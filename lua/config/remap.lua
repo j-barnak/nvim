@@ -17,6 +17,13 @@ vim.keymap.set("n", "<C-h>", "<C-w>h")
 vim.keymap.set("n", "<C-l>", "<C-w>l")
 vim.keymap.set("n", "<leader><BS>", "<C-o>")
 
+vim.keymap.set({ "n", "o", "x" }, "J",  "G", { noremap = true, silent = true, desc = "Jump to end‑of‑file" })
+vim.keymap.set({ "n", "o", "x" }, "K",  "gg", { noremap = true, silent = true, desc = "Jump to start‑of‑file" })
+vim.keymap.set("n", "<leader>J", "J", { noremap = true, silent = true, desc = "Join lines (original J)" })
+vim.keymap.set("x", "<leader>J", "J", { noremap = true, silent = true, desc = "Join selection (original J)" })
+vim.keymap.set("n", "<leader>K", "K", { noremap = true, silent = true, desc = "Keyword help (original K)" })
+vim.keymap.set("x", "<leader>K", "K", { noremap = true, silent = true, desc = "Keyword help (original K)" })
+
 -- Sanity Mappings
 -- TODO: When 0.10 is released, use: vim.keymap.set("ca", "WQ", "wq")
 vim.cmd([[
