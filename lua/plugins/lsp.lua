@@ -131,7 +131,6 @@ return {
       "emmet_language_server",
       "ruff",
       "pyright",
-      "harper_ls",
       "millet",
       "racket_langserver",
       "clangd",
