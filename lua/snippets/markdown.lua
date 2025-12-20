@@ -12,12 +12,14 @@ return {
     Basic
     Front: {}
     Back: {}
-    TARGET DECK: {}
-    END]],
+    END
+
+    {}
+    ]],
       {
         i(1, "front"),
         i(2, "back"),
-        i(3, "target_deck"),
+        i(0),
       }
     )
   ),
