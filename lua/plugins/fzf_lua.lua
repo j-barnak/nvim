@@ -26,7 +26,6 @@ return {
 
     local map = vim.keymap.set
     map("n", "<leader>ff", "<Cmd>FzfLua files<CR>", { desc = "find file" })
-    map("n", "<leader>fg", "<Cmd>FzfLua live_grep<CR>", { desc = "live grep" })
     map("n", "<leader>fg", function() require("fzf-lua").grep_project() end, { desc = "grep (fuzzy filter immediately)" })
     map("n", "<leader>ft", "<Cmd>FzfLua tags<CR>", { desc = "project tags" })
     map("n", "<leader>fb", "<Cmd>FzfLua btags<CR>", { desc = "buffer tags" })
