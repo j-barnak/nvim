@@ -58,7 +58,7 @@ return {
 
 
     vim.lsp.config("emmet_language_server", with_caps({}))
-    vim.lsp.config("tsserver", with_caps({}))
+    vim.lsp.config("ts_ls", with_caps({}))
     vim.lsp.config("ruff", with_caps({}))
     vim.lsp.config("pyright", with_caps({}))
 
