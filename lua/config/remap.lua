@@ -53,3 +53,14 @@ vim.api.nvim_create_autocmd("FileType", {
 	pattern = { "qf" },
 	command = [[nnoremap <buffer> <CR> <CR>:cclose<CR>]],
 })
+
+-- This fixes the issue where vim's built-ins override my K mapping; these
+-- built-ins have higher priority
+vim.api.nvim_create_autocmd("FileType", {
+  pattern = "racket",
+  callback = function()
+    vim.keymap.set({ "n", "o", "x" }, "K", "gg", { buffer = true, silent = true, noremap = true })
+    vim.keymap.set("n", "<leader>K", "<Plug>RacketDoc", { buffer = true, silent = true })
+    vim.keymap.set("x", "<leader>K", "<Plug>RacketDoc", { buffer = true, silent = true })
+  end,
+})

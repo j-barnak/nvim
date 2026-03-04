@@ -23,4 +23,11 @@ return {
       }
     )
   ),
+
+  s(
+    "tt",
+    fmt([[TARGET DECK: {}]], {
+      i(0),
+    })
+  ),
 }

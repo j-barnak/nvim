@@ -24,9 +24,6 @@ return {
       return opts
     end
 
-    ---------------------------------------------------------------------------
-    -- Global LspAttach: completion, inlay hints, per-buffer LSP keymaps
-    ---------------------------------------------------------------------------
     vim.api.nvim_create_autocmd("LspAttach", {
       group = vim.api.nvim_create_augroup("UserLspConfig", {}),
       callback = function(ev)
@@ -62,13 +59,14 @@ return {
 
     vim.lsp.config("emmet_language_server", with_caps({}))
     vim.lsp.config("tsserver", with_caps({}))
-
     vim.lsp.config("ruff", with_caps({}))
     vim.lsp.config("pyright", with_caps({}))
 
     vim.lsp.config("harper_ls", with_caps({
       filetypes = { "markdown" },
     }))
+
+    vim.lsp.config("marksman", with_caps({ filetypes = { "markdown" }, }))
 
     vim.lsp.config("millet", with_caps({
       -- original intent: SML only
@@ -132,9 +130,10 @@ return {
       "ruff",
       "pyright",
       "millet",
-      "racket_langserver",
       "clangd",
       "lua_ls",
+      "harper_ls",
+      "marksman",
     })
 
     vim.api.nvim_create_autocmd("LspAttach", {

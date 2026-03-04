@@ -2,6 +2,10 @@ return {
   "ibhagwan/fzf-lua",
   dependencies = { "nvim-tree/nvim-web-devicons", "stevearc/aerial.nvim" },
   opts = {
+    fzf_bin = "sk",
+    fzf_opts = {
+      ["--algo"] = "frizbee",
+    },
     keymap = {
       fzf = {
         ['tab'] = 'down',
@@ -13,7 +17,7 @@ return {
                 --type f --exclude .git --exclude exports --exclude build]],
     },
     grep = {
-        rg_opts = [[--color=never --hidden --line-number --column --no-heading --smart-case -g "!build/*" -g "!.git/*" -g "!exports/*"]],
+      rg_opts = [[--color=never --hidden --line-number --column --no-heading --smart-case -g "!build/*" -g "!.git/*" -g "!exports/*"]],
     },
   },
   config = function(_, opts)
@@ -22,11 +26,13 @@ return {
     local map = vim.keymap.set
     map("n", "<leader>ff", "<Cmd>FzfLua files<CR>", { desc = "find file" })
     map("n", "<leader>fg", "<Cmd>FzfLua live_grep<CR>", { desc = "live grep" })
+    map("n", "<leader>fg", function() require("fzf-lua").grep_project() end, { desc = "grep (fuzzy filter immediately)" })
     map("n", "<leader>ft", "<Cmd>FzfLua tags<CR>", { desc = "project tags" })
     map("n", "<leader>fb", "<Cmd>FzfLua btags<CR>", { desc = "buffer tags" })
     map("n", "<leader>fd", "<Cmd>FzfLua lsp_definitions<CR>")
     map("n", "<leader>fr", "<Cmd>FzfLua lsp_references<CR>")
     map("n", "<leader>fi", "<Cmd>FzfLua lsp_implementations<CR>")
-    map("n", "<leader>fS", "<Cmd>FzfLua lsp_document_symbols<CR>", { desc = "document symbols (LSP)" })
+    map("n", "<leader>fs", "<Cmd>FzfLua lsp_document_symbols<CR>", { desc = "document symbols (LSP)" })
+    map("n", "<leader>fS", "<Cmd>FzfLua lsp_workspace_symbols<CR>", { desc = "workspace symbols (LSP)" })
   end,
 }
