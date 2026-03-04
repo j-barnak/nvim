@@ -23,11 +23,11 @@
 -- }
 
 return {
-  "dasupradyumna/midnight.nvim",
-  lazy = false,
-  priority = 1000,
-  config = function()
-    vim.cmd.colorscheme("midnight")
-    vim.api.nvim_set_hl(0, "LspInlayHint", { fg = "#9DA9A0" })
-  end,
+  -- "dasupradyumna/midnight.nvim",
+  -- lazy = false,
+  -- priority = 1000,
+  -- config = function()
+  --   vim.cmd.colorscheme("midnight")
+  --   vim.api.nvim_set_hl(0, "LspInlayHint", { fg = "#9DA9A0" })
+  -- end,
 }
