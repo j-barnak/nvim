@@ -36,7 +36,6 @@ return {
         vim.keymap.set("n", "gd",         vim.lsp.buf.definition,     opts)
         vim.keymap.set("n", "<leader>I",  vim.lsp.buf.hover,          opts)
         vim.keymap.set("n", "gi",         vim.lsp.buf.implementation, opts)
-        vim.keymap.set("n", "<leader>rr", builtin.lsp_references,     opts)
         vim.keymap.set("n", "<leader>rn", vim.lsp.buf.rename,         opts)
         vim.keymap.set("n", "<leader>ca", vim.lsp.buf.code_action,    opts)
       end,
