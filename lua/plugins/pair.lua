@@ -1,19 +1,16 @@
 return {
   {
     "windwp/nvim-autopairs",
-    dependencies = {
-      { "hrsh7th/nvim-cmp" },
-    },
     event = "InsertEnter",
-    opts = {},
+    opts  = {},
     config = function(_, opts)
       local npairs = require("nvim-autopairs")
-      local rule = require("nvim-autopairs.rule")
-      local cond = require("nvim-autopairs.conds")
+      local rule   = require("nvim-autopairs.rule")
+      local cond   = require("nvim-autopairs.conds")
 
       npairs.setup(opts)
 
-      local is_template = require("util.pair").is_template
+      local is_template    = require("util.pair").is_template
       local struct_or_class = require("util.pair").struct_or_class
 
       npairs.add_rules({

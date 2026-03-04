@@ -9,20 +9,35 @@ return {
 
     keymap = {
       preset = "none",
-      ["<Tab>"]     = { "select_next", "fallback" },
-      ["<S-Tab>"]   = { "select_prev", "fallback" },
+      ["<Tab>"] = {
+        function(cmp)
+          if cmp.is_visible() then return cmp.select_next() end
+        end,
+        "fallback",
+      },
+      ["<S-Tab>"] = {
+        function(cmp)
+          if cmp.is_visible() then return cmp.select_prev() end
+        end,
+        "fallback",
+      },
       ["<CR>"]      = { "accept", "fallback" },
-      ["<C-b>"]     = { "scroll_documentation_up", "fallback" },
-      ["<C-f>"]     = { "scroll_documentation_down", "fallback" },
       ["<C-Space>"] = { "show", "fallback" },
       ["<C-e>"]     = { "hide", "fallback" },
+      ["<C-p>"]     = { "scroll_documentation_up", "fallback" },
+      ["<C-n>"]     = { "scroll_documentation_down", "fallback" },
     },
 
     completion = {
+      menu = {
+        draw = {
+          treesitter = { "lsp", "buffer", "snippets" },
+        },
+      },
       list = {
         selection = {
-          preselect  = false,  -- mirrors completeopt=noselect
-          auto_insert = false, -- mirrors select=false in confirm
+          preselect   = false,
+          auto_insert = false,
         },
       },
       documentation = {
@@ -31,8 +46,6 @@ return {
       },
     },
 
-    -- Mirror the original entry_filter: suppress lsp/snippets/buffer inside strings,
-    -- but always allow path completions.
     sources = {
       default = function(_ctx)
         local ok, node = pcall(vim.treesitter.get_node)
@@ -46,15 +59,22 @@ return {
       end,
 
       providers = {
-        -- Mirrors the priority = 100 you had on luasnip in cmp
         snippets = { score_offset = 5 },
       },
     },
 
+    -- fuzzy = {
+    --   implementation  = "prefer_rust",
+    --   frecency        = { enabled = true },
+    --   use_proximity   = true,
+    -- },
+
     fuzzy = {
-      implementation = "prefer_rust",
-      -- Boosts recently/frequently accepted items
-      frecency = { enabled = true },
+      implementation = "prefer_rust",  -- Rust matcher is required for typo resistance
+      max_typos = function(keyword)
+        return math.floor(#keyword / 4)  -- 1 typo per 4 chars, e.g. 4+ char keywords get 1 typo allowed
+      end,
+      frecency      = { enabled = true },
       use_proximity = true,
     },
 

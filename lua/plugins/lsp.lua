@@ -3,20 +3,18 @@ return {
   dependencies = {
     { "nvim-telescope/telescope.nvim" },
     { "lukas-reineke/lsp-format.nvim" },
-    { "hrsh7th/nvim-cmp" },
+    { "saghen/blink.cmp" },
   },
   config = function()
     local builtin    = require("telescope.builtin")
     local sig_toggle = require("config.lsp_toggle")
     local lsp_format = require("lsp-format")
 
-    local capabilities = vim.lsp.protocol.make_client_capabilities()
-    capabilities = vim.tbl_deep_extend(
-      "force",
-      capabilities,
-      require("cmp_nvim_lsp").default_capabilities()
-    )
-    capabilities.textDocument.completion.completionItem.snippetSupport = false
+    local capabilities = require("blink.cmp").get_lsp_capabilities({
+      textDocument = {
+        completion = { completionItem = { snippetSupport = false } },
+      },
+    })
 
     local function with_caps(opts)
       opts = opts or {}
