@@ -16,8 +16,8 @@ vim.keymap.set("n", "<C-h>", "<C-w>h")
 vim.keymap.set("n", "<C-l>", "<C-w>l")
 vim.keymap.set("n", "<leader><BS>", "<C-o>")
 
-vim.keymap.set({ "n", "o", "x" }, "J",  "G", { noremap = true, silent = true, desc = "Jump to end‑of‑file" })
-vim.keymap.set({ "n", "o", "x" }, "K",  "gg", { noremap = true, silent = true, desc = "Jump to start‑of‑file" })
+vim.keymap.set({ "n", "o", "x" }, "J", "G", { noremap = true, silent = true, desc = "Jump to end‑of‑file" })
+vim.keymap.set({ "n", "o", "x" }, "K", "gg", { noremap = true, silent = true, desc = "Jump to start‑of‑file" })
 vim.keymap.set("n", "<leader>J", "J", { noremap = true, silent = true, desc = "Join lines (original J)" })
 vim.keymap.set("x", "<leader>J", "J", { noremap = true, silent = true, desc = "Join selection (original J)" })
 vim.keymap.set("n", "<leader>K", "K", { noremap = true, silent = true, desc = "Keyword help (original K)" })
@@ -56,10 +56,10 @@ vim.api.nvim_create_autocmd("FileType", {
 -- This fixes the issue where vim's built-ins override my K mapping; these
 -- built-ins have higher priority
 vim.api.nvim_create_autocmd("FileType", {
-  pattern = "racket",
-  callback = function()
-    vim.keymap.set({ "n", "o", "x" }, "K", "gg", { buffer = true, silent = true, noremap = true })
-    vim.keymap.set("n", "<leader>K", "<Plug>RacketDoc", { buffer = true, silent = true })
-    vim.keymap.set("x", "<leader>K", "<Plug>RacketDoc", { buffer = true, silent = true })
-  end,
+	pattern = "racket",
+	callback = function()
+		vim.keymap.set({ "n", "o", "x" }, "K", "gg", { buffer = true, silent = true, noremap = true })
+		vim.keymap.set("n", "<leader>K", "<Plug>RacketDoc", { buffer = true, silent = true })
+		vim.keymap.set("x", "<leader>K", "<Plug>RacketDoc", { buffer = true, silent = true })
+	end,
 })

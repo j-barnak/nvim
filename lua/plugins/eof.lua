@@ -1,4 +1,4 @@
 return {
-  "Aasim-A/scrollEOF.nvim",
-  opts = {},
+	"Aasim-A/scrollEOF.nvim",
+	opts = {},
 }

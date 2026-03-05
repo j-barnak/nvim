@@ -1,8 +1,8 @@
 return {
-  {
-    "stevearc/dressing.nvim",
-  },
-  {
-    "tpope/vim-fugitive",
-  },
+	{
+		"stevearc/dressing.nvim",
+	},
+	{
+		"tpope/vim-fugitive",
+	},
 }

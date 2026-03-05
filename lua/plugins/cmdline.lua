@@ -1,1 +1,1 @@
-return { 'nvim-mini/mini.cmdline', version = false }
+return { "nvim-mini/mini.cmdline", version = false }

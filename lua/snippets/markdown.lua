@@ -4,10 +4,10 @@ local i = ls.insert_node
 local fmt = require("luasnip.extras.fmt").fmt
 
 return {
-  s(
-    "ff",
-    fmt(
-      [[ 
+	s(
+		"ff",
+		fmt(
+			[[ 
     START
     Basic
     Front: {}
@@ -16,18 +16,18 @@ return {
 
     {}
     ]],
-      {
-        i(1, "front"),
-        i(2, "back"),
-        i(0),
-      }
-    )
-  ),
+			{
+				i(1, "front"),
+				i(2, "back"),
+				i(0),
+			}
+		)
+	),
 
-  s(
-    "tt",
-    fmt([[TARGET DECK: {}]], {
-      i(0),
-    })
-  ),
+	s(
+		"tt",
+		fmt([[TARGET DECK: {}]], {
+			i(0),
+		})
+	),
 }
