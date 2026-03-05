@@ -37,7 +37,7 @@ return {
 		{ "<leader>fd", "<cmd>FzfLua lsp_definitions<cr>", desc = "definitions (LSP)" },
 		{ "<leader>rr", "<cmd>FzfLua lsp_references<cr>", desc = "references (LSP)" },
 		{ "<leader>fi", "<cmd>FzfLua lsp_implementations<cr>", desc = "implementations (LSP)" },
-		-- Use LSP document symbols when available, fall back to aerial (treesitter) otherwise
+		-- Use LSP document symbols when available, fall back to treesitter otherwise
 		{
 			"<leader>fs",
 			function()
@@ -52,10 +52,10 @@ return {
 				if has_lsp then
 					require("fzf-lua").lsp_document_symbols()
 				else
-					require("fzf-lua").aerial()
+					require("fzf-lua").treesitter()
 				end
 			end,
-			desc = "document symbols (LSP / aerial fallback)",
+			desc = "document symbols",
 		},
 		{ "<leader>fS", "<cmd>FzfLua lsp_live_workspace_symbols<cr>", desc = "workspace symbols (LSP)" },
 	},
