@@ -5,7 +5,6 @@ return {
 		{ "hrsh7th/nvim-cmp" },
 	},
 	config = function()
-		local builtin = require("telescope.builtin")
 		local sig_toggle = require("config.lsp_toggle")
 		local lsp_format = require("lsp-format")
 
