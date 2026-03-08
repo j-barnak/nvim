@@ -1,7 +1,6 @@
 return {
 	"neovim/nvim-lspconfig",
 	dependencies = {
-		{ "nvim-telescope/telescope.nvim" },
 		{ "lukas-reineke/lsp-format.nvim" },
 		{ "hrsh7th/nvim-cmp" },
 	},

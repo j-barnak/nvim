@@ -3,13 +3,15 @@ return {
 	version = "*",
 	lazy = true,
 	opts = {
-		mappings = {
-			["<leader>o"] = {
-				action = function()
-					return require("obsidian").util.smart_action()
-				end,
-				opts = { noremap = true, silent = true, expr = true },
-			},
+		callbacks = {
+			enter_note = function(note)
+				vim.keymap.set("n", "<leader>o", require("obsidian.api").smart_action, {
+					buffer = true,
+					noremap = true,
+					silent = true,
+					expr = true,
+				})
+			end,
 		},
 		daily_notes = {
 			enabled = true,
