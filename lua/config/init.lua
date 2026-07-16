@@ -1,5 +1,2 @@
 require("config.remap")
 require("config.options")
-require("config.anki_jump")
-require("config.anki_marks")
-require("config.obsidian_remove")

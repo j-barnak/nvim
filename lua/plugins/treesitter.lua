@@ -1,8 +1,5 @@
 return {
 	"nvim-treesitter/nvim-treesitter",
-	dependencies = {
-		{ "windwp/nvim-ts-autotag" },
-	},
 	build = function()
 		require("nvim-treesitter.install").update({ with_sync = true })
 	end,
@@ -28,7 +25,7 @@ return {
 		auto_install = true,
 		highlight = {
 			enable = true,
-			disable = function(lang, bufnr) --
+			disable = function(lang, bufnr)
 				return vim.api.nvim_buf_line_count(bufnr) > 50000
 					and (lang == "cpp" or lang == "c" or lang == "javascript")
 			end,
@@ -37,6 +34,5 @@ return {
 	},
 	config = function(_, opts)
 		require("nvim-treesitter.configs").setup(opts)
-		vim.api.nvim_set_hl(0, "@text.todo", {})
 	end,
 }

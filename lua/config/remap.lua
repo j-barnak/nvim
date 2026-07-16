@@ -1,9 +1,9 @@
-vim.keymap.set("n", "q", "<Nop>", { silent = true }) -- disable macro
+vim.keymap.set("n", "q", "<Nop>", { silent = true })
 vim.keymap.set({ "n", "v" }, "<leader>y", [["+y]])
 vim.keymap.set("n", "<leader>Y", [["+Y]])
-vim.keymap.set("n", "<CR>", "<CR><Cmd>cclose<CR>", { buffer = false, noremap = false, silent = true })
 vim.keymap.set("n", "<cr>", "ciw")
 vim.keymap.set("i", "<C-w>", "<Esc>cvb", {})
+vim.keymap.set("i", "jj", "<Esc>", { silent = true })
 vim.keymap.set({ "n", "o", "x" }, "H", "^", {})
 vim.keymap.set({ "n", "o", "x" }, "L", "$", {})
 vim.keymap.set("n", "U", "<C-r>")
@@ -23,8 +23,11 @@ vim.keymap.set("x", "<leader>J", "J", { noremap = true, silent = true, desc = "J
 vim.keymap.set("n", "<leader>K", "K", { noremap = true, silent = true, desc = "Keyword help (original K)" })
 vim.keymap.set("x", "<leader>K", "K", { noremap = true, silent = true, desc = "Keyword help (original K)" })
 
--- Sanity Mappings
--- TODO: When 0.10 is released, use: vim.keymap.set("ca", "WQ", "wq")
+vim.keymap.set("n", "<leader>cc", "gcc", { remap = true, desc = "Toggle comment line" })
+vim.keymap.set({ "n", "x" }, "<leader>c", "gc", { remap = true, desc = "Toggle comment" })
+vim.keymap.set("n", "<leader>bc", "gbc", { remap = true, desc = "Toggle comment block" })
+vim.keymap.set({ "n", "x" }, "<leader>b", "gb", { remap = true, desc = "Toggle comment block" })
+
 vim.cmd([[
 cnoreabbrev W! w!
 cnoreabbrev W1 w!
@@ -51,15 +54,4 @@ cnoreabbrev Qall qall
 vim.api.nvim_create_autocmd("FileType", {
 	pattern = { "qf" },
 	command = [[nnoremap <buffer> <CR> <CR>:cclose<CR>]],
-})
-
--- This fixes the issue where vim's built-ins override my K mapping; these
--- built-ins have higher priority
-vim.api.nvim_create_autocmd("FileType", {
-	pattern = "racket",
-	callback = function()
-		vim.keymap.set({ "n", "o", "x" }, "K", "gg", { buffer = true, silent = true, noremap = true })
-		vim.keymap.set("n", "<leader>K", "<Plug>RacketDoc", { buffer = true, silent = true })
-		vim.keymap.set("x", "<leader>K", "<Plug>RacketDoc", { buffer = true, silent = true })
-	end,
 })

@@ -1,5 +1,5 @@
-vim.keymap.set({ "n", "o", "x" }, "j", "gj", {})
-vim.keymap.set({ "n", "o", "x" }, "k", "gk", {})
-vim.keymap.set({ "n", "o", "x" }, "H", "g0", {})
-vim.keymap.set({ "n", "o", "x" }, "L", "g$", {})
-vim.cmd([[set wrap]])
+vim.keymap.set({ "n", "o", "x" }, "j", "gj", { buffer = true })
+vim.keymap.set({ "n", "o", "x" }, "k", "gk", { buffer = true })
+vim.keymap.set({ "n", "o", "x" }, "H", "g0", { buffer = true })
+vim.keymap.set({ "n", "o", "x" }, "L", "g$", { buffer = true })
+vim.opt_local.wrap = true

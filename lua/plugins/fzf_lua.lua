@@ -1,17 +1,11 @@
 return {
 	"ibhagwan/fzf-lua",
-	dependencies = { "nvim-tree/nvim-web-devicons" },
 
 	opts = {
 		keymap = {
 			fzf = {
 				["tab"] = "down",
 				["btab"] = "up",
-			},
-		},
-		lsp = {
-			symbols = {
-				exec_empty_query = true,
 			},
 		},
 		files = {
@@ -25,38 +19,21 @@ return {
 
 	keys = {
 		{ "<leader>ff", "<cmd>FzfLua files<cr>", desc = "find file" },
-		{ "<leader>ft", "<cmd>FzfLua tags<cr>", desc = "project tags" },
-		{ "<leader>fb", "<cmd>FzfLua btags<cr>", desc = "buffer tags" },
 		{
 			"<leader>fg",
 			function()
 				require("fzf-lua").grep_project()
 			end,
-			desc = "grep (fuzzy filter immediately)",
+			desc = "grep",
 		},
-		{ "<leader>fd", "<cmd>FzfLua lsp_definitions<cr>", desc = "definitions (LSP)" },
-		{ "<leader>rr", "<cmd>FzfLua lsp_references<cr>", desc = "references (LSP)" },
-		{ "<leader>fi", "<cmd>FzfLua lsp_implementations<cr>", desc = "implementations (LSP)" },
-		-- Use LSP document symbols when available, fall back to treesitter otherwise
+		{ "<leader>ft", "<cmd>FzfLua tags<cr>", desc = "project tags" },
+		{ "<leader>fb", "<cmd>FzfLua btags<cr>", desc = "buffer tags" },
 		{
 			"<leader>fs",
 			function()
-				local clients = vim.lsp.get_clients({ bufnr = 0 })
-				local has_lsp = false
-				for _, client in ipairs(clients) do
-					if client.server_capabilities.documentSymbolProvider then
-						has_lsp = true
-						break
-					end
-				end
-				if has_lsp then
-					require("fzf-lua").lsp_document_symbols()
-				else
-					require("fzf-lua").treesitter()
-				end
+				require("fzf-lua").treesitter()
 			end,
 			desc = "document symbols",
 		},
-		{ "<leader>fS", "<cmd>FzfLua lsp_live_workspace_symbols<cr>", desc = "workspace symbols (LSP)" },
 	},
 }
