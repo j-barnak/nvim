@@ -40,6 +40,7 @@ vim.api.nvim_create_autocmd("ColorScheme", {
 		vim.api.nvim_set_hl(0, "FloatTitle", { fg = "#87afaf", bold = true })
 		vim.api.nvim_set_hl(0, "CursorLine", { bg = "#1f3a5f" })
 		vim.api.nvim_set_hl(0, "CursorLineNr", { fg = "#ffff00", bold = true })
+		vim.api.nvim_set_hl(0, "MatchParen", { fg = "#e0af68", bold = true, underline = true })
 	end,
 })
 vim.cmd.colorscheme("vim")
