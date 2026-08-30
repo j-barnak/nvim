@@ -1,55 +1,38 @@
+local ensure = {
+	"bash",
+	"c",
+	"cpp",
+	"css",
+	"diff",
+	"html",
+	"javascript",
+	"json",
+	"lua",
+	"markdown",
+	"markdown_inline",
+	"python",
+	"query",
+	"rust",
+	"toml",
+	"vim",
+	"vimdoc",
+}
+
 return {
 	"nvim-treesitter/nvim-treesitter",
-	build = function()
-		require("nvim-treesitter.install").update({ with_sync = true })
-	end,
+	branch = "main",
 	lazy = false,
-	opts = {
-		indent = { enable = true },
-		ensure_installed = {
-			"c",
-			"lua",
-			"javascript",
-			"cpp",
-		},
-		incremental_selection = {
-			enable = true,
-			keymaps = {
-				init_selection = "<C-space>",
-				node_incremental = "<C-space>",
-				scope_incremental = false,
-				node_decremental = "<bs>",
-			},
-		},
-		sync_install = false,
-		auto_install = true,
-		highlight = {
-			enable = true,
-			disable = function(lang, bufnr)
-				-- The markdown parser crashes on code-fence injections in this
-				-- nvim build; fall back to Vim's built-in markdown syntax.
-				if lang == "markdown" or lang == "markdown_inline" then
-					return true
-				end
-				return vim.api.nvim_buf_line_count(bufnr) > 50000
-					and (lang == "cpp" or lang == "c" or lang == "javascript")
-			end,
-			additional_vim_regex_highlighting = false,
-		},
-	},
-	config = function(_, opts)
-		require("nvim-treesitter.configs").setup(opts)
-		-- The markdown parser crashes on code-fence injections in this nvim
-		-- build. Stop the TS highlighter on markdown (deferred so it runs after
-		-- nvim-treesitter starts it) and fall back to Vim's built-in syntax.
+	build = ":TSUpdate",
+	config = function()
+		require("nvim-treesitter").install(ensure)
+
+		-- Start treesitter highlighting for any buffer whose parser is available.
 		vim.api.nvim_create_autocmd("FileType", {
-			pattern = "markdown",
-			callback = function(ev)
-				vim.schedule(function()
-					if vim.api.nvim_buf_is_valid(ev.buf) then
-						pcall(vim.treesitter.stop, ev.buf)
-					end
-				end)
+			callback = function(args)
+				local lang = vim.treesitter.language.get_lang(vim.bo[args.buf].filetype)
+				if lang and pcall(vim.treesitter.language.add, lang) then
+					pcall(vim.treesitter.start, args.buf, lang)
+				end
 			end,
 		})
 	end,

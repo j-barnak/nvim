@@ -5,7 +5,9 @@ return {
 		{ "i", mode = { "x", "o" } },
 	},
 	event = "VeryLazy",
-	dependencies = { "nvim-treesitter/nvim-treesitter-textobjects" },
+	dependencies = {
+		{ "nvim-treesitter/nvim-treesitter-textobjects", branch = "main" },
+	},
 	opts = function()
 		local ai = require("mini.ai")
 		return {
@@ -21,6 +23,7 @@ return {
 		}
 	end,
 	config = function(_, opts)
+		require("nvim-treesitter-textobjects").setup({})
 		require("mini.ai").setup(opts)
 	end,
 }

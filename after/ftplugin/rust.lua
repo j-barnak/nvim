@@ -37,6 +37,11 @@ local function open_doc(path)
 	vim.bo[buf].filetype = "markdown"
 	vim.bo[buf].modifiable = false
 	vim.keymap.set("n", "q", "<cmd>close<cr>", { buffer = buf })
+	-- Oil opens in this doc's directory (browse sibling pages), not the cwd.
+	local dir = vim.fs.dirname(path)
+	vim.keymap.set("n", "<leader>fe", function()
+		require("oil").toggle_float(dir)
+	end, { buffer = buf, desc = "Oil (this doc's directory)" })
 end
 
 vim.keymap.set("n", "<leader>K", function()
