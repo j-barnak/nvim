@@ -4,7 +4,7 @@
 --     • Linux Kernel -> version -> Browse Documentation (.rst -> Markdown)
 --                                or API reference (16k+ kernel-doc symbols,
 --                                extracted per-symbol with scripts/kernel-doc)
---     • BCC          -> browse docs + examples at latest (master)
+--     • BCC / QEMU / libbpf -> browse docs (+ examples) at latest (master)
 -- Everything is fetched lazily and cached under stdpath("data")/docs, one
 -- blobless+treeless sparse checkout per source/version. Files render in a
 -- reused right vsplit: .rst via pandoc, .md as-is, code with its filetype.
@@ -14,7 +14,6 @@ local M = {}
 local repo = "https://github.com/torvalds/linux"
 local data_root = vim.fn.stdpath("data") .. "/docs"
 local cache_root = data_root .. "/linux"
-local bcc_root = data_root .. "/bcc"
 local tags_cache = cache_root .. "/tags.txt"
 
 local viewer_win -- reused doc-viewer window handle
@@ -319,46 +318,79 @@ local function pick_kernel_version()
 	end)
 end
 
--- ── BCC (iovisor/bcc): docs + examples, latest (master) ──────────────────
-local function ensure_bcc(cb)
-	local dir = bcc_root .. "/master"
-	if vim.fn.isdirectory(dir .. "/examples") == 1 then
+-- ── simple providers: sparse-clone a repo's docs at latest (master) ──────
+-- Lazily sparse-clone `sparse` paths of `url` into `dir`; cb(dir) once the
+-- `marker` subdir exists.
+local function ensure_repo(dir, url, sparse, marker, cb)
+	if vim.fn.isdirectory(dir .. "/" .. marker) == 1 then
 		return cb(dir)
 	end
-	vim.fn.mkdir(bcc_root, "p")
-	vim.notify("Cloning BCC docs + examples … (first time only)")
+	vim.fn.mkdir(vim.fs.dirname(dir), "p")
+	vim.notify("Cloning " .. vim.fs.basename(vim.fs.dirname(dir)) .. " docs … (first time only)")
 	local script = table.concat({
 		"rm -rf " .. vim.fn.shellescape(dir),
-		"git -c core.autocrlf=false clone -n --depth=1 --filter=tree:0 https://github.com/iovisor/bcc "
-			.. vim.fn.shellescape(dir),
+		"git -c core.autocrlf=false clone -n --depth=1 --filter=tree:0 " .. url .. " " .. vim.fn.shellescape(dir),
 		"cd " .. vim.fn.shellescape(dir),
-		"git sparse-checkout set --no-cone /docs /examples",
+		"git sparse-checkout set --no-cone " .. sparse,
 		"git checkout",
 	}, " && ")
-	vim.system({ "sh", "-c", script }, { text = true, timeout = 120000 }, function(res)
+	vim.system({ "sh", "-c", script }, { text = true, timeout = 180000 }, function(res)
 		vim.schedule(function()
-			if res.code == 0 and vim.fn.isdirectory(dir .. "/examples") == 1 then
+			if res.code == 0 and vim.fn.isdirectory(dir .. "/" .. marker) == 1 then
 				cb(dir)
 			else
-				vim.notify("BCC clone failed:\n" .. (res.stderr or ""), vim.log.levels.ERROR)
+				vim.notify("Clone failed:\n" .. (res.stderr or ""), vim.log.levels.ERROR)
 			end
 		end)
 	end)
 end
 
-local function pick_bcc()
-	if not have("git") then
-		return vim.notify("git not found (needed to fetch BCC docs)", vim.log.levels.WARN)
+-- name -> { url, sparse (checkout paths), marker (dir proving success),
+--          browse (subdir to fuzzy-browse, "" = whole clone), exts, prompt }
+local simple = {
+	bcc = {
+		url = "https://github.com/iovisor/bcc",
+		sparse = "/docs /examples",
+		marker = "examples",
+		browse = "",
+		exts = "-e md -e rst -e py -e c -e cc -e h -e lua -e txt",
+		prompt = "BCC> ",
+	},
+	qemu = {
+		url = "https://github.com/qemu/qemu",
+		sparse = "/docs",
+		marker = "docs",
+		browse = "/docs",
+		exts = "-e rst -e md -e txt",
+		prompt = "QEMU> ",
+	},
+	libbpf = {
+		url = "https://github.com/libbpf/libbpf",
+		sparse = "/docs",
+		marker = "docs",
+		browse = "/docs",
+		exts = "-e rst -e md -e txt",
+		prompt = "libbpf> ",
+	},
+}
+
+local function make_simple(name, spec)
+	return function()
+		if not have("git") then
+			return vim.notify("git not found (needed to fetch " .. name .. " docs)", vim.log.levels.WARN)
+		end
+		ensure_repo(data_root .. "/" .. name .. "/master", spec.url, spec.sparse, spec.marker, function(dir)
+			pick_files(dir .. spec.browse, spec.exts, spec.prompt)
+		end)
 	end
-	ensure_bcc(function(dir)
-		pick_files(dir, "-e md -e rst -e py -e c -e cc -e h -e lua -e txt", "BCC> ")
-	end)
 end
 
 -- ── providers + :Docs command ────────────────────────────────────────────
 local providers = {
 	{ name = "Linux Kernel", key = "kernel", run = pick_kernel_version },
-	{ name = "BCC", key = "bcc", run = pick_bcc },
+	{ name = "BCC", key = "bcc", run = make_simple("bcc", simple.bcc) },
+	{ name = "QEMU", key = "qemu", run = make_simple("qemu", simple.qemu) },
+	{ name = "libbpf", key = "libbpf", run = make_simple("libbpf", simple.libbpf) },
 }
 
 function M.open()
