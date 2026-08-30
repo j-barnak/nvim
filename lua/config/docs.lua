@@ -1,11 +1,12 @@
 -- :Docs — a small documentation browser.
---   :Docs -> provider menu -> "Linux Kernel" -> version -> either
---     • Browse Documentation : fuzzy-browse .rst pages, rendered as Markdown
---     • API reference        : fuzzy-search 16k+ kernel-doc symbols, extracted
---                              per-symbol with scripts/kernel-doc
--- Everything is fetched lazily and cached under stdpath("cache")/docs/linux,
--- one blobless+treeless sparse checkout per version. Documentation is fetched
--- on first browse; the (heavier) source tree + API index only on first API use.
+--   :Docs -> provider menu ->
+--     • Linux Kernel -> version -> Browse Documentation (.rst -> Markdown)
+--                                or API reference (16k+ kernel-doc symbols,
+--                                extracted per-symbol with scripts/kernel-doc)
+--     • BCC          -> browse docs + examples at latest (master)
+-- Everything is fetched lazily and cached under stdpath("cache")/docs, one
+-- blobless+treeless sparse checkout per source/version. Files render in a
+-- right vsplit: .rst via pandoc, .md as-is, code examples with their filetype.
 
 local M = {}
 
@@ -17,8 +18,8 @@ local function fzf()
 	return require("fzf-lua")
 end
 
--- ── render Markdown lines in a right vsplit ──────────────────────────────
-local function render_lines(lines, dir)
+-- ── render lines in a right vsplit with the given filetype ───────────────
+local function render_lines(lines, ft, dir)
 	if not lines or #lines == 0 then
 		return vim.notify("Nothing to render", vim.log.levels.WARN)
 	end
@@ -27,9 +28,9 @@ local function render_lines(lines, dir)
 	vim.api.nvim_win_set_buf(0, buf)
 	vim.bo[buf].buftype, vim.bo[buf].bufhidden = "nofile", "wipe"
 	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-	-- ft after the split is current window so markdown's window-local options
+	-- ft after the split is current window so a filetype's window-local options
 	-- don't leak onto the previous window.
-	vim.bo[buf].filetype = "markdown"
+	vim.bo[buf].filetype = ft or "markdown"
 	vim.bo[buf].modifiable = false
 	vim.keymap.set("n", "q", "<cmd>close<cr>", { buffer = buf })
 	if dir then
@@ -39,16 +40,25 @@ local function render_lines(lines, dir)
 	end
 end
 
--- ── render an .rst file ──────────────────────────────────────────────────
-local function open_doc(path)
-	local out
-	if vim.fn.executable("pandoc") == 1 then
-		out = vim.fn.systemlist({ "pandoc", "-f", "rst", "-t", "gfm-raw_html", "--wrap=none", path })
+-- ── render a doc or source file, by extension ────────────────────────────
+--   .rst -> pandoc to Markdown; .md -> shown as-is; anything else (code
+--   examples) -> shown raw with its detected filetype for syntax highlighting.
+local function open_file(path)
+	local ext = (path:match("%.([%w]+)$") or ""):lower()
+	local lines, ft
+	if ext == "rst" and vim.fn.executable("pandoc") == 1 then
+		lines = vim.fn.systemlist({ "pandoc", "-f", "rst", "-t", "gfm-raw_html", "--wrap=none", path })
+		ft = "markdown"
 	end
-	if not out or #out == 0 then
-		out = vim.fn.filereadable(path) == 1 and vim.fn.readfile(path) or {}
+	if not lines or #lines == 0 then
+		lines = vim.fn.filereadable(path) == 1 and vim.fn.readfile(path) or {}
+		if ext == "md" or ext == "markdown" or ext == "rst" then
+			ft = "markdown"
+		else
+			ft = vim.filetype.match({ filename = path }) or ""
+		end
 	end
-	render_lines(out, vim.fs.dirname(path))
+	render_lines(lines, ft, vim.fs.dirname(path))
 end
 
 -- ── extract one kernel-doc symbol and render it ──────────────────────────
@@ -61,17 +71,17 @@ local function open_api(dir, name, file)
 		vim.fn.shellescape(file)
 	)
 	local res = vim.system({ "sh", "-c", cmd }, { text = true }):wait()
-	render_lines(vim.split(res.stdout or "", "\n", { trimempty = true }), dir)
+	render_lines(vim.split(res.stdout or "", "\n", { trimempty = true }), "markdown", dir)
 end
 
--- ── pickers ──────────────────────────────────────────────────────────────
-local function browse(docdir)
-	fzf().fzf_exec("fd --base-directory " .. vim.fn.shellescape(docdir) .. " --type f --extension rst", {
-		prompt = "Kernel docs> ",
+-- ── fuzzy-browse doc/source files under a directory ──────────────────────
+local function pick_files(dir, fd_args, prompt)
+	fzf().fzf_exec("fd --base-directory " .. vim.fn.shellescape(dir) .. " --type f " .. fd_args, {
+		prompt = prompt,
 		actions = {
 			["default"] = function(sel)
 				if sel and sel[1] then
-					open_doc(docdir .. "/" .. sel[1])
+					open_file(dir .. "/" .. sel[1])
 				end
 			end,
 		},
@@ -203,7 +213,7 @@ local function kernel_menu(version)
 					ensure_api(version, api_search)
 				else
 					ensure_docs(version, function(_, docdir)
-						browse(docdir)
+						pick_files(docdir, "--extension rst", "Kernel docs> ")
 					end)
 				end
 			end,
@@ -229,9 +239,44 @@ local function pick_kernel_version()
 	end)
 end
 
+-- ── BCC (iovisor/bcc): docs + examples, latest (master) ──────────────────
+local bcc_root = vim.fn.stdpath("cache") .. "/docs/bcc"
+
+local function ensure_bcc(cb)
+	local dir = bcc_root .. "/master"
+	if vim.fn.isdirectory(dir .. "/examples") == 1 then
+		return cb(dir)
+	end
+	vim.fn.mkdir(bcc_root, "p")
+	vim.notify("Cloning BCC docs + examples … (first time only)")
+	local script = table.concat({
+		"rm -rf " .. vim.fn.shellescape(dir),
+		"git clone -n --depth=1 --filter=tree:0 https://github.com/iovisor/bcc " .. vim.fn.shellescape(dir),
+		"cd " .. vim.fn.shellescape(dir),
+		"git sparse-checkout set --no-cone /docs /examples",
+		"git checkout",
+	}, " && ")
+	vim.system({ "sh", "-c", script }, { text = true }, function(res)
+		vim.schedule(function()
+			if res.code == 0 and vim.fn.isdirectory(dir .. "/examples") == 1 then
+				cb(dir)
+			else
+				vim.notify("BCC clone failed:\n" .. (res.stderr or ""), vim.log.levels.ERROR)
+			end
+		end)
+	end)
+end
+
+local function pick_bcc()
+	ensure_bcc(function(dir)
+		pick_files(dir, "-e md -e rst -e py -e c -e cc -e h -e lua -e txt", "BCC> ")
+	end)
+end
+
 -- ── top-level :Docs provider menu ────────────────────────────────────────
 local providers = {
 	["Linux Kernel"] = pick_kernel_version,
+	["BCC"] = pick_bcc,
 }
 
 function M.open()
