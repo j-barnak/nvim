@@ -16,23 +16,13 @@ local function to_markdown(path)
 end
 
 local function open_doc(path)
-	local width = math.floor(vim.o.columns * 0.8)
-	local height = math.floor(vim.o.lines * 0.8)
+	local lines = to_markdown(path)
+	vim.cmd("rightbelow vsplit")
 	local buf = vim.api.nvim_create_buf(false, true)
+	vim.api.nvim_win_set_buf(0, buf)
 	vim.bo[buf].buftype, vim.bo[buf].bufhidden = "nofile", "wipe"
-	vim.api.nvim_buf_set_lines(buf, 0, -1, false, to_markdown(path))
-	vim.api.nvim_open_win(buf, true, {
-		relative = "editor",
-		width = width,
-		height = height,
-		row = math.floor((vim.o.lines - height) / 2),
-		col = math.floor((vim.o.columns - width) / 2),
-		border = "rounded",
-		style = "minimal",
-		title = " Rust docs ",
-		title_pos = "center",
-	})
-	-- Set filetype only after the float is the current window so the markdown
+	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
+	-- Set filetype only after the split is the current window so the markdown
 	-- ftplugin's window-local options don't leak onto the Rust window.
 	vim.bo[buf].filetype = "markdown"
 	vim.bo[buf].modifiable = false
