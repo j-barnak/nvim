@@ -1,51 +1,93 @@
 -- :Docs — a small documentation browser.
---   :Docs -> provider menu ->
+--   :Docs                 -> provider menu (fzf)
+--   :Docs kernel | bcc    -> jump straight to a provider
 --     • Linux Kernel -> version -> Browse Documentation (.rst -> Markdown)
 --                                or API reference (16k+ kernel-doc symbols,
 --                                extracted per-symbol with scripts/kernel-doc)
 --     • BCC          -> browse docs + examples at latest (master)
--- Everything is fetched lazily and cached under stdpath("cache")/docs, one
+-- Everything is fetched lazily and cached under stdpath("data")/docs, one
 -- blobless+treeless sparse checkout per source/version. Files render in a
--- right vsplit: .rst via pandoc, .md as-is, code examples with their filetype.
+-- reused right vsplit: .rst via pandoc, .md as-is, code with its filetype.
 
 local M = {}
 
 local repo = "https://github.com/torvalds/linux"
-local cache_root = vim.fn.stdpath("cache") .. "/docs/linux"
+local data_root = vim.fn.stdpath("data") .. "/docs"
+local cache_root = data_root .. "/linux"
+local bcc_root = data_root .. "/bcc"
 local tags_cache = cache_root .. "/tags.txt"
+
+local viewer_win -- reused doc-viewer window handle
+local viewer_seq = 0 -- for unique scratch buffer names
 
 local function fzf()
 	return require("fzf-lua")
 end
 
--- ── render lines in a right vsplit with the given filetype ───────────────
-local function render_lines(lines, ft, dir)
+local function have(bin)
+	return vim.fn.executable(bin) == 1
+end
+
+-- ── render lines in a reused right vsplit with the given filetype ─────────
+local function render_lines(lines, ft, dir, title)
 	if not lines or #lines == 0 then
 		return vim.notify("Nothing to render", vim.log.levels.WARN)
 	end
-	-- Reuse an existing docs viewer split if one is open, else make one.
-	local win
-	for _, w in ipairs(vim.api.nvim_list_wins()) do
-		if vim.b[vim.api.nvim_win_get_buf(w)].docs_viewer then
-			win = w
-			break
+
+	-- Reuse the tracked viewer window if still valid, else recover it by tag,
+	-- else open a new split.
+	local win = viewer_win
+	if not (win and vim.api.nvim_win_is_valid(win)) then
+		win = nil
+		for _, w in ipairs(vim.api.nvim_list_wins()) do
+			if vim.w[w].docs_viewer then
+				win = w
+				break
+			end
 		end
 	end
 	if win then
 		vim.api.nvim_set_current_win(win)
 	else
 		vim.cmd("rightbelow vsplit")
+		win = vim.api.nvim_get_current_win()
 	end
+	viewer_win = win
+	vim.w[win].docs_viewer = true
+
+	-- Scratch buffer: buftype=nofile, noswapfile, nomodeline, unlisted are the
+	-- defaults for nvim_create_buf(false, true); only bufhidden needs override.
 	local buf = vim.api.nvim_create_buf(false, true)
-	vim.api.nvim_win_set_buf(0, buf)
-	vim.b[buf].docs_viewer = true
-	vim.bo[buf].buftype, vim.bo[buf].bufhidden = "nofile", "wipe"
+	vim.bo[buf].bufhidden = "wipe"
+	vim.api.nvim_win_set_buf(win, buf)
+	viewer_seq = viewer_seq + 1
+	pcall(vim.api.nvim_buf_set_name, buf, string.format("docs://%d/%s", viewer_seq, title or "doc"))
 	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-	-- ft after the split is current window so a filetype's window-local options
-	-- don't leak onto the previous window.
+
+	-- Prose-friendly window-local viewport (wrap only for prose, not code).
+	local prose = ft == nil or ft == "" or ft == "markdown" or ft == "rst"
+	local wo = {
+		number = false,
+		relativenumber = false,
+		signcolumn = "no",
+		foldcolumn = "0",
+		foldenable = false,
+		list = false,
+		cursorline = true,
+		wrap = prose,
+		linebreak = prose,
+	}
+	for k, v in pairs(wo) do
+		vim.api.nvim_set_option_value(k, v, { scope = "local", win = win })
+	end
+
+	-- filetype last, while `win` is current, so ftplugin setlocal stays scoped.
 	vim.bo[buf].filetype = ft or "markdown"
 	vim.bo[buf].modifiable = false
-	vim.keymap.set("n", "q", "<cmd>close<cr>", { buffer = buf })
+
+	vim.keymap.set("n", "q", function()
+		pcall(vim.api.nvim_win_close, 0, true)
+	end, { buffer = buf, nowait = true, silent = true, desc = "Close docs viewer" })
 	if dir then
 		vim.keymap.set("n", "<leader>fe", function()
 			require("oil").toggle_float(dir)
@@ -54,27 +96,29 @@ local function render_lines(lines, ft, dir)
 end
 
 -- ── render a doc or source file, by extension ────────────────────────────
---   .rst -> pandoc to Markdown; .md -> shown as-is; anything else (code
---   examples) -> shown raw with its detected filetype for syntax highlighting.
+--   .rst -> pandoc to Markdown (raw rst as `rst` if pandoc is missing);
+--   .md -> as-is; anything else (code examples) -> raw with detected filetype.
 local function open_file(path)
 	local ext = (path:match("%.([%w]+)$") or ""):lower()
 	local lines, ft
-	if ext == "rst" and vim.fn.executable("pandoc") == 1 then
+	if ext == "rst" and have("pandoc") then
 		lines = vim.fn.systemlist({ "pandoc", "-f", "rst", "-t", "gfm-raw_html", "--wrap=none", path })
 		ft = "markdown"
 	end
 	if not lines or #lines == 0 then
 		lines = vim.fn.filereadable(path) == 1 and vim.fn.readfile(path) or {}
-		if ext == "md" or ext == "markdown" or ext == "rst" then
+		if ext == "md" or ext == "markdown" then
 			ft = "markdown"
+		elseif ext == "rst" then
+			ft = "rst"
 		else
-			ft = vim.filetype.match({ filename = path }) or ""
+			ft = vim.filetype.match({ filename = path, contents = lines }) or ""
 		end
 	end
-	render_lines(lines, ft, vim.fs.dirname(path))
+	render_lines(lines, ft, vim.fs.dirname(path), vim.fs.basename(path))
 end
 
--- ── extract one kernel-doc symbol and render it ──────────────────────────
+-- ── extract one kernel-doc symbol and render it (async) ──────────────────
 local function open_api(dir, name, file)
 	local cmd = string.format(
 		"cd %s && perl scripts/kernel-doc -rst -function %s %s 2>/dev/null "
@@ -83,14 +127,29 @@ local function open_api(dir, name, file)
 		vim.fn.shellescape(name),
 		vim.fn.shellescape(file)
 	)
-	local res = vim.system({ "sh", "-c", cmd }, { text = true }):wait()
-	render_lines(vim.split(res.stdout or "", "\n", { trimempty = true }), "markdown", dir)
+	vim.system({ "sh", "-c", cmd }, { text = true, timeout = 15000 }, function(res)
+		vim.schedule(function()
+			local out = vim.split(res.stdout or "", "\n", { trimempty = true })
+			if #out == 0 then
+				return vim.notify("kernel-doc: nothing for " .. name .. "\n" .. (res.stderr or ""), vim.log.levels.WARN)
+			end
+			render_lines(out, "markdown", dir, name)
+		end)
+	end)
 end
 
 -- ── fuzzy-browse doc/source files under a directory ──────────────────────
 local function pick_files(dir, fd_args, prompt)
+	if not have("fd") then
+		return vim.notify("fd not found (needed to browse docs)", vim.log.levels.WARN)
+	end
+	-- --base-directory guarantees the search root (fzf-lua's cwd isn't applied
+	-- to the raw command); cwd lets the builtin previewer resolve the entries.
 	fzf().fzf_exec("fd --base-directory " .. vim.fn.shellescape(dir) .. " --type f " .. fd_args, {
 		prompt = prompt,
+		cwd = dir,
+		previewer = "builtin",
+		fzf_opts = { ["--no-multi"] = true },
 		actions = {
 			["default"] = function(sel)
 				if sel and sel[1] then
@@ -104,7 +163,7 @@ end
 local function api_search(dir)
 	fzf().fzf_exec("cat " .. vim.fn.shellescape(dir .. "/api-index.tsv"), {
 		prompt = "Kernel API> ",
-		fzf_opts = { ["--delimiter"] = "\t", ["--with-nth"] = "1..2" },
+		fzf_opts = { ["--delimiter"] = "\t", ["--with-nth"] = "1..2", ["--no-multi"] = true },
 		actions = {
 			["default"] = function(sel)
 				if sel and sel[1] then
@@ -129,12 +188,13 @@ local function ensure_docs(version, cb)
 	vim.notify("Cloning kernel Documentation @ " .. version .. " … (first time only)")
 	local script = table.concat({
 		"rm -rf " .. vim.fn.shellescape(dir),
-		"git clone -n --depth=1 --filter=tree:0 --branch " .. vim.fn.shellescape(version) .. " " .. repo .. " " .. vim.fn.shellescape(dir),
+		"git -c core.autocrlf=false clone -n --depth=1 --filter=tree:0 --branch "
+			.. vim.fn.shellescape(version) .. " " .. repo .. " " .. vim.fn.shellescape(dir),
 		"cd " .. vim.fn.shellescape(dir),
 		"git sparse-checkout set --no-cone /Documentation",
 		"git checkout",
 	}, " && ")
-	vim.system({ "sh", "-c", script }, { text = true }, function(res)
+	vim.system({ "sh", "-c", script }, { text = true, timeout = 180000 }, function(res)
 		vim.schedule(function()
 			if res.code == 0 and vim.fn.isdirectory(docdir) == 1 then
 				cb(dir, docdir)
@@ -183,15 +243,19 @@ local function ensure_api(version, cb)
 			return cb(dir)
 		end
 		vim.notify("Fetching kernel API sources @ " .. version .. " … (first time, ~1-2 min)")
-		vim.system({ "sh", "-c", string.format(API_BUILD, vim.fn.shellescape(dir)) }, { text = true }, function(res)
-			vim.schedule(function()
-				if res.code == 0 and vim.fn.filereadable(index) == 1 then
-					cb(dir)
-				else
-					vim.notify("API index build failed:\n" .. (res.stderr or ""):sub(1, 400), vim.log.levels.ERROR)
-				end
-			end)
-		end)
+		vim.system(
+			{ "sh", "-c", string.format(API_BUILD, vim.fn.shellescape(dir)) },
+			{ text = true, timeout = 600000 },
+			function(res)
+				vim.schedule(function()
+					if res.code == 0 and vim.fn.filereadable(index) == 1 then
+						cb(dir)
+					else
+						vim.notify("API index build failed:\n" .. (res.stderr or ""):sub(1, 400), vim.log.levels.ERROR)
+					end
+				end)
+			end
+		)
 	end)
 end
 
@@ -203,12 +267,13 @@ local function with_versions(cb)
 	vim.fn.mkdir(cache_root, "p")
 	vim.notify("Fetching kernel versions …")
 	local cmd = "git ls-remote --tags --refs " .. repo .. " | grep -oE 'v[0-9]+\\.[0-9]+(\\.[0-9]+)?$' | sort -Vr"
-	vim.system({ "sh", "-c", cmd }, { text = true }, function(res)
+	vim.system({ "sh", "-c", cmd }, { text = true, timeout = 30000 }, function(res)
 		local list = vim.split(res.stdout or "", "\n", { trimempty = true })
-		if #list > 0 then
-			vim.fn.writefile(list, tags_cache)
-		end
 		vim.schedule(function()
+			if #list == 0 then
+				return vim.notify("Could not list kernel versions:\n" .. (res.stderr or ""), vim.log.levels.ERROR)
+			end
+			vim.fn.writefile(list, tags_cache)
 			cb(list)
 		end)
 	end)
@@ -217,6 +282,7 @@ end
 local function kernel_menu(version)
 	fzf().fzf_exec({ "Browse Documentation", "API reference" }, {
 		prompt = version .. "> ",
+		fzf_opts = { ["--no-multi"] = true },
 		actions = {
 			["default"] = function(sel)
 				if not (sel and sel[1]) then
@@ -235,12 +301,13 @@ local function kernel_menu(version)
 end
 
 local function pick_kernel_version()
+	if not have("git") then
+		return vim.notify("git not found (needed to fetch kernel docs)", vim.log.levels.WARN)
+	end
 	with_versions(function(list)
-		if #list == 0 then
-			return vim.notify("Could not list kernel versions", vim.log.levels.ERROR)
-		end
 		fzf().fzf_exec(list, {
 			prompt = "Kernel version> ",
+			fzf_opts = { ["--no-multi"] = true },
 			actions = {
 				["default"] = function(sel)
 					if sel and sel[1] then
@@ -253,8 +320,6 @@ local function pick_kernel_version()
 end
 
 -- ── BCC (iovisor/bcc): docs + examples, latest (master) ──────────────────
-local bcc_root = vim.fn.stdpath("cache") .. "/docs/bcc"
-
 local function ensure_bcc(cb)
 	local dir = bcc_root .. "/master"
 	if vim.fn.isdirectory(dir .. "/examples") == 1 then
@@ -264,12 +329,13 @@ local function ensure_bcc(cb)
 	vim.notify("Cloning BCC docs + examples … (first time only)")
 	local script = table.concat({
 		"rm -rf " .. vim.fn.shellescape(dir),
-		"git clone -n --depth=1 --filter=tree:0 https://github.com/iovisor/bcc " .. vim.fn.shellescape(dir),
+		"git -c core.autocrlf=false clone -n --depth=1 --filter=tree:0 https://github.com/iovisor/bcc "
+			.. vim.fn.shellescape(dir),
 		"cd " .. vim.fn.shellescape(dir),
 		"git sparse-checkout set --no-cone /docs /examples",
 		"git checkout",
 	}, " && ")
-	vim.system({ "sh", "-c", script }, { text = true }, function(res)
+	vim.system({ "sh", "-c", script }, { text = true, timeout = 120000 }, function(res)
 		vim.schedule(function()
 			if res.code == 0 and vim.fn.isdirectory(dir .. "/examples") == 1 then
 				cb(dir)
@@ -281,32 +347,63 @@ local function ensure_bcc(cb)
 end
 
 local function pick_bcc()
+	if not have("git") then
+		return vim.notify("git not found (needed to fetch BCC docs)", vim.log.levels.WARN)
+	end
 	ensure_bcc(function(dir)
 		pick_files(dir, "-e md -e rst -e py -e c -e cc -e h -e lua -e txt", "BCC> ")
 	end)
 end
 
--- ── top-level :Docs provider menu ────────────────────────────────────────
+-- ── providers + :Docs command ────────────────────────────────────────────
 local providers = {
-	["Linux Kernel"] = pick_kernel_version,
-	["BCC"] = pick_bcc,
+	{ name = "Linux Kernel", key = "kernel", run = pick_kernel_version },
+	{ name = "BCC", key = "bcc", run = pick_bcc },
 }
 
 function M.open()
-	local names = vim.tbl_keys(providers)
-	table.sort(names)
+	local names = vim.tbl_map(function(p)
+		return p.name
+	end, providers)
 	fzf().fzf_exec(names, {
 		prompt = "Docs> ",
+		fzf_opts = { ["--no-multi"] = true },
 		actions = {
 			["default"] = function(sel)
-				if sel and sel[1] and providers[sel[1]] then
-					providers[sel[1]]()
+				if not (sel and sel[1]) then
+					return
+				end
+				for _, p in ipairs(providers) do
+					if p.name == sel[1] then
+						return p.run()
+					end
 				end
 			end,
 		},
 	})
 end
 
-vim.api.nvim_create_user_command("Docs", M.open, { desc = "Browse documentation" })
+vim.api.nvim_create_user_command("Docs", function(o)
+	local key = o.fargs[1]
+	if not key then
+		return M.open()
+	end
+	for _, p in ipairs(providers) do
+		if p.key == key then
+			return p.run()
+		end
+	end
+	vim.notify("Docs: unknown provider '" .. key .. "'", vim.log.levels.ERROR)
+end, {
+	nargs = "?",
+	desc = "Browse documentation",
+	complete = function(arg_lead)
+		return vim.tbl_filter(function(k)
+			return vim.startswith(k, arg_lead)
+		end, vim.tbl_map(function(p)
+			return p.key
+		end, providers))
+	end,
+})
 
 return M
