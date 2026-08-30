@@ -1,16 +1,15 @@
-vim.opt.incsearch = true
+-- Disable netrw early so oil is the file explorer from the first buffer.
+vim.g.loaded_netrw = 1
+vim.g.loaded_netrwPlugin = 1
+
 vim.opt.hlsearch = false
-vim.opt.backup = false
-vim.opt.fileencoding = "utf-8"
 vim.opt.ignorecase = true
 vim.opt.smartcase = true
 vim.opt.autoindent = true
-vim.opt.smartindent = true
 vim.opt.splitbelow = true
 vim.opt.splitright = true
 vim.opt.swapfile = false
 vim.opt.termguicolors = true
-vim.opt.timeoutlen = 1000
 vim.opt.undofile = true
 vim.opt.undodir = os.getenv("HOME") .. "/.vim/undodir"
 vim.opt.updatetime = 50

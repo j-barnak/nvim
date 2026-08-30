@@ -24,7 +24,9 @@ return {
 	"stevearc/oil.nvim",
 	dependencies = { "nvim-mini/mini.icons" },
 
-	cmd = { "Oil" },
+	-- Not lazy-loaded: oil's docs advise against it, and it must be the default
+	-- file explorer for `nvim .` / `:e <dir>`. netrw is disabled in options.lua.
+	lazy = false,
 	keys = {
 		{
 			"<leader>fe",
@@ -79,9 +81,6 @@ return {
 	},
 
 	config = function(_, opts)
-		vim.g.loaded_netrw = 1
-		vim.g.loaded_netrwPlugin = 1
-
 		require("oil").setup(opts)
 	end,
 }
