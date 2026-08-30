@@ -23,9 +23,22 @@ local function render_lines(lines, ft, dir)
 	if not lines or #lines == 0 then
 		return vim.notify("Nothing to render", vim.log.levels.WARN)
 	end
-	vim.cmd("rightbelow vsplit")
+	-- Reuse an existing docs viewer split if one is open, else make one.
+	local win
+	for _, w in ipairs(vim.api.nvim_list_wins()) do
+		if vim.b[vim.api.nvim_win_get_buf(w)].docs_viewer then
+			win = w
+			break
+		end
+	end
+	if win then
+		vim.api.nvim_set_current_win(win)
+	else
+		vim.cmd("rightbelow vsplit")
+	end
 	local buf = vim.api.nvim_create_buf(false, true)
 	vim.api.nvim_win_set_buf(0, buf)
+	vim.b[buf].docs_viewer = true
 	vim.bo[buf].buftype, vim.bo[buf].bufhidden = "nofile", "wipe"
 	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
 	-- ft after the split is current window so a filetype's window-local options
