@@ -10,14 +10,14 @@ local root_markers = {
 
 local function project_root()
 	local bufname = vim.api.nvim_buf_get_name(0)
-	local start_dir = bufname ~= "" and vim.fs.dirname(bufname) or vim.loop.cwd()
+	local start_dir = bufname ~= "" and vim.fs.dirname(bufname) or vim.uv.cwd()
 
 	local root = vim.fs.find(root_markers, {
 		upward = true,
 		path = start_dir,
 	})[1]
 
-	return root and vim.fs.dirname(root) or vim.loop.cwd()
+	return root and vim.fs.dirname(root) or vim.uv.cwd()
 end
 
 return {
