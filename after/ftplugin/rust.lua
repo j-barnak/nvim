@@ -1,31 +1,24 @@
--- <leader>K: fuzzy-search Rust docs (std + this project's `cargo doc` deps),
--- open the selected page as clean Markdown in a right vsplit. Buffer-local, so
--- the global <leader>K is unaffected. Uses: fd, xmllint, pandoc, w3m.
-
 local function have(bin)
 	return vim.fn.executable(bin) == 1
 end
 
--- Extract just <section id="main-content"> (drops the rustdoc sidebar/logo/nav).
 local XPATH = [[xmllint --html --xpath "//*[@id='main-content']" %s 2>/dev/null]]
 
 local function to_markdown(path)
 	local extract = XPATH:format(vim.fn.shellescape(path))
-	-- Preferred: clean Markdown. gfm-raw_html drops HTML pandoc can't map.
 	if have("xmllint") and have("pandoc") then
 		local out = vim.fn.systemlist(extract .. " | pandoc -f html -t gfm-raw_html --wrap=none 2>/dev/null")
 		if out and #out > 0 then
 			return out
 		end
 	end
-	-- Fallback: still main-content only (sidebar-free) via w3m.
+	-- Fallback
 	if have("xmllint") and have("w3m") then
 		local out = vim.fn.systemlist(extract .. " | w3m -dump -T text/html 2>/dev/null")
 		if out and #out > 0 then
 			return out
 		end
 	end
-	-- Last resort: whole page.
 	if have("w3m") then
 		return vim.fn.systemlist({ "w3m", "-dump", path })
 	end
@@ -42,12 +35,9 @@ local function open_doc(path)
 	vim.api.nvim_win_set_buf(0, buf)
 	vim.bo[buf].buftype, vim.bo[buf].bufhidden = "nofile", "wipe"
 	vim.api.nvim_buf_set_lines(buf, 0, -1, false, lines)
-	-- Set filetype only after the split is the current window so the markdown
-	-- ftplugin's window-local options don't leak onto the Rust window.
 	vim.bo[buf].filetype = "markdown"
 	vim.bo[buf].modifiable = false
 	vim.keymap.set("n", "q", "<cmd>close<cr>", { buffer = buf })
-	-- Oil opens in this doc's directory (browse sibling pages), not the cwd.
 	local dir = vim.fs.dirname(path)
 	vim.keymap.set("n", "<leader>fe", function()
 		require("oil").toggle_float(dir)
@@ -89,13 +79,11 @@ vim.keymap.set("n", "<leader>K", function()
 			end,
 		},
 	}
-	-- Live preview only when both extraction tools are present.
 	if have("w3m") then
 		opts.preview = XPATH:format("{}") .. " | w3m -dump -T text/html -cols $FZF_PREVIEW_COLUMNS"
 	end
 	require("fzf-lua").fzf_exec("fd --type f --extension html --absolute-path . " .. table.concat(roots, " "), opts)
 end, { buffer = true, desc = "Search Rust docs" })
 
--- Revert the buffer-local mapping if this buffer's filetype changes.
 vim.b.undo_ftplugin = (vim.b.undo_ftplugin and vim.b.undo_ftplugin .. " | " or "")
 	.. "silent! lua pcall(vim.keymap.del, 'n', '<leader>K', { buffer = 0 })"
