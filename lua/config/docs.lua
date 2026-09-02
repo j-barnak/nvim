@@ -372,6 +372,14 @@ local simple = {
 		exts = "-e rst -e md -e txt",
 		prompt = "libbpf> ",
 	},
+	drgn = {
+		url = "https://github.com/osandov/drgn",
+		sparse = "/docs",
+		marker = "docs",
+		browse = "/docs",
+		exts = "-e rst -e md -e py -e txt",
+		prompt = "drgn> ",
+	},
 }
 
 local function make_simple(name, spec)
@@ -391,6 +399,7 @@ local providers = {
 	{ name = "BCC", key = "bcc", run = make_simple("bcc", simple.bcc) },
 	{ name = "QEMU", key = "qemu", run = make_simple("qemu", simple.qemu) },
 	{ name = "libbpf", key = "libbpf", run = make_simple("libbpf", simple.libbpf) },
+	{ name = "drgn", key = "drgn", run = make_simple("drgn", simple.drgn) },
 }
 
 function M.open()
