@@ -380,6 +380,14 @@ local simple = {
 		exts = "-e rst -e md -e py -e txt",
 		prompt = "drgn> ",
 	},
+	libdrgn = {
+		url = "https://github.com/osandov/drgn",
+		sparse = "/libdrgn",
+		marker = "libdrgn",
+		browse = "/libdrgn",
+		exts = "-e h -e c -e rst -e md",
+		prompt = "libdrgn> ",
+	},
 }
 
 local function make_simple(name, spec)
@@ -400,6 +408,7 @@ local providers = {
 	{ name = "QEMU", key = "qemu", run = make_simple("qemu", simple.qemu) },
 	{ name = "libbpf", key = "libbpf", run = make_simple("libbpf", simple.libbpf) },
 	{ name = "drgn", key = "drgn", run = make_simple("drgn", simple.drgn) },
+	{ name = "libdrgn", key = "libdrgn", run = make_simple("libdrgn", simple.libdrgn) },
 }
 
 function M.open()
