@@ -139,6 +139,8 @@ local function docs_toc()
 	})
 end
 
+local follow_link -- forward declaration; assigned after open_file is defined
+
 -- ── render lines in a reused right vsplit with the given filetype ─────────
 local function render_lines(lines, ft, dir, title)
 	if not lines or #lines == 0 then
@@ -208,6 +210,9 @@ local function render_lines(lines, ft, dir, title)
 	end
 	if dir then
 		vim.b[buf].docs_dir = dir
+		vim.keymap.set("n", "gd", function()
+			follow_link()
+		end, { buffer = buf, nowait = true, silent = true, desc = "Docs: follow link under cursor" })
 		vim.keymap.set("n", "<leader>fe", function()
 			require("oil").toggle_float(dir)
 		end, { buffer = buf, desc = "Oil (this doc's directory)" })
@@ -277,6 +282,47 @@ local function open_file(path)
 		lines = abs_images(strip_frontmatter(lines), dir)
 	end
 	render_lines(lines, ft, dir, vim.fs.basename(path))
+end
+
+-- gd: follow the Markdown/rst link under the cursor to another doc in this set.
+follow_link = function()
+	local dir = vim.b.docs_dir
+	if not dir then
+		return
+	end
+	local line = vim.api.nvim_get_current_line()
+	local col = vim.api.nvim_win_get_cursor(0)[2]
+	local pick, first
+	local s = 1
+	while true do
+		local a, b, url = line:find("%[[^%]]*%]%(([^)]+)%)", s)
+		if not a then
+			break
+		end
+		first = first or url
+		if col >= a - 1 and col <= b then
+			pick = url
+			break
+		end
+		s = b + 1
+	end
+	local url = pick or first
+	if not url then
+		return vim.notify("No link on this line", vim.log.levels.INFO)
+	end
+	if url:match("^%a[%w+.-]*://") then
+		return vim.notify("External link: " .. url, vim.log.levels.INFO)
+	end
+	url = url:gsub("%s.*$", ""):gsub("#.*$", "") -- drop title/anchor
+	if url == "" then
+		return
+	end
+	local path = vim.fs.normalize(dir .. "/" .. url:gsub("^%./", ""))
+	if vim.fn.filereadable(path) == 1 then
+		open_file(path)
+	else
+		vim.notify("Link target not found: " .. url, vim.log.levels.WARN)
+	end
 end
 
 -- ── extract one kernel-doc symbol and render it (async) ──────────────────
@@ -1368,7 +1414,9 @@ local function pick_ghidra()
 						local dir = data_root .. "/ghidra/" .. tag
 						local marker = dir .. "/GhidraDocs"
 						local function browse()
-							pick_files(dir .. "/GhidraDocs", "-e md -e html -e txt", "Ghidra " .. tag .. "> ")
+							-- GhidraDocs/languages is the SLEIGH manual (writing processor
+							-- modules); the x86 language dir gives real .slaspec/.sinc examples.
+							pick_files(dir, "-e md -e html -e txt -e slaspec -e sinc -e cspec -e ldefs -e pspec", "Ghidra " .. tag .. "> ")
 						end
 						if vim.fn.isdirectory(marker) == 1 then
 							return browse()
@@ -1379,7 +1427,7 @@ local function pick_ghidra()
 							"rm -rf " .. vim.fn.shellescape(dir),
 							"git -c core.autocrlf=false clone -n --depth=1 --filter=tree:0 --branch " .. vim.fn.shellescape(tag) .. " " .. repo .. " " .. vim.fn.shellescape(dir),
 							"cd " .. vim.fn.shellescape(dir),
-							"git sparse-checkout set --no-cone /GhidraDocs",
+							"git sparse-checkout set --no-cone /GhidraDocs /Ghidra/Processors/x86/data/languages",
 							"git checkout",
 						}, " && ")
 						vim.system({ "sh", "-c", script }, { text = true, timeout = 180000 }, function(r2)
@@ -1481,6 +1529,112 @@ local function man_provider(cmd, title)
 	end
 end
 
+-- ── generic chaptered-PDF provider (C/C++ ISO working drafts) ────────────
+-- Same idea as the Intel SDM: fetch the PDF, split by the PDF outline into
+-- per-clause text files (pdftotext -layout), stripping the ISO running
+-- header / page numbers. Browsable, and <leader>fs gives the clause TOC.
+local PDF_BUILD = [[
+set -e
+PDF="$1"; OUT="$2"; URL="$3"
+if [ ! -f "$PDF" ]; then mkdir -p "$(dirname "$PDF")"; curl -fsSL "$URL" -o "$PDF"; fi
+mkdir -p "$OUT"
+JS="$OUT/.ol.js"
+cat > "$JS" <<EOF2
+var doc = Document.openDocument("$PDF");
+function pageof(it){ try { var l = doc.resolveLink(it.uri); return (typeof l==="number")?l:(l&&l.page); } catch(e){ return -1; } }
+function walk(items,d){ for(var i=0;i<items.length;i++){ var it=items[i]; print(d+"\t"+(pageof(it)+1)+"\t"+it.title); if(it.down) walk(it.down,d+1); } }
+walk(doc.loadOutline(),0);
+EOF2
+mutool run "$JS" > "$OUT/.all.tsv" 2>/dev/null
+TOTAL=$(pdfinfo "$PDF" | awk '/^Pages:/{print $2}')
+D=$(awk -F'\t' '{c[$1]++} END{for(d=0;d<8;d++) if(c[d]>=5){print d; exit}}' "$OUT/.all.tsv")
+idx=0; prev_p=""; prev_t=""
+emit() {
+  idx=$((idx+1)); n=$(printf '%03d' "$idx")
+  f=$(printf '%s' "$3" | tr '/' '-' | cut -c1-80)
+  pdftotext -layout -f "$1" -l "$2" "$PDF" - 2>/dev/null \
+    | sed 's/\f//g' \
+    | awk '{t=$0; gsub(/^[ \t]+|[ \t]+$/,"",t)} t ~ /^ISO\/IEC [0-9]/{next} t ~ /^© ISO\/IEC/{next} t ~ /^[0-9]+$/{next} {print}' \
+    | cat -s > "$OUT/$n $f.txt"
+}
+if [ -n "$D" ]; then
+  awk -F'\t' -v D="$D" '$1==D{print $2"\t"$3}' "$OUT/.all.tsv" > "$OUT/.ch.tsv"
+  while IFS="$(printf '\t')" read -r p t; do
+    [ -n "$prev_p" ] && emit "$prev_p" $((p-1)) "$prev_t"
+    prev_p="$p"; prev_t="$t"
+  done < "$OUT/.ch.tsv"
+  [ -n "$prev_p" ] && emit "$prev_p" "$TOTAL" "$prev_t"
+else
+  p=1
+  while [ "$p" -le "$TOTAL" ]; do e=$((p+39)); [ "$e" -gt "$TOTAL" ] && e="$TOTAL"; emit "$p" "$e" "pages $p-$e"; p=$((e+1)); done
+fi
+rm -f "$JS" "$OUT/.all.tsv" "$OUT/.ch.tsv"
+]]
+
+local STD_URLS = {
+	["c-draft"] = "https://www.open-std.org/jtc1/sc22/wg14/www/docs/n3220.pdf",
+	["cpp-draft"] = "https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2023/n4950.pdf",
+}
+
+local function pick_pdf(name, prompt)
+	for _, t in ipairs({ "curl", "mutool", "pdftotext", "pdfinfo" }) do
+		if not have(t) then
+			return vim.notify(t .. " needed for " .. name, vim.log.levels.WARN)
+		end
+	end
+	local out = data_root .. "/std/" .. name
+	local pdf = tools_dir .. "/" .. name .. ".pdf"
+	local function browse()
+		pick_files(out, "-e txt", prompt)
+	end
+	if #vim.fn.glob(out .. "/*.txt", false, true) > 0 then
+		return browse()
+	end
+	vim.fn.mkdir(out, "p")
+	vim.notify("Fetching + splitting " .. name .. " … (first time)")
+	vim.system({ "sh", "-c", PDF_BUILD, "pdf", pdf, out, STD_URLS[name] }, { text = true, timeout = 300000 }, function(res)
+		vim.schedule(function()
+			if #vim.fn.glob(out .. "/*.txt", false, true) > 0 then
+				browse()
+			else
+				vim.notify(name .. " build failed:\n" .. (res.stderr or ""):sub(1, 300), vim.log.levels.ERROR)
+			end
+		end)
+	end)
+end
+
+-- ── GCC internals + manuals (texinfo, rendered with makeinfo) ────────────
+-- gccint covers the internals: passes, RTL, GIMPLE, machine descriptions.
+local function pick_gcc()
+	if not (have("git") and have("makeinfo")) then
+		return vim.notify("git and makeinfo (texinfo) are needed for GCC docs", vim.log.levels.WARN)
+	end
+	local docs = {
+		["GCC Internals (gccint)"] = "gccint.texi",
+		["GCC user manual (gcc)"] = "gcc.texi",
+		["CPP (preprocessor)"] = "cpp.texi",
+	}
+	ensure_repo(data_root .. "/gcc", "https://github.com/gcc-mirror/gcc", "/gcc/doc", "gcc/doc", function(d)
+		fzf().fzf_exec(vim.tbl_keys(docs), {
+			prompt = "GCC docs> ",
+			fzf_opts = { ["--no-multi"] = true },
+			actions = {
+				["default"] = function(sel)
+					if not (sel and sel[1] and docs[sel[1]]) then
+						return
+					end
+					local cmd = table.concat({
+						"cd " .. vim.fn.shellescape(d .. "/gcc/doc"),
+						"[ -f gcc-vers.texi ] || printf '@set version-GCC 15.0.0\\n@set BUGURL https://gcc.gnu.org/bugs/\\n@clear DEVELOPMENT\\n' > gcc-vers.texi",
+						"makeinfo --no-split --plaintext -I include " .. vim.fn.shellescape(docs[sel[1]]),
+					}, " && ")
+					render_shell(cmd, sel[1], "text")
+				end,
+			},
+		})
+	end)
+end
+
 -- ── providers + :Docs command ────────────────────────────────────────────
 local providers = {
 	{ name = "Linux Kernel", key = "kernel", run = pick_kernel_version },
@@ -1513,6 +1667,8 @@ local providers = {
 	{ name = "Intel SDM Vol 2", key = "sdm2", run = function() pick_sdm(2) end },
 	{ name = "Intel SDM Vol 3", key = "sdm3", run = function() pick_sdm(3) end },
 	{ name = "Intel SDM Vol 4", key = "sdm4", run = function() pick_sdm(4) end },
+	{ name = "C standard (C23 draft)", key = "cstd", run = function() pick_pdf("c-draft", "C draft> ") end },
+	{ name = "C++ standard (draft)", key = "cppstd", run = function() pick_pdf("cpp-draft", "C++ draft> ") end },
 	{ name = "man 2 (system calls)", key = "man2", run = function() pick_man(2) end },
 	{ name = "man 3 (C library)", key = "man3", run = function() pick_man(3) end },
 	{ name = "cppman (C++ reference)", key = "cppman", run = pick_cppman },
@@ -1554,6 +1710,7 @@ local providers = {
 	end },
 	{ name = "GNU ld (linker)", key = "ld", run = man_provider("man ld", "ld(1)") },
 	{ name = "GNU as (assembler)", key = "as", run = man_provider("man as", "as(1)") },
+	{ name = "GCC internals + manuals", key = "gcc", run = pick_gcc },
 	{ name = "ELF format", key = "elf", run = man_provider("man 5 elf", "elf(5)") },
 	{ name = "Bash (man bash)", key = "bash", run = man_provider("man bash", "bash(1)") },
 	{ name = "pydoc (any Python pkg)", key = "pydoc", run = pick_pydoc },
