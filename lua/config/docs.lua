@@ -219,6 +219,19 @@ local function render_lines(lines, ft, dir, title)
 	end
 end
 
+-- Drop a leading YAML front-matter block (MS Learn, Jekyll, Sphinx docs),
+-- which is metadata noise when reading a page.
+local function strip_frontmatter(lines)
+	if lines[1] == "---" then
+		for i = 2, math.min(#lines, 80) do
+			if lines[i] == "---" then
+				return vim.list_slice(lines, i + 1)
+			end
+		end
+	end
+	return lines
+end
+
 -- Rewrite relative Markdown image links to absolute paths so snacks.image can
 -- find them: the doc renders in a scratch buffer with no real file path.
 local function abs_images(lines, dir)
@@ -261,7 +274,7 @@ local function open_file(path)
 	end
 	local dir = vim.fs.dirname(path)
 	if ft == "markdown" then
-		lines = abs_images(lines, dir)
+		lines = abs_images(strip_frontmatter(lines), dir)
 	end
 	render_lines(lines, ft, dir, vim.fs.basename(path))
 end
@@ -595,12 +608,13 @@ local simple = {
 		prompt = "Frida> ",
 	},
 	triton = {
+		-- Triton has no in-repo prose docs; its C++ API headers (doxygen comments) are the reference.
 		url = "https://github.com/JonathanSalwan/Triton",
-		sparse = "/src /doc",
-		marker = "doc",
-		browse = "/src",
-		exts = "-e hpp -e h -e cpp -e py -e md",
-		prompt = "Triton> ",
+		sparse = "/src",
+		marker = "src",
+		browse = "/src/libtriton/includes",
+		exts = "-e hpp -e h",
+		prompt = "Triton (C++ API)> ",
 	},
 	angr = {
 		url = "https://github.com/angr/angr",
@@ -667,10 +681,11 @@ local simple = {
 		prompt = "Qiling> ",
 	},
 	panda = {
+		-- /docs is QEMU-inherited; PANDA's own docs live in /panda/docs.
 		url = "https://github.com/panda-re/panda",
-		sparse = "/docs",
-		marker = "docs",
-		browse = "/docs",
+		sparse = "/panda/docs",
+		marker = "panda/docs",
+		browse = "/panda/docs",
 		exts = "-e md -e rst -e txt",
 		prompt = "PANDA> ",
 	},
@@ -715,11 +730,12 @@ local simple = {
 		prompt = "pwntools> ",
 	},
 	uefi = {
+		-- MdePkg/Include is the UEFI/PI API (protocols, services, types).
 		url = "https://github.com/tianocore/edk2",
 		sparse = "/MdePkg",
 		marker = "MdePkg",
-		browse = "/MdePkg",
-		exts = "-e h -e c -e md -e txt",
+		browse = "/MdePkg/Include",
+		exts = "-e h -e md",
 		prompt = "UEFI (edk2 MdePkg)> ",
 	},
 	coreboot = {
@@ -762,6 +778,47 @@ local simple = {
 		browse = "/docs",
 		exts = "-e md -e rst -e txt -e ql -e qll",
 		prompt = "CodeQL> ",
+	},
+	lld = {
+		url = "https://github.com/llvm/llvm-project",
+		sparse = "/lld/docs",
+		marker = "lld/docs",
+		browse = "/lld/docs",
+		exts = "-e rst -e md",
+		prompt = "lld (LLVM linker)> ",
+	},
+	lldb = {
+		url = "https://github.com/llvm/llvm-project",
+		sparse = "/lldb/docs",
+		marker = "lldb/docs",
+		browse = "/lldb/docs",
+		exts = "-e rst -e md",
+		prompt = "lldb> ",
+	},
+	macho = {
+		-- The Mach-O format definition: XNU's own mach-o headers.
+		url = "https://github.com/apple-oss-distributions/xnu",
+		sparse = "/EXTERNAL_HEADERS/mach-o",
+		marker = "EXTERNAL_HEADERS/mach-o",
+		browse = "/EXTERNAL_HEADERS/mach-o",
+		exts = "-e h",
+		prompt = "Mach-O> ",
+	},
+	winsdk = {
+		url = "https://github.com/MicrosoftDocs/sdk-api",
+		sparse = "/sdk-api-src",
+		marker = "sdk-api-src",
+		browse = "/sdk-api-src",
+		exts = "-e md",
+		prompt = "Win32 API> ",
+	},
+	windriver = {
+		url = "https://github.com/MicrosoftDocs/windows-driver-docs",
+		sparse = "/windows-driver-docs-pr",
+		marker = "windows-driver-docs-pr",
+		browse = "/windows-driver-docs-pr",
+		exts = "-e md",
+		prompt = "Windows Driver> ",
 	},
 }
 
@@ -1376,6 +1433,54 @@ local function pick_pydoc()
 	end)
 end
 
+-- ── update: git-pull every cached doc repo to the most recent ────────────
+local function update_all()
+	if not have("git") then
+		return vim.notify("git not found", vim.log.levels.WARN)
+	end
+	local repos = {}
+	local function scan(glob)
+		for _, d in ipairs(vim.fn.glob(glob, false, true)) do
+			if vim.fn.isdirectory(d .. "/.git") == 1 then
+				repos[#repos + 1] = d
+			end
+		end
+	end
+	scan(data_root .. "/*/master") -- simple providers
+	scan(data_root .. "/*") -- netbsd and any flat clones
+	scan(data_root .. "/linux/*") -- kernel versions
+	scan(data_root .. "/ghidra/*") -- ghidra tags
+	if #repos == 0 then
+		return vim.notify("No cached doc repos to update yet", vim.log.levels.INFO)
+	end
+	vim.notify("Updating " .. #repos .. " cached doc repos … (git pull)")
+	local done, failed = 0, {}
+	for _, d in ipairs(repos) do
+		vim.system({ "git", "-C", d, "pull", "--ff-only" }, { text = true, timeout = 180000 }, function(res)
+			vim.schedule(function()
+				done = done + 1
+				if res.code ~= 0 then
+					failed[#failed + 1] = vim.fs.basename(vim.fs.dirname(d)) .. "/" .. vim.fs.basename(d)
+				end
+				if done == #repos then
+					if #failed == 0 then
+						vim.notify("Docs update: all " .. #repos .. " repos up to date")
+					else
+						vim.notify(("Docs update: %d/%d ok; failed: %s"):format(#repos - #failed, #repos, table.concat(failed, ", ")), vim.log.levels.WARN)
+					end
+				end
+			end)
+		end)
+	end
+end
+
+-- man-page / web providers rendered inline (no clone).
+local function man_provider(cmd, title)
+	return function()
+		render_shell("MANWIDTH=90 " .. cmd .. " 2>/dev/null | col -bx", title, "man")
+	end
+end
+
 -- ── providers + :Docs command ────────────────────────────────────────────
 local providers = {
 	{ name = "Linux Kernel", key = "kernel", run = pick_kernel_version },
@@ -1437,12 +1542,22 @@ local providers = {
 	{ name = "DynamoRIO (DBI, Pin alternative)", key = "dynamorio", run = make_simple("dynamorio", simple.dynamorio) },
 	{ name = "Nyx (snapshot fuzzer)", key = "nyx", run = make_simple("nyx", simple.nyx) },
 	{ name = "CodeQL", key = "codeql", run = make_simple("codeql", simple.codeql) },
+	{ name = "lld (LLVM linker)", key = "lld", run = make_simple("lld", simple.lld) },
+	{ name = "lldb", key = "lldb", run = make_simple("lldb", simple.lldb) },
+	{ name = "Mach-O format", key = "macho", run = make_simple("macho", simple.macho) },
+	{ name = "Win32 API", key = "winsdk", run = make_simple("winsdk", simple.winsdk) },
+	{ name = "Windows Driver (WDK)", key = "windriver", run = make_simple("windriver", simple.windriver) },
 	{ name = "Ghidra API (versioned)", key = "ghidra", run = pick_ghidra },
 	{ name = "Multiboot specs", key = "multiboot", run = pick_multiboot },
-	{ name = "Bash (man bash)", key = "bash", run = function()
-		render_shell("MANWIDTH=90 man bash 2>/dev/null | col -bx", "bash(1)", "man")
+	{ name = "GNU Make manual", key = "make", run = function()
+		render_shell("curl -sSL https://www.gnu.org/software/make/manual/make.html | pandoc -f html -t gfm-raw_html --wrap=none 2>/dev/null", "GNU Make manual", "markdown")
 	end },
+	{ name = "GNU ld (linker)", key = "ld", run = man_provider("man ld", "ld(1)") },
+	{ name = "GNU as (assembler)", key = "as", run = man_provider("man as", "as(1)") },
+	{ name = "ELF format", key = "elf", run = man_provider("man 5 elf", "elf(5)") },
+	{ name = "Bash (man bash)", key = "bash", run = man_provider("man bash", "bash(1)") },
 	{ name = "pydoc (any Python pkg)", key = "pydoc", run = pick_pydoc },
+	{ name = "Update all cached docs", key = "update", run = update_all },
 }
 
 function M.open()
