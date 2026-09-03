@@ -521,48 +521,70 @@ end
 -- PDF outline) into per-chapter text files, then browse them.
 local SDM_BUILD = [[
 set -e
-PDF="$1"; OUT="$2"
+PDF="$1"; OUT="$2"; URL="$3"
 if [ ! -f "$PDF" ]; then
   mkdir -p "$(dirname "$PDF")"
-  curl -fsSL "https://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-software-developer-system-programming-manual-325384.pdf" -o "$PDF"
+  curl -fsSL "$URL" -o "$PDF"
 fi
 mkdir -p "$OUT"
 JS="$OUT/.ol.js"
 cat > "$JS" <<EOF2
 var doc = Document.openDocument("$PDF");
 function pageof(it){ try { var l = doc.resolveLink(it.uri); return (typeof l==="number")?l:(l&&l.page); } catch(e){ return -1; } }
-function walk(items,d){ for(var i=0;i<items.length;i++){ var it=items[i]; if(d===0){ print((pageof(it)+1)+"\t"+it.title); } if(it.down) walk(it.down,d+1); } }
+function walk(items,d){ for(var i=0;i<items.length;i++){ var it=items[i]; print(d+"\t"+(pageof(it)+1)+"\t"+it.title); if(it.down) walk(it.down,d+1); } }
 walk(doc.loadOutline(),0);
 EOF2
-mutool run "$JS" > "$OUT/.ch.tsv" 2>/dev/null
+mutool run "$JS" > "$OUT/.all.tsv" 2>/dev/null
 TOTAL=$(pdfinfo "$PDF" | awk '/^Pages:/{print $2}')
+# Split at the shallowest outline depth with >= 5 entries (volumes differ).
+D=$(awk -F'\t' '{c[$1]++} END{for(d=0;d<8;d++) if(c[d]>=5){print d; exit}}' "$OUT/.all.tsv")
 idx=0; prev_p=""; prev_t=""
-emit() { idx=$((idx+1)); n=$(printf '%02d' "$idx"); f=$(printf '%s' "$3" | tr '/' '-'); pdftotext -layout -f "$1" -l "$2" "$PDF" "$OUT/$n $f.txt" 2>/dev/null; }
-while IFS="$(printf '\t')" read -r p t; do
-  [ -n "$prev_p" ] && emit "$prev_p" $((p-1)) "$prev_t"
-  prev_p="$p"; prev_t="$t"
-done < "$OUT/.ch.tsv"
-[ -n "$prev_p" ] && emit "$prev_p" "$TOTAL" "$prev_t"
-rm -f "$JS" "$OUT/.ch.tsv"
+emit() { idx=$((idx+1)); n=$(printf '%03d' "$idx"); f=$(printf '%s' "$3" | tr '/' '-' | cut -c1-80); pdftotext -layout -f "$1" -l "$2" "$PDF" "$OUT/$n $f.txt" 2>/dev/null; }
+if [ -n "$D" ]; then
+  awk -F'\t' -v D="$D" '$1==D{print $2"\t"$3}' "$OUT/.all.tsv" > "$OUT/.ch.tsv"
+  while IFS="$(printf '\t')" read -r p t; do
+    [ -n "$prev_p" ] && emit "$prev_p" $((p-1)) "$prev_t"
+    prev_p="$p"; prev_t="$t"
+  done < "$OUT/.ch.tsv"
+  [ -n "$prev_p" ] && emit "$prev_p" "$TOTAL" "$prev_t"
+else
+  # No usable outline (e.g. Vol 4): fixed 40-page chunks.
+  p=1
+  while [ "$p" -le "$TOTAL" ]; do
+    e=$((p+39)); [ "$e" -gt "$TOTAL" ] && e="$TOTAL"
+    emit "$p" "$e" "pages $p-$e"
+    p=$((e+1))
+  done
+fi
+rm -f "$JS" "$OUT/.all.tsv" "$OUT/.ch.tsv"
 ]]
 
-local function pick_sdm()
+local SDM = "https://www.intel.com/content/dam/www/public/us/en/documents/manuals/"
+local SDM_URLS = {
+	[1] = SDM .. "64-ia-32-architectures-software-developer-vol-1-manual.pdf",
+	[2] = SDM .. "64-ia-32-architectures-software-developer-instruction-set-reference-manual-325383.pdf",
+	[3] = SDM .. "64-ia-32-architectures-software-developer-system-programming-manual-325384.pdf",
+	[4] = "https://www.intel.com/content/dam/develop/external/us/en/documents/335592-sdm-vol-4.pdf",
+}
+
+local function pick_sdm(vol)
 	for _, t in ipairs({ "curl", "mutool", "pdftotext", "pdfinfo" }) do
 		if not have(t) then
 			return vim.notify(t .. " needed for Intel SDM", vim.log.levels.WARN)
 		end
 	end
-	local out = data_root .. "/sdm/vol3"
+	local out = data_root .. "/sdm/vol" .. vol
+	local pdf = tools_dir .. "/sdm-vol" .. vol .. ".pdf"
 	local function browse()
-		pick_files(out, "-e txt", "Intel SDM v3> ")
+		pick_files(out, "-e txt", "Intel SDM v" .. vol .. "> ")
 	end
 	if #vim.fn.glob(out .. "/*.txt", false, true) > 0 then
 		return browse()
 	end
 	vim.fn.mkdir(out, "p")
-	vim.notify("Fetching + splitting Intel SDM Vol 3 … (first time)")
+	vim.notify("Fetching + splitting Intel SDM Vol " .. vol .. " … (first time)")
 	vim.system(
-		{ "sh", "-c", SDM_BUILD, "sdm", tools_dir .. "/sdm-vol3.pdf", out },
+		{ "sh", "-c", SDM_BUILD, "sdm", pdf, out, SDM_URLS[vol] },
 		{ text = true, timeout = 300000 },
 		function(res)
 			vim.schedule(function()
@@ -604,7 +626,10 @@ local providers = {
 	{ name = "Python", key = "python", run = make_simple("python", simple.python) },
 	{ name = "LLVM", key = "llvm", run = make_simple("llvm", simple.llvm) },
 	{ name = "Xen", key = "xen", run = make_simple("xen", simple.xen) },
-	{ name = "Intel SDM Vol 3", key = "sdm", run = pick_sdm },
+	{ name = "Intel SDM Vol 1", key = "sdm1", run = function() pick_sdm(1) end },
+	{ name = "Intel SDM Vol 2", key = "sdm2", run = function() pick_sdm(2) end },
+	{ name = "Intel SDM Vol 3", key = "sdm3", run = function() pick_sdm(3) end },
+	{ name = "Intel SDM Vol 4", key = "sdm4", run = function() pick_sdm(4) end },
 }
 
 function M.open()
