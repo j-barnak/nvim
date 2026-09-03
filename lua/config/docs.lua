@@ -100,13 +100,15 @@ end
 local function open_file(path)
 	local ext = (path:match("%.([%w]+)$") or ""):lower()
 	local lines, ft
-	if ext == "rst" and have("pandoc") then
-		lines = vim.fn.systemlist({ "pandoc", "-f", "rst", "-t", "gfm-raw_html", "--wrap=none", path })
+	-- .rst via pandoc rst, .xml via pandoc DocBook (OpenGL refpages).
+	if have("pandoc") and (ext == "rst" or ext == "xml") then
+		local from = ext == "xml" and "docbook" or "rst"
+		lines = vim.fn.systemlist({ "pandoc", "-f", from, "-t", "gfm-raw_html", "--wrap=none", path })
 		ft = "markdown"
 	end
 	if not lines or #lines == 0 then
 		lines = vim.fn.filereadable(path) == 1 and vim.fn.readfile(path) or {}
-		if ext == "md" or ext == "markdown" then
+		if ext == "md" or ext == "markdown" or ext == "pandoc" then
 			ft = "markdown"
 		elseif ext == "rst" then
 			ft = "rst"
@@ -380,6 +382,62 @@ local simple = {
 		exts = "-e rst -e md -e py -e txt",
 		prompt = "drgn> ",
 	},
+	sdl2 = {
+		url = "https://github.com/libsdl-org/sdlwiki",
+		sparse = "/SDL2",
+		marker = "SDL2",
+		browse = "/SDL2",
+		exts = "-e md",
+		prompt = "SDL2> ",
+	},
+	sdl3 = {
+		url = "https://github.com/libsdl-org/sdlwiki",
+		sparse = "/SDL3",
+		marker = "SDL3",
+		browse = "/SDL3",
+		exts = "-e md",
+		prompt = "SDL3> ",
+	},
+	opengl = {
+		url = "https://github.com/KhronosGroup/OpenGL-Refpages",
+		sparse = "/gl4",
+		marker = "gl4",
+		browse = "/gl4",
+		exts = "-e xml",
+		prompt = "OpenGL> ",
+	},
+	aflpp = {
+		url = "https://github.com/AFLplusplus/AFLplusplus",
+		sparse = "/docs /utils /custom_mutators",
+		marker = "docs",
+		browse = "",
+		exts = "-e md -e rst -e c -e cpp -e h -e py -e txt",
+		prompt = "AFL++> ",
+	},
+	python = {
+		url = "https://github.com/python/cpython",
+		sparse = "/Doc",
+		marker = "Doc",
+		browse = "/Doc/library",
+		exts = "-e rst",
+		prompt = "Python> ",
+	},
+	llvm = {
+		url = "https://github.com/llvm/llvm-project",
+		sparse = "/llvm/docs",
+		marker = "llvm/docs",
+		browse = "/llvm/docs",
+		exts = "-e rst -e md",
+		prompt = "LLVM> ",
+	},
+	xen = {
+		url = "https://github.com/xen-project/xen",
+		sparse = "/docs",
+		marker = "docs",
+		browse = "/docs",
+		exts = "-e rst -e md -e pandoc -e txt",
+		prompt = "Xen> ",
+	},
 }
 
 local function make_simple(name, spec)
@@ -498,6 +556,13 @@ local providers = {
 	{ name = "libbpf", key = "libbpf", run = make_simple("libbpf", simple.libbpf) },
 	{ name = "drgn", key = "drgn", run = make_simple("drgn", simple.drgn) },
 	{ name = "libdrgn", key = "libdrgn", run = pick_libdrgn },
+	{ name = "SDL2", key = "sdl2", run = make_simple("sdl2", simple.sdl2) },
+	{ name = "SDL3", key = "sdl3", run = make_simple("sdl3", simple.sdl3) },
+	{ name = "OpenGL", key = "opengl", run = make_simple("opengl", simple.opengl) },
+	{ name = "AFL++", key = "aflpp", run = make_simple("aflpp", simple.aflpp) },
+	{ name = "Python", key = "python", run = make_simple("python", simple.python) },
+	{ name = "LLVM", key = "llvm", run = make_simple("llvm", simple.llvm) },
+	{ name = "Xen", key = "xen", run = make_simple("xen", simple.xen) },
 }
 
 function M.open()
