@@ -1,4 +1,4 @@
--- :Docs — a small documentation browser.
+-- :Docs (a small documentation browser).
 --   :Docs                 -> provider menu (fzf)
 --   :Docs kernel | bcc    -> jump straight to a provider
 --     • Linux Kernel -> version -> Browse Documentation (.rst -> Markdown)
@@ -25,6 +25,118 @@ end
 
 local function have(bin)
 	return vim.fn.executable(bin) == 1
+end
+
+-- ── figure viewer: show an extracted SDM diagram inline (snacks.image) ────
+-- snacks renders PNG natively via the kitty graphics protocol (works over
+-- SSH+tmux with allow-passthrough), no ImageMagick needed. Opening the PNG
+-- in a float lets snacks' image hijack render it. Falls back to xdg-open.
+local fig_win -- floating window currently showing a figure
+local function clear_figure()
+	if fig_win and vim.api.nvim_win_is_valid(fig_win) then
+		pcall(vim.api.nvim_win_close, fig_win, true)
+	end
+	fig_win = nil
+end
+
+local function show_figure(png)
+	local ok, snacks = pcall(require, "snacks")
+	if ok and snacks.image and snacks.image.supports_file(png) and snacks.image.supports_terminal() then
+		clear_figure()
+		local cols, rows = vim.o.columns, vim.o.lines
+		local W = math.max(40, math.floor(cols * 0.62))
+		local H = math.max(10, math.floor((rows - 4) * 0.9))
+		local win = vim.api.nvim_open_win(vim.api.nvim_create_buf(false, true), true, {
+			relative = "editor",
+			width = W,
+			height = H,
+			row = math.floor((rows - H) / 2 - 1),
+			col = math.floor((cols - W) / 2),
+			style = "minimal",
+			border = "rounded",
+			title = " " .. vim.fs.basename(png):gsub("%.png$", "") .. "  (q closes) ",
+		})
+		fig_win = win
+		-- Open the image file in the float; snacks' BufReadCmd hijack renders it.
+		vim.api.nvim_win_call(win, function()
+			vim.cmd("edit " .. vim.fn.fnameescape(png))
+			local b = vim.api.nvim_get_current_buf()
+			vim.bo[b].bufhidden = "wipe"
+			for _, k in ipairs({ "q", "<Esc>" }) do
+				vim.keymap.set("n", k, clear_figure, { buffer = b, nowait = true, silent = true })
+			end
+		end)
+		return
+	end
+	if have("xdg-open") then
+		vim.system({ "xdg-open", png })
+		return vim.notify("Opened " .. vim.fs.basename(png) .. " externally", vim.log.levels.INFO)
+	end
+	vim.notify("Figure image at " .. png, vim.log.levels.INFO)
+end
+
+-- On a line that names a figure ("Figure 4-8" / "see Figure 5-9"), show the
+-- diagram cropped from the PDF during the SDM build (docs_dir/figures/).
+local function open_figure_under_cursor()
+	local dir = vim.b.docs_dir
+	if not dir then
+		return
+	end
+	local id = vim.api.nvim_get_current_line():match("[Ff]igure%s+([%dA-Z]+%-%w+)")
+	if not id then
+		return
+	end
+	local png = dir .. "/figures/Figure " .. id .. ".png"
+	if vim.fn.filereadable(png) == 0 then
+		return vim.notify("No image for Figure " .. id, vim.log.levels.WARN)
+	end
+	show_figure(png)
+end
+
+-- ── table of contents: fuzzy-jump the current doc's headings (<leader>fs) ─
+-- Handles markdown ("## Heading") and Intel SDM numbered sections
+-- ("4.1   PAGING MODES AND CONTROL BITS": section number, 2+ spaces, title;
+-- inline refs like "4.10 provides ..." use a single space and are excluded).
+local function docs_toc()
+	local win = vim.api.nvim_get_current_win()
+	local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
+	local entries = {}
+	for i, L in ipairs(lines) do
+		local title, depth
+		local hashes, htext = L:match("^(#+)%s+(.+)$")
+		if hashes then
+			depth, title = #hashes, htext
+		else
+			local num, sect = L:match("^([%dA-Z][%d.]*%.%d[%d.]*)%s%s+([%u%d].*)$")
+			if num then
+				depth = select(2, num:gsub("%.", "")) + 1
+				title = num .. "  " .. sect
+			elseif L:match("^%u[%u][%u &/,()'-]*$") then
+				depth, title = 1, L -- man-page section header (NAME, SEE ALSO, …)
+			end
+		end
+		if title then
+			title = title:gsub("%s+$", "")
+			entries[#entries + 1] = string.format("%d\t%s%s", i, string.rep("  ", depth - 1), title)
+		end
+	end
+	if #entries == 0 then
+		return vim.notify("No headings found in this document", vim.log.levels.INFO)
+	end
+	fzf().fzf_exec(entries, {
+		prompt = "TOC> ",
+		fzf_opts = { ["--with-nth"] = "2..", ["--delimiter"] = "\\t", ["--no-multi"] = true },
+		actions = {
+			["default"] = function(sel)
+				local lnum = sel and sel[1] and tonumber(sel[1]:match("^(%d+)"))
+				if lnum and vim.api.nvim_win_is_valid(win) then
+					vim.api.nvim_set_current_win(win)
+					vim.api.nvim_win_set_cursor(win, { lnum, 0 })
+					vim.cmd("normal! zz")
+				end
+			end,
+		},
+	})
 end
 
 -- ── render lines in a reused right vsplit with the given filetype ─────────
@@ -87,11 +199,41 @@ local function render_lines(lines, ft, dir, title)
 	vim.keymap.set("n", "q", function()
 		pcall(vim.api.nvim_win_close, 0, true)
 	end, { buffer = buf, nowait = true, silent = true, desc = "Close docs viewer" })
+	vim.keymap.set("n", "<leader>fs", docs_toc, { buffer = buf, desc = "Docs: table of contents" })
+	if ft == "man" then
+		-- K opens the man page for the word under the cursor (e.g. K on `read`).
+		vim.keymap.set("n", "K", function()
+			vim.cmd("Man " .. vim.fn.expand("<cword>"))
+		end, { buffer = buf, silent = true, desc = "man page for word under cursor" })
+	end
 	if dir then
+		vim.b[buf].docs_dir = dir
 		vim.keymap.set("n", "<leader>fe", function()
 			require("oil").toggle_float(dir)
 		end, { buffer = buf, desc = "Oil (this doc's directory)" })
+		-- SDM chapters carry extracted diagrams: <CR> on a "Figure N-M" line
+		-- shows the cropped image inline.
+		if dir:match("/sdm/vol%d") then
+			vim.keymap.set("n", "<CR>", open_figure_under_cursor, { buffer = buf, nowait = true, silent = true, desc = "Show figure under cursor" })
+		end
 	end
+end
+
+-- Rewrite relative Markdown image links to absolute paths so snacks.image can
+-- find them: the doc renders in a scratch buffer with no real file path.
+local function abs_images(lines, dir)
+	if not dir then
+		return lines
+	end
+	for i, l in ipairs(lines) do
+		lines[i] = l:gsub("(!%[[^%]]*%]%()([^)%s]+)(%))", function(pre, url, post)
+			if url:match("^%a[%w+.-]*://") or url:match("^/") then
+				return pre .. url .. post
+			end
+			return pre .. vim.fs.normalize(dir .. "/" .. (url:gsub("^%./", ""))) .. post
+		end)
+	end
+	return lines
 end
 
 -- ── render a doc or source file, by extension ────────────────────────────
@@ -100,9 +242,10 @@ end
 local function open_file(path)
 	local ext = (path:match("%.([%w]+)$") or ""):lower()
 	local lines, ft
-	-- .rst via pandoc rst, .xml via pandoc DocBook (OpenGL refpages).
-	if have("pandoc") and (ext == "rst" or ext == "xml") then
-		local from = ext == "xml" and "docbook" or "rst"
+	-- .rst via pandoc rst, .xml via pandoc DocBook (OpenGL refpages), .html via
+	-- pandoc HTML (Ghidra CheatSheet, doxygen pages).
+	if have("pandoc") and (ext == "rst" or ext == "xml" or ext == "html" or ext == "htm") then
+		local from = ext == "xml" and "docbook" or ((ext == "html" or ext == "htm") and "html") or "rst"
 		lines = vim.fn.systemlist({ "pandoc", "-f", from, "-t", "gfm-raw_html", "--wrap=none", path })
 		ft = "markdown"
 	end
@@ -116,7 +259,11 @@ local function open_file(path)
 			ft = vim.filetype.match({ filename = path, contents = lines }) or ""
 		end
 	end
-	render_lines(lines, ft, vim.fs.dirname(path), vim.fs.basename(path))
+	local dir = vim.fs.dirname(path)
+	if ft == "markdown" then
+		lines = abs_images(lines, dir)
+	end
+	render_lines(lines, ft, dir, vim.fs.basename(path))
 end
 
 -- ── extract one kernel-doc symbol and render it (async) ──────────────────
@@ -438,6 +585,184 @@ local simple = {
 		exts = "-e rst -e md -e pandoc -e txt",
 		prompt = "Xen> ",
 	},
+	-- reverse-engineering / binary-analysis / fuzzing tooling
+	frida = {
+		url = "https://github.com/frida/frida-website",
+		sparse = "/_docs",
+		marker = "_docs",
+		browse = "/_docs",
+		exts = "-e md",
+		prompt = "Frida> ",
+	},
+	triton = {
+		url = "https://github.com/JonathanSalwan/Triton",
+		sparse = "/src /doc",
+		marker = "doc",
+		browse = "/src",
+		exts = "-e hpp -e h -e cpp -e py -e md",
+		prompt = "Triton> ",
+	},
+	angr = {
+		url = "https://github.com/angr/angr",
+		sparse = "/docs",
+		marker = "docs",
+		browse = "/docs",
+		exts = "-e rst -e md",
+		prompt = "angr> ",
+	},
+	qbdi = {
+		url = "https://github.com/QBDI/QBDI",
+		sparse = "/docs /examples",
+		marker = "docs",
+		browse = "",
+		exts = "-e rst -e md -e cpp -e c -e py -e txt",
+		prompt = "QBDI> ",
+	},
+	capstone = {
+		url = "https://github.com/capstone-engine/capstone",
+		sparse = "/docs /include",
+		marker = "docs",
+		browse = "",
+		exts = "-e md -e rst -e txt -e h",
+		prompt = "Capstone> ",
+	},
+	binja = {
+		url = "https://github.com/Vector35/binaryninja-api",
+		sparse = "/docs /examples",
+		marker = "docs",
+		browse = "",
+		exts = "-e md -e rst -e py -e cpp -e txt",
+		prompt = "Binary Ninja> ",
+	},
+	lief = {
+		url = "https://github.com/lief-project/LIEF",
+		sparse = "/doc /examples",
+		marker = "doc",
+		browse = "",
+		exts = "-e rst -e md -e py -e cpp -e txt",
+		prompt = "LIEF> ",
+	},
+	pyelftools = {
+		url = "https://github.com/eliben/pyelftools",
+		sparse = "/doc /examples /scripts",
+		marker = "doc",
+		browse = "",
+		exts = "-e rst -e md -e py -e txt",
+		prompt = "pyelftools> ",
+	},
+	qbindiff = {
+		url = "https://github.com/quarkslab/qbindiff",
+		sparse = "/doc",
+		marker = "doc",
+		browse = "/doc",
+		exts = "-e rst -e md -e py -e txt",
+		prompt = "QBinDiff> ",
+	},
+	qiling = {
+		url = "https://github.com/qilingframework/qiling",
+		sparse = "/docs /examples",
+		marker = "docs",
+		browse = "",
+		exts = "-e md -e rst -e py -e txt",
+		prompt = "Qiling> ",
+	},
+	panda = {
+		url = "https://github.com/panda-re/panda",
+		sparse = "/docs",
+		marker = "docs",
+		browse = "/docs",
+		exts = "-e md -e rst -e txt",
+		prompt = "PANDA> ",
+	},
+	volatility = {
+		url = "https://github.com/volatilityfoundation/volatility3",
+		sparse = "/doc",
+		marker = "doc",
+		browse = "/doc",
+		exts = "-e rst -e md -e txt",
+		prompt = "Volatility> ",
+	},
+	syzkaller = {
+		url = "https://github.com/google/syzkaller",
+		sparse = "/docs",
+		marker = "docs",
+		browse = "/docs",
+		exts = "-e md -e txt",
+		prompt = "syzkaller> ",
+	},
+	unicorn = {
+		url = "https://github.com/unicorn-engine/unicorn",
+		sparse = "/docs /samples",
+		marker = "docs",
+		browse = "",
+		exts = "-e md -e rst -e txt -e c -e py",
+		prompt = "Unicorn> ",
+	},
+	keystone = {
+		url = "https://github.com/keystone-engine/keystone",
+		sparse = "/docs /samples",
+		marker = "docs",
+		browse = "",
+		exts = "-e md -e rst -e txt -e c -e py",
+		prompt = "Keystone> ",
+	},
+	pwntools = {
+		url = "https://github.com/Gallopsled/pwntools",
+		sparse = "/docs /examples",
+		marker = "docs",
+		browse = "",
+		exts = "-e rst -e md -e py -e txt",
+		prompt = "pwntools> ",
+	},
+	uefi = {
+		url = "https://github.com/tianocore/edk2",
+		sparse = "/MdePkg",
+		marker = "MdePkg",
+		browse = "/MdePkg",
+		exts = "-e h -e c -e md -e txt",
+		prompt = "UEFI (edk2 MdePkg)> ",
+	},
+	coreboot = {
+		url = "https://github.com/coreboot/coreboot",
+		sparse = "/Documentation",
+		marker = "Documentation",
+		browse = "/Documentation",
+		exts = "-e md -e rst -e txt",
+		prompt = "coreboot> ",
+	},
+	uboot = {
+		url = "https://github.com/u-boot/u-boot",
+		sparse = "/doc",
+		marker = "doc",
+		browse = "/doc",
+		exts = "-e rst -e md -e txt",
+		prompt = "U-Boot> ",
+	},
+	nyx = {
+		url = "https://github.com/nyx-fuzz/Nyx",
+		sparse = "/docs",
+		marker = "docs",
+		browse = "/docs",
+		exts = "-e md -e rst -e txt",
+		prompt = "Nyx> ",
+	},
+	-- DynamoRIO: open-source dynamic binary instrumentation (Intel Pin alternative)
+	dynamorio = {
+		url = "https://github.com/DynamoRIO/dynamorio",
+		sparse = "/api",
+		marker = "api",
+		browse = "/api",
+		exts = "-e dox -e md -e c -e cpp -e h -e txt",
+		prompt = "DynamoRIO> ",
+	},
+	codeql = {
+		url = "https://github.com/github/codeql",
+		sparse = "/docs",
+		marker = "docs",
+		browse = "/docs",
+		exts = "-e md -e rst -e txt -e ql -e qll",
+		prompt = "CodeQL> ",
+	},
 }
 
 local function make_simple(name, spec)
@@ -487,7 +812,7 @@ local function pick_doxygen(name, url, sparse, input, patterns)
 		return vim.notify("git not found", vim.log.levels.WARN)
 	end
 	if vim.fn.executable("moxygen") == 0 then
-		return vim.notify("moxygen not found — run: npm install -g moxygen", vim.log.levels.WARN)
+		return vim.notify("moxygen not found (run: npm install -g moxygen)", vim.log.levels.WARN)
 	end
 	local marker = sparse:gsub("^/", ""):gsub(" .*", "")
 	ensure_repo(data_root .. "/" .. name .. "/master", url, sparse, marker, function(dir)
@@ -515,13 +840,110 @@ local function pick_doxygen(name, url, sparse, input, patterns)
 	end)
 end
 
--- ── Intel SDM Vol 3: download the PDF, split by chapter into text ─────────
--- The System Programming Guide isn't published as markdown, so fetch the
--- latest PDF (325384) and pdftotext -layout each chapter (page ranges from the
--- PDF outline) into per-chapter text files, then browse them.
+-- ── Intel SDM figure extraction (stdlib Python; written to disk by pick_sdm) ─
+-- SDM diagrams are vector art with selectable text labels, so a figure is the
+-- band between its caption and the nearest full-width paragraph above it. We
+-- find that band from `pdftotext -bbox-layout`, render just that region with
+-- pdftoppm, and trim to a tight PNG named after the figure ("Figure 4-8.png").
+local FIGEXTRACT_PY = [==[
+import sys, os, re, subprocess
+import xml.etree.ElementTree as ET
+
+PDF, OUTDIR = sys.argv[1], sys.argv[2]
+DPI = 300  # crisp enough to zoom; figures are cached under stdpath("data")
+SCALE = DPI / 72.0
+os.makedirs(OUTDIR, exist_ok=True)
+
+raw = subprocess.run(["pdftotext", "-bbox-layout", PDF, "-"],
+                     capture_output=True, text=True).stdout
+raw = re.sub(r'<!DOCTYPE[^>]*>', '', raw)
+raw = re.sub(r'\sxmlns="[^"]*"', '', raw, count=1)
+root = ET.fromstring(raw)
+
+FIG_RE = re.compile(r'^Figure\s+([0-9A-Z]+-[0-9A-Z]+)\.', re.I)
+
+def block_text(b):
+    return " ".join((w.text or "") for w in b.iter("word")).strip()
+
+def fget(el, attr):
+    return float(el.get(attr))
+
+count = 0
+pagenum = 0
+for page in root.iter("page"):
+    pagenum += 1
+    pw, ph = fget(page, "width"), fget(page, "height")
+    blocks = list(page.iter("block"))
+    if not blocks:
+        continue
+    blocks.sort(key=lambda b: fget(b, "yMin"))
+    cl, cr = 45.0, pw - 45.0
+    cw = cr - cl
+    HEADER_Y, FOOTER_Y = 55.0, ph - 45.0
+
+    def is_body(b):
+        w = fget(b, "xMax") - fget(b, "xMin")
+        return w >= 0.55 * cw and fget(b, "xMin") <= cl + 0.12 * cw
+
+    CAP_RE = re.compile(r'^(Figure|Table)\s+[0-9A-Z]+-', re.I)
+
+    for b in blocks:
+        m = FIG_RE.match(block_text(b))
+        if not m:
+            continue
+        fid = m.group(1)
+        final = os.path.join(OUTDIR, "Figure " + fid + ".png")
+        if os.path.exists(final):
+            continue  # keep the first occurrence (main figure, not a "(Contd.)")
+        cap_ymin, cap_ymax = fget(b, "yMin"), fget(b, "yMax")
+        # Top boundary: the nearest body paragraph OR another figure/table
+        # caption above (so stacked figures on one page don't merge).
+        top = HEADER_Y
+        for pb in blocks:
+            if pb is b:
+                continue
+            pby = fget(pb, "yMax")
+            if pby <= cap_ymin - 2 and pby > top and (is_body(pb) or CAP_RE.match(block_text(pb))):
+                top = pby
+        top += 3
+        bottom = min(cap_ymax + 4, FOOTER_Y)
+        if bottom - top < 30:
+            continue
+        xs0, xs1 = [], []
+        for ib in blocks:
+            if fget(ib, "yMin") >= top - 2 and fget(ib, "yMax") <= bottom + 2:
+                xs0.append(fget(ib, "xMin")); xs1.append(fget(ib, "xMax"))
+        left = max(cl, min(xs0) - 8) if xs0 else cl
+        right = min(cr, max(xs1) + 8) if xs1 else cr
+        x, y = int(left * SCALE), int(top * SCALE)
+        w, h = int((right - left) * SCALE), int((bottom - top) * SCALE)
+        if w <= 0 or h <= 0:
+            continue
+        out = os.path.join(OUTDIR, "Figure " + fid)
+        subprocess.run(["pdftoppm", "-png", "-r", str(DPI), "-f", str(pagenum), "-l", str(pagenum),
+                        "-x", str(x), "-y", str(y), "-W", str(w), "-H", str(h), PDF, out],
+                       capture_output=True)
+        produced = next((os.path.join(OUTDIR, f) for f in os.listdir(OUTDIR)
+                         if f.startswith("Figure " + fid + "-") and f.endswith(".png")), None)
+        if produced:
+            final = os.path.join(OUTDIR, "Figure " + fid + ".png")
+            if produced != final:
+                os.replace(produced, final)
+            subprocess.run(["convert", final, "-trim", "+repage",
+                            "-bordercolor", "white", "-border", "14", final], capture_output=True)
+            count += 1
+print("figures:", count)
+]==]
+
+-- ── Intel SDM: download the PDF, split by chapter into text + figures ─────
+-- The manuals aren't published as markdown, so fetch the latest PDF and
+-- pdftotext -layout each chapter (page ranges from the PDF outline) into
+-- per-chapter text files, stripping running headers/footers and form feeds.
+-- Figures (vector diagrams) are then cropped to PNGs via FIGEXTRACT_PY so
+-- <CR> on a "Figure N-M" line shows the diagram inline (snacks.image).
 local SDM_BUILD = [[
 set -e
-PDF="$1"; OUT="$2"; URL="$3"
+PDF="$1"; OUT="$2"; URL="$3"; PY="$4"
 if [ ! -f "$PDF" ]; then
   mkdir -p "$(dirname "$PDF")"
   curl -fsSL "$URL" -o "$PDF"
@@ -539,7 +961,15 @@ TOTAL=$(pdfinfo "$PDF" | awk '/^Pages:/{print $2}')
 # Split at the shallowest outline depth with >= 5 entries (volumes differ).
 D=$(awk -F'\t' '{c[$1]++} END{for(d=0;d<8;d++) if(c[d]>=5){print d; exit}}' "$OUT/.all.tsv")
 idx=0; prev_p=""; prev_t=""
-emit() { idx=$((idx+1)); n=$(printf '%03d' "$idx"); f=$(printf '%s' "$3" | tr '/' '-' | cut -c1-80); pdftotext -layout -f "$1" -l "$2" "$PDF" "$OUT/$n $f.txt" 2>/dev/null; }
+emit() {
+  idx=$((idx+1)); n=$(printf '%03d' "$idx")
+  f=$(printf '%s' "$3" | tr '/' '-' | cut -c1-80)
+  hdr=$(printf '%s' "$3" | sed -E 's/^(Chapter|Appendix) [0-9A-Z]+ *//' | tr '[:lower:]' '[:upper:]')
+  pdftotext -layout -f "$1" -l "$2" "$PDF" - 2>/dev/null \
+    | sed 's/\f//g' \
+    | awk -v h="$hdr" '{t=$0; gsub(/^[ \t]+|[ \t]+$/,"",t)} t ~ /^Vol\. [0-9A-D]+ +[0-9A-Z]+-[0-9]+$/{next} t ~ /^[0-9A-Z]+-[0-9]+ +Vol\. [0-9A-D]+$/{next} h!="" && toupper(t)==h{next} {print}' \
+    | cat -s > "$OUT/$n $f.txt"
+}
 if [ -n "$D" ]; then
   awk -F'\t' -v D="$D" '$1==D{print $2"\t"$3}' "$OUT/.all.tsv" > "$OUT/.ch.tsv"
   while IFS="$(printf '\t')" read -r p t; do
@@ -557,6 +987,11 @@ else
   done
 fi
 rm -f "$JS" "$OUT/.all.tsv" "$OUT/.ch.tsv"
+# Extract figures as tight PNGs (diagrams are vector, so rasterize regions).
+if [ -n "$PY" ] && command -v python3 >/dev/null 2>&1 \
+   && command -v pdftoppm >/dev/null 2>&1 && command -v convert >/dev/null 2>&1; then
+  python3 "$PY" "$PDF" "$OUT/figures" >/dev/null 2>&1 || true
+fi
 ]]
 
 local SDM = "https://www.intel.com/content/dam/www/public/us/en/documents/manuals/"
@@ -582,10 +1017,14 @@ local function pick_sdm(vol)
 		return browse()
 	end
 	vim.fn.mkdir(out, "p")
-	vim.notify("Fetching + splitting Intel SDM Vol " .. vol .. " … (first time)")
+	-- Drop the figure extractor next to the other downloaded tools.
+	local py = tools_dir .. "/sdm-figextract.py"
+	vim.fn.mkdir(tools_dir, "p")
+	pcall(vim.fn.writefile, vim.split(FIGEXTRACT_PY, "\n"), py)
+	vim.notify("Fetching + splitting Intel SDM Vol " .. vol .. " … (first time; figures take a minute)")
 	vim.system(
-		{ "sh", "-c", SDM_BUILD, "sdm", pdf, out, SDM_URLS[vol] },
-		{ text = true, timeout = 300000 },
+		{ "sh", "-c", SDM_BUILD, "sdm", pdf, out, SDM_URLS[vol], py },
+		{ text = true, timeout = 600000 },
 		function(res)
 			vim.schedule(function()
 				if #vim.fn.glob(out .. "/*.txt", false, true) > 0 then
@@ -596,6 +1035,345 @@ local function pick_sdm(vol)
 			end)
 		end
 	)
+end
+
+-- ── man pages + cppman: reference at your fingertips while writing C/C++ ──
+-- Rendered with filetype=man, so Neovim highlights them AND `K` on any word
+-- opens that word's man page (e.g. K over `read` on the open(2) page).
+local function render_shell(cmd, title, ft)
+	vim.system({ "sh", "-c", cmd }, { text = true }, function(res)
+		vim.schedule(function()
+			local out = vim.split(res.stdout or "", "\n")
+			while #out > 0 and out[#out]:match("^%s*$") do
+				out[#out] = nil
+			end
+			if #out == 0 then
+				local err = res.stderr ~= "" and res.stderr or ("Nothing for " .. title)
+				return vim.notify(err, vim.log.levels.WARN)
+			end
+			render_lines(out, ft or "man", nil, title)
+		end)
+	end)
+end
+
+-- Section 2 = system calls, 3 = C library functions.
+local function pick_man(section)
+	if not have("man") then
+		return vim.notify("man not found", vim.log.levels.WARN)
+	end
+	local list = vim.fn.systemlist("apropos -s " .. section .. " . 2>/dev/null | sort -u")
+	if #list == 0 then
+		list = vim.fn.systemlist(
+			"for d in $(manpath 2>/dev/null | tr ':' ' '); do ls \"$d/man"
+				.. section
+				.. "\" 2>/dev/null; done | sed 's/\\.[0-9].*$//' | sort -u"
+		)
+	end
+	if #list == 0 then
+		return vim.notify("No man pages found in section " .. section, vim.log.levels.WARN)
+	end
+	fzf().fzf_exec(list, {
+		prompt = "man " .. section .. "> ",
+		fzf_opts = { ["--no-multi"] = true },
+		actions = {
+			["default"] = function(sel)
+				local name = sel and sel[1] and sel[1]:match("^(%S+)")
+				if name then
+					render_shell(
+						"MANWIDTH=90 man " .. section .. " " .. vim.fn.shellescape(name) .. " 2>/dev/null | col -bx",
+						name .. "(" .. section .. ")"
+					)
+				end
+			end,
+		},
+	})
+end
+
+-- cppman renders cppreference.com pages as man pages. It lives in a pipx
+-- venv, so it may not be on Neovim's PATH (resolve the binary explicitly).
+local function cppman_bin()
+	if have("cppman") then
+		return "cppman"
+	end
+	local p = vim.fn.expand("~/.local/bin/cppman")
+	return vim.fn.executable(p) == 1 and p or nil
+end
+
+-- Full-symbol fuzzy list if cppman's index db is populated, else a prompt
+-- (rendering a page by name works even when the index isn't built).
+local function pick_cppman()
+	local bin = cppman_bin()
+	if not bin then
+		return vim.notify("cppman not found (install with: pipx install cppman)", vim.log.levels.WARN)
+	end
+	local function render(sym)
+		render_shell(bin .. " --force-columns=90 " .. vim.fn.shellescape(sym) .. " 2>/dev/null | col -bx", "cppman " .. sym, "man")
+	end
+	-- cppman's index is a SQLite db with one "<source>_keywords" table of
+	-- searchable symbol names. Dump those for the picker (read-only).
+	local db = vim.fn.expand("~/.cache/cppman/index.db")
+	local names = {}
+	if vim.fn.filereadable(db) == 1 and have("python3") then
+		names = vim.fn.systemlist({
+			"python3",
+			"-c",
+			"import sqlite3,sys\n"
+				.. "c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True)\n"
+				.. "s=set()\n"
+				.. "for tbl in [r[0] for r in c.execute(\"SELECT name FROM sqlite_master WHERE type='table'\")]:\n"
+				.. "  if not tbl.endswith('_keywords'): continue\n"
+				.. "  try:\n"
+				.. "    for r in c.execute('SELECT keyword FROM \"%s\"' % tbl):\n"
+				.. "      k=(r[0] or '').strip()\n"
+				.. "      if len(k)>1 and not k.startswith('('): s.add(k)\n"
+				.. "  except Exception: pass\n"
+				.. "print('\\n'.join(sorted(s)))",
+			db,
+		})
+	end
+	if #names > 0 then
+		fzf().fzf_exec(names, {
+			prompt = "cppman> ",
+			fzf_opts = { ["--no-multi"] = true },
+			actions = {
+				["default"] = function(sel)
+					if sel and sel[1] then
+						render(sel[1])
+					end
+				end,
+			},
+		})
+	else
+		vim.ui.input({ prompt = "cppman (C++ symbol, e.g. std::vector): " }, function(sym)
+			if sym and sym ~= "" then
+				render(sym)
+			end
+		end)
+	end
+end
+
+-- ── NetBSD kernel (9) + driver (4) man pages ─────────────────────────────
+-- NetBSD's section 9 (kernel internals) and 4 (device drivers) man pages are
+-- the reason to reach for NetBSD. Sparse-clone just those two dirs from the
+-- source tree and render the mdoc with the local man(1) (groff handles mdoc).
+local function pick_nbsd(section)
+	if not (have("git") and have("fd") and have("man")) then
+		return vim.notify("git, fd and man are needed for NetBSD docs", vim.log.levels.WARN)
+	end
+	local dir = data_root .. "/netbsd"
+	ensure_repo(dir, "https://github.com/NetBSD/src", "/share/man/man9 /share/man/man4", "share/man/man9", function(d)
+		local mandir = d .. "/share/man/man" .. section
+		fzf().fzf_exec("fd --base-directory " .. vim.fn.shellescape(mandir) .. " --type f .", {
+			prompt = "NetBSD (" .. section .. ")> ",
+			cwd = mandir,
+			fzf_opts = { ["--no-multi"] = true },
+			actions = {
+				["default"] = function(sel)
+					if sel and sel[1] then
+						local f = mandir .. "/" .. sel[1]
+						render_shell("MANWIDTH=90 man -l " .. vim.fn.shellescape(f) .. " 2>/dev/null | col -bx", vim.fs.basename(sel[1]), "man")
+					end
+				end,
+			},
+		})
+	end)
+end
+
+-- ── Haskell: search Hoogle, render the result's docs ──────────────────────
+local function html_to_text(s)
+	s = (s or ""):gsub("<pre>", "\n"):gsub("</pre>", "\n")
+	s = s:gsub("<h%d[^>]*>", "\n"):gsub("</h%d>", "\n")
+	s = s:gsub("<li>", "\n- "):gsub("</?[ou]l>", "\n"):gsub("</p>", "\n\n")
+	s = s:gsub("<[^>]+>", "")
+	s = s:gsub("&lt;", "<"):gsub("&gt;", ">"):gsub("&quot;", '"'):gsub("&#39;", "'"):gsub("&amp;", "&")
+	return s
+end
+
+local function pick_haskell()
+	if not have("curl") then
+		return vim.notify("curl needed for Hoogle", vim.log.levels.WARN)
+	end
+	vim.ui.input({ prompt = "Hoogle search: " }, function(q)
+		if not q or q == "" then
+			return
+		end
+		local url = "https://hoogle.haskell.org/?hoogle=" .. vim.uri_encode(q) .. "&mode=json&count=100"
+		vim.system({ "curl", "-sSL", url }, { text = true, timeout = 20000 }, function(res)
+			vim.schedule(function()
+				local ok, data = pcall(vim.json.decode, res.stdout or "")
+				if not ok or type(data) ~= "table" or #data == 0 then
+					return vim.notify("Hoogle: no results for " .. q, vim.log.levels.WARN)
+				end
+				local entries, by_idx = {}, {}
+				for i, r in ipairs(data) do
+					local sig = html_to_text(r.item or ""):gsub("%s+", " "):gsub("^%s+", "")
+					local mod = r.module and r.module.name or ""
+					local pkg = r.package and r.package.name or ""
+					entries[#entries + 1] = string.format("%d\t%s  (%s, %s)", i, sig, mod, pkg)
+					by_idx[i] = r
+				end
+				fzf().fzf_exec(entries, {
+					prompt = "Hoogle> ",
+					fzf_opts = { ["--with-nth"] = "2..", ["--delimiter"] = "\\t", ["--no-multi"] = true },
+					actions = {
+						["default"] = function(sel)
+							local r = sel and sel[1] and by_idx[tonumber(sel[1]:match("^(%d+)"))]
+							if not r then
+								return
+							end
+							local out = { html_to_text(r.item or ""):gsub("^%s+", ""), "" }
+							if r.module then
+								out[#out + 1] = "Module:  " .. (r.module.name or "")
+							end
+							if r.package then
+								out[#out + 1] = "Package: " .. (r.package.name or "")
+							end
+							if r.url then
+								out[#out + 1] = r.url
+							end
+							out[#out + 1] = ""
+							for _, l in ipairs(vim.split(html_to_text(r.docs or ""), "\n")) do
+								out[#out + 1] = l
+							end
+							render_lines(out, "markdown", nil, "hoogle: " .. q)
+						end,
+					},
+				})
+			end)
+		end)
+	end)
+end
+
+-- ── OCaml: browse the stdlib module index, render a module's API ──────────
+local OCAML_IDX = [[curl -sSL https://ocaml.org/api/index_modules.html | grep -oE 'href="[A-Z][A-Za-z0-9_]*\.html"' | sed -E 's/.*"([^"]+)\.html".*/\1/' | sort -u]]
+
+local function pick_ocaml()
+	if not (have("curl") and have("pandoc")) then
+		return vim.notify("curl and pandoc are needed for OCaml docs", vim.log.levels.WARN)
+	end
+	local dir = data_root .. "/ocaml"
+	local idxfile = dir .. "/modules.txt"
+	local function browse()
+		fzf().fzf_exec(vim.fn.readfile(idxfile), {
+			prompt = "OCaml module> ",
+			fzf_opts = { ["--no-multi"] = true },
+			actions = {
+				["default"] = function(sel)
+					if sel and sel[1] then
+						render_shell(
+							"curl -sSL " .. vim.fn.shellescape("https://ocaml.org/api/" .. sel[1] .. ".html")
+								.. " | pandoc -f html -t gfm-raw_html --wrap=none 2>/dev/null | awk 'f||/OCaml library/{f=1}f'",
+							"OCaml." .. sel[1],
+							"markdown"
+						)
+					end
+				end,
+			},
+		})
+	end
+	if vim.fn.filereadable(idxfile) == 1 then
+		return browse()
+	end
+	vim.fn.mkdir(dir, "p")
+	vim.system({ "sh", "-c", OCAML_IDX }, { text = true, timeout = 20000 }, function(res)
+		vim.schedule(function()
+			local mods = vim.split(res.stdout or "", "\n", { trimempty = true })
+			if #mods == 0 then
+				return vim.notify("OCaml: could not fetch the module index", vim.log.levels.WARN)
+			end
+			vim.fn.writefile(mods, idxfile)
+			browse()
+		end)
+	end)
+end
+
+-- ── Ghidra: versioned API/docs (pick a release tag, all versions) ────────
+local function pick_ghidra()
+	if not (have("git") and have("fd")) then
+		return vim.notify("git and fd are needed for Ghidra docs", vim.log.levels.WARN)
+	end
+	local repo = "https://github.com/NationalSecurityAgency/ghidra"
+	vim.system({ "sh", "-c", "git ls-remote --tags --refs " .. repo .. " | sed 's#.*refs/tags/##' | sort -rV" }, { text = true, timeout = 30000 }, function(res)
+		vim.schedule(function()
+			local tags = vim.split(res.stdout or "", "\n", { trimempty = true })
+			if #tags == 0 then
+				return vim.notify("Ghidra: could not list versions", vim.log.levels.WARN)
+			end
+			fzf().fzf_exec(tags, {
+				prompt = "Ghidra version> ",
+				fzf_opts = { ["--no-multi"] = true },
+				actions = {
+					["default"] = function(sel)
+						if not (sel and sel[1]) then
+							return
+						end
+						local tag = sel[1]
+						local dir = data_root .. "/ghidra/" .. tag
+						local marker = dir .. "/GhidraDocs"
+						local function browse()
+							pick_files(dir .. "/GhidraDocs", "-e md -e html -e txt", "Ghidra " .. tag .. "> ")
+						end
+						if vim.fn.isdirectory(marker) == 1 then
+							return browse()
+						end
+						vim.fn.mkdir(vim.fs.dirname(dir), "p")
+						vim.notify("Cloning Ghidra " .. tag .. " docs … (first time)")
+						local script = table.concat({
+							"rm -rf " .. vim.fn.shellescape(dir),
+							"git -c core.autocrlf=false clone -n --depth=1 --filter=tree:0 --branch " .. vim.fn.shellescape(tag) .. " " .. repo .. " " .. vim.fn.shellescape(dir),
+							"cd " .. vim.fn.shellescape(dir),
+							"git sparse-checkout set --no-cone /GhidraDocs",
+							"git checkout",
+						}, " && ")
+						vim.system({ "sh", "-c", script }, { text = true, timeout = 180000 }, function(r2)
+							vim.schedule(function()
+								if vim.fn.isdirectory(marker) == 1 then
+									browse()
+								else
+									vim.notify("Ghidra clone failed:\n" .. (r2.stderr or ""):sub(1, 300), vim.log.levels.ERROR)
+								end
+							end)
+						end)
+					end,
+				},
+			})
+		end)
+	end)
+end
+
+-- ── Multiboot / Multiboot2 boot protocol specs (GNU GRUB, rendered) ───────
+local function pick_multiboot()
+	if not (have("curl") and have("pandoc")) then
+		return vim.notify("curl and pandoc are needed for the Multiboot specs", vim.log.levels.WARN)
+	end
+	local specs = {
+		["Multiboot (v1)"] = "https://www.gnu.org/software/grub/manual/multiboot/multiboot.html",
+		["Multiboot2"] = "https://www.gnu.org/software/grub/manual/multiboot2/multiboot.html",
+	}
+	fzf().fzf_exec(vim.tbl_keys(specs), {
+		prompt = "Multiboot> ",
+		fzf_opts = { ["--no-multi"] = true },
+		actions = {
+			["default"] = function(sel)
+				if sel and sel[1] and specs[sel[1]] then
+					render_shell("curl -sSL " .. vim.fn.shellescape(specs[sel[1]]) .. " | pandoc -f html -t gfm-raw_html --wrap=none 2>/dev/null", sel[1], "markdown")
+				end
+			end,
+		},
+	})
+end
+
+-- ── pydoc: docs for any installed Python package (pexpect, requests, …) ───
+-- Lazily covers third-party packages that the cpython stdlib docs don't have.
+local function pick_pydoc()
+	if not have("python3") then
+		return vim.notify("python3 needed for pydoc", vim.log.levels.WARN)
+	end
+	vim.ui.input({ prompt = "pydoc module (e.g. pexpect, requests.get): " }, function(mod)
+		if mod and mod ~= "" then
+			render_shell("python3 -m pydoc " .. vim.fn.shellescape(mod) .. " 2>&1", "pydoc " .. mod, "text")
+		end
+	end)
 end
 
 -- ── providers + :Docs command ────────────────────────────────────────────
@@ -630,6 +1408,41 @@ local providers = {
 	{ name = "Intel SDM Vol 2", key = "sdm2", run = function() pick_sdm(2) end },
 	{ name = "Intel SDM Vol 3", key = "sdm3", run = function() pick_sdm(3) end },
 	{ name = "Intel SDM Vol 4", key = "sdm4", run = function() pick_sdm(4) end },
+	{ name = "man 2 (system calls)", key = "man2", run = function() pick_man(2) end },
+	{ name = "man 3 (C library)", key = "man3", run = function() pick_man(3) end },
+	{ name = "cppman (C++ reference)", key = "cppman", run = pick_cppman },
+	{ name = "NetBSD kernel (man 9)", key = "nbsd9", run = function() pick_nbsd(9) end },
+	{ name = "NetBSD drivers (man 4)", key = "nbsd4", run = function() pick_nbsd(4) end },
+	{ name = "OCaml (stdlib)", key = "ocaml", run = pick_ocaml },
+	{ name = "Haskell (Hoogle)", key = "haskell", run = pick_haskell },
+	{ name = "Frida", key = "frida", run = make_simple("frida", simple.frida) },
+	{ name = "Triton", key = "triton", run = make_simple("triton", simple.triton) },
+	{ name = "angr", key = "angr", run = make_simple("angr", simple.angr) },
+	{ name = "QBDI (Quarkslab)", key = "qbdi", run = make_simple("qbdi", simple.qbdi) },
+	{ name = "Capstone", key = "capstone", run = make_simple("capstone", simple.capstone) },
+	{ name = "Binary Ninja API", key = "binja", run = make_simple("binja", simple.binja) },
+	{ name = "LIEF", key = "lief", run = make_simple("lief", simple.lief) },
+	{ name = "pyelftools", key = "pyelftools", run = make_simple("pyelftools", simple.pyelftools) },
+	{ name = "QBinDiff", key = "qbindiff", run = make_simple("qbindiff", simple.qbindiff) },
+	{ name = "Qiling", key = "qiling", run = make_simple("qiling", simple.qiling) },
+	{ name = "PANDA", key = "panda", run = make_simple("panda", simple.panda) },
+	{ name = "Volatility", key = "volatility", run = make_simple("volatility", simple.volatility) },
+	{ name = "syzkaller", key = "syzkaller", run = make_simple("syzkaller", simple.syzkaller) },
+	{ name = "Unicorn", key = "unicorn", run = make_simple("unicorn", simple.unicorn) },
+	{ name = "Keystone", key = "keystone", run = make_simple("keystone", simple.keystone) },
+	{ name = "pwntools", key = "pwntools", run = make_simple("pwntools", simple.pwntools) },
+	{ name = "UEFI (edk2)", key = "uefi", run = make_simple("uefi", simple.uefi) },
+	{ name = "coreboot", key = "coreboot", run = make_simple("coreboot", simple.coreboot) },
+	{ name = "U-Boot", key = "uboot", run = make_simple("uboot", simple.uboot) },
+	{ name = "DynamoRIO (DBI, Pin alternative)", key = "dynamorio", run = make_simple("dynamorio", simple.dynamorio) },
+	{ name = "Nyx (snapshot fuzzer)", key = "nyx", run = make_simple("nyx", simple.nyx) },
+	{ name = "CodeQL", key = "codeql", run = make_simple("codeql", simple.codeql) },
+	{ name = "Ghidra API (versioned)", key = "ghidra", run = pick_ghidra },
+	{ name = "Multiboot specs", key = "multiboot", run = pick_multiboot },
+	{ name = "Bash (man bash)", key = "bash", run = function()
+		render_shell("MANWIDTH=90 man bash 2>/dev/null | col -bx", "bash(1)", "man")
+	end },
+	{ name = "pydoc (any Python pkg)", key = "pydoc", run = pick_pydoc },
 }
 
 function M.open()
