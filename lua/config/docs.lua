@@ -1798,7 +1798,6 @@ local providers = {
 	{ name = "man 4 (devices)", key = "man4", run = function() pick_man(4) end },
 	{ name = "man 5 (file formats)", key = "man5", run = function() pick_man(5) end },
 	{ name = "man 7 (overviews)", key = "man7", run = function() pick_man(7) end },
-	{ name = "man 9 (kernel)", key = "man9", run = function() pick_man(9) end },
 	{ name = "cppman (C++ reference)", key = "cppman", run = pick_cppman },
 	{ name = "NetBSD kernel (man 9)", key = "nbsd9", run = function() pick_nbsd(9) end },
 	{ name = "NetBSD drivers (man 4)", key = "nbsd4", run = function() pick_nbsd(4) end },
