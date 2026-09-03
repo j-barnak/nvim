@@ -451,96 +451,63 @@ local function make_simple(name, spec)
 	end
 end
 
--- ── libdrgn: render its Doxygen-documented C API into per-symbol Markdown ─
--- libdrgn's public API (libdrgn/drgn.h) is documented with Doxygen comments,
--- not rendered rst. Parse each /** ... */ block + declaration into one
--- Markdown file per symbol, then browse them like any other docs.
-local LIBDRGN_DOXY = [==[
-import re, os, sys
-header, outdir = sys.argv[1], sys.argv[2]
-os.makedirs(outdir, exist_ok=True)
-lines = open(header, encoding="utf-8", errors="replace").read().split("\n")
-n = len(lines)
-def strip_star(l):
-    l = re.sub(r'^\s*\*/?', '', l)
-    return l[1:] if l.startswith(' ') else l
-def inline(t):
-    return re.sub(r'@(?:ref|p|a|c)\s+([A-Za-z_]\w*)', r'`\1`', t)
-i = count = 0
-while i < n:
-    if lines[i].lstrip().startswith("/**"):
-        buf, j = [], i
-        while j < n:
-            buf.append(lines[j])
-            if "*/" in lines[j]: break
-            j += 1
-        k = j + 1
-        while k < n and lines[k].strip() == "": k += 1
-        decl_l = []
-        while k < n:
-            decl_l.append(lines[k].strip())
-            if ";" in lines[k] or "{" in lines[k]: break
-            k += 1
-        decl = re.sub(r'\s+', ' ', " ".join(decl_l)).strip()
-        body = "\n".join(strip_star(x) for x in buf).replace("/**","").replace("*/","")
-        if "@file" in body: i = j+1; continue
-        sym = None
-        for pat in [r'#\s*define\s+([A-Za-z_]\w*)',
-                    r'(?:typedef\s+)?(?:struct|enum|union)\s+([A-Za-z_]\w*)\s*[{;]',
-                    r'([A-Za-z_]\w*)\s*\(',
-                    r'([A-Za-z_]\w*)\s*;']:
-            m = re.search(pat, decl)
-            if m: sym = m.group(1); break
-        if not sym: i = j+1; continue
-        params, returns, out, in_code = [], [], [], False
-        for l in body.split("\n"):
-            if "@code" in l: out.append("```c"); in_code=True; continue
-            if "@endcode" in l: out.append("```"); in_code=False; continue
-            if in_code: out.append(l); continue
-            pm = re.match(r'\s*@param(?:\[[^\]]*\])?\s+(\S+)\s+(.*)', l)
-            if pm: params.append((pm.group(1), inline(pm.group(2)))); continue
-            rm = re.match(r'\s*@returns?\s+(.*)', l)
-            if rm: returns.append(inline(rm.group(1))); continue
-            l = re.sub(r'^\s*@brief\s+', '', l)
-            l = re.sub(r'^\s*@(?:ingroup|memberof|private|internal|relates|struct|typedef|enum|union|def|fn|var|class|addtogroup|defgroup|weakgroup|hideinitializer)\b.*$', '', l)
-            l = re.sub(r'^\s*@note\b\s*', '**Note:** ', l)
-            l = re.sub(r'^\s*@warning\b\s*', '**Warning:** ', l)
-            l = re.sub(r'^\s*@sa\b\s*', '**See also:** ', l)
-            out.append(inline(l))
-        md = ["# " + sym, "", "```c", decl, "```", ""] + out
-        if params:
-            md += ["", "**Parameters**", ""] + ["- `%s` — %s" % p for p in params]
-        if returns:
-            md += ["", "**Returns**", "", " ".join(returns)]
-        txt = re.sub(r'\n{3,}', '\n\n', "\n".join(md)).strip() + "\n"
-        open(os.path.join(outdir, sym + ".md"), "w").write(txt)
-        count += 1; i = k + 1
-    else:
-        i += 1
-]==]
+-- ── doxygen providers: doxygen (XML) -> moxygen -> per-class/group Markdown ─
+-- For libraries whose API lives in Doxygen-commented C/C++ headers (libdrgn,
+-- SFML). Downloads a prebuilt doxygen binary on first use; moxygen (npm) turns
+-- the XML into cross-linked per-class/per-group Markdown, browsed like the rest.
+local tools_dir = data_root .. "/.tools"
+local DOX_PIPELINE = [[
+set -e
+INPUT="$1"; OUT="$2"; TOOLS="$3"; PATTERNS="$4"
+DOXY=$(ls "$TOOLS"/doxygen-*/bin/doxygen 2>/dev/null | head -1)
+if [ -z "$DOXY" ]; then
+  mkdir -p "$TOOLS"
+  ( cd "$TOOLS" && curl -fsSL https://www.doxygen.nl/files/doxygen-1.14.0.linux.bin.tar.gz -o d.tgz && tar xzf d.tgz && rm -f d.tgz )
+  DOXY=$(ls "$TOOLS"/doxygen-*/bin/doxygen 2>/dev/null | head -1)
+fi
+XML="$OUT/.xml"; rm -rf "$XML"; mkdir -p "$XML" "$OUT"
+{
+  echo "INPUT = $INPUT"
+  echo "FILE_PATTERNS = $PATTERNS"
+  echo "RECURSIVE = YES"
+  echo "GENERATE_HTML = NO"
+  echo "GENERATE_XML = YES"
+  echo "XML_OUTPUT = $XML"
+  echo "XML_PROGRAMLISTING = NO"
+  echo "EXTRACT_ALL = YES"
+  echo "QUIET = YES"
+  echo "WARN_IF_UNDOCUMENTED = NO"
+} > "$XML/Doxyfile"
+"$DOXY" "$XML/Doxyfile" >/dev/null 2>&1
+moxygen --classes --groups --anchors --output "$OUT/%s.md" "$XML" >/dev/null 2>&1
+]]
 
-local function pick_libdrgn()
-	if not have("git") or not have("python3") then
-		return vim.notify("git + python3 needed for libdrgn docs", vim.log.levels.WARN)
+local function pick_doxygen(name, url, sparse, input, patterns)
+	if not have("git") then
+		return vim.notify("git not found", vim.log.levels.WARN)
 	end
-	ensure_repo(data_root .. "/libdrgn/master", "https://github.com/osandov/drgn", "/libdrgn", "libdrgn", function(dir)
-		local api = dir .. "/.api"
+	if vim.fn.executable("moxygen") == 0 then
+		return vim.notify("moxygen not found — run: npm install -g moxygen", vim.log.levels.WARN)
+	end
+	local marker = sparse:gsub("^/", ""):gsub(" .*", "")
+	ensure_repo(data_root .. "/" .. name .. "/master", url, sparse, marker, function(dir)
+		local md = dir .. "/.dox"
 		local function browse()
-			pick_files(api, "-e md", "libdrgn API> ")
+			pick_files(md, "-e md", name .. "> ")
 		end
-		if vim.fn.isdirectory(api) == 1 then
+		if #vim.fn.glob(md .. "/*.md", false, true) > 0 then
 			return browse()
 		end
-		vim.notify("Building libdrgn C API reference … (first time)")
+		vim.notify("Building " .. name .. " API (doxygen + moxygen) … first time, ~1-2 min")
 		vim.system(
-			{ "python3", "-c", LIBDRGN_DOXY, dir .. "/libdrgn/drgn.h", api },
-			{ text = true, timeout = 60000 },
+			{ "sh", "-c", DOX_PIPELINE, "dox", dir .. input, md, tools_dir, patterns },
+			{ text = true, timeout = 300000 },
 			function(res)
 				vim.schedule(function()
-					if vim.fn.isdirectory(api) == 1 then
+					if #vim.fn.glob(md .. "/*.md", false, true) > 0 then
 						browse()
 					else
-						vim.notify("libdrgn API build failed:\n" .. (res.stderr or ""), vim.log.levels.ERROR)
+						vim.notify("Doxygen build failed:\n" .. (res.stderr or ""):sub(1, 400), vim.log.levels.ERROR)
 					end
 				end)
 			end
@@ -555,7 +522,20 @@ local providers = {
 	{ name = "QEMU", key = "qemu", run = make_simple("qemu", simple.qemu) },
 	{ name = "libbpf", key = "libbpf", run = make_simple("libbpf", simple.libbpf) },
 	{ name = "drgn", key = "drgn", run = make_simple("drgn", simple.drgn) },
-	{ name = "libdrgn", key = "libdrgn", run = pick_libdrgn },
+	{
+		name = "libdrgn",
+		key = "libdrgn",
+		run = function()
+			pick_doxygen("libdrgn", "https://github.com/osandov/drgn", "/libdrgn", "/libdrgn", "drgn.h")
+		end,
+	},
+	{
+		name = "SFML",
+		key = "sfml",
+		run = function()
+			pick_doxygen("sfml", "https://github.com/SFML/SFML", "/include", "/include", "*.hpp *.h *.inl")
+		end,
+	},
 	{ name = "SDL2", key = "sdl2", run = make_simple("sdl2", simple.sdl2) },
 	{ name = "SDL3", key = "sdl3", run = make_simple("sdl3", simple.sdl3) },
 	{ name = "OpenGL", key = "opengl", run = make_simple("opengl", simple.opengl) },
