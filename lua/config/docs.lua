@@ -515,6 +515,67 @@ local function pick_doxygen(name, url, sparse, input, patterns)
 	end)
 end
 
+-- ── Intel SDM Vol 3: download the PDF, split by chapter into text ─────────
+-- The System Programming Guide isn't published as markdown, so fetch the
+-- latest PDF (325384) and pdftotext -layout each chapter (page ranges from the
+-- PDF outline) into per-chapter text files, then browse them.
+local SDM_BUILD = [[
+set -e
+PDF="$1"; OUT="$2"
+if [ ! -f "$PDF" ]; then
+  mkdir -p "$(dirname "$PDF")"
+  curl -fsSL "https://www.intel.com/content/dam/www/public/us/en/documents/manuals/64-ia-32-architectures-software-developer-system-programming-manual-325384.pdf" -o "$PDF"
+fi
+mkdir -p "$OUT"
+JS="$OUT/.ol.js"
+cat > "$JS" <<EOF2
+var doc = Document.openDocument("$PDF");
+function pageof(it){ try { var l = doc.resolveLink(it.uri); return (typeof l==="number")?l:(l&&l.page); } catch(e){ return -1; } }
+function walk(items,d){ for(var i=0;i<items.length;i++){ var it=items[i]; if(d===0){ print((pageof(it)+1)+"\t"+it.title); } if(it.down) walk(it.down,d+1); } }
+walk(doc.loadOutline(),0);
+EOF2
+mutool run "$JS" > "$OUT/.ch.tsv" 2>/dev/null
+TOTAL=$(pdfinfo "$PDF" | awk '/^Pages:/{print $2}')
+idx=0; prev_p=""; prev_t=""
+emit() { idx=$((idx+1)); n=$(printf '%02d' "$idx"); f=$(printf '%s' "$3" | tr '/' '-'); pdftotext -layout -f "$1" -l "$2" "$PDF" "$OUT/$n $f.txt" 2>/dev/null; }
+while IFS="$(printf '\t')" read -r p t; do
+  [ -n "$prev_p" ] && emit "$prev_p" $((p-1)) "$prev_t"
+  prev_p="$p"; prev_t="$t"
+done < "$OUT/.ch.tsv"
+[ -n "$prev_p" ] && emit "$prev_p" "$TOTAL" "$prev_t"
+rm -f "$JS" "$OUT/.ch.tsv"
+]]
+
+local function pick_sdm()
+	for _, t in ipairs({ "curl", "mutool", "pdftotext", "pdfinfo" }) do
+		if not have(t) then
+			return vim.notify(t .. " needed for Intel SDM", vim.log.levels.WARN)
+		end
+	end
+	local out = data_root .. "/sdm/vol3"
+	local function browse()
+		pick_files(out, "-e txt", "Intel SDM v3> ")
+	end
+	if #vim.fn.glob(out .. "/*.txt", false, true) > 0 then
+		return browse()
+	end
+	vim.fn.mkdir(out, "p")
+	vim.notify("Fetching + splitting Intel SDM Vol 3 … (first time)")
+	vim.system(
+		{ "sh", "-c", SDM_BUILD, "sdm", tools_dir .. "/sdm-vol3.pdf", out },
+		{ text = true, timeout = 300000 },
+		function(res)
+			vim.schedule(function()
+				if #vim.fn.glob(out .. "/*.txt", false, true) > 0 then
+					browse()
+				else
+					vim.notify("SDM build failed:\n" .. (res.stderr or ""):sub(1, 400), vim.log.levels.ERROR)
+				end
+			end)
+		end
+	)
+end
+
 -- ── providers + :Docs command ────────────────────────────────────────────
 local providers = {
 	{ name = "Linux Kernel", key = "kernel", run = pick_kernel_version },
@@ -543,6 +604,7 @@ local providers = {
 	{ name = "Python", key = "python", run = make_simple("python", simple.python) },
 	{ name = "LLVM", key = "llvm", run = make_simple("llvm", simple.llvm) },
 	{ name = "Xen", key = "xen", run = make_simple("xen", simple.xen) },
+	{ name = "Intel SDM Vol 3", key = "sdm", run = pick_sdm },
 }
 
 function M.open()
