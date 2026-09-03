@@ -380,14 +380,6 @@ local simple = {
 		exts = "-e rst -e md -e py -e txt",
 		prompt = "drgn> ",
 	},
-	libdrgn = {
-		url = "https://github.com/osandov/drgn",
-		sparse = "/libdrgn",
-		marker = "libdrgn",
-		browse = "/libdrgn",
-		exts = "-e h -e c -e rst -e md",
-		prompt = "libdrgn> ",
-	},
 }
 
 local function make_simple(name, spec)
@@ -401,6 +393,103 @@ local function make_simple(name, spec)
 	end
 end
 
+-- ── libdrgn: render its Doxygen-documented C API into per-symbol Markdown ─
+-- libdrgn's public API (libdrgn/drgn.h) is documented with Doxygen comments,
+-- not rendered rst. Parse each /** ... */ block + declaration into one
+-- Markdown file per symbol, then browse them like any other docs.
+local LIBDRGN_DOXY = [==[
+import re, os, sys
+header, outdir = sys.argv[1], sys.argv[2]
+os.makedirs(outdir, exist_ok=True)
+lines = open(header, encoding="utf-8", errors="replace").read().split("\n")
+n = len(lines)
+def strip_star(l):
+    l = re.sub(r'^\s*\*/?', '', l)
+    return l[1:] if l.startswith(' ') else l
+def inline(t):
+    return re.sub(r'@(?:ref|p|a|c)\s+([A-Za-z_]\w*)', r'`\1`', t)
+i = count = 0
+while i < n:
+    if lines[i].lstrip().startswith("/**"):
+        buf, j = [], i
+        while j < n:
+            buf.append(lines[j])
+            if "*/" in lines[j]: break
+            j += 1
+        k = j + 1
+        while k < n and lines[k].strip() == "": k += 1
+        decl_l = []
+        while k < n:
+            decl_l.append(lines[k].strip())
+            if ";" in lines[k] or "{" in lines[k]: break
+            k += 1
+        decl = re.sub(r'\s+', ' ', " ".join(decl_l)).strip()
+        body = "\n".join(strip_star(x) for x in buf).replace("/**","").replace("*/","")
+        if "@file" in body: i = j+1; continue
+        sym = None
+        for pat in [r'#\s*define\s+([A-Za-z_]\w*)',
+                    r'(?:typedef\s+)?(?:struct|enum|union)\s+([A-Za-z_]\w*)\s*[{;]',
+                    r'([A-Za-z_]\w*)\s*\(',
+                    r'([A-Za-z_]\w*)\s*;']:
+            m = re.search(pat, decl)
+            if m: sym = m.group(1); break
+        if not sym: i = j+1; continue
+        params, returns, out, in_code = [], [], [], False
+        for l in body.split("\n"):
+            if "@code" in l: out.append("```c"); in_code=True; continue
+            if "@endcode" in l: out.append("```"); in_code=False; continue
+            if in_code: out.append(l); continue
+            pm = re.match(r'\s*@param(?:\[[^\]]*\])?\s+(\S+)\s+(.*)', l)
+            if pm: params.append((pm.group(1), inline(pm.group(2)))); continue
+            rm = re.match(r'\s*@returns?\s+(.*)', l)
+            if rm: returns.append(inline(rm.group(1))); continue
+            l = re.sub(r'^\s*@brief\s+', '', l)
+            l = re.sub(r'^\s*@(?:ingroup|memberof|private|internal|relates|struct|typedef|enum|union|def|fn|var|class|addtogroup|defgroup|weakgroup|hideinitializer)\b.*$', '', l)
+            l = re.sub(r'^\s*@note\b\s*', '**Note:** ', l)
+            l = re.sub(r'^\s*@warning\b\s*', '**Warning:** ', l)
+            l = re.sub(r'^\s*@sa\b\s*', '**See also:** ', l)
+            out.append(inline(l))
+        md = ["# " + sym, "", "```c", decl, "```", ""] + out
+        if params:
+            md += ["", "**Parameters**", ""] + ["- `%s` — %s" % p for p in params]
+        if returns:
+            md += ["", "**Returns**", "", " ".join(returns)]
+        txt = re.sub(r'\n{3,}', '\n\n', "\n".join(md)).strip() + "\n"
+        open(os.path.join(outdir, sym + ".md"), "w").write(txt)
+        count += 1; i = k + 1
+    else:
+        i += 1
+]==]
+
+local function pick_libdrgn()
+	if not have("git") or not have("python3") then
+		return vim.notify("git + python3 needed for libdrgn docs", vim.log.levels.WARN)
+	end
+	ensure_repo(data_root .. "/libdrgn/master", "https://github.com/osandov/drgn", "/libdrgn", "libdrgn", function(dir)
+		local api = dir .. "/.api"
+		local function browse()
+			pick_files(api, "-e md", "libdrgn API> ")
+		end
+		if vim.fn.isdirectory(api) == 1 then
+			return browse()
+		end
+		vim.notify("Building libdrgn C API reference … (first time)")
+		vim.system(
+			{ "python3", "-c", LIBDRGN_DOXY, dir .. "/libdrgn/drgn.h", api },
+			{ text = true, timeout = 60000 },
+			function(res)
+				vim.schedule(function()
+					if vim.fn.isdirectory(api) == 1 then
+						browse()
+					else
+						vim.notify("libdrgn API build failed:\n" .. (res.stderr or ""), vim.log.levels.ERROR)
+					end
+				end)
+			end
+		)
+	end)
+end
+
 -- ── providers + :Docs command ────────────────────────────────────────────
 local providers = {
 	{ name = "Linux Kernel", key = "kernel", run = pick_kernel_version },
@@ -408,7 +497,7 @@ local providers = {
 	{ name = "QEMU", key = "qemu", run = make_simple("qemu", simple.qemu) },
 	{ name = "libbpf", key = "libbpf", run = make_simple("libbpf", simple.libbpf) },
 	{ name = "drgn", key = "drgn", run = make_simple("drgn", simple.drgn) },
-	{ name = "libdrgn", key = "libdrgn", run = make_simple("libdrgn", simple.libdrgn) },
+	{ name = "libdrgn", key = "libdrgn", run = pick_libdrgn },
 }
 
 function M.open()
