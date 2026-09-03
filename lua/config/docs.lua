@@ -238,6 +238,22 @@ local function strip_frontmatter(lines)
 	return lines
 end
 
+-- Turn Jekyll/Liquid tags into plain Markdown (Frida's docs use these):
+-- {% highlight LANG %}..{% endhighlight %} -> fenced code; drop other lone tags.
+local function strip_liquid(lines)
+	for i, l in ipairs(lines) do
+		local lang = l:match("^%s*{%%%s*highlight%s+(%S+)%s*%%}%s*$")
+		if lang then
+			lines[i] = "```" .. lang
+		elseif l:match("^%s*{%%%s*endhighlight%s*%%}%s*$") then
+			lines[i] = "```"
+		elseif l:match("^%s*{%%.-%%}%s*$") then
+			lines[i] = ""
+		end
+	end
+	return lines
+end
+
 -- Rewrite relative Markdown image links to absolute paths so snacks.image can
 -- find them: the doc renders in a scratch buffer with no real file path.
 local function abs_images(lines, dir)
@@ -280,7 +296,7 @@ local function open_file(path)
 	end
 	local dir = vim.fs.dirname(path)
 	if ft == "markdown" then
-		lines = abs_images(strip_frontmatter(lines), dir)
+		lines = abs_images(strip_liquid(strip_frontmatter(lines)), dir)
 	end
 	render_lines(lines, ft, dir, vim.fs.basename(path))
 end
@@ -647,10 +663,11 @@ local simple = {
 	},
 	-- reverse-engineering / binary-analysis / fuzzing tooling
 	frida = {
+		-- /_docs are Jekyll "{% tf %}" wrappers; the real prose is in _i18n/en.
 		url = "https://github.com/frida/frida-website",
-		sparse = "/_docs",
-		marker = "_docs",
-		browse = "/_docs",
+		sparse = "/_i18n/en/_docs",
+		marker = "_i18n/en/_docs",
+		browse = "/_i18n/en/_docs",
 		exts = "-e md",
 		prompt = "Frida> ",
 	},
