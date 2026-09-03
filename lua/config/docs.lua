@@ -203,10 +203,11 @@ local function render_lines(lines, ft, dir, title)
 	end, { buffer = buf, nowait = true, silent = true, desc = "Close docs viewer" })
 	vim.keymap.set("n", "<leader>fs", docs_toc, { buffer = buf, desc = "Docs: table of contents" })
 	if ft == "man" then
-		-- K opens the man page for the word under the cursor (e.g. K on `read`).
-		vim.keymap.set("n", "K", function()
+		-- gd follows the cross-reference under the cursor (e.g. gd on `read`
+		-- opens read's man page), matching gd = "follow link" in the other docs.
+		vim.keymap.set("n", "gd", function()
 			vim.cmd("Man " .. vim.fn.expand("<cword>"))
-		end, { buffer = buf, silent = true, desc = "man page for word under cursor" })
+		end, { buffer = buf, nowait = true, silent = true, desc = "Docs: follow man cross-reference" })
 	end
 	if dir then
 		vim.b[buf].docs_dir = dir
@@ -1669,8 +1670,13 @@ local providers = {
 	{ name = "Intel SDM Vol 4", key = "sdm4", run = function() pick_sdm(4) end },
 	{ name = "C standard (C23 draft)", key = "cstd", run = function() pick_pdf("c-draft", "C draft> ") end },
 	{ name = "C++ standard (draft)", key = "cppstd", run = function() pick_pdf("cpp-draft", "C++ draft> ") end },
+	{ name = "man 1 (commands)", key = "man1", run = function() pick_man(1) end },
 	{ name = "man 2 (system calls)", key = "man2", run = function() pick_man(2) end },
 	{ name = "man 3 (C library)", key = "man3", run = function() pick_man(3) end },
+	{ name = "man 4 (devices)", key = "man4", run = function() pick_man(4) end },
+	{ name = "man 5 (file formats)", key = "man5", run = function() pick_man(5) end },
+	{ name = "man 7 (overviews)", key = "man7", run = function() pick_man(7) end },
+	{ name = "man 9 (kernel)", key = "man9", run = function() pick_man(9) end },
 	{ name = "cppman (C++ reference)", key = "cppman", run = pick_cppman },
 	{ name = "NetBSD kernel (man 9)", key = "nbsd9", run = function() pick_nbsd(9) end },
 	{ name = "NetBSD drivers (man 4)", key = "nbsd4", run = function() pick_nbsd(4) end },
