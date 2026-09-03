@@ -1700,6 +1700,64 @@ local function pick_gcc()
 	end)
 end
 
+-- ── Android Common Kernel (versioned): binder + drivers + kernel docs ────
+-- The attack surface for Android kernel research: drivers/android (binder),
+-- drivers/staging/android (ashmem/ion), and the admin-guide/driver-api/
+-- dev-tools (kasan, kcov) docs, at a chosen ACK branch (android14-6.1, …).
+local function pick_android_kernel()
+	if not (have("git") and have("fd")) then
+		return vim.notify("git and fd are needed for the Android kernel", vim.log.levels.WARN)
+	end
+	local repo = "https://github.com/aosp-mirror/kernel_common"
+	vim.system({ "sh", "-c", "git ls-remote --heads " .. repo .. " | sed 's#.*refs/heads/##' | grep -E '^android[0-9]+-[0-9]+\\.[0-9]+$' | sort -Vr" }, { text = true, timeout = 30000 }, function(res)
+		vim.schedule(function()
+			local branches = vim.split(res.stdout or "", "\n", { trimempty = true })
+			if #branches == 0 then
+				return vim.notify("Android kernel: could not list branches", vim.log.levels.WARN)
+			end
+			fzf().fzf_exec(branches, {
+				prompt = "Android kernel (ACK)> ",
+				fzf_opts = { ["--no-multi"] = true },
+				actions = {
+					["default"] = function(sel)
+						if not (sel and sel[1]) then
+							return
+						end
+						local br = sel[1]
+						local dir = data_root .. "/android-kernel/" .. br
+						local marker = dir .. "/drivers/android"
+						local sparse = "/drivers/android /drivers/staging/android /Documentation/admin-guide /Documentation/driver-api /Documentation/dev-tools"
+						local function browse()
+							pick_files(dir, "-e c -e h -e rst -e md -e txt", "ACK " .. br .. "> ")
+						end
+						if vim.fn.isdirectory(marker) == 1 then
+							return browse()
+						end
+						vim.fn.mkdir(vim.fs.dirname(dir), "p")
+						vim.notify("Cloning Android kernel " .. br .. " … (first time)")
+						local script = table.concat({
+							"rm -rf " .. vim.fn.shellescape(dir),
+							"git -c core.autocrlf=false clone -n --depth=1 --filter=tree:0 --branch " .. vim.fn.shellescape(br) .. " " .. repo .. " " .. vim.fn.shellescape(dir),
+							"cd " .. vim.fn.shellescape(dir),
+							"git sparse-checkout set --no-cone " .. sparse,
+							"git checkout",
+						}, " && ")
+						vim.system({ "sh", "-c", script }, { text = true, timeout = 300000 }, function(r2)
+							vim.schedule(function()
+								if vim.fn.isdirectory(marker) == 1 then
+									browse()
+								else
+									vim.notify("Android kernel clone failed:\n" .. (r2.stderr or ""):sub(1, 300), vim.log.levels.ERROR)
+								end
+							end)
+						end)
+					end,
+				},
+			})
+		end)
+	end)
+end
+
 -- ── providers + :Docs command ────────────────────────────────────────────
 local providers = {
 	{ name = "Linux Kernel", key = "kernel", run = pick_kernel_version },
@@ -1766,6 +1824,7 @@ local providers = {
 	{ name = "coreboot", key = "coreboot", run = make_simple("coreboot", simple.coreboot) },
 	{ name = "U-Boot", key = "uboot", run = make_simple("uboot", simple.uboot) },
 	{ name = "Android (bionic internals)", key = "android", run = make_simple("android", simple.android) },
+	{ name = "Android kernel (ACK, versioned)", key = "android-kernel", run = pick_android_kernel },
 	{ name = "DynamoRIO (DBI, Pin alternative)", key = "dynamorio", run = make_simple("dynamorio", simple.dynamorio) },
 	{ name = "Nyx (snapshot fuzzer)", key = "nyx", run = make_simple("nyx", simple.nyx) },
 	{ name = "CodeQL", key = "codeql", run = make_simple("codeql", simple.codeql) },
