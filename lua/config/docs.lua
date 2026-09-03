@@ -334,8 +334,28 @@ follow_link = function()
 	if url == "" then
 		return
 	end
-	local path = vim.fs.normalize(dir .. "/" .. url:gsub("^%./", ""))
-	if vim.fn.filereadable(path) == 1 then
+	local base = vim.fs.normalize(dir .. "/" .. url:gsub("^%./", ""))
+	-- Wiki links often omit the extension ([SDL_Event](SDL_Event) -> SDL_Event.md).
+	local path
+	for _, cand in ipairs({ base, base .. ".md", base .. ".markdown", base .. ".rst", base .. ".txt", base .. ".html" }) do
+		if vim.fn.filereadable(cand) == 1 then
+			path = cand
+			break
+		end
+	end
+	if not path then
+		-- case-insensitive fallback within the target's directory
+		local d, want = vim.fs.dirname(base), vim.fs.basename(base):lower()
+		pcall(function()
+			for name, t in vim.fs.dir(d) do
+				if t == "file" and (name:lower() == want or name:gsub("%.[%w]+$", ""):lower() == want) then
+					path = d .. "/" .. name
+					return
+				end
+			end
+		end)
+	end
+	if path then
 		open_file(path)
 	else
 		vim.notify("Link target not found: " .. url, vim.log.levels.WARN)
