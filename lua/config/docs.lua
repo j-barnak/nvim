@@ -857,6 +857,15 @@ local simple = {
 		exts = "-e md -e rst -e txt",
 		prompt = "Nyx> ",
 	},
+	libafl = {
+		-- The LibAFL Book (docs/src) plus the example fuzzers.
+		url = "https://github.com/AFLplusplus/LibAFL",
+		sparse = "/docs/src /fuzzers",
+		marker = "docs/src",
+		browse = "",
+		exts = "-e md -e rs -e txt",
+		prompt = "LibAFL> ",
+	},
 	-- DynamoRIO: open-source dynamic binary instrumentation (Intel Pin alternative)
 	dynamorio = {
 		url = "https://github.com/DynamoRIO/dynamorio",
@@ -1798,6 +1807,7 @@ local providers = {
 	{ name = "man 4 (devices)", key = "man4", run = function() pick_man(4) end },
 	{ name = "man 5 (file formats)", key = "man5", run = function() pick_man(5) end },
 	{ name = "man 7 (overviews)", key = "man7", run = function() pick_man(7) end },
+	{ name = "man 8 (sysadmin)", key = "man8", run = function() pick_man(8) end },
 	{ name = "cppman (C++ reference)", key = "cppman", run = pick_cppman },
 	{ name = "NetBSD kernel (man 9)", key = "nbsd9", run = function() pick_nbsd(9) end },
 	{ name = "NetBSD drivers (man 4)", key = "nbsd4", run = function() pick_nbsd(4) end },
@@ -1826,6 +1836,7 @@ local providers = {
 	{ name = "Android kernel (ACK, versioned)", key = "android-kernel", run = pick_android_kernel },
 	{ name = "DynamoRIO (DBI, Pin alternative)", key = "dynamorio", run = make_simple("dynamorio", simple.dynamorio) },
 	{ name = "Nyx (snapshot fuzzer)", key = "nyx", run = make_simple("nyx", simple.nyx) },
+	{ name = "LibAFL", key = "libafl", run = make_simple("libafl", simple.libafl) },
 	{ name = "CodeQL", key = "codeql", run = make_simple("codeql", simple.codeql) },
 	{ name = "lld (LLVM linker)", key = "lld", run = make_simple("lld", simple.lld) },
 	{ name = "lldb", key = "lldb", run = make_simple("lldb", simple.lldb) },
