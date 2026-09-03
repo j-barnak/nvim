@@ -798,12 +798,23 @@ local simple = {
 		prompt = "Unicorn> ",
 	},
 	keystone = {
+		-- include/keystone/keystone.h is the actual API; bindings/samples show use.
 		url = "https://github.com/keystone-engine/keystone",
-		sparse = "/docs /samples",
+		sparse = "/docs /samples /include /bindings",
 		marker = "docs",
 		browse = "",
-		exts = "-e md -e rst -e txt -e c -e py",
+		exts = "-e md -e rst -e txt -e c -e py -e h",
 		prompt = "Keystone> ",
+	},
+	android = {
+		-- In-depth Android systems docs: bionic (libc + dynamic linker), the
+		-- C API headers, ELF-TLS/ABI/fortify notes. (Framework/SDK is web-only.)
+		url = "https://github.com/aosp-mirror/platform_bionic",
+		sparse = "/docs /libc/include /linker",
+		marker = "docs",
+		browse = "",
+		exts = "-e md -e h",
+		prompt = "Android (bionic)> ",
 	},
 	pwntools = {
 		url = "https://github.com/Gallopsled/pwntools",
@@ -1512,11 +1523,27 @@ local function pick_pydoc()
 	if not have("python3") then
 		return vim.notify("python3 needed for pydoc", vim.log.levels.WARN)
 	end
-	vim.ui.input({ prompt = "pydoc module (e.g. pexpect, requests.get): " }, function(mod)
-		if mod and mod ~= "" then
-			render_shell("python3 -m pydoc " .. vim.fn.shellescape(mod) .. " 2>&1", "pydoc " .. mod, "text")
-		end
-	end)
+	-- Fuzzy list of every importable top-level module (stdlib + site-packages,
+	-- e.g. pexpect, requests, numpy) so third-party packages are discoverable.
+	local mods = vim.fn.systemlist({
+		"python3",
+		"-c",
+		"import pkgutil,sys; print(chr(10).join(sorted(set([m.name for m in pkgutil.iter_modules()] + list(sys.builtin_module_names)))))",
+	})
+	if #mods == 0 then
+		return vim.notify("pydoc: could not list modules", vim.log.levels.WARN)
+	end
+	fzf().fzf_exec(mods, {
+		prompt = "pydoc> ",
+		fzf_opts = { ["--no-multi"] = true },
+		actions = {
+			["default"] = function(sel)
+				if sel and sel[1] then
+					render_shell("python3 -m pydoc " .. vim.fn.shellescape(sel[1]) .. " 2>&1", "pydoc " .. sel[1], "text")
+				end
+			end,
+		},
+	})
 end
 
 -- ── update: git-pull every cached doc repo to the most recent ────────────
@@ -1738,6 +1765,7 @@ local providers = {
 	{ name = "UEFI (edk2)", key = "uefi", run = make_simple("uefi", simple.uefi) },
 	{ name = "coreboot", key = "coreboot", run = make_simple("coreboot", simple.coreboot) },
 	{ name = "U-Boot", key = "uboot", run = make_simple("uboot", simple.uboot) },
+	{ name = "Android (bionic internals)", key = "android", run = make_simple("android", simple.android) },
 	{ name = "DynamoRIO (DBI, Pin alternative)", key = "dynamorio", run = make_simple("dynamorio", simple.dynamorio) },
 	{ name = "Nyx (snapshot fuzzer)", key = "nyx", run = make_simple("nyx", simple.nyx) },
 	{ name = "CodeQL", key = "codeql", run = make_simple("codeql", simple.codeql) },
