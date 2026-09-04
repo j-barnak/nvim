@@ -1237,6 +1237,12 @@ local SRC_URLS = {
 local GS_OVERRIDE = {
 	aya = "https://github.com/aya-rs/aya",
 }
+-- Books whose companion source is a real upstream repo worth exploring. Every
+-- book's docs cache lives under docs/books/<key>/<slug>, so the shared "books"
+-- path segment can't identify the repo; key on the slug instead.
+local BOOK_SRC = {
+	["xv6-x86"] = "https://github.com/mit-pdos/xv6-public",
+}
 gs_source = function(dir)
 	if not dir then
 		return
@@ -1245,7 +1251,13 @@ gs_source = function(dir)
 	-- First path segment under the docs cache is the provider name (simple
 	-- providers live at <name>/master, others at <name>/… or <name>/<ver>).
 	local name = dir:match("/docs/([^/]+)")
-	if name and GS_OVERRIDE[name] then
+	if name == "books" then
+		-- Books share the "books" segment; resolve the per-book repo by slug.
+		local slug = dir:match("/docs/books/[^/]+/([^/]+)")
+		if slug and BOOK_SRC[slug] then
+			srcname, url = slug, BOOK_SRC[slug]
+		end
+	elseif name and GS_OVERRIDE[name] then
 		srcname, url = name, GS_OVERRIDE[name]
 	elseif name and simple[name] then
 		srcname, url = name, simple[name].url
