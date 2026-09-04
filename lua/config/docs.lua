@@ -2455,21 +2455,36 @@ for i, f in enumerate(spine):
         if md.strip() and "读累了记得休息一会哦" not in md:
             conv.append((i, posixpath.basename(f), md))
 if not conv: sys.exit(1)
+_used = set()  # per-book (fresh process): titles already handed out, so a coarse spine doc that spills into the next chapter's running headers still gets a distinct entry
 def title_for(base, md):
+    def take(t):
+        t = t.strip()[:80]; _used.add(t); return t
     t = labels.get(base)
-    if t: return t
-    # No ncx label: derive from a heading or bold lead, or a clearly title-like
-    # first line (starts capitalized, no code punctuation) - so a degenerate-ncx
-    # book gets real titles where it can, and a clean numeric index otherwise
-    # (better than dumping a code line like "namespace sdb {" as the title).
-    for line in md.lstrip().split("\n")[:12]:
-        s = line.strip()
-        if s.startswith("#"): return s.lstrip("# ").strip()[:80]
+    if t: return take(t)
+    head = [l.strip() for l in md.lstrip().split("\n")[:12]]
+    # A real heading is authoritative.
+    for s in head:
+        if s.startswith("#"): return take(s.lstrip("# ").strip())
+    # Degenerate ncx + no lead heading: mine the recto running header (the
+    # chapter title printed beside odd page numbers, e.g. "Software Breakpoints
+    # **121**"). The most frequent one names the chapter this spine doc is mostly
+    # about, so a single-navPoint epub (Building a Debugger) still gets real
+    # chapter titles instead of a table caption or an exercise-section heading.
+    # Verso headers ("**120** Chapter 6") lead with the page number, so this
+    # title-first pattern never matches them. Skip an already-used title (a doc
+    # spilling into the next chapter) and fall to its next-most-frequent header.
+    hdr = re.findall(r'(?m)^([A-Z][A-Za-z0-9 ,:/-]{2,58}?) \*\*\d+\*\*\s*$', md)
+    if hdr:
+        for h in sorted(set(hdr), key=lambda h: (-hdr.count(h), hdr.index(h))):
+            if hdr.count(h) >= 3 and h.strip() not in _used: return take(h)
+    # Otherwise a bold lead or a clearly title-like first line (capitalized, no
+    # code punctuation) - better than dumping a code line like "namespace sdb {".
+    for s in head:
         b = re.match(r'\*\*(.+?)\*\*', s)
-        if b: return b.group(1).strip()[:80]
+        if b: return take(b.group(1))
         if (re.match(r'[A-Z][A-Za-z0-9].{2,58}$', s) and not re.search(r'[{};=<>|]', s)
                 and not s.rstrip().endswith((',', '-', ':')) and '0x' not in s):
-            return s  # a title-like line, not a sentence fragment / program output
+            return take(s)
     stem = re.sub(r'\.x?html?$','',base,flags=re.I)
     return "" if re.fullmatch(r'(index_split_\d+|cover|title\w*|copyright|toc|nav|part\d*|\d+)', stem, re.I) else stem
 # Some epubs mark code with <p>+<br/>+monospace instead of <pre>, so pandoc
@@ -2479,15 +2494,25 @@ def title_for(base, md):
 # almost no English stopwords, never touches inside an existing fence, and skips
 # headings/tables/quotes/inline-code/images - so it does not fence real prose.
 _STOP = set("the a an and or of to in is are was were be been being that this these those we you it its our your their he she they them his her as at by for from with on off up out into over under then than so if else when while do does did has have had will would can could should may might must not no yes but also each any all some most more less very just like about which who whom whose where why how what onto per via both either neither".split())
-_CODE = re.compile(r'[{}();]|::|#include|#define|->|==|!=|<=|>=|&&|\|\||std::|0x[0-9a-fA-F]+|\breturn\b|\bvoid\b|\bstruct\b|\bconst\b|\bauto\b|\bclass\b|\btemplate\b|\bnamespace\b|\bstatic\b|\bunsigned\b|\bsizeof\b|\btypedef\b|\bnullptr\b')
+_CODE = re.compile(r'[{}();]|::|#\s*(?:include|define|undef|ifn?def|ifdef|elif|else|endif|pragma|if)\b|->|==|!=|<=|>=|&&|\|\||std::|0x[0-9a-fA-F]+|\bsdb>|\(gdb\)|\(lldb\)|\breturn\b|\bvoid\b|\bstruct\b|\bconst\b|\bauto\b|\bclass\b|\btemplate\b|\bnamespace\b|\bstatic\b|\bunsigned\b|\bsizeof\b|\btypedef\b|\bnullptr\b')
+# Strong code punctuation that essentially never appears in English prose (bare
+# () ; excluded - those do show up in prose). Two or more => code even when word
+# operators (if/and/or) inflate the stopword count.
+_HARD = re.compile(r'[{}]|==|!=|->|::|<=|>=|\+=|-=|&&|\|\||std::|#\s*(?:include|define|undef|ifn?def|ifdef|elif|else|endif|pragma|if)\b')
 def _unesc(s): return re.sub(r'\\([\\`*_{}\[\]()>#+.!<>&~=-])', r'\1', s)
 def _is_code(raw):
     t = _unesc(raw.rstrip().strip())
     if not t: return None
-    if re.match(r'#{1,6}\s', t) or t.startswith("|") or t.startswith("> ") or t.startswith("`") or t.startswith("!["): return False
+    if re.fullmatch(r'>?\s*\d+', t): return None                        # bare gutter line-number: absorb into a run, never break it
+    if re.match(r'#{1,6}\s', t) or t.startswith("|") or t.startswith("`") or t.startswith("!["): return False  # heading/table/inline-code/image
     if re.fullmatch(r'-{2,}\s*snip\s*-{2,}|\.\.\.|\[\.\.\.\]', t): return True
-    if raw.endswith("  ") and len(_CODE.findall(t)) >= 1 and sum(1 for w in re.findall(r"[A-Za-z]{2,}", t) if w.lower() in _STOP) <= 2:
-        return True
+    if raw.endswith("  "):                                              # hard-break-terminated line = the <br/>-per-line code shape
+        sig = len(_CODE.findall(t))
+        stop = sum(1 for w in re.findall(r"[A-Za-z]{2,}", t) if w.lower() in _STOP)
+        # Few stopwords => not prose. Or >=2 strong code punctuations, which
+        # fences word-operator code (`if (x and y and z) {`) that trips the
+        # stopword filter, while a wordy sentence with a stray `(E)` stays prose.
+        if sig >= 1 and (stop <= 2 or len(_HARD.findall(t)) >= 2): return True
     return False
 def fence_code(md):
     lines = md.split("\n"); out = []; i = 0; n = len(lines); infence = False
@@ -2499,7 +2524,16 @@ def fence_code(md):
         while j < n and lines[j].lstrip()[:3] not in ("```", "~~~"):
             c = _is_code(lines[j])
             if c is True: codes += 1; buf.append(lines[j]); j += 1
-            elif c is None and codes > 0 and j + 1 < n and _is_code(lines[j + 1]) is True: buf.append(lines[j]); j += 1
+            elif c is None and codes > 0:
+                # Bridge a gap of blank / bare line-number lines (a listing that a
+                # removed running header split, or a wrapped gutter number) - but
+                # only when code actually resumes past the gap, so trailing blanks
+                # and prose never get pulled in.
+                k = j
+                while k < n and lines[k].lstrip()[:3] not in ("```", "~~~") and _is_code(lines[k]) is None: k += 1
+                if k < n and lines[k].lstrip()[:3] not in ("```", "~~~") and _is_code(lines[k]) is True:
+                    buf += lines[j:k]; j = k
+                else: break
             else: break
         if codes >= 2:
             body = [_unesc(x.rstrip()) for x in buf]
@@ -2508,9 +2542,28 @@ def fence_code(md):
         else:
             out.append(lines[i]); i += 1
     return "\n".join(out)
+# Print page furniture: the recto running header ("Chapter Title **page**") and
+# the verso ("**page** Chapter N"), repeated on every printed page and often
+# flowed by the epub into the middle of a paragraph or a code listing. Drop them
+# where they recur (>=4 in a doc = a genuine running header, not an incidental
+# line), so prose reads clean and a listing the header split rejoins into one
+# fenced block. Only removes the boilerplate header lines; never touches a fence.
+_RECTO = re.compile(r"^[A-Za-z][A-Za-z0-9 ,:/'’.&-]{2,58}? \*\*\d+\*\*$")
+_VERSO = re.compile(r"^\*\*\d+\*\* [A-Z][A-Za-z0-9 ,:/'’.&-]{1,58}$")
+def _furn(l):
+    t = _unesc(l.strip()); return bool(_RECTO.match(t) or _VERSO.match(t))
+def strip_furniture(md):
+    lines = md.split("\n")
+    if sum(1 for l in lines if _furn(l)) < 4: return md
+    out = []; infence = False
+    for l in lines:
+        if l.lstrip()[:3] in ("```", "~~~"): infence = not infence; out.append(l); continue
+        if not infence and _furn(l): continue
+        out.append(l)
+    return "\n".join(out)
 def write(idx, ttl, md):
     name = ("%03d %s" % (idx, sanitize(ttl))) if ttl else ("%03d" % idx)
-    open(os.path.join(out, name + ".md"), "w", encoding="utf-8").write(fence_code(md))
+    open(os.path.join(out, name + ".md"), "w", encoding="utf-8").write(fence_code(strip_furniture(md)))
 if len(conv) <= 60 or len(top) < 3:
     for idx,(i,base,md) in enumerate(conv, 1): write(idx, title_for(base,md), md)
     print("strategy=per-spine chapters=%d" % len(conv)); sys.exit(0)
