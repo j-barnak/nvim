@@ -149,6 +149,9 @@ end
 local follow_link -- forward declaration; assigned after open_file is defined
 local gs_source -- forward declaration; assigned after the `simple` table exists
 local last_picker -- re-open the current provider's fuzzy finder (D in a doc)
+-- Bumped on every user-initiated open; an async render (pandoc/curl) checks it
+-- before drawing so a slow conversion cannot clobber a doc opened after it.
+local render_seq = 0
 
 -- ── render lines in a reused right vsplit with the given filetype ─────────
 local function render_lines(lines, ft, dir, title)
@@ -308,6 +311,8 @@ end
 -- (a re-clone or new version reconverts) and run it async on a cache miss.
 local convcache_dir = data_root .. "/.convcache"
 local function open_file(path)
+	render_seq = render_seq + 1
+	local myseq = render_seq -- a later open supersedes this one's async render
 	local ext = (path:match("%.([%w]+)$") or ""):lower()
 	local dir = vim.fs.dirname(path)
 	local base = vim.fs.basename(path)
@@ -357,12 +362,18 @@ local function open_file(path)
 					lines[#lines] = nil
 				end
 				if #lines == 0 then
-					return finish(nil, nil) -- conversion empty: show raw source
+					if myseq == render_seq then
+						finish(nil, nil) -- conversion empty: show raw source
+					end
+					return
 				end
-				pcall(function()
+				pcall(function() -- cache the conversion even if a newer open won
 					vim.fn.mkdir(convcache_dir, "p")
 					vim.fn.writefile(lines, cf)
 				end)
+				if myseq ~= render_seq then
+					return -- superseded by a later open; do not clobber the viewer
+				end
 				finish(lines, "markdown")
 			end)
 		end
@@ -440,10 +451,16 @@ end
 
 -- ── extract one kernel-doc symbol and render it (async) ──────────────────
 local function open_api(dir, name, file)
+	-- kernel-doc is perl on older trees and Python (needing the kdoc package on
+	-- PYTHONPATH) on recent ones; pick the interpreter by shebang so both work.
 	local cmd = string.format(
-		"cd %s && perl scripts/kernel-doc -rst -function %s %s 2>/dev/null "
+		"cd %s && KD=scripts/kernel-doc && "
+			.. "if head -1 \"$KD\" 2>/dev/null | grep -qi perl; then perl \"$KD\" -rst -function %s %s 2>/dev/null; "
+			.. "else PYTHONPATH=tools/lib/python python3 \"$KD\" -rst -function %s %s 2>/dev/null; fi "
 			.. "| pandoc -f rst -t gfm-raw_html --wrap=none 2>/dev/null",
 		vim.fn.shellescape(dir),
+		vim.fn.shellescape(name),
+		vim.fn.shellescape(file),
 		vim.fn.shellescape(name),
 		vim.fn.shellescape(file)
 	)
@@ -535,7 +552,11 @@ local API_BUILD = [[
 set -e
 cd %s
 grep -rhoE '^\.\. kernel-doc:: \S+' Documentation --include='*.rst' | awk '{print $3}' | sort -u > .kd_files.txt
-git sparse-checkout add /scripts
+# /scripts holds the perl kernel-doc on older trees; recent kernels rewrote it
+# in Python (scripts/kernel-doc symlinks to /tools/docs/kernel-doc) which imports
+# the kdoc package from /tools/lib/python. Fetch all three or the recent-kernel
+# API path renders nothing (dangling symlink / missing kdoc module).
+git sparse-checkout add /scripts /tools/docs /tools/lib/python
 sed 's|^|/|' .kd_files.txt | xargs -d '\n' git sparse-checkout add
 git checkout
 python3 - "$PWD" <<'PY'
@@ -1431,6 +1452,8 @@ end
 -- `:Docs update` clears this cache so pages can be refreshed on demand.
 local webcache_dir = data_root .. "/.webcache"
 local function render_shell(cmd, title, ft, cache_key)
+	render_seq = render_seq + 1
+	local myseq = render_seq -- a later open supersedes this fetch's render
 	local cf = cache_key and (webcache_dir .. "/" .. vim.fn.sha256(cache_key) .. ".txt")
 	if cf and vim.fn.filereadable(cf) == 1 then
 		local cached = vim.fn.readfile(cf)
@@ -1453,6 +1476,9 @@ local function render_shell(cmd, title, ft, cache_key)
 					vim.fn.mkdir(webcache_dir, "p")
 					vim.fn.writefile(out, cf)
 				end)
+			end
+			if myseq ~= render_seq then
+				return -- superseded by a later open; do not clobber the viewer
 			end
 			render_lines(out, ft or "man", nil, title)
 		end)
@@ -1648,7 +1674,7 @@ local function pick_haskell()
 end
 
 -- ── OCaml: browse the stdlib module index, render a module's API ──────────
-local OCAML_IDX = [[curl -sSL https://ocaml.org/api/index_modules.html | grep -oE 'href="[A-Z][A-Za-z0-9_]*\.html"' | sed -E 's/.*"([^"]+)\.html".*/\1/' | sort -u]]
+local OCAML_IDX = [[curl -fsSL https://ocaml.org/api/index_modules.html | grep -oE 'href="[A-Z][A-Za-z0-9_]*\.html"' | sed -E 's/.*"([^"]+)\.html".*/\1/' | sort -u]]
 
 local function pick_ocaml()
 	if not (have("curl") and have("pandoc")) then
@@ -1664,7 +1690,7 @@ local function pick_ocaml()
 				["default"] = function(sel)
 					if sel and sel[1] then
 						render_shell(
-							"curl -sSL " .. vim.fn.shellescape("https://ocaml.org/api/" .. sel[1] .. ".html")
+							"curl -fsSL " .. vim.fn.shellescape("https://ocaml.org/api/" .. sel[1] .. ".html")
 								.. " | pandoc -f html -t gfm-raw_html --wrap=none 2>/dev/null | awk 'f||/OCaml library/{f=1}f'",
 							"OCaml." .. sel[1],
 							"markdown",
@@ -1724,12 +1750,16 @@ local function pick_ghidra()
 						end
 						vim.fn.mkdir(vim.fs.dirname(dir), "p")
 						vim.notify("Cloning Ghidra " .. tag .. " docs … (first time)")
+						-- Kill-atomic (tmp+mv), like ensure_repo/ensure_docs, so a
+						-- checkout killed midway never leaves a partial tree whose
+						-- marker dir makes the next run treat it as complete.
+						local tmp = dir .. ".tmp"
 						local script = table.concat({
-							"rm -rf " .. vim.fn.shellescape(dir),
-							"git -c core.autocrlf=false clone -n --depth=1 --filter=blob:none --branch " .. vim.fn.shellescape(tag) .. " " .. repo .. " " .. vim.fn.shellescape(dir),
-							"cd " .. vim.fn.shellescape(dir),
-							"git sparse-checkout set --no-cone /GhidraDocs /Ghidra/Processors/x86/data/languages",
-							"git checkout",
+							"rm -rf " .. vim.fn.shellescape(tmp) .. " " .. vim.fn.shellescape(dir),
+							"git -c core.autocrlf=false clone -n --depth=1 --filter=blob:none --branch " .. vim.fn.shellescape(tag) .. " " .. repo .. " " .. vim.fn.shellescape(tmp),
+							"git -C " .. vim.fn.shellescape(tmp) .. " sparse-checkout set --no-cone /GhidraDocs /Ghidra/Processors/x86/data/languages",
+							"git -C " .. vim.fn.shellescape(tmp) .. " checkout",
+							"mv " .. vim.fn.shellescape(tmp) .. " " .. vim.fn.shellescape(dir),
 						}, " && ")
 						vim.system({ "sh", "-c", script }, { text = true, timeout = 180000 }, function(r2)
 							vim.schedule(function()
@@ -1762,7 +1792,7 @@ local function pick_multiboot()
 		actions = {
 			["default"] = function(sel)
 				if sel and sel[1] and specs[sel[1]] then
-					render_shell("curl -sSL " .. vim.fn.shellescape(specs[sel[1]]) .. " | pandoc -f html -t gfm-raw_html --wrap=none 2>/dev/null", sel[1], "markdown", specs[sel[1]])
+					render_shell("curl -fsSL " .. vim.fn.shellescape(specs[sel[1]]) .. " | pandoc -f html -t gfm-raw_html --wrap=none 2>/dev/null", sel[1], "markdown", specs[sel[1]])
 				end
 			end,
 		},
@@ -2000,12 +2030,14 @@ local function pick_android_kernel()
 						end
 						vim.fn.mkdir(vim.fs.dirname(dir), "p")
 						vim.notify("Cloning Android kernel " .. br .. " … (first time)")
+						-- Kill-atomic (tmp+mv), like ensure_repo/ensure_docs.
+						local tmp = dir .. ".tmp"
 						local script = table.concat({
-							"rm -rf " .. vim.fn.shellescape(dir),
-							"git -c core.autocrlf=false clone -n --depth=1 --filter=blob:none --branch " .. vim.fn.shellescape(br) .. " " .. repo .. " " .. vim.fn.shellescape(dir),
-							"cd " .. vim.fn.shellescape(dir),
-							"git sparse-checkout set --no-cone " .. sparse,
-							"git checkout",
+							"rm -rf " .. vim.fn.shellescape(tmp) .. " " .. vim.fn.shellescape(dir),
+							"git -c core.autocrlf=false clone -n --depth=1 --filter=blob:none --branch " .. vim.fn.shellescape(br) .. " " .. repo .. " " .. vim.fn.shellescape(tmp),
+							"git -C " .. vim.fn.shellescape(tmp) .. " sparse-checkout set --no-cone " .. sparse,
+							"git -C " .. vim.fn.shellescape(tmp) .. " checkout",
+							"mv " .. vim.fn.shellescape(tmp) .. " " .. vim.fn.shellescape(dir),
 						}, " && ")
 						vim.system({ "sh", "-c", script }, { text = true, timeout = 300000 }, function(r2)
 							vim.schedule(function()
@@ -2176,7 +2208,7 @@ local providers = {
 	{ name = "Ghidra API (versioned)", key = "ghidra", run = pick_ghidra },
 	{ name = "Multiboot specs", key = "multiboot", run = pick_multiboot },
 	{ name = "GNU Make manual", key = "make", run = function()
-		render_shell("curl -sSL https://www.gnu.org/software/make/manual/make.html | pandoc -f html -t gfm-raw_html --wrap=none 2>/dev/null", "GNU Make manual", "markdown", "gnu-make-manual")
+		render_shell("curl -fsSL https://www.gnu.org/software/make/manual/make.html | pandoc -f html -t gfm-raw_html --wrap=none 2>/dev/null", "GNU Make manual", "markdown", "gnu-make-manual")
 	end },
 	{ name = "GNU ld (linker)", key = "ld", run = man_provider("man ld", "ld(1)") },
 	{ name = "GNU as (assembler)", key = "as", run = man_provider("man as", "as(1)") },
