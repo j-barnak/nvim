@@ -140,6 +140,7 @@ local function docs_toc()
 end
 
 local follow_link -- forward declaration; assigned after open_file is defined
+local gs_source -- forward declaration; assigned after the `simple` table exists
 
 -- ── render lines in a reused right vsplit with the given filetype ─────────
 local function render_lines(lines, ft, dir, title)
@@ -214,6 +215,9 @@ local function render_lines(lines, ft, dir, title)
 		vim.keymap.set("n", "gd", function()
 			follow_link()
 		end, { buffer = buf, nowait = true, silent = true, desc = "Docs: follow link under cursor" })
+		vim.keymap.set("n", "gs", function()
+			gs_source(dir)
+		end, { buffer = buf, silent = true, desc = "Docs: explore this project's source" })
 		vim.keymap.set("n", "<leader>fe", function()
 			require("oil").toggle_float(dir)
 		end, { buffer = buf, desc = "Oil (this doc's directory)" })
@@ -896,6 +900,15 @@ local simple = {
 		exts = "-e md",
 		prompt = "PE format> ",
 	},
+	armtf = {
+		-- Arm Trusted Firmware-A: EL3/secure world, PSCI, SMCCC, boot flow.
+		url = "https://github.com/ARM-software/arm-trusted-firmware",
+		sparse = "/docs",
+		marker = "docs",
+		browse = "/docs",
+		exts = "-e rst -e md",
+		prompt = "Arm TF-A> ",
+	},
 	bpftrace = {
 		url = "https://github.com/bpftrace/bpftrace",
 		sparse = "/docs /man",
@@ -964,6 +977,46 @@ local function make_simple(name, spec)
 			pick_files(dir .. spec.browse, spec.exts, spec.prompt)
 		end)
 	end
+end
+
+-- Some projects keep their real docs in a GitHub *wiki* (a flat separate repo,
+-- <repo>.wiki.git) where sparse-checkout-by-path doesn't help: shallow-clone it whole.
+local function make_wiki(name, url, prompt)
+	return function()
+		if not (have("git") and have("fd")) then
+			return vim.notify("git and fd are needed for " .. name, vim.log.levels.WARN)
+		end
+		local dir = data_root .. "/" .. name .. "/wiki"
+		local function browse()
+			pick_files(dir, "-e md -e rst -e org -e txt", prompt)
+		end
+		if #vim.fn.glob(dir .. "/*.md", false, true) > 0 then
+			return browse()
+		end
+		vim.fn.mkdir(vim.fs.dirname(dir), "p")
+		vim.notify("Cloning " .. name .. " wiki … (first time)")
+		vim.system({ "git", "clone", "--depth=1", url, dir }, { text = true, timeout = 120000 }, function(res)
+			vim.schedule(function()
+				if #vim.fn.glob(dir .. "/*.md", false, true) > 0 then
+					browse()
+				else
+					vim.notify(name .. " wiki clone failed:\n" .. (res.stderr or ""):sub(1, 200), vim.log.levels.ERROR)
+				end
+			end)
+		end)
+	end
+end
+
+-- gs from a docs buffer: explore that project's full source (config.src).
+-- Opens in a NEW TAB so the docs stay put and `:q` on the source returns here.
+gs_source = function(dir)
+	local name = dir and dir:match("/docs/([^/]+)/master")
+	local spec = name and simple[name]
+	if not spec then
+		return vim.notify("Source explorer is only wired for repo-backed providers", vim.log.levels.INFO)
+	end
+	vim.cmd("tabnew")
+	require("config.src").open(name, spec.url)
 end
 
 -- ── doxygen providers: doxygen (XML) -> moxygen -> per-class/group Markdown ─
@@ -1679,6 +1732,9 @@ local STD_URLS = {
 	["cpp-draft"] = "https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2023/n4950.pdf",
 	["dwarf5"] = "https://dwarfstd.org/doc/DWARF5.pdf",
 	["x86-64-abi"] = "https://gitlab.com/x86-psABIs/x86-64-ABI/-/jobs/artifacts/master/raw/x86-64-ABI/abi.pdf?job=build",
+	["riscv"] = "https://github.com/riscv/riscv-isa-manual/releases/latest/download/riscv-spec.pdf",
+	["arm-a"] = "https://www.cs.princeton.edu/courses/archive/fall19/cos217/reading/ArmArchitectureReferenceManual.pdf",
+	["arm-m"] = "https://community.arm.com/cfs-file/__key/communityserver-discussions-components-files/471/DDI0553B_5F00_y_5F00_armv8m_5F00_arm.pdf",
 }
 
 local function pick_pdf(name, prompt)
@@ -1697,7 +1753,7 @@ local function pick_pdf(name, prompt)
 	end
 	vim.fn.mkdir(out, "p")
 	vim.notify("Fetching + splitting " .. name .. " … (first time)")
-	vim.system({ "sh", "-c", PDF_BUILD, "pdf", pdf, out, STD_URLS[name] }, { text = true, timeout = 300000 }, function(res)
+	vim.system({ "sh", "-c", PDF_BUILD, "pdf", pdf, out, STD_URLS[name] }, { text = true, timeout = 900000 }, function(res)
 		vim.schedule(function()
 			if #vim.fn.glob(out .. "/*.txt", false, true) > 0 then
 				browse()
@@ -1845,6 +1901,21 @@ local function pick_binutils()
 	})
 end
 
+-- ── SQLite C API: the fully-documented sqlite3.h header (rendered as C) ──
+local function pick_sqlite()
+	if not have("git") then
+		return vim.notify("git needed for the SQLite API", vim.log.levels.WARN)
+	end
+	ensure_repo(data_root .. "/sqlite", "https://github.com/sqlite/sqlite", "/src/sqlite.h.in", "src", function(d)
+		local f = d .. "/src/sqlite.h.in"
+		if vim.fn.filereadable(f) == 1 then
+			render_lines(vim.fn.readfile(f), "c", vim.fs.dirname(f), "sqlite3.h (C API)")
+		else
+			vim.notify("sqlite header not found", vim.log.levels.WARN)
+		end
+	end)
+end
+
 -- ── providers + :Docs command ────────────────────────────────────────────
 local providers = {
 	{ name = "Linux Kernel", key = "kernel", run = pick_kernel_version },
@@ -1883,6 +1954,9 @@ local providers = {
 	{ name = "C++ standard (draft)", key = "cppstd", run = function() pick_pdf("cpp-draft", "C++ draft> ") end },
 	{ name = "DWARF 5 spec", key = "dwarf", run = function() pick_pdf("dwarf5", "DWARF 5> ") end },
 	{ name = "x86-64 System V ABI (Intel/AMD64)", key = "abi", run = function() pick_pdf("x86-64-abi", "x86-64 ABI> ") end },
+	{ name = "RISC-V ISA (unpriv + priv, H ext)", key = "riscv", run = function() pick_pdf("riscv", "RISC-V ISA> ") end },
+	{ name = "Arm ARM (A-profile, application)", key = "arm-a", run = function() pick_pdf("arm-a", "Arm A-profile> ") end },
+	{ name = "Arm ARM (M-profile, microcontroller)", key = "arm-m", run = function() pick_pdf("arm-m", "Arm M-profile> ") end },
 	{ name = "man 1 (commands)", key = "man1", run = function() pick_man(1) end },
 	{ name = "man 2 (system calls)", key = "man2", run = function() pick_man(2) end },
 	{ name = "man 3 (C library)", key = "man3", run = function() pick_man(3) end },
@@ -1899,6 +1973,7 @@ local providers = {
 	{ name = "Frida", key = "frida", run = make_simple("frida", simple.frida) },
 	{ name = "Triton", key = "triton", run = make_simple("triton", simple.triton) },
 	{ name = "angr", key = "angr", run = make_simple("angr", simple.angr) },
+	{ name = "BAP (Binary Analysis Platform)", key = "bap", run = make_wiki("bap", "https://github.com/BinaryAnalysisPlatform/bap.wiki.git", "BAP> ") },
 	{ name = "QBDI (Quarkslab)", key = "qbdi", run = make_simple("qbdi", simple.qbdi) },
 	{ name = "Capstone", key = "capstone", run = make_simple("capstone", simple.capstone) },
 	{ name = "Binary Ninja API", key = "binja", run = make_simple("binja", simple.binja) },
@@ -1927,6 +2002,8 @@ local providers = {
 	{ name = "Win32 API", key = "winsdk", run = make_simple("winsdk", simple.winsdk) },
 	{ name = "Windows Driver (WDK)", key = "windriver", run = make_simple("windriver", simple.windriver) },
 	{ name = "PE / COFF format", key = "pe", run = make_simple("pe", simple.pe) },
+	{ name = "Arm Trusted Firmware-A", key = "armtf", run = make_simple("armtf", simple.armtf) },
+	{ name = "SQLite C API", key = "sqlite", run = pick_sqlite },
 	{ name = "Ghidra API (versioned)", key = "ghidra", run = pick_ghidra },
 	{ name = "Multiboot specs", key = "multiboot", run = pick_multiboot },
 	{ name = "GNU Make manual", key = "make", run = function()

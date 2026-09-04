@@ -33,6 +33,14 @@ return {
 		vim.api.nvim_create_autocmd("FileType", {
 			callback = function(args)
 				local buf = args.buf
+				-- Big-file guard: treesitter highlight + injections get slow on very
+				-- large buffers (e.g. the sqlite3.h API header, the GCC manual, big
+				-- source files). Skip it past a size threshold; regex syntax stays.
+				local nlines = vim.api.nvim_buf_line_count(buf)
+				if nlines > 5000 or vim.api.nvim_buf_get_offset(buf, nlines) > 512 * 1024 then
+					vim.b[buf].ts_disabled_bigfile = true
+					return
+				end
 				local lang = vim.treesitter.language.get_lang(vim.bo[buf].filetype)
 				if not lang then
 					return
