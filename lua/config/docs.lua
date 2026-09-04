@@ -2080,6 +2080,7 @@ local function web_index_provider(opts)
 		vim.system({ "sh", "-c", cmd }, { text = true, timeout = 30000 }, function(res)
 			vim.schedule(function()
 				local items = vim.split(res.stdout or "", "\n", { trimempty = true })
+				if opts.title_keep then items = vim.tbl_filter(function(x) return x:match(opts.title_keep) ~= nil end, items) end
 				if #items == 0 then
 					return vim.notify(opts.name .. ": could not fetch the index", vim.log.levels.WARN)
 				end
@@ -2105,8 +2106,9 @@ local pick_rayanfam = web_index_provider({
 	name = "rayanfam",
 	index_url = "https://rayanfam.com/tutorials/",
 	index_argv = { "links", "/topics/", "https://rayanfam.com" },
+	title_keep = "Hypervisor From Scratch",  -- curate to just the HVFS series
 	content_sel = "div.post-content",
-	prompt = "Rayanfam tutorial> ",
+	prompt = "Hypervisor From Scratch> ",
 })
 
 -- ── Ghidra: versioned API/docs (pick a release tag, all versions) ────────
@@ -2701,32 +2703,14 @@ local function pick_android_kernel()
 end
 
 -- ── Rust: pick one of the official mdbooks and browse its Markdown ───────
+-- The Rust *reference* (the rust-lang books moved to Books -> Rust).
 local function pick_rust()
-	if not have("git") then
-		return vim.notify("git needed for Rust docs", vim.log.levels.WARN)
+	if not (have("git") and have("fd")) then
+		return vim.notify("git and fd are needed for the Rust reference", vim.log.levels.WARN)
 	end
-	local books = {
-		["The Rust Programming Language (the book)"] = "https://github.com/rust-lang/book",
-		["The Rust Reference"] = "https://github.com/rust-lang/reference",
-		["The Rustonomicon (unsafe Rust)"] = "https://github.com/rust-lang/nomicon",
-		["Rust by Example"] = "https://github.com/rust-lang/rust-by-example",
-		["Learn Rust With Entirely Too Many Linked Lists"] = "https://github.com/rust-unofficial/too-many-lists",
-	}
-	fzf().fzf_exec(vim.tbl_keys(books), {
-		prompt = "Rust docs> ",
-		fzf_opts = { ["--no-multi"] = true },
-		actions = {
-			["default"] = function(sel)
-				if not (sel and sel[1] and books[sel[1]]) then
-					return
-				end
-				local url = books[sel[1]]
-				ensure_repo(data_root .. "/rust/" .. url:match("([^/]+)$"), url, "/src", "src", function(d)
-					pick_files(d .. "/src", "-e md", sel[1] .. "> ")
-				end)
-			end,
-		},
-	})
+	ensure_repo(data_root .. "/rust/reference", "https://github.com/rust-lang/reference", "/src", "src", function(d)
+		pick_files(d .. "/src", "-e md", "Rust reference> ")
+	end)
 end
 
 -- ── binutils: the analysis tools, rendered from their man pages ──────────
@@ -2782,6 +2766,10 @@ local BOOKS = {
 		{ title = "Command-Line Rust", fmt = "epub", file = "Command-line Rust _ a project-based primer for writing Rust -- Ken Youens-Clark -- 2024 Updated Edition, 2024 -- O'Reilly Media, Incorporated; -- 9781098109400 -- 462825f45d6c0c1f3254f43a9f8062ee -- Anna’s Archive.epub" },
 		{ title = "Programming Rust (2e)", fmt = "epub", file = "Programming Rust_ Fast, Safe Systems Development, -- Jim Blandy & Jason Orendorff & Leonora F _ S_ Tindall -- 2nd Edition, 2021 -- O'Reilly Media -- 42c3a550a65cf7d0fe19185d1c57c56e -- Anna’s Archive.epub" },
 		{ title = "Rust in Action", fmt = "epub", file = "Rust_In_Action.epub" },
+		{ title = "The Rust Programming Language (the book)", fmt = "mdbook", url = "https://github.com/rust-lang/book" },
+		{ title = "The Rustonomicon (unsafe Rust)", fmt = "mdbook", url = "https://github.com/rust-lang/nomicon" },
+		{ title = "Rust by Example", fmt = "mdbook", url = "https://github.com/rust-lang/rust-by-example" },
+		{ title = "Learn Rust With Entirely Too Many Linked Lists", fmt = "mdbook", url = "https://github.com/rust-unofficial/too-many-lists" },
 	} },
 	{ module = "Operating Systems", key = "books-os", items = {
 		{ title = "Operating Systems: Three Easy Pieces", fmt = "epub", file = "OSTEP.epub" },
@@ -2872,6 +2860,15 @@ end
 
 -- Ensure a book is converted+split, then open its chapter picker.
 local function ensure_book(mkey, entry)
+	if entry.fmt == "mdbook" then -- git-cloned mdBook (the rust-lang books): browse its /src markdown
+		if not (have("git") and have("fd")) then
+			return vim.notify("git and fd are needed for this book", vim.log.levels.WARN)
+		end
+		ensure_repo(data_root .. "/rust/" .. entry.url:match("([^/]+)$"), entry.url, "/src", "src", function(d)
+			pick_files(d .. "/src", "-e md", entry.title .. "> ")
+		end)
+		return
+	end
 	local out = books_root .. "/" .. mkey .. "/" .. book_slug(entry.title)
 	local exts = entry.fmt == "epub" and "-e md" or "-e txt"
 	local function browse()
@@ -2938,6 +2935,50 @@ local function make_books_module(mod)
 	end
 end
 
+-- Aya: the book (aya-rs.dev) and the crate reference (docs.rs) under one entry.
+local function pick_aya()
+	fzf().fzf_exec({ "Book (aya-rs.dev)", "Crate reference (docs.rs)" }, {
+		prompt = "Aya> ",
+		fzf_opts = { ["--no-multi"] = true },
+		actions = {
+			["default"] = function(sel)
+				if not (sel and sel[1]) then
+					return
+				end
+				if sel[1]:match("^Book") then
+					make_simple("aya", simple.aya)()
+				else
+					pick_aya_api()
+				end
+			end,
+		},
+	})
+end
+
+-- All books under one entry: pick a subject module, then a book, then a chapter.
+local function pick_books()
+	local mods = {}
+	for _, m in ipairs(BOOKS) do
+		mods[#mods + 1] = m.module
+	end
+	fzf().fzf_exec(mods, {
+		prompt = "Books (subject)> ",
+		fzf_opts = { ["--no-multi"] = true },
+		actions = {
+			["default"] = function(sel)
+				if not (sel and sel[1]) then
+					return
+				end
+				for _, m in ipairs(BOOKS) do
+					if m.module == sel[1] then
+						return make_books_module(m)()
+					end
+				end
+			end,
+		},
+	})
+end
+
 -- ── providers + :Docs command ────────────────────────────────────────────
 local providers = {
 	{ name = "Linux Kernel", key = "kernel", run = pick_kernel_version },
@@ -2947,8 +2988,7 @@ local providers = {
 	{ name = "bpftrace", key = "bpftrace", run = make_simple("bpftrace", simple.bpftrace) },
 	{ name = "eBPF ABI reference (helpers / kfuncs / maps / program types)", key = "ebpf", run = make_simple("ebpf", simple.ebpf) },
 	{ name = "eBPF (Cilium Reference: architecture, XDP, tc, toolchain)", key = "cilium", run = make_simple("cilium", simple.cilium) },
-	{ name = "Aya (Rust eBPF library book)", key = "aya", run = make_simple("aya", simple.aya) },
-	{ name = "Aya API (crate reference, docs.rs)", key = "aya-api", run = pick_aya_api },
+	{ name = "Aya", key = "aya", run = pick_aya },
 	{ name = "drgn", key = "drgn", run = make_simple("drgn", simple.drgn) },
 	{
 		name = "libdrgn",
@@ -2982,21 +3022,21 @@ local providers = {
 	{ name = "RISC-V ISA (unpriv + priv, H ext)", key = "riscv", run = function() pick_pdf("riscv", "RISC-V ISA> ") end },
 	{ name = "Arm ARM (A-profile, application)", key = "arm-a", run = function() pick_pdf("arm-a", "Arm A-profile> ") end },
 	{ name = "Arm ARM (M-profile, microcontroller)", key = "arm-m", run = function() pick_pdf("arm-m", "Arm M-profile> ") end },
-	{ name = "man 1 (commands)", key = "man1", run = function() pick_man(1) end },
-	{ name = "man 2 (system calls)", key = "man2", run = function() pick_man(2) end },
-	{ name = "man 3 (C library)", key = "man3", run = function() pick_man(3) end },
-	{ name = "man 4 (devices)", key = "man4", run = function() pick_man(4) end },
-	{ name = "man 5 (file formats)", key = "man5", run = function() pick_man(5) end },
-	{ name = "man 7 (overviews)", key = "man7", run = function() pick_man(7) end },
-	{ name = "man 8 (sysadmin)", key = "man8", run = function() pick_man(8) end },
-	{ name = "cppman (C++ reference)", key = "cppman", run = pick_cppman },
-	{ name = "Learn C++ (learncpp.com tutorial, 356 lessons)", key = "cpp", run = pick_learncpp },
-	{ name = "Rayanfam tutorials (Hypervisor From Scratch, ...)", key = "rayanfam", run = pick_rayanfam },
-	{ name = "NetBSD kernel (man 9)", key = "nbsd9", run = function() pick_nbsd(9) end },
+	{ name = "Commands (man 1)", key = "man1", run = function() pick_man(1) end },
+	{ name = "System calls (man 2)", key = "man2", run = function() pick_man(2) end },
+	{ name = "Library functions (man 3)", key = "man3", run = function() pick_man(3) end },
+	{ name = "Devices (man 4)", key = "man4", run = function() pick_man(4) end },
+	{ name = "File formats (man 5)", key = "man5", run = function() pick_man(5) end },
+	{ name = "Miscellaneous (man 7)", key = "man7", run = function() pick_man(7) end },
+	{ name = "System administration (man 8)", key = "man8", run = function() pick_man(8) end },
+	{ name = "CppReference", key = "cppman", run = pick_cppman },
+	{ name = "learncpp.com", key = "cpp", run = pick_learncpp },
+	{ name = "Hypervisor From Scratch", key = "rayanfam", run = pick_rayanfam },
+	{ name = "NetBSD kernel internals (man 9)", key = "nbsd9", run = function() pick_nbsd(9) end },
 	{ name = "NetBSD drivers (man 4)", key = "nbsd4", run = function() pick_nbsd(4) end },
 	{ name = "OCaml (stdlib)", key = "ocaml", run = pick_ocaml },
 	{ name = "Haskell (Hoogle)", key = "haskell", run = pick_haskell },
-	{ name = "Rust (book / reference / nomicon)", key = "rust", run = pick_rust },
+	{ name = "Rust reference", key = "rust", run = pick_rust },
 	{ name = "Frida", key = "frida", run = make_simple("frida", simple.frida) },
 	{ name = "Triton", key = "triton", run = make_simple("triton", simple.triton) },
 	{ name = "angr", key = "angr", run = make_simple("angr", simple.angr) },
@@ -3046,10 +3086,8 @@ local providers = {
 	{ name = "Update all cached docs", key = "update", run = update_all },
 }
 
--- One :Docs entry per book module (books-c, books-cpp, books-os, …).
-for _, mod in ipairs(BOOKS) do
-	providers[#providers + 1] = { name = mod.module .. " books", key = mod.key, run = make_books_module(mod) }
-end
+-- All books under one entry: Books -> subject module -> book -> chapter.
+providers[#providers + 1] = { name = "Books", key = "books", run = pick_books }
 
 function M.open()
 	local names = vim.tbl_map(function(p)
