@@ -249,6 +249,9 @@ local function strip_liquid(lines)
 			lines[i] = "```"
 		elseif l:match("^%s*{%%.-%%}%s*$") then
 			lines[i] = ""
+		else
+			-- Drop trailing {#anchor} / {: attrs} (Doxygen/moxygen/kramdown) noise.
+			lines[i] = l:gsub("%s*{[#:][^}]*}%s*$", "")
 		end
 	end
 	return lines
@@ -610,11 +613,12 @@ local simple = {
 		prompt = "QEMU> ",
 	},
 	libbpf = {
+		-- /docs is thin sphinx autodoc; the real API is the header comments in /src.
 		url = "https://github.com/libbpf/libbpf",
-		sparse = "/docs",
+		sparse = "/docs /src",
 		marker = "docs",
-		browse = "/docs",
-		exts = "-e rst -e md -e txt",
+		browse = "",
+		exts = "-e rst -e md -e txt -e h",
 		prompt = "libbpf> ",
 	},
 	drgn = {
@@ -882,6 +886,31 @@ local simple = {
 		browse = "/docs",
 		exts = "-e md -e rst -e txt -e ql -e qll",
 		prompt = "CodeQL> ",
+	},
+	pe = {
+		-- The PE/COFF format spec (and related debug docs) from MS Learn source.
+		url = "https://github.com/MicrosoftDocs/win32",
+		sparse = "/desktop-src/Debug",
+		marker = "desktop-src/Debug",
+		browse = "/desktop-src/Debug",
+		exts = "-e md",
+		prompt = "PE format> ",
+	},
+	bpftrace = {
+		url = "https://github.com/bpftrace/bpftrace",
+		sparse = "/docs /man",
+		marker = "docs",
+		browse = "",
+		exts = "-e md -e rst -e txt",
+		prompt = "bpftrace> ",
+	},
+	ebpf = {
+		url = "https://github.com/isovalent/ebpf-docs",
+		sparse = "/docs",
+		marker = "docs",
+		browse = "/docs",
+		exts = "-e md",
+		prompt = "eBPF> ",
 	},
 	lld = {
 		url = "https://github.com/llvm/llvm-project",
@@ -1648,6 +1677,8 @@ rm -f "$JS" "$OUT/.all.tsv" "$OUT/.ch.tsv"
 local STD_URLS = {
 	["c-draft"] = "https://www.open-std.org/jtc1/sc22/wg14/www/docs/n3220.pdf",
 	["cpp-draft"] = "https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2023/n4950.pdf",
+	["dwarf5"] = "https://dwarfstd.org/doc/DWARF5.pdf",
+	["x86-64-abi"] = "https://gitlab.com/x86-psABIs/x86-64-ABI/-/jobs/artifacts/master/raw/x86-64-ABI/abi.pdf?job=build",
 }
 
 local function pick_pdf(name, prompt)
@@ -1767,12 +1798,61 @@ local function pick_android_kernel()
 	end)
 end
 
+-- ── Rust: pick one of the official mdbooks and browse its Markdown ───────
+local function pick_rust()
+	if not have("git") then
+		return vim.notify("git needed for Rust docs", vim.log.levels.WARN)
+	end
+	local books = {
+		["The Rust Programming Language (the book)"] = "https://github.com/rust-lang/book",
+		["The Rust Reference"] = "https://github.com/rust-lang/reference",
+		["The Rustonomicon (unsafe Rust)"] = "https://github.com/rust-lang/nomicon",
+		["Rust by Example"] = "https://github.com/rust-lang/rust-by-example",
+	}
+	fzf().fzf_exec(vim.tbl_keys(books), {
+		prompt = "Rust docs> ",
+		fzf_opts = { ["--no-multi"] = true },
+		actions = {
+			["default"] = function(sel)
+				if not (sel and sel[1] and books[sel[1]]) then
+					return
+				end
+				local url = books[sel[1]]
+				ensure_repo(data_root .. "/rust/" .. url:match("([^/]+)$"), url, "/src", "src", function(d)
+					pick_files(d .. "/src", "-e md", sel[1] .. "> ")
+				end)
+			end,
+		},
+	})
+end
+
+-- ── binutils: the analysis tools, rendered from their man pages ──────────
+local function pick_binutils()
+	if not have("man") then
+		return vim.notify("man not found", vim.log.levels.WARN)
+	end
+	local tools = { "readelf", "objdump", "nm", "strings", "objcopy", "addr2line", "size", "strip", "ar", "ranlib", "c++filt", "ld", "as" }
+	fzf().fzf_exec(tools, {
+		prompt = "binutils> ",
+		fzf_opts = { ["--no-multi"] = true },
+		actions = {
+			["default"] = function(sel)
+				if sel and sel[1] then
+					render_shell("MANWIDTH=90 man " .. vim.fn.shellescape(sel[1]) .. " 2>/dev/null | col -bx", sel[1] .. "(1)", "man")
+				end
+			end,
+		},
+	})
+end
+
 -- ── providers + :Docs command ────────────────────────────────────────────
 local providers = {
 	{ name = "Linux Kernel", key = "kernel", run = pick_kernel_version },
 	{ name = "BCC", key = "bcc", run = make_simple("bcc", simple.bcc) },
 	{ name = "QEMU", key = "qemu", run = make_simple("qemu", simple.qemu) },
 	{ name = "libbpf", key = "libbpf", run = make_simple("libbpf", simple.libbpf) },
+	{ name = "bpftrace", key = "bpftrace", run = make_simple("bpftrace", simple.bpftrace) },
+	{ name = "eBPF docs", key = "ebpf", run = make_simple("ebpf", simple.ebpf) },
 	{ name = "drgn", key = "drgn", run = make_simple("drgn", simple.drgn) },
 	{
 		name = "libdrgn",
@@ -1801,6 +1881,8 @@ local providers = {
 	{ name = "Intel SDM Vol 4", key = "sdm4", run = function() pick_sdm(4) end },
 	{ name = "C standard (C23 draft)", key = "cstd", run = function() pick_pdf("c-draft", "C draft> ") end },
 	{ name = "C++ standard (draft)", key = "cppstd", run = function() pick_pdf("cpp-draft", "C++ draft> ") end },
+	{ name = "DWARF 5 spec", key = "dwarf", run = function() pick_pdf("dwarf5", "DWARF 5> ") end },
+	{ name = "x86-64 System V ABI (Intel/AMD64)", key = "abi", run = function() pick_pdf("x86-64-abi", "x86-64 ABI> ") end },
 	{ name = "man 1 (commands)", key = "man1", run = function() pick_man(1) end },
 	{ name = "man 2 (system calls)", key = "man2", run = function() pick_man(2) end },
 	{ name = "man 3 (C library)", key = "man3", run = function() pick_man(3) end },
@@ -1813,6 +1895,7 @@ local providers = {
 	{ name = "NetBSD drivers (man 4)", key = "nbsd4", run = function() pick_nbsd(4) end },
 	{ name = "OCaml (stdlib)", key = "ocaml", run = pick_ocaml },
 	{ name = "Haskell (Hoogle)", key = "haskell", run = pick_haskell },
+	{ name = "Rust (book / reference / nomicon)", key = "rust", run = pick_rust },
 	{ name = "Frida", key = "frida", run = make_simple("frida", simple.frida) },
 	{ name = "Triton", key = "triton", run = make_simple("triton", simple.triton) },
 	{ name = "angr", key = "angr", run = make_simple("angr", simple.angr) },
@@ -1843,6 +1926,7 @@ local providers = {
 	{ name = "Mach-O format", key = "macho", run = make_simple("macho", simple.macho) },
 	{ name = "Win32 API", key = "winsdk", run = make_simple("winsdk", simple.winsdk) },
 	{ name = "Windows Driver (WDK)", key = "windriver", run = make_simple("windriver", simple.windriver) },
+	{ name = "PE / COFF format", key = "pe", run = make_simple("pe", simple.pe) },
 	{ name = "Ghidra API (versioned)", key = "ghidra", run = pick_ghidra },
 	{ name = "Multiboot specs", key = "multiboot", run = pick_multiboot },
 	{ name = "GNU Make manual", key = "make", run = function()
@@ -1851,6 +1935,7 @@ local providers = {
 	{ name = "GNU ld (linker)", key = "ld", run = man_provider("man ld", "ld(1)") },
 	{ name = "GNU as (assembler)", key = "as", run = man_provider("man as", "as(1)") },
 	{ name = "GCC internals + manuals", key = "gcc", run = pick_gcc },
+	{ name = "binutils (readelf/objdump/nm/…)", key = "binutils", run = pick_binutils },
 	{ name = "ELF format", key = "elf", run = man_provider("man 5 elf", "elf(5)") },
 	{ name = "Bash (man bash)", key = "bash", run = man_provider("man bash", "bash(1)") },
 	{ name = "pydoc (any Python pkg)", key = "pydoc", run = pick_pydoc },
