@@ -2321,13 +2321,20 @@ emit() {
 # are kept (top-level-only dropped them). Strip a "[Trial version]"/bracket tag
 # some PDF tools stamp on every bookmark. Spec PDFs (C/C++/DWARF/ABI/... which
 # have bare numbered clauses, no Chapter/Part) keep the depth heuristic below.
-if [ "$4" = book ]; then
+SLUG=$(basename "$OUT")
+if [ "$4" = book ] && [ "$SLUG" = operating-systems-three-easy-pieces ]; then
+  # OSTEP's chapters are topic-titled (no Chapter N / number / Part keyword), so
+  # no title pattern can find them; its real chapters are the outline's depth-1
+  # nodes. Use them directly.
+  awk -F'\t' '$1==1{print $2"\t"$3}' "$OUT/.all.tsv" > "$OUT/.ch.tsv"
+elif [ "$4" = book ]; then
   awk -F'\t' '
-    { t=$3; sub(/^[ \t]+/,"",t); sub(/^\[[A-Za-z0-9 ._-]*\][ \t]*/,"",t); sub(/[ \t]+$/,"",t) }
+    { t=$3; sub(/^[ \t]+/,"",t); sub(/^\[[A-Za-z0-9 ._-]*\][ \t]*/,"",t); sub(/[ \t]+$/,"",t); ty=0 }
     t ~ /^Part [IVXLC0-9]/ || t ~ /^Section [0-9]+[ :.]/ || t ~ /^Chapter [0-9]+.*[A-Za-z]/ \
-      || t ~ /^[0-9]+\. [^(]/ || t ~ /^[0-9]+ [A-Z]/ \
-      || t ~ /^Appendix [A-Z0-9]/ || t ~ /^(Bibliography|Index|References|Glossary)[ ]*$/ \
-      || t ~ /^(Preface|Foreword|Introduction|Epilogue|Afterword)([ .:]|$)/ { print $2"\t"t }
+      || t ~ /^[0-9]+\. [^(]/ || t ~ /^[0-9]+ [A-Z]/ || t ~ /^Appendix [A-Z0-9]/ { ty=1; seen=1 }
+    t ~ /^(Preface|Foreword|Epilogue|Afterword)([ .:]|$)/ || t ~ /^Introduction[ ]*$/ { ty=1 }
+    seen && t ~ /^(Bibliography|Index|References|Glossary)[ ]*$/ { ty=1 }
+    ty { print $2"\t"t }
   ' "$OUT/.all.tsv" | sort -t"$(printf '\t')" -k1,1n -s \
     | awk -F'\t' '$1!=lastp{print} {lastp=$1}' > "$OUT/.ch.tsv"
   [ "$(wc -l < "$OUT/.ch.tsv")" -ge 5 ] || : > "$OUT/.ch.tsv"
@@ -2843,7 +2850,7 @@ local BOOKS = {
 		{ title = "Beautiful C++ (30 Core Guidelines)", fmt = "pdf", file = "Beautiful C++ _ 30 Core Guidelines for Writing Clean, Safe, -- J_ Guy Davidson & Kate Gregory -- 1, 2021 -- Pearson Education, Limited; Addison-Wesley -- 9780137647842 -- 3d6251a17d7996d9091349de.pdf" },
 		{ title = "C++ Move Semantics (The Complete Guide)", fmt = "pdf", file = "C++ Move Semantics - The Complete Guide -- Nicolai M_ Josuttis -- 2022 -- c6f2c4fe3e0701d95a17354ad517147a -- Anna’s Archive.pdf" },
 		{ title = "C++ Initialization Story", fmt = "epub", file = "C__ Initialization Story - Bartłomiej Filipek.epub" },
-		{ title = "C++ Templates: The Complete Guide (2e)", fmt = "epub", file = "C__ Templates_ The Complete Guide, 2nd Edition - David Vandevoorde & Nicolai M. Josuttis & Douglas Gregor.epub" },
+		{ title = "C++ Templates: The Complete Guide (2e)", fmt = "pdf", file = "CppTemplates-CompleteGuide-2e.pdf" },
 		{ title = "Effective Modern C++", fmt = "epub", file = "Effective-Modern-C-.epub" },
 	} },
 	{ module = "Rust", key = "books-rust", items = {
@@ -2856,7 +2863,7 @@ local BOOKS = {
 		{ title = "Learn Rust With Entirely Too Many Linked Lists", fmt = "mdbook", url = "https://github.com/rust-unofficial/too-many-lists" },
 	} },
 	{ module = "Operating Systems", key = "books-os", items = {
-		{ title = "Operating Systems: Three Easy Pieces", fmt = "epub", file = "OSTEP.epub" },
+		{ title = "Operating Systems: Three Easy Pieces", fmt = "pdf", file = "OSTEP.pdf" },
 		{ title = "xv6 (x86)", fmt = "epub", file = "x86-xv6.epub" },
 		{ title = "Advanced Programming in the UNIX Environment", fmt = "pdf", file = "Advanced Programming in the UNIX Environment.pdf" },
 		{ title = "System Programming in Linux", fmt = "epub", file = "System-Programming-in-Linux_-A-Hands-On-Introduction-Stewart-N_-Weiss-2025-No-Starch-Press_-Incorpor.epub" },
@@ -2890,7 +2897,7 @@ local BOOKS = {
 		{ title = "Beyond BIOS", fmt = "epub", file = "Beyond BIOS - Vincent Zimmer,Michael Rothman,Suresh Marisetty.epub" },
 	} },
 	{ module = "Windows", key = "books-windows", items = {
-		{ title = "Windows Kernel Programming (2e)", fmt = "epub", file = "Windows-Kernel-Programming_-Second-Edition-Pavel-Yosifovich-2_-2021-leanpub_com-d11f122d8f775237cc43.epub" },
+		{ title = "Windows Kernel Programming (2e)", fmt = "pdf", file = "WindowsKernelProgramming.pdf" },
 	} },
 	{ module = "Haskell", key = "books-haskell", items = {
 		{ title = "Programming in Haskell (2e)", fmt = "epub", file = "Programming in Haskell (9781316876152) -- Hutton, Graham -- Second Edition, 5th printing, 2018;2015 -- Cambridge University Press (Virtual Publishing) -- 9781139637534 -- f80c6f606a590ab38c7340907cab3be5 -- Anna’s.epub" },
@@ -2902,7 +2909,7 @@ local BOOKS = {
 		{ title = "Python Crash Course", fmt = "pdf", file = "Python-Crash-Course.pdf" },
 	} },
 	{ module = "Java", key = "books-java", items = {
-		{ title = "Java Concurrency in Practice", fmt = "epub", file = "Java Concurrency in Practice -- By & chenjin5_com -- 2011 -- cj5_1227 -- 32cdf3fa77c565bc654a662ee6d6e5bd -- Anna’s Archive.epub" },
+		{ title = "Java Concurrency in Practice", fmt = "pdf", file = "JavaConcurrencyInPractice.pdf" },
 	} },
 	{ module = "Graphics", key = "books-graphics", items = {
 		{ title = "OpenGL SuperBible", fmt = "pdf", file = "OpenGL_Superbible.pdf" },
@@ -2911,7 +2918,7 @@ local BOOKS = {
 		{ title = "Building Git", fmt = "pdf", file = "Building_Git.pdf" },
 	} },
 	{ module = "Debugging", key = "books-debugging", items = {
-		{ title = "Building a Debugger", fmt = "epub", file = "BuildingaDebugger.epub" },
+		{ title = "Building a Debugger", fmt = "pdf", file = "Building-a-debugger.pdf" },
 	} },
 }
 
