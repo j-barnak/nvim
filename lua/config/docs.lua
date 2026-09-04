@@ -2293,87 +2293,122 @@ else
   while [ "$p" -le "$TOTAL" ]; do e=$((p+39)); [ "$e" -gt "$TOTAL" ] && e="$TOTAL"; emit "$p" "$e" "pages $p-$e"; p=$((e+1)); done
 fi
 rm -f "$JS" "$OUT/.all.tsv" "$OUT/.ch.tsv"
+# Drop blank chapter files (cover / back-cover / title pages that are image-only
+# in the PDF and text-extract to nothing) so they are not dead picker entries.
+for t in "$OUT"/*.txt; do
+  [ -e "$t" ] && [ "$(tr -d '[:space:]\f' < "$t" | wc -c)" -lt 3 ] && rm -f "$t"
+done
 touch "$OUT/.complete"
 ]]
 
--- ── epub books: pandoc the whole book to markdown, then split by chapter ──
+-- ── epub books: split by the epub's own spine/ncx into per-chapter markdown ──
 -- Args (positional, so filenames with spaces/apostrophes/unicode are safe):
---   $1 = source epub, $2 = out dir, $3 = title. Figures are extracted to an
--- absolute media dir so their links come out absolute and abs_images() passes
--- them straight to snacks.image. Kill-atomic via the .complete sentinel.
+--   $1 = source epub, $2 = out dir, $3 = title. Each spine document is rendered
+-- with pandoc (titled from the ncx TOC); when the spine is chapter-sized it is
+-- one chapter per doc, otherwise docs are grouped under the ncx top-level
+-- chapters. Figures are extracted to an absolute media dir so their links come
+-- out absolute and abs_images() passes them to snacks.image. Kill-atomic via
+-- the .complete sentinel.
 local EPUB_BUILD = [==[
 set -e
 SRC="$1"; OUT="$2"; TITLE="$3"
 mkdir -p "$OUT"
-rm -f "$OUT"/*.md "$OUT"/.complete; rm -rf "$OUT/media"
-MD="$OUT/.book.md"
-pandoc "$SRC" -t gfm-raw_html --wrap=none --extract-media="$OUT/media" -o "$MD"
-python3 - "$MD" "$OUT" "$TITLE" <<'PY'
-import sys, os, re
-md, out, title = sys.argv[1], sys.argv[2], sys.argv[3]
-lines = open(md, encoding="utf-8", errors="replace").read().split("\n")
-hdr = re.compile(r'^(#{1,6}) ')
-
-# Count headings per level, ignoring fenced code (a "# ..." inside ```c is not
-# a chapter). Split at the shallowest level whose count is in [5,200] (mirrors
-# the SDM outline-depth heuristic); books use #, ## or ### for chapters.
-fence = False
-cnt = {}
-for L in lines:
-    if L[:3] in ("```", "~~~"):
-        fence = not fence
-        continue
-    if fence:
-        continue
-    m = hdr.match(L)
-    if m:
-        d = len(m.group(1))
-        cnt[d] = cnt.get(d, 0) + 1
-# Pick the level that best matches a book's chapter structure: among levels
-# with 5..250 headings, the one whose count is closest to ~35 (a typical
-# chapter count), preferring the shallower on ties. Shallow levels are often
-# inflated (every section marked #), so "closest to 35" beats "shallowest".
-cand = [(l, cnt.get(l, 0)) for l in range(1, 7) if 5 <= cnt.get(l, 0) <= 250]
-level = min(cand, key=lambda lc: (abs(lc[1] - 35), lc[0]))[0] if cand else None
-
+rm -f "$OUT"/*.md "$OUT"/.complete; rm -rf "$OUT/media" "$OUT/.x"; mkdir -p "$OUT/.x"
+( cd "$OUT/.x" && unzip -o -q "$SRC" )
+# Primary: split by the epub's own spine/ncx (per-spine when the spine is
+# chapter-sized, else group spine docs under the ncx top-level chapters).
+# Fallback (malformed/unparseable epub): the whole book as one chapter.
+if python3 - "$OUT/.x" "$OUT" "$TITLE" <<'PY'
+import sys, os, posixpath, re, subprocess
+import xml.etree.ElementTree as ET
+root, out, title = sys.argv[1], sys.argv[2], sys.argv[3]
 def sanitize(t):
-    t = re.sub(r'[\\/:*?"<>|]', '-', t).strip()
-    return (t[:80] or "untitled")
-
-def write(idx, ttl, buf):
-    open(os.path.join(out, "%03d %s.md" % (idx, sanitize(ttl))), "w", encoding="utf-8").write("\n".join(buf))
-
-if level is None:  # no clean split point: keep the whole book as one chapter
-    write(1, title, lines)
-    print("chapters: 1")
-    sys.exit(0)
-
-fence = False
-idx = 0
-cur = "Front Matter"
-buf = []
-wrote = 0
-for L in lines:
-    if L[:3] in ("```", "~~~"):
-        fence = not fence
-    m = None if fence else hdr.match(L)
-    if m and len(m.group(1)) == level:
-        if any(x.strip() for x in buf):
-            write(idx, cur, buf)
-            wrote += 1
-        idx += 1
-        cur = L[m.end():].strip() or ("Chapter %d" % idx)
-        buf = [L]
-    else:
-        buf.append(L)
-if any(x.strip() for x in buf):
-    write(idx, cur, buf)
-    wrote += 1
-print("chapters:", wrote)
-sys.exit(0 if wrote else 1)
+    t = re.sub(r'[\\/:*?"<>|]', '-', (t or "").strip()); return (t[:80] or "untitled")
+def clean(md): return re.sub(r'\[([^\]]+)\]\(#[^)]*\)', r'\1', md).strip("\n")
+def pandoc(p):
+    r = subprocess.run(["pandoc", p, "-f","html","-t","gfm-raw_html","--wrap=none",
+        "--resource-path", os.path.dirname(p), "--extract-media", os.path.join(out,"media")],
+        capture_output=True, text=True)
+    return clean(r.stdout)
+try:
+    cont = open(os.path.join(root,"META-INF","container.xml"),encoding="utf-8",errors="replace").read()
+    opf_rel = re.search(r'full-path="([^"]+)"', cont).group(1); opf_dir = posixpath.dirname(opf_rel)
+    uo = lambda p: posixpath.normpath(posixpath.join(opf_dir, p)) if opf_dir else p
+    opf = ET.parse(os.path.join(root, opf_rel)).getroot()
+    man, ncx_rel = {}, None
+    for it in opf.iter():
+        if it.tag.endswith("}item"):
+            man[it.get("id")] = it.get("href")
+            if it.get("media-type") == "application/x-dtbncx+xml": ncx_rel = it.get("href")
+    spine = [uo(man[ir.get("idref")]) for ir in opf.iter() if ir.tag.endswith("}itemref") and man.get(ir.get("idref"))]
+    labels, top = {}, []
+    if ncx_rel:
+        ncx = ET.parse(os.path.join(root, uo(ncx_rel))).getroot()
+        nsn = {"n":"http://www.daisy.org/z3986/2005/ncx/"}
+        for np in ncx.iter():
+            if np.tag.endswith("}navPoint"):
+                lab = np.find(".//n:navLabel/n:text", nsn); con = np.find("n:content", nsn)
+                if lab is not None and con is not None:
+                    labels.setdefault(posixpath.basename(con.get("src").split("#")[0]), " ".join((lab.text or "").split()))
+        nm = ncx.find("n:navMap", nsn)
+        for np in (nm if nm is not None else []):
+            if np.tag.endswith("}navPoint"):
+                lab = np.find("n:navLabel/n:text", nsn); con = np.find("n:content", nsn)
+                if lab is not None and con is not None:
+                    top.append((" ".join((lab.text or "").split()), posixpath.basename(con.get("src").split("#")[0])))
+except Exception as e:
+    sys.stderr.write("parse failed: %s\n" % e); sys.exit(2)
+# convert each spine doc once
+conv = []  # (spine_index, basename, md)
+for i, f in enumerate(spine):
+    p = os.path.join(root, f)
+    if os.path.isfile(p):
+        md = pandoc(p)
+        if md.strip(): conv.append((i, posixpath.basename(f), md))
+if not conv: sys.exit(1)
+def title_for(base, md):
+    t = labels.get(base)
+    if t: return t
+    first = md.lstrip().split("\n",1)[0]
+    if first.startswith("#"): return first.lstrip("# ").strip()
+    stem = re.sub(r'\.x?html?$','',base,flags=re.I)
+    return "" if re.fullmatch(r'(index_split_\d+|cover|title\w*|copyright|toc|nav|part\d*|\d+)', stem, re.I) else stem
+def write(idx, ttl, md):
+    name = ("%03d %s" % (idx, sanitize(ttl))) if ttl else ("%03d" % idx)
+    open(os.path.join(out, name + ".md"), "w", encoding="utf-8").write(md)
+if len(conv) <= 60 or len(top) < 3:
+    for idx,(i,base,md) in enumerate(conv, 1): write(idx, title_for(base,md), md)
+    print("strategy=per-spine chapters=%d" % len(conv)); sys.exit(0)
+# group by top-level ncx boundaries
+spine_base = {}
+for i, f in enumerate(spine):
+    spine_base.setdefault(posixpath.basename(f), i)
+bnds = []
+for label, sf in top:
+    if sf in spine_base: bnds.append((spine_base[sf], label))
+bnds = sorted(set(bnds))
+def chapter_of(si):
+    lab, best = "Front Matter", -1
+    for bsi, blabel in bnds:
+        if bsi <= si and bsi > best: best, lab = bsi, blabel
+    return best, lab
+groups = []  # ordered [(key,label,[md])]
+order = {}
+for si, base, md in conv:
+    key, lab = chapter_of(si)
+    if key not in order:
+        order[key] = len(groups); groups.append([key, lab, []])
+    groups[order[key]][2].append(md)
+for idx,(key,lab,mds) in enumerate(groups, 1):
+    write(idx, lab if key>=0 else "Front Matter", "\n\n".join(mds))
+print("strategy=grouped chapters=%d (from %d spine docs)" % (len(groups), len(conv))); sys.exit(0)
 PY
-rm -f "$MD"
-touch "$OUT/.complete"
+then :
+else
+  pandoc "$SRC" -t gfm-raw_html --wrap=none --extract-media="$OUT/media" -o "$OUT/001 Full Text.md"
+fi
+rm -rf "$OUT/.x"
+if [ -n "$(find "$OUT" -maxdepth 1 -name '*.md' -print -quit)" ]; then touch "$OUT/.complete"; fi
 ]==]
 
 -- pdf books reuse PDF_BUILD verbatim (it skips the download when $1 exists);
