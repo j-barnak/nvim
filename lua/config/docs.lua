@@ -2430,10 +2430,17 @@ def flatten_tables(html):
             div.append(nt)
         table.replace_with(div)
     return str(s)
+# Real code-fence languages; anything else on a fence line is a CSS/DocBook class
+# pandoc leaked from the source's <pre class="..."> (programlisting, insert,
+# insert-before, table, less_space, pagebreak-before, ...) - strip it to a plain
+# fence so the block still renders as code without a bogus "language".
+_LANGS = set("c cpp c++ cc cxx h hpp cs csharp objc rust rs python py py3 js javascript jsx mjs ts typescript tsx json json5 jsonc sh bash zsh shell console shell-session sh-session shellsession terminal doscon bat batch powershell ps1 java kotlin kt go golang lua ruby rb perl pl php swift scala r matlab octave html xhtml xml svg css scss sass less styl yaml yml toml ini cfg conf sql haskell hs ocaml ml sml fsharp fs asm nasm gas x86asm armasm mips llvm diff patch udiff make makefile cmake meson ninja dockerfile docker text plaintext plain txt none nohighlight ada d dart elixir ex erlang clojure clj lisp elisp scheme racket vim viml vimscript proto protobuf graphql gql markdown md rst tex latex bibtex verilog systemverilog vhdl gdb ld linker-script nginx apache toml groovy gradle tcl awk sed regex ebnf bnf abnf pseudocode".split())
 def clean(md):
     md = re.sub(r'\[!\[[^\]]*\]\([^)]*\)\]\((?!\w+://)[^)]*\.x?html[^)]*\)', '', md)  # dead linked-image nav thumbnail
     md = re.sub(r'\[([^\]]*)\]\(#[^)]*\)', r'\1', md)                        # dead pure-anchor link
     md = re.sub(r'\[([^\]]*)\]\((?!\w+://)[^)]*\.x?html[^)]*\)', r'\1', md)  # dead intra-epub .html link (kept text)
+    md = re.sub(r'(?m)^([ \t]*`{3,})[ \t]*([A-Za-z][\w+.#-]*)[ \t]*$',
+                lambda m: m.group(1) if m.group(2).lower() not in _LANGS else m.group(0), md)
     return md.strip("\n")
 def pandoc(p):
     html = flatten_tables(open(p, encoding="utf-8", errors="replace").read())
