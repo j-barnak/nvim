@@ -2781,7 +2781,8 @@ local function pick_gcc()
 		["GCC user manual (gcc)"] = "gcc.texi",
 		["CPP (preprocessor)"] = "cpp.texi",
 	}
-	ensure_repo(data_root .. "/gcc", "https://github.com/gcc-mirror/gcc", "/gcc/doc", "gcc/doc", function(d)
+	-- /libiberty/at-file.texi: the GCC user manual (gcc.texi) @includes it via srcdir.
+	ensure_repo(data_root .. "/gcc", "https://github.com/gcc-mirror/gcc", "/gcc/doc /libiberty/at-file.texi", "gcc/doc", function(d)
 		fzf().fzf_exec(vim.tbl_keys(docs), {
 			prompt = "GCC docs> ",
 			fzf_opts = { ["--no-multi"] = true },
@@ -2792,7 +2793,9 @@ local function pick_gcc()
 					end
 					local cmd = table.concat({
 						"cd " .. vim.fn.shellescape(d .. "/gcc/doc"),
-						"[ -f gcc-vers.texi ] || printf '@set version-GCC 15.0.0\\n@set BUGURL https://gcc.gnu.org/bugs/\\n@clear DEVELOPMENT\\n' > gcc-vers.texi",
+						-- @set srcdir ..: gcc.texi's invoke.texi does `@include @value{srcdir}/../libiberty/at-file.texi`;
+						-- srcdir=.. (the repo's gcc/ dir, from gcc/doc) makes that resolve, else makeinfo aborts empty.
+						"printf '@set version-GCC 15.0.0\\n@set BUGURL https://gcc.gnu.org/bugs/\\n@clear DEVELOPMENT\\n@set srcdir ..\\n' > gcc-vers.texi",
 						"makeinfo --no-split --plaintext -I include " .. vim.fn.shellescape(docs[sel[1]]),
 					}, " && ")
 					render_shell(cmd, sel[1], "text")
