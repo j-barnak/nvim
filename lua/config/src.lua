@@ -83,26 +83,17 @@ end
 local function open_picker(win, dir, tagfile, restore_fn)
 	if vim.api.nvim_win_is_valid(win) then
 		vim.api.nvim_set_current_win(win) -- selections open in the docs split
+		-- Window-local cd: Neovim chdir's the process to it while this window is
+		-- current, so the user's own cwd-based maps (<leader>ff files, <leader>fg
+		-- grep) target the source. <leader>ft reads &tags, which scope_tags points
+		-- at this repo's .srctags. So all three existing maps just work here.
+		pcall(vim.cmd, "lcd " .. vim.fn.fnameescape(dir))
 	end
 	scope_tags(dir, tagfile)
 	if restore_fn then
 		arm_restore(win, dir, restore_fn)
 	end
-	local base = vim.fs.basename(dir)
-	-- The same three verbs are reachable from any of the pickers.
-	local actions = {
-		["ctrl-t"] = function() fzf().tags({ cwd = dir, ctags_file = tagfile }) end,
-		["ctrl-f"] = function() fzf().files({ cwd = dir }) end,
-		["ctrl-g"] = function() fzf().live_grep({ cwd = dir }) end,
-	}
-	if vim.fn.filereadable(tagfile) == 1 then
-		-- Land in the symbol (tags) picker; ctrl-f files, ctrl-g grep.
-		fzf().tags({ cwd = dir, ctags_file = tagfile, prompt = base .. " tags> ", actions = actions })
-	else
-		-- First time: index still building, so start on files (instant).
-		vim.notify("Indexing " .. base .. " symbols … (Ctrl-t for tags shortly)")
-		fzf().files({ cwd = dir, prompt = base .. " src> ", actions = actions })
-	end
+	fzf().files({ cwd = dir, prompt = vim.fs.basename(dir) .. " src> " })
 end
 
 -- Write to a temp file then rename in, so a <C-]> mid-build never reads a
