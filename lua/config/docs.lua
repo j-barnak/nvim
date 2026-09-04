@@ -2263,7 +2263,7 @@ emit() {
   f=$(printf '%s' "$3" | tr '/' '-' | cut -c1-80)
   pdftotext -layout -f "$1" -l "$2" "$PDF" - 2>/dev/null \
     | sed 's/\f//g' \
-    | awk '{t=$0; gsub(/^[ \t]+|[ \t]+$/,"",t)} t ~ /^ISO\/IEC [0-9]/{next} t ~ /^© ISO\/IEC/{next} t ~ /^[0-9]+$/{next} {print}' \
+    | awk '{t=$0; gsub(/^[ \t]+|[ \t]+$/,"",t)} t ~ /^ISO\/IEC [0-9]/{next} t ~ /^© ISO\/IEC/{next} t ~ /^[0-9]+$/{next} t ~ /ABC Amber|Team LiB|processtext\.com/{next} {print}' \
     | cat -s > "$OUT/$n $f.txt"
 }
 if [ -n "$D" ]; then
@@ -2309,7 +2309,11 @@ import xml.etree.ElementTree as ET
 root, out, title = sys.argv[1], sys.argv[2], sys.argv[3]
 def sanitize(t):
     t = re.sub(r'[\\/:*?"<>|]', '-', (t or "").strip()); return (t[:80] or "untitled")
-def clean(md): return re.sub(r'\[([^\]]+)\]\(#[^)]*\)', r'\1', md).strip("\n")
+def clean(md):
+    md = re.sub(r'\[!\[[^\]]*\]\([^)]*\)\]\((?!\w+://)[^)]*\.x?html[^)]*\)', '', md)  # dead linked-image nav thumbnail
+    md = re.sub(r'\[([^\]]*)\]\(#[^)]*\)', r'\1', md)                        # dead pure-anchor link
+    md = re.sub(r'\[([^\]]*)\]\((?!\w+://)[^)]*\.x?html[^)]*\)', r'\1', md)  # dead intra-epub .html link (kept text)
+    return md.strip("\n")
 def pandoc(p):
     r = subprocess.run(["pandoc", p, "-f","html","-t","gfm-raw_html","--wrap=none",
         "--resource-path", os.path.dirname(p), "--extract-media", os.path.join(out,"media")],
@@ -2349,7 +2353,9 @@ for i, f in enumerate(spine):
     p = os.path.join(root, f)
     if os.path.isfile(p):
         md = pandoc(p)
-        if md.strip(): conv.append((i, posixpath.basename(f), md))
+        # skip empty docs (cover images) and injected watermark/promo interstitials
+        if md.strip() and "读累了记得休息一会哦" not in md:
+            conv.append((i, posixpath.basename(f), md))
 if not conv: sys.exit(1)
 def title_for(base, md):
     t = labels.get(base)
@@ -2363,8 +2369,9 @@ def title_for(base, md):
         if s.startswith("#"): return s.lstrip("# ").strip()[:80]
         b = re.match(r'\*\*(.+?)\*\*', s)
         if b: return b.group(1).strip()[:80]
-        if re.match(r'[A-Z][A-Za-z0-9].{2,58}$', s) and not re.search(r'[{};=<>|]', s):
-            return s
+        if (re.match(r'[A-Z][A-Za-z0-9].{2,58}$', s) and not re.search(r'[{};=<>|]', s)
+                and not s.rstrip().endswith((',', '-', ':')) and '0x' not in s):
+            return s  # a title-like line, not a sentence fragment / program output
     stem = re.sub(r'\.x?html?$','',base,flags=re.I)
     return "" if re.fullmatch(r'(index_split_\d+|cover|title\w*|copyright|toc|nav|part\d*|\d+)', stem, re.I) else stem
 def write(idx, ttl, md):
