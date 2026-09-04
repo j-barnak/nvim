@@ -1938,6 +1938,122 @@ local function pick_aya_api()
 	end)
 end
 
+-- ── site-scraped tutorials: learncpp.com, rayanfam.com ───────────────────
+-- No git repo, so fetch the index page, list its links, and render a picked
+-- page's main article. A small bs4 helper extracts just the content container
+-- (dropping nav, scripts, and the reader-comment section) before pandoc, and
+-- results are cached like the other web-fetch providers.
+local WEBEXTRACT_PY = [==[
+import sys
+from bs4 import BeautifulSoup
+mode = sys.argv[1]
+arg = sys.argv[2] if len(sys.argv) > 2 else ""
+base = sys.argv[3] if len(sys.argv) > 3 else ""
+s = BeautifulSoup(sys.stdin.read(), "html.parser")
+if mode == "links":
+    seen = set()
+    for a in s.find_all("a", href=True):
+        h = a["href"]
+        if arg not in h:
+            continue
+        h = h.split("#")[0].split("?")[0].rstrip("/")
+        if h.startswith("/"):
+            h = base.rstrip("/") + h
+        if h in seen:
+            continue
+        t = " ".join(a.get_text(" ", strip=True).split())
+        if not t or len(t) > 130:
+            continue
+        seen.add(h)
+        sys.stdout.write(t + "\t" + h + "\n")
+elif mode == "content":
+    el = s.select_one(arg) or s.find("article")
+    if not el:
+        sys.exit(1)
+    for t in el.select("script, style, ins, iframe, nav, #comments, .comments, .code-block-buttons, .prevnext, .share-buttons, .page__share, .pagination"):
+        t.decompose()
+    sys.stdout.write(str(el))
+]==]
+
+-- opts: name, index_url, link_filter, base, content_sel, prompt
+local function web_index_provider(opts)
+	return function()
+		if not (have("curl") and have("pandoc") and have("python3")) then
+			return vim.notify("curl, pandoc and python3 are needed for " .. opts.name, vim.log.levels.WARN)
+		end
+		local py = tools_dir .. "/webextract.py"
+		if vim.fn.filereadable(py) == 0 then
+			vim.fn.mkdir(tools_dir, "p")
+			pcall(vim.fn.writefile, vim.split(WEBEXTRACT_PY, "\n"), py)
+		end
+		local dir = data_root .. "/" .. opts.name
+		local idxfile = dir .. "/index.tsv"
+		local function browse()
+			last_picker = browse -- D reopens the index
+			fzf().fzf_exec(vim.fn.readfile(idxfile), {
+				prompt = opts.prompt,
+				fzf_opts = { ["--with-nth"] = "1", ["--delimiter"] = "\\t", ["--no-multi"] = true },
+				actions = {
+					["default"] = function(sel)
+						if not (sel and sel[1]) then
+							return
+						end
+						local title, url = sel[1]:match("^([^\t]+)\t(.+)$")
+						if not url then
+							return
+						end
+						render_shell(
+							"curl -fsSL " .. vim.fn.shellescape(url) .. " | python3 " .. vim.fn.shellescape(py)
+								.. " content " .. vim.fn.shellescape(opts.content_sel)
+								.. " | pandoc -f html -t gfm-raw_html --wrap=none 2>/dev/null",
+							title,
+							"markdown",
+							url
+						)
+					end,
+				},
+			})
+		end
+		if vim.fn.filereadable(idxfile) == 1 then
+			return browse()
+		end
+		vim.fn.mkdir(dir, "p")
+		vim.notify("Fetching the " .. opts.name .. " index … (first time)")
+		local cmd = "curl -fsSL " .. vim.fn.shellescape(opts.index_url) .. " | python3 " .. vim.fn.shellescape(py)
+			.. " links " .. vim.fn.shellescape(opts.link_filter) .. " " .. vim.fn.shellescape(opts.base or "")
+		vim.system({ "sh", "-c", cmd }, { text = true, timeout = 30000 }, function(res)
+			vim.schedule(function()
+				local items = vim.split(res.stdout or "", "\n", { trimempty = true })
+				if #items == 0 then
+					return vim.notify(opts.name .. ": could not fetch the index", vim.log.levels.WARN)
+				end
+				vim.fn.writefile(items, idxfile)
+				browse()
+			end)
+		end)
+	end
+end
+
+-- learncpp.com: the full C++ tutorial (356 lessons), lesson body only (the
+-- reader-comment threads under div#comments are dropped by the extractor).
+local pick_learncpp = web_index_provider({
+	name = "learncpp",
+	index_url = "https://www.learncpp.com/",
+	link_filter = "learncpp.com/cpp-tutorial/",
+	content_sel = "div.entry-content",
+	prompt = "Learn C++ lesson> ",
+})
+
+-- rayanfam.com tutorials (the full Hypervisor From Scratch series, and more).
+local pick_rayanfam = web_index_provider({
+	name = "rayanfam",
+	index_url = "https://rayanfam.com/tutorials/",
+	link_filter = "/topics/",
+	base = "https://rayanfam.com",
+	content_sel = "div.post-content",
+	prompt = "Rayanfam tutorial> ",
+})
+
 -- ── Ghidra: versioned API/docs (pick a release tag, all versions) ────────
 local function pick_ghidra()
 	if not (have("git") and have("fd")) then
@@ -2391,6 +2507,8 @@ local providers = {
 	{ name = "man 7 (overviews)", key = "man7", run = function() pick_man(7) end },
 	{ name = "man 8 (sysadmin)", key = "man8", run = function() pick_man(8) end },
 	{ name = "cppman (C++ reference)", key = "cppman", run = pick_cppman },
+	{ name = "Learn C++ (learncpp.com tutorial, 356 lessons)", key = "cpp", run = pick_learncpp },
+	{ name = "Rayanfam tutorials (Hypervisor From Scratch, ...)", key = "rayanfam", run = pick_rayanfam },
 	{ name = "NetBSD kernel (man 9)", key = "nbsd9", run = function() pick_nbsd(9) end },
 	{ name = "NetBSD drivers (man 4)", key = "nbsd4", run = function() pick_nbsd(4) end },
 	{ name = "OCaml (stdlib)", key = "ocaml", run = pick_ocaml },
