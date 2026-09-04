@@ -3017,7 +3017,11 @@ local function ensure_book(mkey, entry)
 		if not (have("git") and have("fd")) then
 			return vim.notify("git and fd are needed for this book", vim.log.levels.WARN)
 		end
-		ensure_repo(data_root .. "/rust/" .. entry.url:match("([^/]+)$"), entry.url, "/src", "src", function(d)
+		-- Also fetch /listings: The Rust Programming Language's chapters pull their
+		-- code in via {{#rustdoc_include ../listings/...}}, which clean_markdown
+		-- inlines only when the file is on disk (the other mdBooks have no
+		-- /listings, so --no-cone just skips it for them).
+		ensure_repo(data_root .. "/rust/" .. entry.url:match("([^/]+)$"), entry.url, "/src /listings", "src", function(d)
 			pick_files(d .. "/src", "-e md", entry.title .. "> ")
 		end)
 		return
