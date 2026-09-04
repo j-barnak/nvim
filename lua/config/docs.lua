@@ -2422,11 +2422,25 @@ try:
                 if lab is not None and con is not None:
                     labels.setdefault(posixpath.basename(con.get("src").split("#")[0]), " ".join((lab.text or "").split()))
         nm = ncx.find("n:navMap", nsn)
+        def _lab(np):
+            l = np.find("n:navLabel/n:text", nsn); return " ".join((l.text or "").split()) if l is not None else ""
+        def _src(np):
+            c = np.find("n:content", nsn); return posixpath.basename(c.get("src").split("#")[0]) if c is not None else None
         for np in (nm if nm is not None else []):
-            if np.tag.endswith("}navPoint"):
-                lab = np.find("n:navLabel/n:text", nsn); con = np.find("n:content", nsn)
-                if lab is not None and con is not None:
-                    top.append((" ".join((lab.text or "").split()), posixpath.basename(con.get("src").split("#")[0])))
+            if not np.tag.endswith("}navPoint"): continue
+            plab, psrc = _lab(np), _src(np)
+            kids = np.findall("n:navPoint", nsn)
+            kid_srcs = {_src(c) for c in kids} - {psrc, None}
+            # Expand a Part/Section container whose children live in distinct
+            # spine docs (real chapters, e.g. WACC's "Part I" -> chapters 1-10),
+            # keeping the container itself; else it is a single chapter boundary.
+            if re.match(r'(part|section|volume|book|unit)\b', plab, re.I) and len(kid_srcs) >= 2:
+                if psrc: top.append((plab, psrc))
+                for c in kids:
+                    cs = _src(c)
+                    if cs: top.append((_lab(c), cs))
+            elif psrc:
+                top.append((plab, psrc))
 except Exception as e:
     sys.stderr.write("parse failed: %s\n" % e); sys.exit(2)
 # convert each spine doc once
@@ -2456,43 +2470,84 @@ def title_for(base, md):
             return s  # a title-like line, not a sentence fragment / program output
     stem = re.sub(r'\.x?html?$','',base,flags=re.I)
     return "" if re.fullmatch(r'(index_split_\d+|cover|title\w*|copyright|toc|nav|part\d*|\d+)', stem, re.I) else stem
+# Some epubs mark code with <p>+<br/>+monospace instead of <pre>, so pandoc
+# renders it as escaped, hard-broken prose (\#include \<x\>) rather than a code
+# block. Re-fence runs of >=2 hard-break-terminated code lines (Building a
+# Debugger, xv6). Conservative: requires a trailing hard-break + code signals +
+# almost no English stopwords, never touches inside an existing fence, and skips
+# headings/tables/quotes/inline-code/images - so it does not fence real prose.
+_STOP = set("the a an and or of to in is are was were be been being that this these those we you it its our your their he she they them his her as at by for from with on off up out into over under then than so if else when while do does did has have had will would can could should may might must not no yes but also each any all some most more less very just like about which who whom whose where why how what onto per via both either neither".split())
+_CODE = re.compile(r'[{}();]|::|#include|#define|->|==|!=|<=|>=|&&|\|\||std::|0x[0-9a-fA-F]+|\breturn\b|\bvoid\b|\bstruct\b|\bconst\b|\bauto\b|\bclass\b|\btemplate\b|\bnamespace\b|\bstatic\b|\bunsigned\b|\bsizeof\b|\btypedef\b|\bnullptr\b')
+def _unesc(s): return re.sub(r'\\([\\`*_{}\[\]()>#+.!<>&~=-])', r'\1', s)
+def _is_code(raw):
+    t = _unesc(raw.rstrip().strip())
+    if not t: return None
+    if re.match(r'#{1,6}\s', t) or t.startswith("|") or t.startswith("> ") or t.startswith("`") or t.startswith("!["): return False
+    if re.fullmatch(r'-{2,}\s*snip\s*-{2,}|\.\.\.|\[\.\.\.\]', t): return True
+    if raw.endswith("  ") and len(_CODE.findall(t)) >= 1 and sum(1 for w in re.findall(r"[A-Za-z]{2,}", t) if w.lower() in _STOP) <= 2:
+        return True
+    return False
+def fence_code(md):
+    lines = md.split("\n"); out = []; i = 0; n = len(lines); infence = False
+    while i < n:
+        if lines[i].lstrip()[:3] in ("```", "~~~"):
+            infence = not infence; out.append(lines[i]); i += 1; continue
+        if infence: out.append(lines[i]); i += 1; continue
+        j = i; codes = 0; buf = []
+        while j < n and lines[j].lstrip()[:3] not in ("```", "~~~"):
+            c = _is_code(lines[j])
+            if c is True: codes += 1; buf.append(lines[j]); j += 1
+            elif c is None and codes > 0 and j + 1 < n and _is_code(lines[j + 1]) is True: buf.append(lines[j]); j += 1
+            else: break
+        if codes >= 2:
+            body = [_unesc(x.rstrip()) for x in buf]
+            while body and not body[-1].strip(): body.pop()
+            out.append("```cpp"); out += body; out.append("```"); i = j
+        else:
+            out.append(lines[i]); i += 1
+    return "\n".join(out)
 def write(idx, ttl, md):
     name = ("%03d %s" % (idx, sanitize(ttl))) if ttl else ("%03d" % idx)
-    open(os.path.join(out, name + ".md"), "w", encoding="utf-8").write(md)
+    open(os.path.join(out, name + ".md"), "w", encoding="utf-8").write(fence_code(md))
 if len(conv) <= 60 or len(top) < 3:
     for idx,(i,base,md) in enumerate(conv, 1): write(idx, title_for(base,md), md)
     print("strategy=per-spine chapters=%d" % len(conv)); sys.exit(0)
-# group by top-level ncx boundaries
 spine_base = {}
 for i, f in enumerate(spine):
     spine_base.setdefault(posixpath.basename(f), i)
-bnds = []
-for label, sf in top:
-    if sf in spine_base: bnds.append((spine_base[sf], label))
-bnds = sorted(set(bnds))
-def chapter_of(si):
-    lab, best = "Front Matter", -1
-    for bsi, blabel in bnds:
-        if bsi <= si and bsi > best: best, lab = bsi, blabel
-    return best, lab
-groups = []  # ordered [(key,label,[md])]
-order = {}
-for si, base, md in conv:
-    key, lab = chapter_of(si)
-    if key not in order:
-        order[key] = len(groups); groups.append([key, lab, []])
-    groups[order[key]][2].append(md)
-# If one group swallows most of the book's CONTENT (not just doc count), the
-# ncx top-level does not line up with the real chapters (a book whose chapters
-# are not top-level nav points) - fall back to per-spine to recover them.
-glines = [sum(m.count(chr(10)) + 1 for m in mds) for _, _, mds in groups]
-gtot = sum(glines) or 1
-if len(groups) < 2 or max(glines, default=0) > 0.6 * gtot:
-    for idx,(i,base,md) in enumerate(conv, 1): write(idx, title_for(base,md), md)
-    print("strategy=per-spine(fallback) chapters=%d" % len(conv)); sys.exit(0)
-for idx,(key,lab,mds) in enumerate(groups, 1):
-    write(idx, lab if key>=0 else "Front Matter", "\n\n".join(mds))
-print("strategy=grouped chapters=%d (from %d spine docs)" % (len(groups), len(conv))); sys.exit(0)
+def group_by(bnds):
+    bnds = sorted(set(bnds))
+    def chapter_of(si):
+        lab, best = "Front Matter", -1
+        for bsi, blabel in bnds:
+            if bsi <= si and bsi > best: best, lab = bsi, blabel
+        return best, lab
+    groups = []; order = {}
+    for si, base, md in conv:
+        key, lab = chapter_of(si)
+        if key not in order:
+            order[key] = len(groups); groups.append([key, lab, []])
+        groups[order[key]][2].append(md)
+    return groups
+def blobbed(groups):
+    gl = [sum(m.count(chr(10)) + 1 for _, _, mds in [g] for m in mds) for g in groups]
+    return len(groups) < 2 or max(gl, default=0) > 0.6 * (sum(gl) or 1)
+def emit(groups):
+    for idx,(key,lab,mds) in enumerate(groups, 1):
+        write(idx, lab if key >= 0 else "Front Matter", "\n\n".join(mds))
+# C1: group under the (Part-expanded) top-level ncx boundaries.
+g1 = group_by([(spine_base[sf], label) for label, sf in top if sf in spine_base])
+if not blobbed(g1):
+    emit(g1); print("strategy=grouped chapters=%d" % len(g1)); sys.exit(0)
+# C1 blobbed (the ncx top-level does not line up with the real chapters). C2:
+# group under EVERY distinct spine doc the ncx references, which recovers books
+# whose chapters are not top-level nav points (e.g. a trailing-blob book).
+g2 = group_by([(spine_base[b], lb) for b, lb in labels.items() if b in spine_base])
+if 3 <= len(g2) <= 60 and not blobbed(g2):
+    emit(g2); print("strategy=grouped-ncx chapters=%d" % len(g2)); sys.exit(0)
+# Otherwise per-spine (navigable, content-complete, no blob).
+for idx,(i,base,md) in enumerate(conv, 1): write(idx, title_for(base,md), md)
+print("strategy=per-spine(fallback) chapters=%d" % len(conv)); sys.exit(0)
 PY
 then :
 else
