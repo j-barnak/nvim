@@ -141,6 +141,7 @@ end
 
 local follow_link -- forward declaration; assigned after open_file is defined
 local gs_source -- forward declaration; assigned after the `simple` table exists
+local last_picker -- re-open the current provider's fuzzy finder (D in a doc)
 
 -- ── render lines in a reused right vsplit with the given filetype ─────────
 local function render_lines(lines, ft, dir, title)
@@ -218,6 +219,11 @@ local function render_lines(lines, ft, dir, title)
 		vim.keymap.set("n", "gs", function()
 			gs_source(dir)
 		end, { buffer = buf, silent = true, desc = "Docs: explore this project's source" })
+		vim.keymap.set("n", "D", function()
+			if last_picker then
+				last_picker()
+			end
+		end, { buffer = buf, nowait = true, silent = true, desc = "Docs: reopen this provider's fuzzy finder" })
 		vim.keymap.set("n", "<leader>fe", function()
 			require("oil").toggle_float(dir)
 		end, { buffer = buf, desc = "Oil (this doc's directory)" })
@@ -393,6 +399,10 @@ end
 local function pick_files(dir, fd_args, prompt)
 	if not have("fd") then
 		return vim.notify("fd not found (needed to browse docs)", vim.log.levels.WARN)
+	end
+	-- remember this picker so `D` in an opened doc reopens the same fuzzy finder
+	last_picker = function()
+		pick_files(dir, fd_args, prompt)
 	end
 	-- --base-directory guarantees the search root (fzf-lua's cwd isn't applied
 	-- to the raw command); cwd lets the builtin previewer resolve the entries.
@@ -658,8 +668,11 @@ local simple = {
 		prompt = "OpenGL> ",
 	},
 	aflpp = {
+		-- All AFL++ docs across the repo: the mode docs (qemu/unicorn/frida/nyx/
+		-- coresight), instrumentation, custom mutators, utils. (The submodules
+		-- are the QEMU/Unicorn/Frida forks, covered by their own providers.)
 		url = "https://github.com/AFLplusplus/AFLplusplus",
-		sparse = "/docs /utils /custom_mutators",
+		sparse = "/docs /instrumentation /qemu_mode /unicorn_mode /frida_mode /nyx_mode /coresight_mode /custom_mutators /utils /dictionaries",
 		marker = "docs",
 		browse = "",
 		exts = "-e md -e rst -e c -e cpp -e h -e py -e txt",
@@ -866,9 +879,10 @@ local simple = {
 		prompt = "Nyx> ",
 	},
 	libafl = {
-		-- The LibAFL Book (docs/src) plus the example fuzzers.
+		-- The LibAFL Book (docs/src), the example fuzzers, and every crate's
+		-- own docs/README (libafl, libafl_bolts, libafl_qemu, libafl_asan, …).
 		url = "https://github.com/AFLplusplus/LibAFL",
-		sparse = "/docs/src /fuzzers",
+		sparse = "/docs/src /fuzzers /crates",
 		marker = "docs/src",
 		browse = "",
 		exts = "-e md -e rs -e txt",

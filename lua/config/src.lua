@@ -97,35 +97,40 @@ local function build_tags(dir, cb)
 	end)
 end
 
-local function ensure_src(name, url, cb)
+-- Clone only (no indexing) — cb runs as soon as the source is on disk.
+local function ensure_clone(name, url, cb)
 	local dir = data_root .. "/" .. name
-	local tagfile = dir .. "/.srctags"
 	if vim.fn.isdirectory(dir) == 1 then
-		if vim.fn.filereadable(tagfile) == 1 then
-			return cb(dir, tagfile)
-		end
-		return build_tags(dir, function(tf) cb(dir, tf) end)
+		return cb(dir)
 	end
 	vim.fn.mkdir(data_root, "p")
 	vim.notify("Cloning " .. name .. " source (shallow, first time) …")
-	vim.system({ "git", "-c", "core.autocrlf=false", "clone", "--depth=1", url, dir }, { text = true, timeout = 600000 }, function(res)
+	vim.system({ "git", "-c", "core.autocrlf=false", "clone", "--depth=1", url, dir }, { text = true, timeout = 900000 }, function(res)
 		vim.schedule(function()
 			if res.code ~= 0 or vim.fn.isdirectory(dir) == 0 then
 				return vim.notify("Source clone failed:\n" .. (res.stderr or ""):sub(1, 300), vim.log.levels.ERROR)
 			end
-			build_tags(dir, function(tf) cb(dir, tf) end)
+			cb(dir)
 		end)
 	end)
 end
 
 -- Open in the current (docs) window; restore_fn re-renders the doc on :q.
+-- The picker opens IMMEDIATELY (fd files + ripgrep are instant even on the
+-- kernel); ctags indexes in the background and <C-]> lights up when ready.
 function M.open(name, url, restore_fn)
 	if not (have("git") and have("ctags")) then
 		return vim.notify("git and ctags are needed for source exploration", vim.log.levels.WARN)
 	end
 	local win = vim.api.nvim_get_current_win()
-	ensure_src(name, url, function(dir, tagfile)
+	ensure_clone(name, url, function(dir)
+		local tagfile = dir .. "/.srctags"
 		open_picker(win, dir, tagfile, restore_fn)
+		if vim.fn.filereadable(tagfile) == 0 then
+			build_tags(dir, function()
+				vim.notify("ctags index ready: " .. vim.fs.basename(dir))
+			end)
+		end
 	end)
 end
 
