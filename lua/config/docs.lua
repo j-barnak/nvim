@@ -2307,18 +2307,37 @@ walk(doc.loadOutline(),0);
 EOF2
 mutool run "$JS" > "$OUT/.all.tsv" 2>/dev/null
 TOTAL=$(pdfinfo "$PDF" | awk '/^Pages:/{print $2}')
-D=$(awk -F'\t' '{c[$1]++} END{for(d=0;d<8;d++) if(c[d]>=5){print d; exit}}' "$OUT/.all.tsv")
 idx=0; prev_p=""; prev_t=""
 emit() {
   idx=$((idx+1)); n=$(printf '%03d' "$idx")
   f=$(printf '%s' "$3" | tr '/' '-' | cut -c1-80)
   pdftotext -layout -f "$1" -l "$2" "$PDF" - 2>/dev/null \
     | sed 's/\f//g' \
-    | awk '{t=$0; gsub(/^[ \t]+|[ \t]+$/,"",t)} t ~ /^ISO\/IEC [0-9]/{next} t ~ /^© ISO\/IEC/{next} t ~ /^[0-9]+$/{next} t ~ /ABC Amber|Team LiB|processtext\.com/{next} {print}' \
+    | awk '{o=$0; gsub(/\[Trial version\]/,""); t=$0; gsub(/^[ \t]+|[ \t]+$/,"",t)} o!=$0 && t==""{next} t ~ /^ISO\/IEC [0-9]/{next} t ~ /^© ISO\/IEC/{next} t ~ /^[0-9]+$/{next} t ~ /ABC Amber|Team LiB|processtext\.com/{next} {print}' \
     | cat -s > "$OUT/$n $f.txt"
 }
-if [ -n "$D" ]; then
-  awk -F'\t' -v D="$D" '$1==D{print $2"\t"$3}' "$OUT/.all.tsv" > "$OUT/.ch.tsv"
+# Book mode ($4=book): pick chapter/part/appendix boundaries from the outline by
+# TITLE pattern at any depth (the printed TOC), so chapters nested under Parts
+# are kept (top-level-only dropped them). Strip a "[Trial version]"/bracket tag
+# some PDF tools stamp on every bookmark. Spec PDFs (C/C++/DWARF/ABI/... which
+# have bare numbered clauses, no Chapter/Part) keep the depth heuristic below.
+if [ "$4" = book ]; then
+  awk -F'\t' '
+    { t=$3; sub(/^[ \t]+/,"",t); sub(/^\[[A-Za-z0-9 ._-]*\][ \t]*/,"",t); sub(/[ \t]+$/,"",t) }
+    t ~ /^Part [IVXLC0-9]/ || t ~ /^Section [0-9]+[ :.]/ || t ~ /^Chapter [0-9]+.*[A-Za-z]/ \
+      || t ~ /^[0-9]+\. [^(]/ || t ~ /^[0-9]+ [A-Z]/ \
+      || t ~ /^Appendix [A-Z0-9]/ || t ~ /^(Bibliography|Index|References|Glossary)[ ]*$/ \
+      || t ~ /^(Preface|Foreword|Introduction|Epilogue|Afterword)([ .:]|$)/ { print $2"\t"t }
+  ' "$OUT/.all.tsv" | sort -t"$(printf '\t')" -k1,1n -s \
+    | awk -F'\t' '$1!=lastp{print} {lastp=$1}' > "$OUT/.ch.tsv"
+  [ "$(wc -l < "$OUT/.ch.tsv")" -ge 5 ] || : > "$OUT/.ch.tsv"
+fi
+# Fallback / spec mode: split at the shallowest outline depth with >= 5 entries.
+if [ ! -s "$OUT/.ch.tsv" ]; then
+  D=$(awk -F'\t' '{c[$1]++} END{for(d=0;d<8;d++) if(c[d]>=5){print d; exit}}' "$OUT/.all.tsv")
+  [ -n "$D" ] && awk -F'\t' -v D="$D" '$1==D{print $2"\t"$3}' "$OUT/.all.tsv" > "$OUT/.ch.tsv"
+fi
+if [ -s "$OUT/.ch.tsv" ]; then
   while IFS="$(printf '\t')" read -r p t; do
     [ -n "$prev_p" ] && emit "$prev_p" $((p-1)) "$prev_t"
     prev_p="$p"; prev_t="$t"
@@ -2627,7 +2646,7 @@ if [ -n "$(find "$OUT" -maxdepth 1 -name '*.md' -print -quit)" ]; then touch "$O
 -- pdf books reuse PDF_BUILD verbatim (it skips the download when $1 exists);
 -- pass an empty URL and gate on the same .complete sentinel.
 local function build_pdf_book(src, out, cb)
-	vim.system({ "sh", "-c", PDF_BUILD, "pdf", src, out, "" }, { text = true, timeout = 900000 }, function(res)
+	vim.system({ "sh", "-c", PDF_BUILD, "pdf", src, out, "", "book" }, { text = true, timeout = 900000 }, function(res)
 		vim.schedule(function()
 			if vim.fn.filereadable(out .. "/.complete") == 1 then
 				cb()
