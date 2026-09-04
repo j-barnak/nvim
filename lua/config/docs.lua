@@ -1288,6 +1288,12 @@ end
 -- SFML). Downloads a prebuilt doxygen binary on first use; moxygen (npm) turns
 -- the XML into cross-linked per-class/per-group Markdown, browsed like the rest.
 local tools_dir = data_root .. "/.tools"
+-- Local book library (epub/pdf): converted chapters live under books_root, and
+-- the source files are copied out of the ephemeral /tmp into books_src so the
+-- providers keep working after a reboot.
+local books_root = data_root .. "/books"
+local books_src = books_root .. "/_src"
+local BOOKS_SRC_DIR = "/tmp/Books"
 local DOX_PIPELINE = [[
 set -e
 INPUT="$1"; OUT="$2"; TOOLS="$3"; PATTERNS="$4"
@@ -2275,6 +2281,95 @@ rm -f "$JS" "$OUT/.all.tsv" "$OUT/.ch.tsv"
 touch "$OUT/.complete"
 ]]
 
+-- ── epub books: pandoc the whole book to markdown, then split by chapter ──
+-- Args (positional, so filenames with spaces/apostrophes/unicode are safe):
+--   $1 = source epub, $2 = out dir, $3 = title. Figures are extracted to an
+-- absolute media dir so their links come out absolute and abs_images() passes
+-- them straight to snacks.image. Kill-atomic via the .complete sentinel.
+local EPUB_BUILD = [==[
+set -e
+SRC="$1"; OUT="$2"; TITLE="$3"
+mkdir -p "$OUT"
+rm -f "$OUT"/*.md "$OUT"/.complete; rm -rf "$OUT/media"
+MD="$OUT/.book.md"
+pandoc "$SRC" -t gfm-raw_html --wrap=none --extract-media="$OUT/media" -o "$MD"
+python3 - "$MD" "$OUT" "$TITLE" <<'PY'
+import sys, os, re
+md, out, title = sys.argv[1], sys.argv[2], sys.argv[3]
+lines = open(md, encoding="utf-8", errors="replace").read().split("\n")
+hdr = re.compile(r'^(#{1,6}) ')
+
+# Count headings per level, ignoring fenced code (a "# ..." inside ```c is not
+# a chapter). Split at the shallowest level whose count is in [5,200] (mirrors
+# the SDM outline-depth heuristic); books use #, ## or ### for chapters.
+fence = False
+cnt = {}
+for L in lines:
+    if L[:3] in ("```", "~~~"):
+        fence = not fence
+        continue
+    if fence:
+        continue
+    m = hdr.match(L)
+    if m:
+        d = len(m.group(1))
+        cnt[d] = cnt.get(d, 0) + 1
+level = next((l for l in range(1, 7) if 5 <= cnt.get(l, 0) <= 200), None)
+
+def sanitize(t):
+    t = re.sub(r'[\\/:*?"<>|]', '-', t).strip()
+    return (t[:80] or "untitled")
+
+def write(idx, ttl, buf):
+    open(os.path.join(out, "%03d %s.md" % (idx, sanitize(ttl))), "w", encoding="utf-8").write("\n".join(buf))
+
+if level is None:  # no clean split point: keep the whole book as one chapter
+    write(1, title, lines)
+    print("chapters: 1")
+    sys.exit(0)
+
+fence = False
+idx = 0
+cur = "Front Matter"
+buf = []
+wrote = 0
+for L in lines:
+    if L[:3] in ("```", "~~~"):
+        fence = not fence
+    m = None if fence else hdr.match(L)
+    if m and len(m.group(1)) == level:
+        if any(x.strip() for x in buf):
+            write(idx, cur, buf)
+            wrote += 1
+        idx += 1
+        cur = L[m.end():].strip() or ("Chapter %d" % idx)
+        buf = [L]
+    else:
+        buf.append(L)
+if any(x.strip() for x in buf):
+    write(idx, cur, buf)
+    wrote += 1
+print("chapters:", wrote)
+sys.exit(0 if wrote else 1)
+PY
+rm -f "$MD"
+touch "$OUT/.complete"
+]==]
+
+-- pdf books reuse PDF_BUILD verbatim (it skips the download when $1 exists);
+-- pass an empty URL and gate on the same .complete sentinel.
+local function build_pdf_book(src, out, cb)
+	vim.system({ "sh", "-c", PDF_BUILD, "pdf", src, out, "" }, { text = true, timeout = 900000 }, function(res)
+		vim.schedule(function()
+			if vim.fn.filereadable(out .. "/.complete") == 1 then
+				cb()
+			else
+				vim.notify("Book PDF build failed:\n" .. (res.stderr or ""):sub(1, 300), vim.log.levels.ERROR)
+			end
+		end)
+	end)
+end
+
 local STD_URLS = {
 	["c-draft"] = "https://www.open-std.org/jtc1/sc22/wg14/www/docs/n3220.pdf",
 	["cpp-draft"] = "https://www.open-std.org/jtc1/sc22/wg21/docs/papers/2023/n4950.pdf",
@@ -2467,6 +2562,181 @@ local function pick_sqlite()
 	end)
 end
 
+-- ── local book library (epub/pdf), grouped by subject module ─────────────
+-- One :Docs entry per module (books-<key>): pick a book, then a chapter. epub
+-- is preferred over pdf when a book exists as both (reflowed text/code splits
+-- into cleaner chapters). Duplicate copies are collapsed to one file.
+local BOOKS = {
+	{ module = "C", key = "books-c", items = {
+		{ title = "Expert C Programming", fmt = "epub", file = "Expert C Programming -- Peter van der Linden -- 2002 -- 6a6a0df494fc411c9842373f70197e46 -- Anna’s Archive.epub" },
+	} },
+	{ module = "C++", key = "books-cpp", items = {
+		{ title = "Beautiful C++ (30 Core Guidelines)", fmt = "pdf", file = "Beautiful C++ _ 30 Core Guidelines for Writing Clean, Safe, -- J_ Guy Davidson & Kate Gregory -- 1, 2021 -- Pearson Education, Limited; Addison-Wesley -- 9780137647842 -- 3d6251a17d7996d9091349de.pdf" },
+		{ title = "C++ Move Semantics (The Complete Guide)", fmt = "pdf", file = "C++ Move Semantics - The Complete Guide -- Nicolai M_ Josuttis -- 2022 -- c6f2c4fe3e0701d95a17354ad517147a -- Anna’s Archive.pdf" },
+		{ title = "C++ Initialization Story", fmt = "epub", file = "C__ Initialization Story - Bartłomiej Filipek.epub" },
+		{ title = "C++ Templates: The Complete Guide (2e)", fmt = "epub", file = "C__ Templates_ The Complete Guide, 2nd Edition - David Vandevoorde & Nicolai M. Josuttis & Douglas Gregor.epub" },
+		{ title = "Effective Modern C++", fmt = "epub", file = "Effective-Modern-C-.epub" },
+	} },
+	{ module = "Rust", key = "books-rust", items = {
+		{ title = "Command-Line Rust", fmt = "epub", file = "Command-line Rust _ a project-based primer for writing Rust -- Ken Youens-Clark -- 2024 Updated Edition, 2024 -- O'Reilly Media, Incorporated; -- 9781098109400 -- 462825f45d6c0c1f3254f43a9f8062ee -- Anna’s Archive.epub" },
+		{ title = "Programming Rust (2e)", fmt = "epub", file = "Programming Rust_ Fast, Safe Systems Development, -- Jim Blandy & Jason Orendorff & Leonora F _ S_ Tindall -- 2nd Edition, 2021 -- O'Reilly Media -- 42c3a550a65cf7d0fe19185d1c57c56e -- Anna’s Archive.epub" },
+		{ title = "Rust in Action", fmt = "epub", file = "Rust_In_Action.epub" },
+	} },
+	{ module = "Operating Systems", key = "books-os", items = {
+		{ title = "Operating Systems: Three Easy Pieces", fmt = "epub", file = "OSTEP.epub" },
+		{ title = "xv6 (x86)", fmt = "epub", file = "x86-xv6.epub" },
+		{ title = "Advanced Programming in the UNIX Environment", fmt = "pdf", file = "Advanced Programming in the UNIX Environment.pdf" },
+		{ title = "System Programming in Linux", fmt = "epub", file = "System-Programming-in-Linux_-A-Hands-On-Introduction-Stewart-N_-Weiss-2025-No-Starch-Press_-Incorpor.epub" },
+		{ title = "Unix Network Programming", fmt = "pdf", file = "Unix-Network-Programming.pdf" },
+	} },
+	{ module = "Compilers", key = "books-compilers", items = {
+		{ title = "Crafting Interpreters", fmt = "epub", file = "Crafting Interpreters -- Robert Nystrom -- United States_] _, 2021 -- Genever Benning -- isbn13 9780990582939 -- c96d09f7d0933fc5c9b75228f7f3e2a3 -- Anna’s Archive.epub" },
+		{ title = "Writing a C Compiler", fmt = "epub", file = "WritingaCCompiler.epub" },
+		{ title = "SSA-based Compiler Design", fmt = "pdf", file = "Fabrice Rastello, Florent Bouchez Tichadou - SSA-based Compiler Design-Springer (2022).pdf" },
+	} },
+	{ module = "Databases", key = "books-db", items = {
+		{ title = "Database Internals", fmt = "epub", file = "Database Internals _ A Deep Dive Into How Distributed Data -- Alex  Petrov -- O'Reilly Media, Sebastopol, CA, 2019 -- O'Reilly Media, Incorporated -- 9781492040316 -- 6ed4b5c9518da1d5ff76d1cd6c3aa813 -- Anna’s Arc.epub" },
+	} },
+	{ module = "Linux / Drivers", key = "books-linux", items = {
+		{ title = "Linux Device Driver Development (Madieu)", fmt = "epub", file = "Linux Device Driver Development_ Everything you need to -- John Madieu -- Packt Publishing, [Place of publication not identified], -- Packt -- isbn13 9781803235943 -- e409561761c67e6644a54ed53a248850 -- Anna’s (1).epub" },
+		{ title = "Linux Device Drivers, 3rd Edition", fmt = "epub", file = "Linux Device Drivers, 3rd Edition -- Jonathan Corbet, Alessandro Rubini, and Greg Kroah-Hartman -- 3rd Edition, 2009 -- O'Reilly Media, Incorporated -- isbn13 9780596159740 -- f4346a4d961cc1b0cb12d88c75e50c50 -- A.epub" },
+		{ title = "The Linux Memory Manager", fmt = "epub", file = "The Linux Memory Manager - Lorenzo Stoakes.epub" },
+		{ title = "Bootlin: Embedded Linux (BBB labs)", fmt = "epub", file = "bootlin-embedded-linux-bbb-labs.epub" },
+		{ title = "Bootlin: Linux Kernel (slides)", fmt = "epub", file = "bootlin-linux-kernel-slides.epub" },
+		{ title = "Bootlin: Embedded Linux (QEMU labs)", fmt = "epub", file = "embedded-linux-qemu-labs.epub" },
+	} },
+	{ module = "Algorithms", key = "books-algo", items = {
+		{ title = "Algorithms Illuminated, Part 2", fmt = "epub", file = "Algorithms Illuminated (Part 2)_ Graph Algorithms and Data -- Tim Roughgarden -- First edition, San Francisco, CA, 2018 -- Soundlikeyourself -- 9780999282908 -- 60673f61ed5b43af2525a40cf00038f9 -- Anna’s Archive.epub" },
+		{ title = "The Algorithm Design Manual", fmt = "pdf", file = "The-Algorithm-Design-Manual.pdf" },
+	} },
+	{ module = "Security", key = "books-security", items = {
+		{ title = "Serious Cryptography (2e)", fmt = "epub", file = "Serious Cryptography, 2nd Edition_ A Practical Introduction -- Jean-Philippe Aumasson -- 2, 2024 -- No Starch Press, Incorporated -- isbn13 9781718503847 -- 98baee034c0a929a742dfde69353a637 -- Anna’s Archive.epub" },
+		{ title = "Fuzzing Against the Machine", fmt = "pdf", file = "FuzzingAgainstTheMachine.pdf" },
+	} },
+	{ module = "Firmware", key = "books-firmware", items = {
+		{ title = "Beyond BIOS", fmt = "epub", file = "Beyond BIOS - Vincent Zimmer,Michael Rothman,Suresh Marisetty.epub" },
+	} },
+	{ module = "Windows", key = "books-windows", items = {
+		{ title = "Windows Kernel Programming (2e)", fmt = "epub", file = "Windows-Kernel-Programming_-Second-Edition-Pavel-Yosifovich-2_-2021-leanpub_com-d11f122d8f775237cc43.epub" },
+	} },
+	{ module = "Haskell", key = "books-haskell", items = {
+		{ title = "Programming in Haskell (2e)", fmt = "epub", file = "Programming in Haskell (9781316876152) -- Hutton, Graham -- Second Edition, 5th printing, 2018;2015 -- Cambridge University Press (Virtual Publishing) -- 9781139637534 -- f80c6f606a590ab38c7340907cab3be5 -- Anna’s.epub" },
+	} },
+	{ module = "OCaml", key = "books-ocaml", items = {
+		{ title = "More OCaml: Algorithms, Methods, and Diversions", fmt = "epub", file = "More OCaml_ Algorithms, Methods, and Diversions -- John Whitington -- Reprint with corrections, Cambridge, United Kingdom, 2014 -- Coherent Press -- 9780957671119 -- 654b9e3e8e78e1a0d5c84ac0dcd6604c -- Anna’s Arch.epub" },
+	} },
+	{ module = "Python", key = "books-python", items = {
+		{ title = "Python Crash Course", fmt = "pdf", file = "Python-Crash-Course.pdf" },
+	} },
+	{ module = "Java", key = "books-java", items = {
+		{ title = "Java Concurrency in Practice", fmt = "epub", file = "Java Concurrency in Practice -- By & chenjin5_com -- 2011 -- cj5_1227 -- 32cdf3fa77c565bc654a662ee6d6e5bd -- Anna’s Archive.epub" },
+	} },
+	{ module = "Graphics", key = "books-graphics", items = {
+		{ title = "OpenGL SuperBible", fmt = "pdf", file = "OpenGL_Superbible.pdf" },
+	} },
+	{ module = "Version Control", key = "books-vcs", items = {
+		{ title = "Building Git", fmt = "pdf", file = "Building_Git.pdf" },
+	} },
+	{ module = "Debugging", key = "books-debugging", items = {
+		{ title = "Building a Debugger", fmt = "epub", file = "BuildingaDebugger.epub" },
+	} },
+}
+
+local function book_slug(t)
+	return (t:lower():gsub("[^%w]+", "-"):gsub("^%-+", ""):gsub("%-+$", ""))
+end
+
+-- Copy a source book out of the ephemeral /tmp into books_src on first use, so
+-- the provider keeps working afterwards. argv cp keeps special chars safe.
+local function ensure_book_src(file, cb)
+	local dst = books_src .. "/" .. file
+	if vim.fn.filereadable(dst) == 1 then
+		return cb(dst)
+	end
+	local orig = BOOKS_SRC_DIR .. "/" .. file
+	if vim.fn.filereadable(orig) == 0 then
+		return vim.notify("Book source not found: " .. file, vim.log.levels.ERROR)
+	end
+	vim.fn.mkdir(books_src, "p")
+	vim.system({ "cp", "--", orig, dst }, { text = true }, function(res)
+		vim.schedule(function()
+			if vim.fn.filereadable(dst) == 1 then
+				cb(dst)
+			else
+				vim.notify("Book copy failed for " .. file .. "\n" .. (res.stderr or ""), vim.log.levels.ERROR)
+			end
+		end)
+	end)
+end
+
+-- Ensure a book is converted+split, then open its chapter picker.
+local function ensure_book(mkey, entry)
+	local out = books_root .. "/" .. mkey .. "/" .. book_slug(entry.title)
+	local exts = entry.fmt == "epub" and "-e md" or "-e txt"
+	local function browse()
+		pick_files(out, exts, entry.title .. "> ")
+	end
+	if vim.fn.filereadable(out .. "/.complete") == 1 then
+		return browse()
+	end
+	vim.fn.mkdir(out, "p")
+	ensure_book_src(entry.file, function(src)
+		if entry.fmt == "epub" then
+			if not (have("pandoc") and have("python3")) then
+				return vim.notify("pandoc and python3 are needed for epub books", vim.log.levels.WARN)
+			end
+			vim.notify("Converting “" .. entry.title .. "” … (first time)")
+			vim.system({ "sh", "-c", EPUB_BUILD, "epub", src, out, entry.title }, { text = true, timeout = 600000 }, function(res)
+				vim.schedule(function()
+					if vim.fn.filereadable(out .. "/.complete") == 1 then
+						browse()
+					else
+						vim.notify("Book build failed:\n" .. (res.stderr or ""):sub(1, 400), vim.log.levels.ERROR)
+					end
+				end)
+			end)
+		else
+			for _, t in ipairs({ "mutool", "pdftotext", "pdfinfo" }) do
+				if not have(t) then
+					return vim.notify(t .. " needed for pdf books", vim.log.levels.WARN)
+				end
+			end
+			vim.notify("Splitting “" .. entry.title .. "” … (first time)")
+			build_pdf_book(src, out, browse)
+		end
+	end)
+end
+
+-- One provider per module: fuzzy-pick a book, then ensure_book opens chapters.
+local function make_books_module(mod)
+	return function()
+		if not have("fd") then
+			return vim.notify("fd not found (needed to browse books)", vim.log.levels.WARN)
+		end
+		local titles = {}
+		for _, e in ipairs(mod.items) do
+			titles[#titles + 1] = e.title
+		end
+		table.sort(titles)
+		fzf().fzf_exec(titles, {
+			prompt = mod.module .. " book> ",
+			fzf_opts = { ["--no-multi"] = true },
+			actions = {
+				["default"] = function(sel)
+					if not (sel and sel[1]) then
+						return
+					end
+					for _, e in ipairs(mod.items) do
+						if e.title == sel[1] then
+							return ensure_book(mod.key, e)
+						end
+					end
+				end,
+			},
+		})
+	end
+end
+
 -- ── providers + :Docs command ────────────────────────────────────────────
 local providers = {
 	{ name = "Linux Kernel", key = "kernel", run = pick_kernel_version },
@@ -2574,6 +2844,11 @@ local providers = {
 	{ name = "pydoc (any Python pkg)", key = "pydoc", run = pick_pydoc },
 	{ name = "Update all cached docs", key = "update", run = update_all },
 }
+
+-- One :Docs entry per book module (books-c, books-cpp, books-os, …).
+for _, mod in ipairs(BOOKS) do
+	providers[#providers + 1] = { name = mod.module .. " books", key = mod.key, run = make_books_module(mod) }
+end
 
 function M.open()
 	local names = vim.tbl_map(function(p)
