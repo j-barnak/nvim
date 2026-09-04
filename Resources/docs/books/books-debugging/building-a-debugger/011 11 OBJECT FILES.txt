@@ -1,0 +1,1748 @@
+OBJECT FILES
+ The doom of the Elves is to be immortal, to love the beauty
+ of the world, to bring it to full flower with their gifts of
+ delicacy and perfection
+
+ –J.R.R. Tolkien, The Silmarillion
+It’s time to read the sacred text of ELF. I’m not talking about The
+Silmarillion, but rather the System V ABI base specification,
+which describes the ELF object format, and the x64 supplement
+that specifies the x64-specific parts.
+The debugger needs to parse the ELF files relevant to the
+running process so it can retrieve debug information, locate the
+code for a given function, and more. To extract information
+from ELF files, we could rely on one of the many existing open
+source ELF parsers. However, if we’re reinventing the wheel,
+we may as well reinvent the chisel used to carve the rock as
+well. In this chapter, we’ll implement a new class, sdb::elf, that
+will be able to parse ELF files and expose the data contained
+within to the rest of the library.
+
+What Is an ELF?
+
+ELF files can be executable programs, shared libraries, static
+libraries (called relocatable files in the specifications), and core
+dumps (snapshots of memory and registers taken to debug a
+process that has crashed). To accommodate all of these flavors,
+ELF files use sections and segments to communicate
+information relevant to both linking and executing binaries.
+
+Sections and Segments
+
+ELF communicates link-time information in sections, named
+regions of the binary accompanied by relevant flags and
+attributes. These flags contain information such as whether a
+section holds code or strings and whether a linker can merge
+the section with identical ones found in other ELF files it’s
+linking together.
+
+ELF files communicate execution-time information in segments.
+These don’t have names but contain flags and attributes
+relevant to program execution, such as where to load the
+program into memory and what the permissions on that block
+of memory should be.
+
+Importantly, sections and segments provide different views of
+the same data. Let me explain with an example. If you run
+readelf --sections --segments test/targets/anti_debugger, you’ll get
+
+something like this:
+
+   Section Headers:
+     [Nr] Name              Type            Address
+          Size              EntSize         Flags
+     [ 0]                   NULL            0000000
+          0000000000000000 0000000000000000
+     [ 1] .interp           PROGBITS        0000000
+          000000000000001c 0000000000000000   A
+     [ 2] .note.gnu.pr[...] NOTE            0000000
+            0000000000000030 0000000000000000   A
+       [ 3] .note.gnu.bu[...] NOTE            0000000
+            0000000000000024 0000000000000000   A
+       [ 4] .note.ABI-tag     NOTE            0000000
+            0000000000000020 0000000000000000   A
+  [ 5] .gnu.hash           GNU_HASH         0000000
+       0000000000000024    0000000000000000   A
+
+Program Headers:
+  Type           Offset              VirtAddr
+                 FileSiz             MemSiz
+  PHDR            0x0000000000000040 0x00000000000
+                  0x00000000000002d8 0x00000000000
+  INTERP          0x0000000000000318 0x00000000000
+                  0x000000000000001c 0x00000000000
+       [Requesting program interpreter: /lib64/ld
+  LOAD            0x0000000000000000 0x00000000000
+                  0x00000000000005f0 0x00000000000
+  LOAD            0x0000000000001000 0x00000000000
+                  0x0000000000000149 0x00000000000
+  LOAD            0x0000000000002000 0x00000000000
+                  0x00000000000000c0 0x00000000000
+
+ Section to Segment mapping:
+  Segment Sections...
+   01     .interp
+   02     .interp .note.gnu.build-id .gnu.hash .d
+   03     .text
+   04     .eh_frame
+   05     .dynamic
+I’ve shortened the output to the first five sections and segments
+for brevity. In it, you can see three blocks of information: the
+section headers, which describe the sections in the file; the
+program headers, which describe the segments in the file; and
+the mapping between sections and segments.
+
+Consider, for example, the bytes from 0x318 to 0x334. These bytes
+are part of both the .interp section and segment 1:
+
+      [Nr] Name                       Type             Address
+           Size                       EntSize          Flags
+      [ 1] .interp                    PROGBITS         0000000
+           000000000000001c           0000000000000000   A
+
+      Type                 Offset             VirtAddr
+                           FileSiz            MemSiz
+      INTERP               0x0000000000000318 0x00000000000
+                           0x000000000000001c 0x00000000000
+
+    Section to Segment mapping:
+      01     .interp
+
+The .interp section spans the file offsets between 0x318 and 0x334.
+Segment 1 is of type INTERP and spans the same file offsets. The
+section-to-segment map shows that segment 1 and the .interp
+section relate to the same data.
+
+Note that the mapping of sections and segments isn’t one-to-
+one. Segment 0, the program header, doesn’t map to a section.
+Segment 2 covers multiple sections, which will be loaded into
+memory in one block. The .interp section appears in multiple
+segments, as it gives the path to the dynamic loader (in the INTERP
+segment type) and is loaded into memory (in the LOAD segment
+type).
+
+In this chapter, we’ll focus entirely on sections, rather than
+segments. You’ll learn more about segments and program
+headers in Chapter 17, when we consider program loading in
+more detail. First, though, let’s look at the overall structure of
+an ELF file.
+
+File Structure
+
+Every ELF file begins with an ELF header that gives high-level
+information about the file, such as where to find the section and
+program headers, what architecture the file is for, and what
+flavor of object file it is (executable, shared library, relocatable,
+or core dump). Usually the program header comes next, which,
+as we’ve seen, describes the segments. Following the program
+header is the file’s main data, which may be viewed as either
+sections or segments. Finally comes the section header, which
+describes the sections. As such, we can take two views of an ELF
+file: a linking view and an execution view, as illustrated in
+Figure 11-1.
+
+The linking view and execution view both cover the part of the ELF file labeled data.
+The linking view consists of sections. The execution view consists of segments. The
+sections and segments do not align exactly.
+
+Figure 11-1: The layout of an ELF file
+
+Some sections are special, and the ELF specification details their
+encoding. Examples include string tables, used to hold textual
+data, and symbol tables, used to describe entities like functions
+and variables for linking purposes. We’ll look at these formats
+in detail later in this chapter.
+
+ELF Header Parsing
+
+Let’s begin our parser by parsing the ELF header. Throughout
+this code, we’ll rely on the types already specified in the elf.h
+header provided by Linux. This will minimize the amount of
+boring busywork we’ll need to do. The elf.h header specifies
+data types used throughout the header:
+
+    typedef uint64_t                     Elf64_Addr;
+    typedef uint16_t                     Elf64_Half;
+    typedef int16_t                      Elf64_SHalf;
+    typedef uint64_t                     Elf64_Off;
+    typedef uint32_t                     Elf64_Sword;
+    typedef uint32_t                     Elf64_Word;
+   typedef uint64_t           Elf64_Xword;
+   typedef int64_t            Elf64_Sxword;
+
+These convenience typedefs save you from having to remember
+the specific integral types used for things like addresses. The
+header file also defines the Elf64_Ehdr type for 64-bit ELF headers:
+
+   typedef struct elf64_hdr {
+       unsigned char e_ident[EI_NIDENT]; // ELF "mag
+       Elf64_Half e_type;          // Executable, sh
+       Elf64_Half e_machine;       // Architecture,
+       Elf64_Word e_version;       // Version, must
+       Elf64_Addr e_entry;         // Entry point vi
+       Elf64_Off e_phoff;          // Program heade
+       Elf64_Off e_shoff;          // Section heade
+       Elf64_Word e_flags;         // Processor-spec
+       Elf64_Half e_ehsize;        // ELF header siz
+       Elf64_Half e_phentsize;     // Program heade
+       Elf64_Half e_phnum;         // Number of prog
+       Elf64_Half e_shentsize;     // Section heade
+       Elf64_Half e_shnum;         // Number of sect
+       Elf64_Half e_shstrndx;      // Section that h
+   } Elf64_Ehdr;
+The magic number is a set sequence of bytes used to identify
+that this blob of binary is indeed an ELF file. Consult the inline
+comments for the meanings of the other fields.
+
+Create a new file at sdb/include/libsdb/elf.hpp to begin the
+implementation of sdb::elf:
+
+   #ifndef SDB_ELF_HPP
+   #define SDB_ELF_HPP
+
+   #include <filesystem>
+   #include <elf.h>
+
+   namespace sdb {
+       class elf {
+       public:
+           elf(const std::filesystem::path& path);
+           ~elf();
+
+              elf(const elf&) = delete;
+              elf& operator=(const elf&) = delete;
+
+              std::filesystem::path path() const { retu
+              const Elf64_Ehdr& get_header() const { re
+
+        private:
+            int fd_;
+              std::filesystem::path path_;
+              std::size_t file_size_;
+              std::byte* data_;
+              Elf64_Ehdr header_;
+        };
+   }
+
+   #endif
+
+The constructor takes the path to an ELF file on disk. We declare
+a destructor because we’ll need to do some cleanup when
+destroying an elf object. These elf objects should be unique, so
+we delete the copy operations, then we define members to store
+an open file descriptor for the ELF file, the path to and size of
+the file, a pointer to the file’s bytes, and the header information.
+
+ELF files can be megabytes or even gigabytes in size. One
+convenient way to handle large files is to use the mmap syscall to
+map them into the virtual memory of our process, letting us
+pretend we’ve read the file completely into memory. The
+operating system can then handle loading necessary parts of
+the file from disk when required. Create an sdb/src/elf.cpp file
+and implement the constructor such that it mmaps the ELF file and
+copies the header bytes into the header_ member:
+#include <sys/types.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
+#include <libsdb/elf.hpp>
+#include <libsdb/error.hpp>
+#include <libsdb/bit.hpp>
+
+sdb::elf::elf(const std::filesystem::path& path)
+    path_ = path;
+
+    if ((fd_ = open(path.c_str(), O_RDONLY)) < 0
+        error::send_errno("Could not open ELF fil
+    }
+
+    struct stat stats;
+    if (fstat(fd_, &stats) < 0) {
+        error::send_errno("Could not retrieve ELF
+    }
+    file_size_ = stats.st_size;
+
+    void* ret;
+
+    if ((ret = mmap(0, file_size_, PROT_READ, MAP
+        close(fd_);
+        error::send_errno("Could not mmap ELF fil
+    }
+         data_ = reinterpret_cast<std::byte*>(ret);
+
+         std::copy(data_, data_ + sizeof(header_), as_
+   }
+
+First, we open the file with the open syscall. We then find the size
+of the file with fstat. This function takes a file descriptor and a
+pointer to a stat object and fills in the stat object with a bunch of
+metadata about the file. Note that when you declare stats, you
+must write struct stat stats rather than just stat stats because a
+function named stat already exists in the global namespace; the
+struct keyword disambiguates the declaration.
+
+After opening the file and getting its size, we map it into virtual
+memory. We pass 0 as the first argument, which instructs mmap to
+choose where to map this memory. We pass the size of the file
+and tell mmap to map it as read-only (PROT_READ). We also need to
+pass a flag indicating how to deal with writes, but the flag we
+choose doesn’t matter in this case because the memory is
+mapped as read-only, so we pass MAP_SHARED. If the underlying file
+is modified while we have it mapped, the memory map will be
+updated, but we won’t attempt to handle this case. Finally, we
+pass the file descriptor for the file we want to map and an offset
+of 0 to map the entire file.
+When the mapping completes, we cast the returned pointer to a
+pointer to bytes, store it in the data_ member, and copy the
+header into the header_ member. Now we can read from data_ to
+retrieve information from any location inside the ELF file
+without having to copy the data ourselves. Neat!
+
+Make sure you close the file and unmap the memory in the
+destructor:
+
+   sdb::elf::~elf() {
+        munmap(data_, file_size_);
+        close(fd_);
+   }
+
+Also add elf.cpp to sdb/src/CMakeLists.txt:
+
+   add_library(libsdb ... elf.cpp)
+
+Next, we can parse the section header.
+Section Header Parsing
+
+The section header table lives at the offset of header_.e_shoff from
+the start of the file. In other words, the header_.e_shoff field gives
+the file offset of the section header table. Each entry is of type
+Elf64_Shdr:
+
+    typedef struct elf64_shdr {
+        Elf64_Word sh_name;                     // Section name as
+        Elf64_Word sh_type;                     // Type, e.g., cod
+        Elf64_Xword sh_flags;                   // Section attribu
+        Elf64_Addr sh_addr;                     // Virtual load ad
+        Elf64_Off sh_offset;                    // File offset
+        Elf64_Xword sh_size;                    // Section size in
+        Elf64_Word sh_link;                     // Index of an ass
+        Elf64_Word sh_info;                     // Additional info
+        Elf64_Xword sh_addralign;               // Section alignme
+        Elf64_Xword sh_entsize;                 // Entry size if t
+    } Elf64_Shdr;
+
+We’ll add a new member to sdb::elf to hold section headers and a
+private member function to parse them:
+
+    #include <vector>
+   namespace sdb {
+       class elf {
+         --snip--
+
+         private:
+               void parse_section_headers();
+
+               --snip--
+               std::vector<Elf64_Shdr> section_headers_
+         };
+   }
+
+Implement this member in sdb/src/elf.cpp by copying the data
+from header_.e_shoff. You’ll find the number of section headers at
+header_.e_shnum. Also add a call to parse_section_headers at the end of the
+
+elf constructor:
+
+   sdb::elf::elf(const std::filesystem::path& path)
+       --snip--
+       parse_section_headers();
+   }
+
+   void sdb::elf::parse_section_headers() {
+       section_headers_.resize(header_.e_shnum);
+       std::copy(data_ + header_.e_shoff,
+               data_ + header_.e_shoff + sizeof(Elf64_Sh
+               reinterpret_cast<std::byte*>(section_head
+   }
+
+We resize the section_headers_ member depending on how many
+sections the ELF header says there are. We then copy all of
+these headers into the vector. To determine the number of bytes
+to copy, we start at the offset given in the header and multiply
+the size of a section header by the number of sections there are.
+
+We must handle one special case, which occurs when a file
+contains many sections. ELF reserves a range of section indices
+for special uses, and if the number of sections reaches that
+limit, the file stores the number of sections elsewhere. More
+concretely, if a file has 0xff00 sections or more, it sets e_shnum to 0
+and stores the number of sections in the sh_size field of the first
+section header. To accommodate this fact, modify the code you
+just wrote like this:
+
+   void sdb::elf::parse_section_headers() {
+       auto n_headers = header_.e_shnum;
+       if (n_headers == 0 and header_.e_shentsize !=
+           n_headers = from_bytes<Elf64_Shdr>(data_
+       }
+
+         section_headers_.resize(n_headers);
+          std::copy(data_ + header_.e_shoff,
+              data_ + header_.e_shoff + sizeof(Elf64_Sh
+              reinterpret_cast<std::byte*>(section_head
+   }
+
+If the file specifies the number of headers to be zero but also
+specifies the section header size element, there must be more
+than 0xff00 sections, so we read the sh_size field of the first section
+header to get the real number of headers. Then, we continue as
+before.
+
+Now that we’ve parsed the section headers, we can write
+functions to access the symbol table and string table, which are
+special sections. Let’s start with the string table.
+
+String Tables
+
+A string table is a list of null-terminated strings. It allows the
+rest of the ELF file to refer to a string using a byte offset into the
+string table. Generally, an ELF file has two string tables: the
+general string table, which lives in the .strtab section, and the
+section name string table, which lives in the .shstrtab section.
+Certain files may also have a .dynstr table containing strings used
+for dynamic linking. Table 11-1 shows an example of a string
+table.
+
+Table 11-1: An Example String Table
+
+  Index       +0      +1      +2      +3   +4   +5    +6   +7   +8
+
+  0           \0      M       i       l    k    s     h    a    k
+
+  10          \0      s       h       a    k    e     \0   n    o
+
+String tables always begin with a null terminator, which means
+that references to index 0 encode empty strings. As you can see,
+the table can duplicate strings and lets us reference substrings.
+For example, some strings we could reference in this table
+include “Milkshake” (index 1), “shake” (index 5), “shake” (index
+11), and “no” (index 17). Let’s begin by parsing the section
+names string table.
+
+Getting Section Names
+
+To add support for retrieving section names, add a get_section_name
+function to sdb::elf in sdb/include/libsdb/elf.hpp:
+   #include <string_view>
+
+   namespace sdb {
+        class elf {
+        public:
+              --snip--
+              std::string_view get_section_name(std::si
+              --snip--
+        };
+   }
+
+Now implement this function in sdb/src/elf.cpp by finding the
+section name string table with the index given in the ELF
+header, then getting the string at the given offset in that section:
+
+   std::string_view sdb::elf::get_section_name(std:
+       auto& section = section_headers_[header_.e_sh
+       return { reinterpret_cast<char*>(data_) + sec
+   }
+
+The e_shstrndx field of the ELF header identifies the section that
+stores the string table for section names (usually .shstrtab). We
+grab the section header for this section, then return the string
+that starts at the given index into that section.
+Building a Section Map
+
+Next, let’s build a map from section names to section headers.
+This will make it much easier to look up sections. Add a new
+private member to hold the section map to sdb::elf and some
+member functions to retrieve section information by section
+name. Also add a private member function to build the map.
+Make the modifications in sdb/include/libsdb/elf.hpp:
+
+   #include <unordered_map>
+   #include <optional>
+   #include <libsdb/types.hpp>
+
+   namespace sdb {
+       class elf {
+       public:
+           --snip--
+           std::optional<const Elf64_Shdr*>
+           get_section(std::string_view name) const
+           span<const std::byte> get_section_content
+
+        private:
+            --snip--
+            void build_section_map();
+            --snip--
+            std::unordered_map<std::string_view, Elf6
+         };
+   }
+
+The get_section function will return a pointer to the section
+header for the section with the given name, if one exists, while
+the get_section_contents function will return a span of bytes with
+the data for that section. We’ll call the build_section_map private
+member from the constructor and it will initialize the section_map_
+member, which maps the section names to the section headers.
+
+Implement build_section_map by getting the section name for each
+section from the string table and updating the private mapping.
+Also call this function from the elf constructor:
+
+   sdb::elf::elf(const std::filesystem::path& path)
+       --snip--
+       build_section_map();
+   }
+
+   void sdb::elf::build_section_map() {
+       for (auto& section : section_headers_) {
+           section_map_[get_section_name(section.sh_
+       }
+   }
+We loop over all of the section headers and add an entry in the
+map that goes from the name of that section to a pointer to the
+section’s header. Then we implement get_section, which merely
+performs a checked map lookup:
+
+    std::optional<const Elf64_Shdr*>
+    sdb::elf::get_section(std::string_view name) cons
+        if (section_map_.count(name) == 0) {
+            return std::nullopt;
+        }
+        return section_map_.at(name);
+    }
+
+If the section map doesn’t contain the given name, we return an
+empty optional. Otherwise, we return a pointer to the relevant
+section header. The get_section_contents function can defer to
+get_section:
+
+    sdb::span<const std::byte>
+    sdb::elf::get_section_contents(std::string_view n
+        if (auto sect = get_section(name); sect) {
+            return { data_ + sect.value()->sh_offset
+        }
+         return { nullptr, std::size_t(0) };
+   }
+
+We try to get the section with the given name. The if (auto var =
+init; var) syntax allows us to initialize a variable and test its
+
+value without having to declare the variable outside the scope
+of the if statement. If we find a section with the given name, we
+return a span representing the region contained in the section.
+Otherwise, we return an empty span.
+
+Now that we have the ability to perform section lookups, we’ll
+locate the .strtab or .dynstr sections and add support for looking
+up strings in the general string table.
+
+Parsing the General String Table
+
+The general string table lives in the .strtab section, though some
+ELF files may have only an abbreviated .dynstr section instead of
+a .strtab section. To retrieve a string from the table given an
+index, add a get_string function to sdb::elf:
+
+   namespace sdb {
+       class elf {
+       public:
+           --snip--
+               std::string_view get_string(std::size_t i
+               --snip--
+         };
+   }
+
+The function will resemble get_section_name, but it will look up the
+string in the .strtab or .dynstr section instead of the .shstrtab
+section. Implement it in sdb/src/elf.cpp:
+
+   std::string_view sdb::elf::get_string(std::size_t
+       auto opt_strtab = get_section(".strtab");
+       if (!opt_strtab) {
+           opt_strtab = get_section(".dynstr");
+           if (!opt_strtab) return "";
+       }
+       return {
+           reinterpret_cast<char*>(data_) + opt_strt
+       };
+   }
+
+We grab the section header corresponding to the .strtab or .dynstr
+section and then return the string that begins at the given offset
+into that section.
+
+               NOTE
+              Although most ELF files have a general string table,
+              in some cases they may allocate different string
+              tables to different sections. The more robust way to
+              handle string tables is to read the sh_link field of the
+              section header to which the string table index
+              belongs, which provides the section index of the
+              string table for that section. I’ve opted to assume
+              there’s a general string table for simplicity.
+
+Now, before we move on to parsing symbol tables, we need to
+think more carefully about the kinds of addresses we have in
+our system.
+
+File Addresses, File Offsets, and Virtual
+Addresses
+
+Currently, we have a type that stores virtual addresses
+(sdb::virt_addr) but no type to store file addresses or file offsets.
+Because the symbol table gives us a function’s address
+information in the form of file addresses, we’ll require a type to
+represent them. We’ll also need a type to represent file offsets,
+as the DWARF information we’ll parse in the next chapter uses
+them heavily.
+Let’s write an sdb::file_addr type that stores a file address and
+implement routines for translating between file addresses and
+virtual addresses. We’ll also write an sdb::file_offset type that
+stores a file offset. Add a function to sdb::virt_addr in
+sdb/include/libsdb/types.hpp that converts the virtual address to
+an sdb::file_addr type in a given ELF file:
+
+   namespace sdb {
+       class file_addr;
+       class elf;
+       class virt_addr {
+       public:
+           --snip--
+           file_addr to_file_addr(const elf& obj) co
+           --snip--
+       };
+   }
+
+We forward-declare sdb::file_addr and sdb::elf so that we can use
+them in the function declaration for to_file_addr. Now define
+sdb::file_addr in the same file:
+
+   namespace sdb {
+       class file_addr {
+       public:
+              file_addr() = default;
+              file_addr(const elf& obj, std::uint64_t a
+                   : elf_(&obj), addr_(addr) {}
+
+              std::uint64_t addr() const {
+                   return addr_;
+              }
+              const elf* elf_file() const {
+                  return elf_;
+              }
+              virt_addr to_virt_addr() const;
+
+        private:
+            const elf* elf_ = nullptr;
+            std::uint64_t addr_ = 0;
+        };
+    }
+
+This type resembles sdb::virt_addr but additionally stores a pointer
+to the ELF file. The address is relative to the load address of this
+file.
+
+We’ll also write operator overloads to make using this type
+more ergonomic. This time, we need to handle the pointer to
+the ELF file as well. For the equality operators, we’ll test the
+equality of the ELF pointers. However, the relative comparison
+operators don’t make sense if the ELF files for the addresses
+don’t match; this mismatch would indicate a programming
+error, so we’ll assert that the ELF pointers are equal:
+
+   #include <cassert>
+
+   namespace sdb {
+       class file_addr {
+       public:
+           --snip--
+           file_addr operator+(std::int64_t offset)
+                return file_addr(*elf_, addr_ + offse
+           }
+           file_addr operator-(std::int64_t offset)
+                return file_addr(*elf_, addr_ - offse
+           }
+           file_addr& operator+=(std::int64_t offset
+                addr_ += offset;
+                return *this;
+           }
+           file_addr& operator-=(std::int64_t offset
+                addr_ -= offset;
+                return *this;
+           }
+           bool operator==(const file_addr& other) c
+                return addr_ == other.addr_ and elf_
+           }
+             bool operator!=(const file_addr& other) c
+                 return addr_ != other.addr_ or elf_
+             }
+             bool operator<(const file_addr& other) co
+                 assert(elf_ == other.elf_);
+                   return addr_ < other.addr_;
+             }
+             bool operator<=(const file_addr& other) c
+                  assert(elf_ == other.elf_);
+                  return addr_ <= other.addr_;
+             }
+             bool operator>(const file_addr& other) co
+                  assert(elf_ == other.elf_);
+                  return addr_ > other.addr_;
+             }
+             bool operator>=(const file_addr& other) c
+                  assert(elf_ == other.elf_);
+                  return addr_ >= other.addr_;
+             }
+             --snip--
+        };
+   }
+
+The file_offset type is much simpler, as we won’t need to do
+many operations on this type; we’ll use it to make sure we don’t
+mix up file offsets and file addresses in our code:
+   namespace sdb {
+         class file_offset {
+         public:
+              file_offset() = default;
+              file_offset(const elf& obj, std::uint64_t
+                    : elf_(&obj), off_(off) {}
+
+              std::uint64_t off() const {
+                  return off_;
+              }
+              const elf* elf_file() const {
+                  return elf_;
+              }
+
+         private:
+             const elf* elf_ = nullptr;
+             std::uint64_t off_ = 0;
+         };
+   }
+
+The type is essentially the same as sdb::file_addr, but it stores an
+offset instead of an address and doesn’t need the comparison
+operators or conversion functions.
+
+To convert between file addresses and virtual addresses, we
+need to know where the ELF file is loaded in virtual memory.
+Determining this location requires some nuance, so read the
+next few paragraphs very carefully.
+
+We must consider three different kinds of addresses: absolute
+offsets from the start of the object file (corresponding to the
+sdb::file_offset type), virtual addresses specified in the ELF file
+
+(corresponding to the sdb::file _addr type), and the actual virtual
+addresses in the executing program (corresponding to the
+sdb::virt_addr type).
+
+Contiguous sections in the ELF file don’t necessarily map
+contiguously into memory; gaps could exist between them. This
+commonly occurs when the segments corresponding to those
+sections have different memory permissions assigned to them.
+For example, the segment holding the .data section should be
+mapped as read/write, but the segment holding the .text section
+is usually mapped as read/execute. Linux assigns memory
+permissions to pages of memory, which are 4,096 bytes in size
+on x64, so if sections with different permissions aren’t aligned
+to 4,096 bytes, the system must load them with gaps between
+them.
+
+Parts of the ELF file that reside in different segments may refer
+to each other using file addresses, and we need these addresses
+to remain valid no matter where the segments are loaded in
+memory. So, the ELF file specifies the file address at which each
+segment gets loaded, and to ensure that cross-references
+between segments work, the file addresses and the real virtual
+addresses will only ever differ by a single offset for the entire
+ELF file, called the load bias. That is, the gaps specified in the
+ELF file and the gaps between the loaded segments will always
+be the same. See Figure 11-2 for a visualization of this principle.
+The file offsets view shows .text and .data sections existing contiguously at address
+0x1000. The file addresses view adds a gap between the two sections. The virtual
+addresses view shows the same gap, but the start address is 0x555555556000
+
+Figure 11-2: Possible layouts of ELF sections in memory
+
+As such, to translate a file address into a virtual address, we
+calculate the load bias of the ELF file and add that to the file
+address. Let’s add functionality to sdb::elf for tracking the ELF
+load bias. Add these members to sdb/include/libsdb/elf.hpp:
+
+    namespace sdb {
+        class elf {
+        public:
+            --snip--
+            virt_addr load_bias() const {
+                 return load_bias_;
+            }
+            void notify_loaded(virt_addr address) {
+                 load_bias_ = address;
+            }
+
+           private:
+               --snip--
+               virt_addr load_bias_;
+         };
+   }
+
+We’ll deal with actually finding the load bias when we hook the
+ELF parser into the rest of the debugger. For now, we can
+assume that load_bias_ is correct and use it to translate between
+virtual addresses and file addresses.
+
+We’ll need a helper function to retrieve the section to which a
+given file or virtual address belongs. Declare two overloads for
+get_section_containing _address in sdb/include/libsdb/elf.hpp:
+
+   namespace sdb {
+       class elf {
+       public:
+           --snip--
+           const Elf64_Shdr* get_section_containing_
+                   file_addr addr) const;
+               const Elf64_Shdr* get_section_containing_
+                   virt_addr addr) const;
+         };
+   }
+
+Then, define them in sdb/src/elf.cpp:
+   const Elf64_Shdr* sdb::elf::get_section_containin
+          file_addr addr) const {
+        if (addr.elf_file() != this) return nullptr;
+        for (auto& section : section_headers_) {
+            if (section.sh_addr <= addr.addr() and
+                    section.sh_addr + section.sh_size > a
+                    return &section;
+              }
+        }
+        return nullptr;
+   }
+
+   const Elf64_Shdr* sdb::elf::get_section_containin
+       for (auto& section : section_headers_) {
+           if (load_bias_ + section.sh_addr <= addr
+               load_bias_ + section.sh_addr + sectio
+               return &section;
+           }
+       }
+       return nullptr;
+   }
+
+The file address helper finds the section at which the given
+address lies, between the sh_addr field of the section header and
+sh_addr + sh_size, which gives the end of the section. The virtual
+
+address helper uses the sh_addr field, offset by the ELF load bias.
+Implement sdb::virt_addr::to_file_addr and sdb::file_addr::to_virt_addr in
+a new file called sdb/src/types.cpp:
+
+   #include <libsdb/types.hpp>
+   #include <libsdb/elf.hpp>
+   #include <cassert>
+
+   sdb::virt_addr sdb::file_addr::to_virt_addr() con
+       assert(elf_ && "to_virt_addr called on null a
+       auto section = elf_->get_section_containing_a
+       if (!section) return virt_addr{};
+       return virt_addr { addr_ + elf_->load_bias()
+   }
+
+   sdb::file_addr sdb::virt_addr::to_file_addr(const
+       auto section = obj.get_section_containing_add
+       if (!section) return file_addr{};
+       return file_addr{ obj, addr_ - obj.load_bias
+   }
+
+The to_virt_addr function first asserts that elf_ is not null, since this
+would indicate that something has gone very wrong. It then
+tries to locate the section that contains the file address to ensure
+that this file address is valid for the ELF file. If there isn’t one,
+we return an empty virtual address. Otherwise, we add the
+stored address to the load bias to compute the real virtual
+address. The to_file_addr function does the opposite, subtracting
+the load bias to compute the file address.
+
+Add this new file to sdb/src/CMakeLists.txt:
+
+   add_library(libsdb ... syscalls.cpp elf.cpp types
+
+While we’re dealing with file addresses, let’s add a little helper
+function to sdb::elf to retrieve the start file address of a section
+by name. Declare it in sdb/include/libsdb/elf.hpp:
+
+   namespace sdb {
+       class elf {
+       public:
+           --snip--
+           std::optional<file_addr> get_section_sta
+                std::string_view name) const;
+           --snip--
+       };
+   }
+
+Define it in sdb/src/elf.cpp:
+
+   std::optional<sdb::file_addr> sdb::elf::get_secti
+       std::string_view name) const {
+        if (auto sect = get_section(name); sect) {
+            return file_addr{ *this, sect.value()->sh
+        }
+        return std::nullopt;
+   }
+
+If the section exists, we return a file address containing its start
+address. Otherwise, we return an empty optional. Now that we
+have a type to represent file addresses, we can implement a
+parser for ELF symbol tables.
+
+Parsing the Symbol Table
+
+A symbol table contains linking-related information about
+global program entities such as variables and functions. Rather
+than the high-level source code details you might get from
+debug information, the symbol table includes more basic
+aspects, such as the following:
+
+  The size of the entity (for example, the object size or number
+  of bytes in a function’s machine code)
+  Whether the entity is available to other ELF files that might
+  link against it
+  The category to which this entity belongs (for example,
+  function, variable, ELF section, or file)
+An ELF file may have two symbol tables: a complete symbol
+table named .symtab with SHT_SYMTAB as the section header’s sh_type
+member, and an abbreviated symbol table named .dynsym with
+SHT_DYNSYM as the section type, which contains only the set of
+
+symbols needed for dynamic linking. Each ELF file may have at
+most one of each and might not have a symbol table at all.
+Many developers strip their executables of symbols so they
+don’t take up unnecessary space.
+
+In 64-bit ELF files, symbols have the following layout:
+
+   typedef struct {
+       Elf64_Word st_name;      // Symbol name (strin
+       unsigned char st_info;   // Symbol's type (e.g
+                                // and binding (e.g.
+        unsigned char st_other; // Symbol's visibilit
+        Elf64_Half st_shndx;    // Which section the
+        Elf64_Addr st_value;    // Value of the symbo
+        Elf64_Xword st_size;    // Size of the symbol
+   } Elf64_Sym;
+
+Consult the inline comments for descriptions of the members.
+
+Add new private members to sdb::elf to hold the symbol table
+and parse it:
+   namespace sdb {
+         class elf {
+              --snip--
+         private:
+              --snip--
+              void parse_symbol_table();
+
+              --snip--
+              std::vector<Elf64_Sym> symbol_table_;
+         };
+   }
+
+Next, implement parse_symbol_table. If the ELF file has a .symtab table,
+we should use it; otherwise, we should try to use the .dynsym
+table. Call this function from the elf constructor:
+
+   sdb::elf::elf(const std::filesystem::path& path)
+       --snip--
+       parse_symbol_table();
+   }
+
+   void sdb::elf::parse_symbol_table() {
+       auto opt_symtab = get_section(".symtab");
+       if (!opt_symtab) {
+              opt_symtab = get_section(".dynsym");
+              if (!opt_symtab) return;
+         }
+         auto symtab = *opt_symtab;
+         symbol_table_.resize(symtab->sh_size / symtab
+         std::copy(data_ + symtab->sh_offset,
+              data_ + symtab->sh_offset + symtab->sh_si
+              reinterpret_cast<std::byte*>(symbol_table
+   }
+
+We first attempt to get the section header for the symbol table.
+If there isn’t one, we just return, leaving symbol_table_ empty.
+Otherwise, we calculate the number of entries in the symbol
+table by dividing the overall symbol table size by the size of a
+single entry, resize the symbol_table_ vector accordingly, then copy
+the data over.
+
+To parse sections, all we needed was the ability to look up a
+section header by name. For symbols, we must do a bit more
+than that. For one thing, multiple symbols may have the same
+name (for example, if they have different types or are weak
+symbols, which may be overridden). We also want the ability to
+find a symbol that lives at, or contains, a given file address. This
+will be useful for actions like finding out which function is
+currently being executed.
+We’ll construct two maps to help us perform these operations:
+one that maps names to multiple potential symbol table entries,
+and one that maps a single address range to a single symbol.
+For the former, we can use std::unordered_multimap<std::string_view,
+Elf64_Sym*>. For the latter, we’ll use a std::map<std::pair<file_addr,
+
+file_addr>, Elf64_Sym*> with a special comparator that takes into
+
+account only the start of the address range; that way, we can
+easily look up symbols by their starting address without having
+to know their size. Add these private members to sdb::elf along
+with a private member to parse them and several public
+member functions that expose them:
+
+   #include <map>
+
+   namespace sdb {
+       class elf {
+       public:
+           --snip--
+           std::vector<const Elf64_Sym*> get_symbols
+                std::string_view name) const;
+
+                std::optional<const Elf64_Sym*> get_symbo
+                    file_addr addr) const;
+                std::optional<const Elf64_Sym*> get_symbo
+                    virt_addr addr) const;
+             std::optional<const Elf64_Sym*> get_symbo
+                 file_addr addr) const;
+             std::optional<const Elf64_Sym*> get_symbo
+                   virt_addr addr) const;
+
+        private:
+             --snip--
+             void build_symbol_maps();
+
+             --snip--
+             std::unordered_multimap<std::string_view
+             symbol_name_map_;
+
+             struct range_comparator {
+                 bool operator()(
+                       std::pair<file_addr, file_addr>
+                       std::pair<file_addr, file_addr>
+                     return lhs.first < rhs.first;
+                 }
+             };
+             std::map<std::pair<file_addr, file_addr>
+             symbol_addr_map_;
+        };
+   }
+
+We add functions for retrieving the set of symbols that
+correspond to the given name, the symbol that starts at a given
+file address, and the symbol that contains a given file address.
+For those final two, we declare overloads for both file addresses
+and virtual addresses for convenience.
+
+The range_comparator type is the special comparator I mentioned
+earlier; it takes two pairs of addresses and compares only the
+first element of each pair (the low address). We supply this type
+as a template argument to std::map, which sets it as the type to
+use when comparing keys in the map.
+
+Now let’s write the functions, starting with build_symbol_maps. For
+each symbol, this function should make the relevant insertions
+into the name and address maps. Note that we should make
+entries in the address map only for symbols that actually have
+addresses, which excludes various types of symbols, such as file
+symbols and those that are undefined.
+
+For the symbol name map, we’ll add an entry for the symbol
+name as it is written in the ELF file as well as an entry for the
+demangled name, if any. Demangling addresses a consequence
+of the C++ language’s support for function overloading and
+templates: that one function name may correspond to many
+different physical functions. To enable this, C++ symbol names
+are mangled, or transformed to also carry information about
+the namespace, return type, function arguments, template
+arguments, and more. For instance, sdb::elf::build_symbol_maps gets
+mangled to become the symbol _ZN3sdb3elf17build_symbol_mapsEv.
+
+We won’t concern ourselves with exactly how names are
+mangled; it suffices to say that the scheme is defined in the
+Itanium ABI for C++ and a function called abi::__cxa_demangle in the
+<cxxabi.h> header can demangle symbols for us. Read section
+5.1 of the Itanium C++ ABI, “External Names (a.k.a. Mangling)”
+(https://itanium-cxx-abi.github.io/cxx-abi/abi.html#mangling), if
+you want to know all of the gory details. Implement
+build_symbol_maps in sdb/src/elf.cpp:
+
+   #include <cxxabi.h>
+
+   sdb::elf::elf(const std::filesystem::path& path)
+       --snip--
+       build_symbol_maps();
+   }
+
+   void sdb::elf::build_symbol_maps() {
+       for (auto& symbol : symbol_table_) {
+           auto mangled_name = get_string(symbol.st_
+           int demangle_status;
+               auto demangled_name = abi::__cxa_demangle
+                   mangled_name.data(), nullptr, nullpt
+               if (demangle_status == 0) {
+                   symbol_name_map_.insert({ demangled_n
+                   free(demangled_name);
+             }
+             symbol_name_map_.insert({ mangled_name, &
+
+             if (symbol.st_value != 0 and
+                   symbol.st_name != 0 and
+                   ELF64_ST_TYPE(symbol.st_info) != STT_
+                   auto addr_range = std::pair(
+                       file_addr{ *this, symbol.st_value
+                       file_addr{ *this, symbol.st_value
+                   symbol_addr_map_.insert({ addr_range
+             }
+        }
+   }
+
+We loop over every symbol in the symbol table, getting the
+(potentially mangled) name of the symbol from the string table
+and attempting to demangle it. The __cxa_demangle function takes a
+mangled name and a pointer to a buffer to fill with the mangled
+name; if this name is nullptr, the function dynamically allocates a
+string and returns it instead. We also pass the function an out-
+parameter for the demangled name size (if null, the size won’t
+be stored) and an out-parameter for status reporting.
+If demangling succeeds, __cxa_demangle stores 0 in the status
+argument, so we check demangle_status, store a new map entry if
+demangling succeeded, and free the allocated pointer.
+Regardless of the demangling’s success, we add a mapping to
+the symbol name map for the symbol’s (potentially mangled)
+name. If the symbol has an address and a name (meaning the
+st_value and st_name fields are not 0) and doesn’t point to thread-
+
+local storage (indicated by ELF64_ST_TYPE(st_info) being STT_TLS), we
+add an entry to the address map that maps the symbol’s address
+range to a pointer to the symbol entry.
+
+Now we’ll turn our attention to get_symbols_by_name. We want this
+function to look up the given name in the symbol name map
+and return pointers to all symbols that match the name. While
+we could do some additional string processing so that, for
+example, begin finds the std::vector<Elf64_Sym,
+std::allocator<Elf64_Sym>>::begin() symbol, we won’t include this
+
+feature here for simplicity. Implement the function in
+sdb/src/elf.cpp:
+
+   #include <algorithm>
+
+   std::vector<const Elf64_Sym*>
+   sdb::elf::get_symbols_by_name(std::string_view na
+       auto [begin, end] = symbol_name_map_.equal_ra
+         std::vector<const Elf64_Sym*> ret;
+         std::transform(begin, end, std::back_inserte
+             [](auto& pair) { return pair.second; });
+         return ret;
+   }
+
+The interface for std::multimap is a bit odd if you’re used to the
+one-to-one map types in the standard library. We retrieve a
+range of the map entries whose keys match the given name
+with equal_range and use structured bindings to immediately give
+names to the two elements of the pair that this function returns.
+(See the “Structured Bindings” box for more details.) We then
+declare a vector to hold the matching symbols and use
+std::transform to fill it. The multimap iterators provide the key and
+
+value, but we only need the values, so we copy the second
+element of each pair into the return vector.
+
+STRUCTURED BINDINGS
+
+The structured bindings feature of C++17 breaks, or
+destructures, variables into several pieces and gives names to
+those pieces. For example, we could destructure a std::pair to
+give names to the two elements of the pair, like this:
+   std::pair<int,int> my_pair {0,1};
+   auto [first, second] = my_pair;
+
+Once this code runs, first will have the value 0 and second will
+have the value 1.
+
+Next, we’ll implement the version of the get_symbol_at_address
+function that takes file addresses. Because our address map
+takes into account only the start address of the range, we can
+locate the relevant symbol, if it exists, by calling std::map::find
+with {address, <some arbitrary address>}:
+
+   std::optional<const Elf64_Sym*>
+   sdb::elf::get_symbol_at_address(file_addr address
+       if (address.elf_file() != this) return std::n
+       file_addr null_addr;
+       auto it = symbol_addr_map_.find({ address, nu
+       if (it == end(symbol_addr_map_)) return std:
+
+          return it->second;
+   }
+If the file address points to the wrong ELF file, we return
+std::nullopt. We then create a null file address and call find with
+
+{address, null_addr} to find the element in the map whose start
+
+address matches the given one. If we don’t find one, we return
+an empty optional. Otherwise, we return a pointer to the
+symbol.
+
+The virtual address version of get_symbol_at_address function can
+defer to the one we just wrote:
+
+   std::optional<const Elf64_Sym*>
+   sdb::elf::get_symbol_at_address(virt_addr address
+       return get_symbol_at_address(address.to_file_
+   }
+
+Before moving on, we must handle a couple of situations that
+might arise in the file address case:
+
+  The symbol containing the address begins exactly at the
+  address.
+  The symbol containing the address begins earlier than the
+  address and spans past it.
+
+Helpfully, std::map comes with a lower_bound function that finds the
+first element that is either greater than or equal to our given
+key. With this, we can handle both of the necessary situations:
+
+   std::optional<const Elf64_Sym*>
+   sdb::elf::get_symbol_containing_address(file_add
+       if (address.elf_file() != this or symbol_add
+             return std::nullopt;
+
+        file_addr null_addr;
+        auto it = symbol_addr_map_.lower_bound({ add
+
+        if (it != end(symbol_addr_map_)) {
+            if (auto [key, value] = *it; key.first ==
+                return value;
+            }
+        }
+
+        if (it == begin(symbol_addr_map_)) return std
+
+        --it;
+        if (auto [key, value] = *it;
+            key.first < address and key.second > add
+            return value;
+        }
+
+        return std::nullopt;
+   }
+If the file address points to the wrong ELF file or the symbol
+table is empty, then we return std::nullopt. Otherwise, we find the
+first address entry with a starting address greater than or equal
+to the given one with lower_bound. So long as lower_bound didn’t return
+the end iterator, we handle the situation in which the symbol
+containing the given offset begins exactly at that offset. We use
+structured bindings to give names to the key and value to which
+the iterator points rather than using it->first.first, and we check
+whether the first element of the address range matches the
+given address. If so, we return the pointer to the symbol.
+
+If no entry matches the given address exactly, we’ll look at the
+entry immediately preceding the lower bound we computed
+earlier, because the range could begin before the given address
+and span beyond it. If the current iterator is the begin iterator,
+there is no entry preceding it, so we return an empty optional.
+Otherwise, we decrement the iterator to get the preceding one
+and check whether the desired address falls within its range. If
+so, we’ve found the entry we’re looking for, so we return the
+associated symbol. Otherwise, we’ve exhausted all possibilities,
+so we return an empty optional.
+
+Finally, the virtual address version of get_symbol_containing_address
+can defer to the one we just wrote:
+   std::optional<const Elf64_Sym*>
+   sdb::elf::get_symbol_containing_address(virt_add
+       return get_symbol_containing_address(address
+   }
+
+Hooray! We have a working symbol table. (At least, we hope so;
+we’ll test it once we’ve hooked the parser into the rest of the
+debugger.)
+
+Creating a Target Type
+
+Now that we’ve written an ELF parser, we need somewhere in
+our debugger state for object files to live. We could add to
+sdb::process, but this type is getting rather large as it is, and an
+
+object file isn’t really contained in process; rather, it’s higher-level,
+symbolic information relevant to the process.
+
+In this section, we’ll introduce a new type that represents this
+more symbolic layer of the program we’re interacting with:
+sdb::target. While the sdb::process type has facilities for low-level
+
+operations such as reading and writing memory, managing
+breakpoint sites, and stepping over instructions, sdb::target will
+provide high-level operations such as managing symbolic
+breakpoints, stepping through source code, and querying debug
+information.
+
+Auxiliary Vectors
+
+The sdb::target type will set the load address of the ELF file’s .text
+section. To find the code’s load address when constructing the
+sdb::elf object, we could parse /proc/<pid>/maps, as we did in
+
+“Position-Independent Executables” on page 151. In this section,
+however, we’ll find the load address in another way, as it lets us
+introduce a new concept: the auxiliary vector.
+
+Defined in the SYSV ABI’s processor supplement document, the
+auxiliary vector is an array of identifier/value pairs that the
+operating system kernel uses to provide information about a
+process to user space. It can encode information such as where
+the ELF program headers were loaded, the PID of the process,
+and, most importantly for us, the real entry point of the
+program. Armed with the real entry point, we can subtract the
+entry point offset stored in the ELF file header to get the load
+bias of the ELF file. In the elf.h header file, which defines the
+auxiliary vector IDs, we can see that the ID we want is AT_ENTRY.
+
+We can get the auxiliary vector for a process in a couple of
+ways. When the process is started, the auxiliary vector is put in
+memory just above the program stack. Helpfully, Linux
+provides the same data in the /proc/<pid>/auxv file. Let’s add a
+function to sdb::process to get the auxiliary vector for the process.
+Add a declaration to sdb/include/libsdb/process.hpp:
+
+   #include <unordered_map>
+
+   namespace sdb {
+       class process {
+       public:
+           --snip--
+           std::unordered_map<int, std::uint64_t> ge
+       };
+   }
+
+This function maps the macro values (for example, AT_ENTRY) to
+the value of the corresponding entry in the auxiliary vector.
+Implement this function in sdb/src/process.cpp. It should keep
+reading entries from the aux vector until it finds the AT_NULL
+entry:
+
+   #include <elf.h>
+   #include <fstream>
+
+   std::unordered_map<int, std::uint64_t> sdb::proce
+        auto path = "/proc/" + std::to_string(pid_) +
+        std::ifstream auxv(path);
+
+        std::unordered_map<int, std::uint64_t> ret;
+        std::uint64_t id, value;
+
+        auto read = [&](auto& into) {
+            auxv.read(reinterpret_cast<char*>(&into)
+        };
+
+        for (read(id); id != AT_NULL; read(id)) {
+            read(value);
+            ret[id] = value;
+        }
+        return ret;
+   }
+
+We compute the path to the the auxiliary vector file and open
+an input stream for it. We declare variables to store the map to
+return and the ID and value of an entry. Entries in
+/proc/<pid>/auxv are binary-encoded pairs of 64-bit integers. We
+make a small helper to read the data into a given variable and
+then use it to continue reading pairs of values, storing them in
+the map, until we read one whose ID is AT_NULL (which terminates
+the list). Finally, we return the map we generated.
+Targets
+
+Now we can implement the sdb::target type, which will manage
+the symbolic level of the program that we’re debugging, such as
+storing the sdb::elf object for the program, reading debug
+information, and carrying out debugger operations at the level
+of the source code. Begin this type in a new
+sdb/include/libsdb/target.hpp file. It should have a process, an
+object file, and functions for retrieving these. Like sdb::process, it
+should be non-copyable and constructible only with launch and
+attach static members:
+
+   #ifndef SDB_TARGET_HPP
+   #define SDB_TARGET_HPP
+
+   #include <memory>
+   #include <libsdb/elf.hpp>
+   #include <libsdb/process.hpp>
+
+   namespace sdb {
+       class target {
+       public:
+           target() = delete;
+              target(const target&) = delete;
+              target& operator=(const target&) = delete
+
+              static std::unique_ptr<target> launch(
+                    std::filesystem::path path,
+                    std::optional<int> stdout_replacement
+              static std::unique_ptr<target> attach(pid
+
+              process& get_process() { return *process_
+              const process& get_process() const { retu
+              elf& get_elf() { return *elf_; }
+              const elf& get_elf() const { return *elf_
+
+         private:
+             target(std::unique_ptr<process> proc, std
+                  : process_(std::move(proc)), elf_(std
+             {}
+
+              std::unique_ptr<process> process_;
+              std::unique_ptr<elf> elf_;
+         };
+   }
+
+   #endif
+
+The launch and attach functions should both parse the ELF file for
+the relevant process and set the load address of the .text section.
+We’ll factor this out into a create_loaded_elf function. Create a new
+sdb/src/target.cpp file with these contents:
+   #include <libsdb/target.hpp>
+   #include <libsdb/types.hpp>
+
+   namespace {
+       std::unique_ptr<sdb::elf> create_loaded_elf(
+              const sdb::process& proc, const std::file
+              auto auxv = proc.get_auxv();
+              auto obj = std::make_unique<sdb::elf>(pat
+              obj->notify_loaded(
+                  sdb::virt_addr(auxv[AT_ENTRY] - obj->
+              return obj;
+         }
+   }
+
+We’ll use this create_loaded_elf function inside of both launch and
+attach. This function gets the auxiliary vector for the process,
+
+creates an sdb::elf object for the file at the given path, then sets
+the load address of its .text section by subtracting the load
+address of the entry point in the ELF header from the actual
+load address of the entry point. Add this new file to
+sdb/src/CMakeLists.txt:
+
+   add_library(libsdb ... target.cpp)
+Implement sdb::target::launch and attach in the same file. The launch
+function is the easiest to implement; it merely constructs the
+process_ and elf_ members using the given path:
+
+    std::unique_ptr<sdb::target>
+    sdb::target::launch(
+          std::filesystem::path path, std::optional<i
+        auto proc = process::launch(path, true, stdou
+        auto obj = create_loaded_elf(*proc, path);
+        return std::unique_ptr<target>(
+            new target(std::move(proc), std::move(obj
+    }
+
+The attach function is a bit trickier. We need a way to find the
+ELF file associated with a given PID. Here, the procfs comes to
+the rescue once more! The /proc/<pid>/exe file is a symbolic link
+to the executable for the given process. We can pass this path to
+create_loaded_elf:
+
+    std::unique_ptr<sdb::target>
+    sdb::target::attach(pid_t pid) {
+        auto elf_path = std::filesystem::path("/proc
+        auto proc = process::attach(pid);
+        auto obj = create_loaded_elf(*proc, elf_path
+        return std::unique_ptr<target>(
+              new target(std::move(proc), std::move(obj
+   }
+
+We compute the path to the executable by concatenating /proc,
+the PID, and exe. Notice that std::filesystem::path supports the /
+operator for path concatenation. We then create the sdb::elf file
+with the computed path and return a new sdb::target object.
+
+We’ll add more features to sdb::target in later chapters, but for
+now, let’s refactor the command line driver to create an
+sdb::target instead of an sdb::process, then use the symbolic
+
+information from the ELF file to work out which function is
+currently being executed. In sdb/tools/sdb.cpp, attach should
+create the target:
+
+   #include <libsdb/target.hpp>
+
+   namespace {
+       std::unique_ptr<sdb::target> attach(int argc
+           // Passing PID
+              if (argc == 3 && argv[1] == std::string_v
+                  pid_t pid = std::atoi(argv[2]);
+                  return sdb::target::attach(pid);
+              }
+
+              // Passing program name
+               else {
+                   const char* program_path = argv[1];
+                    auto target = sdb::target::launch(pro
+                    fmt::print("Launched process with PID
+                    return target;
+               }
+         }
+   }
+
+We update the return type to be std::unique_ptr<sdb::target> and
+update the calls to attach and launch to call the versions in
+sdb::target rather than sdb::process. We also update the call to pid to
+
+first get the process object from the target and the last return
+statement to return the target.
+
+The main function needs updating as well, to pass the target to
+main_loop and set up the SIGINT handler:
+
+   int main(int argc, const char* argv[]) {
+       if (argc == 1) {
+           std::cerr << "No arguments given\n";
+           return -1;
+       }
+
+         try {
+             auto target = attach(argc, argv);
+               g_sdb_process = &target->get_process();
+               signal(SIGINT, handle_sigint);
+               main_loop(target);
+         }
+         catch (const sdb::error& err) {
+               std::cout << err.what() << '\n';
+         }
+   }
+
+The attach function now returns an sdb::target, so change the
+name of the process variable to target. Store &target->get_process() in
+the g_sdb_process global variable, and pass target to the main_loop
+function.
+
+The main_loop function should pass the target to handle_command:
+
+   namespace {
+         void main_loop(std::unique_ptr<sdb::target>&
+             --snip--
+             handle_command(target, line_str);
+             --snip--
+         }
+   }
+For now, handle_command will just pass the given target’s process to
+most of the subcommands. The only one that we’ll give the
+target itself is handle_stop, so that we can try to print the current
+function. Grab a reference to the target’s process near the top of
+the function, and then update all of the calls:
+
+   namespace {
+    ➊ void handle_command(std::unique_ptr<sdb::targ
+             std::string_view line) {
+           auto args = split(line, ' ');
+           auto command = args[0];
+        ➋ auto process = &target->get_process();
+
+              if (is_prefix(command, "continue")) {
+                   process->resume();
+                   auto reason = process->wait_on_signal
+                ➌ handle_stop(*target, reason);
+              }
+              --snip--
+              else if (is_prefix(command, "step")) {
+                   auto reason = process->step_instructi
+                ➍ handle_stop(*target, reason);
+              }
+              --snip--
+         }
+   }
+The updates you need to make are in the function signature ➊,
+the creation of a local process variable ➋, and both calls to
+handle_stop ➌➍. In handle _stop, pass the target to print_stop_reason:
+
+   namespace {
+       void handle_stop(sdb::target& target, sdb::st
+               print_stop_reason(target, reason);
+               if (reason.reason == sdb::process_state:
+                   print_disassembly(
+                       target.get_process(), target.get_
+               }
+         }
+   }
+
+Update the parameter type and the arguments to print_stop_reason
+and print_disassembly.
+
+Now we can make a nonstructural change. In handle_stop, if the
+process stopped due to a signal, we should look up the symbol
+corresponding to the current program counter and print out the
+function name, if there is one. That part of the switch statement is
+getting rather crowded, so let’s factor it into a get_signal_stop_reason
+function:
+   namespace {
+        std::string get_signal_stop_reason(
+              const sdb::target& target, sdb::stop_re
+              auto& process = target.get_process();
+              std::string message = fmt::format("stoppe
+                    sigabbrev_np(reason.info), process.ge
+
+              auto func = target.get_elf().get_symbol_c
+              if (func and ELF64_ST_TYPE(func.value()->
+                  message += fmt::format(" ({})",
+                      target.get_elf().get_string(func
+              }
+
+              if (reason.info == SIGTRAP) {
+                  message += get_sigtrap_info(process,
+              }
+
+              return message;
+        }
+   }
+
+At the start of the function, we grab a reference to the process
+so we don’t have to repeat target.get_process() in multiple places.
+We initialize the message variable and then retrieve the symbol at
+the current program counter with get_symbol_containing_address. This
+function returns a pointer to the symbol corresponding to the
+current function. Getting the type of a symbol is a little
+unwieldy, as it’s packed into the st_info member, but we use the
+ELF64_ST_TYPE macro to retrieve the relevant bits and test it against
+
+STT_FUNC to see if the symbol represents a function. If so, we add
+
+the function’s name to the message, retrieving the name from
+the string table.
+
+We now need to modify print_stop_reason to call this new function:
+
+   namespace {
+       void print_stop_reason(
+             const sdb::target& target, sdb::stop_re
+           std::string message;
+           switch (reason.reason)
+           {
+           --snip--
+           case sdb::process_state::stopped:
+                message = get_signal_stop_reason(targ
+                break;
+           }
+
+              fmt::print("Process {} {}\n", target.get_
+        }
+   }
+First, we update the parameter type from const sdb::process& to const
+sdb::target&. We then update the sdb::process_state::stopped branch to
+
+populate the message with the get_signal_stop_reason function we
+just wrote. Finally, we update the printing of the PID to first
+extract the process from the target.
+
+Now, if we stop at a breakpoint inside of a function for which
+we have a symbol range, the debugger will print the function’s
+name when the inferior stops:
+
+   $ tools/sdb test/targets/hello_sdb
+   Launched process with PID 1647
+   sdb> break set 0x55555555515b
+   sdb> c
+   Process 1647 stopped with signal TRAP at 0x555555
+   0x000055555555515b: call 0x0000555555555050
+   0x0000555555555160: mov $0x00, %eax
+   0x0000555555555165: pop %rbp
+   0x0000555555555166: ret
+   0x0000555555555167: add %dh, %bl
+
+The debugger correctly adds (main) to the output! Now we can
+test the debugger’s new features.
+
+Testing
+To test our new type, we won’t account for all possible
+scenarios; rather, we’ll ensure that if we regress some core
+functionality, we’ll know about it immediately.
+
+We’ll start by ensuring that the symbol at the entry point offset
+is the _start function. Supplied by the C++ toolchain, this
+function sets up the support that the program needs to run
+before calling main:
+
+   #include <libsdb/target.hpp>
+
+   TEST_CASE("ELF parser works", "[elf]") {
+       auto path = "targets/hello_sdb";
+       sdb::elf elf (path);
+       auto entry = elf.get_header().e_entry;
+       auto sym = elf.get_symbol_at_address(file_add
+       auto name = elf.get_string(sym.value()->st_na
+       REQUIRE(name == "_start");
+
+We can also look for the _start symbol using get_symbols_by_name, to
+ensure we get the right one:
+
+         --snip--
+         auto syms = elf.get_symbols_by_name("_start"
+         name = elf.get_string(syms.at(0)->st_name);
+         REQUIRE(name == "_start");
+
+Finally, we’ll pretend that the ELF file is loaded at 0xcafecafe and
+ensure that 0xcafecafe + entry finds the _start symbol if we look up
+the symbol by address rather than offset:
+
+   TEST_CASE("ELF parser works", "[elf]") {
+       --snip--
+       elf.notify_loaded(virt_addr{ 0xcafecafe });
+       sym = elf.get_symbol_at_address(virt_addr{ 0x
+       name = elf.get_string(sym.value()->st_name);
+       REQUIRE(name == "_start");
+   }
+
+These tests should all pass. That will do for testing!
+
+Summary
+
+In this chapter, you learned about the layout of ELF files, which
+store the code of a program along with necessary data and
+metadata for linking, loading, and executing. You also
+implemented a parser for ELF files and tested it.
+In the next chapter, you’ll begin implementing a parser for the
+debug information format used on Linux, DWARF. DWARF is
+considerably more complex than ELF, so we’ll dedicate multiple
+chapters to implementing all of the parser’s necessary pieces to
+facilitate a full debugging experience.
+
+Check Your Knowledge
+
+1.
+1. What are the four kinds of object files that ELF files can
+  represent?
+2.
+2. What is the difference between an ELF section and an ELF
+  segment?
+3.
+3. Which Linux syscall can map large files into memory?
+4.
+4. How are ELF string tables represented?
+5.
+5. What is the auxiliary vector?

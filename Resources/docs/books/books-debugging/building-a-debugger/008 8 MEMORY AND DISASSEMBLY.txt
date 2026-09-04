@@ -1,0 +1,990 @@
+MEMORY AND DISASSEMBLY
+    . . . and I wrote to the waves words that vanished with the
+    tide to be forgotten.
+Memory corruption errors are one of the trickiest issues to
+debug in software. A memory write can invalidate a data
+structure without crashing the program, only for the corruption
+to hide in the shadows until it causes unexpected behavior a
+few thousand function calls later.
+Debuggers usually provide a means to inspect and modify the
+memory of the inferior process so the user can track down
+these sneaky problems. In this chapter, you’ll add commands to
+your debugger for achieving this.
+
+By reading the memory of the code that is currently being
+executed, the debugger can also show the user a representation
+of the code. Most people won’t understand the instructions by
+looking at the raw memory dump, however, so debuggers must
+first disassemble the machine code, turning it back into human-
+readable assembly, before showing it to the user. You’ll add
+disassembly support to your debugger in the memory
+manipulation features you implement.
+
+Memory Operations
+
+When we implemented breakpoint site enabling in Chapter 7,
+we read from and wrote to memory with PTRACE_PEEKDATA and
+PTRACE_POKEDATA. To interact with memory, we could just write
+
+wrappers around these functions and expose them to the user.
+However, these operations work on 64 bits at a time, so if we
+wanted to read a large amount of data out of the process
+(maybe to visualize some large data structure), we would have
+to make a lot of system calls, meaning many trips to and from
+kernel space, causing bad performance.
+A better option might be to use the process_vm_readv and process_vm
+_writev syscalls and the /proc/pid>/mem file, both of which
+
+support reading and writing larger chunks. Unfortunately, the
+memory gods aren’t on our side: process_vm_writev doesn’t support
+writing to protected areas of memory like code segments, and
+WSL has poor support for /proc/<pid>/mem. So, we’ll use
+process_vm_readv to read memory and grit our teeth while using
+
+ptrace to write memory one word at a time.
+
+Reading and Writing
+
+Let’s add two new member functions to sdb::process for reading
+and writing memory. For reading, we should take a virtual
+address and an amount to read and return a std::vector<std::byte>
+that stores the requested memory. For writing, we could take an
+address and a std::vector<std::byte>, but using std::vector here might
+force additional memory allocations where they’re not needed.
+As such, we’ll write a small span type that represents a view of an
+existing region of memory. Add the following to
+sdb/include/libsdb/types.hpp:
+
+   #include <vector>
+   namespace sdb {
+       template <class T>
+       class span {
+         public:
+             span() = default;
+              span(T* data, std::size_t size) : data_(d
+              span(T* data, T* end) : data_(data), size
+              template <class U>
+              span(const std::vector<U>& vec) : data_(v
+
+              T* begin() const { return data_; }
+              T* end() const { return data_ + size_; }
+              std::size_t size() const { return size_;
+              T& operator[](std::size_t n) { return *(d
+
+         private:
+             T* data_ = nullptr;
+             std::size_t size_ = 0;
+         };
+   }
+
+The span type has four constructors: a default one that leaves the
+span empty, one that takes a start pointer and a size, one that
+takes start and end pointers, and one that takes a std::vector. We
+make the std::vector constructor a template with its own template
+parameter rather than using std::vector<T> because, for instance,
+it will be common for us to initialize an sdb::span<const std::byte>
+with a std::vector<std::byte>, and those types don’t exactly match.
+The rest of the type is fairly straightforward; it stores the
+necessary information and allows users to retrieve the
+elements, start and end pointers, and size of the span.
+
+Now we can declare read_memory and write_memory in
+sdb/include/libsdb/process.hpp:
+
+   namespace sdb {
+       class process {
+       public:
+           --snip--
+           std::vector<std::byte> read_memory(virt_a
+           void write_memory(virt_addr address, span
+           --snip--
+       };
+   }
+
+The read_memory function takes a virtual address to read from and
+a number of bytes to read and returns the requested memory in
+a std::vector. The write_memory function takes a virtual address to
+write to and a span<const std::byte> representing the data to write.
+The const part in span<const std:: byte> ensures that we cannot
+accidentally modify the data to which the span is pointing.
+Implement these in sdb/src/process.cpp, beginning with
+read_memory:
+
+    #include <sys/uio.h>
+
+    std::vector<std::byte>
+    sdb::process::read_memory(
+          virt_addr address, std::size_t amount) cons
+        std::vector<std::byte> ret(amount);
+
+          iovec local_desc{ ret.data(), ret.size() };
+          std::vector<iovec> remote_descs;
+          while (amount > 0) {
+              auto up_to_next_page = 0x1000 - (address
+              auto chunk_size = std::min(amount, up_to_
+              remote_descs.push_back({ reinterpret_cast
+              amount -= chunk_size;
+              address += chunk_size;
+          }
+
+          if (process_vm_readv(pid_, &local_desc, /*lio
+              remote_descs.data(), /*riovcnt=*/remote_d
+              error::send_errno("Could not read process
+          }
+          return ret;
+    }
+We initialize a std::vector with enough space to fit the data we’ll
+read. The process_vm_readv function performs the memory read and
+takes descriptions of the memory involved in the data transfer
+as arguments of type iovec. This type wraps a pointer to the
+buffer and the size of the buffer. The descriptor for the memory
+into which the data should be copied (the local descriptor) is
+simply the data and size of the ret vector.
+
+The descriptor for the memory from which the data should be
+copied (the remote descriptor) is a bit more complicated. We
+want client code to be able to request large amounts of data,
+potentially more than is possible to read from the inferior, and
+have whatever data is accessible returned. For example, if we
+want to read a Linux filepath from the inferior process, this
+could be up to 4KiB in size, but maybe the path is only 12 bytes
+in size and directly after the path in memory is a page that is
+inaccessible to the inferior. We should still return those 12 valid
+bytes. The process_vm_readv function does support partial memory
+transfers, but if any part of the read for a single iovec descriptor
+fails, then no data is copied for that entire descriptor. As such,
+we create a vector of descriptors and split the range of data to
+be copied on memory page boundaries (assuming 4KiB pages,
+which is the default on x64). We pass this vector to process_vm_readv.
+We also pass the PID of the process from which we want to
+read, the number of local and remote descriptors we’re passing
+(one, in both cases), and an argument for additional flags. As
+none exist at the time of writing, we pass 0. If process_vm_readv fails,
+it returns -1 and sets errno, so we make sure to handle this
+potential error.
+
+The write_memory function is a bit more complicated. Because ptrace
+can only write exactly 8 bytes at a time, we might accidentally
+overwrite some data if the amount we want to write isn’t
+divisible by eight. In such cases, we’ll need to read 8 bytes from
+the desired address, copy the data over the start of these bytes,
+then write them back:
+
+   #include <libsdb/bit.hpp>
+
+   void sdb::process::write_memory(
+       virt_addr address, span<const std::byte> data
+       std::size_t written = 0;
+         while (written < data.size()) { ➊
+             auto remaining = data.size() - written;
+             std::uint64_t word;
+             if (remaining >= 8) { ➋
+                 word = from_bytes<std::uint64_t>(data
+             }
+             else { ➌
+                    auto read = read_memory(address + wri
+                    auto word_data = reinterpret_cast<cha
+                    std::memcpy(word_data, data.begin() +
+                    std::memcpy(word_data + remaining, re
+              }
+              if (ptrace(PTRACE_POKEDATA, pid_, address
+                    error::send_errno("Failed to write me
+              }
+              written += 8;
+         }
+   }
+
+We loop until we’ve written all of the data that the caller gave
+us ➊. Each iteration of this loop writes 8 bytes to the inferior
+process. We calculate the amount of remaining data based on
+how much we’ve written so far and declare a word variable that
+will hold the data to be written on this iteration. If at least 8
+bytes remain, we’ll write the next 8 bytes from the start of the
+given buffer ➋. Otherwise, we need to handle the special case of
+doing a partial memory write ➌. For this, we read the 8 bytes
+we’ll be writing to and cast a pointer to word to a char* so we can
+use memcpy on it. We then copy the remaining data into the start of
+word_data, followed by the bytes we’re trying not to overwrite.
+
+Finally, we call ptrace with the PTRACE_POKEDATA request to write the
+next 8 bytes to the inferior, handle any errors, and record that
+we’ve written another 8 bytes, so that the loop now considers
+the next 8 bytes.
+
+We’ll also write a convenience helper called read_memory_as that
+reads a block of memory as an object of a given type. Add this
+code to sdb/include/libsdb/process.hpp:
+
+   #include <libsdb/bit.hpp>
+
+   namespace sdb {
+       class process {
+       public:
+           --snip--
+           template <class T>
+           T read_memory_as(virt_addr address) const
+                auto data = read_memory(address, size
+                return from_bytes<T>(data.data());
+           }
+           --snip--
+       };
+   }
+
+This function template has one template parameter that gives
+the type to which the memory should be converted. It reads an
+amount of memory equal to the size of that type from the given
+address and then converts the resulting bytes to the given type.
+Because this is a template, we must implement it in the header
+rather than in the implementation file.
+
+Exposing Memory to the User
+
+Now we’ll support memory operations on the command line.
+Add a new command to handle_command in sdb/tools/sdb.cpp:
+
+   --snip--
+   else if (is_prefix(command, "memory")) {
+         handle_memory_command(*process, args);
+   }
+   --snip--
+
+We’ll support three subcommands: memory read <address>, to read an
+unspecified amount of data from that address (we’ll default to
+32 bytes); memory read <address> <number of bytes>, to read the specified
+number of bytes from that address; and memory write <address>
+<values>, to write the given values to the given address.
+
+Implement handle_memory_command as a simple wrapper around the
+functions that will do the actual reading and writing:
+
+   namespace {
+       void handle_memory_command(
+             sdb::process& process,
+                 const std::vector<std::string>& args) {
+               if (args.size() < 3) {
+                   print_help({ "help", "memory" });
+                     return;
+               }
+               if (is_prefix(args[1], "read")) {
+                     handle_memory_read_command(process, a
+               }
+               else if (is_prefix(args[1], "write")) {
+                   handle_memory_write_command(process,
+               }
+               else {
+                   print_help({ "help", "memory" });
+               }
+         }
+   }
+
+As usual, we call print_help if the user supplies unexpected
+arguments. Otherwise, we forward the arguments to one of the
+handle_memory_read_command or handle_memory_write_command functions, which
+
+we’ll write next.
+
+Let’s start with handle_memory_read_command. Implementing this
+function requires many steps, so we’ll do it piece by piece,
+beginning with argument parsing:
+   namespace {
+         void handle_memory_read_command(
+               sdb::process& process,
+                const std::vector<std::string>& args) {
+              auto address = sdb::to_integral<std::uint
+              if (!address) sdb::error::send("Invalid a
+
+              auto n_bytes = 32;
+              if (args.size() == 4) {
+                  auto bytes_arg = sdb::to_integral<std
+                  if (!bytes_arg) sdb::error::send("Inv
+                  n_bytes = *bytes_arg;
+              }
+
+We parse the address the user wants to read from, throwing an
+error if this fails. We then try to parse the number of bytes the
+user wants to read. If they don’t specify a number, we default to
+32. To perform the data read, we call into sdb::process::read_memory:
+
+              --snip--
+              auto data = process.read_memory(sdb::virt
+
+Finally, we print out the memory. We’ll print the data in batches
+of 16 bytes in hexadecimal, like this:
+   sdb> mem read 0x000055555555515b
+   0x0055555555515b: cc f0 fe ff ff b8 00 00 00 00 5
+   0x0055555555516b: fa 48 83 ec 08 48 83 c4 08 c3 0
+
+We write a loop that batches up the memory and uses fmt::print
+to write the batches in the desired format:
+
+              --snip--
+              for (std::size_t i = 0; i < data.size();
+                   auto start = data.begin() + i;
+                   auto end = data.begin() + std::min(i
+                   fmt::print("{:#016x}: {:02x}\n",
+                       *address + i, fmt::join(start, en
+              }
+         }
+   }
+
+We loop over the data 16 bytes at a time and compute start and
+end locations for the range we’ll print. When computing the
+end of the data, we offset the start of the data by the smaller of
+i+16 and the total data size. This ensures that end doesn’t point
+
+past the end of the data if the number of bytes isn’t divisible by
+16. We then call fmt::print. The {:#016x} specifier prints the address
+in hexadecimal with a leading 0x and pads it to 16 characters.
+The {:02x} specifier prints the value of each byte in hexadecimal
+without a leading 0x and pads it to two characters. Lastly,
+fmt::join causes that second specifier to apply to every element of
+
+the given range with the given delimiter (in our case, a blank
+space) between them.
+
+Now we implement handle_memory_write_command. When writing
+memory, we’ll expect input in the form of hexadecimal values,
+comma-separated and surrounded in square brackets, as in mem
+write 0x555555555156 [0xff,0xff]. This is essentially the approach of the
+
+parse_vector function, with one key difference: we should keep
+
+reading values until we find a ] character and then return a
+std::vector<std::byte>. Let’s write a parse_vector overload that does this
+
+in sdb/libsdb/include/parse.hpp:
+
+   namespace sdb {
+       inline auto parse_vector(
+             std::string_view text) {
+           auto invalid = [] { sdb::error::send("Inv
+
+               std::vector<std::byte> bytes;
+               const char* c = text.data();
+
+               if (*c++ != '[') invalid();
+
+               while (*c != ']') {
+                   auto byte = sdb::to_integral<std::byt
+                   bytes.push_back(byte.value());
+                   c += 4;
+
+                   if (*c == ',') ++c;
+                   else if (*c != ']') invalid();
+              }
+
+              if (++c != text.end()) invalid();
+
+              return bytes;
+        }
+   }
+
+We define a simple lambda that we can call to throw an error in
+a concise way. We then define a vector to hold the parsed bytes
+and grab the first character of the data. If it’s not an opening
+square bracket, the input is invalid, so we throw an error. After
+this check, we loop, reading bytes and commas until we hit the
+closing square bracket. On each iteration, we parse four
+characters (for example, 0xff) as a byte, move the c pointer past
+this data, and then ensure that we have either a comma or a
+closing square bracket. We check that we’ve consumed all of the
+text in the argument and then return the parsed bytes.
+The handle_memory_write_command function then parses the input and
+calls process.write_memory:
+
+   namespace {
+       void handle_memory_write_command(
+                  sdb::process& process,
+                  const std::vector<std::string>& args) {
+                if (args.size() != 4) {
+                    print_help({ "help", "memory" });
+                    return;
+                }
+
+                auto address = sdb::to_integral<std::uint
+                if (!address) sdb::error::send("Invalid a
+
+                auto data = sdb::parse_vector(args[3]);
+                process.write_memory(
+                    sdb::virt_addr{ *address }, { data.da
+          }
+   }
+
+If the caller passed an incorrect number of arguments, we print
+a help message. Otherwise, we parse the address to write to and
+the vector of data, then call process.write_memory to write the data to
+the inferior.
+Finally, we add some help text to print_help:
+
+              --snip--
+              if (args.size() == 1) {
+                  std::cerr << R"(Available commands:
+         breakpoint      - Commands for operating on break
+         continue        - Resume the process
+         memory          - Commands for operating on memo
+         register        - Commands for operating on regis
+         step            - Step over a single instruction
+   )";
+             }
+             --snip--
+             else if (is_prefix(args[1], "memory")) {
+                  std::cerr << R"(Available commands:
+         read <address>
+         read <address> <number of bytes>
+         write <address> <bytes>
+   )";
+              }
+              --snip--
+
+You can test these memory operations with the reg_read
+program. Launch the program, resume until it traps, and write
+some random bytes to the place where the program counter is
+pointing. Then resume and watch the process terminate due to
+an illegal instruction:
+
+   $ tools/sdb test/targets/reg_read
+   Launched process with PID 24233
+   sdb> c
+   Process 22092 stopped with signal TRAP at 0x55555
+   sdb> mem read 0x555555555156
+   0x00555555555156: 41 b5 2a 48 c7 c0 3e 00 00 00 4
+   0x00555555555166: 05 00 00 00 0f 05 49 bd 11 ba 5
+   sdb> mem write 0x555555555156 [0xff,0xff]
+   sdb> mem read 0x555555555156
+   0x00555555555156: ff ff 2a 48 c7 c0 3e 00 00 00 4
+   0x00555555555166: 05 00 00 00 0f 05 49 bd 11 ba 5
+   sdb> c
+   Process 24233 stopped with signal ILL at 0x555555
+   sdb>
+
+Bask in the glory of your heinous memory shenanigans for a
+minute, then get ready to write some tests.
+
+Testing Memory Operations
+
+Let’s a write a small test application whose memory we can
+read and write. To test reads, we’ll create a local integer
+variable with known contents and write the address of this
+variable to stdout. In the debugger, we’ll then read the memory at
+that address and ensure that the value we get matches the
+value in the code. Create an sdb/test/targets/memory.cpp file
+with these contents:
+
+   #include <cstdio>
+   #include <sys/signal.h>
+   #include <unistd.h>
+
+   int main() {
+       unsigned long long a = 0xcafecafe;
+       auto a_address = &a;
+
+         write(STDOUT_FILENO, &a_address, sizeof(void*
+         fflush(stdout);
+
+         raise(SIGTRAP);
+   }
+
+We define an integer variable with the value 0xcafecafe and
+retrieve its address; then we write it to stdout with the write
+syscall. We flush the stream so the debugger will definitely get
+the message and trap to signal the debugger.
+
+As usual, add this to the file sdb/test/targets/CMakeLists.txt:
+   --snip--
+   add_test_cpp_target(memory)
+   --snip--
+
+Then, add a test to sdb/test/tests.cpp:
+
+   TEST_CASE("Reading and writing memory works", "[m
+       bool close_on_exec = false;
+       sdb::pipe channel(close_on_exec);
+       auto proc = process::launch("targets/memory"
+       channel.close_write();
+
+        proc->resume();
+        proc->wait_on_signal();
+
+        auto a_pointer = from_bytes<std::uint64_t>(ch
+        auto data_vec = proc->read_memory(virt_addr{
+        auto data = from_bytes<std::uint64_t>(data_ve
+        REQUIRE(data == 0xcafecafe);
+   }
+
+We launch the test program and replace its stdout with a pipe so
+we can read the pointer the program prints. Next, we resume
+the process and wait for it to trap; then we parse the pointer the
+program printed to the pipe, read the data at the memory
+address given by that pointer, and ensure that it’s the value we
+expect (0xcafecafe). This test should pass.
+
+To test writes, we’ll create a local character array, print the
+address of this array to stdout, and, in the debugger, write a
+string to this address. The test will print the string to stdout and
+make sure we receive the same string in the debugger.
+
+Add the following to the existing sdb/test/targets/memory.cpp
+file:
+
+    int main() {
+        --snip--
+        char b[12] = { 0 };
+        auto b_address = &b;
+        write(STDOUT_FILENO, &b_address, sizeof(void*
+        fflush(stdout);
+        raise(SIGTRAP);
+
+         printf("%s", b);
+    }
+
+We declare an array of zeros that the debugger will write into.
+As in the previous test, we print the address of this array, flush
+stdout, and then trap. Finally, we print the contents of the array,
+which the debugger will have written to before resuming the
+process.
+
+Next, edit the test to carry out the rest of the steps required:
+
+   TEST_CASE("Reading and writing memory works", "[m
+       --snip--
+       proc->resume();
+       proc->wait_on_signal();
+
+           auto b_pointer = from_bytes<std::uint64_t>(ch
+           proc->write_memory(
+               virt_addr{ b_pointer }, { as_bytes("Hello
+
+           proc->resume();
+           proc->wait_on_signal();
+
+           auto read = channel.read();
+           REQUIRE(to_string_view(read) == "Hello, sdb!
+   }
+
+We resume the process and wait for it to trap after writing to
+stdout. We then read the address of the b variable from the pipe
+
+and write Hello, sdb! into that memory. Finally, we resume the
+process again and ensure it prints out the string.
+If you run the tests, you should see this:
+
+   All tests passed (66 assertions in 17 test cases
+
+Congratulate yourself on successfully implementing so many
+features! Maybe throw yourself a little party. When you’re done
+celebrating, it’s time to move on to disassembly.
+
+Disassembly
+
+Now that we can read from memory and read the instruction
+pointer, it’s possible to print out a textual representation of the
+assembly code of the inferior when the user stops at a
+breakpoint. We can feed the raw binary instructions, from the
+current instruction pointer onward, to a tool that decodes them,
+spitting out assembly code. We call such a tool a disassembler.
+
+Writing an x64 disassembler is way out of scope for this book;
+the topic could fill an entire book itself. The instruction
+encoding for x64 is very complex and includes a huge number
+of instructions. If you’re interested in the encoding format, you
+can read the “X86-64 Instruction Encoding” article on the
+OSDev.org wiki at https://wiki.osdev.org/X86-
+64_Instruction_Encoding.
+This book uses the Zydis library for disassembly as it’s very
+lightweight and also supports encoding instructions. Zydis has
+several versions with rather different interfaces; I’ll use version
+4. If you don’t want to add any more dependencies to the
+project, you could instead use libopcodes, which comes with
+binutils. Be warned, however, that it’s almost completely
+
+undocumented.
+
+Add Zydis to sdb/vcpkg.json:
+
+    {
+          "dependencies": ["libedit", "catch2", "fmt",
+    }
+
+Find the package in sdb/CMakeLists.txt, underneath the call to
+find_package for fmt:
+
+    --snip--
+    find_package(fmt CONFIG REQUIRED)
+    find_package(zydis CONFIG REQUIRED)
+    --snip--
+
+Then link against it in sdb/src/CMakeList.txt and add
+disassembler.cpp as a source file (as we’ll be writing this file
+shortly):
+
+   add_library(libsdb ... disassembler.cpp)
+   target_link_libraries(libsdb PRIVATE Zydis::Zydis
+
+If you followed along with “Making the Dependencies
+Accessible” on page 5 and want to maintain the ability to install
+libsdb and allow dependent libraries to easily consume it
+
+through CMake, you’ll need to add a CMake configuration file
+for libsdb and make Zydis a dependency. For details on this
+process, see the “Installing” chapter of An Introduction to
+Modern CMake (https://cliutils.gitlab.io/modern-
+cmake/chapters/install/installing.html).
+
+Add disassembler.cpp to the existing add_library call and write a
+new call to target_link_libraries to link against Zydis. We won’t
+expose any code from Zydis in the public headers; we need it
+only for building, so we use PRIVATE visibility.
+
+We’ll encapsulate disassembling in an sdb::disassembler type.
+Create a new sdb/include/libsdb/disassembler.hpp file with these
+contents:
+#ifndef SDB_DISASSEMBLER_HPP
+#define SDB_DISASSEMBLER_HPP
+
+#include <libsdb/process.hpp>
+#include <optional>
+
+namespace sdb {
+    class disassembler {
+        struct instruction {
+            virt_addr address;
+            std::string text;
+        };
+
+    public:
+        disassembler(process& proc) : process_(&p
+
+         std::vector<instruction> disassemble(
+             std::size_t n_instructions,
+             std::optional<virt_addr> address = st
+
+    private:
+        process* process_;
+    };
+}
+
+#endif
+Our new sdb::disassembler type has a nested instruction type, which
+holds a string representation of the instruction and the memory
+address where the binary instruction it corresponds to is
+stored. The constructor takes a reference to an sdb::process and
+stores a pointer to it. The disassemble function takes a number of
+instructions to disassemble and, optionally, an address from
+which to disassemble; by default, it uses the current program
+counter value.
+
+Implement disassemble in a new sdb/src/disassembler.cpp file.
+Begin the function by creating a std::vector with enough memory
+reserved for all of the instructions:
+
+   #include <Zydis/Zydis.h>
+   #include <libsdb/disassembler.hpp>
+
+   std::vector<sdb::disassembler::instruction> sdb:
+         std::size_t n_instructions,
+         std::optional<virt_addr> address) {
+       std::vector<instruction> ret;
+       ret.reserve(n_instructions);
+
+If the user didn’t supply an address to disassemble from, we’ll
+default to the location where the program counter is pointing.
+We’ll need to read a chunk of memory from that address, but
+x64 instructions aren’t all the same size, so we don’t know how
+much memory we’ll have to read. We could choose to read a
+small chunk at a time, reading more if we run out of bytes to
+disassemble. However, the largest x64 instruction is 15 bytes, so
+if we read n_instructions * 15, we’re guaranteed to have enough
+memory to disassemble n_instructions, so long as there are that
+many instructions left in memory:
+
+         --snip--
+         if (!address) {
+              address.emplace(process_->get_pc());
+         }
+         auto code = process_->read_memory(*address, n
+
+Then, until we either run out of instructions to decode or have
+decoded n_instructions, we decode another instruction and push it
+back to ret:
+
+         --snip--
+         ZyanUSize offset = 0;
+         ZydisDisassembledInstruction instr;
+
+         while (ZYAN_SUCCESS(ZydisDisassembleATT(
+             ZYDIS_MACHINE_MODE_LONG_64, address->add
+             code.data() + offset, code.size() - offse
+              and n_instructions > 0)
+         {
+              ret.push_back(instruction{ *address, std
+              offset += instr.info.length;
+              *address += instr.info.length;
+              --n_instructions;
+         }
+
+         return ret;
+   }
+
+The ZYAN_SUCCESS macro checks whether the call to ZydisDisassembleATT
+succeeded. We loop, calling ZydisDisassembleATT to populate instr
+with the disassembled instruction information. We then push
+back a new sdb:: disassembler::instruction into the return vector,
+which records the address of the instruction as well as its text
+as a string. Finally, we update our bookkeeping variables.
+
+Now we can expose this feature to users. We’ll do this in two
+ways: by printing out the disassembly when the inferior stops
+and by providing an explicit disassemble command. In
+sdb/tools/sdb.cpp, add a print_disassembly function to print some
+code to the console:
+   #include <libsdb/disassembler.hpp>
+
+   namespace {
+           void print_disassembly(sdb::process& process
+                 sdb::virt_addr address, std::size_t n_i
+               sdb::disassembler dis(process);
+               auto instructions = dis.disassemble(n_ins
+               for (auto& instr : instructions) {
+                 ➊ fmt::print("{:#018x}: {}\n", instr.ad
+               }
+           }
+   }
+
+We create a disassembler object, disassemble the requested
+number of instructions from the given address, and then print
+all of these instructions, along with their addresses. The :#018x
+specifier ➊ prints a hexadecimal representation of the address
+with enough padding to ensure that the output stays vertically
+aligned.
+
+Both the continue and the step command should disassemble
+instructions after wait_on_signal returns. Let’s factor this behavior
+into a handle_stop function:
+   namespace {
+        void handle_stop(sdb::process& process, sdb:
+            print_stop_reason(process, reason);
+              if (reason.reason == sdb::process_state:
+                  print_disassembly(process, process.ge
+              }
+        }
+   }
+
+We print the stop reason and then, if the process stopped due to
+a signal, print five lines of disassembly, starting from the
+program counter. We call this function from the continue and step
+command handlers inside of handle_command:
+
+              --snip--
+              if (is_prefix(command, "continue")) {
+                   process->resume();
+                   auto reason = process->wait_on_signal
+                   handle_stop(*process, reason);
+              }
+              else if (is_prefix(command, "step")) {
+                   auto reason = process->step_instructi
+                   handle_stop(*process, reason);
+              }
+              --snip--
+Then, we add a new command:
+
+              --snip--
+              else if (is_prefix(command, "disassemble
+                  handle_disassemble_command(*process,
+              }
+              --snip--
+
+We’ll support two optional flags:
+
+   disassemble -c <n_instructions> -a <address>
+
+We’ll default these to five instructions and the current program
+counter value. Start implementing the handle_disassemble_command
+function with these defaults:
+
+   namespace {
+       void handle_disassemble_command(
+        sdb::process& process, const std::vector<std
+
+              auto address = process.get_pc();
+              std::size_t n_instructions = 5;
+We’ll then loop over the rest of the arguments, filling in address
+and n_instructions with the user’s specifications:
+
+              --snip--
+              auto it = args.begin() + 1;
+              while (it != args.end()) {
+                  if (*it == "-a" and it + 1 != args.en
+                      ++it;
+                      auto opt_addr = sdb::to_integral<
+                      if (!opt_addr) sdb::error::send(
+                      address = sdb::virt_addr{ *opt_ad
+                  }
+                  else if (*it == "-c" and it + 1 != a
+                      ++it;
+                      auto opt_n = sdb::to_integral<std
+                      if (!opt_n) sdb::error::send("Inv
+                      n_instructions = *opt_n;
+                  }
+                  else {
+                      print_help({ "help", "disassemble
+                      return;
+                  }
+              }
+
+We loop over the arguments, checking which flag the user
+passed and parsing the relevant type. If we get an argument we
+weren’t expecting or fail to parse an integer, we throw an
+exception. Next, we call into the disassembler:
+
+             --snip--
+             print_disassembly(process, address, n_ins
+         }
+
+Finally, we add help information for this command to print_help:
+
+             --snip--
+             if (args.size() == 1) {
+                  std::cerr << R"(Available commands:
+         breakpoint - Commands for operating on break
+         continue     - Resume the process
+         disassemble - Disassemble machine code to ass
+         memory       - Commands for operating on memo
+         register     - Commands for operating on regis
+         step          - Step over a single instruction
+   )";
+             }
+             --snip--
+             else if (is_prefix(args[1], "disassemble
+                  std::cerr << R"(Available options:
+         -c <number of instructions>
+         -a <start address>
+   )";
+               }
+               --snip--
+
+If you test this new code with breakpoints, however, you may
+encounter a problem:
+
+   $ tools/sdb test/targets/hello_sdb
+   Launched process with PID 3479
+   sdb> break set 0x55555555515b
+   sdb> c
+   Process 3479 stopped with signal TRAP at 0x555555
+   0x000055555555515b: int3
+
+The only instruction the debugger has disassembled is the int3
+instruction used for breakpoints. Before we disassemble, we
+need to replace each of those int3 instructions with the original
+byte. We could instead disable all of the breakpoints in the
+region before reading memory, but this is rather wasteful as it
+may incur many syscalls. It’s better to first read the memory
+and then fix the bytes.
+
+We’ll add a function called read_memory_without_traps to sdb::process.
+Declare it in sdb/include/libsdb/process.hpp, next to the regular
+read_memory function:
+               --snip--
+               std::vector<std::byte> read_memory(
+                   virt_addr address, std::size_t amount
+               std::vector<std::byte> read_memory_withou
+                   virt_addr address, std::size_t amount
+               --snip--
+
+Implement the function in sdb/src/process.cpp. We’ll pretend we
+already have a function called sdb::stoppoint_collection::get_in_region
+that gets us the list of stop points between two addresses:
+
+   std::vector<std::byte>
+   sdb::process::read_memory_without_traps(
+         virt_addr address, std::size_t amount) cons
+       auto memory = read_memory(address, amount);
+       auto sites = breakpoint_sites_.get_in_region
+           address, address + amount);
+       for (auto site : sites) {
+           if (!site->is_enabled()) continue;
+               auto offset = site->address() - address.a
+               memory[offset.addr()] = site->saved_data_
+         }
+         return memory;
+   }
+We read the requested memory, then get a list of the breakpoint
+sites in that region. For each enabled site, we replace the int3
+instruction at the memory address on which the breakpoint is
+set with the address’s original data.
+
+Next, add the get_in_region function to
+sdb/include/libsdb/stoppoint_collection.hpp:
+
+   namespace sdb {
+       template <class Stoppoint>
+       class stoppoint_collection {
+       public:
+           --snip--
+           std::vector<Stoppoint*> get_in_region(
+                virt_addr low, virt_addr high) const
+           --snip--
+       };
+   }
+
+Implement the function in the same header:
+
+   namespace sdb {
+       template <class Stoppoint>
+       std::vector<Stoppoint*> stoppoint_collection<
+             virt_addr low, virt_addr high) const {
+           std::vector<Stoppoint*> ret;
+                for (auto& site : stoppoints_) {
+                    if (site->in_range(low, high)) {
+                        ret.push_back(&*site);
+                      }
+                }
+                return ret;
+          }
+   }
+
+We loop over the stop points, pushing a pointer to points whose
+addresses fall in the given range into a vector, which we then
+return.
+
+Finally, replace the call to read_memory in sdb::disassembler::disassemble
+with a call to read_memory_without_traps:
+
+          --snip--
+          auto code = process_->read_memory_without_tra
+               *address, n_instructions * 15);
+          --snip--
+
+Now, if you hit the same breakpoint you did earlier, the
+disassembler should pretend that the breakpoint isn’t there and
+return the disassembly:
+   $ tools/sdb test/targets/hello_sdb
+   Launched process with PID 4077
+   sdb> break set 0x55555555515b
+   sdb> c
+   Process 4077 stopped with signal TRAP at 0x555555
+   0x000055555555515b: call 0x0000555555555050
+   0x0000555555555160: mov $0x00, %eax
+   0x0000555555555165: pop %rbp
+   0x0000555555555166: ret
+   0x0000555555555167: add %dh, %bl
+
+Sometimes, lying to users is okay.
+
+Summary
+
+In this chapter, you augmented the debugger with the ability to
+read and write memory and disassemble machine instructions.
+In the next chapter, you’ll implement hardware breakpoints
+and data watchpoints.
+
+Check Your Knowledge
+
+1.
+1. What are the disadvantages of the PTRACE_PEEKDATA and
+  PTRACE_POKEDATA commands compared to other options for
+
+  reading and writing memory?
+2.
+2. What is the job of a disassembler?
+3.
+3. What is the size of the largest x64 instruction, in bytes?

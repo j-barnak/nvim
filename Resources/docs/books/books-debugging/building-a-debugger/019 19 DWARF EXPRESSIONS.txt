@@ -1,0 +1,1942 @@
+DWARF EXPRESSIONS
+ A figure of speech guiding you to the forest.
+The DWARF parser we have written so far can locate functions,
+but it can’t yet locate variables. While finding functions is fairly
+easy, as they’re loaded from the binary to a single point in
+memory for the entirety of the program, variables are more
+mercurial; they may live in registers for part of a function,
+move to the stack so the registers can serve other purposes, and
+then move back to registers. Furthermore, as you learned in
+Chapter 16, locating the stack frame for the current function
+isn’t trivial, which further complicates locating variables.
+
+DWARF expressions provide a way for the compiler to encode
+arbitrarily complex schemes for locating variables at runtime.
+They are encoded in a custom binary scheme that maintains a
+stack of values, and each instruction manipulates the stack in
+some way: by pushing values to it, popping values from it,
+adding the two values at the top of the stack, and so on.
+
+The language is sufficiently powerful that you could perform
+any algorithmic calculation with it. We call languages with this
+property Turing-complete, after early computer scientist Alan
+Turing. You probably didn’t expect to write an interpreter for a
+Turing-complete programming language so you could locate a
+variable, but I promise it won’t be too difficult. In this chapter,
+you’ll implement an interpreter for DWARF expressions and
+add basic support for reading global variables to your debugger.
+A Taxonomy of DWARF Expressions
+
+Before we dive into the details, let’s take a look at a few
+examples of DWARF expressions:
+
+   DW_OP_reg3
+   DW_OP_fbreg -50
+   DW_OP_bregx 54 32 DW_OP_deref
+   DW_OP_reg3 DW_OP_piece 4 DW_OP_reg10 DW_OP_piece
+
+Each line represents a single expression. The first indicates that
+the value lives in the register with the DWARF ID 3, and the
+second indicates that the value lives at a byte offset of –50 from
+the frame base, another term for the canonical frame address
+(CFA) you learned about in Chapter 16. The third expression
+indicates that the address at which the value is stored is at a 32-
+byte offset from the contents of register 54. The final expression
+says that register 3 stores the first 4 bytes of the object, and
+register 10 stores the final 2 bytes.
+
+These DWARF expressions live in DIE attributes that encode
+locations. For variables, this is the DW_AT_location attribute in the
+DW_TAG_variable or DW_TAG_formal_parameter DIE that represents that
+
+variable.
+In this section, I’ll detail the taxonomy of DWARF expressions,
+which is shown in Figure 19-1.
+
+A DWARF expression can be a single location description or a location list. A single
+location description can be simple or composite. A simple location description can
+be address, register, implicit, or empty.
+
+Figure 19-1: The taxonomy of DWARF expressions
+
+A DWARF expression encodes either a single location
+description or a location list. A single location description
+locates a variable that uses a single address for its entire
+lifetime, whereas a location list locates a variable that has
+different locations depending on the current value of the
+program counter. Location lists consist of several single location
+descriptions, alongside the ranges of program counter values
+for which they are valid.
+
+Single Location Descriptions
+
+There are two types of single location descriptions: simple
+location descriptions and composite location descriptions. A
+simple location description locates a variable stored in one
+contiguous block (for example, a single register or
+uninterrupted area of memory), whereas a composite location
+description locates a variable that splits its storage between
+multiple areas (for example, a structure whose two members
+live in separate registers). Composite location descriptions
+consist of two or more simple location descriptions, each
+accompanied by the size of the data stored at that location.
+
+An expression sometimes explicitly states its type; otherwise,
+we can deduce it from context. For now, it suffices to know that
+DWARF encodes single location descriptions with the form
+DW_FORM_exprloc, a ULEB128 that holds the byte size of the expression
+
+followed by the data for the expression, and encodes location
+lists with the form DW_FORM_sec_offset, an offset into the .debug_loc
+section that stores the data for the location list.
+DWARF uses a series of expression instructions that operate on
+a stack of values to encode single location descriptions, and a
+single location’s type depends on the kinds of instructions used
+in the expression. If an expression uses either the DW_OP_piece or
+DW_OP_bit_piece instruction, it represents a composite location
+
+description; otherwise, it represents a simple location
+description.
+
+Simple Location Descriptions
+
+Simple location descriptions themselves have multiple classes:
+
+  Register Consists of a single instruction specifying the
+  register that stores the variable in question. Registers whose
+  DWARF IDs are between 0 and 31 inclusive are encoded with
+  the opcodes between DW_OP_reg0 and DW_OP_reg31. That is, the
+  opcode DW_OP_reg0 states that the variable is stored in the
+  register with DWARF ID 0, the opcode DW_OP_reg15 states that it
+  is stored in the register with DWARF ID 15, and so on.
+  Registers whose DWARF IDs lie outside of that range are
+  encoded with the opcode DW_OP_regx, which has a single ULEB128
+  operand giving the DWARF ID of the register in which the
+  variable is stored. However, if the expression is in a frame
+  information context (either in the .eh_frame section or in a
+  DW_AT_frame_base attribute), then these opcodes are instead used
+to compute an address location description by pushing the
+value of the relevant register to the stack.
+Implicit Indicates that the variable has no storage; the
+expression computes the value of the variable. Implicit
+location descriptions can encode locations in one of two
+ways. The simplest is with the DW_OP_implicit_value opcode, which
+has one ULEB128 argument giving the length of the data for the
+variable, followed by a block of that size that encodes the
+data itself. The more complicated scheme uses the stack
+manipulation opcodes involved in representing address
+location descriptions, then ends the DWARF expression with
+a DW_OP_stack_value opcode, which indicates that the value at the
+top of the stack is the actual value of the variable rather than
+its address.
+Address Indicates that the variable lives at the address
+computed by the expression. Non-empty DWARF expressions
+that don’t use the previously mentioned opcodes all encode
+address location descriptions. After the execution of all of the
+instructions in the DWARF expression, the value at the top of
+the stack gives the address of the variable.
+Empty An empty location description. If a DWARF expression
+has a length of zero, it represents an empty location
+description, meaning the address and contents of the
+  variable being described are unknown. This usually occurs
+  when the compiler optimizes out a variable.
+
+Composite Location Descriptions
+
+DWARF encodes composite location descriptions as a series of
+simple location descriptions, each terminated by a single
+DW_OP_piece or DW_OP_bit_piece opcode. The DW_OP_piece opcode has one
+
+ULEB128 operand that gives the byte size of the data stored at the
+
+location given by the simple location description that precedes
+it. The DW_OP_bit_piece opcode has two operands: one ULEB128 that
+gives the bit size (not byte size) of the data, and one ULEB128 that
+gives the bit offset from the location given by the preceding
+simple location description at which the data is stored. You’ll
+primarily find the DW_OP_bit _piece opcode used for types with
+bitfield members.
+
+Executing Simple Location Descriptions
+
+Let’s write the code to parse and execute simple location
+descriptions. We’ll create an sdb::dwarf_expression type that
+represents these descriptions and can evaluate them.
+
+Defining Result Types
+Begin by defining types that represent the various potential
+results of a simple location description evaluation. Add this
+code to sdb/include/libsdb/dwarf.hpp, above the definition of
+sdb::attr:
+
+    namespace sdb {
+        class dwarf;
+        class dwarf_expression {
+
+             public:
+                 struct address_result {
+                     virt_addr address;
+                 };
+                 struct register_result {
+                     std::uint64_t reg_num;
+                 };
+                 struct data_result {
+                     span<const std::byte> data;
+                 };
+                 struct literal_result {
+                     std::uint64_t value;
+                 };
+                 struct empty_result {};
+                 using simple_location = std::variant<
+                     address_result, register_result,
+                     data_result, literal_result, empty_re
+               struct pieces_result {
+                   struct piece {
+                           simple_location location;
+                           std::uint64_t bit_size;
+                           std::uint64_t offset = 0;
+                     };
+                     std::vector<piece> pieces;
+               };
+               using result = std::variant<simple_locati
+         };
+   }
+
+We create address_result, register_result, and empty_result types, which
+correspond to address, register, and empty location
+descriptions. The data _result and literal_result types correspond to
+the two different ways of encoding implicit location
+descriptions: data_result is for the DW_OP_implicit _result opcode,
+which can have variably sized data, and literal_result is for the
+DW_OP_stack_value opcode, whose result is always 64 bits in size on
+
+x64. We define a simple_location type alias to a std::variant of all the
+possible simple location description types.
+
+We then create a pieces_result type, which stores a vector of piece
+descriptions, each of which stores a single location, the bit size
+of the data, and the bit offset from the location member at which
+the data is really stored. We can use a single type to represent
+the results of both DW_OP_piece and DW_OP_bit _piece opcodes, as
+DW_OP_piece <byte size> is equivalent to DW_OP_bit_piece (<byte size>*8) 0.
+
+Evaluating Expressions
+
+Next, let’s add data members, a constructor, and an eval member
+function, which will evaluate the expression and return the
+result:
+
+   namespace sdb {
+       class dwarf;
+       class dwarf_expression {
+       public:
+           --snip--
+           dwarf_expression(const dwarf& parent,
+                             span<const std::byte> ex
+                             bool in_frame_info)
+                : parent_(&parent)
+                , expr_data_(expr_data)
+                , in_frame_info_(in_frame_info) {}
+
+              result eval(
+                   const sdb::process& proc,
+                   const registers& regs,
+                   bool push_cfa = false) const;
+          private:
+              const dwarf* parent_;
+              span<const std::byte> expr_data_;
+              bool in_frame_info_;
+         };
+   }
+
+We store a pointer to the parent sdb::dwarf object so we can query
+it for the additional information needed to evaluate the
+expression, as well as the expression’s data. Some instructions
+need to be interpreted differently depending on whether the
+expression resides in the .eh_frame section or a DW_AT_frame_base
+attribute, so we also store an in_frame_info_ member that tracks
+this. The eval function will need the ability to read memory and
+registers, so it takes those values as parameters. It also takes an
+optional argument that indicates whether the CFA should be
+pushed to the stack before the expression is evaluated. This is
+used for running the expression and val_expression register restore
+rules when unwinding the stack.
+
+Let’s begin by implementing eval in sdb/src/dwarf.cpp. It’s a long
+function, so we’ll do it piece by piece, starting with some setup:
+
+   #include <functional>
+
+   sdb::dwarf_expression::result
+   sdb::dwarf_expression::eval(
+         const sdb::process& proc, const registers&
+       cursor cur({ expr_data_.begin(), expr_data_.e
+
+        std::vector<std::uint64_t> stack;
+        if (push_cfa) stack.push_back(regs.cfa().add
+
+        std::optional<simple_location> most_recent_lo
+        std::vector<pieces_result::piece> pieces;
+
+        bool result_is_address = true;
+
+We create a cursor to parse the data we need. We initialize an
+empty stack of values and push the CFA to it if required. We also
+initialize a variable for holding the most recently computed
+location and a vector to hold any pieces that we collect. By
+default, we assume that the result of the DWARF expression is
+an address, but a DW_OP_stack_value opcode may override this value,
+so we make a Boolean variable to track it.
+
+Performing Stack Operations
+
+Next, we’ll define some helpers for some of the stack
+operations. Several stack operations perform an arithmetic or
+logical operation on the top two elements of the stack. We’ll
+create a couple of lambda functions that can make this code
+shorter:
+
+           --snip--
+           auto binop = [&](auto op) {
+                auto rhs = stack.back();
+                stack.pop_back();
+                auto lhs = stack.back();
+                stack.pop_back();
+                stack.push_back(op(lhs, rhs));
+           };
+
+           auto relop = [&](auto op) {
+               auto rhs = static_cast<std::int64_t>(stac
+               stack.pop_back();
+               auto lhs = static_cast<std::int64_t>(stac
+               stack.pop_back();
+               stack.push_back(op(lhs, rhs) ? 1 : 0);
+           };
+
+Both lambdas take a function that represents an arithmetic or
+relational operator. The arithmetic version pops the top two
+values from the stack and pushes back the result of calling the
+given operator with those values. The relational version pops
+the top two values from the stack, interprets them as signed
+integers, and then pushes either 1 or 0 to the stack, depending
+on whether the given operator returned true or false.
+
+Some of the operations will require the current program
+counter value and the DIE for the function that is currently
+being executed, so we grab them:
+
+        --snip--
+        auto virt_pc = virt_addr{
+             regs.read_by_id_as<std::uint64_t>(registe
+        };
+        auto pc = virt_pc.to_file_addr(*parent_->elf_
+        auto func = parent_->function_containing_add
+
+We read the current program counter value, convert it to a file
+address, and then look up the function containing that address.
+
+Finding the Current Simple Location Description
+
+As the last bit of setup before we start executing instructions,
+we’ll write a lambda that figures out which simple location
+description the current state of the expression interpreter
+represents:
+         --snip--
+         auto get_current_location = [&]() {
+             simple_location loc;
+              if (stack.empty()) {
+                  loc = most_recent_location.value_or(e
+                    most_recent_location.reset();
+              }
+              else if (result_is_address) {
+                  loc = address_result{ virt_addr{stack
+                  stack.pop_back();
+              }
+              else {
+                  loc = literal_result{ stack.back() }
+                  stack.pop_back();
+                  result_is_address = true;
+              }
+              return loc;
+         };
+
+If the stack is currently empty, the current location is either the
+most recently computed location (a variable or implicit data
+location) or an empty location. After checking the most recent
+location, we reset it. If the result is an address, the current
+location is an address location, and we’ll find its value on the
+top of the stack. Otherwise, the current location is an implicit
+literal location, and we reset result_is_address back to the default.
+Handling Opcode Ranges
+
+Now we can start executing instructions. We’ll loop until the
+cursor hits the end of its data, executing each instruction as we
+go. We’ll start with the opcodes that cover ranges of values.
+These include the DW_OP_reg0 through DW_OP_reg31 opcodes you’ve
+seen already; the DW_OP_lit0 through DW_OP_lit31 opcodes, which
+push the specified integer onto the stack; and the DW_OP_breg0
+through DW_OP_breg31 opcodes, which push the value stored in the
+given register, offset by a single SLEB128 operand, to the stack:
+
+         --snip--
+         while (!cur.finished()) {
+              auto opcode = cur.u8();
+
+              if (opcode >= DW_OP_lit0 and opcode <= DW
+                  stack.push_back(opcode - DW_OP_lit0)
+              }
+              else if (opcode >= DW_OP_breg0 and opcode
+                  auto reg = opcode - DW_OP_breg0;
+                  auto reg_val = regs.read(sdb::registe
+                  auto offset = cur.sleb128();
+                  stack.push_back(std::get<std::uint64_
+              }
+              else if (opcode >= DW_OP_reg0 and opcode
+                  auto reg = opcode - DW_OP_reg0;
+                  if (in_frame_info_) {
+                           auto reg_val = regs.read(sdb::reg
+                           stack.push_back(std::get<std::uin
+                     }
+                     else {
+                         most_recent_location = register_
+                                static_cast<std::uint64_t>(re
+                           };
+                     }
+               }
+
+We parse the opcode, which is an unsigned 8-bit integer. If the
+opcode is one of the DW_OP_lit<number> opcodes, we push <number> to
+the stack. If it’s one of the DW_OP_breg_<DWARF register ID> opcodes, we
+read the register with the given register ID as a 64-bit integer,
+offset the value by the SLEB128 operand, and push the result to the
+stack. If it’s one of the DW_OP_reg_<DWARF register ID> opcodes, we need
+to vary our behavior depending on whether this expression is
+in a frame information context. If it is, we read the value of the
+register and push the result to the stack; this is the equivalent of
+DW_OP _bregN with an argument of 0 but takes less space to encode.
+
+If the expression is not in a frame information context, we
+record that the most recent location names the given register
+ID. The static_cast is there to silence compiler warnings.
+
+Handling Individual Opcodes
+Let’s move on to opcodes we need to handle individually. We’ll
+start with DW_OP_addr, which pushes its single 64-bit file address
+operand to the stack, and the DW_OP_const<specifier> opcodes, which
+push their single integer operand to the stack. The specifier is
+an optional byte size (1, 2, 4, or 8) followed by either a u
+indicating an unsigned integer or an s indicating a signed
+integer. If the opcode includes no byte size, the integer is an
+LEB128:
+
+              --snip--
+              switch (opcode) {
+              case DW_OP_addr: {
+                   auto addr = file_addr{
+                       *parent_->elf_file(), cur.u64()
+                   };
+                   stack.push_back(addr.to_virt_addr().a
+                   break;
+              }
+              case DW_OP_const1u:
+                   stack.push_back(cur.u8());
+                   break;
+              case DW_OP_const1s:
+                   stack.push_back(cur.s8());
+                  break;
+              case DW_OP_const2u:
+                  stack.push_back(cur.u16());
+                  break;
+              case DW_OP_const2s:
+                  stack.push_back(cur.s16());
+                  break;
+              case DW_OP_const4u:
+                  stack.push_back(cur.u32());
+                   break;
+              case DW_OP_const4s:
+                  stack.push_back(cur.s32());
+                  break;
+              case DW_OP_const8u:
+                  stack.push_back(cur.u64());
+                  break;
+              case DW_OP_const8s:
+                  stack.push_back(cur.s64());
+                  break;
+              case DW_OP_constu:
+                  stack.push_back(cur.uleb128());
+                  break;
+              case DW_OP_consts:
+                  stack.push_back(cur.sleb128());
+                  break;
+
+For the DW_OP_addr opcode, we parse the address and convert it to
+a real virtual address before pushing it to the stack. For the
+other opcodes, we simply parse the type given by the specifier
+and push it to the stack.
+Next are the DW_OP_bregx and DW_OP_fbreg opcodes. The former is
+essentially the same as the DW_OP_breg_<number> opcodes for which
+we’ve already added support, except it specifies the register
+using a ULEB128 operand rather than encoding the register in the
+opcode. The DW_OP_fbreg opcode pushes to the stack the result of
+evaluating the DWARF expression held in the current function’s
+DW_AT_frame_base attribute, offset by a single SLEB128 operand. The
+
+DW_AT_frame_base usually points to the function’s CFA:
+
+              --snip--
+              case DW_OP_bregx: {
+                   auto reg_val = regs.read(
+                       sdb::register_info_by_dwarf(cur.u
+                   stack.push_back(
+                       std::get<std::uint64_t>(reg_val)
+                   break;
+              }
+              case DW_OP_fbreg: {
+                   auto offset = cur.sleb128();
+                   auto fb_loc = func.value()[DW_AT_fram
+                       .as_evaluated_location(proc, regs
+                    auto fb_addr = read_frame_base_result
+                    stack.push_back(fb_addr.addr() + offs
+                    break;
+              }
+For DW_OP_bregx, we read the register given by the ULEB128 operand,
+offset its value by the next SLEB128 operand, and push the result to
+the stack.
+
+The DW_OP_fbreg opcode is a little more complicated, as we need to
+evaluate a nested DWARF expression. We parse the SLEB128 offset
+and store it. We then evaluate the frame base DWARF
+expression by retrieving the current function’s DW_AT_frame_base
+attribute and calling an as_evaluated_location function on it, which
+we’ll write later. This will evaluate the DWARF expression in
+that attribute and return the result as an sdb::dwarf_expression::result
+object. Recall that expressions in DW_AT_frame_base have to be
+interpreted slightly differently, so we pass true as the argument
+for in_frame_info.
+
+Next, we need to retrieve the frame base from this DWARF
+expression result. We’ll write a function named
+read_frame_base_result to do this work so that the code stays clean.
+
+For now, we call this function with the computed location and
+the current register set. Finally, we offset that address by the
+integer we parsed at the start and push the result to the stack.
+
+Let’s implement read_frame_base_result in sdb/src/dwarf.cpp:
+   namespace {
+        sdb::virt_addr read_frame_base_result(
+              const sdb::dwarf_expression::result& lo
+               const sdb::registers& regs) {
+             auto simple_loc = std::get_if<sdb::dwarf_
+             if (!simple_loc) sdb::error::send("Unsupp
+             if (auto addr_res = std::get_if<sdb::dwa
+                 return addr_res->address;
+             }
+             sdb::error::send("Unsupported frame base
+        }
+   }
+
+The result should only ever be a simple address location; it
+doesn’t really make sense to have the address split between
+multiple registers, and register locations should be impossible
+because the relevant DWARF expression instructions are
+handled as addresses in frame information contexts. We extract
+the simple address result and throw an exception if there’s a
+problem.
+
+Performing Stack Operations
+
+The next few opcodes implement several classic stack
+operations, including duplicating the value at the top of the
+stack, pushing or popping a value to or from the stack, and
+more:
+
+             --snip--
+             case DW_OP_dup:
+                 stack.push_back(stack.back());
+                 break;
+             case DW_OP_drop:
+                 stack.pop_back();
+                 break;
+             case DW_OP_pick:
+                 stack.push_back(stack.rbegin()[cur.u8
+                 break;
+             case DW_OP_over:
+                 stack.push_back(stack.rbegin()[1]);
+                 break;
+             case DW_OP_swap:
+                 std::swap(stack.rbegin()[0], stack.rb
+                 break;
+             case DW_OP_rot:
+                 std::rotate(
+                     stack.rbegin(), stack.rbegin() +
+                 break;
+
+The DW_OP_dup opcode duplicates the value on the top of the stack,
+while DW_OP_drop pops the value on the top of the stack and
+discards it.
+
+The DW_OP_pick opcode pushes to the stack the value stored at stack
+.rbegin()[N], where N is an unsigned 8-bit operand to the
+
+instruction. The std::vector::rbegin function retrieves a reverse
+iterator, so stack.rbegin()[N] retrieves the element N places from the
+back of the vector, which represents the top of the stack.
+
+The DW_OP_over opcode duplicates the value underneath the value
+on the top of the stack, DW_OP_swap swaps the two values at the top
+of the stack, and DW_OP_rot rotates the top three values of the
+stack, such that stack[0] becomes stack[2], stack[1] becomes stack[0],
+and stack[2] becomes stack[1]. We perform this by calling std::rotate
+with reverse iterators.
+
+Executing Dereferencing Instructions
+
+Next, we handle the dereferencing instructions. Continue the
+implementation like so:
+
+               --snip--
+               case DW_OP_deref: {
+                    auto addr = virt_addr{ stack.back() }
+                    stack.back() = proc.read_memory_as<st
+                    break;
+               }
+                case DW_OP_deref_size: {
+                    auto addr = virt_addr{ stack.back() }
+                    auto size_to_read = cur.u8();
+                    auto mem = proc.read_memory(addr, siz
+                    std::uint64_t res = 0;
+                    std::copy(mem.data(), mem.data() + me
+                        reinterpret_cast<std::byte*>(&res
+                    stack.back() = res;
+                    break;
+                }
+                case DW_OP_xderef:
+                    sdb::error::send("DW_OP_xderef not su
+                case DW_OP_xderef_size:
+                    sdb::error::send("DW_OP_xderef_size n
+
+The DW_OP_deref opcode pushes the value stored at the address on
+the top of the stack to the stack. DW_OP_deref_size retrieves the value
+stored at the address on the top of the stack, reading the
+number of bytes specified by a single unsigned 8-bit operand.
+Then, it zero-extends the value to 64 bits and pushes the result
+to the stack.
+
+The DW_OP_xderef opcode is an extended dereference that also takes
+an address space in which to operate. This is for machines that
+have multiple address spaces, like GPUs, and is unused on x64,
+so we won’t support it. DW_OP_xderef_size is an extended sized
+dereference that also takes an address space to operate in.
+Similarly, we won’t support this.
+
+Addresses on the stack are virtual addresses. For DW_OP_deref, we
+pop the top address from the stack and read 64 bits from that
+address. For DW_OP _deref_size, we read the number of bytes
+specified by the argument and then copy the bytes into a 64-bit
+integer filled with 0 bits. We throw exceptions for the two
+unsupported opcodes.
+
+Pushing Specific Entities to the Stack
+
+Certain instructions push the addresses of specific entities to
+the stack:
+
+             --snip--
+             case DW_OP_push_object_address:
+                  sdb::error::send("Unsupported opcode
+             case DW_OP_form_tls_address:
+                  sdb::error::send("Unsupported opcode
+             case DW_OP_call_frame_cfa:
+                  stack.push_back(regs.cfa().addr());
+                  break;
+We won’t implement two of these entity-pushing opcodes. The
+opcode DW_OP_push_object_address supports certain Fortran dynamic
+types, which we don’t care about. The opcode DW_OP_form_tls_address
+translates the address on the top of the stack to an address
+within the thread-local storage block for the object file to which
+the address belongs, and implementing it would require a
+significant amount of extra code. We throw exceptions for these
+two opcodes.
+
+We do implement DW_OP_call_frame_cfa, which pushes the CFA for
+the current stack frame to the top of the DWARF expression
+stack. For this opcode, we retrieve the CFA address and push it
+to the stack.
+
+Performing Arithmetic, Bitwise, and Relational
+Operations
+
+Most of the arithmetic and bitwise operations follow the same
+pattern: they pop the top two values off the stack and push the
+result of executing a bitwise operator on them. The value on the
+top of the stack becomes the right-side operand, and the value
+below the one on the top of the stack becomes the left-side
+operand.
+I won’t describe these opcodes individually, as they’re pretty
+straightforward. The only one that breaks the pattern slightly is
+the division operator, DW_OP_div, which interprets the operands as
+signed integers:
+
+             --snip--
+             case DW_OP_minus:
+                  binop(std::minus{});
+                  break;
+             case DW_OP_mod:
+                  binop(std::modulus{});
+                  break;
+             case DW_OP_mul:
+                  binop(std::multiplies{});
+                  break;
+             case DW_OP_and:
+                  binop(std::bit_and{});
+                  break;
+             case DW_OP_or:
+                  binop(std::bit_or{});
+                  break;
+             case DW_OP_plus:
+                  binop(std::plus{});
+                 break;
+             case DW_OP_shl:
+                 binop([](auto lhs, auto rhs) { return
+                 break;
+         ➊ case DW_OP_shr:
+                binop([](auto lhs, auto rhs) { return
+                break;
+         ➋ case DW_OP_shra:
+                binop([](auto lhs, auto rhs) {
+                        return static_cast<std::int64_t>
+                 break;
+             case DW_OP_xor:
+                 binop(std::bit_xor{});
+                 break;
+             case DW_OP_div: {
+                 auto rhs = static_cast<std::int64_t>
+                 stack.pop_back();
+                 auto lhs = static_cast<std::int64_t>
+                 stack.pop_back();
+                 stack.push_back(static_cast<std::uint
+                 break;
+             }
+
+We implement the majority of these opcodes by passing one of
+the function objects from the <functional> header to the binop
+lambda we defined earlier. There are no function objects in the
+standard library for shifting operations, so we pass closures for
+those.
+The difference between DW_OP_shr (logical shift) ➊ and DW_OP_shra
+(arithmetic shift) ➋ is that logical shifting replaces shifted bits
+with 0s, whereas arithmetic shifting replaces them with 1s if the
+shifted integer is negative and 0s if it is positive. We implement
+the former by shifting the unsigned integer at the top of the
+stack and the latter by first interpreting it as a signed integer.
+Performing a right shift on a signed integer in C++ is
+implementation-defined behavior, and GCC on x64 defines it to
+perform an arithmetic shift (as do most implementations).
+Finally, we implement division by interpreting the integers as
+signed before dividing them and pushing back the result.
+
+A few arithmetic and bitwise operations don’t follow the
+pattern we just described. These include DW_OP_abs, which
+interprets the value on the top of the stack as a signed integer
+and replaces it with the absolute value (removing the sign if
+there is one); DW_OP_neg, which interprets the value on the top of
+the stack as a signed integer and replaces it with its negation;
+DW_OP_plus_uconst, which takes a single ULEB128 argument and adds it
+
+to the value on the top of the stack; and DW_OP_not, which performs
+a bitwise negation on the value on the top of the stack.
+
+Continue the implementation by handling these opcodes:
+               --snip--
+               case DW_OP_abs: {
+                   auto sval = static_cast<std::int64_t>
+                     sval = std::abs(sval);
+                     stack.back() = static_cast<std::uint6
+                     break;
+               }
+               case DW_OP_neg: {
+                   auto neg = -static_cast<std::int64_t>
+                   stack.back() = static_cast<std::uint6
+                   break;
+               }
+               case DW_OP_plus_uconst:
+                   stack.back() += cur.uleb128();
+                   break;
+               case DW_OP_not:
+                   stack.back() = ~stack.back();
+                   break;
+
+Next are the six relational operators, corresponding to the <, <=,
+>, >=, ==, and != operators:
+
+               --snip--
+               case DW_OP_le:
+                     relop(std::less_equal{});
+                     break;
+             case DW_OP_ge:
+                   relop(std::greater_equal{});
+                   break;
+             case DW_OP_eq:
+                   relop(std::equal_to{});
+                   break;
+             case DW_OP_lt:
+                   relop(std::less{});
+                   break;
+             case DW_OP_gt:
+                   relop(std::greater{});
+                   break;
+             case DW_OP_ne:
+                   relop(std::not_equal_to{});
+                   break;
+
+We implement these opcodes with the relop lambda we defined
+earlier.
+
+Executing Control Flow Instructions
+
+Next, we execute a handful of control flow instructions. DW_OP_skip
+represents an unconditional branch; it moves the cursor
+forward or backward by the amount given by a signed 2-byte
+operand. On the other hand, DW_OP_bra represents a conditional
+branch; it moves the cursor forward or backward by the
+amount given by a signed 2-byte operand if the value at the top
+of the stack isn’t 0. Implement these branch instructions as
+follows:
+
+             --snip--
+             case DW_OP_skip:
+                  cur += cur.s16();
+                  break;
+             case DW_OP_bra:
+                  if (stack.back() != 0) {
+                      cur += cur.s16();
+                  }
+                  stack.pop_back();
+                  break;
+             case DW_OP_call2:
+                  sdb::error::send("Unsupported opcode
+             case DW_OP_call4:
+                  sdb::error::send("Unsupported opcode
+             case DW_OP_call_ref:
+                  sdb::error::send("Unsupported opcode
+
+Note that we don’t implement the DW_OP_call[2/4/_ref] opcodes,
+which represent function calls. These instructions hand off
+execution to the DWARF expression in the DW_AT_location attribute
+of the DIE identified by the operand, which can be 2 bytes, 4
+bytes, or an offset identifying the DIE whose location it should
+execute.
+
+The specification for DW_OP_call_ref is actually impossible to
+implement as written; even GDB doesn’t implement it, so we
+can ignore it. The other two versions are very seldom used and
+add significant implementation overhead, so we’ll ignore them,
+too. LLDB doesn’t implement any of these operations either, so
+we’re in good company.
+
+Executing Non-Address Location Types
+
+Certain instructions can indicate variable location types other
+than addresses. The DW_OP_regx instruction takes a ULEB128 operand
+that encodes a DWARF register number. Like the DW_OP_regN
+instructions that you already implemented, its function
+depends on whether it is used in a frame information context. If
+it is, this instruction pushes the value of the specified register to
+the stack (in which case the variable location is an address
+location). If this DWARF expression is not in a frame
+information context, the DW_OP_regx instruction indicates that the
+variable lives in the specified register.
+
+There are two other non-address location types to handle:
+DW_OP_implicit _value indicates that the variable has no location but
+has a known value encoded by a ULEB128 operand giving the
+length of the data followed by the data itself, and DW_OP_stack_value
+indicates that the variable has no location but has a known
+value stored on the top of the stack.
+
+Continue the implementation by handling these opcodes:
+
+              --snip--
+              case DW_OP_regx:
+                   if (in_frame_info_) {
+                       auto reg_val = regs.read(
+                           sdb::register_info_by_dwarf(c
+                       stack.push_back(
+                           std::get<std::uint64_t>(reg_v
+                   }
+                   else {
+                       most_recent_location = register_
+                           cur.uleb128() };
+                   }
+                   break;
+
+              case DW_OP_implicit_value: {
+                  auto length = cur.uleb128();
+                  most_recent_location = data_result{
+                      span<const std::byte>{cur.positio
+                  break;
+              }
+              case DW_OP_stack_value:
+                  result_is_address = false;
+                    break;
+
+For DW_OP_regx, we store a register_result with the parsed register
+number as the most recent location. For DW_OP_implicit_value, we
+instead store a data_result with the parsed block. For
+DW_OP_stack_value, we just record that the result isn’t an address; the
+
+get_current_location function we wrote earlier handles the rest.
+
+Also handle the DW_OP_nop instruction, which does nothing:
+
+              --snip--
+              case DW_OP_nop:
+                    break;
+
+This opcode serves the purpose of aligning addresses to
+particular boundaries for platforms that require it.
+
+Handling Composite Locations
+
+Finally, we’ll execute the two instructions for defining
+composite locations. DW_OP_piece indicates that the most recent
+location stores one piece of the data for this variable, and the
+operand gives the piece’s byte size. DW_OP_bit _piece indicates that
+the most recent location stores one piece of the data for this
+variable, but its location or size isn’t aligned to a byte. A ULEB128
+operand gives the bit size of the piece, and a second ULEB128
+operand gives the bit offset from the start of this piece’s location
+at which the data is actually stored.
+
+Let’s execute these instructions:
+
+              --snip--
+              case DW_OP_piece: {
+                   auto byte_size = cur.uleb128();
+                   simple_location loc = get_current_loc
+                   pieces.push_back(pieces_result::piece
+                   break;
+              }
+              case DW_OP_bit_piece: {
+                   auto bit_size = cur.uleb128();
+                   auto offset = cur.uleb128();
+                   simple_location loc = get_current_loc
+                   pieces.push_back(pieces_result::piece
+                    break;
+              }
+              }
+         }
+For DW_OP_piece, we parse the byte size, get the current location,
+and record the piece. The piece type stores the size of the piece in
+bits rather than bytes, so we multiply the byte size by eight
+before storing it. For DW_OP _bit_piece, we parse the bit size and
+offset, get the current location, and record the new piece.
+
+After handling all the potential opcodes, we need to return the
+result. If there were any piece descriptions, we should return a
+pieces_result that stores the descriptions. Otherwise, we should
+
+just return the single result computed by get_current_location:
+
+         --snip--
+         if (!pieces.empty()) {
+              return pieces_result{ pieces };
+         }
+
+         return get_current_location();
+   }
+
+We’ve finished implementing single location descriptions. Let’s
+move on to location lists.
+
+Executing Location Lists
+DWARF encodes location lists in a manner very similar to range
+lists, which you implemented as part of Chapter 12. They
+consist of a sequence of entries. Each entry is either a location
+entry, an end-of-list entry, or a base address selection entry.
+
+Location entries consist of two 64-bit unsigned integers that
+encode the start and end range for the entry, followed by a 16-
+bit unsigned integer giving the length of the following
+expression and the data for a single location description. These
+entries express the start and end range values as offsets from
+the current base address and denote the noninclusive range of
+program counter values to which they apply.
+
+Like in range lists, end-of-list entries encode the end of the list
+and consist of two 64-bit integers with the value 0. Each base
+address selection entry consists of a 64-bit integer whose bits
+are all set to 1 and a 64-bit integer representing the base
+address for subsequent location entries. The DW_AT_low_pc attribute
+of the DIE to which this location list belongs gives the initial
+base address.
+
+Let’s define a type for representing location lists to
+sdb/include/libsdb/dwarf.hpp, underneath the definition of
+sdb::dwarf_expression:
+   namespace sdb {
+         class location_list {
+         public:
+             location_list(
+                    const dwarf& parent, const compile_un
+                    span<const std::byte> expr_data, bool
+                    : parent_(&parent)
+                    , cu_(&cu)
+                    , expr_data_(expr_data)
+                    , in_frame_info_(in_frame_info) {}
+
+             dwarf_expression::result eval(
+                  const sdb::process& proc, const regis
+         private:
+             const dwarf* parent_;
+             const compile_unit* cu_;
+             span<const std::byte> expr_data_;
+             bool in_frame_info_;
+         };
+   }
+
+This interface is very similar to that of sdb::dwarf_expression. The
+difference is that sdb::location_list also requires a reference to the
+compile unit for the list so we can read its DW_AT_low_pc attribute to
+calculate the initial base address.
+Implement the eval function in sdb/src/dwarf.cpp. It should find
+the single location description that corresponds to the program
+counter value in the given register set and evaluate that
+expression:
+
+   sdb::dwarf_expression::result
+   sdb::location_list::eval(
+          const sdb::process& proc, const registers&
+       auto virt_pc = virt_addr{
+            regs.read_by_id_as<std::uint64_t>(registe
+       };
+       auto pc = virt_pc.to_file_addr(*parent_->elf_
+       auto func = parent_->function_containing_add
+
+        cursor cur({ expr_data_.begin(), expr_data_.e
+        constexpr auto base_address_flag = ~static_ca
+        auto base_address = cu_->root()[DW_AT_low_pc
+
+        auto first = cur.u64();
+        auto second = cur.u64();
+        while (!(first == 0 and second == 0)) { ➋
+            if (first == base_address_flag) { ➌
+                base_address = second;
+            }
+
+              else { ➍
+                  auto length = cur.u16();
+                    if (pc.addr() >= base_address + first
+                        pc.addr() < base_address + second
+                        dwarf_expression expr(
+                               *parent_, { cur.position(), c
+                         return expr.eval(proc, regs);
+                    }
+                    else { ➏
+                         cur += length;
+                    }
+              }
+              first = cur.u64();
+              second = cur.u64();
+         }
+         return dwarf_expression::empty_result{};
+   }
+
+First, we compute the program counter value as a file address
+and retrieve the DIE corresponding to the currently executing
+function. We initialize a cursor for the location list’s data ➊,
+create a variable that stores the base address flag (a 64-bit
+integer with all bits set to 1), and retrieve the initial base
+address from the root compile unit DIE. Next, we read the list’s
+first entry and loop until we read an end-of-list entry (one
+where both elements are 0s) ➋.
+If the first element of the entry is the base address flag ➌, the
+entry is a base address selector, so we update the base address
+to the value stored in the second element. Otherwise, this entry
+is a location entry ➍. Such an entry begins with a 2-byte
+unsigned integer that encodes the entry’s data length, so we
+parse this.
+
+If the range for the entry contains the current program counter
+value ➎, we’ve found the entry we’re looking for, so we
+construct an sdb::dwarf_expression out of the entry’s data and then
+evaluate it and return the result. We pass along in_frame_info_ so
+that DWARF expression implements the correct behavior for
+the register instructions. If this entry’s range doesn’t contain the
+current program counter value ➏, we skip past the data and
+read the next entry. Finally, if we got to the end of the list
+without finding an entry that matches the current program
+counter, we return an empty result.
+
+We’ve now supported both single location descriptions and
+location lists. Let’s add some helper functions to sdb::attr to
+expose these through DIE attributes.
+
+Exposing Attributes to the User
+Users of libsdb should be able to call as_expression on a DIE attribute
+to retrieve its contents as an sdb::dwarf_expression and call
+as_location_list to retrieve the attribute’s contents as a location
+
+list. For convenience, they should also be able to call
+as_evaluated_location, which should indicate whether the given
+
+attribute represents a single location description or a location
+list, and then evaluate the contents. Add declarations for these
+functions to sdb::attr in sdb/include/libsdb/dwarf.hpp:
+
+   namespace sdb {
+       class attr {
+       public:
+           --snip--
+           dwarf_expression as_expression(bool in_f
+           location_list as_location_list(bool in_f
+           dwarf_expression::result as_evaluated_loc
+                const sdb::process& proc,
+                const registers& regs,
+                bool in_frame_info) const;
+
+               --snip--
+         };
+   }
+The first two functions require only an argument to state
+whether the expression is in a frame information context
+because sdb::attr already tracks all the other necessary data. The
+final function additionally requires a process and register set to
+pass on to the expression evaluator.
+
+Implement these functions in sdb/dwarf.cpp, starting with the
+first two:
+
+   sdb::dwarf_expression sdb::attr::as_expression(bo
+       cursor cur({ location_, cu_->data().end() })
+       auto length = cur.uleb128();
+       span<const std::byte> data{ cur.position(), l
+       return dwarf_expression{ *cu_->dwarf_info(),
+   }
+
+   sdb::location_list sdb::attr::as_location_list(bo
+       auto section = cu_->dwarf_info()->elf_file()
+           ".debug_loc");
+
+         cursor cur({ location_, cu_->data().end() })
+         auto offset = cur.u32();
+
+         span<const std::byte> data(section.begin() +
+         return location_list{ *cu_->dwarf_info(), *cu
+   }
+The as_expression function creates a cursor, parses the length of
+the single location expression, creates a span that covers the
+expression’s data, and returns an sdb::dwarf_expression that
+represents the single location description.
+
+DWARF encodes location lists as an offset into the .debug_loc
+section, so as_location_list locates that section, parses the 4-byte
+offset stored in the attribute, computes a span for the data, and
+returns an sdb::location_list that represents the location list. Note
+that we won’t know the length of the location list before
+evaluating it, so we just use the end of the .debug_loc section as
+the marker for the end of the data. This is fine because the
+location list’s end-of-list entry tells us when to stop parsing
+entries.
+
+Now that we’ve defined these two functions, we can implement
+the function as_evaluated_location:
+
+   sdb::dwarf_expression::result
+   sdb::attr::as_evaluated_location(
+         const sdb::process& proc,
+         const registers& regs,
+         bool in_frame_info) const {
+       if (form_ == DW_FORM_exprloc) {
+           auto expr = as_expression(in_frame_info)
+           return expr.eval(proc, regs);
+         }
+         else if (form_ == DW_FORM_sec_offset) {
+             auto loc_list = as_location_list(in_frame
+               return loc_list.eval(proc, regs);
+         }
+         else {
+               error::send("Invalid location type");
+         }
+   }
+
+DWARF encodes single location descriptions with the form
+DW_FORM _exprloc, so if the attribute has this form, we call as_expression
+
+and evaluate the result. Location lists instead have the form
+DW_FORM_sec_offset; if we encounter that, we call as_location_list and
+
+then evaluate the result. If the attribute’s form is something
+else, an error has occurred, so we throw an exception.
+
+Before we use our new DWARF expression support to read
+some variables, let’s add support to the stack unwinder for
+DWARF expressions.
+
+Augmenting the Stack Unwinder
+
+When we first implemented stack unwinding in Chapter 16, we
+skipped over DWARF expressions. Recall that two register
+restoration rules involve DWARF expressions: val_expression(E)
+and expression(E). In the first case, val_expression(E), executing the
+DWARF expression E gives the previous value of the register. In
+the second case, expression(E), executing the DWARF expression E
+gives that previous value’s address.
+
+One CFA rule, also named expression(E), involves DWARF
+expressions as well. The rule calculates the CFA by executing
+the DWARF expression E. Lastly, DWARF expressions can appear
+in the following three DWARF call frame information
+instructions:
+
+  DW_CFA_expression Takes a ULEB128 operand representing the
+
+  DWARF register number for which the rule is being defined
+  and an additional DW_FORM_block operand that represents a
+  DWARF expression E and sets the rule for the register to
+  expression(E). Prior to the execution of E, this expression pushes
+
+  the CFA to the DWARF expression stack.
+  DW_CFA_val_expression The same as DW_CFA_expression, but defines the
+
+  register’s rule to be val_expression(E) rather than expression(E).
+  DW_CFA_def_cfa_expression Takes a DW_FORM_exprloc operand that
+
+  encodes a DWARF expression E and sets the CFA rule to
+  expression(E).
+Let’s add support for these rule types and instructions. In
+sdb/src/dwarf.cpp, add new register rule types for expression(E)
+and val_expression(E), and add a new CFA rule type for expression(E):
+
+   namespace {
+         struct register_rule {
+              --snip--
+         };
+         struct expr_rule {
+              sdb::dwarf_expression expr;
+         };
+         struct val_expr_rule {
+              sdb::dwarf_expression expr;
+         };
+         struct cfa_register_rule {
+              --snip--
+         };
+         struct cfa_expr_rule {
+              sdb::dwarf_expression expr;
+         };
+   }
+
+Replace the current cfa_rule member of the unwind_context type with
+a std::variant type covering the two possible rule types, add the
+two new register restore rule types to the rule type alias, and
+modify rule_stack to use the new type for the CFA rule:
+   namespace {
+         struct unwind_context {
+             --snip--
+               using cfa_rule_type = std::variant<cfa_re
+               cfa_rule_type cfa_rule;
+               using rule = std::variant<
+                    undefined_rule, same_rule, offset_rul
+                    val_offset_rule, register_rule,
+                    expr_rule, val_expr_rule>;
+               --snip--
+               std::vector<std::pair<ruleset, cfa_rule_t
+         };
+   }
+
+We also need to update our existing handling of the CFA register
+rule instructions in execute_cfi_instruction, as the rule is now a
+std::variant rather than a cfa_register_rule:
+
+   --snip--
+   case DW_CFA_def_cfa:
+        ctx.cfa_rule = cfa_register_rule{
+         ➊ static_cast<std::uint32_t>(cur.uleb128())
+            static_cast<std::uint32_t>(cur.uleb128()
+        };
+        break;
+   case DW_CFA_def_cfa_sf:
+        ctx.cfa_rule = cfa_register_rule{
+         ➋ static_cast<std::uint32_t>(cur.uleb128())
+              cur.sleb128() * cie.data_alignment_facto
+        };
+        break;
+   case DW_CFA_def_cfa_register:
+        std::get<cfa_register_rule>(ctx.cfa_rule).reg
+        break;
+   case DW_CFA_def_cfa_offset:
+        std::get<cfa_register_rule>(ctx.cfa_rule).off
+        break;
+   case DW_CFA_def_cfa_offset_sf:
+        std::get<cfa_register_rule>(ctx.cfa_rule).off
+            cur.sleb128() * cie.data_alignment_facto
+        break;
+   --snip--
+
+For the first two instructions, we replace the existing cfa_rule
+member with a new cfa_register_rule that has the same content as
+before. For the other three instructions, we assume that the
+current CFA rule is a register rule, so we use std::get to retrieve
+the cfa_register_rule object and update the relevant member to the
+same value we did previously. All the static_casts in this snippet
+are to silence compiler warnings.
+For those of you worried about C++’s evaluation order when we
+parse two values from the cursor in a single expression ➊➋,
+have no fear, because the order is defined to be left to right
+when using list initialization (which is the initialization form
+used here with the curly brackets).
+
+Now we can add support for DW_CFA_def_cfa_expression. Replace the
+existing code (which just throws an exception) with this:
+
+   --snip--
+   case DW_CFA_def_cfa_expression: {
+        auto length = cur.uleb128();
+        auto expr = sdb::dwarf_expression{
+            elf, { cur.position(), cur.position() + l
+        ctx.cfa_rule = cfa_expr_rule{ expr };
+        break;
+   }
+   --snip--
+
+We read the ULEB128 data length, create an sdb::dwarf_expression with
+the expression’s data, and store a cfa_expr_rule with this
+expression as the current CFA rule. We pass true as the final
+argument because this expression is in a frame information
+context.
+Also replace the current handling of the DW_CFA_expression and
+DW_CFA_val _expression instructions, like so:
+
+   --snip--
+   case DW_CFA_expression: {
+         auto reg = cur.uleb128();
+         auto length = cur.uleb128();
+         auto expr = sdb::dwarf_expression{
+             elf, { cur.position(), cur.position() + l
+         ctx.register_rules.emplace(reg, expr_rule{ ex
+         break;
+   }
+   case DW_CFA_val_expression: {
+        auto reg = cur.uleb128();
+        auto length = cur.uleb128();
+        auto expr = sdb::dwarf_expression{
+            elf, { cur.position(), cur.position() + l
+        ctx.register_rules.emplace(reg, val_expr_rule
+        break;
+   }
+   --snip--
+
+These implementations are very similar to the one we used for
+the DW_CFA _def_cfa_expression instruction. However, we also parse the
+DWARF register number operand and store it in the created
+register rule.
+We need to handle both possible CFA rules in execute_unwind_rules.
+This should resolve the real address of the CFA, update the old
+register set’s CFA, and continue on as before:
+
+   namespace {
+       sdb::registers execute_unwind_rules(
+             unwind_context& ctx, sdb::registers& ol
+             const sdb::process& proc) {
+           auto unwound_regs = old_regs;
+
+              auto dwexp_addr_result = [&](const auto&
+                  auto& loc = std::get<sdb::dwarf_expre
+                  auto& addr_res = std::get<sdb::dwarf_
+                  return sdb::virt_addr{ addr_res.addre
+              };
+
+              std::uint64_t cfa;
+              if (auto reg_rule = std::get_if<cfa_regis
+                  auto reg_info = sdb::register_info_by
+                  cfa = std::get<std::uint64_t>(old_reg
+                      reg_rule->offset;
+              }
+              else if (auto expr = std::get_if<cfa_exp
+                  auto res = expr->expr.eval(proc, old_
+                  cfa = dwexp_addr_result(res).addr();
+              }
+              old_regs.set_cfa(sdb::virt_addr{ cfa });
+              --snip--
+          }
+      }
+
+All DWARF expression results in call frame information
+instructions are single address results, so we introduce a
+lambda function to easily extract the address that the
+expression computes. If the CFA rule is a register rule, we
+follow the same procedure as before: we read the rule’s register,
+add the rule’s offset to the result, and store this as the CFA. If the
+CFA rule is a DWARF expression rule, we evaluate it, extract the
+address from the result, and store that as the CFA. After
+computing the CFA, we store it in the old register set, as we used
+to.
+
+In the same function, we also need to handle the two new
+register restore rules. Add code to handle these in new
+branches underneath the existing one for handling val_offset
+rules:
+
+      else if (auto val_offset = std::get_if<val_offset
+          --snip--
+      }
+      else if (auto expr = std::get_if<expr_rule>(&rule
+          auto res = expr->expr.eval(proc, old_regs, t
+        auto addr = dwexp_addr_result(res);
+        auto value = proc.read_memory_as<std::uint64_
+        unwound_regs.write(reg_info, { value }, false
+   }
+   else if (auto val_expr = std::get_if<val_expr_rul
+        auto res = val_expr->expr.eval(proc, old_regs
+        auto addr = dwexp_addr_result(res);
+        unwound_regs.write(reg_info, { addr.addr() }
+   }
+
+In each case, we evaluate the DWARF expression and extract
+the computed address. We pass true as the final argument to
+push the CFA to the stack prior to evaluation. For expression rules,
+we read the memory at that address and store it as the
+unwound register value. For val_expression rules, we store the
+computed address as the unwound register value.
+
+At this point, the implementation of DWARF expressions is
+complete! If you’ve never implemented an interpreter for a
+Turing-complete language before, you can finally say that you
+have.
+
+Reading Global Variables
+Displaying the contents of variables to the user with the correct
+type information is a more complex topic, and we’ll mostly
+leave it until the next chapter. In this section, however, we’ll add
+some very basic support for reading global integer variables so
+we can test the functionality we just added.
+
+Reading DWARF Expression Results
+
+Let’s start by adding a function to sdb::target that takes a DWARF
+expression result and returns the bytes that make up the
+variable stored there. Declare this function in
+sdb/include/libsdb/target.hpp:
+
+   namespace sdb {
+       class target {
+       public:
+           --snip--
+           std::vector<std::byte> read_location_data
+                const dwarf_expression::result& loc,
+                std::optional<pid_t> otid = std::null
+           --snip--
+        };
+   }
+
+The function takes the DWARF expression result that locates the
+data, a number of bytes to read, and which thread to operate on
+(because we may have to read from the registers of a specific
+thread).
+
+Implement it in sdb/src/target.cpp. The implementation is rather
+complex, especially for composite locations, so we’ll go through
+it bit by bit. We’ll start by following the usual process of
+calculating which thread to operate on by checking the otid
+argument, which may have the default value of std::nullopt:
+
+   std::vector<std::byte> sdb::target::read_location
+         const dwarf_expression::result& loc, std::s
+         std::optional<pid_t> otid) const {
+       auto tid = otid.value_or(process_->current_th
+
+Next, we’ll begin handling simple locations, starting with
+register locations. We want to copy the contents of the register
+into a vector of bytes, but std::register::read returns a std::variant
+whose size and type depend on which register is being read. We
+can use std::visit to extract the bytes from this variant:
+
+           --snip--
+           if (auto simple_loc = std::get_if<sdb::dwarf_
+                if (auto reg_loc = std::get_if<sdb::dwarf
+                    auto reg_info = register_info_by_dwa
+                    auto reg_value = threads_.at(tid).fra
+                      auto get_bytes = [](auto value) {
+                          std::vector<std::byte> bytes(size
+                            auto begin = reinterpret_cast<con
+                            std::copy(begin, begin + sizeof(v
+                            return bytes;
+                      };
+                      return std::visit(get_bytes, reg_valu
+               }
+
+We try to extract a simple location from the given result. If the
+operation succeeds, we try to extract a register result, and if
+that succeeds, we perform the copy. We retrieve the register
+info for the DWARF register number stored in the result object,
+then read the value of the relevant register in the requested
+thread. We next define a generic get_bytes lambda function that
+returns the contents of its argument as a vector of bytes. We
+pass it to std::visit, along with the register value. Because we’ll
+call the get_bytes lambda with the contents of the variant, the value
+parameter will be of type std::uint64_t if the variant stores a
+std::uint64_t, of type sdb::byte64 if it stores an sdb::byte64, and so on.
+
+Next, let’s handle address results, which should read the
+requested number of bytes from the memory at the address
+stored in the result:
+              --snip--
+              else if (
+                  auto addr_res = std::get_if<sdb::dwa
+                    return process_->read_memory(addr_res
+              }
+
+Data results are also pretty straightforward. We construct the
+return value (a std::vector<std::byte>) with the iterators for the
+beginning and end of the data span, which copies the data from
+the span into the vector:
+
+              --snip--
+              else if (auto data_res = std::get_if<sdb
+                   return { data_res->data.begin(), data
+              }
+
+Literal results are similar. We reinterpret a pointer to the stored
+value as a pointer to bytes and pass this value to the std::vector
+constructor to copy the bytes into the return value:
+
+              --snip--
+              else if (auto literal_res =
+                     std::get_if<sdb::dwarf_expression:
+                   auto begin = reinterpret_cast<const s
+                    return { begin, begin + size };
+              }
+         }
+
+Finally, we need to handle composite results. This is
+significantly trickier than the previous cases because pieces
+aren’t necessarily aligned to byte boundaries. We’ll start by
+implementing the simple case, in which the data is aligned on a
+byte boundary:
+
+         --snip--
+         else if (auto pieces_res = std::get_if<sdb::d
+              std::vector<std::byte> data(size);
+              std::size_t offset = 0;
+              for (auto& piece : pieces_res->pieces) {
+                  auto byte_size = (piece.bit_size + 7
+                  auto piece_data = read_location_data
+                  if (offset % 8 == 0 and piece.offset
+                      std::copy(piece_data.begin(), pie
+                      offset += piece.bit_size;
+                  }
+
+We try to extract the pieces_result object. If that succeeds, we
+initialize the return vector and create a variable to store the
+current bit offset at which new data should be written into this
+vector. We iterate over all of the pieces in the result, reading the
+data for the current piece’s location by recursively calling
+read_location_data.
+
+We pass the number of bytes this function should read, which
+we calculate by adding seven to the piece’s bit size and dividing
+it by eight. We must do this because if the bit size is not exactly
+divisible by eight, integer division will cut off the remainder,
+but we want to round up toward the nearest byte.
+
+If the current bit offset and the piece’s bit size are aligned to a
+byte, and the piece’s bit offset is 0, we’re in the simple case and
+can copy the bytes into the data vector.
+
+Now we’ll tackle the more complicated case, where we need to
+handle copying data that isn’t aligned to a byte. The algorithm
+needs to work for arbitrarily sized data copied from a
+potentially non-byte-aligned position to a different potentially
+non-byte-aligned position. We’ll pretend that we have a
+function called memcpy_bits that performs this work, with this
+signature:
+
+    void memcpy_bits(std::uint8_t* dest, std::uint32_
+        const std::uint8_t* src, std::uint32_t src_bi
+        std::uint32_t n_bits);
+
+Let’s use this function to perform the data copy:
+
+        --snip--
+                   else {
+                       auto dest = reinterpret_cast<std
+                       auto src = reinterpret_cast<const
+                       memcpy_bits(dest, 0, src, piece.o
+                   }
+              }
+              return data;
+        }
+        sdb::error::send("Invalid location type");
+   }
+
+We cast the destination and source pointers to the correct types.
+We call memcpy_bits with these pointers, supplying 0 as the bit
+offset into the destination data into which we should copy,
+piece.offset as the bit offset into the source data at which we
+
+should start the copy, and piece.bit_size as the number of bits to
+copy. The error send at the end is mostly to silence compiler
+warnings but may come in handy if some other location type is
+added in another DWARF version.
+Let’s implement memcpy_bits in sdb/include/bit.hpp:
+
+   namespace sdb {
+        inline void memcpy_bits(std::uint8_t* dest, s
+              const std::uint8_t* src, std::uint32_t
+                std::uint32_t n_bits) {
+              for (; n_bits; --n_bits, ++src_bit, ++des
+                  std::uint8_t dest_mask = 1 << (dest_b
+                  dest[dest_bit / 8] &= ~dest_mask;
+                  auto src_mask = 1 << (src_bit % 8);
+                  auto corresponding_src_bit_set = src
+                  if (corresponding_src_bit_set) {
+                      dest[dest_bit / 8] |= dest_mask;
+                  }
+              }
+        }
+   }
+
+We copy the data one bit at a time. For each bit, we first clear
+that bit in the destination data. We then check if the
+corresponding bit in the source data is set and, if so, set the
+relevant bit in the destination data. There are more efficient
+ways in which we could implement this function, but this way
+is much simpler, and we don’t expect copying DWARF
+expression piece results to be a very common operation.
+Let’s move on to reading global variables.
+
+Indexing Global Variables
+
+Currently, sdb::dwarf enables us to find functions with DIEs
+defined in that DWARF file. We index these functions so we
+don’t need to traverse the entire DIE tree whenever we look for
+a function. Let’s extend this index to also include global
+variables.
+
+Add a global variable index to sdb::dwarf in
+sdb/include/libsdb/dwarf.hpp. Also add an in_function parameter to
+index_die to track whether the DIE currently being indexed is
+
+nested inside of a function and therefore not a global variable:
+
+   namespace sdb {
+       class dwarf {
+           --snip--
+       private:
+           --snip--
+           void index_die(const die& current, bool i
+           --snip--
+           mutable std::unordered_multimap<std::stri
+              global_variable_index_;
+        };
+   }
+
+We give the in_function parameter a default argument on false to
+minimize updates needed to existing calls. Update the
+implementation of index_die in sdb/src/dwarf.cpp to also add
+entries to the global variable index:
+
+   void sdb::dwarf::index_die(const die& current, bo
+       --snip--
+       if (has_range and is_function) {
+            --snip--
+       }
+
+        auto has_location = current.contains(DW_AT_lo
+        auto is_variable = current.abbrev_entry()->ta
+        if (has_location and is_variable and !in_func
+            if (auto name = current.name()) {
+                index_entry entry{ current.cu(), cur
+                global_variable_index_.emplace(*name
+             }
+        }
+
+        if (is_function) in_function = true;
+        for (auto child : current.children()) {
+             index_die(child, in_function);
+         }
+   }
+
+If the DIE has both a DW_AT_location attribute and the DW_TAG_variable
+tag and isn’t nested inside of a function DIE, this DIE belongs to
+a global variable we can locate. In that case, we attempt to get
+its name. If we succeed, we create a new index entry for that
+global variable and add it to the index. After handling variables,
+we update in_function if the current DIE belongs to a function. We
+then index all child DIEs, passing the new value of in_function so
+that any variable DIEs nested inside of function DIEs won’t be
+added to the index.
+
+Let’s add a find_global_variable function to sdb::dwarf for querying
+this index. Declare this function in sdb/include/libsdb/dwarf.hpp:
+
+   namespace sdb {
+       class dwarf {
+       public:
+           --snip--
+           std::optional<die> find_global_variable(s
+           --snip--
+       };
+   }
+Implement it in sdb/src/dwarf.cpp. For now, it will merely look
+at the global variable index:
+
+   std::optional<sdb::die> sdb::dwarf::find_global_v
+       index();
+        auto it = global_variable_index_.find(name);
+        if (it != global_variable_index_.end()) {
+            cursor cur({ it->second.pos, it->second.c
+            return parse_die(*it->second.cu, cur);
+        }
+        return std::nullopt;
+   }
+
+First, we call index to ensure that the index is ready (recall that
+the index function makes sure this check happens only once). We
+then search the global variable index for a variable with that
+name. If we don’t find one, we return std::nullopt. If we do, we
+parse the DIE that starts at the location held in the index and
+return it. Note that, for simplicity, we don’t handle namespaces,
+which mostly involves string processing and isn’t super
+interesting. Feel free to implement this feature yourself,
+however.
+
+Adding a Variable Lookup Interface
+Let’s add a very simple interface for variable reading to the
+command line driver. Add a new variable command to
+handle_command, in sdb/tools/sdb.cpp:
+
+   namespace {
+       void handle_command(
+             std::unique_ptr<sdb::target>& target,
+             std::string_view line) {
+           --snip--
+           else if (is_prefix(command, "variable"))
+                handle_variable_command(*target, args
+           }
+           --snip--
+       }
+   }
+
+For now, implement a basic version of handle_variable_command, which
+you’ll extend in the next chapter. We’ll support a single
+subcommand, read <variable name>, which reads the value of the
+variable with the given name as a 64-bit integer and prints it
+out:
+
+   namespace {
+       void handle_variable_command(
+             sdb::target& target, const std::vector<
+              if (args.size() < 3) {
+                  print_help({ "help", "variable" });
+                   return;
+              }
+
+              if (is_prefix(args[1], "read")) {
+                   auto die = target.get_main_elf().get_
+                   auto loc = die.value()[DW_AT_location
+                       target.get_process(), target.get_
+                   auto value = target.read_location_dat
+                   std::uint64_t res = 0;
+                   std::copy(value.begin(), value.end()
+                   std::cout << "Value: " << res << '\n
+              }
+        }
+   }
+
+If the user doesn’t supply enough arguments, we print a help
+message. Otherwise, we try to read the variable with the given
+name. We locate the DIE for it, evaluate its location, read the
+value, copy the result into a 64-bit integer, and print the value.
+This code is quite brittle, as we’re assuming that the variable
+names a 64-bit integer, but it should do for some initial testing.
+
+Extend the help information with this new command:
+   namespace {
+         void print_help(const std::vector<std::string
+             if (args.size() == 1) {
+                    std::cerr << R"(Available commands:
+         --snip--
+         variable       - Commands for operating on varia
+         --snip--
+   )";
+             }
+             else if (is_prefix(args[1], "variable"))
+                 std::cerr << R"(Available commands:
+         read <variable>
+   )";
+             }
+             --snip--
+         }
+   }
+
+Now we can move on to testing.
+
+Testing
+
+To test the new variable-reading feature, create a new test
+target at sdb/test/targets/global_variable.cpp with these contents:
+   #include <cstdint>
+
+   std::uint64_t g_int = 0;
+
+   int main() {
+         g_int = 1;
+         g_int = 42;
+   }
+
+We make a single global variable called g_int, which we initialize
+to 0 and assign twice in the body of the main function. Add this
+target to sdb/test/targets/CMakeLists.txt:
+
+   --snip--
+   add_test_cpp_target(global_variable)
+   --snip--
+
+Build the test and manually ensure that reading variables
+works. Set a breakpoint on main, continue the program, and then
+step through it, printing the value of g_int at each step. It should
+print 0, then 1, and then 42:
+
+   $ tools/sdb test/targets/global_variable
+   Launched process with PID 1280
+   sdb> break set main
+sdb> c
+Thread 1280 stopped with signal TRAP at 0x5555555
+global_variable.cpp:5 (global_variable`main)   (br
+  2 std::uint64_t g_int = 0;
+  4 int main() {
+> 5      g_int = 1;
+  6      g_int = 42;
+  7 }
+sdb> var read g_int
+Value: 0
+sdb> next
+Thread 1280 stopped with signal TRAP at 0x5555555
+global_variable.cpp:6 (global_variable`main) (si
+    4 int main() {
+    5     g_int = 1;
+> 6       g_int = 42;
+    7 }
+sdb> var read g_int
+Value: 1
+sdb> next
+Thread 1280 stopped with signal TRAP at 0x5555555
+global_variable.cpp:7 (global_variable`main) (si
+    4 int main() {
+    5     g_int = 1;
+    6     g_int = 42;
+> 7 }
+   sdb> var read g_int
+   Value: 42
+
+Let’s translate this procedure into an automated test:
+
+   TEST_CASE("Can read global integer variable", "[v
+       auto target = target::launch("targets/global_
+       auto& proc = target->get_process();
+
+        target->create_function_breakpoint("main").en
+        proc.resume();
+        proc.wait_on_signal();
+
+        auto var_die = target->get_main_elf().get_dwa
+        auto var_loc = var_die.value()[DW_AT_location
+            .as_evaluated_location(proc, proc.get_reg
+        auto res = target->read_location_data(var_loc
+        auto val = from_bytes<std::uint64_t>(res.data
+
+        REQUIRE(val == 0);
+
+        target->step_over();
+        res = target->read_location_data(var_loc, 8)
+        val = from_bytes<std::uint64_t>(res.data());
+
+        REQUIRE(val == 1);
+        target->step_over();
+        res = target->read_location_data(var_loc, 8)
+        val = from_bytes<std::uint64_t>(res.data());
+
+        REQUIRE(val == 42);
+   }
+
+We launch global_variable, set a breakpoint on main, and resume
+the process. When the process hits the breakpoint, we find the
+DIE for the g_int variable, read its location attribute, get the data
+there, and convert it to a std::uint64_t. We require that the value
+be 0, then we step, reread the variable, require that it be 1, step
+again, reread, and require that it be 42. We don’t need to
+reevaluate the location DWARF expression because it’s a global
+variable, so its position won’t depend on the program counter
+or registers.
+
+Finally, let’s also add a test for a more complex DWARF
+expression:
+
+   TEST_CASE("DWARF expressions work", "[dwarf]") {
+       std::vector<std::uint8_t> piece_data = {
+           DW_OP_reg16, DW_OP_piece, 4, DW_OP_piece
+           0xff, 0xff, 0xff, 0xff, DW_OP_bit_piece,
+       };
+        auto target = target::launch("targets/step")
+        auto& proc = target->get_process();
+        sdb::span<const std::byte> data {
+            reinterpret_cast<std::byte*>(piece_data.d
+        auto expr = sdb::dwarf_expression(target->get
+        auto res = expr.eval(proc, proc.get_registers
+
+        auto& pieces = std::get<sdb::dwarf_expression
+        REQUIRE(pieces.size() == 3);
+        REQUIRE(pieces[0].bit_size == 4 * 8);
+        REQUIRE(pieces[1].bit_size == 8 * 8);
+        REQUIRE(pieces[2].bit_size == 5);
+        REQUIRE(std::get<dwarf_expression::register_
+        REQUIRE(std::get_if<dwarf_expression::empty_
+        REQUIRE(std::get<dwarf_expression::address_re
+            .address.addr() == 0xffffffff);
+        REQUIRE(pieces[0].offset == 0);
+        REQUIRE(pieces[1].offset == 0);
+        REQUIRE(pieces[2].offset == 12);
+
+   }
+
+We create a DWARF expression manually that consists of three
+pieces. The first piece is 4 bytes long and lives in register 16. The
+second is 8 bytes long and has no location. The third is 12 bits
+long and starts at a 5-bit offset inside of the memory at address
+0xffffffff. We create a dummy target, as our parser requires one,
+
+then make an sdb::dwarf_expression out of the data we created and
+evaluate it. We issue a series of requirements on the result: that
+there be three pieces with the sizes, contents, and offsets we
+specified. These tests should pass.
+
+Summary
+
+In this chapter, you implemented an interpreter for DWARF
+expressions and added basic support for reading global
+variables to your debugger. You learned about the taxonomy of
+DWARF expressions, how the stack machine is encoded, and
+how call frame information uses DWARF expressions. You also
+added support for DWARF expressions to your existing stack
+unwinder.
+
+In the next chapter, you’ll add type information parsing to your
+DWARF parser and use the parser to read, write, and visualize
+more complex variables.
+
+Check Your Knowledge
+
+1.
+1. What different types of location descriptions can DWARF
+  expressions encode?
+2.
+2. With which other DWARF entity do location lists share an
+  almost identical encoding?
+3.
+3. Which DWARF expression instruction allows copying data
+  from an arbitrary location of the stack?
+4.
+4. Which DWARF expression instruction is not implementable
+  as it is specified?

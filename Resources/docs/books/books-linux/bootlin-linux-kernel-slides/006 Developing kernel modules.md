@@ -1,0 +1,441 @@
+![](media/index-92_1.jpg)
+
+Developing kernel modules
+
+ 
+
+Developing kernel
+
+ 
+
+modules
+
+ 
+
+© Copyright 2004-2025, Bootlin. embedded Linux and kernel engineering Creative Commons BY-SA 3.0 license.
+
+Corrections, suggestions, contributions and translations are welcome!
+
+ 
+
+- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 92/436 Hello module 1/2
+
+// SPDX-License-Identifier: GPL-2.0
+
+/\* hello.c \*/
+
+\#include \<linux/init.h\>
+
+\#include \<linux/module.h\>
+
+\#include \<linux/kernel.h\>
+
+static int \_\_init hello_init(void)
+
+{
+
+pr_alert("Good morrow to this fair assembly.\n"); return 0;
+
+}
+
+static void \_\_exit hello_exit(void)
+
+{
+
+pr_alert("Alas, poor world, what treasure hast thou lost!\n");
+
+}
+
+module_init(hello_init);
+
+module_exit(hello_exit);
+
+MODULE_LICENSE("GPL");
+
+MODULE_DESCRIPTION("Greeting module");
+
+MODULE_AUTHOR("William Shakespeare");
+
+- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 93/436 Hello module 2/2
+
+ 
+
+▶ Code marked as [\_\_init:](https://elixir.bootlin.com/linux/latest/ident/__init)
+
+*•* Removed after initialization (static kernel or module.) *•* See how init memory is reclaimed when the kernel finishes booting:
+
+\[ 2.689854\] VFS: Mounted root (nfs filesystem) on device 0:15. \[ 2.698796\] devtmpfs: mounted \[ 2.704277\] Freeing unused kernel memory: 1024K \[ 2.710136\] Run /sbin/init as init process
+
+ 
+
+▶ Code marked as [\_\_exit:](https://elixir.bootlin.com/linux/latest/ident/__exit)
+
+*•* Discarded when module compiled statically into the kernel, or when module
+
+unloading support is not enabled.
+
+▶ Code of this example module available on
+
+<https://raw.githubusercontent.com/bootlin/training-materials/master/code/hello/hello.c>
+
+ 
+
+- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 94/436 Hello module explanations
+
+ 
+
+▶ Headers specific to the Linux kernel: linux/xxx.h
+
+*•* No access to the usual C library, we’re doing kernel programming
+
+▶ An initialization function
+
+*•* Called when the module is loaded, returns an error code (0 on success, negative
+
+value on failure)
+
+*•* Declared by the [module_init()](https://elixir.bootlin.com/linux/latest/ident/module_init) macro: the name of the function doesn’t matter,
+
+even though \<modulename\>\_init() is a convention.
+
+▶ A cleanup function
+
+*•* Called when the module is unloaded
+
+*•* Declared by the [module_exit()](https://elixir.bootlin.com/linux/latest/ident/module_exit) macro.
+
+▶ Metadata information declared using [MODULE_LICENSE()](https://elixir.bootlin.com/linux/latest/ident/MODULE_LICENSE), [MODULE_DESCRIPTION()](https://elixir.bootlin.com/linux/latest/ident/MODULE_DESCRIPTION)
+
+and [MODULE_AUTHOR()](https://elixir.bootlin.com/linux/latest/ident/MODULE_AUTHOR)
+
+ 
+
+- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 95/436 Symbols exported to modules 1/2
+
+ 
+
+▶ From a kernel module, only a limited number of kernel functions can be called ▶ Functions and variables have to be explicitly exported by the kernel to be visible
+
+to a kernel module
+
+▶ Two macros are used in the kernel to export functions and variables:
+
+*•* EXPORT_SYMBOL(symbolname), which exports a function or variable to all modules *•* EXPORT_SYMBOL_GPL(symbolname), which exports a function or variable only to GPL
+
+modules
+
+*•* Linux 5.3: contains the same number of symbols with [EXPORT_SYMBOL()](https://elixir.bootlin.com/linux/latest/ident/EXPORT_SYMBOL) and
+
+symbols with [EXPORT_SYMBOL_GPL()](https://elixir.bootlin.com/linux/latest/ident/EXPORT_SYMBOL_GPL)
+
+▶ A normal driver should not need any non-exported function.
+
+ 
+
+- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 96/436 Symbols exported to modules 2/2
+
+ 
+
+- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 97/436
+
+Module license
+
+ 
+
+▶ Several usages
+
+*•* Used to restrict the kernel functions that the module can use if it isn’t a GPL
+
+licensed module.
+
+Difference between [EXPORT_SYMBOL()](https://elixir.bootlin.com/linux/latest/ident/EXPORT_SYMBOL) and [EXPORT_SYMBOL_GPL()](https://elixir.bootlin.com/linux/latest/ident/EXPORT_SYMBOL_GPL).
+
+*•* One reason a kernel can become “tainted” is proprietary modules, among others.
+
+See [admin-guide/tainted-kernels](https://www.kernel.org/doc/html/latest/admin-guide/tainted-kernels.html) for other taint flags. This attribute is visible in kernel crashes and oopses for bug reports.
+
+*•* Useful for users to check that their system is 100% free (for the kernel, check
+
+/proc/sys/kernel/tainted; run vrms to check installed packages).
+
+▶ Values
+
+*•* GPL compatible (see [include/linux/license.h](https://elixir.bootlin.com/linux/latest/source/include/linux/license.h)[:](https://elixir.bootlin.com/linux/latest/source/include/linux/license.h) GPL, GPL v2,
+
+GPL and additional rights, Dual MIT/GPL, Dual BSD/GPL, Dual MPL/GPL)
+
+*•* Proprietary
+
+ 
+
+- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 98/436 Compiling a module
+
+ 
+
+Two solutions
+
+▶ *Out of tree*, when the code is outside of the kernel source tree, in a different
+
+directory
+
+*•* Not integrated into the kernel configuration/compilation process *•* Needs to be built separately
+
+*•* The driver cannot be built statically, only as a module
+
+▶ Inside the kernel tree
+
+*•* Well integrated into the kernel configuration/compilation process *•* The driver can be built statically or as a module
+
+ 
+
+- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 99/436
+
+Compiling an out-of-tree module 1/2
+
+ 
+
+▶ The below Makefile should be reusable for any single-file out-of-tree Linux
+
+module
+
+▶ The source file is hello.c
+
+▶ Just run make to build the hello.ko file
+
+ifneq (\$(KERNELRELEASE),)
+
+obj-m := hello.o
+
+else
+
+KDIR := /path/to/kernel/sources
+
+all:
+
+\<tab\>\$(MAKE)-C \$(KDIR) M=\$\$PWD
+
+endif
+
+ 
+
+▶ KDIR: kernel source or headers directory (see next slides)
+
+ 
+
+- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 100/436 Compiling an out-of-tree module 2/2
+
+ 
+
+▶ The module Makefile is interpreted with KERNELRELEASE undefined, so it calls
+
+the kernel Makefile, passing the module directory in the M variable ▶ The kernel Makefile knows how to compile a module, and thanks to the M
+
+variable, knows where the Makefile for our module is. This module Makefile is
+
+then interpreted with KERNELRELEASE defined, so the kernel sees the obj-m
+
+definition.
+
+- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 101/436
+
+Modules and kernel version
+
+ 
+
+▶ To be compiled, a kernel module needs access to *kernel headers*, containing the
+
+definitions of functions, types and constants.
+
+▶ Two solutions
+
+*•* Full kernel sources (configured + make modules_prepare) *•* Only kernel headers (linux-headers-\* packages in Debian/Ubuntu distributions, or
+
+directory created by make headers_install).
+
+▶ The sources or headers must be configured (.config file)
+
+*•* Many macros or functions depend on the configuration
+
+▶ You also need the kernel [Makefile,](https://elixir.bootlin.com/linux/latest/source/Makefile) the [scripts/](https://elixir.bootlin.com/linux/latest/source/scripts/) directory, and a few others. ▶ A kernel module compiled against version X of kernel headers will not load in
+
+kernel version Y
+
+*•* modprobe / insmod will say Invalid module format
+
+ 
+
+- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 102/436 New driver in kernel sources 1/2
+
+ 
+
+▶ To add a new driver to the kernel sources:
+
+*•* Add your new source file to the appropriate source directory. Example:
+
+[drivers/usb/serial/navman.c](https://elixir.bootlin.com/linux/latest/source/drivers/usb/serial/navman.c)
+
+*•* Single file drivers in the common case, even if the file is several thousand lines of
+
+code big. Only really big drivers are split in several files or have their own directory.
+
+*•* Describe the configuration interface for your new driver by adding the following lines
+
+to the Kconfig file in this directory:
+
+ 
+
+config USB_SERIAL_NAVMAN
+
+tristate "USB Navman GPS device"
+
+depends on USB_SERIAL
+
+help
+
+To compile this driver as a module, choose M
+
+here: the module will be called navman.
+
+ 
+
+- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 103/436
+
+New driver in kernel sources 2/2
+
+ 
+
+▶ Add a line in the Makefile file based on the Kconfig setting:
+
+obj-\$(CONFIG_USB_SERIAL_NAVMAN) += navman.o ▶ It tells the kernel build system to build navman.c when the USB_SERIAL_NAVMAN
+
+option is enabled. It works both if compiled statically or as a module.
+
+*•* Run make xconfig and see your new options! *•* Run make and your new files are compiled!
+
+*•* See [kbuild/](https://www.kernel.org/doc/html/latest/kbuild/) for details and more elaborate examples like drivers with several source
+
+files, or drivers in their own subdirectory, etc.
+
+ 
+
+- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 104/436 Hello module with parameters 1/2
+
+ 
+
+// SPDX-License-Identifier: GPL-2.0
+
+/\* hello_param.c \*/
+
+\#include \<linux/init.h\>
+
+\#include \<linux/module.h\>
+
+ 
+
+MODULE_LICENSE("GPL");
+
+ 
+
+static char \*whom = "world";
+
+module_param(whom, charp, 0644);
+
+MODULE_PARM_DESC(whom, "Recipient of the hello message");
+
+ 
+
+static int howmany = 1;
+
+module_param(howmany, int, 0644);
+
+MODULE_PARM_DESC(howmany, "Number of greetings");
+
+ 
+
+- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 105/436 Hello module with parameters 2/2
+
+ 
+
+static int \_\_init hello_init(void)
+
+{
+
+int i;
+
+ 
+
+for (i = 0; i \< howmany; i++)
+
+pr_alert("(%d) Hello, %s\n", i, whom);
+
+return 0;
+
+}
+
+static void \_\_exit hello_exit(void)
+
+{
+
+pr_alert("Goodbye, cruel %s\n", whom);
+
+}
+
+ 
+
+module_init(hello_init);
+
+module_exit(hello_exit);
+
+Thanks to Jonathan Corbet for the examples
+
+Source code available on: <https://github.com/bootlin/training-materials/blob/master/code/hello-param/hello_param.c>
+
+- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 106/436 Declaring a module parameter
+
+ 
+
+module_param(
+
+name, /\* name of an already defined variable \*/
+
+type, /\* standard types (different from C types) are:
+
+\* byte, short, ushort, int, uint, long, ulong \* charp: a character pointer
+
+\* bool: a bool, values 0/1, y/n, Y/N.
+
+\* invbool: the above, only sense-reversed (N = true). \*/
+
+perm /\* for /sys/module/\<module_name\>/parameters/\<param\>,
+
+\* 0: no such module parameter value file \*/
+
+);
+
+ 
+
+/\* Example: drivers/block/loop.c \*/
+
+static int max_loop;
+
+module_param(max_loop, int, 0444);
+
+MODULE_PARM_DESC(max_loop, "Maximum number of loop devices");
+
+Modules parameter arrays are also possible with [module_param_array().](https://elixir.bootlin.com/linux/latest/ident/module_param_array)
+
+- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 107/436
+
+Practical lab - Writing modules
+
+ 
+
+▶ Create, compile and load your first module ▶ Add module parameters ▶ Access kernel internals from your module
+
+![](media/index-108_1.png)
+
+ 
+
+- Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 108/436
+
+![](media/index-108_2.png)

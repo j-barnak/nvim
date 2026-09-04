@@ -1,0 +1,827 @@
+26. Remote repositories
+When Git was first becoming popular, one of its banner features was that it was distributed.
+Along with other distributed version control systems (DVCS) like Darcs1 and Mercurial2, Git
+led a move away from the widespread centralised model of Subversion3 and CVS4. Given that
+decentralisation is a core element of Git’s design, it may seem surprising that we’ve not yet
+made any mention of it. Every command we’ve studied so far works on the data in your project
+and its .git directory, never touching the rest of your system, much less another computer. So
+where does distribution come in?
+
+In a centralised system, there is a single copy of the repository — the equivalent of the .git
+directory — that resides on a server accessible to all team members. Each contributor has a
+local working copy of the project, and a little metadata, but they do not have a complete copy of
+the repository. If they want to commit anything, they need to push their changes to the server.
+If they want to do anything else, like inspect the history or perform a merge, they also need
+to talk to the server. The server is responsible for integrating everyone’s changes and making
+sure conflicts are avoided or resolved. It might do this using a system of locks to ensure only
+one user at a time is allowed to change each file, or it might be able to detect when a submitted
+change is not based on the latest version and reject it.
+
+DVCSs do not work like this. There is no special central server that everyone must submit
+changes to. Instead there are multiple complete copies of the repository, one on each developer’s
+machine. The team can fetch changes from each other in any way they like, and they can work
+on their own local repository without a network connection, since their copy of the repository
+is fully independent.
+
+Git is designed so that almost all interesting operations on the project history happen locally,
+in the .git directory of each contributor’s copy. Making it distributed is reduced to the
+problem of copying commits between repositories, and Git’s data model is designed to make
+it straightforward to do this efficiently and reliably. Once you’ve fetched commits from a
+collaborator, you can use all the tools we’ve seen so far to merge their history with your own.
+
+Conceptually, Git’s fetch and push commands essentially do two things: they copy missing
+objects from one repository to another, and they update pointers in the .git/refs directory.
+There is fair amount of detail in how exactly they do this, and it will take us the few
+remaining chapters to complete it. The important thing to remember for now is that Git achieves
+distribution by performing all history manipulation locally, and then making it easy to copy
+commits between repositories.
+
+In this chapter we’ll tackle a few of the building blocks necessary to build towards a working
+fetch command. We’ll look at configuring remote repositories, take a look at refspecs, and
+we’ll extend the RevList class to find objects other than commits.
+
+  http://darcs.net/
+  https://www.mercurial-scm.org/
+  https://subversion.apache.org/
+  https://www.nongnu.org/cvs/
+
+                                     Remote repositories
+
+26.1. Storing remote references
+If you take a look inside the .git/config file in a repository you’ve cloned from GitHub, you’ll
+probably see a section that looks like this:
+     [remote "origin"]
+             url = git@github.com:jcoglan/jit.git
+             fetch = +refs/heads/*:refs/remotes/origin/*
+
+The remote.origin.fetch variable is a refspec. We’ll learn more about those shortly, but
+for now it suffices to say that this variable describes how to copy references from the remote
+repository into our local one when we run fetch. It says that we’d like to copy every ref inside
+refs/heads from the remote repository into the directory refs/remotes/origin in our local
+copy. The leading plus sign means updates to our refs will be forced; they’ll be overwritten
+even if the new commit IDs are not fast-forwards from the current values.
+
+So, if the remote has a branch called master and we fetch from it, we should end up with a file
+at .git/refs/remotes/origin/master containing the remote’s master branch pointer. The
+fetch command essentially makes a copy of the remote inside our own repository, retrieving
+any objects we don’t yet have, and storing a copy of the remote branch pointers in .git/refs/
+remotes.
+
+After this fetch, we can refer to the remote’s master pointer by the name origin/master when
+using any command that takes a revision, such as log or merge. This is achieved by adding
+.git/refs/remotes to the list of paths searched by the Refs class when looking for named
+pointers.
+     # lib/refs.rb
+
+       REFS_DIR    = Pathname.new("refs")
+       HEADS_DIR   = REFS_DIR.join("heads")
+       REMOTES_DIR = REFS_DIR.join("remotes")
+
+       def initialize(pathname)
+         @pathname     = pathname
+         @refs_path    = @pathname.join(REFS_DIR)
+         @heads_path   = @pathname.join(HEADS_DIR)
+         @remotes_path = @pathname.join(REMOTES_DIR)
+       end
+
+       def path_for_name(name)
+         prefixes = [@pathname, @refs_path, @heads_path, @remotes_path]
+         prefix   = prefixes.find { |path| File.file? path.join(name) }
+
+         prefix ? prefix.join(name) : nil
+       end
+
+We’d also like to strip this directory name off the beginning of any references inside
+it, for example the ref refs/remotes/origin/master should be displayed using the short
+name origin/master. We do this by adding refs/remotes to the list of paths used in
+Refs#short_name.
+
+     # lib/refs.rb
+
+                                      Remote repositories
+
+       def short_name(path)
+         path = @pathname.join(path)
+
+         prefix = [@remotes_path, @heads_path, @pathname].find do |dir|
+           path.dirname.ascend.any? { |parent| parent == dir }
+         end
+
+         path = path.relative_path_from(prefix) if prefix
+         path.to_s
+       end
+
+We’ve also put in a check so that if none of the prefixes match, the path is left as-is. This is
+because this method will be used to display the results of fetch and push commands, which
+let the user enter any refs of their choice, and they may enter invalid refs that don’t match any
+of these directories.
+
+We can now save remote references and refer to them easily without typing out their whole path.
+
+26.2. The remote command
+The snippet from .git/config that we saw above was generated using the remote command.
+Running the following command will cause Git to create a new remote in your configuration,
+with the given name and URL.
+     $ git remote add origin "git@github.com:jcoglan/jit.git"
+
+That’s all a remote is: a stored URL and a few other details. We use remotes because typing
+out the full URL and refspec every time we ran fetch would be tedious; it’s much easier to
+type fetch origin and have Git look up the relevant stored parameters. Just like the master
+branch, the origin remote is not special, except that it’s the default remote name used if you
+run fetch without any arguments.
+
+We can list the remotes we have by running the remote command with no arguments, or with
+the --verbose flag.
+     $ git remote
+     origin
+
+     $ git remote --verbose
+     origin git@github.com:jcoglan/jit.git (fetch)
+     origin git@github.com:jcoglan/jit.git (push)
+
+We can also remove remotes by running remote remove <name>, which deletes them from the
+configuration along with any refs in .git/refs/remotes as specified by their fetch setting.
+
+Let’s sketch out the start of a remote command implementation that defines the options and
+sub-commands, before we tackle each operation in turn.
+     # lib/command/remote.rb
+
+     module Command
+       class Remote < Base
+
+         def define_options
+           @parser.on("-v", "--verbose") { @options[:verbose] = true }
+
+                                       Remote repositories
+
+            @options[:tracked] = []
+            @parser.on("-t <branch>") { |branch| @options[:tracked].push(branch) }
+          end
+
+          def run
+            case @args.shift
+            when "add"    then add_remote
+            when "remove" then remove_remote
+            else               list_remotes
+            end
+          end
+
+          # ...
+
+       end
+     end
+
+The run method shifts the sub-command name of the front of the @args array, so the @args
+array will now only contain the arguments to the sub-command, not its name. These functions
+are mostly boilerplate for storing and retrieving data, so we’ll rattle through them fairly quickly
+before moving on to the more conceptually interesting elements.
+
+26.2.1. Adding a remote
+The add sub-command takes a name and a URL. The name must not already be registered as
+a remote in the current repository; if it is then we’ll get an exception that we must catch. The
+:tracked option is an array populated by the -t flag; rather than getting the default fetch
+setting of +refs/heads/*:refs/remotes/<name>/*, we can specify which branches we’d like
+to fetch. Running remote add … -t master -t topic will result in these fetch settings
+being added:
+              fetch = +refs/heads/master:refs/remotes/origin/master
+              fetch = +refs/heads/topic:refs/remotes/origin/topic
+
+remote.<name>.fetch is a multi-valued variable in the configuration. The add_remote sub-
+command just sends its input off to another object that does the real work.
+     # lib/command/remote.rb
+
+          def add_remote
+            name, url = @args[0], @args[1]
+            repo.remotes.add(name, url, @options[:tracked])
+            exit 0
+          rescue Remotes::InvalidRemote => error
+            @stderr.puts "fatal: #{ error.message }"
+            exit 128
+          end
+
+Repository#remotes is a new piece of repository state management that wraps around the
+repo’s local config file in order to store its data.
+     # lib/repository.rb
+
+       def remotes
+         @remotes ||= Remotes.new(config.file(:local))
+
+                                       Remote repositories
+
+       end
+
+It returns an instance of the Remotes class, which is what does the real work of storing and
+retrieving remote configuration. We do this in a class connected to Repository, rather than in
+the remote command itself, because other commands like fetch and push will need access to
+this information.
+     # lib/remotes.rb
+
+     class Remotes
+       DEFAULT_REMOTE = "origin"
+
+       InvalidRemote = Class.new(StandardError)
+
+       def initialize(config)
+         @config = config
+       end
+
+       # ...
+     end
+
+Now we get to the real logic, inside the Remotes#add method. It takes the remote name, URL,
+and possibly-empty list of tracking branches, and adds a new remote to the config.
+
+The list of tracking branches is set to ["*"] if the input is empty. If the given name already exists
+as a remote in the config, then we raise an error. Otherwise, we set the remote.<name>.url
+variable, and add a remote.<name>.fetch setting for each tracking branch. This is done by
+using the Refspec class, defined below, to serialise a spec whose source is refs/heads/
+<branch>, whose target is refs/remotes/<name>/<branch>, and whose force flag is set.
+
+     # lib/remotes.rb
+
+       def add(name, url, branches = [])
+         branches = ["*"] if branches.empty?
+         @config.open_for_update
+
+          if @config.get(["remote", name, "url"])
+            @config.save
+            raise InvalidRemote, "remote #{ name } already exists."
+          end
+
+          @config.set(["remote", name, "url"], url)
+
+          branches.each do |branch|
+            source = Refs::HEADS_DIR.join(branch)
+            target = Refs::REMOTES_DIR.join(name, branch)
+            refspec = Refspec.new(source, target, true)
+
+            @config.add(["remote", name, "fetch"], refspec.to_s)
+          end
+
+         @config.save
+       end
+
+For now, the Remotes::Refspec class just takes the input source, target and forced flag, and
+serialises them. Later on we’ll expand this class so that it can select references for us to fetch.
+
+                                     Remote repositories
+
+     # lib/remotes/refspec.rb
+
+     class Remotes
+
+       Refspec = Struct.new(:source, :target, :forced) do
+         def to_s
+           spec = forced ? "+" : ""
+           spec + [source, target].join(":")
+         end
+       end
+
+     end
+
+26.2.2. Removing a remote
+Removing a remote is essentially the reverse of the above operation. In Command::Remote, we
+dispatch the remove sub-command to the Remotes#remove method:
+     # lib/command/remote.rb
+
+           def remove_remote
+             repo.remotes.remove(@args[0])
+             exit 0
+           rescue Remotes::InvalidRemote => error
+             @stderr.puts "fatal: #{ error.message }"
+             exit 128
+           end
+
+In Remotes#remove, we delete the entire section for the remote from the configuration. If this
+call returns false, then the given remote did not actually exist, and we raise an exception to
+notify the user.
+     # lib/remotes.rb
+
+       def remove(name)
+         @config.open_for_update
+
+         unless @config.remove_section(["remote", name])
+           raise InvalidRemote, "No such remote: #{ name }"
+         end
+       ensure
+         @config.save
+       end
+
+26.2.3. Listing remotes
+To list the remotes currently configured for the repository, we call the remote command without
+arguments, or with the --verbose option. To get the information this command needs to display,
+we need to wrap an object interface around the information currently stored in the config file.
+
+The sub-command begins by calling Remotes#list_remotes to get the names of all the remotes
+stored in the configuration. Unless we’re in verbose mode, we just print those names. In verbose
+mode, we fetch the remote’s details using Remotes#get, and then the fetch_url and push_url
+methods of the returned object to get the relevant URLs.
+     # lib/command/remote.rb
+
+                                      Remote repositories
+
+         def list_remotes
+           repo.remotes.list_remotes.each { |name| list_remote(name) }
+           exit 0
+         end
+
+         def list_remote(name)
+           return puts name unless @options[:verbose]
+
+             remote = repo.remotes.get(name)
+
+           puts "#{ name }\t#{ remote.fetch_url } (fetch)"
+           puts "#{ name }\t#{ remote.push_url } (push)"
+         end
+
+Remotes#list_remotes just needs to load the config file, then use the Config#subsections
+method to get the names of all the remote section’s subsections.
+     # lib/remotes.rb
+
+       def list_remotes
+         @config.open
+         @config.subsections("remote")
+       end
+
+The Remotes#get method’s job is to return an object that let us retrieve values necessary for
+fetch and push from a specific remote’s subsection within the config. The Config class doesn’t
+directly provide a way of accessing a subsection as a first-class object as in most cases this is
+not necessary, so we’ll invent a specific class called Remotes::Remote to play this role.
+     # lib/remotes.rb
+
+       def get(name)
+         @config.open
+         return nil unless @config.section?(["remote", name])
+
+         Remote.new(@config, name)
+       end
+
+The Remotes::Remote class takes the Config object and the name of the remote and provides
+an interface for accessing the relevant variables.
+     # lib/remotes/remote.rb
+
+     class Remotes
+       class Remote
+
+         def initialize(config, name)
+           @config = config
+           @name   = name
+
+           @config.open
+         end
+
+         # ...
+
+       end
+
+                                                 Remote repositories
+
+       end
+
+To provide the fetch_url and push_url interface, the Remote class has to look the relevant
+variables up in the Config object, based on its name. If remote.<name>.pushurl is not set, then
+the push URL defaults to being the same as the fetch URL.
+       # lib/remotes/remote.rb
+
+             def fetch_url
+               @config.get(["remote", @name, "url"])
+             end
+
+             def push_url
+               @config.get(["remote", @name, "pushurl"]) || fetch_url
+             end
+
+The fetch command will also need the fetch refspecs, and remote.<name>.fetch is multi-
+valued so we use Config#get_all to retrieve it. Finally this command will need to access a
+setting called uploadpack for the given remote, which sets the name of a program that the fetch
+command will run to interact with the remote repository5.
+       # lib/remotes/remote.rb
+
+             def fetch_specs
+               @config.get_all(["remote", @name, "fetch"])
+             end
+
+             def uploader
+               @config.get(["remote", @name, "uploadpack"])
+             end
+
+26.3. Refspecs
+When defining the remote add command above, we introduced the remote.<name>.fetch
+variable and the Refspec class. We briefly alluded to the idea that a refspec is a description
+of the refs we want to copy from the remote, and where they should be copied to in our
+local repository. For example, the refspec refs/heads/*:refs/remotes/origin/* instructs
+the fetch command to copy all the refs under refs/heads from the remote into the directory
+refs/remotes/origin in our repo.
+
+The general form of a refspec is <source>:<target> where <source> and <target> are paths
+inside the .git directory. It is interpreted as an instruction to copy the ref <source> from the
+remote into the ref <target> in the local repository. The source and target can also include a
+wildcard, as in refs/heads/*:refs/remotes/origin/*, which means we should copy every
+ref beginning with refs/heads/ from the remote to a corresponding ref beginning with refs/
+remotes/origin/ in our local repository.
+
+If the refspec does not have a leading +, then the target will only be updated on a fast-forward,
+that is if the target commit ID is an ancestor of the source, as in a fast-forward merge.
+
+For example, suppose Alice has the following three commits on her master branch:
+ Section 28.2, “The fetch and upload-pack commands”
+
+                                              Remote repositories
+
+Figure 26.1. Alice’s history
+
+                      A       B       C
+                      o <---- o <---- o [refs/heads/master]
+
+Bob sets up a remote to point at Alice’s repo, with the variable remote.alice.fetch set
+to refs/heads/master:refs/remotes/alice/master, without a leading +. When he fetches,
+he’ll receive all of Alice’s commits, and his refs/remotes/alice/master ref will be equal to
+Alice’s refs/heads/master.
+Figure 26.2. Bob’s repository after fetching from Alice
+
+                      A       B       C
+                      o <---- o <---- o [refs/remotes/alice/master]
+
+Now, Alice adds some more commits to her branch on top of commit C, which Bob’s remote
+ref currently points at.
+Figure 26.3. Alice’s extended history
+
+           A       B       C       D       E
+           o <---- o <---- o <---- o <---- o [refs/heads/master]
+
+When Bob fetches a second time, he’ll receive commits D and E which he does not yet have,
+and since E is a descendant of C, his refs/remotes/alice/master ref is updated to point at E.
+Figure 26.4. Bob’s updated repository
+
+           A       B       C       D       E
+           o <---- o <---- o <---- o <---- o [refs/remotes/alice/master]
+
+But, supposing Alice changed her mind about those last few commits and went back to B to
+start a new line of commits, she’d end up with this history:
+Figure 26.5. Alice’s amended history
+
+           A       B          C       D       E
+           o <---- o <---- o <---- o <---- o
+                     \
+                       \
+                         \ F      G
+                          o <---- o [refs/heads/master]
+
+If Bob fetches from Alice now, he will still receive commits F and G which he does not have,
+but because G is not a descendant of the commit his remote ref points at, that ref will not be
+updated.
+Figure 26.6. Bob’s repository after an unforced fetch
+
+           A       B          C     D      E
+           o <---- o <---- o <---- o <---- o [refs/remotes/alice/master]
+                     \
+                       \
+                         \ F      G
+                          o <---- o
+
+If Bob instead prefixed his fetch refspec with a leading plus sign, indicating the refspec is
+forced, the ref would be updated to point at G.
+
+                                                    Remote repositories
+
+Figure 26.7. Bob’s repository after a forced fetch
+             A       B          C       D       E
+             o <---- o <---- o <---- o <---- o
+                       \
+                         \
+                           \ F      G
+                            o <---- o [refs/remotes/alice/master]
+
+When the fetch command is run, the first thing it does is retrieve a list of the remote repository’s
+refs and their current values. For example if we fetched from the Git project’s own repository,
+we might receive:
+       5d826e972970a784bd7a7bdf587512510097b8c7 HEAD
+       98cdfbb84ad2ed6a2eb43dafa357a70a4b0a0fad refs/heads/maint
+       5d826e972970a784bd7a7bdf587512510097b8c7 refs/heads/master
+       b2cc3488ba006e3ba171e85dffbe6f332f84bf9a refs/heads/todo
+
+The job of a refspec is to select which refs we’d like to copy from the remote, and where to save
+them in our local repository. For example, given the above list and the refspec refs/heads/
+*:refs/remotes/origin/*, we’d like to produce this structure, where the boolean indicates
+whether this mapping is forced.
+       {
+           "refs/remotes/origin/maint" => ["refs/heads/maint", false],
+           "refs/remotes/origin/master" => ["refs/heads/master", false],
+           "refs/remotes/origin/todo"   => ["refs/heads/todo",   false]
+       }
+
+If the refspec was +refs/heads/ma*:refs/* then we would instead get this set of mappings:
+       {
+           "refs/int" => ["refs/heads/maint", true],
+           "refs/ster" => ["refs/heads/master", true]
+       }
+
+In general, since the remote.<name>.fetch setting is multi-valued, we’ll be matching a list of
+refs against a list of refspecs. In this case we can match each refspec against the list to generate
+the above structure, and then merge all the results into a single hash.
+
+We’ll need to begin by parsing a refspec string into a Refspec object. The regular expression
+REFSPEC_FORMAT captures an optional leading +, and then two sections of characters other than
+:, separated by :.
+       # lib/remotes/refspec.rb
+
+             REFSPEC_FORMAT = /^(\+?)([^:]+):([^:]+)$/
+
+             def self.parse(spec)
+               match = REFSPEC_FORMAT.match(spec)
+               Refspec.new(match[2], match[3], match[1] == "+")
+             end
+
+We’ll define Refspec.expand as a method that takes a list of refspec strings, and a list of refs,
+also strings, and returns a hash of the above form. To do this, it parses all the specs, calls
+Refspec#match_refs on each one, and combines the results using Hash#merge .
+
+ https://docs.ruby-lang.org/en/2.3.0/Hash.html#method-i-merge
+
+                                     Remote repositories
+
+     # lib/remotes/refspec.rb
+
+         def self.expand(specs, refs)
+           specs = specs.map { |spec| Refspec.parse(spec) }
+
+           specs.reduce({}) do |mappings, spec|
+             mappings.merge(spec.match_refs(refs))
+           end
+         end
+
+To perform the pattern-matching, we can convert each spec’s source into a regular expression,
+for example refs/heads/* becomes refs/heads/(.*). The (.*) matches and captures any
+number of characters. By matching this expression against each input ref, we can find the part
+of the ref that matches the *, and substitute it for the * in the target. If the source does not
+contain a *, then the refspec is treated literally and not matched against the list of refs.
+     # lib/remotes/refspec.rb
+
+         def match_refs(refs)
+           return { target => [source, forced] } unless source.to_s.include?("*")
+
+           pattern = /^#{ source.sub("*", "(.*)") }$/
+           mappings = {}
+
+           refs.each do |ref|
+             next unless match = pattern.match(ref)
+             dst = match[1] ? target.sub("*", match[1]) : target
+             mappings[dst] = [ref, forced]
+           end
+
+           mappings
+         end
+
+Let’s try our Refspec.expand method out on a couple of examples and see that it does what
+we expect:
+     >> refs = ["HEAD", "refs/heads/master", "refs/other"]
+
+     >> specs = ["+refs/heads/*:refs/remotes/origin/*"]
+     >> Remotes::Refspec.expand(specs, refs)
+     => { "refs/remotes/origin/master" => ["refs/heads/master", true] }
+
+     >> specs = ["refs/other:refs/remotes/origin/other"]
+     >> Remotes::Refspec.expand(specs, refs)
+     => { "refs/remotes/origin/other" => ["refs/other", false] }
+
+This is just what we wanted; the method works with wildcard and non-wildcard refspecs, and
+produces the right mappings with forced flags set correctly.
+
+26.4. Finding objects
+After using the refspecs to decide which references should be copied, the fetch command needs
+to download a bundle of objects from the remote repo. Ideally, this bundle should be as small as
+possible, consisting only of commits the local repository does not already have. But as well as
+commits, it needs to contain all the trees and blobs that make up the content of those commits,
+where again these should be limited to objects the receiver is lacking.
+
+                                        Remote repositories
+
+In Section 16.2.1, “Revision lists” we introduced the RevList class for generating lists of
+commits, and in Section 17.6, “Logs in a merging history” and Section 23.2.1, “Rev-list without
+walking” we extended it so that it could handle branching and merging histories and the
+demands of the cherry-pick and revert commands. We now need to extend it further to
+support finding trees and blobs.
+
+We’ll do this by adding an :objects option to RevList, which defaults to false so the class
+continues to return only commits unless this option is set. We will also add a new item of state to
+the class: the @pending array will store the root tree IDs of any commits we find as we traverse
+the history. We’ll find all the objects that need downloading by marking commits the receiver
+already has as uninteresting. So, we don’t want to emit any objects we find until we’ve finished
+traversing the history and we know those objects aren’t part of uninteresting commits that the
+receiver already has. Instead, we’ll store them up in the @pending array and emit them at the end.
+      # lib/rev_list.rb
+
+        def initialize(repo, revs, options = {})
+          # ...
+          @pending = []
+          # ...
+
+           @objects = options.fetch(:objects, false)
+           @walk    = options.fetch(:walk, true)
+
+          # ...
+        end
+
+In the RevList#each method, we need two extra steps. First, if the :objects option was used,
+we call mark_edges_uninteresting, which will find the nearest commits that were excluded
+from the results, and mark all their content as uninteresting. Second, we add a step after
+traverse_commits to iterate over the pending objects and emit them.
+
+      # lib/rev_list.rb
+
+        def each
+          limit_list if @limited
+          mark_edges_uninteresting if @objects
+          traverse_commits { |commit| yield commit }
+          traverse_pending { |object| yield object }
+        end
+
+The call to mark_edges_uninteresting takes care of flagging any trees and blobs that are part
+of commits excluded from the search. For example, imagine evaluating the revision range D..F
+against this history:
+Figure 26.8. Forking history
+           A       B          C     D
+           o <---- o <---- o <---- o
+                     \
+                       \
+                         \ E      F
+                          o <---- o
+
+After running limit_list, the output queue will contain commits F and E, while commits D, C
+and B will be marked as uninteresting. The edge of a query is the set of uninteresting commits
+
+                                      Remote repositories
+
+immediately reachable from the interesting ones, that form the boundary of the result set. In this
+case, the edge consists of commit B. The idea is that the edge commits are the ones that all the
+interesting commits are derived from, so the interesting commits will contain a lot of the same
+trees and blobs as the edge commits. By marking the trees of edge commits as uninteresting,
+we can avoid sending the entire current state of the project over the network and thus make
+the bundle a lot smaller.
+
+mark_edges_uninteresting iterates over the commits in the output queue. For each commit,
+we call mark_tree_uninteresting with the commit’s tree ID if that commit was marked
+uninteresting. Then we check the commit’s parents, to get to the potentially-uninteresting
+commits reachable from the interesting set, and do the same.
+     # lib/rev_list.rb
+
+       def mark_edges_uninteresting
+         @queue.each do |commit|
+           if marked?(commit.oid, :uninteresting)
+             mark_tree_uninteresting(commit.tree)
+           end
+
+            commit.parents.each do |oid|
+              next unless marked?(oid, :uninteresting)
+
+             parent = load_commit(oid)
+             mark_tree_uninteresting(parent.tree)
+           end
+         end
+       end
+
+The mark_tree_uninteresting method recursively marks every tree and blob within a given
+tree as uninteresting. It does this by building a Database::Entry for the given tree ID, and
+using a helper method traverse_tree to recurse over its structure. This method takes the Entry
+object, and yields it to the caller. If yield entry, that is the given block, returns false, then
+we bail out. This would happen if the mark method returns false indicating the tree is already
+marked so we can stop recursing into it. If the Entry represents a tree, then we load it from the
+database and recursively call traverse_tree on each of its entries.
+     # lib/rev_list.rb
+
+       def mark_tree_uninteresting(tree_oid)
+         entry = @repo.database.tree_entry(tree_oid)
+         traverse_tree(entry) { |object| mark(object.oid, :uninteresting) }
+       end
+
+       def traverse_tree(entry)
+         return unless yield entry
+         return unless entry.tree?
+
+         tree = @repo.database.load(entry.oid)
+
+         tree.entries.each do |name, item|
+           traverse_tree(item) { |object| yield object }
+         end
+       end
+
+                                      Remote repositories
+
+traverse_tree takes a Database::Entry rather than a simple object ID because it needs to
+know if the entry points to a tree or not. Therefore mark_tree_uninteresting needs to build
+such an entry from a commit’s tree pointer, and it uses a helper from the Database class to
+do this.
+     # lib/database.rb
+
+       def tree_entry(oid)
+         Entry.new(oid, Tree::TREE_MODE)
+       end
+
+Having marked all the uninteresting tree and blobs, we can now iterate over the commits we’ve
+found and if we decide to yield the commit, we’ll add an entry for its tree to the @pending array.
+     # lib/rev_list.rb
+
+       def traverse_commits
+         until @queue.empty?
+           commit = @queue.shift
+           # ...
+
+           @pending.push(@repo.database.tree_entry(commit.tree))
+           yield commit
+         end
+       end
+
+Finally, the traverse_pending method takes care of emitting all the pending trees and blobs to
+the caller. For every entry in the @pending array, we call traverse_tree and yield every object
+to the caller, as long as the object is not marked as uninteresting and we’ve not already seen it.
+The block needs to return true so that traverse_tree explores the whole tree in this case.
+     # lib/rev_list.rb
+
+       def traverse_pending
+         return unless @objects
+
+         @pending.each do |entry|
+           traverse_tree(entry) do |object|
+             next if marked?(object.oid, :uninteresting)
+             next unless mark(object.oid, :seen)
+
+             yield object
+             true
+           end
+         end
+       end
+
+We can now use RevList to find all kinds of content. As well as commits, it will now yield
+trees and blobs. Note however that whereas commits are emitted as Database::Commit objects,
+trees and blobs appear as Database::Entry objects that have only an object ID and a mode.
+This avoids loading the full content of blobs, which are not necessary to complete this search
+operation. If the caller needs to read blob content it must load them itself.
+
+To finish up our changes to RevList, we’re going to need two other small changes that help with
+searching for objects. First, it will be useful during fetch to find all the objects reachable from
+any of a repository’s references, i.e. HEAD and anything under refs. We’ll add an :all option to
+
+                                      Remote repositories
+
+the class, that will cause it to queue up all the commits referenced via the Refs#list_all_refs
+method.
+     # lib/rev_list.rb
+
+       def initialize(repo, revs, options = {})
+         # ...
+
+         include_refs(repo.refs.list_all_refs) if options[:all]
+
+         revs.each { |rev| handle_revision(rev) }
+         handle_revision(Revision::HEAD) if @queue.empty?
+       end
+
+       def include_refs(refs)
+         oids = refs.map(&:read_oid).compact
+         oids.each { |oid| handle_revision(oid) }
+       end
+
+The other improvement we need relates to how missing objects are handled. Sending objects
+between repositories involves finding all the objects that the sender has but which the receiver
+is missing. For example, if the receiver has commits A and B and is requesting commits X and Y,
+then we can find all the commits that need sending by calling RevList on the remote repository
+with the inputs ^A, ^B, X and Y. But if the remote repository does not have commits A and B
+this query will fail.
+
+We’re only supplying the inputs ^A and ^B to limit the search, to try to avoid sending
+unnecessary objects. It’s an optimisation, so it’s actually fine if the sender doesn’t know about
+these commits and chooses to ignore them. To allow this, I’m going to add an option called
+:missing to RevList that instructs it to suppress errors resulting from revisions that don’t
+resolve.
+     # lib/rev_list.rb
+
+       def initialize(repo, revs, options = {})
+         # ...
+
+         @objects = options.fetch(:objects, false)
+         @missing = options.fetch(:missing, false)
+         @walk    = options.fetch(:walk, true)
+
+         # ...
+       end
+
+The effect of this option is that, if Revision#resolve raises a Revision::InvalidObject error,
+we’ll swallow it. This makes it okay to run a query involving IDs of commits that don’t exist
+in one of the repositories.
+     # lib/rev_list.rb
+
+       def set_start_point(rev, interesting)
+         rev = Revision::HEAD if rev == ""
+         oid = Revision.new(@repo, rev).resolve(Revision::COMMIT)
+
+         # ...
+
+                                    Remote repositories
+
+       rescue Revision::InvalidObject => error
+         raise error unless @missing
+       end
+
+Now that we can configure remotes and search for objects, the next step is to define a method
+for sending information over the network.
+

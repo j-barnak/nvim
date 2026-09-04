@@ -1,0 +1,1534 @@
+SHARED LIBRARIES
+ We walk the corridors, searching the shelves and
+ rearranging them, looking for lines of meaning amid leagues
+ of cacophony and incoherence, reading the history of the
+ past and our future, collecting our thoughts and collecting
+ the thoughts of others, and every so often glimpsing mirrors,
+ in which we may recognize creatures of the information.
+
+ —Jorge Luis Borges, “The Library of Babel”
+Until now, we’ve restricted our discussion to code that lives
+inside the executable that holds the program’s entry point.
+However, many programs rely on shared libraries, whose code
+resides in a completely different ELF file, with a different set of
+DWARF information.
+To further complicate matters, programs don’t necessarily load
+shared libraries when they start, as they may open the libraries
+at runtime using dlopen. On Linux, most plug-in systems work in
+this way; users of a program drop shared libraries into a known
+folder, and the program opens these and then calls initialization
+routines with known names inside of those shared libraries.
+
+In this chapter, you’ll learn how Linux systems load programs
+and add facilities to your debugger to trace the loading and
+unloading of shared libraries. Using this tracer, you’ll add
+support for setting breakpoints and performing stack
+unwinding across shared library boundaries.
+
+Because you’re probably pretty tired of dealing with DWARF
+information at this point, you’ll be happy to hear that we’ll do
+zero DWARF parsing in the next two chapters.
+
+Program Loading
+
+Program loading is the process of taking an executable from the
+filesystem, loading it into memory, preparing it for execution,
+and jumping to its entry point. Recall from Chapter 11 that ELF
+files are split into segments. Program headers describe the
+segments of the program relevant to program loading. For
+example, here is a textual dump of the program headers for the
+hello_sdb program, as produced by readelf:
+
+   $ readelf -l test/targets/hello_sdb
+   --snip--
+     Type              Offset                  VirtAddr
+                     FileSiz            MemSiz
+     PHDR            0x0000000000000040 0x00000000000
+                     0x00000000000002d8 0x00000000000
+     INTERP          0x0000000000000318 0x00000000000
+                     0x000000000000001c 0x00000000000
+          [Requesting program interpreter: /lib64/ld
+     LOAD            0x0000000000000000 0x00000000000
+                     0x0000000000000628 0x00000000000
+     LOAD            0x0000000000001000 0x00000000000
+                     0x0000000000000175 0x00000000000
+     LOAD            0x0000000000002000 0x00000000000
+                     0x00000000000000f4 0x00000000000
+   ➊ LOAD            0x0000000000002db8 0x0000000000
+                     0x0000000000000258 0x00000000000
+     DYNAMIC         0x0000000000002dc8 0x00000000000
+                     0x00000000000001f0 0x00000000000
+     NOTE            0x0000000000000338 0x00000000000
+                     0x0000000000000030 0x00000000000
+     NOTE            0x0000000000000368 0x00000000000
+                     0x0000000000000044 0x00000000000
+     GNU_PROPERTY    0x0000000000000338 0x00000000000
+                     0x0000000000000030 0x00000000000
+      GNU_EH_FRAME        0x0000000000002010 0x00000000000
+                          0x0000000000000034 0x00000000000
+      GNU_STACK           0x0000000000000000 0x00000000000
+                          0x0000000000000000 0x00000000000
+      GNU_RELRO           0x0000000000002db8 0x00000000000
+                          0x0000000000000248 0x00000000000
+   --snip--
+
+Each pair of lines in this table describes a segment (you can
+pass the -W flag to readelf to show one line per entry). As you can
+see, each segment specifies a type, the file offset at which it
+begins, a relevant file address, a relevant physical address
+(ignored on Linux because user-space programs aren’t allowed
+to access physical memory directly), their byte size within the
+ELF file, their byte size when loaded in memory, permission
+flags, and segment alignment. The segment alignment is usually
+the size of a memory page (which is usually 4KiB on x64), and
+the offset and virtual address of a LOAD segment must differ from
+the alignment boundary by the same amount (in other words,
+they must be congruent modulo the alignment). This ensures
+that file pages can be mmapped into memory.
+
+The size in memory may differ from the size on disk in some
+cases. For example, segment 5 ➊ (segment numbers are zero-
+based) has the file size 0x258 but the memory size 0x260. This
+occurs because the segment includes the program’s
+uninitialized global data, a bunch of 0 bytes that the program
+fills in while it runs. Because there’s no point in storing a bunch
+of 0s in the binary, this program header instead instructs the
+loader to allocate an extra 8 bytes for uninitialized globals.
+
+A segment’s type can be any of the following:
+
+  LOAD Specifies a segment to load into memory at the given file
+
+  address.
+  DYNAMIC Specifies dynamic linking information.
+
+  INTERP Specifies the location and size of the path to the
+
+  dynamic linker.
+  NOTE Specifies the location and size of auxiliary information
+
+  about the binary. This segment is often used to provide
+  information about core dumps or to communicate between
+  the linker and C standard library.
+  PHDR Specifies where to load the program headers themselves
+
+  so that other tools (like debuggers!) can read them.
+  TLS Provides information about thread-local storage.
+
+  GNU_EH_FRAME Locates the stack unwinding information (and
+
+  points to the same memory as the .eh_frame section).
+  GNU_PROPERTY Specifies a special NOTE section that contains
+
+  information specific to the dynamic linker. Points to the same
+  memory as the .note.gnu.property section.
+  GNU_RELRO Some loaded segments require relocation, in which
+
+  the dynamic linker resolves references to external symbols to
+  their correct locations in memory. Sections of type GNU_RELRO
+  mark areas of memory that should be made read-only after
+  this relocation is complete.
+  GNU_STACK Indicates whether the stack should be executable.
+
+You’ll find most of the segment types defined in the SYSV ABI,
+but the GNU_* ones are GCC extensions.
+
+The loading process differs significantly depending on whether
+the dynamic linker needs to be involved, which occurs if the
+executable is position-independent or depends on shared
+libraries (including the standard library). We’ll first consider
+program loading in cases when the dynamic linker isn’t
+involved and then consider the case where it is.
+
+Static Executables
+
+We call executables that don’t require the dynamic linker static
+executables, and their program headers don’t include an INTERP
+segment.
+
+Because program loading is a privileged operation, the code for
+loading executables lives inside the Linux kernel. When a
+program requests that the kernel load a program through a call
+to one of the exec functions, the kernel first cleans up any
+information from the old process that it no longer needs.
+Examples include additional running threads, old memory
+maps, any file descriptors marked O_CLOEXEC, and signal handlers.
+
+After cleaning up the old process, the kernel begins setting up
+for the new one. It allocates memory to hold the process’s stack,
+then loops through all of the LOAD segments in the program
+headers and loads them at the correct positions.
+
+The kernel maps the entirety of a special ELF file called the
+virtual dynamic shared object (vDSO) into the process’s address
+space. The vDSO is a shared library that implements certain
+syscalls by reading directly from kernel space without having to
+perform a context switch into the kernel, making these syscalls
+run roughly four times as fast. On x64, the syscalls implemented
+in the vDSO are clock_gettime, getcpu, gettime, and gettimeofday.
+
+Once it has set up the virtual address space, the kernel
+initializes the process’s stack. At the top of the stack, it puts the
+auxiliary vector (which you learned about in Chapter 11), the
+environment variables for the process, and the command line
+arguments. Finally, the kernel jumps back to the program’s
+entry point, in user space.
+Let’s consider how dynamic linking modifies this loading
+process.
+
+Dynamic Executables
+
+Dynamic executables list an INTERP segment in their program
+headers, and they change the loading process we just discussed
+in a few ways.
+
+One way is address space layout randomization (ASLR),
+discussed in Chapter 7. Dynamic executables aren’t necessarily
+position-independent, as they could be non-PIEs that depend on
+shared libraries, but for PIEs that don’t explicitly disable ASLR,
+the kernel will allocate the stack at a random location and offset
+the file addresses specified in the program headers by a single
+random value.
+
+The next big difference is that the entry point to which the
+kernel eventually jumps after setting up program execution
+isn’t the entry point of the program we’re trying to run, but the
+entry point of the dynamic linker. The dynamic linker runs in
+user space rather than in the kernel, which has a few benefits.
+For example, we can patch and improve the linker without
+having to reload the kernel, and there are fewer security
+concerns, as the linker can’t perform arbitrary privileged
+operations. As such, the kernel loads the dynamic linker
+specified in the INTERP segment, sets up an address space in
+which it can run, provides it with the ELF file to be loaded, and
+then context-switches into the dynamic linker.
+
+The dynamic linker has two main jobs: loading dependencies
+and carrying out relocations. The first job involves locating the
+dependencies on disk of the program it’s loading and then
+mapping those dependencies into the virtual memory of the
+new process. The second job is adjusting any references that are
+sensitive to where parts of the program are loaded, which it
+does by pointing those references to the real virtual addresses
+of the relevant functions or variables. Such references may
+point elsewhere inside the main executable or to part of a
+shared library.
+
+In the next two sections, I’ll discuss dependency loading and
+relocation in more detail.
+
+Loading Dependencies
+
+The loading of dependencies involves a few communication
+channels. The dynamic linker needs information about the
+environment in which to run the new program, and it must
+know which program to load. The kernel provides these details
+when it loads the dynamic linker. The linker also needs
+information about the shared libraries on which the program
+depends, which it retrieves from the .dynamic section of the
+program’s ELF file, pointed to by the DYNAMIC segment in the
+program headers. Finally, the dynamic linker must
+communicate information about the dynamic libraries it has
+loaded, including what their virtual addresses are, to other
+tools, such as our debugger. It achieves this with a rendezvous
+structure that the linker maintains in the address space of the
+running process.
+
+The .dynamic Section
+
+For the most part, the compiler and the static linker populate
+the .dynamic section when they generate the ELF file for the
+program being loaded. This section communicates information
+about dependencies and relocations to the dynamic linker. It is
+loaded into memory as part of the usual loading process, and
+the dynamic linker updates it to provide additional information
+to the running program and any tools that interact with it.
+
+The .dynamic section consists of a list of entries. Each entry has a
+tag and a value, and the list ends with an entry whose tag and
+value are both 0. Together, the SYSV ABI, the LSB, and GNU
+extensions define dozens of entry types that this section can
+store. Many aren’t relevant to us, so I won’t discuss them all.
+Instead, I’ll show you an example of the .dynamic section for the
+hello_sdb executable and mention some of its most interesting
+entries:
+
+   $ readelf -d test/targets/hello_sdb
+   Dynamic section at offset 0x2dc8 contains 27 ent
+     Tag                   Type             Name/Val
+    0x0000000000000001 (NEEDED)             Shared l
+    0x000000000000000c (INIT)               0x1000
+    0x000000000000000d (FINI)               0x1168
+    0x0000000000000019 (INIT_ARRAY)         0x3db8
+    0x000000000000001b (INIT_ARRAYSZ)       8 (bytes
+    0x000000000000001a (FINI_ARRAY)         0x3dc0
+    0x000000000000001c (FINI_ARRAYSZ)       8 (bytes
+    0x000000006ffffef5 (GNU_HASH)           0x3b0
+    0x0000000000000005 (STRTAB)             0x480
+    0x0000000000000006 (SYMTAB)             0x3d8
+    0x000000000000000a (STRSZ)              141 (byt
+    0x000000000000000b (SYMENT)             24 (byte
+    0x0000000000000015 (DEBUG)              0x0
+    0x0000000000000003 (PLTGOT)             0x3fb8
+    0x0000000000000002 (PLTRELSZ)           24 (byte
+    0x0000000000000014 (PLTREL)             RELA
+    0x0000000000000017 (JMPREL)             0x610
+    0x0000000000000007 (RELA)               0x550
+    0x0000000000000008 (RELASZ)             192 (byt
+    0x0000000000000009 (RELAENT)                            24 (byte
+    0x000000000000001e (FLAGS)                              BIND_NOW
+    0x000000006ffffffb (FLAGS_1)                            Flags: N
+    0x000000006ffffffe (VERNEED)                            0x520
+    0x000000006fffffff (VERNEEDNUM)                         1
+    0x000000006ffffff0 (VERSYM)                             0x50e
+    0x000000006ffffff9 (RELACOUNT)                          3
+    0x0000000000000000 (NULL)                               0x0
+
+As you can see, this section has 27 entries. You can learn more
+about them by looking up their names in section 11.3 of the
+generic part of the LSB core specification. The most interesting
+entries include the following:
+
+  NEEDED Names a shared library on which the executable
+
+  depends. In this case, the program depends on libc.so.6,
+  which is the C standard library. The dynamic linker will
+  search for this library in several directories, including
+  default system locations like /lib, any directories named in
+  this .dynamic section’s RPATH entry, and directories specified in
+  the LD_LIBRARY_PATH environment variable, among others.
+  INIT Specifies a function to call before main.
+
+  FINI Specifies a function to call after main exits.
+
+  DEBUG Specifies a pointer to the dynamic linker rendezvous
+
+  structure. Note that this is 0 in the ELF file; the dynamic
+  linker will relocate it after loading the .dynamic section into
+  memory.
+  PLTGOT Specifies a pointer to the procedure linkage table, used
+
+  to implement function calls across shared libraries.
+  RELA Specifies the relocations for the binary.
+
+For our purposes, the most important of these entries is DEBUG.
+Let’s look at the format of the structure to which it points at
+runtime.
+
+The Rendezvous Structure
+
+The rendezvous structure is an area of memory that the
+dynamic linker uses to communicate with debuggers and other
+tools that need to track the loading and unloading of shared
+libraries. Its structure is as follows:
+
+   struct r_debug {
+         int r_version;
+         struct link_map *r_map;
+         ElfW(Addr) r_brk;
+         enum {
+              RT_CONSISTENT,
+              RT_ADD,
+              RT_DELETE,
+         } r_state;
+         ElfW(Addr) r_ldbase;
+      };
+
+The r_version field specifies the version number for the
+rendezvous structure. This will usually be 1, but it will be 2 in
+the case that the library was opened with the dlmopen syscall
+rather than dlopen (note the added m). This syscall is not nearly as
+commonly used, so we’re not going to worry about it. The r_map
+field is a pointer to a linked list of information about loaded
+dynamic libraries. I’ll show you the link_map definition shortly.
+
+The r_brk field is a pointer to the _dl_debug_state function inside of
+the dynamic linker. It’s a completely empty function called
+before and after the linker loads or unloads a shared library.
+The idea is that debuggers can set a breakpoint on this function,
+and whenever it’s hit, they can reread the r_map member of the
+structure to learn about any changes in mapped libraries.
+
+The r_state field specifies the state of the loaded library list. If the
+member is RT_ADD or RT_DELETE, the linker is about to add or remove
+an entry from r_map, whereas if the member is RT_CONSISTENT, the
+operation is complete and the debugger can read the updated
+r_map member. Finally, the r_ldbase field is the load address of the
+
+dynamic linker itself.
+The link_map type has more than a dozen fields, but we can
+consider most of these to be implementation details for the
+linker, and they may change without notice. We should rely on
+only five fields, shown here:
+
+   struct link_map {
+         ElfW(Addr) l_addr;
+         char *l_name;
+         ElfW(Dyn) *l_ld;
+         struct link_map *l_next;
+         struct link_map *l_prev;
+         --snip--
+   };
+
+Each entry in the loaded library list describes information
+about a single shared library or the main executable. The l_addr
+entry is the virtual address at which the library is loaded, while
+l_name is the path to the loaded ELF file. In the case of the main
+
+executable, the path is empty, and for the vDSO, it’s linux-
+vdso.so.1, which doesn’t actually exist on disk. Otherwise, it is
+an absolute path to the ELF file on disk.
+
+The l_ld field is the virtual address of the loaded .dynamic section
+for the object file; l_next is a pointer to the next item in the linked
+list, which terminates with a null pointer; and l_prev is a pointer
+to the previous item in the linked list. For the first entry in the
+list, this is a null pointer.
+
+Note that we can’t consider the rendezvous structure initialized
+until the dynamic linker has finished and then jumped to the
+real entry point of the executable it’s loading.
+
+At this point, we should have enough information to track
+shared library loading in our debugger. Before we implement
+this feature, let’s discuss relocations, which will help you make
+sense of the dynamic linker’s job and understand the assembly
+instructions that encode references to external symbols.
+
+Relocations
+
+The dynamic linker needs to resolve two important kinds of
+references when carrying out relocations: references to data
+and references to functions. Data references are much easier to
+deal with, so we’ll consider these first.
+
+Code in the main executable might reference a global variable
+inside a shared library, or vice versa. To see an example, save
+the following code in a file called
+sdb/test/targets/marshmallow.cpp:
+   #include <iostream>
+   int libmeow_client_cuteness = 100;
+   bool libmeow_client_is_cute();
+
+   int main() {
+         std::cout << "Cuteness rating: " << libmeow_c
+         std::cout << "Is cute: " << std::boolalpha <<
+   }
+
+This program defines a libmeow_client_cuteness variable and a
+function called libmeow_client_is_cute, whose definition exists
+elsewhere (we’ll write this next). Inside main, it prints out the
+cuteness rating and then prints out the result of calling
+libmeow_client_is_cute (std::boolalpha here will make it so that true or
+
+false is printed rather than 1 or 0).
+
+In a new sdb/test/targets/libmeow.cpp file, define the
+libmeow_client_is_cute function and use the libmeow_client_cuteness
+
+variable:
+
+   extern int libmeow_client_cuteness;
+
+   bool libmeow_client_is_cute() {
+        return libmeow_client_cuteness > 50;
+   }
+
+Now build a shared library from this file, create an executable
+from the marshmallow.cpp file, and link them together by
+adding this file to sdb/test/targets/CMakeLists.txt:
+
+   add_test_cpp_target(marshmallow)
+   add_library(meow SHARED "libmeow.cpp")
+   target_compile_options(meow PRIVATE -g -O0 -fPIC
+   target_link_libraries(marshmallow PRIVATE meow)
+
+The SHARED keyword specifies that we’d like to build a shared
+library rather than a static one. We pass the -fPIC argument to
+tell the compiler to output position-independent code.
+
+The machine code that loads the value of libmeow_client_cuteness in
+both the marshmallow executable and libmeow.so must point to
+the same memory location for this program to run. My version
+of GCC has opted to use RIP-relative addressing for the load
+instruction inside the marshmallow executable; this loads the
+value from an address relative to the current program counter
+so that the address doesn’t need to be relocated. You can see
+this by examining the disassembly (here, I’ve passed the --no-
+show-raw-insn flag in order to not show the raw bytes of the
+
+machine code):
+
+   $ objdump -D --no-show-raw-insn test/targets/marshmallow
+   --snip--
+   1252:             mov       0x2db8(%rip),%eax               # 40
+   1258:             mov       %eax,%esi
+   --snip--
+
+This loads the value from the address given by offsetting the
+virtual address of the program counter after the current
+instruction by 0x2db8. As you can see in the output, the program
+counter after that instruction has the file address 0x1258, so the
+value will be loaded from file address 0x4010. If we dump the .data
+section of the executable, we can see that this address stores 100,
+which is the value of libmeow_client_cuteness:
+
+   $ readelf -x .data test/targets/marshmallow
+   Hex dump of section '.data':
+     0x00004000 00000000 00000000 08400000 00000000
+     0x00004010 64000000
+
+The value at 0x4010 is 0x64, which is 100 in decimal.
+For the reference inside libmeow.so, however, the process is a
+bit more complicated. A simple option would be to relocate the
+load instruction for libmeow_client_cuteness inside libmeow.so to
+point to wherever that variable is located inside the
+marshmallow executable. This solution has a problem,
+however: the linker can’t relocate the reference to
+libmeow_client_cuteness inside the code for the libmeow_client_is_cute
+
+function because the .text section is usually loaded as read-only,
+for security reasons. Even if it could relocate the reference, it’s
+possible that the program makes 10,000 references to
+libmeow_client_cuteness, in which case the linker would need to make
+
+10,000 modifications to the code, which could significantly slow
+down the launching of the process.
+
+The linker solves this problem with the global offset table.
+
+Global Offset Table
+
+The global offset table (GOT) enables updating references that
+reside in read-only sections. It also facilitates relocating a
+symbol by updating only one location, rather than every single
+reference to it.
+
+The basic idea is to introduce a level of indirection to external
+symbol references. Instead of reading an address directly to
+retrieve a variable, a program can read from the global offset
+table to retrieve the address of the variable and then read the
+memory at that address to retrieve the variable itself. If the
+global offset table is mapped in memory as read/write and
+references in the .text section point to the global offset table, the
+dynamic linker can perform relocations on the GOT rather than
+on the .text section.
+
+To see this design in the code generated for libmeow_client_is_cude,
+have a look at the disassembly:
+
+   $ objdump -D --no-show-raw-insn test/targets/libmeow.so
+   00000000000010f9 <_Z22libmeow_client_is_cutev>:
+   --snip--
+        1101:         mov     0x2ee8(%rip),%rax         # 3ff
+        1108:         mov     (%rax),%eax
+        110a:         cmp     $0x32,%eax
+   --snip--
+
+The cmp $0x32,%eax instruction is equivalent to the
+libmeow_client_cuteness > 50 statement in the code. Note, however,
+
+that there are two load instructions rather than one: first an
+address is retrieved from file address 0x3ff0, and then the value
+of libmeow_client_cuteness is retrieved from the address that was just
+loaded. If we check the section headers of libmeow.so, we can
+see that file address 0x3ff0 lives in the global offset table, in the
+.got section:
+
+   $ readelf -S test/targets/libmeow.so
+   Section Headers:
+     [Nr] Name                         Type                     Address
+            Size                       EntSize                  Flags
+   --snip--
+     [17] .got                         PROGBITS         0000000
+            0000000000000028           0000000000000008 WA
+
+The .got section begins at file address 0x3fd8 and has a size of 0x28,
+so it spans up to 0x4000, and as such it contains 0x3ff0.
+
+We now know that the reference to libmeow_client_cuteness inside
+libmeow.so points to the global offset table, so next we need to
+understand how the entry in the global offset table is updated
+to point at the definition of libmeow_client _cuteness inside the
+marshmallow executable. This is achieved with a relocation
+record.
+
+Relocation Records
+
+Relocation records live in sections named .rel.<ID> or .rela.<ID>,
+where <ID> specifies the element to which the relocations apply
+(usually a section name or dyn, for dynamic relocations).
+
+Relocation records consist of a file address to which they apply,
+a relocation type, and additional information about how to
+apply the relocation that is specific to each relocation type.
+Some relocations also have an integer called an addend, which
+the dynamic linker adds to the computed value before
+committing the relocation to memory. In sections beginning
+with .rela, the addend is explicitly provided in the relocation
+record. In sections beginning with .rel, the addend is stored in
+memory that is to be updated. You can see the relocations for an
+ELF file with readelf -r. Here is the relocation record for
+libmeow.so that copies the data for the libmeow_client_cuteness
+variable from libmeow.so:
+
+   $ readelf -rW test/targets/libmeow.so
+   Relocation section '.rela.dyn' at offset 0x458 co
+   Offset    Info                 Type         Sym.
+   --snip--
+   00003ff0 0000000400000006 R_X86_64_GLOB_DAT 00000
+
+This tells the dynamic linker to locate the symbol
+libmeow_client_cuteness and write the address of that symbol into file
+
+address 0x3ff0, which is the global offset table that we looked at
+earlier. It’s the linker’s job to find a definition for
+libmeow_client_cuteness among the object files to which it has access.
+
+The type field shows the relocation type, which in this case is
+the x64 global data relocation type. The info field points to the
+symbol table entry for libmeow_client_cuteness (which is the symbol
+at index 4) and gives an enumerator value for the relocation
+type (R_X86_64_GLOB_DAT has the value 6).
+
+To visualize the entire relocation process I’ve just discussed,
+imagine that marshmallow is loaded at 0xab000000 (the load
+address of libmeow.so is irrelevant for this example). Figure 17-
+1 shows the references before relocation.
+
+Figure 17-1: The references between object files before relocation
+
+The reference to libmeow_client_cuteness inside marshmallow points
+to the value in the .data section for marshmallow. The reference
+inside libmeow.so points to an entry in .got that is currently not
+pointing anywhere (it is essentially a null pointer). Figure 17-2
+shows the result of the relocation.
+
+Figure 17-2: The references between object files after relocation
+
+The dynamic linker relocated the reference to
+libmeow_client_cuteness inside libmeow.so by updating the global
+
+offset table entry to point to the definition inside the
+marshmallow executable.
+
+Next, let’s discuss how function calls across libraries work.
+
+Procedure Linkage Table
+
+You might assume that function calls work in the same way as
+variable references, meaning the program calls the function
+through a pointer in the global offset table. This is partly true,
+though again, there are a few problems.
+First, there are usually way more references to functions across
+shared library boundaries than there are references to
+variables. Executing one relocation for every referenced shared
+library function on program startup can have a noticeable
+impact on program startup time.
+
+Second, the instructions for direct calls and indirect calls (those
+made through a pointer) have different encodings and
+instruction lengths on x64, and some function calls use the jmp
+instruction rather than the call instruction. If the static linker
+gets object files from the compiler that make direct calls to
+unresolved symbols, it can’t change those direct calls to indirect
+calls through the global offset table without disassembling the
+instruction on which they’re performing the relocation and
+potentially introducing extra nop instructions. Relocations
+should be easy to apply and shouldn’t require disassembling
+instructions for a single relocation type.
+
+The procedure linkage table (PLT) solves problem one by
+deferring the resolution of the real function address until the
+function is called for the first time (a practice called lazy
+binding) and solves problem two by providing a fixed location
+to call, enabling the encoding of external calls as direct calls.
+
+              NOTE
+              Lazy binding can have security issues, since a
+              malicious function definition may be bound at
+              runtime. As such, toolchains often disable it by
+              default, by setting the BIND_NOW flag in the ELF file’s
+              .dynamic section.
+
+Here is the PLT for the libmeow_client_is_cute function inside the
+marshmallow executable:
+
+   0000000000001040 <_Z22libmeow_client_is_cutev@plt
+       1040:       jmp    *0x2f52(%rip)        # 3f9
+       1046:       push   $0x1
+       104b:       jmp    1020 <_init+0x20>
+
+Note that I compiled this example with the -fcf-protection=none flag
+to disable certain security features that make the PLT more
+complicated than it needs to be.
+
+You can see that the function consists of three instructions. The
+first is an indirect jump through the global offset table entry for
+libmeow_client_is _cute, which is initialized to point at the
+
+subsequent push instruction, at 0x1046. This instruction pushes the
+value 1 onto the stack, which is an index into .rela.plt. The
+relocation at that index then informs the dynamic linker to
+overwrite libmeow_client_is_cute’s global offset table entry with the
+real address of the function. The entry looks like this:
+
+    Offset        Info                  Type                       Sym
+    --snip--
+    00003f98 0000000300000007 R_X86_64_JUMP_SLOT 0000
+
+Through a bit of indirection, the next jump instruction calls the
+function __dl_runtime_resolve inside of the dynamic linker, which
+performs this relocation, and then jumps to the
+libmeow_client_is_cute function. On subsequent calls, the global
+
+offset table entry for libmeow_client_is_cute stores the real address of
+the function inside of libmeow.so. Subsequent calls to the
+procedure linkage table entry for libmeow_client_is_cute will hit that
+first jmp instruction and jump straight to the definition of
+libmeow_client_is_cute.
+
+Tracing Shared Library Loading
+
+With the theory out of the way, we can begin writing code to
+trace shared library loads. To do so, we’ll follow this algorithm:
+
+1. Set an internal breakpoint on the real entry point of the
+   executable. When we hit the breakpoint, the dynamic linker
+   should be initialized.
+2. Walk through the loaded library list in the rendezvous
+   structure, parsing the ELF files for every shared library noted
+   there and adding them to a collection in sdb::target. We’ll also
+   dump the vDSO to disk so we can reference it in the same
+   way as other shared libraries.
+3. Set an internal breakpoint on the _dl_debug_state function, a
+   pointer to which is stored in the r_brk member of the
+   rendezvous structure.
+4. Whenever we hit the _dl_debug_state function breakpoint and
+   the r_state member of the rendezvous structure is RT_CONSISTENT,
+   reread r_map, adding any new shared libraries and unloading
+   any ones that were removed.
+
+In a few places, the algorithm carries out certain actions when
+we hit a specific breakpoint. Let’s add functionality to
+sdb::breakpoint to facilitate this.
+
+Adding Breakpoint Hit Callbacks
+
+Users of libsdb should be able to register a callback on
+sdb::breakpoint objects to call whenever the breakpoint is hit. This
+
+callback will take no arguments and return a bool telling the
+process whether it should immediately resume. Modify
+sdb/include/libsdb/breakpoint.hpp like so:
+   #include <functional>
+   namespace sdb {
+       class breakpoint {
+         public:
+             --snip--
+              void install_hit_handler(std::function<bo
+                    on_hit_ = std::move(on_hit);
+              }
+
+              bool notify_hit() const {
+                  if (on_hit_) return on_hit_();
+                  return false;
+              }
+
+         protected:
+             --snip--
+             std::function<bool(void)> on_hit_;
+         };
+   }
+
+We add an on_hit_ member function that stores the hit handler.
+For this member’s type, we use a specialization of std::function,
+which can hold an arbitrary function-like object, such as a
+pointer to a function, a function object, or a closure. We also
+add a function called install_hit_handler that sets this member and
+a notify_hit function that calls the hit handler, if there is one. By
+default, the process shouldn’t immediately resume when the
+breakpoint is hit, so notify_hit returns false if there is no hit
+handler installed.
+
+We should call the notify_hit function inside
+sdb::process::wait_on_signal. Modify the existing code in
+
+sdb/src/process.cpp like this:
+
+   sdb::stop_reason sdb::process::wait_on_signal() {
+       --snip--
+
+         if (is_attached_ and state_ == process_state
+             --snip--
+             if (reason.info == SIGTRAP) {
+                  if (reason.trap_reason == trap_type:
+                      breakpoint_sites_.contains_addres
+
+                          breakpoint_sites_.get_by_address
+                          set_pc(instr_begin);
+
+                          auto& bp = breakpoint_sites_.get_
+                          if (bp.parent_) {
+                              bool should_restart = bp.pare
+                              if (should_restart) {
+                                  resume();
+                                      return wait_on_signal();
+                                 }
+                          }
+                    }
+                    --snip--
+               }
+               --snip--
+         }
+
+         return reason;
+   }
+
+If the process stopped due to a signal, the signal was a SIGTRAP, the
+trap reason was a software breakpoint, and an enabled
+breakpoint site exists above the program counter, then we try to
+notify this hit breakpoint. We find the breakpoint site using the
+address at which the process stopped. If that site has a parent
+breakpoint, we call notify_hit on it. If notify_hit returns true, we
+resume the process and call wait_on_signal again to wait until it
+next halts.
+
+With this support in place, we can start to locate the dynamic
+linker rendezvous structure.
+
+Locating the Rendezvous Structure
+
+Recall that if a program links to dynamic libraries, the process
+will begin inside of the dynamic linker, which won’t initialize
+the rendezvous structure until we get to the executable’s real
+entry point. As such, in sdb::target:: launch, we’ll set an internal
+breakpoint on the ELF file’s entry point after creating the target.
+When the breakpoint is hit, we know the rendezvous structure
+exists and can locate it in memory. We’ll do this with a function
+called sdb::target::resolve_dynamic_linker_rendezvous, which we’ll write
+shortly. Replace the return tgt; statement at the end of
+sdb::target::launch in sdb/src/target.cpp with this code to set the
+
+program entry break point:
+
+   std::unique_ptr<sdb::target>
+   sdb::target::launch(
+       --snip--
+       auto entry_point = virt_addr{ tgt->get_proces
+       auto& entry_bp = tgt->create_address_breakpoi
+       entry_bp.install_hit_handler([target = tgt.ge
+            target->resolve_dynamic_linker_rendezvous
+            return true;
+         });
+         entry_bp.enable();
+         return tgt;
+   }
+
+We retrieve the real entry point of the executable from the
+auxiliary vector. We set an internal breakpoint on it and then
+install a hit handler that calls resolve_dynamic_linker_rendezvous. The
+process should restart immediately after resolving the address
+of the rendezvous structure, so the hit handler returns true.
+After installing the hit handler, we enable the breakpoint and
+return the created target.
+
+Note that the lambda function’s capture specifier is [target =
+tgt.get()]. The tgt variable is a std::unique_ptr, so we can’t capture it
+
+by value because std::unique_ptrs aren’t copyable. We also
+shouldn’t capture it by reference because it will go out of scope
+when the function ends and we’ll be left with a dangling
+reference. Instead, we extract the pointer it wraps and capture
+that pointer in the closure.
+
+We should also call resolve_dynamic_linker_rendezvous when attaching
+to an existing process. Modify sdb::target::attach to call this
+function just before returning:
+
+   std::unique_ptr<sdb::target>
+   sdb::target::attach(pid_t pid) {
+         --snip--
+         tgt->resolve_dynamic_linker_rendezvous();
+         return tgt;
+   }
+Now we can write the resolve_dynamic_linker_rendezvous function.
+Declare it in sdb/include/libsdb/target.hpp, along with a data
+member that will store the resolved address. Also declare a
+reload_dynamic_libraries function, which we’ll call to populate a list
+
+of loaded libraries, and a read_dynamic_linker_rendezvous function,
+which will read the resolved dynamic linker rendezvous:
+
+   #include <link.h>
+   namespace sdb {
+       class target {
+           --snip--
+           std::optional<r_debug> read_dynamic_linke
+       private:
+           --snip--
+           void resolve_dynamic_linker_rendezvous()
+           void reload_dynamic_libraries();
+           --snip--
+           virt_addr dynamic_linker_rendezvous_addre
+       };
+   }
+
+Implement the resolve_dynamic_linker_rendezvous function in
+sdb/src/target.cpp. It should locate the dynamic section of the
+inferior, read it, locate the dynamic linker rendezvous structure
+address in the DT_DEBUG entry, read the list of loaded dynamic
+libraries, and then set an internal breakpoint on the
+_dl_debug_state function. This breakpoint should reread the
+
+dynamic library list whenever that function is called:
+
+   void sdb::target::resolve_dynamic_linker_rendezvo
+       if (dynamic_linker_rendezvous_address_.addr(
+
+        auto dynamic_section = main_elf_->get_section
+        auto dynamic_start = file_addr{ *main_elf_, d
+        auto dynamic_size = dynamic_section.value()->
+        auto dynamic_bytes = process_->read_memory(
+            dynamic_start.to_virt_addr(), dynamic_siz
+
+        std::vector<Elf64_Dyn> dynamic_entries(
+            dynamic_size / sizeof(Elf64_Dyn));
+        std::copy(dynamic_bytes.begin(), dynamic_byte
+            reinterpret_cast<std::byte*>(dynamic_ent
+
+        for (auto entry : dynamic_entries) {
+            if (entry.d_tag == DT_DEBUG) {
+                dynamic_linker_rendezvous_address_ =
+                reload_dynamic_libraries();
+
+                   auto debug_info = read_dynamic_linke
+                   auto debug_state_addr = sdb::virt_add
+                   auto& debug_state_bp = create_address
+                       debug_state_addr, false, true);
+                   debug_state_bp.install_hit_handler([&
+                       reload_dynamic_libraries();
+                         return true;
+                   });
+                   debug_state_bp.enable();
+              }
+        }
+   }
+
+This snippet uses main_elf_ instead of elf_, as we’re going to be
+renaming that member shortly. We immediately return if we’ve
+already resolved the address of the rendezvous structure. We
+then read the .dynamic section of the inferior by calculating its
+start position and size and read the data there using
+sdb::process::read_memory. So we don’t have to manually interpret the
+
+bytes of the section, we copy the data into a vector of Elf64_Dyn
+objects, which look like this:
+
+   typedef struct {
+        Elf64_Sxword d_tag;
+
+             union {
+                  Elf64_Xword d_val;
+                  Elf64_Addr d_ptr;
+         } d_un;
+   } Elf64_Dyn;
+
+Each object stores the tag for the entry and then its value, either
+as a pointer or as an integer.
+
+To copy the dynamic section into a vector, we first initialize the
+vector with the correct number of empty entries, which we
+calculate by dividing the size of the section by the size of an
+entry and then copying the bytes of the dynamic section into
+the vector.
+
+After performing this copy, we loop over the entries of the
+dynamic section. The DT_DEBUG entry stores the rendezvous
+structure’s address, so when we find that tag, we store the
+address in the dynamic_linker_rendezvous_address_ member and call
+reload_dynamic_libaries to initialize a list of the loaded libraries.
+
+Finally, we set the breakpoint on _dl_debug_state. Recall that the
+r_brk member of the rendezvous structure holds a pointer to this
+
+function. We read the rendezvous structure from the inferior
+and set a breakpoint on the address stored in its r_brk member.
+We install a hit handler that reloads the set of loaded dynamic
+libraries and continues the process and then enable the
+breakpoint.
+Before we read the loaded library list, we need to create a way
+for the debugger to store multiple ELF files.
+
+Handling Multiple ELF Files
+
+Currently, sdb::target stores a pointer to exactly one sdb::elf object.
+To support shared libraries, however, we need the ability to
+store multiple sdb::elf objects. To enable this, we’ll create a
+relatively simple sdb::elf_collection type. Define it at the bottom of
+sdb/include/libsdb/elf.hpp:
+
+   #include <string_view>
+   namespace sdb {
+       class elf_collection {
+       public:
+           void push(std::unique_ptr<elf> elf) {
+               elves_.push_back(std::move(elf));
+           }
+
+              template <class F>
+              void for_each(F f);
+              template <class F>
+              void for_each(F f) const;
+
+              const elf* get_elf_containing_address(vi
+              const elf* get_elf_by_path(std::filesyste
+              const elf* get_elf_by_filename(std::strin
+        private:
+            std::vector<std::unique_ptr<elf>> elves_
+        };
+   }
+
+The type wraps a vector of unique pointers to sdb::elf, with a few
+additional features. We can push new ELF files into the
+collection, iterate over them with for_each, and retrieve specific
+ELF files by their full path, filename, or an address. Implement
+the for_each functions in the same header because they’re
+templates:
+
+   namespace sdb {
+       template <class F>
+       void elf_collection::for_each(F f) {
+           for (auto& elf : elves_) {
+               f(*elf);
+           }
+       }
+       template <class F>
+       void elf_collection::for_each(F f) const {
+           for (const auto& elf : elves_) {
+               f(*elf);
+              }
+        }
+   }
+
+Implement the other three functions in sdb/src/elf.cpp:
+
+   const sdb::elf* sdb::elf_collection::get_elf_cont
+         virt_addr address) const {
+       for (auto& elf : elves_) {
+           if (auto section = elf->get_section_conta
+               return elf.get();
+           }
+       }
+       return nullptr;
+   }
+
+   const sdb::elf* sdb::elf_collection::get_elf_by_p
+         std::filesystem::path path) const {
+       for (auto& elf : elves_) {
+           if (elf->path() == path) {
+               return elf.get();
+           }
+       }
+       return nullptr;
+   }
+
+   const sdb::elf* sdb::elf_collection::get_elf_by_f
+         std::string_view name) const {
+          for (auto& elf : elves_) {
+              if (elf->path().filename() == name) {
+                  return elf.get();
+               }
+          }
+          return nullptr;
+   }
+
+These functions simply iterate over the ELF files and return the
+one that corresponds to the given data, or a null pointer if none
+exists.
+
+To hook this code into sdb::target, replace the existing elf_
+member with two members: one to store the sdb::elf_collection,
+and one to point to the main ELF file for the executable, for
+convenience. Also replace the get_elf overloads with get_elves and
+get_main_elf. Finally, populate elves_ and main_elf_ in the constructor:
+
+   namespace sdb {
+       class target {
+       public:
+           --snip--
+           elf_collection& get_elves() { return elve
+           const elf_collection& get_elves() const {
+           elf& get_main_elf() { return *main_elf_;
+           const elf& get_main_elf() const { return
+         private:
+             target(std::unique_ptr<process> proc, std
+                    : process_(std::move(proc))
+                    , stack_(this)
+                    , main_elf_(obj.get()) {
+                    elves_.push(std::move(obj));
+              }
+              --snip--
+              elf_collection elves_;
+              elf* main_elf_;
+         };
+   }
+
+This change has a few knock-on effects on the rest of the
+codebase because the assumption that only one ELF file exists
+has permeated through the implementation. To minimize the
+number of changes we need to make to existing functions, let’s
+add an overload of sdb::virt_addr::to_file_address that takes an
+sdb::elf_collection and finds the ELF file that matches the stored
+
+virtual address before translating it to a file address. Declare it
+in sdb/include/libsdb/types.hpp:
+
+   namespace sdb {
+       class elf_collection;
+       class virt_addr {
+         public:
+             --snip--
+             file_addr to_file_addr(const elf_collecti
+               --snip--
+         };
+
+We forward-declare sdb::elf_collection rather than including the
+header to avoid cyclical dependencies. Implement this function
+in sdb/src/types.cpp:
+
+   sdb::file_addr sdb::virt_addr::to_file_addr(const
+       auto obj = elves.get_elf_containing_address(*
+       if (!obj) return file_addr{};
+       return to_file_addr(*obj);
+   }
+
+The function calls sdb::elf_collection::get_elf_containing_address to
+locate the correct ELF file for which to perform the translation
+and then defers to the existing overload of to_file_addr, so long as
+it found an ELF file.
+
+At several points in the codebase, we assume we need to check
+only a single sdb::dwarf object. One is in sdb::line_breakpoint::resolve,
+which looks only in the main ELF file’s DWARF information for
+line entries. Let’s add a function to sdb::target that looks for line
+entries in any ELF file. Declare it in
+sdb/include/libsdb/target.hpp:
+
+   namespace sdb {
+       class target {
+           --snip--
+               std::vector<line_table::iterator> get_lin
+                    std::filesystem::path path, std::size
+               --snip--
+         };
+   }
+
+This function should call sdb::dwarf::line_table::get_entry_by_address for
+every ELF file. Implement it in sdb/src/target.cpp:
+
+   std::vector<sdb::line_table::iterator> sdb::targe
+         std::filesystem::path path, std::size_t lin
+       std::vector<sdb::line_table::iterator> entrie
+       elves_.for_each([&](auto& elf) {
+           for (auto& cu : elf.get_dwarf().compile_u
+                     auto new_entries = cu->lines().get_en
+                     entries.insert(entries.end(), new_ent
+               }
+         });
+         return entries;
+   }
+
+We create an empty vector to hold the entries we find. We then
+loop over every ELF file in elves_, call get_entries_by_line on each
+compile unit in that ELF file’s DWARF information, and collect
+the results into that single vector. Finally, we return the entries
+we found.
+
+In sdb::line_breakpoint::resolve in sdb/src/breakpoint.cpp, we get rid
+of the outer loop and call sdb::target::get_line_entries_by_line instead
+of calling sdb::dwarf::line_table::get_entry_by_address. The rest of the
+code can stay the same:
+
+   void sdb::line_breakpoint::resolve() {
+       auto entries = target_->get_line_entries_by_l
+       for (auto entry : entries) {
+           --snip--
+       }
+   }
+
+We must also update sdb::stack::unwind. We used to continue
+unwinding so long as the program counter was within the main
+ELF file; now, we should keep unwinding while we have any
+ELF file that corresponds to the program counter. Also, at the
+end of the loop, we should call to_file_addr with sdb::elf_collection
+for the target rather than just for the main ELF file. Make these
+changes in sdb/src/stack.cpp:
+
+   void sdb::stack::unwind() {
+       --snip--
+       while (virt_pc.addr() != 0 and elf) {
+            --snip--
+            file_pc = virt_pc.to_file_addr(target_->g
+            --snip--
+       }
+   }
+
+We have a few more updates to make. For reasons similar to the
+previous change, the sdb::target::get_pc_file_address and
+function_name_at_address functions in sdb/src/target.cpp should pass
+
+the sdb::elf_collection to to_file_addr:
+
+   sdb::file_addr sdb::target::get_pc_file_address(
+       return process_->get_pc().to_file_addr(elves_
+   }
+
+   std::string_view sdb::target::function_name_at_ad
+       auto file_address = address.to_file_addr(elve
+          auto obj = file_address.elf_file();
+          if (!obj) return "";
+          --snip--
+    }
+
+We also add a check to function_name_at_address to return an empty
+string if it can’t find the ELF file for the given address.
+
+The std::target::find_functions function in the same file needs to
+loop over all ELF files in the target, which we can do by
+wrapping the code, save for the first and last statements, in a
+lambda, making a couple of small changes, and passing it to
+sdb::elf_collection::for_each:
+
+    sdb::target::find_functions_result
+    sdb::target::find_functions(std::string name) con
+        find_functions_result result;
+
+          elves_.for_each([&](auto& elf) {
+              auto dwarf_found = ➊ elf.get_dwarf().fin
+              if (dwarf_found.empty()) {
+                  auto elf_found = ➋ elf.get_symbols_b
+                  for (auto sym : elf_found) {
+                      result.elf_functions.push_back(st
+                  }
+                }
+                else {
+                    --snip--
+                }
+         });
+         return result;
+   }
+
+There are three changes needed in the lambda body to go from
+elf_ to elf ➊ ➋ ➌.
+
+We’ve made all of the changes necessary for supporting
+multiple ELF files. Now we can move on to reading the loaded
+library list.
+
+Reading the Loaded Library List
+
+When we implemented resolve_dynamic_linker_rendezvous, we left two
+functions unimplemented: read_dynamic_linker_rendezvous and
+reload_dynamic _libraries. The former should read the rendezvous
+
+structure from the inferior, if its address has been resolved, and
+return it as an r_debug object. The latter function should walk the
+loaded library list inside the r_debug object and populate
+sdb::target::elves_ with any new ELF files.
+Let’s start by implementing read_dynamic_linker_rendezvous in
+sdb/src/target.cpp:
+
+   std::optional<r_debug>
+   sdb::target::read_dynamic_linker_rendezvous() con
+         if (dynamic_linker_rendezvous_address_.addr(
+             return process_->read_memory_as<r_debug>
+                 dynamic_linker_rendezvous_address_);
+         }
+         return std::nullopt;
+   }
+
+If the rendezvous structure address has been resolved, we read
+the memory at that location as an r_debug object and return the
+result. Otherwise, we return an empty optional.
+
+The reload_dynamic_libraries function is a fair bit more complex, so
+we’ll tackle it piece by piece. For the sake of simplicity, I won’t
+handle unloading shared libraries, which would require some
+more work to disable any breakpoints set on locations within
+the unloaded libraries. We’ll begin by reading the rendezvous
+structure, returning if the reading fails, and grabbing the
+pointer to the first entry in the loaded library list:
+   void sdb::target::reload_dynamic_libraries() {
+        auto debug = read_dynamic_linker_rendezvous(
+        if (!debug) return;
+
+        auto entry_ptr = debug->r_map;
+
+We’ll loop until we hit the end of the list, indicated by a null
+pointer. We can’t just walk the list as though it were a regular
+C++ linked list because the pointers all point inside of the
+inferior process rather than inside of the debugger. So, we need
+to use the memory-reading functions in sdb::process. For each
+entry in the map, we read the link_map structure and point entry_ptr
+to the next entry:
+
+        while (entry_ptr != nullptr) {
+            auto entry_addr = virt_addr(
+                reinterpret_cast<std::uint64_t>(entry
+            auto entry = process_->read_memory_as<lin
+            entry_ptr = entry.l_next;
+
+Next, we read the path to the ELF file, encoded as a null-
+terminated string in the l_name field of the map entry. The
+maximum path size on Linux is 4,096 bytes, so we read that
+amount (recall that sdb::process::read_memory supports partial reads
+in case reading 4KiB from that address hits an inaccessible
+memory page). By convention, an empty string identifies the
+executable itself, so if the path we read is empty, we should
+continue to the next entry:
+
+                 auto name_addr = virt_addr(
+                     reinterpret_cast<std::uint64_t>(entry
+                 auto name_bytes = process_->read_memory(n
+                 auto name = std::filesystem::path{
+                     reinterpret_cast<char*>(name_bytes.da
+                 if (name.empty()) continue;
+
+We should check whether we’ve already created an sdb::elf
+object for this shared library, which we can do by looking up
+the path in sdb::target ::elves_. It should be an absolute path to the
+ELF file for that shared library, except in the case of the vDSO.
+Recall that the vDSO doesn’t reside on disk and is identified by
+the name linux-vdso.so.1. We’ll dump the vDSO to disk and store
+an absolute path to it in the corresponding sdb::elf object, so if
+the library name in the list entry identifies the vDSO, we should
+perform a lookup by filename rather than by path in the
+sdb::elf_collection:
+               const elf* found = nullptr;
+               const auto vdso_name = "linux-vdso.so.1"
+               if (name == vdso_name) {
+                     found = elves_.get_elf_by_filename(na
+               }
+               else {
+                     found = elves_.get_elf_by_path(name)
+               }
+
+If we didn’t find a corresponding sdb::elf object, we should
+create one, notify it of where it was loaded in memory, and add
+it to sdb::target::elves_. Also, if this entry is for the vDSO, we
+should first dump the vDSO to disk, which we’ll do with an aptly
+named but currently nonexistent, function called dump_vdso:
+
+               if (!found) {
+                   if (name == vdso_name) {
+                       name = dump_vdso(*process_, virt_
+                   }
+                   auto new_elf = std::make_unique<elf>
+                     new_elf->notify_loaded(virt_addr{ ent
+                     elves_.push(std::move(new_elf));
+               }
+         }
+Finally, we should resolve all breakpoints in the target, as the
+user may have set breakpoints that require the DWARF
+information of one of the shared libraries to resolve:
+
+        breakpoints_.for_each([&](auto& bp) {
+              bp.resolve();
+        });
+   }
+
+The only thing left to do is implement dump_vdso, which we’ll
+define in the same file:
+
+   #include <fstream>
+   namespace {
+       std::filesystem::path dump_vdso(
+             const sdb::process& proc, sdb::virt_add
+           char tmp_dir[] = "/tmp/sdb-XXXXXX";
+           mkdtemp(tmp_dir);
+           auto vdso_dump_path = std::filesystem::pa
+           std::ofstream vdso_dump(vdso_dump_path, s
+              auto vdso_header = proc.read_memory_as<El
+              auto vdso_size = vdso_header.e_shoff +
+                  vdso_header.e_shentsize * vdso_heade
+              auto vdso_bytes = proc.read_memory(addres
+              vdso_dump.write(
+                  reinterpret_cast<const char*>(vdso_by
+              return vdso_dump_path;
+        }
+   }
+
+We must dump the vDSO into a file called exactly linux-vdso.so.1
+so that its filename matches the entry in the rendezvous
+structure. To do this, we create a new temporary directory
+using mkdtemp. This command takes a string whose last six
+characters are XXXXXX, fills in those placeholders with random
+characters to make a unique directory name, and then creates a
+directory at that path. We declare the variable as char tmp_dir[]
+rather than as const char* because we’ll update the string with the
+correct path. We then construct a full path to the dump location
+by appending linux-vdso.so.1 and construct a std::ostream with which
+we can write to the file.
+
+Next, we grab the ELF header for the vDSO, found at the
+address given to dump_vdso as an argument, and calculate the size
+of the ELF file. Calculating the size of any arbitrary ELF file is
+tricky because it may not necessarily have section headers that
+give us an easy way to locate the end. Luckily, the vDSO does
+have section headers, so we can calculate its size by offsetting
+the start of the section headers by the number of section entries
+multiplied by the size of an entry. We then read the calculated
+number of bytes from the start of the vDSO, write them to the
+temporary file, and return its path.
+
+Before we test this code, let’s make sdb include information
+about the ELF file to which a function belongs when it prints
+out function names. Modify sdb::target::function_name_at_address in
+sdb/src/target.cpp like so:
+
+   std::string sdb::target::function_name_at_address
+       auto file_address = address.to_file_addr(elve
+       auto obj = file_address.elf_file();
+       auto func = obj->get_dwarf().function_contain
+    ➊ auto elf_filename = obj->path().filename().st
+    ➋ std::string func_name = "";
+
+         if (func and func->name()) {
+           ➌ func_name = *func->name();
+         }
+         else if (auto elf_func = obj->get_symbol_cont
+              elf_func and ELF64_ST_TYPE(elf_func.value
+             ➍ func_name = obj->get_string(elf_func.valu
+         }
+
+    ➎ if (!func_name.empty()) {
+           return elf_filename + "`" + func_name;
+         }
+         return "";
+   }
+
+We add a variable to hold the ELF filename ➊ and a variable to
+hold the computed function name ➋. Instead of immediately
+returning inside the branches, we set func_name to the found name
+➌➍. After trying to compute the function name if we found one,
+we prefix it with the ELF filename and a backtick ➎, so the
+result will look like libsdb.so`function_name_at_address. Let’s test this
+feature on the marshmallow executable:
+
+   $ tools/sdb test/targets/marshmallow
+   Launched process with PID 68736
+   sdb> break set libmeow_client_is_cute
+   sdb> c
+   Cuteness rating: 100
+   Process 68736 stopped with signal TRAP at 0x7ffff
+   libmeow.cpp:4 (libmeow.so`libmeow_client_is_cute)
+     1 extern int libmeow_client_cuteness;
+     3 bool libmeow_client_is_cute() {
+   > 4      return libmeow_client_cuteness > 50;
+     5 }
+   sdb> back
+   *[0]: 0x7ffff7fb7101 libmeow.so`libmeow_client_is
+    [1]: 0x5555555552a0 marshmallow`main
+
+As expected, when the target program loads the libmeow.so
+library, the debugger resolves the libmeow_client_is_cute breakpoint.
+Note that the function name is qualified with the ELF file in
+which it’s defined and that stack unwinding works across the
+libraries. Let’s end this chapter by writing an automated test.
+
+Testing
+
+Add a new test case to sdb/test/tests.cpp that does the same
+thing as our manual test. It should launch marshmallow, set a
+breakpoint on libmeow_client_is_cute, and ensure that the
+breakpoint is hit and that the backtrace is correct:
+
+   TEST_CASE("Shared library tracing works", "[dynli
+       auto dev_null = open("/dev/null", O_WRONLY);
+       auto target = target::launch("targets/marshma
+       auto& proc = target->get_process();
+
+        target->create_function_breakpoint("libmeow_c
+        proc.resume();
+        proc.wait_on_signal();
+        REQUIRE(target->get_stack().frames().size() =
+        REQUIRE(
+            target->get_stack().frames()[0].func_die
+        REQUIRE(target->get_stack().frames()[1].func_
+        REQUIRE(target->get_pc_file_address().elf_fil
+        close(dev_null);
+   }
+
+Because we changed the function_name_at_address output format, we
+need to fix the source-level stepping test. Prefix all the function
+names with step`, like this:
+
+   TEST_CASE("Source-level stepping", "[target]") {
+       --snip--
+       REQUIRE(target->function_name_at_address(pc)
+       --snip--
+       REQUIRE(target->function_name_at_address(pc)
+       --snip--
+       REQUIRE(target->function_name_at_address(pc)
+       --snip--
+       REQUIRE(target->function_name_at_address(pc)
+       --snip--
+       REQUIRE(target->function_name_at_address(pc)
+   }
+
+We’re done! Run the tests, which should all pass.
+Summary
+
+In this chapter, you learned about how the Linux kernel loads
+programs when the dynamic linker is involved and when it
+isn’t. You learned how the .dynamic section communicates
+information between the kernel and dynamic linker and how
+the dynamic linker rendezvous structure provides the debugger
+with information about the dynamic libraries loaded in the
+process. You also learned how relocations fix references
+between shared libraries, with help from the global offset table
+for variables and the procedure linkage table for function calls.
+
+You implemented tracing for dynamic library loading by relying
+on the dynamic linker rendezvous structure and added hit
+handlers to sdb::breakpoint. You also augmented the textual output
+of the debugger with shared library information and tested
+your changes.
+
+In the next chapter, you’ll learn about multithreaded programs
+on Linux and add support for threads to the debugger.
+
+Check Your Knowledge
+
+1.
+1. What do program headers describe?
+2.
+2. Which segment type provides the path to the dynamic linker?
+3.
+3. What is the purpose of the vDSO?
+4.
+4. Where does the kernel begin execution of programs whose
+   executables are PIEs or that depend on dynamic libraries?
+5.
+5. What type of .dynamic section entry specifies a dynamic library
+   dependency?
+6.
+6. What is the purpose of the dynamic linker rendezvous
+   structure?
+7.
+7. How can the dynamic linker rendezvous structure be
+   located?
+8.
+8. To which function does the dynamic linker rendezvous
+   structure maintain a pointer for debuggers to set a
+   breakpoint on?
+9.
+9. What is the purpose of relocations?
+10.
+ 10. What is the purpose of the global offset table?
+11.
+ 11. Why is the global offset table not used directly for function
+   calls?
+12.
+ 12. What is lazy binding?

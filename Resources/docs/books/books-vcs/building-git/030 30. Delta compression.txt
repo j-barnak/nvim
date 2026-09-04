@@ -1,0 +1,755 @@
+30. Delta compression
+When sending a pack of objects over the network, it’s likely that the pack will contain a lot of
+objects that are similar to one another. For example, if a sequence of commits all modify the
+same file, then we’ll be sending multiple versions of that file in the same pack. Those versions
+may not differ very much from one another; if the changes are small, the versions will have a lot
+of text in common. Sending objects over the wire takes time, especially over a slow connection,
+and it would speed things up if we could avoid putting so much repeated data in our packs.
+
+Although objects are compressed individually using zlib when sent over the network and stored
+on disk, there’s an opportunity for shrinking them even more by exploiting similarities across
+objects. One technique we could use to make a pack smaller, which would be easy to implement,
+is to compress the entire thing with zlib. That would take advantage of similar strings between
+objects, as long as the similar objects are placed near each other in the pack1.
+
+However, as we’ll see later, Git also uses packs as on-disk storage for objects2 — if you clone a
+large repository you’ll receive a single pack containing the entire history. If an entire pack were
+compressed with zlib, then we’d need to read the entire thing from the beginning to decompress
+it and retrieve objects.
+
+Git’s commands usually need access to arbitrary objects by ID, and it would slow things down
+terribly if we had to read the entire database in order to locate a single object. We’d like a way to
+compress objects that preserves our ability to access them at random. Delta compression does
+this by providing a way to represent one object as the difference between it and another, but
+in a way where object records in a pack can still be read from arbitrary locations in the pack,
+without needing to read everything up to that point first.
+
+30.1. The XDelta algorithm
+To compress objects, Git uses a variant on the XDelta algorithm, described in a paper by
+Joshua P. MacDonald3. It creates a representation of a target string in terms of a source string,
+by generating a sequence of operations for reconstructing the target from the source. These
+operations are either a copy, directing us to copy a substring from the source string, or an insert,
+telling us to insert newly added data.
+
+The way XDelta works is best introduced with an example. Suppose we have the following two
+strings as our source and target. The aim is to find a representation of the target in terms of the
+source, where this new representation is smaller than the target.
+              source: the quick brown fox jumps over the slow lazy dog
+
+              target: a swift auburn fox jumps over three dormant hounds
+
+We can see that these strings have some content in common. Copy operations consist of just
+two numbers, the offset and size of the substring to take from the source, and are therefore
+  To limit its memory use when processing large and possibly unending data streams, zlib uses a sliding window of recently seen strings to
+compress data. If similar substrings in the stream are too far apart, the first will fall out of this window and cannot be used to compress the next.
+  Chapter 32, Packs in the database
+  http://www.xmailserver.org/xdfs.pdf, section 3.1
+
+                                                 Delta compression
+
+much smaller than insert operations which contain literal chunks of text. To achieve good
+compression, we’d like to use copy operations as much as possible, so we need to find the
+common substrings between the two texts.
+
+String searching is a well-studied problem4, and there are many well-known algorithms for
+finding a particular pattern within a string, for example Rabin-Karp5, Knuth-Morris-Pratt6, and
+Boyer-Moore7. Finding any possible substrings shared by two texts is even harder since there
+is no pre-defined pattern to search for.
+
+The naive approach is to look at the first character of the target, a, and find where it occurs
+in the source. The letter a appears at offset 41 in the word lazy. In the target it’s followed by
+a space, but in the source we have a z, so there’s no meaningful substring there. Moving one
+place forward in the target, we have a space, which appears in the source at offsets 3, 9, 15, 19,
+25, 30, 34, 39, and 44. In the target, the next letter is the s of swift, and if we examine each of
+these offsets in the source, we see the space at offset 34 is followed by the s of slow. There the
+similarity stops, so we’ve found a common substring of length 2.
+
+The nested iteration through the target string, then the source string to find a matching
+character, then a character-by-character comparison at each matching offset, means this
+approach to finding common substrings is extremely slow. To get better performance, most
+search algorithms pre-process the source in some way to gather information about where
+substrings might start.
+
+In XDelta, we begin by building an index of the source string based on splitting it into 16-byte
+blocks, and storing the offsets at which those blocks appear. A given block might be found at
+multiple locations, so this index is a map from blocks to arrays of offsets. For our source string,
+the index looks like this:
+      {
+          "the quick brown " => [ 0],
+          "fox jumps over t" => [16],
+          "he slow lazy dog" => [32]
+      }
+
+Only full blocks are indexed, so if the source length is not a multiple of 16, the last few bytes
+will not be indexed. This index can be reused across multiple target strings, so we only need
+to build it once for each source.
+
+Having indexed the source, we iterate over the target using a sliding window, also of length 16.
+At each offset in the target, we look at the 16 bytes from that position, and see if that block
+appears in the index. If it does not, then we add the first byte to the insert buffer. Here are the
+first few steps of this process:
+
+  https://en.wikipedia.org/wiki/String-searching_algorithm
+  https://en.wikipedia.org/wiki/Rabin%E2%80%93Karp_algorithm
+  https://en.wikipedia.org/wiki/Knuth%E2%80%93Morris%E2%80%93Pratt_algorithm
+  https://en.wikipedia.org/wiki/Boyer%E2%80%93Moore_string-search_algorithm
+
+                                                Delta compression
+
+Figure 30.1. First few iterations of the matching loop
+
+           offset    | sliding window        | insert buffer
+           ----------+-----------------------+------------------
+              0      | "a swift auburn f"    | ""
+              1      | " swift auburn fo"    | "a"
+              2      | "swift auburn fox"    | "a "
+              3      | "wift auburn fox "    | "a s"
+              4      | "ift auburn fox j"    | "a sw"
+
+Eventually, at offset 15 in the target, we find the block "fox jumps over t", which does appear
+in the index, with offset 16 in the source.
+
+Figure 30.2. Finding the first matching block
+
+           offset    | sliding window        | insert buffer
+           ----------+-----------------------+------------------
+             13      | "n fox jumps over"    | "a swift aubur"
+             14      | " fox jumps over "    | "a swift auburn"
+             15      | "fox jumps over t"    | "a swift auburn "
+
+So, we have found a common block between these two strings, as indicated by the parentheses:
+           source: the quick brown (fox jumps over t)he slow lazy dog
+
+           target: a swift auburn (fox jumps over t)hree dormant hounds
+
+Having found this starting block, we then try to expand it. We can see that in both strings, the
+block is followed by the letter h, so we’ll include that into the matching block:
+           source: the quick brown (fox jumps over th)e slow lazy dog
+
+           target: a swift auburn (fox jumps over th)ree dormant hounds
+
+Working in the opposite direction, both blocks are preceded by the letter n and a space, so we’ll
+include those into the block as well.
+           source: the quick brow(n fox jumps over th)e slow lazy dog
+
+           target: a swift aubur(n fox jumps over th)ree dormant hounds
+
+As we’ve extended the match backwards, we also need to remove the matched string "n "
+from the end of the input buffer. We emit the input buffer as an insert operation, and then the
+matching block as a copy, giving the offset in the source string and the length of the block.
+We repeat this process after the matched block until we reach the end of the string, emitting
+anything remaining in the buffer as a final insert operation. The end result is:
+           insert "a swift aubur"
+           copy   14 19
+           insert "ree dormant hounds"
+
+This has replaced a 19-byte chunk of the target with a copy operation, which as we’ll see later
+occupies only 3 bytes. By maximising the amount of common text we find, we can substantially
+reduce the size of the target string.
+
+                                        Delta compression
+
+30.1.1. Comparison with diffs
+Conceptually, this problem looks very similar to generating diffs8 between the two strings.
+However, we need a specialised algorithm here because the algorithms used for diffing perform
+badly on this problem. While the Myers algorithm performs well on line-oriented text files,
+many things we’ll want to compress, for example tree objects, are not line-oriented text but
+binary files. Increasing the granularity of the diff inputs from lines to bytes will typically make
+the input a couple of orders of magnitude larger and severely degrade the speed of the algorithm.
+
+The other limitation of diffs is that they have constraints that are useful for human readability
+and for conducting merges, but do not produce optimal deltas. One of these constraints is
+that, for items to be considered equal, they must appear in the same order in both strings. For
+example, take these two strings that differ only in the order of their words.
+             source: the quick brown fox jumps over the slow lazy dog
+
+             target: over the slow lazy dog the quick brown fox jumps
+
+If we take a word-wise diff between these, we get:
+       - the
+       - quick
+       - brown
+       - fox
+       - jumps
+         over
+         the
+         slow
+         lazy
+         dog
+       + the
+       + quick
+       + brown
+       + fox
+       + jumps
+
+A diff algorithm will recognise that over the slow lazy dog is common to the two strings,
+but treats the quick brown fox jumps as newly inserted words, because it doesn’t model
+the concept of items being moved, copied or reordered. If we convert this into copy/insert
+operations, we get:
+             copy   26 22
+             insert " the quick brown fox jumps"
+
+XDelta does not mind how many times a block appears in the target, or how blocks are ordered
+between the two versions. It will spot that the quick brown fox jumps can also be copied
+from the beginning of the source, replacing a 25-byte block with a 3-byte copy operation. It
+only generates an insert operation for the space between the two copied sections.
+             copy   26 22
+             insert " "
+             copy   0 25
+
+ Chapter 11, The Myers diff algorithm
+
+                                      Delta compression
+
+30.1.2. Implementation
+To support the implementation of XDelta, we’ll need a couple of structures to represent
+operations. I’m going to place these structures in the Pack::Delta namespace, which will
+contain logic to connect pairs of objects within a Git pack and apply compression to them. The
+compression algorithm itself will live in Pack::XDelta.
+     # lib/pack/delta.rb
+
+     module Pack
+       class Delta
+
+         Copy   = Struct.new(:offset, :size)
+         Insert = Struct.new(:data)
+
+       end
+     end
+
+Because of the way that these operations are encoded within packs, the maximum space
+allocated for the size of a copy operation is 3 bytes, and so its maximum value is FFFFFF16,
+or 16,777,21510. The length of an insert block is contained in 7 bits, so an insert operation can
+have a size of at most 7F16, or 12710.
+     # lib/pack.rb
+
+       MAX_COPY_SIZE   = 0xffffff
+       MAX_INSERT_SIZE = 0x7f
+
+To build an index for compressing various targets against a source, we’ll have a method called
+Pack::XDelta.create_index. It takes a source string, and returns an XDelta instance that
+contains this source, and an index of its constituent blocks and their offsets.
+     # lib/pack/xdelta.rb
+
+     module Pack
+       class XDelta
+
+         BLOCK_SIZE = 16
+
+         def self.create_index(source)
+           blocks = source.bytesize / BLOCK_SIZE
+           index = {}
+
+             (0 ... blocks).each do |i|
+               offset = i * BLOCK_SIZE
+               slice = source.byteslice(offset, BLOCK_SIZE)
+
+               index[slice] ||= []
+               index[slice].push(offset)
+             end
+
+           XDelta.new(source, index)
+         end
+
+         def initialize(source, index)
+           @source = source
+           @index = index
+
+                                      Delta compression
+
+         end
+
+         # ...
+
+       end
+     end
+
+A single XDelta instance contains a source string and its index, and can be used to generate
+compressed versions of arbitrary numbers of targets. The XDelta#compress method takes a
+target, and generates and returns a list of operations — Copy and Insert values — that represent
+the target in terms of the source. @offset tracks the current offset we’ve reached in the target
+string, and @insert stores the insert buffer.
+     # lib/pack/xdelta.rb
+
+         def compress(target)
+           @target = target
+           @offset = 0
+           @insert = []
+           @ops    = []
+
+             generate_ops while @offset < @target.bytesize
+             flush_insert
+
+           @ops
+         end
+
+generate_ops is called as long as @offset is less than the size of the target. It calls
+longest_match to get the offset and size of the longest match we can find in the source, at our
+current position in the target. If no matching block is found, then we call push_insert which
+adds to the insert buffer and moves the @offset pointer. Otherwise, we try to expand the match
+in both directions, and then flush any existing insert bytes and emit a Copy operation for the
+offset and size of the match we found.
+     # lib/pack/xdelta.rb
+
+         def generate_ops
+           m_offset, m_size = longest_match
+           return push_insert if m_size == 0
+
+             m_offset, m_size = expand_match(m_offset, m_size)
+
+           flush_insert
+           @ops.push(Delta::Copy.new(m_offset, m_size))
+         end
+
+The longest_match method looks at the sliding window block at the current offset in the target
+string, and checks if that block appears in the index. If not, then it returns zero for the match
+offset and size, indicating no match was found.
+
+If the block does appear in the index, then it tries to find the longest match beginning at any
+of the indexed positions. Looking up the block in the index gives every position that the block
+appears in the source. For each such position pos, we begin by calling remaining_bytes which
+returns the size of the longest possible copy operation that could begin here: the minimum of
+the remaining source bytes, the remaining target bytes, and the maximum copy operation size.
+
+                                       Delta compression
+
+If this is smaller than the current best match size, then we skip this position. Otherwise we call
+match_from, which extends the match as far as possible in the forward direction and returns
+the offset in the source where the match ends. If the difference between this value and pos is
+greater than the current best match size, then we set pos as the best offset and update the best
+match size.
+     # lib/pack/xdelta.rb
+
+         def longest_match
+           slice = @target.byteslice(@offset, BLOCK_SIZE)
+           return [0, 0] unless @index.has_key?(slice)
+
+            m_offset = m_size = 0
+
+            @index[slice].each do |pos|
+              remaining = remaining_bytes(pos)
+              break if remaining <= m_size
+
+              s = match_from(pos, remaining)
+              next if m_size >= s - pos
+
+              m_offset = pos
+              m_size   = s - pos
+            end
+
+           [m_offset, m_size]
+         end
+
+remaining_bytes encodes the calculation of how many bytes we could possibly include in a
+copy operation beginning at offset pos in the source string. This is limited by the number of
+bytes remaining in the source from pos, the bytes remaining in the target from @offset, and
+the maximum copy operation size.
+     # lib/pack/xdelta.rb
+
+         def remaining_bytes(pos)
+           source_remaining = @source.bytesize - pos
+           target_remaining = @target.bytesize - @offset
+
+           [source_remaining, target_remaining, MAX_COPY_SIZE].min
+         end
+
+The method match_from takes an offset in the source string, pos, and the maximum number of
+bytes we might include in a match, remaining. Starting at the current offsets in the source and
+target documents, we compare each byte and increment the two pointers as long as the bytes
+match. This should advance the pointers at least BLOCK_SIZE places, but may result in a longer
+match. At the end, it returns the source offset of the end of the match.
+     # lib/pack/xdelta.rb
+
+         def match_from(pos, remaining)
+           s, t = pos, @offset
+
+            while remaining > 0 and @source.getbyte(s) == @target.getbyte(t)
+              s, t = s + 1, t + 1
+              remaining -= 1
+            end
+
+                                        Delta compression
+
+            s
+          end
+
+The call to longest_match in generate_ops returns the longest match we can find by expanding
+a matching block forwards from an indexed position. expand_match then attempts to extend
+the block working backwards, by removing bytes from the insert buffer. As long as the match
+offset is positive and there is still content in the insert buffer, the target and match offsets are
+decremented, the match size is incremented, and the last byte is popped off the insert buffer.
+Once this is complete, we have found the best match, and we can advance the @offset pointer
+by the size of the match, and return the match offset and size to the caller. generate_ops takes
+these values, flushes the contents of the insert buffer, and then appends a Copy operation with
+the given values.
+     # lib/pack/xdelta.rb
+
+          def expand_match(m_offset, m_size)
+            while m_offset > 0 and @source.getbyte(m_offset - 1) == @insert.last
+              break if m_size == MAX_COPY_SIZE
+
+                @offset -= 1
+                m_offset -= 1
+                m_size   += 1
+
+              @insert.pop
+            end
+
+            @offset += m_size
+            [m_offset, m_size]
+          end
+
+Finally, we have the methods for managing the insert buffer. push_insert pushes the byte at
+the current target offset into the buffer, and increments the pointer. It flushes the buffer if we’ve
+reached the maximum insert size. flush_insert appends an Insert operation with the contents
+of the buffer, and empties the buffer. If this method is given a size argument, it only flushes the
+buffer if it contains the given number of bytes.
+     # lib/pack/xdelta.rb
+
+          def push_insert
+            @insert.push(@target.getbyte(@offset))
+            @offset += 1
+            flush_insert(MAX_INSERT_SIZE)
+          end
+
+          def flush_insert(size = nil)
+            return if size and @insert.size < size
+            return if @insert.empty?
+
+            @ops.push(Delta::Insert.new(@insert.pack("C*")))
+            @insert = []
+          end
+
+This XDelta class can generate a list of operations, but is not concerned with how those
+operations are encoded when written into a pack. As such, we’re able to inspect its output in a
+structured form and place the encoding logic elsewhere.
+
+                                             Delta compression
+
+     >> source = "the quick brown fox jumps over the slow lazy dog"
+     >> target = "a swift auburn fox jumps over three dormant hounds"
+     >>
+     >> index = Pack::XDelta.create_index(source)
+     >> index.compress(target)
+     => [ Delta::Insert(data="a swift aubur"), Delta::Copy(offset=14, size=19),
+          Delta::Insert(data="ree dormant hounds") ]
+
+30.2. Delta encoding
+To store a delta in a pack, we need to convert the Copy and Insert values into strings and
+concatenate them. An Insert operation is encoded directly as a byte containing its size,
+followed by its contents. The size has a maximum value of 7F16.
+     # lib/pack/delta.rb
+
+          Insert = Struct.new(:data) do
+            def to_s
+              [data.bytesize, data].pack("Ca*")
+            end
+          end
+
+Copy operations are more complicated. These values contain two numbers, an offset and
+a size. The encoding allocates up to four bytes for the offset and three bytes for the size,
+which together can be viewed as a seven-byte (56-bit) number. To get the greatest compression
+efficiency, the encoding uses a variable-length encoding — if we used the full seven bytes to
+encode the small numbers we saw in our opening example, most of the bytes would be zero.
+Therefore Git uses a method of packing a number into as few bytes as possible.
+
+As an example, let’s say we want to encode the number 2,634,033,90810, or 9D002AF416.
+Representing this number directly using seven bytes, padding with leading zeroes, gives us:
+          00   00   00   9D   00   2A   F4
+
+Git’s encoding removes all the zero bytes, leaving us with:
+                         9D        2A   F4
+
+To indicate which bytes of the number have been retained, it then prepends a header byte where
+a bit is set if the corresponding byte is present. In this example, we’ve kept the first, second and
+fourth least-significant bytes, and so the header byte reflects this with the value 000010112. To
+distinguish Copy data from Insert data, the most-significant bit of this header is set; the highest
+value of an insert’s first byte is 7F16, and setting the most-significant bit means a copy’s first
+byte will be at least 8016.
+
+That gives us 100010112 as the header byte, or 8B16. The full encoding of the Copy operation
+consists of this header, followed by the retained bytes of the value in little-endian order, that
+is, 8B F4 2A 9D.
+
+The Numbers::PackedInt56LE module implements this encoding. Its write method returns an
+array of bytes, but does not set the most-significant bit on the first byte — this is left to the caller.
+The read method takes an IO object with a readbyte method, and a header, which is the first
+byte of the value. This makes it suitable for reading from a stream just as Pack::Reader does.
+
+                                        Delta compression
+
+     # lib/pack/numbers.rb
+
+          module PackedInt56LE
+            def self.write(value)
+              bytes = [0]
+
+              (0...7).each do |i|
+                byte = (value >> (8 * i)) & 0xff
+                next if byte == 0
+
+                bytes[0] |= 1 << i
+                bytes.push(byte)
+              end
+
+              bytes
+            end
+
+            def self.read(input, header)
+              value = 0
+
+              (0...7).each do |i|
+                next if header & (1 << i) == 0
+                value |= input.readbyte << (8 * i)
+              end
+
+              value
+            end
+          end
+
+PackedInt56LE.write works by initialising the bytes array to contain the header byte (initially
+zero), and then iterating over the bytes of value, from least significant to most significant. For
+example, if value is 0x9d002af4, then byte inside the loop will take the values 0xf4, 0x2a, 0,
+0x9d, 0, 0 and 0. For iterations where byte is non-zero, the corresponding bit in the header byte
+is set, and the current byte is pushed onto the result array. For example, the byte 0x9d occurs
+on the fourth iteration of the loop, so the fourth least-significant bit in the header byte is set by
+performing a bitwise-or with the value 0b1000.
+
+Copy#to_s uses this number format by effectively concatenating its four-byte offset and three-
+byte size into a single seven-byte number. This is done by bit-shifting the size by 32 bits, and
+combining the result with the offset with a bitwise-or.
+     # lib/pack/delta.rb
+
+          Copy = Struct.new(:offset, :size) do
+            def to_s
+              bytes = Numbers::PackedInt56LE.write((size << 32) | offset)
+              bytes[0] |= 0x80
+              bytes.pack("C*")
+            end
+          end
+
+The final element of the delta encoding is that the sequence of operations is prefixed with two
+numbers: the sizes of the source and target strings, which let the receiver of the pack check
+they’ve decoded it properly. These numbers are encoded using the VarIntLE format that we
+
+                                           Delta compression
+
+saw in the size headers for pack records9, with a small alteration. This format currently assumes
+the first byte of the encoding contains four bits from the value.
+       # lib/pack/numbers.rb
+
+             module VarIntLE
+               def self.write(value)
+                 bytes = []
+                 mask = 0xf
+                 shift = 4
+
+                  # ...
+                end
+
+                def self.read(input)
+                  first = input.readbyte
+                  value = first & 0xf
+                  shift = 4
+
+                 # ...
+               end
+             end
+
+For delta size headers, the format uses the full seven data bits of the first byte, and we can
+arrange this by passing shift into this module’s methods as a parameter, and having it calculate
+the mask dynamically.
+       # lib/pack/numbers.rb
+
+             module VarIntLE
+               def self.write(value, shift)
+                 bytes = []
+                 mask = 2 ** shift - 1
+
+                  # ...
+                end
+
+                def self.read(input, shift)
+                  first = input.readbyte
+                  value = first & (2 ** shift - 1)
+
+                 # ...
+               end
+             end
+
+Callers can now use VarIntLE.write(value, 4) or VarIntLE.write(value, 7) as required.
+
+We now have all the pieces necessary to serialise a delta. Let’s look at the example that we
+opened the chapter with, using a short script that uses Pack::XDelta and Pack::Numbers.
+       source = "the quick brown fox jumps over the slow lazy dog"
+       target = "a swift auburn fox jumps over three dormant hounds"
+
+       index = Pack::XDelta.create_index(source)
+       delta = index.compress(target)
+
+ Section 27.4, “The pack format”
+
+                                       Delta compression
+
+     s = Pack::Numbers::VarIntLE.write(source.bytesize, 7)
+     t = Pack::Numbers::VarIntLE.write(target.bytesize, 7)
+
+     delta = (s + t).pack("C*") + delta.join("")
+
+     print delta
+
+If we run this program and pipe it into hexdump we can see that the result is 2616 or 3810 bytes
+long, down from the original 50.
+     00000000   30 32 0d 61 20 73 77 69     66 74 20 61 75 62 75 72    |02.a swift aubur|
+     00000010   91 0e 13 12 72 65 65 20     64 6f 72 6d 61 6e 74 20    |....ree dormant |
+     00000020   68 6f 75 6e 64 73                                      |hounds|
+
+The first two bytes encode the sizes of the strings: 3016 is 4810, and 3216 is 5010.
+     00000000   30 32                                                  |02               |
+
+The next 14 bytes are an insert operation: 0D16 is less than 8016, and equals 1310, the length
+of the following data.
+     00000000           0d 61 20 73 77 69   66 74 20 61 75 62 75 72    |   .a swift aubur|
+
+After this, we see a 3-byte copy operation. 9116 is 100100012, indicating the true little-endian
+value is 0e 00 00 00 13 00 00. The first four bytes are the offset, and the rest are the size:
+E16 is 1410, and 1316 is 1910.
+     00000010   91 0e 13                                               |...              |
+
+Finally, the last insert operation appears, with length header 1216 or 1810.
+     00000010            12 72 65 65 20     64 6f 72 6d 61 6e 74 20    |   .ree dormant |
+     00000020   68 6f 75 6e 64 73                                      |hounds|
+
+What about the example where we reordered the words? If we change the target to over the
+slow lazy dog the quick brown fox jumps, then the output is:
+
+     00000000   30 30 91 1a 16 01 20 90     19                         |00.... ..|
+
+This is just 9 bytes to represent a 48-byte string. It consists of 91 1a 16, a copy operation of
+offset 2610 and size 2210; followed by 01 20, an insert operation consisting of a single space;
+then 90 19, a copy operation with offset 0 and size 2510. Note that the offset of zero means this
+last operation uses no bytes to encode the offset.
+
+These examples give some indication of why the block size of 16 is used. The block size
+represents the minimum size of a matching substring that can be found, and making it larger
+decreases the likelihood of finding matches. But making it smaller damages performance; a
+block size of 1 is equivalent to the naive approach. We need a trade-off between speed and
+compression. Since copy operations take up between two and eight bytes, a minimum match
+size of 16 means compression will make a significant reduction even to the shortest possible
+matches, while achieving a good-enough speed for practical use. It’s also small enough to detect
+matching entries in tree objects, enabling them to compress very well.
+
+                                        Delta compression
+
+30.3. Expanding deltas
+When a delta is read by the receiver — a fetch or receive-pack process — it must be re-
+applied to the source text to regenerate the target. Let’s create a Pack::Expander class for
+performing this task. Expander.expand will take two strings, the source and the delta, and
+initialise a new Expander to perform the process. The Expander begins by reading the two string
+sizes from the beginning of the delta. StringIO wraps a string with the IO interface, letting us
+call readbyte and read to progress through the string; this saves us from having to explicitly
+track the current position in the delta.
+     # lib/pack/expander.rb
+
+     module Pack
+       class Expander
+
+          attr_reader :source_size, :target_size
+
+          def self.expand(source, delta)
+            Expander.new(delta).expand(source)
+          end
+
+          def initialize(delta)
+            @delta = StringIO.new(delta)
+
+            @source_size = read_size
+            @target_size = read_size
+          end
+
+          # ...
+
+       end
+     end
+
+read_size uses the VarIntLE.read method we defined above, which returns the first byte of
+the number, and the full numeric value. We only want the second value here.
+     # lib/pack/expander.rb
+
+          def read_size
+            Numbers::VarIntLE.read(@delta, 7)[1]
+          end
+
+The main work of interpreting the delta is done in Expander#expand. It takes the source string
+and scans through the delta, reconstructing the target as it goes. Until we reach the end of
+the delta, we read a single byte. If this is less then 8016, that means the next chunk is an
+Insert operation, and we pass that first byte and the delta to Delta::Insert.parse to read
+the string data from the operation. If the first byte is at least 8016, then a Copy follows. Calling
+Delta::Copy.parse gives us a Copy value, and we use its offset and size to copy a chunk
+out of the source string.
+     # lib/pack/expander.rb
+
+          def expand(source)
+            check_size(source, @source_size)
+            target = ""
+
+                                       Delta compression
+
+            until @delta.eof?
+              byte = @delta.readbyte
+
+              if byte < 0x80
+                insert = Delta::Insert.parse(@delta, byte)
+                target.concat(insert.data)
+              else
+                copy = Delta::Copy.parse(@delta, byte)
+                target.concat(source.byteslice(copy.offset, copy.size))
+              end
+            end
+
+           check_size(target, @target_size)
+           target
+         end
+
+At either end of this method, we check the sizes of the strings against the sizes recorded at the
+beginning of the delta. If they disagree, an error is thrown.
+     # lib/pack/expander.rb
+
+         def check_size(buffer, size)
+           raise "failed to apply delta" unless buffer.bytesize == size
+         end
+
+Parsing an Insert operation is as straightforward as serialising it: we read a number of bytes
+given by the value of the first byte.
+     # lib/pack/delta.rb
+
+         Insert = Struct.new(:data) do
+           def self.parse(input, byte)
+             Insert.new(input.read(byte))
+           end
+         end
+
+To parse a Copy operation, we can use PackedInt56LE.read to read the seven-byte number
+described by the leading byte. The least-significant four bytes of this number are the offset, and
+we can select those via a bitwise-and with FFFFFFFF16. The next three bytes are the size, and
+we can get this by bit-shifting the number to the right by four bytes, or 32 bits.
+     # lib/pack/delta.rb
+
+         Copy = Struct.new(:offset, :size) do
+           def self.parse(input, byte)
+             value = Numbers::PackedInt56LE.read(input, byte)
+             offset = value & 0xffffffff
+             size   = value >> 32
+
+             Copy.new(offset, size)
+           end
+         end
+
+We now have all the tools we need to generate and interpret deltas. Given some pair of strings,
+we can compress one of them by generating a delta against the other. To use this to compress
+
+                                      Delta compression
+
+a pack, we need to find pairs of objects that will compress well against one another, and that’s
+what we’ll deal with in the next chapter.
+

@@ -1,0 +1,1992 @@
+SOFTWARE BREAKPOINTS
+    All beautiful things in the world stop to look back at you,
+    softly.
+Breakpoints allow debugger users to specify a code location at
+which execution of the program should halt, allowing for
+further inspection of the program’s state. Breakpoints are one
+of the most important features of any debugger, but to users,
+they often feel like magic. Fortunately, if you look past the
+smoke and mirrors, you’ll find that breakpoints are quite
+simple (though rather ingenious) in their implementation.
+
+In this chapter, you’ll learn about software breakpoints and
+implement them in sdb, and then you’ll add the usual
+automated tests. You’ll also implement stepping over single
+machine instructions.
+
+Hardware vs. Software Breakpoints
+
+A debugger can support two main kinds of breakpoints:
+hardware and software. Hardware breakpoints involve setting
+architecture-specific registers to produce breaks for you,
+whereas software breakpoints involve modifying the machine
+instructions in the process’s memory.
+
+While a tool can set an unlimited number of software
+breakpoints, the number of hardware breakpoints is limited by
+the number of debug registers in the system. On x64, there are
+only four hardware breakpoint registers.
+Hardware breakpoints have the powerful ability to trigger
+breaks if a given address is executed, written to, or read from.
+Software breakpoints can trigger breaks on execution only.
+Hardware breakpoints also enable the debugging of program
+exploits that involve overwriting memory with executable code,
+so they can be useful in security and reverse engineering
+situations. We’ll focus on software breakpoints in this chapter
+and then implement hardware breakpoints in Chapter 9.
+
+Implementing Software Breakpoints
+
+I mentioned that we set software breakpoints by modifying the
+executing code on the fly. You might now be asking yourself
+exactly how to modify the code, and how the debugger can tell
+that the execution has hit the breakpoint.
+
+To modify a process’s code, we can use ptrace. We previously
+relied on this utility to read and write data, but we can also use
+it on the machine instructions held in memory. (If only ptrace
+could also make coffee, it could solve all of our low-level
+debugging problems for us.)
+
+We must make a modification that causes the processor to halt
+and signal the program when executing the code at the
+breakpoint address. On x64, we accomplish this by overwriting
+the instruction at that address with the int3 instruction.
+
+The x64 architecture has an interrupt vector table that the
+operating system can use to register handlers for various
+events, such as dividing by zero, accessing protected memory,
+or executing invalid opcodes. You can think of these handlers as
+error handling callbacks at the hardware level, and we’ll look at
+them in more detail in Chapter 10. When the processor executes
+the int3 instruction, it passes control to the breakpoint interrupt
+handler, which—in the case of Linux—signals the process with
+a SIGTRAP.
+
+The last piece of the puzzle is how the debugger gets notified of
+the break. We already wrote a wait_on_signal function that can
+listen for signals being sent to the child process. We can use that
+function here as well; we’ll set the breakpoint, continue the
+program, call wait_on_signal, and block the program until the SIGTRAP
+occurs. We can then communicate this breakpoint to the user,
+perhaps by printing the source location the debugger has
+reached or changing the focused line in a GUI debugger.
+
+With the theory out of the way, we can start implementing
+breakpoints.
+Representing Locations
+
+Let’s create a type to represent and manage a single breakpoint
+location. Importantly, when a user sets a single logical
+breakpoint, that breakpoint may be associated with several
+locations. Say, for example, they set a breakpoint in the C++
+function to_string. There are many overloads of to_string with
+different types, so we’ll need to create multiple physical
+breakpoints for each overload. We’ll differentiate between the
+logical, user-level breakpoint and the physical, hardware-level
+breakpoint by calling the former sdb::breakpoint and the latter
+sdb::breakpoint_site. In this chapter, we’re only implementing
+
+setting a breakpoint on a memory address, so we only need to
+implement sdb::breakpoint_site. We’ll implement sdb::breakpoint in
+Chapter 14.
+
+Instances of sdb::process should maintain a list of all breakpoint
+sites set on that process. As such, users of libsdb should be able
+to create a breakpoint only by making a request to a process
+object. We’ll implement this behavior by making the
+constructor for breakpoint_site private and making process a friend,
+granting it access to the private members of breakpoint_site. We
+should also disallow copying and moving of breakpoint_site objects.
+Create a new file at sdb/include/libsdb/breakpoint_site.hpp with
+these contents:
+#ifndef SDB_BREAKPOINT_SITE_HPP
+#define SDB_BREAKPOINT_SITE_HPP
+
+#include <cstdint>
+#include <cstddef>
+#include <libsdb/types.hpp>
+
+namespace sdb {
+ ➊ class process;
+
+    class breakpoint_site {
+    public:
+     ➋ breakpoint_site() = delete;
+        breakpoint_site(const breakpoint_site&) =
+        breakpoint_site& operator=(const breakpoi
+
+     ➌ using id_type = std::int32_t;
+     ➍ id_type id() const { return id_; }
+
+     ➎ void enable();
+        void disable();
+
+     ➏ bool is_enabled() const { return is_enabl
+        virt_addr address() const { return addres
+
+        bool at_address(virt_addr addr) const {
+            return address_ == addr;
+        }
+              bool in_range(virt_addr low, virt_addr hi
+                  return low <= address_ and high > add
+              }
+
+        private:
+         ➐ breakpoint_site(
+                  process& proc, virt_addr address);
+              friend process;
+
+            id_type id_;
+            process* process_;
+            virt_addr address_;
+            bool is_enabled_;
+         ➑ std::byte saved_data_;
+        };
+   }
+
+   #endif
+
+We forward-declare sdb::process ➊ so we can use references and
+pointers to it in this file without including process.hpp. Then we
+begin the implementation of breakpoint_site by explicitly disabling
+default construction and all copy and move behaviors ➋.
+Breakpoints should have unique identifiers, referenced either
+from code or on the command line, so we create an id type alias
+➌ for the actual integral type so that we don’t have to care
+about it elsewhere. We also write a member function that
+retrieves the breakpoint site’s ID ➍.
+
+We’ll need member functions to enable and disable the
+breakpoint site, but these will be complex to write, so for now,
+we just declare them ➎; we’ll implement them later. We
+implement the functions for retrieving whether the site is
+enabled and the address on which it’s set inline, because they’re
+very short ➏. We also write functions for checking whether a
+breakpoint site is at a given address or lies in an address range.
+These functions may appear unnecessary, but they’ll come in
+handy when we add support for source-level breakpoints in
+Chapter 14.
+
+We declare a private constructor ➐ and declare sdb::process as a
+friend so that it can access this constructor. Finally, we declare
+
+members for all the information that a breakpoint site needs to
+track, including a member to hold the data we replace with the
+int3 instruction when setting a breakpoint ➑.
+
+Most of this code merely tracks state information; the real
+magic happens in the enable and disable functions. Before we
+implement those, let’s enable the creation and management of
+the breakpoint sites.
+Creating Sites
+
+To create a breakpoint site, we first need a constructor in
+sdb/src/breakpoint _site.cpp that initializes members and
+generates a unique ID:
+
+   #include <libsdb/breakpoint_site.hpp>
+
+   namespace {
+       auto get_next_id() {
+         ➊ static sdb::breakpoint_site::id_type id =
+         ➋ return ++id;
+       }
+   }
+
+   sdb::breakpoint_site::breakpoint_site(
+       process& proc, virt_addr address)
+       : process_{ &proc }, address_{ address }, is_
+       saved_data_{} {
+       id_ = get_next_id();
+   }
+
+We implement get_next_id with a function-local static variable ➊
+that is initialized exactly once, on the first call to the function.
+Subsequent calls will use the same object. We increment and
+return the result on each call ➋, and because we use the pre-
+increment version of ++, the first ID will be 1. The constructor for
+breakpoint_site calls this function and initializes the id_ member
+
+with the result.
+
+Add breakpoint_site.cpp to your sdb/src/CMakeLists.txt file to
+add it to the library:
+
+   add_library(libsdb ... breakpoint_site.cpp)
+
+Now we’ll add support to sdb::process for creating and tracking
+breakpoint sites. Add the following to
+sdb/include/libsdb/process.hpp:
+
+   #include <vector>
+   #include <libsdb/breakpoint_site.hpp>
+
+   namespace sdb {
+       class process {
+       public:
+           --snip--
+
+          ➊ breakpoint_site& create_breakpoint_site(v
+             // Some way to iterate over and remove b
+             --snip--
+
+         private:
+            --snip--
+         ➋ std::vector<std::unique_ptr<breakpoint_si
+        };
+   }
+
+We add a new breakpoint_sites_ member ➋. We can’t store a
+std::vector <breakpoint_site> because we can’t copy or move a
+
+breakpoint site, but we get around this by dynamically
+allocating them and storing std::unique_ptr values instead. We also
+declare a function to create a breakpoint site at a given virtual
+address ➊.
+
+Managing Sites
+
+We’re still missing a way for client code to iterate over
+breakpoint sites, retrieve a site given an ID or an address, and
+perform other interactions. We have a few options for
+implementing these operations:
+
+  Write a function that returns a reference to breakpoint_sites_.
+  This is pretty icky, as it’s very much an implementation detail
+  that we’re storing these as std::unique_ptrs, and we don’t want
+  to let users modify the vector itself.
+  Write a custom type, such as breakpoint_site_collection, that
+  exposes functions for all of the operations we want to
+   support, like find_by_id(id), for_each(callback), and so on. This
+   involves quite a lot of code overhead.
+   Return an indirect_range that dereferences each std::unique_ptr
+   before returning it on iteration. This requires either pulling
+   in some other dependency, like Boost, or writing some
+   somewhat gnarly template code.
+
+To keep the C++ relatively simple and clean, we’ll choose the
+second option. Here are some operations we should support:
+
+   Adding a new breakpoint site to the collection
+   Checking whether a site exists based on an ID or address
+   Getting a site by ID or address
+   Removing a site by ID or address
+   Iterating over sites
+   Retrieving the size of the collection
+   Checking whether a site is empty
+
+However, there are other kinds of stopping points that the
+debugger should support. We’ll use the name stop point to refer
+to breakpoint sites, source-level breakpoints, and watchpoints.
+We don’t want to have to write three separate types, called
+breakpoint_site_collection, watchpoint_collection, and breakpoint_collection,
+
+that do essentially the same thing. As such, we’ll write a class
+template called sdb::stoppoint_collection that can cover all of our
+needs. Create a new file at
+sdb/include/libsdb/stoppoint_collection.hpp with these contents:
+
+   #ifndef SDB_STOPPOINT_COLLECTION_HPP
+   #define SDB_STOPPOINT_COLLECTION_HPP
+
+   #include <vector>
+   #include <memory>
+   #include <libsdb/types.hpp>
+
+   namespace sdb {
+       template <class Stoppoint>
+       class stoppoint_collection {
+       public:
+           Stoppoint& push(std::unique_ptr<Stoppoint
+
+             bool contains_id(typename Stoppoint::id_t
+             bool contains_address(virt_addr address)
+             bool enabled_stoppoint_at_address(virt_ad
+
+             Stoppoint& get_by_id(typename Stoppoint:
+             const Stoppoint& get_by_id(typename Stopp
+             Stoppoint& get_by_address(virt_addr addre
+             const Stoppoint& get_by_address(virt_add
+
+             void remove_by_id(typename Stoppoint::id_
+             void remove_by_address(virt_addr address
+               template <class F>
+               void for_each(F f); ➍
+               template <class F>
+               void for_each(F f) const;
+
+               std::size_t size() const { return stoppoi
+               bool empty() const { return stoppoints_.e
+
+         private:
+             using points_t = std::vector<std::unique_
+             points_t stoppoints_;
+         };
+   }
+   #endif
+
+We declare several functions here, but most are fairly
+straightforward. The push function adds a new stop point to the
+collection. The contains_id and contains_address functions return
+whether the collection contains a stop point matching the given
+ID or virtual address ➊, and enabled_stoppoint _at_address is a
+convenience function for determining if there’s an enabled stop
+point in the collection with the given address. We need the
+typename keyword for any types that depend on the Stoppoint
+
+template parameter; it tells the compiler that this name refers
+to a type rather than a value. The get_by_id and get_by_address
+functions will do the same but also return the matching stop
+point, if there is one. Note that we implement both const ➌ and
+non-const ➋ overloads to maintain const-correctness. The
+remove_by_id and remove_by_address functions will (you guessed it)
+
+remove the stop point matching the ID of the address.
+
+The for_each functions ➍ are a little more complicated; users will
+pass them a function or lambda to be called with a reference to
+each breakpoint site. Finally, size and empty return the relevant
+information about the collection state, and we add a private
+member that stores pointers to the actual stop points.
+
+Before we implement these functions, we can plug the
+stoppoint_collection type into sdb::process in
+
+sdb/include/libsdb/process.hpp:
+
+   --snip--
+   #include <libsdb/stoppoint_collection.hpp>
+
+   namespace sdb {
+       class process {
+       public:
+           --snip--
+
+                stoppoint_collection<breakpoint_site>&
+                breakpoint_sites() { return breakpoint_si
+               const stoppoint_collection<breakpoint_sit
+               breakpoint_sites() const { return breakpo
+
+         private:
+             --snip--
+               stoppoint_collection<breakpoint_site> bre
+         };
+   }
+
+We add functions for retrieving the breakpoint site collection,
+keeping in mind const-correctness by implementing two
+overloads. We also replace the type of breakpoint_sites_ with the
+new stoppoint_collection type, supplying breakpoint_site as the
+template argument.
+
+Let’s implement create_breakpoint_site in sdb/src/process.cpp:
+
+   sdb::breakpoint_site&
+   sdb::process::create_breakpoint_site(virt_addr ad
+   {
+       if (breakpoint_sites_.contains_address(addres
+           error::send("Breakpoint site already crea
+                    std::to_string(address.addr()));
+         }
+         return breakpoint_sites_.push(
+               std::unique_ptr<breakpoint_site>(new brea
+   }
+
+If two breakpoints point to the same site, they could very easily
+overwrite each other and cause data loss. As such, we disallow
+this ➊. After performing this check, we create a new breakpoint
+site and push it into the breakpoint_sites_ collection.
+
+We can then implement the functions for stoppoint_collection. The
+code is fairly repetitive, but it does the job. Because
+stoppoint_collection is a template, the implementations must go in
+
+the header file rather than in a .cpp file so that the compiler can
+generate code from those member functions whenever it sees a
+new specialization of the stoppoint_collection template. Let’s start
+by implementing push in
+sdb/include/libsdb/stoppoint_collection.hpp:
+
+   namespace sdb {
+       template <class Stoppoint>
+       Stoppoint& stoppoint_collection<Stoppoint>::p
+             std::unique_ptr<Stoppoint> bs) {
+           stoppoints_.push_back(std::move(bs));
+           return *stoppoints_.back();
+        }
+   }
+
+We push the argument into the stoppoints_ vector and return a
+reference to that element. Remember to move unique pointers
+with std::move when transferring ownership; otherwise, the code
+won’t compile. If you’re not familiar with move semantics, see
+the following box.
+
+MOVE SEMANTICS
+
+Move semantics, a feature added in C++11, provides a way to
+transfer ownership of resources from one object to another.
+When objects manage resources, such as dynamically allocated
+memory or file handles, it can sometimes be costly or
+impossible to copy these resources to other objects. Types that
+should never be copied are called move-only types. Types that
+are instead costly to copy can use move semantics to avoid
+those copies in certain circumstances. Consider, for example,
+the following std::vector type, which stores a few MB of data. Say
+we want to store this vector somewhere:
+
+   void store(std::vector<big_type>);
+   {
+        std::vector<big_type> copy_is_expensive;
+         fill_with_data(copy_is_expensive);
+         store(copy_is_expensive);
+   }
+
+Copying all of this data to store it somewhere else is
+unnecessary, because copy_is_expensive is about to go out of scope,
+so its memory will be reclaimed. It would be better to somehow
+signal to store that it can steal, or move, the data instead of
+having to copy it. We do this using std::move:
+
+   void store(std::vector<big_type>);
+   {
+         std::vector<big_type> copy_is_expensive;
+         fill_with_data(copy_is_expensive);
+         store(std::move(copy_is_expensive));
+   }
+
+In many cases, you’ll get move semantics for free. If you store
+types that are move-aware, like std::vector, the compiler will
+generate the necessary operations for you to ensure that
+moving an object of your type will also move its subobjects. If
+the types you’re storing aren’t move-aware but represent some
+resource, you can implement these move operations yourself by
+writing a move constructor and move assignment operator.
+Rather than the copy versions of the resource, which generally
+take references to const like t(const t& rhs) and t& operator=(const t&
+rhs), the move versions take rvalue references. These look like
+
+t(t&& rhs) and t& operator (t&& rhs). Inside them, you can take the
+
+resource from rhs and put rhs into an empty state.
+
+For more details, see Chapter 5 of Scott Meyers’s Modern
+Effective C++ (O’Reilly, 2014) or this Stack Overflow question:
+https://stackoverflow.com/ questions/3106110/what-is-move-
+semantics.
+
+Now we can move on to contains_id and contains_address. These
+functions, along with many other functions in this type, will
+need to find stop points by ID or virtual address. To minimize
+repeated code, let’s perform this task in two private members
+called find_by_id and find_by_address. Declare them in the type
+definition:
+
+   namespace sdb {
+       template <class Stoppoint>
+       class stoppoint_collection {
+           --snip--
+       private:
+           using points_t = std::vector<std::unique_
+              typename points_t::iterator find_by_id(ty
+              typename points_t::const_iterator find_by
+              typename points_t::iterator find_by_addre
+              typename points_t::const_iterator find_by
+
+              points_t stoppoints_;
+         };
+
+The find_by_id and find_by_address functions return iterators to the
+stop point’s vector. We make const and non-const overloads and
+vary the return type between iterator and const_iterator, depending
+on whether the member function itself is declared const.
+Implement them in the same file:
+
+   #include <algorithm>
+
+   namespace sdb {
+       template <class Stoppoint>
+       auto stoppoint_collection<Stoppoint>::find_by
+              -> typename points_t::iterator { ➋
+              return std::find_if(begin(stoppoints_), e
+                  [=](auto& point) { return point->id(
+         }
+
+         template <class Stoppoint>
+          auto stoppoint_collection<Stoppoint>::find_by
+              -> typename points_t::const_iterator {
+                 return const_cast<stoppoint_collection*>
+          }
+
+          template <class Stoppoint>
+          auto stoppoint_collection<Stoppoint>::find_by
+              -> typename points_t::iterator {
+              return std::find_if(begin(stoppoints_), e
+                  [=](auto& point) { return point->at_a
+          }
+
+          template <class Stoppoint>
+          auto stoppoint_collection<Stoppoint>::find_by
+              -> typename points_t::const_iterator {
+              return const_cast<stoppoint_collection*>
+          }
+    }
+
+We use a few tricks here to minimize duplication and large type
+names. As points_t::iterator is a member type of
+sdb::stoppoint_collection<Stoppoint>, typename
+
+sdb::stoppoint_collection<Stoppoint>::points_t::iterator would be the
+
+normal return type, which is quite the mouthful. Instead, we
+use trailing return types by specifying the return type as auto ➊
+and writing the actual return type at the end of the signature ➋.
+Doing this lets us omit the sdb:: stoppoint_collection<Stoppoint>:: part.
+We do this for all four functions.
+
+We implement the non-const version of find_by_id with std::find_if
+➊, an algorithm that returns an iterator to the first element that
+satisfies the given predicate. We include the header for
+std::find_if at the top of the file. If it can’t find such an element, it
+
+returns the end iterator it’s given. We pass a lambda that
+returns an indication of whether a given stop point’s ID is equal
+to id.
+
+We could implement the const version by copying and pasting
+the code from the non-const version, but I’ve chosen to
+implement the former in terms of the latter instead. We cast
+away the constness of this in order to call the non-const overload
+➌. This is fine because the function will end by converting
+iterator to a const_iterator, so we’re not in danger of breaking const-
+
+correctness.
+
+The find_by_address functions are very similar, except they check
+for a given address rather than an ID.
+
+Now we can implement the rest of the functions using these
+private members, starting with the functions contains_id,
+contains_address, and enabled_stoppoint_at_address:
+   namespace sdb {
+         template <class Stoppoint>
+         bool stoppoint_collection<Stoppoint>::contain
+              return find_by_id(id) != end(stoppoints_
+         }
+
+         template <class Stoppoint>
+         bool stoppoint_collection<Stoppoint>::contain
+             return find_by_address(address) != end(st
+         }
+
+         template <class Stoppoint>
+         bool stoppoint_collection<Stoppoint>::enabled
+               virt_addr address) const {
+             return contains_address(address) and get_
+         }
+   }
+
+The contains_id and contains_address functions now call the relevant
+find_by_* function and indicate whether it returned the end
+
+iterator (meaning it found no matching stop point). Next are the
+get_by_id overloads:
+
+   #include <libsdb/error.hpp>
+
+   namespace sdb {
+         template <class Stoppoint>
+         Stoppoint& stoppoint_collection<Stoppoint>::g
+                typename Stoppoint::id_type id) {
+              auto it = find_by_id(id);
+              if (it == end(stoppoints_))
+                    error::send("Invalid stoppoint id");
+              return **it;
+         }
+
+         template <class Stoppoint>
+         const Stoppoint& stoppoint_collection<Stoppoi
+               typename Stoppoint::id_type id) const {
+             return const_cast<stoppoint_collection*>
+         }
+   }
+
+We include the header for sdb::error. The non-const version finds
+the relevant iterator using find_by_id. If it returns the end iterator,
+the function throws an exception. Otherwise, it returns a
+reference to the found element. Note that we must dereference
+the iterator twice: once for the iterator and once for the
+std::unique_ptr it references. We implement the const version in
+
+terms of the non-const one following the approach we took
+previously.
+The get_by_address overloads follow the same pattern as the
+previous functions:
+
+   namespace sdb {
+       template <class Stoppoint>
+         Stoppoint& stoppoint_collection<Stoppoint>::g
+               virt_addr address) {
+             auto it = find_by_address(address);
+             if (it == end(stoppoints_))
+                 error::send("Stoppoint with given add
+             return **it;
+         }
+
+         template <class Stoppoint>
+         const Stoppoint& stoppoint_collection<Stoppoi
+               virt_addr address) const {
+             return const_cast<stoppoint_collection*>
+         }
+   }
+
+These are essentially the same as the get_by_id functions, but they
+call find_by_address instead of find_by_id. Next are the remove_by_*
+functions:
+
+   namespace sdb {
+       template <class Stoppoint>
+        void stoppoint_collection<Stoppoint>::remove_
+            auto it = find_by_id(id);
+              (**it).disable();
+              stoppoints_.erase(it);
+        }
+
+        template <class Stoppoint>
+        void stoppoint_collection<Stoppoint>::remove_
+            auto it = find_by_address(address);
+            (**it).disable();
+            stoppoints_.erase(it);
+        }
+   }
+
+For both functions, we find the relevant stop point, disable it so
+we don’t have any leaky stop points, and then erase them from
+the container.
+
+The last function we need is for_each. This loops over the stop
+points in the collection, calling the f parameter with each one:
+
+   namespace sdb {
+       template <class Stoppoint>
+    ➊ template <class F>
+       void stoppoint_collection<Stoppoint>::for_eac
+           for (auto& point : stoppoints_) {
+                  ➌ f(*point);
+              }
+        }
+        template <class Stoppoint>
+        template <class F>
+        void stoppoint_collection<Stoppoint>::for_eac
+              for (const auto& point : stoppoints_) {
+                  f(*point);
+              }
+        }
+   }
+
+Having two template lines in a row might look strange, but this is
+a how we define a member function template of a class
+template. The template argument for for_each ➊, F, is the type of
+the function to call once for every element in the collection. The
+for_each function takes a single regular function parameter ➋: the
+
+function to be called. By making for_each a template that takes the
+function type as a template parameter, we allow users to pass a
+regular function, a lambda, or some custom function object.
+
+The body of the function is simpler. It loops over all of the stop
+points in the collection, passing each one as an argument to the
+supplied function ➌. The const version is a copy and paste job.
+We can’t do the const_cast trick we did for the other functions
+because we don’t want to accidentally pass a non-const stop
+point to the given function and break correctness.
+
+These breakpoint site management functions involved a fair
+amount of work and hairy template code, but they’ll save us a
+lot of pain in the future. Let’s test the breakpoint site machinery
+to make sure we’re happy with it and then move on to actually
+setting some breakpoints.
+
+Testing Site Management
+
+In sdb/test/tests.cpp, we’ll test that we can create breakpoint
+sites and that their IDs increase as expected:
+
+   TEST_CASE("Can create breakpoint site", "[breakpo
+        auto proc = process::launch("targets/run_endl
+     ➊ auto& site = proc->create_breakpoint_site(vir
+        REQUIRE(site.address().addr() == 42);
+   }
+
+   TEST_CASE("Breakpoint site ids increase", "[break
+       auto proc = process::launch("targets/run_endl
+
+        auto& s1 = proc->create_breakpoint_site(virt_
+        REQUIRE(s1.address().addr() == 42);
+
+        auto& s2 = proc->create_breakpoint_site(virt_
+       ➋ REQUIRE(s2.id() == s1.id() + 1);
+
+         auto& s3 = proc->create_breakpoint_site(virt_
+         REQUIRE(s3.id() == s1.id() + 2);
+
+         auto& s4 = proc->create_breakpoint_site(virt_
+         REQUIRE(s4.id() == s1.id() + 3);
+   }
+
+First, we test the creation of breakpoint sites. Because we’re not
+enabling the breakpoints upon creation, it’s okay for us to write
+dummy values for the addresses. It’s also reasonable for
+create_breakpoint_site not to check for address validity, as the user
+
+may request a breakpoint on an address that isn’t yet writable.
+As such, we create a breakpoint site at address 42 ➊ and ensure
+that the created site has the correct address.
+
+To test that breakpoint site IDs increase, we create a series of
+breakpoints and ensure they’re allocated subsequent numbers.
+Recall that IDs are globally unique within a run of the program
+because we use a function-local static variable. We don’t want
+our tests to depend on the order in which they’re run, so we
+check the IDs relative to each other ➋ rather than considering
+absolute values. Next, we test searching for sites:
+TEST_CASE("Can find breakpoint site", "[breakpoin
+       auto proc = process::launch("targets/run_endl
+    ➊ const auto& cproc = proc;
+
+    ➋ proc->create_breakpoint_site(virt_addr{ 42 })
+      proc->create_breakpoint_site(virt_addr{ 43 }
+      proc->create_breakpoint_site(virt_addr{ 44 }
+      proc->create_breakpoint_site(virt_addr{ 45 }
+
+      auto& s1 = proc->breakpoint_sites().get_by_ad
+      REQUIRE(proc->breakpoint_sites().contains_add
+      REQUIRE(s1.address().addr() == 44);
+
+      auto& cs1 = cproc->breakpoint_sites().get_by_
+      REQUIRE(cproc->breakpoint_sites().contains_ad
+      REQUIRE(cs1.address().addr() == 44);
+
+      auto& s2 = proc->breakpoint_sites().get_by_id
+      REQUIRE(proc->breakpoint_sites().contains_id
+      REQUIRE(s2.id() == s1.id() + 1);
+      REQUIRE(s2.address().addr() == 45);
+
+      auto& cs2 = proc->breakpoint_sites().get_by_i
+      REQUIRE(cproc->breakpoint_sites().contains_id
+      REQUIRE(cs2.id() == cs1.id() + 1);
+      REQUIRE(cs2.address().addr() == 45);
+}
+   TEST_CASE("Cannot find breakpoint site", "[breakp
+       auto proc = process::launch("targets/run_endl
+        const auto& cproc = proc;
+
+        REQUIRE_THROWS_AS(
+              proc->breakpoint_sites().get_by_address(v
+        REQUIRE_THROWS_AS(proc->breakpoint_sites().ge
+        REQUIRE_THROWS_AS(
+            cproc->breakpoint_sites().get_by_address
+        REQUIRE_THROWS_AS(cproc->breakpoint_sites().g
+   }
+
+We write two tests: one for successful searches and one for
+unsuccessful searches. We also test const ➊ and non-const
+processes to ensure that both work. To test successful searches,
+we create a series of breakpoint sites ➋ and ensure that the
+get_by_* and contains_* member functions retrieve breakpoints
+
+with the expected IDs and addresses.
+
+To test for failure, we ensure that both get_by_* functions throw
+errors if we pass a breakpoint site ID that doesn’t correspond to
+a valid site. You can expand these tests if you’d like, but the ones
+shown here should be enough to give you a sense of security
+when you make changes to your codebase.
+Next, we test retrieving the size and emptiness of a site
+collection:
+
+   TEST_CASE("Breakpoint site list size and emptines
+       auto proc = process::launch("targets/run_endl
+        const auto& cproc = proc;
+
+        REQUIRE(proc->breakpoint_sites().empty());
+        REQUIRE(proc->breakpoint_sites().size() == 0
+        REQUIRE(cproc->breakpoint_sites().empty());
+        REQUIRE(cproc->breakpoint_sites().size() == 0
+
+        proc->create_breakpoint_site(virt_addr{ 42 }
+        REQUIRE(!proc->breakpoint_sites().empty());
+        REQUIRE(proc->breakpoint_sites().size() == 1
+        REQUIRE(!cproc->breakpoint_sites().empty());
+        REQUIRE(cproc->breakpoint_sites().size() ==
+
+        proc->create_breakpoint_site(virt_addr{ 43 }
+        REQUIRE(!proc->breakpoint_sites().empty());
+        REQUIRE(proc->breakpoint_sites().size() == 2
+        REQUIRE(!cproc->breakpoint_sites().empty());
+        REQUIRE(cproc->breakpoint_sites().size() == 2
+   }
+To test the size and empty functions, we first ensure that the size is
+zero and that the list is empty. We then create a couple of
+breakpoint sites and ensure that the size increments as
+expected and that empty now returns true.
+
+Finally, we test iteration, which requires a little more
+explaining:
+
+   TEST_CASE("Can iterate breakpoint sites", "[break
+       auto proc = process::launch("targets/run_endl
+       const auto& cproc = proc;
+
+         proc->create_breakpoint_site(virt_addr{ 42 }
+         proc->create_breakpoint_site(virt_addr{ 43 }
+         proc->create_breakpoint_site(virt_addr{ 44 }
+         proc->create_breakpoint_site(virt_addr{ 45 }
+
+         proc->breakpoint_sites().for_each(
+          ➊ [addr = 42](auto& site) mutable {
+                 REQUIRE(site.address().addr() == add
+              });
+
+         cproc->breakpoint_sites().for_each(
+             [addr = 42](auto& site) mutable {
+                 REQUIRE(site.address().addr() == add
+              });
+   }
+
+As in several of the other tests, we create a process and several
+breakpoint sites that we can then iterate over. To make the test
+concise, we use an advanced feature of C++ lambdas: init-
+captures ➊. This creates a capture with an initial value (42). We
+use the mutable keyword to let us change the value of this capture
+during iteration. (Otherwise, the capture would be declared
+const.) Using this feature, we increment the captured variable on
+
+each iteration and check against the site address. We do this for
+both const and non-const processes, as usual.
+
+All of these tests should pass.
+
+That was quite a lot of machinery to get through before we get
+to the real subject of our chapter. But really, it’s this kind of
+machinery and careful thought to the architecture of our
+program that will help us extend it without getting completely
+lost later on. It’s as much a part of building a debugger as
+setting a breakpoint is.
+
+Speaking of setting breakpoints, we can start doing this now by
+implementing the enable function.
+Enabling Breakpoints
+
+To enable a breakpoint site, we need to replace the instruction
+at the given address with an int3 instruction, which we encode
+as 0xcc. We must also save the replaced instruction so we can
+restore the code later; we don’t want to forget to execute the
+user’s code! In sdb/src/breakpoint_site.cpp, add the following:
+
+   #include <sys/ptrace.h>
+   #include <libsdb/breakpoint_site.hpp>
+   #include <libsdb/process.hpp>
+   #include <libsdb/error.hpp>
+
+   void sdb::breakpoint_site::enable() {
+       if (is_enabled_) return;
+
+        errno = 0;
+        std::uint64_t data = ptrace(PTRACE_PEEKDATA,
+        if (errno != 0) {
+            error::send_errno("Enabling breakpoint si
+        }
+
+        saved_data_ = static_cast<std::byte>(data & 0
+
+        std::uint64_t int3 = 0xcc;
+        std::uint64_t data_with_int3 = ((data & ~0xff
+         if (ptrace(PTRACE_POKEDATA, process_->pid(),
+             error::send_errno("Enabling breakpoint si
+         }
+
+         is_enabled_ = true;
+   }
+
+If the breakpoint site is already enabled, we do nothing.
+Carrying out the rest of the process on an already set
+breakpoint will likely lead to corrupted code.
+
+We read 64 bits of data from the address at which we need to
+set the breakpoint using PTRACE_PEEKDATA ➊, which communicates
+errors in a different way from most other ptrace requests: it
+merely sets errno rather than communicating an error via its
+return value. Therefore, to check for an error, we set errno to 0,
+then check whether ptrace set errno after the call. If so, then an
+error occurred, and we report it with error::send_errno.
+
+As we received 64 bits of data and need only the first 8 bits, we
+bitwise AND the data with 0xff ➋. We then need to replace the
+bits we just saved with 0xcc. First, we zero out those bits by
+bitwise ANDing the data with ~0xff; then, we bitwise OR it with
+0xcc to set the correct bits ➌. I’ll describe this bitwise operation
+
+in more detail shortly.
+Now that we’ve replaced the first byte of the data we read, we
+write it to memory using PTRACE_POKEDATA ➍, which is the opposite
+of PTRACE_PEEKDATA. Finally, we set is_enabled_ to true to track the state
+of the breakpoint site.
+
+Let’s now walk through the code’s bitwise operations in more
+detail. (Feel free to skip to the next section if the code already
+makes sense to you.) On my machine, the memory for the start
+of the main function of run_endlessly looks like this:
+
+   $ objdump -d run_endlessly
+   --snip--
+   0000000000001129 <main>:
+        1129:         f3 0f 1e fa                              endbr64
+        112d:         55                                       push    %
+        112e:         48 89 e5                                 mov     %
+   --snip--
+
+On the left side are memory addresses in hexadecimal. These
+tell us that 0x1129 is the start address of the function. In the
+middle, also in hexadecimal, are the bytes stored at those
+locations. On the right are the assembly instructions
+corresponding to those bytes. Because x64 is little-endian, we
+won’t get 0xf30f1efa554889e5 if we load this data into a 64-bit integer.
+The swapped bytes instead give us 0xe5894855fa1e0ff3.
+Our aim is to replace f3 with cc, first saving f3 aside. We get f3 by
+bitwise ANDing with 0xff. This looks like the following:
+
+          e5 89 48 55 fa 1e 0f f3
+   AND 00 00 00 00 00 00 00 ff
+   =      00 00 00 00 00 00 00 f3
+
+Here is the equivalent of the last 4 bytes of that calculation in
+binary:
+
+          11111010 00011110 0001111 11110011
+   AND 00000000 00000000 0000000 11111111
+   =      00000000 00000000 0000000 11110011
+
+To replace the last byte with cc, we bitwise AND the data with
+~0xff to zero those bits and then bitwise OR it with cc to set the
+
+correct bits. The ~ in ~0xff is the complement operator. It flips all
+of the bits in the integer; so, ~0xff for a 64-bit number is just a
+shorter way of writing 0xffffffffffffff00. (I had to triple-check that
+I used the correct number of f characters, so you can see why
+this syntax is useful.)
+
+In binary, this process for the last 4 bytes looks like the
+following:
+          1111010 00011110 0001111 11110011
+    AND 1111111 11111111 1111111 00000000
+    =     1111010 00011110 0001111 00000000
+    OR    0000000 00000000 0000000 11001100
+    =     1111010 00011110 0001111 11001100
+
+After this brief aside, let’s go back to implementing
+breakpoint_site:: disable.
+
+Disabling Breakpoints
+
+To disable a breakpoint site, we’ll implement a disable function.
+While easier to write than enable, it has a subtlety to it: since
+ptrace memory reads and writes operate on whole words rather
+
+than bytes, we can’t simply write the saved byte back to
+memory. We need to first read the word at the location to
+restore, then overwrite the low byte with the original data and
+write it back to memory:
+
+    void sdb::breakpoint_site::disable() {
+        if (!is_enabled_) return;
+
+          errno = 0;
+          std::uint64_t data = ptrace(PTRACE_PEEKDATA,
+          if (errno != 0) {
+              error::send_errno("Disabling breakpoint s
+         }
+
+         auto restored_data =
+               ((data & ~0xff) | static_cast<std::uint8_
+         if (ptrace(PTRACE_POKEDATA, process_->pid(),
+             error::send_errno("Disabling breakpoint s
+         }
+
+         is_enabled_ = false;
+   }
+
+Like in the enable function, we return immediately if the site is
+already disabled. We then read a word of data using
+PTRACE_PEEKDATA and check the return code. We restore the original
+
+instruction by masking the first byte with data & ~0xff and then
+bitwise ORing the result with the saved data. After this
+calculation, we write the result back to memory with
+PTRACE_POKEDATA and record that the site is disabled in the is_enabled_
+
+member.
+
+Adding Breakpoints to the Debugger
+
+Now we need to expose this breakpoint functionality to users of
+the debugger. In sdb/tools/sdb.cpp, add a new case to handle_command
+for handling breakpoint commands:
+   namespace {
+         void handle_command(
+              std::unique_ptr<sdb::process>& process,
+              std::string_view line) {
+              --snip--
+              else if (is_prefix(command, "breakpoint"
+                   handle_breakpoint_command(*process, a
+              }
+              --snip--
+         }
+   }
+
+This case defers to the handle_breakpoint_command function, which we’ll
+write next. We’ll also add commands for listing, setting,
+enabling, disabling, and deleting breakpoints, in that order.
+
+Listing
+
+An operation to list breakpoints should output something like
+this:
+
+   Current breakpoints:
+   1: address = 0xcafe, disabled
+   2: address = 0xacab, enabled
+Each entry has the site’s ID, followed by its address and whether
+it’s enabled. Let’s implement breakpoint listing in
+src/tools/sdb.cpp:
+
+   namespace {
+       void handle_breakpoint_command(sdb::process&
+                const std::vector<std::string>& args) {
+              if (args.size() < 2) {
+                  print_help({ "help", "breakpoint" })
+                  return;
+              }
+
+              auto command = args[1];
+
+              if (is_prefix(command, "list")) {
+               ➊ if (process.breakpoint_sites().empty(
+                      fmt::print("No breakpoints set\n
+                  }
+               ➋ else {
+                         fmt::print("Current breakpoints:\
+                         process.breakpoint_sites().for_ea
+                             fmt::print(➍"{}: address = {
+                                 site.id(), site.address(
+                                 site.is_enabled() ? "enab
+                               });
+                     }
+                     return;
+              }
+          }
+   }
+
+We start, as usual, by printing a help message if the user
+provides an incorrect number of arguments. We then
+implement the list subcommand. If no breakpoints are set, we
+print a message to that effect ➊. Otherwise, we print the list in
+the format I specified earlier ➋. We pass a lambda to for_each to
+call for each breakpoint site, printing the information for that
+site ➌.
+
+The format string for the site information ➍ has a fair bit going
+on. The {} characters are placeholders to fill with the arguments
+we pass to fmt::print. The first placeholder corresponds to the
+first additional argument, the second placeholder to the second,
+and so on. The {:#x} specifier formats the number as a lowercase
+hexadecimal number with leading 0x. The blank {} specifiers
+format the argument using a default format that depends on
+the argument’s type. This will print the site ID as an integer and
+the enabled/disabled text as a string.
+
+For the rest of the breakpoint subcommands, we’ll have to
+parse strings to integers. For example, breakpoint set should take
+an address written in hexadecimal. The breakpoint enable command
+should take a site ID as an integer.
+
+Setting
+
+Armed with the to_integral helper we wrote in the last chapter,
+we can implement breakpoint setting:
+
+   namespace {
+     void handle_breakpoint_command(sdb::process& p
+             const std::vector<std::string>& args) {
+           --snip--
+           if (args.size() < 3) {
+                print_help({ "help", "breakpoint" })
+                return;
+           }
+
+              if (is_prefix(command, "set")) {
+                  auto address = sdb::to_integral<std:
+
+                   if (!address) {
+                       fmt::print(stderr,
+                           "Breakpoint command expects a
+                            "hexadecimal, prefixed with
+                        return;
+                   }
+                   process.create_breakpoint_site(sdb::v
+                   return;
+               }
+        }
+   }
+
+All breakpoint subcommands other than list take an additional
+argument, so we start by ensuring that the user passed at least
+three arguments (“breakpoint,” the subcommand, and the
+subcommand arguments).
+
+If the subcommand passed was set, we parse the given address
+using the to_integral helper ➊ we wrote earlier. We pass 16 to
+to_integral to make it parse hexadecimal input. If a parsing error
+
+occurs, we report it to the user and return. Otherwise, we
+create a breakpoint site at the parsed address, enable it, and
+then return.
+
+Enabling, Disabling, and Deleting
+
+The last three commands, to enable, disable, and delete
+breakpoint sites, are more straightforward:
+
+   namespace {
+     void handle_breakpoint_command(sdb::process& p
+                  const std::vector<std::string>& args) {
+                --snip--
+                auto id = sdb::to_integral<sdb::breakpoin
+                if (!id) {
+                    std::cerr << "Command expects breakpo
+                    return;
+                }
+
+                if (is_prefix(command, "enable")) {
+                    process.breakpoint_sites().get_by_id
+                }
+                else if (is_prefix(command, "disable")) {
+                    process.breakpoint_sites().get_by_id
+                }
+                else if (is_prefix(command, "delete")) {
+                    process.breakpoint_sites().remove_by_
+                }
+          }
+    }
+
+The three commands all take a breakpoint site ID as their
+argument, so we parse this, returning an error if it can’t be
+parsed. We enable or disable breakpoints by calling get_by_id to
+retrieve the site and then calling either enable or disable,
+depending on the command passed. To delete the site, we call
+remove_by_id.
+Providing Help
+
+Let’s also add a help message to print_help to remind you of how
+to work with breakpoints:
+
+         --snip--
+         if (args.size() == 1) {
+                  std::cerr << R"(Available commands:
+         breakpoint - Commands for operating on break
+         continue     - Resume the process
+         register     - Commands for operating on regis
+   )";
+         }
+         --snip--
+         else if (is_prefix(args[1], "breakpoint")) {
+              std::cerr << R"(Available commands:
+         list
+         delete <id>
+         disable <id>
+         enable <id>
+         set <address>
+   )";
+         }
+         --snip--
+The format you use here doesn’t really matter; it’s mostly to
+help you remember the command syntax down the road, after
+you’ve implemented many more functions. I used raw string
+literals to avoid having to escape the newlines.
+
+Determining Where to Set Breakpoints
+
+I’m sure you’re itching to test your breakpoints. But the ability
+to set a breakpoint isn’t very useful if you don’t know what
+address to set it at. In Chapter 14, we’ll add the ability to set
+breakpoints on function names or source code lines, but for
+now, we can discover the site address manually.
+
+One way to test the debugger is to write a function that prints
+“Hello, world!” and set a breakpoint on the function call. If we
+launch the inferior, it should halt on entry. If we then resume
+execution, we should see the process stop without printing
+anything because it will have hit the breakpoint before printing
+a message.
+
+To perform this test, we need a binary to debug and an address
+at which to set the breakpoint. Create an
+sdb/test/targets/hello_sdb.cpp file with these contents:
+   #include <cstdio>
+
+   int main() {
+        std::puts("Hello, sdb!");
+   }
+
+Remember to add the file to sdb/test/targets/CMakeLists.txt:
+
+   --snip--
+   add_executable(hello_sdb hello_sdb.cpp)
+
+Now run a build.
+
+To find the address we need, we can use the handy objdump
+utility, a program that is likely already installed on your system
+and can display information about object files. Open a shell and
+execute objdump -d hello_sdb. You should see a representation of the
+binary data for your code, alongside the disassembled
+instructions that correspond to that data.
+
+Somewhere in there, you’ll find the code for the main function.
+Mine looks like this:
+
+   $ objdump -d hello_sdb
+   --snip--
+   0000000000001149 <main>:
+       1149:       f3 0f 1e fa                             endbr64
+         114d:            55                               push      %
+         114e:            48 89 e5                         mov       %
+         1151:            48 8d 05 ac 0e 00 00             lea       0x
+         1158:            48 89 c7                         mov       %
+    ➊ 115b:              e8 f0 fe ff ff                    call    10
+        1160:             b8 00 00 00 00                    mov     $0
+        1165:             5d                                pop     %
+        1166:             c3                                ret
+   --snip--
+
+On the left side are memory addresses in hexadecimal. These
+tell us that 0x1149 is the start address of the function. In the
+middle, also in hexadecimal, are the bytes stored at those
+locations. On the right side are the assembly instructions
+corresponding to those bytes. Here, we can see that the call to
+puts starts at address 0x115b ➊.
+
+So, can we just set a breakpoint on 0x115b? Unfortunately, it’s a bit
+more complicated than that.
+
+Position-Independent Executables
+
+Today, many compilers produce position-independent
+executables (PIEs) by default. These executables don’t expect to
+be loaded at a specific memory address; they can be loaded
+anywhere and still work. As such, memory addresses within
+PIEs aren’t absolute virtual addresses, they’re offsets from the
+start of the final load address of the binary. In other words,
+0x115b doesn’t mean “virtual address 0x115b,” it means “0x115b bytes
+
+away from where the binary was loaded.” We’ll refer to these
+addresses as file addresses. We’ll also sometimes need to refer to
+offsets from the start of the object file on disk, which we’ll call
+file offsets. File offsets and file addresses are not necessarily the
+same, because different parts of the ELF file may be mapped
+into different areas of virtual memory.
+
+PIEs exist to support address space layout randomization (ASLR),
+a protection against malicious code that takes advantage of
+known virtual addresses to attack programs. By randomizing
+the virtual addresses at which a program is loaded, the system
+keeps attackers from making predictions that could help them
+compromise it.
+
+You can check whether a given executable is a PIE by running
+file on it from a command line. For my hello_sdb executable, I
+get this:
+
+   $ file test/targets/hello_sdb
+   test/targets/hello_sdb: ELF 64-bit LSB pie execut
+   dynamically linked, interpreter /lib64/ld-linux-x
+   BuildID[sha1]=8a16c5368b08a5763a9820dd330d8817bd7
+   with debug_info, not stripped
+
+The important part here is “ELF 64-bit LSB pie executable,”
+which tells us we’re dealing with a PIE. Your version of the file
+program may instead say “ELF 64-bit LSB shared object,” which
+is equivalent.
+
+To deal with PIEs in the debugger, we have two options. First,
+we could compile our test programs with -no-pie to force them to
+commit to absolute load addresses. Second, we could parse
+information in the procfs to find the real load address of the
+executable.
+
+Option one isn’t very appealing, as it would limit the set of
+programs the debugger could debug. Option two, or some
+equivalent of it, is the choice that production debuggers take.
+We’ll also disable ASLR for processes we launch ourselves so
+the addresses remain stable between program runs, making it
+easier to write tests.
+
+Disabling ASLR is quite easy. You can disable ASLR globally by
+running echo 0 > /proc/sys/kernel/randomize_va_space on a command line,
+but it’s better to do it on a per-process basis. The personality
+syscall allows you to change some execution properties for
+processes, like whether they’re limited to 32-bit addresses or
+whether ASLR is enabled. We can call this right after we call fork
+in sdb::process::launch in sdb/src/process.cpp:
+
+     #include <sys/personality.h>
+
+     std::unique_ptr<process> process::launch
+     (std::filesystem::path path, bool debug) {
+         --snip--
+         if (pid == 0) {
+               personality(ADDR_NO_RANDOMIZE);
+               --snip--
+         }
+         --snip--
+     }
+
+Passing the ADDR_NO_RANDOMIZE option to personality disables address
+space randomization for the current process. Be sure to call this
+function in the child process, where the PID returned by fork is
+0.
+
+We can find information about where the system loaded
+programs in memory at /proc/<pid>/maps. For me, the start of
+this file looks like this when running with ASLR enabled:
+   556e2e531000-556e2e532000 r--p 00000000 08:10 129
+   556e2e532000-556e2e533000 r-xp 00001000 08:10 129
+   556e2e533000-556e2e534000 r--p 00002000 08:10 129
+   556e2e534000-556e2e535000 r--p 00002000 08:10 129
+   556e2e535000-556e2e536000 rw-p 00003000 08:10 129
+
+Each line is a region of mapped memory, and they correspond
+to different segments of the object file. The first part is the
+address range, followed by the read/write/execute permissions
+of the region. Next comes the file offset of the segment, some
+more detailed information about where the file is on disk, and
+the path to the file. From the permissions, you can kind of guess
+what the different segments are. The second one, with
+executable (x) permissions, is the code. The last segment, with
+writable (w) permissions, contains non-constant global
+variables.
+
+Due to ASLR, running the program again produces different
+addresses. However, if you turn off ASLR, you should get the
+same addresses every time you run the program. This stability
+makes the binary much easier to deal with when testing the
+debugger.
+We’ll add one more bit of help before we try to actually set a
+breakpoint: making sdb print the PIDs of programs it launches.
+In sdb/tools/sdb.cpp, add the following:
+
+        std::unique_ptr<sdb::process> attach(int argc
+            --snip--
+            // Passing program name
+            else {
+                 auto program_path = argv[1];
+                 auto proc = sdb::process::launch(prog
+                 fmt::print("Launched process with PID
+                 return proc;
+            }
+        }
+
+We’re finally ready to test whether the breakpoint code works.
+
+Breakpoint Tests
+
+Let’s use the debugger to set a breakpoint on the “Hello, world”
+program.
+
+The algorithm for finding where to set a breakpoint depends on
+whether the program is compiled as a PIE or a non-PIE. The PIE
+case is a bit more involved, but we’ll follow that algorithm here.
+We’ll force all test executables to compile as PIEs, in case your
+compiler doesn’t do this by default. We’ll also force them to
+compile without optimizations and with debug information,
+even in release CMake builds, as we’ll need this information
+when we start parsing DWARF in Chapter 12. We can do this by
+adding CMake functions in sdb/test/targets/CMakeLists.txt.
+Rewrite this file like so:
+
+   ➊ function(add_test_cpp_target name)
+         add_executable(${name} "${name}.cpp")
+         target_compile_options(${name} PRIVATE -g
+      ➋ add_dependencies(tests ${name})
+     endfunction()
+
+      function(add_test_asm_target name)
+          add_executable(${name} "${name}.s")
+          target_compile_options(${name} PRIVATE -pie
+          add_dependencies(tests ${name})
+      endfunction()
+
+      add_test_cpp_target(run_endlessly)
+      add_test_cpp_target(end_immediately)
+      add_test_cpp_target(hello_sdb)
+
+      add_test_asm_target(reg_write)
+      add_test_asm_target(reg_read)
+First, we define a CMake function with the name add_test_cpp_target
+➊, which takes a single parameter called name. It calls add_executable
+to create a target with the given name that has a single source
+file whose path is the given name plus .cpp. We add three flags
+to the target compile options: -g for generating debug info, -O0
+for disabling optimizations (note the capital letter O followed by
+the number 0), and -pie for generating a PIE. We also call
+add_dependencies to ensure that whenever we build the tests target,
+
+we also build the test programs ➋.
+
+The add_test_asm_target function is much the same, but it affects
+assembly sources. We use the .s suffix when creating the
+executable. The -g and -O0 flags aren’t necessary because we
+won’t use debug information for assembly code and the
+assembler doesn’t carry out optimizations. Finally, we call
+add_test_cpp_target or add_test_asm_target for each of the existing test
+
+targets to build them.
+
+Now that we’ve built the test programs, we move to the next
+step of setting a breakpoint: finding the address on which to set
+it. We can find the address of the call instruction in the main
+function of hello_sdb using objdump -d hello_sdb. This is a file
+address rather than a virtual address because we built the
+program as a PIE. In my case, the file address is 0x115b:
+   115b:            e8 f0 fe ff ff                   call      1050 <
+
+For me, the .text section is mapped into memory at the same
+offset at which it exists in the ELF file. We can see this with the
+readelf utility:
+
+   $ readelf -S test/targets/hello_sdb
+   There are 36 section headers, starting at offset
+
+   Section Headers:
+     [Nr] Name                        Type                   Address
+            Size                      EntSize                Flags
+   --snip--
+     [16] .text                       PROGBITS         0000000
+            0000000000000107          0000000000000000 AX
+   --snip--
+
+Because the Address and Offset fields are the same, file addresses
+and file offsets are equivalent for the .text section. If they’re
+different for your executable, you’ll need to subtract the file
+offset from the file address to calculate the section load bias for
+that section and subtract this load bias from the file address of
+the call instruction to calculate where that instruction lives
+inside the ELF file.
+We’ll use the procfs to find the load address of the instruction.
+Run sdb on hello_sdb. It should launch the program, halt it on
+entry, and print the PID of the inferior:
+
+   $ tools/sdb test/targets/hello_sdb
+   Launched process with PID 11786
+   sdb>
+
+Open a new terminal or press CTRL-Z to put sdb in the
+background. Read the memory map file for the process in the
+procfs:
+
+   $ cat /proc/11786/maps
+   555555554000-555555555000           r--p 00000000 08:10 12
+   555555555000-555555556000           r-xp 00001000 08:10 12
+   555555556000-555555557000           r--p 00002000 08:10 12
+   555555557000-555555558000           r--p 00002000 08:10 12
+   555555558000-555555559000           rw-p 00003000 08:10 12
+
+We’re looking for an instruction, and we know it will be in the
+second entry because it’s the only one marked as executable (x).
+However, you could also identify it by looking at the file offset in
+column three and the mapped ranges in column one.
+The second entry corresponds to file offset 0x1000. By subtracting
+the low range (0x555555555000) from the high range (0x555555556000),
+we can see that it spans 0x1000 bytes. This means that it covers
+the file offset regions 0x1000 through 0x2000, and the address we’re
+looking for (0x115b) is within that range.
+
+We calculate the load address of the instruction by adding the
+load address of the segment to the instruction’s file address,
+then subtracting the segment’s start file address. In this case,
+this is 0x115b + 0x555555555000 - 0x1000 = 0x55555555515b. This is where we
+need to set the breakpoint.
+
+Now set the breakpoint and continue the program:
+
+   sdb> break set 0x55555555515b
+   sdb> c
+   Process 344 stopped with signal TRAP at 0x5555555
+   sdb>
+
+If this worked correctly, you should see no output because the
+program should have stopped before the call. Congratulations!
+You’ve just set a breakpoint.
+
+Continuing
+You might notice that if you continue from the breakpoint, you
+hit an illegal instruction. Don’t worry, you’re not in trouble, it’s
+just because the CPU executed the int3 instruction and is now
+trying to execute the remainder of the bytes of the instruction
+we scribbled over. These bytes don’t form a valid instruction, so
+the operating system sends the process a SIGILL.
+
+We could bypass this issue by disabling the breakpoint, moving
+the program counter back 1 byte, and then continuing, but this
+would cause problems if we should hit the same breakpoint
+more than once. Instead, the solution is to set the program
+counter back by 1 byte if we stop at a breakpoint. Then, to
+resume the process, we can disable the breakpoint, step over a
+single instruction, re-enable the breakpoint, and resume.
+
+In order to move the program counter back, we should add
+another little helper function to sdb/include/libsdb/process.hpp
+that allows us to set the program counter:
+
+   namespace sdb {
+       class process {
+       public:
+           --snip--
+           void set_pc(virt_addr address) {
+                get_registers().write_by_id(register_
+           }
+              --snip--
+        };
+   }
+
+This function writes the given address to the rip register.
+
+Next, if the process stopped due to a SIGTRAP and the address 1
+byte below the program counter is an enabled breakpoint, we
+should fix up the program counter to point to the breakpoint.
+Add the following to wait_on_signal in sdb/src/process.cpp:
+
+        --snip--
+        if (is_attached_ and state_ == process_state
+             read_all_registers();
+
+              auto instr_begin = get_pc() - 1;
+              if (reason.info == SIGTRAP and
+                  breakpoint_sites_.enabled_stoppoint_a
+                  set_pc(instr_begin);
+              }
+        }
+        --snip--
+
+Finally, when we resume the process, if the process is currently
+stopped at a breakpoint, we should step over the breakpoint.
+Add the following code to the beginning of sdb/src/process.cpp:
+
+   void sdb::process::resume() {
+         auto pc = get_pc();
+         if (breakpoint_sites_.enabled_stoppoint_at_ad
+              auto& bp = breakpoint_sites_.get_by_addre
+              bp.disable();
+              if (ptrace(PTRACE_SINGLESTEP, pid_, nullp
+                  error::send_errno("Failed to single s
+              }
+              int wait_status;
+              if (waitpid(pid_, &wait_status, 0) < 0) {
+                  error::send_errno("waitpid failed");
+              }
+              bp.enable();
+         }
+         --snip--
+   }
+
+First, we check if we’re at an enabled breakpoint. If so, we
+disable it and use PTRACE_SINGLESTEP to execute a single instruction.
+We call waitpid to wait until the inferior has executed the
+instruction and halted, and then we reenable the breakpoint
+before continuing the process and setting the state to running.
+Now you should be able to set the same breakpoint you did in
+your initial test, hit it, continue, and see the process print Hello,
+sdb! and then exit:
+
+   $ tools/sdb test/targets/hello_sdb
+   Launched process with PID 1408
+   sdb> break set 0x55555555515b
+   sdb> c
+   Process 1408 stopped with signal TRAP at 0x555555
+   sdb> c
+   Hello, sdb!
+   Process 1408 exited with status 0
+   sdb>
+
+As we’ve just discovered PTRACE_SINGLESTEP, let’s also use it to add
+support for stepping over machine instructions to the
+debugger’s command line. Add a step_instruction function to
+sdb/include/libsdb/process.hpp:
+
+   namespace sdb {
+         class process {
+         public:
+              --snip--
+              sdb::stop_reason step_instruction();
+              --snip--
+        };
+   }
+
+The function returns a stop reason that describes why the
+process halted after stepping. For example, it could step directly
+into a breakpoint, in which case the breakpoint stop should be
+returned.
+
+Implement the function in sdb/src/process.cpp. If a breakpoint is
+enabled at the program counter, we should disable it before
+stepping and enable it afterward:
+
+   sdb::stop_reason sdb::process::step_instruction(
+       std::optional<breakpoint_site*> to_reenable;
+       auto pc = get_pc();
+       if (breakpoint_sites_.enabled_stoppoint_at_ad
+        ➊ auto& bp = breakpoint_sites_.get_by_addre
+             bp.disable();
+             to_reenable = &bp;
+        }
+
+        if (ptrace(PTRACE_SINGLESTEP, pid_, nullptr,
+            error::send_errno("Could not single step
+        }
+        auto reason = wait_on_signal();
+         if (to_reenable) {
+             to_reenable.value()->enable();
+         }
+         return reason;
+   }
+
+This function is very similar to the code we wrote for
+continuing the process. We declare a std::optional<breakpoint_site*> to
+track the breakpoint site at which the process is currently
+stopped, if there is one. If there is indeed a breakpoint at the
+current program counter location, we retrieve it, disable it, and
+store a pointer to it for re-enabling later. Note that we must
+declare bp as a reference ➊ so that we can safely store a pointer
+to it in a variable declared in the enclosing scope.
+
+After potentially disabling a breakpoint, we call PTRACE_SINGLESTEP to
+step over an instruction and wait_on_signal to wait until that is
+completed and retrieve a reason for stopping. If there is a
+breakpoint to enable, we enable it, then finally return the stop
+reason to the caller.
+
+Next, we’ll add a stepping command. We’ll write a simple step
+command for now and expand on it when we add support for
+stepping at the source code level in Chapter 14. The command
+should print the stop reason, just like continue. In
+sdb/tools/sdb.cpp, add the following:
+
+   namespace {
+       void handle_command(std::unique_ptr<sdb::proc
+                 std::string_view line) {
+               --snip--
+               else if (is_prefix(command, "step")) {
+                    auto reason = process->step_instructi
+                    print_stop_reason(*process, reason);
+               }
+               --snip--
+         }
+   }
+
+We add a “step” branch to handle_command that steps over an
+instruction, then prints the stop reason. We’ll also add some
+help text to print_help:
+
+                  std::cerr << R"(Available commands:
+         breakpoint - Commands for operating on break
+         continue     - Resume the process
+         register     - Commands for operating on regis
+         step         - Step over a single instruction
+   )";
+Let’s move on to testing.
+
+Automated Testing
+
+We performed a lot of manual work to derive the correct
+address on which to set a breakpoint. We should find a way to
+automate this process so we can include it in our test suite. We
+want to implement the following algorithm:
+
+1. Find the file address at which we’d like to set a breakpoint.
+2. Find the section load bias for the section that contains that
+  file address.
+3. Convert the breakpoint file address to a file offset using the
+  section load bias.
+4. Calculate the load address of that file offset in the current
+  process.
+5. Set a breakpoint on the load address.
+6. Continue, and ensure that the process stops at the
+  breakpoint.
+7. Continue again, and ensure the process exits with the desired
+  output.
+
+Let’s start by implementing a function for finding the section
+load bias for a given file address. In Chapter 11, we’ll deal with
+file addresses, file offsets, and virtual addresses in a more
+robust way, but for now, we’ll just parse the output of readelf.
+Add the following to sdb/test/tests.cpp:
+
+   namespace {
+       std::int64_t get_section_load_bias(
+                std::filesystem::path path, Elf64_Addr
+              auto command = std::string("readelf -WS
+              auto pipe = popen(command.c_str(), "r");
+
+              std::regex text_regex(R"(PROGBITS\s+(\w+
+              char* line = nullptr;
+              std::size_t len = 0;
+              while (getline(&line, &len, pipe) != -1)
+                  std::cmatch groups;
+                  if (std::regex_search(line, groups, t
+                      auto address = std::stol(groups[
+                      auto offset = std::stol(groups[2
+                      auto size = std::stol(groups[3],
+                      if (address <= file_address and
+                          file_address < (address + siz
+                          free(line);
+                          pclose(pipe);
+                          return address - offset;
+                      }
+                   }
+                   free(line);
+                   line = nullptr;
+              }
+              pclose(pipe);
+              sdb::error::send("Could not find section
+         }
+   }
+
+The command we’ll execute is readelf -WS <program name>, which
+prints out the section headers with the entry for each section on
+a single line. We use popen to run this command and open a pipe
+from which we can read its output. We create a regular
+expression, which I’ll explain in detail shortly, that captures the
+file address, file offset, and size of the section. We then loop
+over the lines of the process output using the getline function
+from the C standard library, because the C++ one operates on
+streams rather than file descriptors. This function dynamically
+allocates a string that stores a line and stores it in the first
+argument. We match our regular expression against this line,
+and if it matches, we parse the address, offset, and size of the
+section into integers. If the given file address lies in the range of
+the section address plus the section size, we clean up and
+return the section load bias. If not, we free the line and set line
+to nullptr, because otherwise getline will try to reuse the freed
+memory. If we don’t find a matching section, we throw an
+exception.
+Let’s look at that regular expression. This is the text that we’re
+trying to match:
+
+      [16] .text                      PROGBITS              00000000
+
+The PROGBITS part of the regular expression matches that string in
+the line. The \s+ parts match one or more pieces of whitespace.
+The (\w+) parts match one or more alphanumeric characters and
+capture them in a capture group, due to the enclosing
+parentheses. As such, the three capture groups will capture the
+three whitespace-separated numbers that succeed PROGBITS.
+
+Now we can find the file address at which to set the breakpoint
+in the binary. Rather than automating disassembling the
+machine code and locating the call instruction, we’ll get the file
+address of the binary’s entry point: the function called at the
+start of the program. On Linux, this is called _start, and it does
+some environment setup before eventually calling the main
+function that the user defines. Once we have the file address,
+we’ll subtract the section load bias to get the file offset of the
+entry point. Again, in Chapter 11, we’ll write our own ELF
+parser that can retrieve the entry point, but for now, we can
+write a small procedure that retrieves the entry point file
+address using the elf.h header that comes with Linux. Add the
+following to sdb/test/tests.cpp:
+
+   #include <elf.h>
+
+   namespace {
+       std::int64_t get_entry_point_offset(std::file
+           std::ifstream elf_file(path);
+
+              Elf64_Ehdr header;
+              elf_file.read(reinterpret_cast<char*>(&he
+
+              auto entry_file_address = header.e_entry
+              auto load_bias = get_section_load_bias(pa
+              return entry_file_address - load_bias;
+         }
+   }
+
+First, we open the given file and ready it for reading by creating
+a std:: ifstream. The Elf64_Ehdr type defines the binary format for
+the ELF header, which gives metadata about the object file, such
+as its entry point. We declare an instance of one and then read
+the data from the beginning of the object file into it using the
+std::istream::read function. Note that we first need to cast the
+
+address of header into a char* because this is what the read function
+expects. The e_entry field gives us the entry point file address for
+the object file. We subtract the section load bias for the relevant
+section to compute the entry point file offset and return it.
+
+So far, so good. To get the load address, we can do some simple
+parsing of the /proc/<pid>/maps file. Refer to “Position-
+Independent Executables” on page 151 if you need a refresher
+on what this looks like.
+
+In Chapter 11, we’ll implement a more robust version of this
+parsing, but for now, we can write a brittle solution that gets
+just the information we want. We’ll rely on the fact that our
+binary’s entries will appear first in the file and that they have
+only a single segment marked as executable:
+
+   #include <regex>
+
+   namespace {
+       virt_addr get_load_address(pid_t pid, std::in
+           std::ifstream maps("/proc/" + std::to_st
+          ➊ std::regex map_regex (R"((\w+)-\w+ ..(.).
+
+              std::string data;
+              while (std::getline(maps, data)) {
+                  std::smatch groups;
+                  std::regex_search(data, groups, map_
+                    if (groups[2] == 'x') {
+                          auto low_range = std::stol(groups
+                          auto file_offset = std::stol(grou
+                          return virt_addr(offset - file_of
+                    }
+               }
+               sdb::error::send("Could not find load add
+         }
+   }
+
+We open the memory map file for the given PID as a std::ifstream
+and create a regular expression (which I’ll explain in detail
+soon) that extracts the low address range, the executable flag,
+and the file offset from the line of text. We then use std::getline to
+loop over the lines of text in that file. We call the std::regex_search
+function to match the line against the regex we wrote and
+populate groups with the extracted data. We’re looking for the
+line that is marked as executable, so the second matched group
+should be x rather than a dot. If so, we calculate the load
+address of the file offset by subtracting the file offset of the
+loaded segment within the original object file and adding the
+low virtual address of the mapped segment.
+Again, let’s break down the regex ➊. We want to match this part
+of the text:
+
+   555555555000-555555556000            r-xp 00001000
+
+We handle the low range with (\w+). Next is -, which just matches
+the - in the text. The sequence \w+ matches one or more
+characters but doesn’t capture it, as we don’t care about this
+part of the text. After this, ..(.). matches four characters,
+capturing the third one. This extracts whether the segment is
+executable. Finally, we capture the file offset with (\w+) again.
+
+Now we can hook the get_load_address function into our test. We’ll
+set a breakpoint on entry, continue, and make sure it’s hit. Then
+we’ll continue from the breakpoint and make sure that the
+process exited normally and printed “Hello, sdb!”:
+
+   TEST_CASE("Breakpoint on address works", "[breakp
+       bool close_on_exec = false;
+       sdb::pipe channel(close_on_exec);
+
+         auto proc = process::launch("targets/hello_sd
+         channel.close_write();
+
+         auto offset = get_entry_point_offset("targets
+        auto load_address = get_load_address(proc->pi
+
+        proc->create_breakpoint_site(load_address).en
+        proc->resume();
+        auto reason = proc->wait_on_signal();
+
+        REQUIRE(reason.reason == process_state::stopp
+        REQUIRE(reason.info == SIGTRAP);
+        REQUIRE(proc->get_pc() == load_address);
+
+        proc->resume();
+        reason = proc->wait_on_signal();
+
+        REQUIRE(reason.reason == process_state::exite
+        REQUIRE(reason.info == 0);
+
+        auto data = channel.read();
+        REQUIRE(to_string_view(data) == "Hello, sdb!\
+   }
+
+We create a pipe so we can read the output of the program, then
+launch the process. Next, we get the file offset of the entry point
+for hello_sdb from the ELF file and calculate its load address in
+the current process. We then set a breakpoint on that load
+address and resume. This should cause the process to stop due
+to a SIGTRAP, with the program counter set to the address on
+which we enabled a breakpoint, so we check for all of those
+cases. Finally, we resume again and ensure the process exited
+and printed out “Hello, sdb!”
+
+Let’s also test that we can remove breakpoint sites from the
+process’s collection:
+
+   TEST_CASE("Can remove breakpoint sites", "[breakp
+       auto proc = process::launch("targets/run_endl
+       auto& site = proc->create_breakpoint_site(vi
+       proc->create_breakpoint_site(virt_addr{ 43 }
+       REQUIRE(proc->breakpoint_sites().size() == 2
+
+        proc->breakpoint_sites().remove_by_id(site.id
+        proc->breakpoint_sites().remove_by_address(vi
+        REQUIRE(proc->breakpoint_sites().empty());
+   }
+
+We create two breakpoint sites and then remove them using the
+two remove_by_* functions, ensuring that we end up with an empty
+list. Run the tests; they should pass.
+
+Summary
+In this chapter, you learned how software breakpoints work.
+You extended the debugger library with a type
+(sdb::breakpoint_site) for representing physical breakpoints and
+added management functions to the sdb::process type. To
+sdb::breakpoint_site, you added the power of setting and disabling
+
+software breakpoints.
+
+You also learned about position-independent executables (PIEs)
+and address space layout randomization (ASLR), and how they
+can make locating the virtual addresses of a loaded program
+difficult. In spite of these challenges, you implemented an
+algorithm for locating a binary instruction inside of a loaded
+program and setting a breakpoint on it. You automated this
+process and added it to your test suite. You also added support
+for single-stepping over single machine instructions.
+
+In the next chapter, you’ll build upon this work by adding
+support for reading and writing memory and disassembling the
+code of the inferior.
+
+Check Your Knowledge
+
+1.
+1. What is the difference between a hardware breakpoint and a
+  software breakpoint? What are the benefits of each?
+2.
+2. Which ptrace commands can we use for reading and writing
+  memory?
+3.
+3. What instruction triggers software breakpoints on x86?
+4.
+4. How can we check whether an executable is position-
+  independent?
+5.
+5. How can we disable ASLR?
+6.
+6. Which part of the procfs contains information about memory
+  maps for a process?

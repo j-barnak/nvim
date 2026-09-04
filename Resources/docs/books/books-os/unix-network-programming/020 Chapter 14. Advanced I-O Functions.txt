@@ -1,0 +1,1351 @@
+
+Chapter 14. Advanced I/O Functions
+       Section 14.1.?Introduction
+
+       Section 14.2.?Socket Timeouts
+
+       Section 14.3.?recv and send Functions
+
+       Section 14.4.?readv and writev Functions
+
+       Section 14.5.?recvmsg and sendmsg Functions
+
+       Section 14.6.?Ancillary Data
+
+       Section 14.7.?How Much Data Is Queued?
+
+       Section 14.8.?Sockets and Standard I/O
+
+       Section 14.9.?Advanced Polling
+
+       Section 14.10.?Summary
+
+       Exercises
+
+                                                                                Page 458
+
+14.1 Introduction
+This chapter covers a variety of functions and techniques that we lump into the category of
+"advanced I/O." First is setting a timeout on an I/O operation, which can be done in three
+different ways. Next are three more variations on the read and write functions: recv and
+send, which allow a fourth argument that contains flags from the process to the kernel,
+readv and writev, which let us specify a vector of buffers to input into or output from, and
+recvmsg and sendmsg, which combine all the features from the other I/O functions along
+with the new capability of receiving and sending ancillary data.
+
+We also consider how to determine the amount of data in the socket receive buffer, how to
+use the C standard I/O library with sockets, and we discuss some advanced ways to wait
+for events.
+
+                                                                                               Page 459
+
+14.2 Socket Timeouts
+There are three ways to place a timeout on an I/O operation involving a socket:
+
+     1.   Call alarm, which generates the SIGALRM signal when the specified time has expired.
+          This involves signal handling, which can differ from one implementation to the next,
+          and it may interfere with other existing calls to alarm in the process.
+
+     2.   Block waiting for I/O in select, which has a time limit built-in, instead of blocking
+          in a call to read or write.
+
+     3.   Use the newer SO_RCVTIMEO and SO_SNDTIMEO socket options. The problem with this
+          approach is that not all implementations support these two socket options.
+
+All three techniques work with input and output operations (e.g., read, write, and other
+variations such as recvfrom and sendto), but we would also like a technique that we can
+use with connect, since a TCP connect can take a long time to time out (typically 75
+seconds). select can be used to place a timeout on connect only when the socket is in a
+nonblocking mode (which we show in Section 16.3), and the two socket options do not
+work with connect. We also note that the first two techniques work with any descriptor,
+while the third technique works only with socket descriptors.
+
+We now show examples of all three techniques.
+
+connect with a Timeout Using SIGALRM
+
+Figure 14.1 shows our function connect_timeo that calls connect with an upper limit
+specified by the caller. The first three arguments are the three required by connect and the
+fourth argument is the number of seconds to wait.
+
+Figure 14.1 connect with a timeout.
+lib/connect_timeo.c
+
+ 1 #include         "unp.h"
+
+ 2 static void connect_alarm(int);
+
+ 3 int
+ 4 connect_timeo(int sockfd, const SA *saptr, socklen_t salen, int nsec)
+ 5 {
+ 6     Sigfunc *sigfunc;
+ 7     int     n;
+
+ 8         sigfunc = Signal(SIGALRM, connect_alarm);
+ 9         if (alarm(nsec) != 0)
+10             err_msg("connect_timeo: alarm was already set");
+
+11         if ( (n = connect(sockfd, saptr, salen)) < 0) {
+12             close(sockfd);
+13             if(errno == EINTR)
+14                errno = ETIMEDOUT;
+15         }
+16         alarm(0);                   /* turn off the alarm */
+17         Signal(SIGALRM, sigfunc);   /* restore previous signal handler */
+
+18         return (n);
+
+                                                                                                  Page 460
+
+19 }
+
+20 static void
+21 connect_alarm(int signo)
+22 {
+23     return;                            /* just interrupt the connect() */
+24 }
+Establish signal handler
+
+8 A signal handler is established for SIGALRM. The current signal handler (if any) is saved,
+so we can restore it at the end of the function.
+
+Set alarm
+
+9 10 The alarm clock for the process is set to the number of seconds specified by the
+caller. The return value from alarm is the number of seconds currently remaining in the
+alarm clock for the process (if one has already been set by the process) or 0 (if there is no
+current alarm). In the former case we print a warning message since we are wiping out
+that previously set alarm (see Exercise 14.2).
+
+Call connect
+
+11 15 connect is called and if the function is interrupted (EINTR), we set the errno value
+to ETIMEDOUT instead. The socket is closed to prevent the three-way handshake from
+continuing.
+
+Turn off alarm and restore any previous signal handler
+
+16 18 The alarm is turned off by setting it to 0 and the previous signal handler (if any) is
+restored.
+
+Handle SIGALRM
+
+20 24 The signal handler just returns, assuming this return will interrupt the pending
+connect, causing connect to return an error of EINTR. Recall our signal function (Figure
+5.6) that does not set the SA_RESTART flag when the signal being caught is SIGALRM.
+
+One point to make with this example is that we can always reduce the timeout period for a
+connect using this technique, but we cannot extend the kernel's existing timeout. That is,
+on a Berkeley-derived kernel the timeout for a connect is normally 75 seconds. We can
+specify a smaller value for our function, say 10, but if we specify a larger value, say 80,
+the connect itself will still time out after 75 seconds.
+
+Another point with this example is that we use the interruptibility of the system call (
+connect) to return before the kernel's time limit expires. This is fine when we perform the
+system call and can handle the EINTR error return. But in Section 29.7, we will encounter a
+library function that performs the system call, and the library function reissues the system
+call when EINTR is returned. We can still use SIGALRM in this scenario, but we will see in
+Figure 29.10 that we also have to use sigsetjmp and siglongjmp to get around the
+library's ignoring of EINTR.
+
+Although this example is fairly simple, signals are quite difficult to use correctly with
+multithreaded programs (see Chapter 26). So, the technique shown here is only
+recommended for single-threaded programs.
+
+recvfrom with a Timeout Using SIGALRM
+
+Figure 14.2 is a redo of our dg_cli function from Figure 8.8, but with a call to alarm to
+interrupt the recvfrom if a reply is not received within five seconds.
+
+                                                                                                Page 461
+
+Figure 14.2 dg_cli function with alarm to timeout recvfrom.
+advio/dgclitimeo3.c
+
+ 1 #include       "unp.h"
+
+ 2 static void sig_alrm(int);
+
+ 3 void
+ 4 dg_cli(FILE *fp, int sockfd, const SA *pservaddr, socklen_t servlen)
+ 5 {
+ 6      int    n;
+ 7      char   sendline[MAXLINE], recvline[MAXLINE + 1];
+
+ 8      Signal(SIGALRM, sig_alrm);
+
+ 9      while (Fgets(sendline, MAXLINE, fp) != NULL) {
+
+10           Sendto(sockfd, sendline, strlen(sendline), 0, pservaddr, servlen);
+
+11           alarm(5);
+12           if ( (n = recvfrom(sockfd, recvline, MAXLINE, 0, NULL, NULL)) < 0) {
+13               if (errno == EINTR)
+14                    fprintf(stderr, "socket timeout\n");
+15               else
+16                    err_sys("recvfrom error");
+17           } else {
+18               alarm(0);
+19               recvline[n] = 0;     /* null terminate */
+20               Fputs(recvline, stdout);
+21           }
+22      }
+23 }
+
+24 static void
+25 sig_alrm(int signo)
+26 {
+27     return;                           /* just interrupt the recvfrom() */
+28 }
+Handle timeout from recvfrom
+
+8 22 We establish a signal handler for SIGALRM and then call alarm for a five-second
+timeout before each call to recvfrom. If recvfrom is interrupted by our signal handler, we
+print a message and continue. If a line is read from the server, we turn off the pending
+alarm and print the reply.
+
+SIGALRM signal handler
+
+24 28 Our signal handler just returns, to interrupt the blocked recvfrom.
+
+This example works correctly because we are reading only one reply each time we establish
+an alarm. In Section 20.4, we will use the same technique, but since we are reading
+multiple replies for a given alarm, a race condition exists that we must handle.
+
+recvfrom with a Timeout Using select
+
+We demonstrate the second technique for setting a timeout (using select) in Figure 14.3.
+It shows our function named readable_timeo which waits up to a specified number of
+
+                                                                                             Page 462
+
+seconds for a descriptor to become readable.
+
+Figure 14.3 readable_timeo function: waits for a descriptor to become
+readable.
+lib/readable_timeo.c
+
+ 1 #include        "unp.h"
+
+ 2 int
+ 3 readable_timeo(int fd, int sec)
+ 4 {
+ 5     fd_set rset;
+ 6     struct timeval tv;
+
+ 7      FD_ZERO(&rset);
+ 8      FD_SET(fd, &rset);
+
+ 9      tv.tv_sec = sec;
+10      tv.tv_usec = 0;
+
+11      return (select(fd + 1, &rset, NULL, NULL, &tv));
+12          /* > 0 if descriptor is readable */
+13 }
+Prepare arguments for select
+
+7 10 The bit corresponding to the descriptor is turned on in the read descriptor set. A
+timeval structure is set to the number of seconds that the caller wants to wait.
+
+Block in select
+
+11 12 select waits for the descriptor to become readable, or for the timeout to expire. The
+return value of this function is the return value of select: 1 on an error, 0 if a timeout
+occurs, or a positive value specifying the number of ready descriptors.
+
+This function does not perform the read operation; it just waits for the descriptor to be
+ready for reading. Therefore, this function can be used with any type of socket, TCP or UDP.
+
+It is trivial to create a similar function named writable_timeo that waits for a descriptor to
+become writable.
+
+We use this function in Figure 14.4, which is a redo of our dg_cli function from Figure 8.8.
+This new version calls recvfrom only when our readable_timeo function returns a positive
+value.
+
+We do not call recvfrom until the function readable_timeo tells us that the descriptor is
+readable. This guarantees that recvfrom will not block.
+
+Figure 14.4 dg_cli function that calls readable_timeo to set a timeout.
+advio/dgclitimeo1.c
+
+ 1 #include        "unp.h"
+
+ 2 void
+ 3 dg_cli(FILE *fp, int sockfd, const SA *pservaddr, socklen_t servlen)
+ 4 {
+ 5      int    n;
+ 6      char   sendline[MAXLINE], recvline[MAXLINE + 1];
+
+                                                                                                 Page 463
+
+ 7      while (Fgets(sendline, MAXLINE, fp) != NULL) {
+
+ 8           Sendto(sockfd, sendline, strlen(sendline), 0, pservaddr, servlen);
+
+ 9           if (Readable_timeo(sockfd, 5) == 0) {
+10               fprintf(stderr, "socket timeout\n");
+11           } else {
+12               n = Recvfrom(sockfd, recvline, MAXLINE, 0, NULL, NULL);
+13               recvline[n] = 0;    /* null terminate */
+14               Fputs(recvline, stdout);
+15           }
+16      }
+17 }
+
+recvfrom with a Timeout Using the SO_RCVTIMEO Socket Option
+
+Our final example demonstrates the SO_RCVTIMEO socket option. We set this option once for
+a descriptor, specifying the timeout value, and this timeout then applies to all read
+operations on that descriptor. The nice thing about this method is that we set the option
+only once, compared to the previous two methods, which required doing something before
+every operation on which we wanted to place a time limit. But this socket option applies
+only to read operations, and the similar option SO_SNDTIMEO applies only to write
+operations; neither socket option can be used to set a timeout for a connect.
+
+Figure 14.5 shows another version of our dg_cli function that uses the SO_RCVTIMEO socket
+option.
+
+Set socket option
+
+8 10 The fourth argument to setsockopt is a pointer to a timeval structure that is filled in
+with the desired timeout.
+
+Test for timeout
+
+15 17 If the I/O operation times out, the function (recvfrom, in this case) returns
+EWOULDBLOCK.
+
+Figure 14.5 dg_cli function that uses the SO_RCVTIMEO socket option to set
+a timeout.
+advio/dgclitimeo2.c
+
+ 1 #include        "unp.h"
+
+ 2 void
+ 3 dg_cli(FILE *fp, int sockfd, const SA *pservaddr, socklen_t servlen)
+ 4 {
+ 5      int     n;
+ 6      char     sendline[MAXLINE], recvline[MAXLINE + 1];
+ 7      struct timeval tv;
+
+ 8      tv.tv_sec = 5;
+ 9      tv.tv_usec = 0;
+10      Setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+
+11      while (Fgets(sendline, MAXLINE, fp) != NULL) {
+
+12           Sendto(sockfd, sendline, strlen(sendline), 0, pservaddr, servlen);
+
+13           n = recvfrom(sockfd, recvline, MAXLINE, 0, NULL, NULL);
+
+                                                                                               Page 464
+
+14             if (n < 0) {
+15                 if (errno == EWOULDBLOCK) {
+16                     fprintf(stderr, "socket timeout\n");
+17                     continue;
+18                 } else
+19                     err_sys("recvfrom error");
+20             }
+
+21             recvline[n] = 0;         /* null terminate */
+22             Fputs(recvline, stdout);
+23      }
+24 }
+
+                                                                                Page 465
+
+14.3 recv and send Functions
+These two functions are similar to the standard read and write functions, but one
+additional argument is required.
+
+ #include <sys/socket.h>
+
+ ssize_t recv(int sockfd, void *buff, size_t nbytes, int flags);
+
+ ssize_t send(int sockfd, const void *buff, size_t nbytes, int flags);
+
+                            Both return: number of bytes read or written if OK,   1 on error
+
+The first three arguments to recv and send are the same as the first three arguments to
+read and write. The flags argument is either 0 or is formed by logically OR'ing one or more
+of the constants shown in Figure 14.6.
+
+                       Figure 14.6. flags for I/O functions.
+
+ MSG_DONTROUTE     This flag tells the kernel that the destination is on a locally attached
+                   network and not to perform a lookup of the routing table. We provided
+                   additional information on this feature with the SO_DONTROUTE socket
+                   option (Section 7.5). This feature can be enabled for a single output
+                   operation with the MSG_DONTROUTE flag, or enabled for all output
+                   operations for a given socket using the socket option.
+
+ MSG_DONTWAIT      This flag specifies nonblocking for a single I/O operation, without
+                   having to turn on the nonblocking flag for the socket, perform the I/O
+                   operation, and then turn off the nonblocking flag. We will describe
+                   nonblocking I/O in Chapter 16, along with turning the nonblocking flag
+                   on and off for all I/O operations on a socket.
+
+                   This flag is newer than the others and might not be supported on all
+                   systems.
+
+ MSG_OOB           With send, this flag specifies that out-of-band data is being sent. With
+                   TCP, only one byte should be sent as out-of-band data, as we will
+                   describe in Chapter 24. With recv, this flag specifies that out-of-band
+                   data is to be read instead of normal data.
+
+ MSG_PEEK          This flag lets us look at the data that is available to be read, without
+                   having the system discard the data after the recv or recvfrom returns.
+                   We will talk more about this in Section 14.7.
+
+ MSG_WAITALL       This flag was introduced with 4.3BSD Reno. It tells the kernel not to
+                   return from a read operation until the requested number of bytes have
+                   been read. If the system supports this flag, we can then omit the readn
+
+                                                                                               Page 466
+
+ MSG_DONTROUTE     This flag tells the kernel that the destination is on a locally attached
+                   network and not to perform a lookup of the routing table. We provided
+                   additional information on this feature with the SO_DONTROUTE socket
+                   option (Section 7.5). This feature can be enabled for a single output
+                   operation with the MSG_DONTROUTE flag, or enabled for all output
+                   operations for a given socket using the socket option.
+
+                   function (Figure 3.15) and replace it with the following macro:
+                   [View full width]
+
+                   #define readn(fd, ptr, n)        recv(fd, ptr, n,
+
+                    MSG_WAITALL)
+                   Even if we specify MSG_WAITALL, the function can still return fewer than
+                   the requested number of bytes if (i) a signal is caught, (ii) the
+                   connection is terminated, or (iii) an error is pending for the socket.
+
+There are additional flags used by other protocols, but not TCP/IP. For example, the OSI
+transport layer is record-based (not a byte stream such as TCP) and supports the MSG_EOR
+flag for output operations to specify the end of a logical record.
+
+There is a fundamental design problem with the flags argument: It is passed by value; it is
+not a value-result argument. Therefore, it can be used only to pass flags from the process
+to the kernel. The kernel cannot pass back flags to the process. This is not a problem with
+TCP/IP, because it is rare to need to pass flags back to the process from the kernel. But
+when the OSI protocols were added to 4.3BSD Reno, the need arose to return MSG_EOR to
+the process with an input operation. Thus, the decision was made with 4.3BSD Reno to
+leave the arguments to the commonly used input functions (recv and recvfrom) as-is and
+change the msghdr structure that is used with recvmsg and sendmsg. We will see in Section
+14.5 that an integer msg_flags member was added to this structure, and since the
+structure is passed by reference, the kernel can modify these flags on return. This also
+means that if a process needs to have the flags updated by the kernel, the process must
+call recvmsg instead of either recv or recvfrom.
+
+                                                                                              Page 467
+
+14.4 readv and writev Functions
+These two functions are similar to read and write, but readv and writev let us read into or
+write from one or more buffers with a single function call. These operations are called
+scatter read (since the input data is scattered into multiple application buffers) and gather
+write (since multiple buffers are gathered for a single output operation).
+
+ #include <sys/uio.h>
+
+ ssize_t readv(int filedes, const struct iovec *iov, int iovcnt);
+
+ ssize_t writev(int filedes, const struct iovec *iov, int iovcnt);
+
+                                 Both return: number of bytes read or written,    1 on error
+
+The second argument to both functions is a pointer to an array of iovec structures, which
+is defined by including the <sys/uio.h> header.
+
+struct iovec {
+   void   *iov_base;      /* starting address of buffer */
+   size_t iov_len;        /* size of buffer */
+};
+
+The datatypes shown for the members of the iovec structure are those specified by POSIX.
+You may encounter implementations that define iov_base to be a char *, and iov_len to
+be an int.
+
+There is some limit to the number of elements in the array of iovec structures that an
+implementation allows. Linux, for example, allows up to 1,024, while HP-UX has a limit of
+2,100. POSIX requires that the constant IOV_MAX be defined by including the <sys/uio.h>
+header and that its value be at least 16.
+
+The readv and writev functions can be used with any descriptor, not just sockets. Also,
+writev is an atomic operation. For a record-based protocol such as UDP, one call to writev
+generates a single UDP datagram.
+
+We mentioned one use of writev with the TCP_NODELAY socket option in Section 7.9. We
+said that a write of 4 bytes followed by a write of 396 bytes could invoke the Nagle
+algorithm and a preferred solution is to call writev for the two buffers.
+
+                                                                                                Page 468
+
+14.5 recvmsg and sendmsg Functions
+These two functions are the most general of all the I/O functions. Indeed, we could replace
+all calls to read, readv, recv, and recvfrom with calls to recvmsg. Similarly all calls to the
+various output functions could be replaced with calls to sendmsg.
+
+ #include <sys/socket.h>
+
+ ssize_t recvmsg(int sockfd, struct msghdr *msg, int flags);
+
+ ssize_t sendmsg(int sockfd, struct msghdr *msg, int flags);
+
+                            Both return: number of bytes read or written if OK,    1 on error
+
+Both functions package most arguments into a msghdr structure.
+
+struct msghdr {
+   void         *msg_name;             /* protocol address */
+   socklen_t     msg_namelen;          /* size of protocol address */
+   struct iovec *msg_iov;              /* scatter/gather array */
+   int           msg_iovlen;           /* # elements in msg_iov */
+   void         *msg_control;          /* ancillary data (cmsghdr struct) */
+   socklen_t     msg_controllen;       /* length of ancillary data */
+   int           msg_flags;            /* flags returned by recvmsg() */
+};
+
+The msghdr structure that we show is the one specified in POSIX. Some systems still use
+an older msghdr structure that originated with 4.2BSD. This older structure does not have
+the msg_flags member, and the msg_control and msg_controllen members are named
+msg_accrights and msg_accrightslen. The newer form of the msghdr structure is often
+available using conditional compilation flags. The only form of ancillary data supported by
+the older structure is the passing of file descriptors (called access rights).
+
+The msg_name and msg_namelen members are used when the socket is not connected (e.g.,
+an unconnected UDP socket). They are similar to the fifth and sixth arguments to recvfrom
+and sendto: msg_name points to a socket address structure in which the caller stores the
+destination's protocol address for sendmsg, or in which recvmsg stores the sender's protocol
+address. If a protocol address does not need to be specified (e.g., a TCP socket or a
+connected UDP socket), msg_name should be set to a null pointer. msg_namelen is a value
+for sendmsg, but a value-result for recvmsg.
+
+The msg_iov and msg_iovlen members specify the array of input or output buffers (the
+array of iovec structures), similar to the second and third arguments for readv or writev.
+The msg_control and msg_controllen members specify the location and size of the
+optional ancillary data. msg_controllen is a value-result argument for recvmsg. We will
+describe ancillary data in Section 14.6.
+
+With recvmsg and sendmsg, we must distinguish between two flag variables: the flags
+argument, which is passed by value, and the msg_flags member of the msghdr structure,
+which is passed by reference (since the address of the structure is passed to the function).
+
+                                                                                                 Page 469
+
+        The msg_flags member is used only by recvmsg. When recvmsg is called, the flags
+         argument is copied into the msg_flags member (p. 502 of TCPv2) and this value is
+         used by the kernel to drive its receive processing. This value is then updated based
+         on the result of recvmsg.
+
+        The msg_flags member is ignored by sendmsg because this function uses the flags
+         argument to drive its output processing. This means if we want to set the
+         MSG_DONTWAIT flag in a call to sendmsg, we set the flags argument to this value;
+         setting the msg_flags member to this value has no effect.
+
+Figure 14.7 summarizes the flags that are examined by the kernel for both the input and
+output functions, as well as the msg_flags that might be returned by recvmsg. There is no
+column for sendmsg msg_flags because, as we mentioned, it is not used.
+
+        Figure 14.7. Summary of input and output flags by various I/O
+                                 functions.
+
+The first four flags are only examined and never returned; the next two are both examined
+and returned; and the last four are only returned. The following comments apply to the six
+flags returned by recvmsg:
+
+ MSG_BCAST             This flag is relatively new, supported by at least BSD, and is returned
+                       if the datagram was received as a link-layer broadcast or with a
+                       destination IP address that is a broadcast address. This flag is a
+                       better way of determining if a UDP datagram was sent to a broadcast
+                       address, compared to the IP_RECVDSTADDR socket option.
+
+ MSG_MCAST             This flag is also a fairly recent addition, supported by at least BSD,
+                       and is returned if the datagram was received as a link-layer
+                       multicast.
+
+ MSG_TRUNC             This flag is returned if the datagram was truncated; in other words,
+                       the kernel has more data to return than the process has allocated
+                       room for (the sum of all the iov_len members). We will discuss this
+                       more in Section 22.3.
+
+ MSG_CTRUNC            This flag is returned if the ancillary data was truncated; in other
+                       words, the kernel has more ancillary data to return than the process
+                       has allocated room for (msg_controllen).
+
+ MSG_EOR               This flag is cleared if the returned data does not end a logical record;
+                       the flag is turned on if the returned data ends a logical record. TCP
+                       does not use this flag since it is a byte-stream protocol.
+
+                                                                                                  Page 470
+
+ MSG_BCAST            This flag is relatively new, supported by at least BSD, and is returned
+                      if the datagram was received as a link-layer broadcast or with a
+                      destination IP address that is a broadcast address. This flag is a
+                      better way of determining if a UDP datagram was sent to a broadcast
+                      address, compared to the IP_RECVDSTADDR socket option.
+
+ MSG_OOB              This flag is never returned for TCP out-of-band data. This flag is
+                      returned by other protocol suites (e.g., the OSI protocols).
+
+ MSG_NOTIFICATON      This flag is returned for SCTP receivers to indicate that the message
+                      read is an event notification, not a data message.
+
+Implementations might return some of the input flags in the msg_flags member, so we
+should examine only those flag values we are interested in (e.g., the last six in Figure 14.7
+).
+
+Figure 14.8 shows a msghdr structure and the various information it points to. We assume
+in this figure that the process is about to call recvmsg for a UDP socket.
+
+  Figure 14.8. Data structures when recvmsg is called for a UDP socket.
+
+Sixteen bytes are allocated for the protocol address and 20 bytes are allocated for the
+ancillary data. An array of three iovec structures is initialized: The first specifies a
+100-byte buffer, the second a 60-byte buffer, and the third an 80-byte buffer. We also
+assume that the IP_RECVDSTADDR socket option has been set for the socket, to receive the
+destination IP address from the UDP datagram.
+
+We next assume that a 170-byte UDP datagram arrives from 192.6.38.100, port 2000,
+destined for our UDP socket with a destination IP address of 206.168.112.96. Figure 14.9
+shows all the information in the msghdr structure when recvmsg returns.
+
+           Figure 14.9. Update of Figure 14.8 when recvmsg returns.
+
+                                                                                                Page 471
+
+The shaded fields are modified by recvmsg. The following items have changed from Figure
+14.8 to Figure 14.9:
+
+       The buffer pointed to by msg_name has been filled in as an Internet socket address
+        structure, containing the source IP address and source UDP port from the received
+        datagram.
+
+       msg_namelen, a value-result argument, is updated with the amount of data stored
+        in msg_name. Nothing changes since its value before the call was 16 and its value
+        when recvmsg returns is also 16.
+
+       The first 100 bytes of data are stored in the first buffer; the next 60 bytes are
+        stored in the second buffer; and the final 10 bytes are stored in the third buffer. The
+        last 70 bytes of the final buffer are not modified. The return value of the recvmsg
+        function is the size of the datagram, 170.
+
+       The buffer pointed to by msg_control is filled in as a cmsghdr structure. (We will say
+        more about ancillary data in Section 14.6 and more about this particular socket
+        option in Section 22.2.) The cmsg_len is 16; cmsg_level is IPPROTO_IP; cmsg_type
+        is IP_RECVDSTADDR; and the next 4 bytes contain the destination IP address from
+        the received UDP datagram. The final 4 bytes of the 20-byte buffer we supplied to
+        hold the ancillary data are not modified.
+
+       The msg_controllen member is updated with the actual amount of ancillary data
+        that was stored. It is also a value-result argument and its result on return is 16.
+
+       The msg_flags member is updated by recvmsg, but there are no flags to return to
+        the process.
+
+Figure 14.10 summarizes the differences among the five groups of I/O functions we
+described.
+
+        Figure 14.10. Comparison of the five groups of I/O functions.
+
+                                                                                                  Page 472
+
+14.6 Ancillary Data
+Ancillary data can be sent and received using the msg_control and msg_controllen
+members of the msghdr structure with the sendmsg and recvmsg functions. Another term
+for ancillary data is control information. In this section, we will describe the concept and
+show the structure and macros used to build and process ancillary data, but we will save
+the code examples for later chapters that describe the actual uses of ancillary data.
+
+Figure 14.11 is a summary of the various uses of ancillary data we cover in this text.
+
+               Figure 14.11. Summary of uses for ancillary data.
+
+The OSI protocol suite also uses ancillary data for various purposes we do not discuss in
+this text.
+
+Ancillary data consists of one or more ancillary data objects, each one beginning with a
+cmsghdr structure, defined by including <sys/socket.h>.
+
+struct cmsghdr {
+   socklen_t cmsg_len;    /* length in bytes, including this structure */
+   int        cmsg_level; /* originating protocol */
+   int        cmsg_type; /* protocol-specific type */
+       /* followed by unsigned char cmsg_data[] */
+};
+
+We have already seen this structure in Figure 14.9, when it was used with the
+IP_RECVDSTADDR socket option to return the destination IP address of a received UDP
+datagram. The ancillary data pointed to by msg_control must be suitably aligned for a
+cmsghdr structure. We will show one way to do this in Figure 15.11.
+
+Figure 14.12 shows an example of two ancillary data objects in the control buffer.
+msg_control points to the first ancillary data object, and the total length of the ancillary
+data is specified by msg_controllen. Each object is preceded by a cmsghdr structure that
+describes the object. There can be padding between the cmsg_type member and the actual
+data, and there can also be padding at the end of the data, before the next ancillary data
+object. The five CMSG_xxx macros we describe shortly account for this possible padding.
+
+   Figure 14.12. Ancillary data containing two ancillary data objects.
+
+                                                                                               Page 473
+
+Not all implementations support multiple ancillary data objects in the control buffer.
+
+Figure 14.13 shows the format of the cmsghdr structure when used with a Unix domain
+socket for descriptor passing (Section 15.7) or credential passing (Section 15.8).
+
+  Figure 14.13. cmsghdr structure when used with Unix domain sockets.
+
+In this figure, we assume each of the three members of the cmsghdr structure occupies
+four bytes and there is no padding between the cmsghdr structure and the actual data.
+When descriptors are passed, the contents of the cmsg_data array are the actual descriptor
+values. In this figure, we show only one descriptor being passed, but in general, more than
+one can be passed (in which case, the cmsg_len value will be 12 plus 4 times the number
+of descriptors, assuming each descriptor occupies 4 bytes).
+
+Since the ancillary data returned by recvmsg can contain any number of ancillary data
+objects, and to hide the possible padding from the application, the following five macros
+are defined by including the <sys/socket.h> header to simplify the processing of the
+ancillary data:
+
+ #include <sys/socket.h>
+
+ #include <sys/param.h> /* for ALIGN macro on many implementations */
+
+ struct cmsghdr *CMSG_FIRSTHDR(struct msghdr *mhdrptr) ;
+
+                      Returns: pointer to first cmsghdr structure or NULL if no ancillary data
+
+                                                                                                 Page 474
+
+ #include <sys/socket.h>
+
+ struct cmsghdr *CMSG_NXTHDR(struct msghdr *mhdrptr, struct cmsghdr *cmsgptr) ;
+
+         Returns: pointer to next cmsghdr structure or NULL if no more ancillary data objects
+
+ unsigned char *CMSG_DATA(struct cmsghdr *cmsgptr) ;
+
+                     Returns: pointer to first byte of data associated with cmsghdr structure
+
+ unsigned int CMSG_LEN(unsigned int length) ;
+
+                               Returns: value to store in cmsg_len given the amount of data
+
+ unsigned int CMSG_SPACE(unsigned int length) ;
+
+                     Returns: total size of an ancillary data object given the amount of data
+
+POSIX defines the first three macros; RFC 3542 [Stevens et al. 2003] defines the last two.
+
+These macros would be used in the following pseudocode:
+
+struct msghdr         msg;
+struct cmsghdr        *cmsgptr;
+
+/* fill in msg structure */
+
+/* call recvmsg() */
+
+for (cmsgptr = CMSG_FIRSTHDR(&msg); cmsgptr != NULL;
+     cmsgptr = CMSG_NXTHDR(&msg, cmsgptr)) {
+    if (cmsgptr->cmsg_level == ... &&
+        cmsgptr->cmsg_type == ... ) {
+        u_char *ptr;
+
+          ptr = CMSG_DATA(cmsgptr);
+          /* process data pointed to by ptr */
+     }
+}
+
+CMSG_FIRSTHDR returns a pointer to the first ancillary data object, or a null pointer if there
+is no ancillary data in the msghdr structure (either msg_control is a null pointer or
+cmsg_len is less than the size of a cmsghdr structure). CMSG_NXTHDR returns a null pointer
+when there is not another ancillary data object in the control buffer.
+
+Many existing implementations of CMSG_FIRSTHDR never look at msg_controllen and just
+return the value of cmsg_control. In Figure 22.2, we will test the value of msg_controllen
+before calling this macro.
+
+The difference between CMSG_LEN and CMSG_SPACE is that the former does not account for
+any padding following the data portion of the ancillary data object and is therefore the
+value to store in cmsg_len, while the latter accounts for the padding at the end and is
+therefore the value to use if dynamically allocating space for the ancillary data object.
+
+                                                                                                 Page 475
+
+                                                                                Page 476
+
+14.7 How Much Data Is Queued?
+There are times when we want to see how much data is queued to be read on a socket,
+without reading the data. Three techniques are available:
+
+    1.   If the goal is not to block in the kernel because we have something else to do when
+         nothing is ready to be read, nonblocking I/O can be used. We will describe this in
+         Chapter 16.
+
+    2.   If we want to examine the data but still leave it on the receive queue for some other
+         part of our process to read, we can use the MSG_PEEK flag (Figure 14.6). If we want
+         to do this, but we are not sure that something is ready to be read, we can use this
+         flag with a nonblocking socket or combine this flag with the MSG_DONTWAIT flag.
+
+         Be aware that the amount of data on the receive queue can change between two
+         successive calls to recv for a stream socket. For example, assume we call recv for a
+         TCP socket specifying a buffer length of 1,024 along with the MSG_PEEK flag, and the
+         return value is 100. If we then call recv again, it is possible for more than 100
+         bytes to be returned (assuming we specify a buffer length greater than 100),
+         because more data can be received by TCP between our two calls.
+
+         In the case of a UDP socket with a datagram on the receive queue, if we call
+         recvfrom specifying MSG_PEEK, followed by another call without specifying MSG_PEEK,
+         the return values from both calls (the datagram size, its contents, and the sender's
+         address) will be the same, even if more datagrams are added to the socket receive
+         buffer between the two calls. (We are assuming, of course, that some other process
+         is not sharing the same descriptor and reading from this socket at the same time.)
+
+    3.   Some implementations support the FIONREAD command of ioctl. The third
+         argument to ioctl is a pointer to an integer, and the value returned in that integer
+         is the current number of bytes on the socket's receive queue (p. 553 of TCPv2). This
+         value is the total number of bytes queued, which for a UDP socket includes all
+         queued datagrams. Also be aware that the count returned for a UDP socket by
+         Berkeley-derived implementations includes the space required for the socket
+         address structure containing the sender's IP address and port for each datagram
+         (16 bytes for IPv4; 24 bytes for IPv6).
+
+                                                                                                 Page 477
+
+14.8 Sockets and Standard I/O
+In all our examples so far, we have used what is sometimes called Unix I/O, the read and
+write functions and their variants (recv, send, etc.). These functions work with descriptors
+and are normally implemented as system calls within the Unix kernel.
+
+Another method of performing I/O is the standard I/O library. It is specified by the ANSI C
+standard and is intended to be portable to non-Unix systems that support ANSI C. The
+standard I/O library handles some of the details that we must worry about ourselves when
+using the Unix I/O functions, such as automatically buffering the input and output
+streams. Unfortunately, its handling of a stream's buffering can present a new set of
+problems we must worry about. Chapter 5 of APUE covers the standard I/O library in detail,
+and [Plauger 1992] presents and discusses a complete implementation of the standard I/O
+library.
+
+The term stream is used with the standard I/O library, as in "we open an input stream" or
+"we flush the output stream." Do not confuse this with the STREAMS subsystem, which we
+will discuss in Chapter 31.
+
+The standard I/O library can be used with sockets, but there are a few items to consider:
+
+        A standard I/O stream can be created from any descriptor by calling the fdopen
+         function. Similarly, given a standard I/O stream, we can obtain the corresponding
+         descriptor by calling fileno. Our first encounter with fileno was in Figure 6.9 when
+         we wanted to call select on a standard I/O stream. select works only with
+         descriptors, so we had to obtain the descriptor for the standard I/O stream.
+
+        TCP and UDP sockets are full-duplex. Standard I/O streams can also be full-duplex:
+         we just open the stream with a type of r+, which means read-write. But on such a
+         stream, an output function cannot be followed by an input function without an
+         intervening call to fflush, fseek, fsetpos, or rewind. Similarly, an input function
+         cannot be followed by an output function without an intervening call to fseek,
+         fsetpos, or rewind, unless the input function encounters an EOF. The problem with
+         these latter three functions is that they all call lseek, which fails on a socket.
+
+        The easiest way to handle this read-write problem is to open two standard I/O
+         streams for a given socket: one for reading and one for writing.
+
+Example: str_echo Function Using Standard I/O
+We now show an alternate version of our TCP echo server (Figure 5.3), which uses standard
+I/O instead of read and writen. Figure 14.14 is a version of our str_echo function that
+uses standard I/O. (This version has a problem that we will describe shortly.)
+
+Figure 14.14 str_echo function recoded to use standard I/O.
+advio/str_echo_stdio02.c
+
+ 1 #include        "unp.h"
+
+ 2 void
+ 3 str_echo(int sockfd)
+ 4 {
+ 5      char    line[MAXLINE];
+ 6      FILE   *fpin, *fpout;
+
+ 7        fpin = Fdopen(sockfd, "r");
+
+                                                                                                Page 478
+
+ 8         fpout = Fdopen(sockfd, "w");
+
+ 9         while (Fgets(line, MAXLINE, fpin) != NULL)
+10             Fputs(line, fpout);
+11 }
+Convert descriptor into input stream and output stream
+
+7 10 Two standard I/O streams are created by fdopen: one for input and one for output.
+The calls to read and writen are replaced with calls to fgets and fputs.
+
+If we run our server with this version of str_echo and then run our client, we see the
+following:
+
+ hpux % tcpcli02 206.168.112.96
+
+ hello, world                                  we type this line, but nothing is echoed
+
+ and hi                                        and this one, still no echo
+
+ hello??                                       and this one, still no echo
+
+ ^D                                            and our EOF character
+
+ hello, world                                  and then the three echoed lines are output
+
+ and hi
+
+ hello??
+
+There is a buffering problem here because nothing is echoed by the server until we enter
+our EOF character. The following steps take place:
+
+         We type the first line of input and it is sent to the server.
+
+         The server reads the line with fgets and echoes it with fputs.
+
+         The server's standard I/O stream is fully buffered by the standard I/O library. This
+          means the library copies the echoed line into its standard I/O buffer for this stream,
+          but does not write the buffer to the descriptor, because the buffer is not full.
+
+         We type the second line of input and it is sent to the server.
+
+         The server reads the line with fgets and echoes it with fputs.
+
+         Again, the server's standard I/O library just copies the line into its buffer, but does
+          not write the buffer because it is still not full.
+
+         The same scenario happens with the third line of input that we enter.
+
+         We type our EOF character, and our str_cli function (Figure 6.13) calls shutdown,
+          sending a FIN to the server.
+
+         The server TCP receives the FIN, which fgets reads, causing fgets to return a null
+          pointer.
+
+         The str_echo function returns to the server main function (Figure 5.12) and the
+          child terminates by calling exit.
+
+         The C library function exit calls the standard I/O cleanup function (pp. 162      164 of
+
+                                                                                                     Page 479
+
+         APUE). The output buffer that was partially filled by our calls to fputs is now output.
+
+        The server child process terminates, causing its connected socket to be closed,
+         sending a FIN to the client, completing the TCP four-packet termination sequence.
+
+        The three echoed lines are received by our str_cli function and output.
+
+        str_cli then receives an EOF on its socket, and the client terminates.
+
+The problem here is the buffering performed automatically by the standard I/O library on
+the server. There are three types of buffering performed by the standard I/O library:
+
+    1.   Fully buffered means that I/O takes place only when the buffer is full, the process
+         explicitly calls fflush, or the process terminates by calling exit. A common size for
+         the standard I/O buffer is 8,192 bytes.
+
+    2.   Line buffered means that I/O takes place when a newline is encountered, when the
+         process calls fflush, or when the process terminates by calling exit.
+
+    3.   Unbuffered means that I/O takes place each time a standard I/O output function is
+         called.
+
+Most Unix implementations of the standard I/O library use the following rules:
+
+        Standard error is always unbuffered.
+
+        Standard input and standard output are fully buffered, unless they refer to a
+         terminal device, in which case, they are line buffered.
+
+        All other streams are fully buffered unless they refer to a terminal device, in which
+         case, they are line buffered.
+
+Since a socket is not a terminal device, the problem seen with our str_echo function in
+Figure 14.14 is that the output stream (fpout) is fully buffered. One way around this is to
+force the output stream to be line buffered by calling setvbuf. Another is to force each
+echoed line to be output by calling fflush after each call to fputs. But in practice, either of
+these solutions is still error-prone and may interact badly with the Nagle algorithm
+described in Section 7.9. In most cases, the best solution is to avoid using the standard
+I/O library altogether for sockets and operate on buffers instead of lines, as described in
+Section 3.9. Using standard I/O on sockets may make sense when the convenience of
+standard I/O streams outweighs the concerns about bugs due to buffering, but these are
+rare cases.
+
+Be aware that some implementations of the standard I/O library still have a problem with
+descriptors greater than 255. This can be a problem with network servers that handle lots
+of descriptors. Check the definition of the FILE structure in your <stdio.h> header to see
+what type of variable holds the descriptor.
+
+                                                                                                   Page 480
+
+14.9 Advanced Polling
+Earlier in this chapter, we discussed several ways to set a time limit on a socket operation.
+Many operating systems now offer another alternative, and provide the features of select
+and poll we described in Chapter 6 as well. Since none of these methods have been
+adopted by POSIX yet, and each implementation seems to be slightly different, code that
+uses these mechanisms should be considered nonportable. We'll describe two mechanisms
+here; other available mechanisms are similar.
+
+/dev/poll Interface
+
+Solaris provides a special file called /dev/poll, which provides a more scalable way to poll
+large numbers of file descriptors. The problem with select and poll is that the file
+descriptors of interest must be passed in with each call. The poll device maintains state
+between calls so that a program can set up the list of descriptors to poll and then loop,
+waiting for events, without setting up the list again each time around the loop.
+
+After opening /dev/poll, the polling program must initialize an array of pollfd structures
+(the same structure used by the poll function, but the revents field is unused in this
+case). The array is then passed to the kernel by calling write to write the structured
+directly to the /dev/poll device. The program then uses an ioctl call, DO_POLL, to block,
+waiting for events. The following structure is passed into the ioctl call:
+
+struct dvpoll {
+    struct pollfd* dp_fds;
+    int            dp_nfds;
+    int            dp_timeout;
+}
+
+The field dp_fds points to a buffer that is used to hold an array of pollfd structures
+returned from the ioctl call. The field dp_nfds field specifies the size of the buffer. The
+ioctl call blocks until there are interesting events on any of the polled file descriptors, or
+until dp_timeout milliseconds have passed. Using a value of zero for dp_timeout will cause
+the ioctl to return immediately, which provides a nonblocking way to use this interface.
+Passing in -1 for the timeout indicates that no timeout is desired.
+
+We modify our str_cli function, which used select in Figure 6.13, to use /dev/poll in
+Figure 14.15.
+
+Figure 14.15 str_cli function using /dev/poll.
+advio/str_cli_poll03.c
+
+ 1 #include       "unp.h"
+ 2 #include       <sys/devpoll.h>
+
+ 3 void
+ 4 str_cli(FILE *fp, int sockfd)
+ 5 {
+ 6      int    stdineof;
+ 7      char   buf[MAXLINE];
+ 8      int    n;
+ 9      int    wfd;
+
+                                                                                                 Page 481
+
+10      struct pollfd pollfd[2];
+11      struct dvpoll dopoll;
+12      int     i;
+13      int     result;
+
+14      wfd = Open("/dev/poll", O_RDWR, 0);
+
+15      pollfd[0].fd = fileno(fp);
+16      pollfd[0].events = POLLIN;
+17      pollfd[0].revents = 0;
+
+18      pollfd[1].fd = sockfd;
+19      pollfd[1].events = POLLIN;
+20      pollfd[1].revents = 0;
+
+21      Write(wfd, pollfd, sizeof(struct pollfd) * 2);
+
+22      stdineof = 0;
+23      for ( ; ; ) {
+24          /* block until /dev/poll says something is ready */
+25          dopoll.dp_timeout = -1;
+26          dopoll.dp_nfds = 2;
+27          dopoll.dp_fds = pollfd;
+28          result = Ioctl(wfd, DP_POLL, &dopoll);
+
+29           /* loop through ready file descriptors */
+30           for (i = 0; i < result; i++) {
+31               if (dopoll.dp_fds[i].fd == sockfd) {
+32                   /* socket is readable */
+33                   if ( (n = Read(sockfd, buf, MAXLINE)) == 0) {
+34                       if (stdineof == 1)
+35                            return; /* normal termination */
+36                       else
+37                            err_quit("str_cli: server terminated prematurely");
+38                   }
+
+39                    Write(fileno(stdout), buf, n);
+40                } else {
+41                    /* input is readable */
+42                    if ( (n = Read(fileno(fp), buf, MAXLINE)) == 0) {
+43                         stdineof = 1;
+44                         Shutdown(sockfd, SHUT_WR); /* send FIN */
+45                         continue;
+46                    }
+
+47                    Writen(sockfd, buf, n);
+48                }
+49           }
+50      }
+51 }
+List descriptors for /dev/poll
+
+14 21 After filling in an array of pollfd structures, we pass them to /dev/poll. Our
+example only requires two file descriptors, so we use a static array of structures. In
+practice, programs that use /dev/poll need to monitor hundreds or even thousands of file
+descriptors, so the array would likely be allocated dynamically.
+
+Wait for work
+
+24 28 Rather than calling select, this program blocks, waiting for work, in the ioctl call.
+
+                                                                                              Page 482
+
+The return is the number of file descriptors that are ready.
+
+Loop through descriptors
+
+30 49 The code in our example is simplified since we know the ready file descriptors will
+be sockfd, the input file descriptor, or both. In a large-scale program, this loop would be
+more complex, perhaps even dispatching the work to threads.
+
+kqueue Interface
+
+FreeBSD introduced the kqueue interface in FreeBSD version 4.1. This interface allows a
+process to register an "event filter" that describes the kqueue events it is interested in.
+Events include file I/O and timeouts like select, but also adds asynchronous I/O, file
+modification notification (e.g., notification when a file is removed or modified), process
+tracking (e.g., notification when a given process exits or calls fork), and signal handling.
+The kqueue interface includes the following two functions and macro:
+
+ #include <sys/types.h>
+
+ #include <sys/event.h>
+
+ #include <sys/time.h>
+
+ int kqueue(void);
+
+ int kevent(int kq, const struct kevent *changelist, int nchanges, struct kevent *
+ eventlist, int nevents, const struct timespec *timeout) ;
+
+ void EV_SET(struct kevent *kev, uintptr_t ident, short filter, u_short flags, u_int
+ fflags, intptr_t data, void *udata);
+
+The kqueue function returns a new kqueue descriptor, which can be used with future calls
+to kevent. The kevent function is used to both register events of interest and determine if
+any events have occurred. The changelist and nchanges parameters describe the changes
+to be made to the events of interest, or are NULL and 0, respectively, if no changes are to
+be made. If nchanges is nonzero, each event filter change requested in the changelist
+array is performed. Any filters whose conditions have triggered, including those that may
+have just been added in the changelist, are returned through the eventlist parameter,
+which points to an array of nevents struct kevents. The kevent function returns the
+number of events that are returned, or zero if a timeout has occurred. The timeout
+argument holds the timeout, which is handled just like select: NULL to block, a nonzero
+timespec to specify an explicit timeout, and a zero timespec to perform a nonblocking
+check for events. Note that the timeout parameter is a struct timespec, which is different
+from select's struct timeval in that it has nanosecond instead of microsecond
+resolution.
+
+The kevent structure is defined by including the <sys/event.h> header.
+
+struct kevent {
+  uintptr_t ident;           /* identifier (e.g., file descriptor) */
+  short      filter;         /* filter type (e.g., EVFILT_READ) */
+  u_short    flags;          /* action flags (e.g., EV_ADD) */
+  u_int      fflags;         /* filter-specific flags */
+  intptr_t   data;           /* filter-specific data */
+
+                                                                                               Page 483
+
+  void        *udata;         /* opaque user data */
+};
+
+The actions for changing a filter and the flag return values are shown in Figure 14.16.
+
+                     Figure 14.16. flags for kevent operations.
+
+Filter types are shown in Figure 14.17.
+
+                    Figure 14.17. filters for kevent operations.
+
+We modify our str_cli function, which used select in Figure 6.13, to use kqueue in Figure
+14.18.
+
+Determine if file pointer points to a file
+
+10 11 The behavior of kqueue on EOF is different depending on whether the file descriptor
+is associated with a file, a pipe, or a terminal, so we use the fstat call to determine if it is
+a file. We will use this determination later.
+
+Set up kevent structures for kqueue
+
+12 13 We use the EV_SET macro to set up two kevent structures; both specify a read filter
+(EVFILT_READ) and request to add this event to the filter (EV_ADD).
+
+Create kqueue and add filters
+
+14 16 We call kqueue to get a kqueue descriptor, set the timeout to zero to allow a
+nonblocking call to kevent, and call kevent with our array of kevents as the change
+request.
+
+Loop forever, blocking in kevent
+
+17 18 We loop forever, blocking in kevent. We pass a NULL change list, since we are only
+interested in the events we have already registered, and a NULL timeout to block forever.
+
+Loop through returned events
+
+19 We check each event that was returned and process it individually.
+
+Figure 14.18 str_cli function using kqueue.
+advio/str_cli_kqueue04.c
+
+                                                                                                   Page 484
+
+ 1 #include       "unp.h"
+
+ 2 void
+ 3 str_cli(FILE *fp, int sockfd)
+ 4 {
+ 5      int     kq, i, n, nev, stdineof = 0, isfile;
+ 6      char    buf[MAXLINE];
+ 7      struct kevent kev[2];
+ 8      struct timespec ts;
+ 9      struct stat st;
+
+10      isfile = ((fstat(fileno(fp), &st) == 0) &&
+11                (st.st_mode & S_IFMT) == S_IFREG);
+
+12      EV_SET(&kev[0], fileno(fp), EVFILT_READ, EV_ADD, 0, 0, NULL);
+13      EV_SET(&kev[1], sockfd, EVFILT_READ, EV_ADD, 0, 0, NULL);
+
+14      kq = Kqueue();
+15      ts.tv_sec = ts.tv_nsec = 0;
+16      Kevent(kq, kev, 2, NULL, 0, &ts);
+
+17      for ( ; ; ) {
+18          nev = Kevent(kq, NULL, 0, kev, 2, NULL);
+
+19           for (i = 0; i < nev; i++) {
+20               if (kev[i].ident == sockfd) {      /* socket is readable */
+21                   if ( (n = Read(sockfd, buf, MAXLINE)) == 0) {
+22                       if (stdineof == 1)
+23                            return; /* normal termination */
+24                       else
+25                            err_quit("str_cli: server terminated prematurely");
+26                   }
+
+27                    Write(fileno(stdout), buf, n);
+28                }
+
+29                if (kev[i].ident == fileno(fp)) { /* input is readable */
+30                    n = Read(fileno(fp), buf, MAXLINE);
+31                    if (n > 0)
+32                        Writen(sockfd, buf, n);
+
+33                    if (n == 0 || (isfile && n == kev[i].data)) {
+34                        stdineof = 1;
+35                        Shutdown(sockfd, SHUT_WR); /* send FIN */
+36                        kev[i].flags = EV_DELETE;
+37                        Kevent(kq, &kev[i], 1, NULL, 0, &ts);     /* remove
+kevent */
+38                          continue;
+39                    }
+40                }
+41           }
+42     }
+43 }
+Socket is readable
+
+20 28 This code is exactly the same as in Figure 6.13.
+
+Input is readable
+
+29 40 This code is similar to Figure 6.13, but is structured slightly differently to handle
+
+                                                                                              Page 485
+
+how kqueue reports an EOF. On pipes and terminals, kqueue returns a readable indication
+that an EOF is pending, just like select. However, on files, kqueue simply returns the
+number of bytes left in the file in the data member of the struct kevent and assumes
+that the application will know when it reaches the end. Therefore, we restructure the loop
+to write the data to the network if a nonzero number of bytes were read. Next, we check
+our modified EOF condition: if we have read zero bytes or if it's a file and we've read as
+many bytes as are left in the file. The other modification from Figure 6.13 is that instead of
+using FD_CLR to remove the input descriptor from the file set, we set the flags to
+EV_DELETE and call kevent to remove this event from the filter in the kernel.
+
+Suggestions
+Care should be taken with these newly evolved interfaces to read the documentation
+specific to the OS release. These interfaces often change in subtle ways between releases
+while the vendors work through the details of how they should work.
+
+While writing nonportable code is, in general, something to avoid, it is quite common to
+use any means possible to optimize a very heavily used network application for the specific
+server it runs on.
+
+                                                                                                 Page 486
+
+14.10 Summary
+There are three main ways to set a time limit on a socket operation:
+
+       Use the alarm function and the SIGALRM signal
+
+       Use the time limit that is provided by select
+
+       Use the newer SO_RCVTIMEO and SO_SNDTIMEO socket options
+
+The first is easy to use, but involves signal handling, and as we will see in Section 20.5,
+can lead to race conditions. Using select means that we block in this function with its
+provided time limit instead of blocking in a call to read, write, or connect. The third
+alternative, to use the new socket options, is also easy, but is not provided by all
+implementations.
+
+recvmsg and sendmsg are the most general of the five groups of I/O functions provided.
+They combine the ability to specify an MSG_xxx flag (from recv and send), plus employ the
+ability to return or specify the peer's protocol address (from recvfrom and sendto), with
+the ability to use multiple buffers (from readv and writev), along with two new features:
+returning flags to the application and receiving or sending ancillary data.
+
+We describe ten different forms of ancillary data in the text, six of which are new with
+IPv6. Ancillary data consists of one or more ancillary data objects, each object preceded by
+a cmsghdr structure specifying its length, protocol level, and type of data. Five functions
+beginning with CMSG_ are used to build and parse ancillary data.
+
+Sockets can be used with the C standard I/O library, but doing this adds another level of
+buffering to that already being performed by TCP. Indeed, a lack of understanding of the
+buffering performed by the standard I/O library is the most common problem with the
+library. Since a socket is not a terminal device, the common solution to this potential
+problem is to set the standard I/O stream to unbuffered, or to simply avoid standard I/O
+on sockets completely.
+
+Many vendors provide advanced ways to poll for many events without the overhead
+required by select and poll. While writing nonportable code should be avoided whenever
+possible, sometimes the benefits of performance improvements outweigh the risk of
+nonportability.
+
+                                                                                               Page 487
+
+Exercises
+     14.1 What happens in Figure 14.1 when we reset the signal handler, and the
+          process has not established a handler for SIGALRM?
+
+     14.2 In Figure 14.1, we print a warning if the process already has an alarm
+          timer set. Modify the function to reset this alarm for the process after
+          the connect, before the function returns.
+
+     14.3 Modify Figure 11.11 as follows: Before calling read, call recv specifying
+          MSG_PEEK. When this returns, call ioctl with a command of FIONREAD
+          and print the number of bytes queued on the socket's receive buffer.
+          Then, call read to actually read the data.
+
+     14.4 What happens to the data in a standard I/O buffer that has not yet
+          been output if the process falls off the end of the main function instead
+          of calling exit?
+
+     14.5 Apply each of the two changes described following Figure 14.14 and
+          verify that each one corrects the buffering problem.
+
+                                                                                      Page 488

@@ -1,0 +1,1121 @@
+31. Compressing packs
+In the last chapter, we saw how the XDelta algorithm can be used to compress a target string
+by expressing it as the difference between it and a source string. If the source and target have
+a lot of text in common, this can produce a huge size reduction in the target by reducing it to a
+series of pointers to substrings from the source. To apply this technique to Git packs, we need
+a method of finding pairs of objects that will form good pairs of strings for XDelta. I will call
+such pairs of objects delta pairs.
+
+In Section 27.4.1, “Writing packs” we introduced the Pack::Writer class, which takes a
+RevList and writes all the objects it yields into a pack to be sent over the network. As an
+example, I’ve picked a sequence of three commits from Jit’s history and generated a RevList
+from them, with the :objects option enabled. The following is a list of all the objects that
+would be packaged up if those three commits were sent in a pack.
+             be6da09           caeef97           6953b7b    4aff4e1   9bd6e40   fa24535
+             d43eb8a           73eefd6           2057254    dfe0449   9dd940f   a5986de
+             6f25967           4e4e36a           cb366b6    65aebd9   3190036   8dad25c
+             38ccace           5b48c0f           dad209f    dd45083   ac373a6   3c51d0b
+             220d9c9           6fcea34           3a92035    af2a5a6   6b9fcfc   46c59ee
+             ea59a5c           073c69a           184a945
+
+These three commits have yielded 33 objects, and to make a start on compressing the pack we
+need to identify which of these would form good delta pairs. That is, for each target object in
+the pack, which other object could we use as the source so that XDelta shrinks the target object
+as much as possible?
+
+Generating a delta is expensive, and trying every possible pair of objects is unfeasible, as
+the number of possible pairs grows with the square of the number of objects — we say this
+approach has quadratic complexity, or it runs in O(n2) time1. A set of 10 objects yields 45
+pairs, 100 objects yields 4,950 pairs, 1,000 objects yields 499,500 pairs and so on. In general,
+algorithms with quadratic complexity cannot be used because as the input size grows, they take
+an unacceptable amount of time to run.
+
+Acceptable performance on large problems often means finding an O(n) or linear time
+solution — one where if you make the input ten times larger, the algorithm takes ten times
+longer, rather than a hundred times. We could achieve this if every object were compared to a
+fixed number of other objects, regardless of the size of the set, rather than trying every possible
+pair. To do this, we need some way of determining which objects are most likely to make good
+delta pairs, without actually generating deltas for them.
+
+31.1. Finding similar objects
+By reading just the beginning of each object, we can get a little bit of information about it — its
+type and size — without reading the whole object from disk into memory. By examining how
+the objects are connected to each other, we can also reconstruct a filename for each tree and
+blob. Below are the three commits, in ascending chronological order, along with a tree of the
+new objects that each commit introduces. Each tree entry lists its ID and name; the name /
+denotes the root tree of a commit.
+ https://en.wikipedia.org/wiki/Time_complexity
+
+                                      Compressing packs
+
+         commit: 6953b7b4a4372e395db1c4ac45563859c3202ee0
+         └─┬ [6fcea34] /
+           ├─┬ [3a92035] lib
+           │ ├── [fa24535] command.rb
+           │ ├─┬ [af2a5a6] command
+           │ │ └── [6b9fcfc] config.rb
+           │ ├── [46c59ee] config.rb
+           │ ├─┬ [dfe0449] config
+           │ │ └── [9dd940f] stack.rb
+           │ └── [a5986de] repository.rb
+           └─┬ [ea59a5c] test
+             └─┬ [073c69a] command
+               └── [184a945] config_test.rb
+
+         commit: caeef97016c08abad94c8191e4edcd3e3eff5a84
+         └─┬ [3190036] /
+           ├─┬ [8dad25c] lib
+           │ ├─┬ [38ccace] command
+           │ │ └── [5b48c0f] config.rb
+           │ └── [dad209f] config.rb
+           └─┬ [dd45083] test
+             ├─┬ [ac373a6] command
+             │ └── [3c51d0b] config_test.rb
+             └── [220d9c9] config_test.rb
+
+         commit: be6da0954076535bbd33e755ba2e0824fe9fd2c5
+         └─┬ [4aff4e1] /
+           ├─┬ [9bd6e40] lib
+           │ ├─┬ [d43eb8a] command
+           │ │ └── [73eefd6] config.rb
+           │ └── [2057254] config.rb
+           └─┬ [6f25967] test
+             ├─┬ [4e4e36a] command
+             │ └── [cb366b6] config_test.rb
+             └── [65aebd9] config_test.rb
+
+Blobs and trees do not have filenames built into them; the same blob or tree may be referenced
+many times from different places, if the same file content has been moved or copied around
+the project. However, we can generate a possible filename for the objects in a pack by looking
+at how they are reachable just from the commits we’re interested in. For example, the objects
+46c59ee, dad209f and 2057254 are reachable only via the path lib/config.rb from the root
+tree in their respective commits, so we could reasonably say these blobs represent versions of
+the file called lib/config.rb.
+
+Now, using the object header information and the pathnames above, we can get a more detailed
+picture of the objects we’re dealing with. Below is a list of each object ID along with its type,
+size, and derived pathname.
+         be6da09       commit        356
+         caeef97       commit        590
+         6953b7b       commit        901
+         4aff4e1       tree          166
+         9bd6e40       tree          845       lib
+         fa24535       blob         1305       lib/command.rb
+         d43eb8a       tree          577       lib/command
+         73eefd6       blob         3249       lib/command/config.rb
+         2057254       blob         5608       lib/config.rb
+
+                                        Compressing packs
+
+          dfe0449       tree            36       lib/config
+          9dd940f       blob           824       lib/config/stack.rb
+          a5986de       blob          1033       lib/repository.rb
+          6f25967       tree           356       test
+          4e4e36a       tree           539       test/command
+          cb366b6       blob          3478       test/command/config_test.rb
+          65aebd9       blob          5589       test/config_test.rb
+          3190036       tree           166
+          8dad25c       tree           845       lib
+          38ccace       tree           577       lib/command
+          5b48c0f       blob          2750       lib/command/config.rb
+          dad209f       blob          5204       lib/config.rb
+          dd45083       tree           356       test
+          ac373a6       tree           539       test/command
+          3c51d0b       blob          3118       test/command/config_test.rb
+          220d9c9       blob          5294       test/config_test.rb
+          6fcea34       tree           166
+          3a92035       tree           845       lib
+          af2a5a6       tree           577       lib/command
+          6b9fcfc       blob          2451       lib/command/config.rb
+          46c59ee       blob          4812       lib/config.rb
+          ea59a5c       tree           356       test
+          073c69a       tree           539       test/command
+          184a945       blob          2364       test/command/config_test.rb
+
+With this information, we can make some reasonable guesses about which objects will be most
+similar. For a start, blobs are unlikely to have much content in common with trees or commits,
+and vice versa, so we can rule some pairs out by only combining objects of the same type.
+Objects with the same path are most likely to be similar to one another: versions of the same file
+will typically have small differences, and long stretches of common text, so they’ll compress
+very well.
+
+Within versions of the same file, we’re likely to get the best compression by combining versions
+that are next to each other in the commit sequence, as the differences between adjacent versions
+will usually be smallest. But, because some commits may be on concurrent branches, it’s not
+possible to totally order the versions of each file in this way. Fortunately, there’s a good proxy
+for the historical order of versions: their file size.
+
+Most of the time, software projects and the files within them tend to get larger. This is not
+always true — code can be deleted, moved, refactored, and so on — but it’s true often enough
+to be a good heuristic for finding similar versions. If we examine the lib/config.rb objects
+in the above list, in the order they appear in the commits, we’ll see that their size does indeed
+increase with time.
+          46c59ee       blob          4812       lib/config.rb
+          dad209f       blob          5204       lib/config.rb
+          2057254       blob          5608       lib/config.rb
+
+So, to prioritise objects that might be similar to each other, Git first sorts the objects in reverse
+order by type, name and size, producing the following list. By type we mean the numeric type:
+1 for commits, 2 for trees, 3 for blobs. And by name we mean just the filename, not including
+its parent directories, so all the trees named command sort together, as do all the blobs named
+config.rb.
+          9dd940f       blob           824       lib/config/stack.rb
+          a5986de       blob          1033       lib/repository.rb
+
+                                      Compressing packs
+
+         cb366b6       blob         3478       test/command/config_test.rb
+         3c51d0b       blob         3118       test/command/config_test.rb
+         184a945       blob         2364       test/command/config_test.rb
+         65aebd9       blob         5589       test/config_test.rb
+         220d9c9       blob         5294       test/config_test.rb
+         73eefd6       blob         3249       lib/command/config.rb
+         5b48c0f       blob         2750       lib/command/config.rb
+         6b9fcfc       blob         2451       lib/command/config.rb
+         2057254       blob         5608       lib/config.rb
+         dad209f       blob         5204       lib/config.rb
+         46c59ee       blob         4812       lib/config.rb
+         fa24535       blob         1305       lib/command.rb
+         ea59a5c       tree          356       test
+         dd45083       tree          356       test
+         6f25967       tree          356       test
+         3a92035       tree          845       lib
+         9bd6e40       tree          845       lib
+         8dad25c       tree          845       lib
+         4e4e36a       tree          539       test/command
+         073c69a       tree          539       test/command
+         ac373a6       tree          539       test/command
+         38ccace       tree          577       lib/command
+         af2a5a6       tree          577       lib/command
+         d43eb8a       tree          577       lib/command
+         4aff4e1       tree          166
+         3190036       tree          166
+         6fcea34       tree          166
+         6953b7b       commit        901
+         caeef97       commit        590
+         be6da09       commit        356
+
+We’ve also left one object out of this set: dfe0449 has a size of just 36 bytes, and is too small
+to substantially benefit from delta compression. It would be quicker to send this data over the
+network as-is rather than spend time trying to optimise it.
+
+Objects likely to be similar to each other are now close together in the list, and we can compare
+each object to a fixed number of its neighbours, rather than to the entire set.
+
+31.1.1. Generating object paths
+To implement this sorting method, we’re going to need to make an update to the RevList class.
+It currently yields either Database::Commit objects, or Database::Entry objects representing
+the ID and and type of trees and blobs, without their full content. To generate the filename for
+each object, we’ll need RevList to record and emit the path by which it found each tree and
+blob that it yields. In the initialize method we’ll create a new hash called @paths that will
+store the first path we saw for each object. In traverse_tree, we can then add entries to @paths
+as we read tree entries.
+     # lib/rev_list.rb
+
+       def initialize(repo, revs, options = {})
+         # ...
+         @paths   = {}
+
+         # ...
+       end
+
+                                      Compressing packs
+
+       def traverse_tree(entry, path = Pathname.new(""))
+         @paths[entry.oid] ||= path
+
+         return unless yield entry
+         return unless entry.tree?
+
+         tree = @repo.database.load(entry.oid)
+
+         tree.entries.each do |name, item|
+           traverse_tree(item, path.join(name)) { |object| yield object }
+         end
+       end
+
+Then when we are emitting the pending objects in RevList#each, we’ll yield the path for each
+object as a second argument.
+     # lib/rev_list.rb
+
+       def each
+         limit_list if @limited
+         mark_edges_uninteresting if @objects
+         traverse_commits { |commit| yield commit }
+         traverse_pending { |object| yield object, @paths[object.oid] }
+       end
+
+31.1.2. Sorting packed objects
+We can now use the paths yielded by RevList to augment the Entry class used by
+Pack::Writer. At first, this was a simple struct holding only an object’s ID and its type, both
+of which could be inferred from the output of RevList, without consulting the database.
+     # lib/pack/writer.rb
+
+         Entry = Struct.new(:oid, :type)
+
+To implement the list ordering we saw above, we will also need the object’s size. This is
+not contained in the RevList output so we’ll need to ask the database for this information.
+However, we’d like to avoid reading every object into memory fully until we really need it,
+especially if the repository contains any very large blobs. Therefore, let’s add a method called
+Database#load_info, which will act like the load_raw method, only without reading the entire
+object. The argument to read_object_header limits how much of the file is read, and we read
+just enough to get data that will decompress to give us the type and size.
+     # lib/database.rb
+
+       def load_info(oid)
+         type, size, _ = read_object_header(oid, 128)
+         Raw.new(type, size)
+       end
+
+We’re now ready to update Pack::Writer to generate richer Entry objects with all the
+information we need. In prepare_pack_list we’ll receive paths for each blob and tree, and
+in add_to_pack_list we can use Database#load_info to get the type and size of the object,
+rather than examining the type of object.
+     # lib/pack/writer.rb
+
+                                                        Compressing packs
+
+             def prepare_pack_list(rev_list)
+               @pack_list = []
+               @progress&.start("Counting objects")
+
+               rev_list.each do |object, path|
+                 add_to_pack_list(object, path)
+                 @progress&.tick
+               end
+               @progress&.stop
+             end
+
+             def add_to_pack_list(object, path)
+               info = @database.load_info(object.oid)
+               @pack_list.push(Entry.new(object.oid, info, path))
+             end
+
+The Entry class will no longer by a simple struct but a rich class, that takes as input an object
+ID, a Database::Raw value with type and size attributes, and a Pathname. The delta and
+depth variables will be used to store connections between delta pairs, but can be ignored for
+the time being.
+       # lib/pack/entry.rb
+
+       module Pack
+         class Entry
+
+             extend Forwardable
+             def_delegators :@info, :type, :size
+
+             attr_reader :oid, :delta, :depth
+
+             def initialize(oid, info, path)
+               @oid   = oid
+               @info = info
+               @path = path
+               @delta = nil
+               @depth = 0
+             end
+
+             # ...
+
+         end
+       end
+
+Ruby’s Forwardable2 module is a quick way of defining methods that delegate to an object’s
+internal variables. The line def_delegators :@info, :oid, :type, :size is equivalent
+to defining the following methods, that let us get object metadata from the Entry itself, for
+example by calling entry.type rather than entry.info.type. This is a common strategy to
+avoid leaking the internal structure of an object out to its callers.
+             def oid
+               @info.oid
+             end
+
+             def type
+
+ https://docs.ruby-lang.org/en/2.3.0/Forwardable.html
+
+                                     Compressing packs
+
+           @info.type
+         end
+
+         def size
+           @info.size
+         end
+
+The Entry class now exposes all the information we need and we can start work on the
+Compressor class. Our Pack::Writer will pass Entry objects into this class, and its job is to
+compress the objects as best it can by generating deltas between them, before the Writer writes
+them into the pack. It takes a Database and Progress as input, and creates a Window object,
+which we’ll take a look at shortly. The Compressor#add method adds an Entry to its @objects
+list, if its size is within a range from 50 bytes to 512 megabytes. Objects outside this range
+are either not worth compressing, or would take so long to compress that Git doesn’t try. Files
+larger then 512 MiB are likely to be binary files that don’t compress well anyway.
+     # lib/pack/compressor.rb
+
+     module Pack
+       class Compressor
+
+         OBJECT_SIZE = 50..0x20000000
+         WINDOW_SIZE = 8
+
+         def initialize(database, progress)
+           @database = database
+           @window   = Window.new(WINDOW_SIZE)
+           @progress = progress
+           @objects = []
+         end
+
+         def add(entry)
+           return unless OBJECT_SIZE.include?(entry.size)
+           @objects.push(entry)
+         end
+
+         # ...
+
+       end
+     end
+
+After adding all its entries to the Compressor, Writer will invoke build_deltas to start the
+compression process. This begins by sorting the objects as described above, and then trying to
+generate a delta for each one.
+     # lib/pack/compressor.rb
+
+         def build_deltas
+           @progress&.start("Compressing objects", @objects.size)
+
+             @objects.sort_by!(&:sort_key)
+
+             @objects.reverse_each do |entry|
+               build_delta(entry)
+               @progress&.tick
+             end
+             @progress&.stop
+
+                                                  Compressing packs
+
+              end
+
+The sort_by! call above sorts the @objects list by the result of Entry#sort_key. This contains
+an array of the sorting values — the numeric type from TYPE_CODES, the filename, and the size.
+I’ve also included object’s directory name, so that files with the same basename are grouped
+by which directory they’re in. Git itself just uses the last 16 bytes of the full pathname here.
+       # lib/pack/entry.rb
+
+              def sort_key
+                [packed_type, @path&.basename, @path&.dirname, @info.size]
+              end
+
+              def packed_type
+                TYPE_CODES.fetch(@info.type)
+              end
+
+31.2. Forming delta pairs
+Now that it has sorted the list of objects, Compressor#build_deltas can get to work on
+compressing them. Here’s the first eight objects from our sorted list:
+              9dd940f             blob            824    lib/config/stack.rb
+              a5986de             blob           1033    lib/repository.rb
+              cb366b6             blob           3478    test/command/config_test.rb
+              3c51d0b             blob           3118    test/command/config_test.rb
+              184a945             blob           2364    test/command/config_test.rb
+              65aebd9             blob           5589    test/config_test.rb
+              220d9c9             blob           5294    test/config_test.rb
+              73eefd6             blob           3249    lib/command/config.rb
+
+To compress the objects, Compressor uses a sliding window, which we’ll model as a simplified
+ring buffer3. To begin with, picture an 8-element array, where all the slots are empty. A variable
+called offset points at the beginning of the array.
+Figure 31.1. Empty sliding window
+           [ _______, _______, _______, _______, _______, _______, _______, _______ ]
+             ^
+             offset
+
+The compressor iterates over the sorted list, adding each one to the window and comparing it
+to the window’s other contents. Initially the window is empty, so we just place the first object
+9dd940f lib/config/stack.rb in it and move the offset pointer. When we add an object
+to the window, we load its complete data from .git/objects, but this data is only retained
+while the object remains in the window, so we don’t run out of memory by loading the entire
+repository at once.
+Figure 31.2. Sliding window with one element
+           [ 9dd940f, _______, _______, _______, _______, _______, _______, _______ ]
+                      ^
+                      offset
+
+Next we add the second object a5986de lib/repository.rb to the window. As the window
+still contains the previous object, we can try to make a pair from them.
+ https://en.wikipedia.org/wiki/Circular_buffer
+
+                                                     Compressing packs
+
+Figure 31.3. Sliding window with two elements
+          [ 9dd940f, a5986de, _______, _______, _______, _______, _______, _______ ]
+                              ^
+                              offset
+
+If we use XDelta to generate the delta between 9dd940f and a5986de, we get a string of length
+1,000. This is less than the original size of a5986de (1,033), and so we store a delta pair: a5986de
+is based on 9dd940f.
+
+Now, we add cb366b6 test/command/config_test.rb, with a size of 3,478. This is
+considerably larger than the other two objects and it does not compress to less than its original
+size against either of them, so no delta pair is formed.
+Figure 31.4. Sliding window with three elements
+          [ 9dd940f, a5986de, cb366b6, _______, _______, _______, _______, _______ ]
+                                       ^
+                                       offset
+
+We continue in this manner, adding objects to the sliding window and comparing them against
+the others, keeping the best delta we can find that’s smaller than the original object size. After
+compressing a few more objects, the window is in this state:
+Figure 31.5. Sliding window with one slot empty
+          [ 9dd940f, a5986de, cb366b6, 3c51d0b, 184a945, 65aebd9, 220d9c9, _______ ]
+                                                                           ^
+                                                                           offset
+
+If we add one more object, the offset pointer wraps back around to the start:
+Figure 31.6. Sliding window after becoming full
+          [ 9dd940f, a5986de, cb366b6, 3c51d0b, 184a945, 65aebd9, 220d9c9, 73eefd6 ]
+            ^
+            offset
+
+Inserting new objects will then begin replacing existing ones. These lost objects can no longer
+be used as bases for delta pairs, and their full object data will drop out of memory and be freed
+by Ruby’s garbage collector4.
+Figure 31.7. Sliding window overwriting old elements
+          [ 5b48c0f, a5986de, cb366b6, 3c51d0b, 184a945, 65aebd9, 220d9c9, 73eefd6 ]
+                     ^
+                     offset
+
+Following this process, each object in the list is compressed against one of its near neighbours.
+Each object is compared to a fixed number of others, and object data is only kept in memory
+while being used to form new deltas. This gives us linear-time performance and limits the
+amount of memory we need to complete the process.
+
+Sometimes, these objects will form chains. For example, it may turn out that the three versions
+of test/command/config_test.rb are chained so that 184a945 is compressed against 3c51d0b,
+and 3c51d0b in turn is based on cb366b6. Decompressing an object requires fully reconstructing
+ https://en.wikipedia.org/wiki/Garbage_collection_(computer_science)
+
+                                      Compressing packs
+
+the text of the object it’s based on, so if that base object is itself compressed, we need to read
+the object it is based on, and so on. So that reading objects from the pack does not become too
+expensive, we should cap the length of these chains somehow.
+
+31.2.1. Sliding-window compression
+To implement the sliding window, we saw above that Compressor creates a Window object with
+size 8 in its initialize method. The Window class takes this number and creates an array of that
+many elements; initially all its slots will contain nil. The @offset variable tracks the current
+insert position.
+     # lib/pack/window.rb
+
+     module Pack
+       class Window
+
+         def initialize(size)
+           @objects = Array.new(size)
+           @offset = 0
+         end
+
+         # ...
+
+       end
+     end
+
+In Compressor#build_data, we take a single Entry and try to compress it. First, we load its
+full data from the database using Database#load_raw. Then we pass the Entry and this data
+string to Window#add, which returns a target object, wrapping the entry and its data. For each
+other object currently in the Window, we attempt to form a delta pair from them.
+     # lib/pack/compressor.rb
+
+         def build_delta(entry)
+           object = @database.load_raw(entry.oid)
+           target = @window.add(entry, object.data)
+
+           @window.each { |source| try_delta(source, target) }
+         end
+
+Window#add takes an Entry and a string of data, and returns an Unpacked struct wrapping these
+values. The purpose of Unpacked is simply to extend an Entry by attaching object data to
+it — we delegate type, size, delta and depth to the Entry. Unpacked also has a delta_index
+attribute, which we’ll use to store the pre-processed index used in the XDelta algorithm.
+     # lib/pack/window.rb
+
+         Unpacked = Struct.new(:entry, :data) do
+           extend Forwardable
+           def_delegators :entry, :type, :size, :delta, :depth
+
+           attr_accessor :delta_index
+         end
+
+         def add(entry, data)
+           unpacked = Unpacked.new(entry, data)
+
+                                       Compressing packs
+
+            @objects[@offset] = unpacked
+            @offset = wrap(@offset + 1)
+
+           unpacked
+         end
+
+         def wrap(offset)
+           offset % @objects.size
+         end
+
+To iterate over the other objects in the window, we want to visit the most-recently inserted
+objects first. As the offset is one position after the just-inserted object, that object will be at
+offset - 1, and the first one we want to try to pair it with is at offset - 2. So starting at
+offset - 2, we iterate a cursor downwards until we reach offset - 1, wrapping around to
+the end of the array.
+     # lib/pack/window.rb
+
+         def each
+           cursor = wrap(@offset - 2)
+           limit = wrap(@offset - 1)
+
+            loop do
+              break if cursor == limit
+
+              unpacked = @objects[cursor]
+              yield unpacked if unpacked
+
+             cursor = wrap(cursor - 1)
+           end
+         end
+
+Compressor#build_delta calls try_delta to attempt to combine two entries in a delta pair.
+This method takes two Unpacked objects; target is the one we just inserted, and source is one
+of the others that were already in the window. If the object types differ, or the source depth has
+overshot the maximum chain length, then we don’t attempt to pair these objects. Otherwise,
+we create a new Delta from them, and check its size. If it’s bigger than the target’s best delta
+or original size, it’s no good. If it’s equal to this size, but would increase the depth (the chain
+length) of the target, we also ignore it. If all these checks pass, then we attach the Delta to
+the target’s Entry.
+     # lib/pack/compressor.rb
+
+         MAX_DEPTH = 50
+
+         def try_delta(source, target)
+           return unless source.type == target.type
+           return unless source.depth < MAX_DEPTH
+
+            delta = Delta.new(source, target)
+            size = target.entry.packed_size
+
+            return if delta.size > size
+            return if delta.size == size and delta.base.depth + 1 >= target.depth
+
+            target.entry.assign_delta(delta)
+
+                                      Compressing packs
+
+         end
+
+Pack::Delta is the namespace where we placed the Copy and Insert structs in the previous
+chapter, and I’m now going to turn it into a class in its own right. It takes two Unpacked values,
+a source and target, and generates the appropriate delta header for their two sizes, using the
+Numbers::VarIntLE module. If the source has not already been pre-processed, we pass its data
+to XDelta.create_index and store the result on the source object — caching this value means
+each possible source is only indexed once and can be reused to compress multiple targets.
+Finally, we call XDelta#compress to compress the target, and add all the serialised operations
+onto the delta.
+     # lib/pack/delta.rb
+
+     module Pack
+       class Delta
+
+         extend Forwardable
+         def_delegator :@data, :bytesize, :size
+
+         attr_reader :base, :data
+
+         def initialize(source, target)
+           @base = source.entry
+           @data = sizeof(source) + sizeof(target)
+
+             source.delta_index ||= XDelta.create_index(source.data)
+
+           delta = source.delta_index.compress(target.data)
+           delta.each { |op| @data.concat(op.to_s) }
+         end
+
+         private
+
+         def sizeof(entry)
+           bytes = Numbers::VarIntLE.write(entry.size, 7)
+           bytes.pack("C*")
+         end
+
+       end
+     end
+
+The other methods used in Compressor#try_delta are Entry#packed_size and
+Entry#assign_delta. packed_size returns the compressed size of the entry if it has a Delta
+assigned, and its original size otherwise. assign_delta binds a Delta to the Entry and sets the
+entry’s depth to one greater than the source entry’s depth. We can access the Entry that another
+has been compressed against by calling entry.delta.base.
+     # lib/pack/entry.rb
+
+         def packed_size
+           @delta ? @delta.size : @info.size
+         end
+
+         def assign_delta(delta)
+           @delta = delta
+           @depth = delta.base.depth + 1
+
+                                      Compressing packs
+
+         end
+
+31.2.2. Limiting delta chain length
+The upload-pack and push commands have not yet been updated to use our Compressor
+class, but with the code we’ve defined so far it is possible to write a short script that seeds
+a Compressor with a set of objects and runs it. The below program finds the last commit to
+modify the file lib/command/config.rb, selects the last three commits up to that point, loads
+all the objects from this range and feeds them into a Compressor. In fact, this is how I generated
+the examples for this chapter.
+     git_path = Pathname.new(Dir.getwd).join(".git")
+     repo     = Repository.new(git_path)
+
+     commit = RevList.new(repo, ["lib/command/config.rb"]).first
+     revs   = "#{ commit.oid }~3..#{ commit.oid }"
+     range = RevList.new(repo, [revs], :objects => true)
+
+     compress = Pack::Compressor.new(repo.database, nil)
+     entries = []
+
+     range.each do |object, path|
+       info = repo.database.load_info(object.oid)
+       entry = Pack::Entry.new(object.oid, info, path)
+
+       compress.add(entry)
+       entries.push(entry)
+     end
+
+     compress.build_deltas
+
+By examining the state of the entries list after running this script, it’s possible to construct
+a tree of the delta links between objects. The follow tree shows each object in the pack, with
+those that use it as a delta base listed as children. For example a5986de has been compressed
+as a delta against 9dd940f. Each object is followed by its name, and its change in size (or just
+its original size for uncompressed objects).
+
+                                           Compressing packs
+
+Figure 31.8. Delta dependencies from compressing three commits
+
+           ├─┬ [9dd940f] lib/config/stack.rb (824)
+           │ └── [a5986de] lib/repository.rb (1033 -> 1000)
+           ├─┬ [cb366b6] test/command/config_test.rb (3478)
+           │ ├─┬ [3c51d0b] test/command/config_test.rb (3118 -> 458)
+           │ │ └── [184a945] test/command/config_test.rb (2364 -> 12)
+           │ └─┬ [65aebd9] test/config_test.rb (5589 -> 5126)
+           │   └─┬ [220d9c9] test/config_test.rb (5294 -> 405)
+           │     ├─┬ [73eefd6] lib/command/config.rb (3249 -> 3084)
+           │     │ └─┬ [5b48c0f] lib/command/config.rb (2750 -> 50)
+           │     │   └── [6b9fcfc] lib/command/config.rb (2451 -> 25)
+           │     └─┬ [2057254] lib/config.rb (5608 -> 5521)
+           │       ├─┬ [dad209f] lib/config.rb (5204 -> 12)
+           │       │ └── [fa24535] lib/command.rb (1305 -> 1039)
+           │       └── [46c59ee] lib/config.rb (4812 -> 12)
+           ├─┬ [ea59a5c] test (356)
+           │ ├── [dd45083] test (356 -> 66)
+           │ ├── [6f25967] test (356 -> 66)
+           │ └─┬ [4e4e36a] test/command (539 -> 513)
+           │   ├── [073c69a] test/command (539 -> 31)
+           │   └── [ac373a6] test/command (539 -> 31)
+           ├─┬ [3a92035] lib (845)
+           │ ├── [9bd6e40] lib (845 -> 68)
+           │ └── [8dad25c] lib (845 -> 68)
+           ├─┬ [38ccace] lib/command (577)
+           │ ├── [af2a5a6] lib/command (577 -> 32)
+           │ └── [d43eb8a] lib/command (577 -> 32)
+           ├─┬ [4aff4e1] / (166)
+           │ ├── [3190036] / (166 -> 58)
+           │ └── [6fcea34] / (166 -> 58)
+           └─┬ [6953b7b] (commit) (901)
+             └─┬ [caeef97] (commit) (590 -> 505)
+               └── [be6da09] (commit) (356 -> 267)
+
+This demonstrates some impressive results, for example the object dad209f has been shrunk
+from 5,204 bytes to just 12. This illuminates why the objects are sorted in order of decreasing
+size. The smaller version will usually be the previous version in the history, and the larger blob
+will be a copy of that, plus a few lines added. That means the smaller blob can be turned into a
+series of copy operations and no inserts, which is very small. It also means that later objects get
+written out uncompressed and are quicker to read, while older objects require delta expansion.
+
+However, some of these delta chains are quite long. To decompress object 6b9fcfc (lib/
+command/config.rb) we first need to read objects cb366b6, 65aebd9, 220d9c9, 73eefd6 and
+5b48c0f, reconstructing the full text of each object in the chain so we can apply the next delta.
+This additional expense might be worth it if the resulting objects were highly compressed, but
+this is not the case. Object 65aebd9 has been modestly shrunk from 5,589 to 5,126 bytes, and
+73eefd6 from 3,249 to 3,084. Requiring five additional object reads to shrink one object by 5%
+does not seem like a good trade-off.
+
+One observation we can make from the above data is that objects tend to compress either very
+well or very poorly — there is not much middle ground. Most of the objects in our example are
+either compressed by at least 90%, or less than 10%. So one thing we could do to discourage
+long chains from forming is to discard deltas that do not shrink an object by at least one-half.
+Then we’d be restricting delta chains to those that provide real compression value.
+
+                                       Compressing packs
+
+Below is a method we’ll add to Compressor, which works out a size threshold that a delta must
+beat in order to be retained. When the target does not already have an assigned Delta, this
+threshold is half the target’s size, minus 20 bytes for the base object ID that will need to be
+written into the pack. When it does have an existing Delta, we just need to improve on that
+delta’s size.
+
+Git goes one step further by adjusting the max_size threshold based on the depth of the
+two Entry objects. It is multiplied by the ratio of the source and target depths’ difference
+from MAX_DEPTH. If source.depth is greater than target.depth, this ratio will be less than
+1, meaning the source needs to generate an even smaller delta in order to justify the cost of
+increasing the chain length. But if source.depth is less than target.depth, the ratio is greater
+than 1 and the threshold rises; we’ll allow a larger delta than the existing one if it results in
+making the chain shorter.
+     # lib/pack/compressor.rb
+
+         def max_size_heuristic(source, target)
+           if target.delta
+             max_size = target.delta.size
+             ref_depth = target.depth
+           else
+             max_size = target.size / 2 - 20
+             ref_depth = 1
+           end
+
+           max_size * (MAX_DEPTH - source.depth) / (MAX_DEPTH + 1 - ref_depth)
+         end
+
+When trying to form delta pairs, Git will reject a delta that does not meet this size limit, and it
+also performs a few checks to avoid generating a delta at all if it will probably be a waste of
+time. If the max_size is zero, this is an impossible target, so we skip this pair. If the target is
+more than max_size bytes larger than the source, it’s unlikely we’ll be able to generate a delta
+smaller than max_size, so we don’t bother. Finally if the target is very much smaller than the
+source, then they’re unlikely to be very similar.
+     # lib/pack/compressor.rb
+
+         def try_delta(source, target)
+           return unless source.type == target.type
+           return unless source.depth < MAX_DEPTH
+
+            max_size = max_size_heuristic(source, target)
+            return unless compatible_sizes?(source, target, max_size)
+
+            delta = Delta.new(source, target)
+            size = target.entry.packed_size
+
+            return if delta.size > max_size
+            return if delta.size == size and delta.base.depth + 1 >= target.depth
+
+           target.entry.assign_delta(delta)
+         end
+
+         def compatible_sizes?(source, target, max_size)
+           size_diff = [target.size - source.size, 0].max
+
+                                             Compressing packs
+
+              return false if max_size == 0
+              return false if size_diff >= max_size
+              return false if target.size < source.size / 32
+
+             true
+           end
+
+After applying these changes, the resulting delta tree has a very different shape. It is flatter; the
+longest chains are of depth 2 rather than 5. Each chain contains only versions of the same file,
+as the objects need to be more similar to one another to form pairs. And, although fewer objects
+have been compressed, the ones that have been are those that compress really well, where most
+of the size reduction in the overall pack comes from. Applying these constraints results in a
+marginally larger pack after zlib compression, but it has fewer long chains and those chains
+that are present are providing real value.
+
+Figure 31.9. Delta dependencies with compression size limits
+
+           ├─┬ [cb366b6] test/command/config_test.rb (3478)
+           │ └─┬ [3c51d0b] test/command/config_test.rb (3118 -> 458)
+           │   └── [184a945] test/command/config_test.rb (2364 -> 12)
+           ├─┬ [65aebd9] test/config_test.rb (5589)
+           │ └── [220d9c9] test/config_test.rb (5294 -> 405)
+           ├─┬ [73eefd6] lib/command/config.rb (3249)
+           │ └─┬ [5b48c0f] lib/command/config.rb (2750 -> 50)
+           │   └── [6b9fcfc] lib/command/config.rb (2451 -> 25)
+           ├─┬ [2057254] lib/config.rb (5608)
+           │ ├── [dad209f] lib/config.rb (5204 -> 12)
+           │ └── [46c59ee] lib/config.rb (4812 -> 12)
+           ├─┬ [ea59a5c] test (356)
+           │ ├── [dd45083] test (356 -> 66)
+           │ └── [6f25967] test (356 -> 66)
+           ├─┬ [3a92035] lib (845)
+           │ ├── [9bd6e40] lib (845 -> 68)
+           │ └── [8dad25c] lib (845 -> 68)
+           ├─┬ [4e4e36a] test/command (539)
+           │ ├── [073c69a] test/command (539 -> 31)
+           │ └── [ac373a6] test/command (539 -> 31)
+           ├─┬ [38ccace] lib/command (577)
+           │ ├── [af2a5a6] lib/command (577 -> 32)
+           │ └── [d43eb8a] lib/command (577 -> 32)
+           └─┬ [4aff4e1] / (166)
+             ├── [3190036] / (166 -> 58)
+             └── [6fcea34] / (166 -> 58)
+
+Git also uses some other tricks to shorten chains. For example, if an object is selected as a delta
+base, it is shifted to the front of the sliding window so it’s kept around for longer and is more
+likely to be used as the base for more deltas. Pushing more deltas to use the same object as
+their base results in a flatter tree.
+
+31.3. Writing and reading deltas
+Now that we have a means of compressing a set of Pack::Entry objects, we can integrate it
+into Pack::Writer and update Pack::Reader so it can read the results. We’ll start by adding a
+new step to the work performed by the Writer class:
+
+                                        Compressing packs
+
+     # lib/pack/writer.rb
+
+          def write_objects(rev_list)
+            prepare_pack_list(rev_list)
+            compress_objects
+            write_header
+            write_entries
+            @output.write(@digest.digest)
+          end
+
+compress_objects uses Compressor to shrink the objects in @pack_list. We just need to add
+each object and call build_deltas to kick off the compression process.
+     # lib/pack/writer.rb
+
+          def compress_objects
+            compressor = Compressor.new(@database, @progress)
+            @pack_list.each { |entry| compressor.add(entry) }
+            compressor.build_deltas
+          end
+
+We must also update write_entry so that it writes the entry’s delta, rather than its original
+content, if a delta exists. The current implementation writes out each object as a header
+containing its type and size, followed by the zlib-compressed object data. For so-called deltified
+objects, we still write the type/size header, where the type is 7, and the size is that of the delta,
+not the original object — the object’s original size is contained in the delta data. This is followed
+by the 20-byte ID of the object the delta is based on, and the zlib-compressed delta data.
+
+For example, to encode object dad209f, we’d write a header for type 7 and size 12, which
+encodes to the single byte 7c. This is followed by the ID of the base object 2057254, so we
+write the bytes 20 57 25 and so on. Then we compress the 12-byte delta, e8 2b d4 28 b0 5a
+09 b3 ee 0a fa 0a, using zlib and that completes this object.
+
+In order for the receiver to read this object, it needs to resolve the delta relative to the object
+2057254, and so it needs to have a copy of 2057254 before it attempts to read dad209f. That
+means, the receiver must already have 2057254 in its database, or 2057254 must appear before
+dad209f in the pack. Usually, Git packs are self-contained, meaning any object used as a delta
+base appears in the same pack, so the pack can be decoded without reference to other sources.
+Making the pack readable thus means every object must appear before any others that use it
+as a delta base.
+
+In write_entry, we can ensure this by recursively calling write_entry with the entry’s base,
+if it’s deltified, before writing the current entry. To prevent objects being included multiple
+times, we store the offset at which each object is written on the Entry object, and bail out if
+the Entry already has an offset assigned.
+
+After that, we can proceed to write out the object record. To get the record’s data, we either use
+the entry’s delta, or get its original data by calling Database#load_raw. We put the packed_size
+and packed_type in the header; these return the compressed size and delta type for deltified
+objects, and the original size and type otherwise. After the header, we write the delta_prefix,
+which is the base object ID for deltified objects and empty otherwise. Finally we write out the
+object data.
+
+                                      Compressing packs
+
+     # lib/pack/writer.rb
+
+         def write_entry(entry)
+           write_entry(entry.delta.base) if entry.delta
+
+           return if entry.offset
+           entry.offset = @offset
+
+           object = entry.delta || @database.load_raw(entry.oid)
+
+           header = Numbers::VarIntLE.write(entry.packed_size, 4)
+           header[0] |= entry.packed_type << 4
+
+           write(header.pack("C*"))
+           write(entry.delta_prefix)
+           write(Zlib::Deflate.deflate(object.data, @compression))
+
+           @progress&.tick(@offset)
+         end
+
+To support this method, we’ve amended Entry#packed_type to return the value REF_DELTA if
+the entry is deltified. Similarly, delta_prefix returns the base object’s ID, packed to 20 bytes.
+We also need to add the offset attribute to store where each entry was placed.
+     # lib/pack/entry.rb
+
+         attr_accessor :offset
+
+         def packed_type
+           @delta ? REF_DELTA : TYPE_CODES.fetch(@info.type)
+         end
+
+         def delta_prefix
+           @delta ? [@delta.base.oid].pack("H40") : ""
+         end
+
+REF_DELTA is another object type constant stored alongside the basic object types.
+
+     # lib/pack.rb
+
+       COMMIT = 1
+       TREE   = 2
+       BLOB   = 3
+
+       REF_DELTA = 7
+
+When reading the pack, we need to detect these records with the REF_DELTA type, and handle
+them properly. These records are not full objects and need further processing, so we distinguish
+them by returning a different type of value: a RefDelta, which contains the base object ID and
+the delta data.
+     # lib/pack/reader.rb
+
+         def read_record
+           type, _ = read_record_header
+
+           case type
+           when COMMIT, TREE, BLOB
+
+                                      Compressing packs
+
+             Record.new(TYPE_CODES.key(type), read_zlib_stream)
+           when REF_DELTA
+             read_ref_delta
+           end
+         end
+
+         def read_ref_delta
+           base_oid = @input.read(20).unpack("H40").first
+           RefDelta.new(base_oid, read_zlib_stream)
+         end
+
+RefDelta is a simple struct that holds the two values necessary to rebuild the original object.
+We could make Pack::Reader rebuild the object itself, but as we’ll see in the following chapter,
+there are multiple ways of storing the contents of the pack, requiring different methods of
+storing and retrieving the contents of base objects. Rather than coupling Pack::Reader to
+these concerns, we’ll just make it return its immediate content with enough structure that other
+modules can process it further.
+     # lib/pack.rb
+
+       RefDelta = Struct.new(:base_oid, :delta_data)
+
+Pack::Reader#read_record can now return non-object values, and its caller
+ReceiveObjects#recv_packed_objects needs to accommodate this change. Before this glue
+module becomes more complicated, we’ll extract the logic for unpacking the objects from
+the pack into its own class, Pack::Unpacker. This class takes a Database, Pack::Reader,
+Pack::Stream and Progress as inputs, and progress is not used if the pack is being read from
+standard input.
+     # lib/command/shared/receive_objects.rb
+
+         def recv_packed_objects(prefix = "")
+           stream   = Pack::Stream.new(@conn.input, prefix)
+           reader   = Pack::Reader.new(stream)
+           progress = Progress.new(@stderr) unless @conn.input == STDIN
+
+           reader.read_header
+
+           unpacker = Pack::Unpacker.new(repo.database, reader, stream, progress)
+           unpacker.process_pack
+         end
+
+The Unpacker class takes the Database, Pack::Reader, Pack::Stream and Progress, and
+unpacks the contents of the pack into the database. Each value returned by Reader#read_record
+is passed to a method called resolve, which converts any deltified records into full objects.
+The result of this resolve call is stored in the database.
+     # lib/pack/unpacker.rb
+
+     module Pack
+       class Unpacker
+
+         def initialize(database, reader, stream, progress)
+           @database = database
+           @reader   = reader
+           @stream   = stream
+
+                                      Compressing packs
+
+           @progress = progress
+         end
+
+         def process_pack
+           @progress&.start("Unpacking objects", @reader.count)
+
+             @reader.count.times do
+               process_record
+               @progress&.tick(@stream.offset)
+             end
+             @progress&.stop
+
+           @stream.verify_checksum
+         end
+
+         def process_record
+           record, _ = @stream.capture { @reader.read_record }
+
+           record = resolve(record)
+           @database.store(record)
+         end
+
+         # ...
+
+       end
+     end
+
+The Unpacker#resolve method returns Record values unmodified. For RefDelta values, it
+looks up the given base ID in the database, and uses Pack::Expander to apply the delta to that
+object. It returns the result as a Record, ready for saving to the database.
+     # lib/pack/unpacker.rb
+
+         def resolve(record)
+           case record
+           when Record   then record
+           when RefDelta then resolve_ref_delta(record)
+           end
+         end
+
+         def resolve_ref_delta(delta)
+           resolve_delta(delta.base_oid, delta.delta_data)
+         end
+
+         def resolve_delta(oid, delta_data)
+           base = @database.load_raw(oid)
+           data = Expander.expand(base.data, delta_data)
+
+           Record.new(base.type, data)
+         end
+
+This demonstrates why objects need to be written to the pack with delta base objects coming
+before those that are based on them. That call to Database#load_raw with the base object ID
+needs to succeed before we can rebuild the current object, so we must have already extracted
+the base object from the pack. If the objects were not ordered this way, then we’d need to scan
+through the pack multiple times to identify all the non-delta records, save them, and use them
+to expand the remaining records.
+
+                                      Compressing packs
+
+A quick test of our push command shows the difference that delta compression makes to the
+pack size. On the commit before we enabled compression, this is the result of pushing the whole
+history to another repository:
+     Counting objects: 100% (1684/1684), done.
+     Writing objects: 100% (1684/1684), 820.84 KiB, done.
+     To file:///Users/jcoglan/projects/building-git/jit/../push-test
+      * [new branch] master -> master
+
+After enabling compression, with one more commit introducing 12 new objects, we see the
+amount of data transferred is reduced from 821 KiB to 333 KiB:
+     Counting objects: 100% (1696/1696), done.
+     Compressing objects: 100% (1662/1662), done.
+     Writing objects: 100% (1696/1696), 333.11 KiB, done.
+     To file:///Users/jcoglan/projects/building-git/jit/../push-test
+      * [new branch] master -> master
+
+So even though the records stored in packs are already using zlib compression, the use of XDelta
+to reduce duplicate content makes a very big difference to the amount of data we need to send
+over the network to synchronise repositories.
+

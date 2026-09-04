@@ -1,0 +1,2509 @@
+Chapter 14. High-Performance OpenGL
+
+What You’ll Learn in This Chapter
+   • How to optimize your applications for performance.
+   • Techniques for reducing the CPU overhead of your programs.
+   • How to use tools to analyze the behavior of your GPU.
+
+Optimizing CPU Performance
+In this section, we’ll cover a number of techniques that you can use either to
+lower the CPU overhead of your applications or to better utilize the CPU of
+your machine. If your application’s performance is limited by CPU overhead,
+then these techniques can make your application go faster. If not, then they still
+give you more CPU cycles to spend on other things—physics, audio, artificial
+intelligence, networking, and so on. Even if you don’t need all those spare
+cycles, the system may be able to shut down the CPU when it’s idle, saving
+power and increasing battery life in mobile applications.
+
+Multi-Threading in OpenGL
+The OpenGL API was designed more than 22 years ago. At the time, machines
+with multiple CPUs were rare and extremely expensive. Graphics hardware
+accelleration was nascent, and even when available, wasn’t faster than
+software rendering by such a huge margin as it is today. Modern GPUs are
+orders of magnitude faster and more efficient at rendering graphics than a
+CPU would be if you were to implement the same things in software.
+Unfortunately, a side effect of the legacy of OpenGL is that it simply isn’t very
+good at multi-threading. It’s possible to use multiple threads in an OpenGL
+application by creating multiple contexts and sharing objects between them.
+However, this can be quite inefficient and might not work as well as you
+might expect. That’s not to say, though, that you can’t use multi-threading to
+make your OpenGL applications go faster.
+The key to getting high performance out of multiple threads in OpenGL is to
+find a way that only one thread calls OpenGL functions, but that is the only
+thing that the one thread does. There are two complementary ways to offload
+the OpenGL thread by moving work to other threads:
+   • Use multiple threads to generate data that will be consumed by OpenGL
+     by mapping a buffer and sharing the pointer between several threads.
+     Have the other threads write their data directly into the mapped buffer,
+     synchronizing only so that the OpenGL thread can call OpenGL
+     commands.
+   • Use multiple threads to create commands for OpenGL by packing their
+     parameters into a buffer and signaling the main OpenGL threads to turn
+     them into real OpenGL commands.
+We will explore both of these techniques in the next few sections.
+
+Using Threads to Generate Data
+In our first example of parallelism using threads, we’re going to use all
+available cores of our host CPU to execute a particle simulation. The OpenGL
+side of the program is actually pretty simple. In fact, in our inner loop, all
+we’re doing is clearing the framebuffer and doing a single draw. All of the
+hard work is done by the CPU in this example.
+Rather than use a hand-coded thread, we’re going to use OpenMP (Open
+Multi-Processing), which is an API and set of language extensions that
+enables advanced compilers to automatically parallelize workloads based on
+your guidance. With OpenMP, we can tell the compiler that iterations of a
+loop are to be run in parallel and to invoke the OpenMP runtime to schedule
+the work to threads that it creates for each core in the system.
+During initialization of our ompparticles application, we tell OpenMP
+how many threads we’d like to run. In this case, we’d like it to use all
+available CPU resources. To do this, we add the following code to our
+startup() function:
+Click here to view code image
+
+   int maxThreads = omp_get_max_threads();
+   omp_set_num_threads(maxThreads);
+
+Now we’re ready to write our simple particle simulation. We declare a data
+stucture that contains the position and velocity of each particle:
+   struct PARTICLE
+   {
+       vmath::vec3 position;
+       vmath::vec3 velocity;
+   };
+In our application, we create two buffers in application memory, each big
+enough to store all of the particles in the system. On each frame of animation,
+we’ll read from one of these buffers and write updated positions and
+velocities into the other. On the subsequent frame, we’ll go the other way.
+Each particle in the system is considered to have a small mass and, therefore,
+to be attracted to all other particles through gravitational attraction. The force
+asserted on the object affects its velocity, which at each step is added to its
+position. The inner loop of the particle simulation is shown in Listing 14.1.
+Click here to view code image
+
+   void ompparticles_app::update_particles_omp(float deltaTime)
+   {
+       // Double-buffer source and destination
+       const PARTICLE* const __restrict src = particles[frame_index
+   & 1];
+       PARTICLE* const __restrict dst = particles[(frame_index + 1)
+   & 1];
+
+       // For each particle in the system
+   #pragma omp parallel for schedule (dynamic, 16)
+       for (int i = 0; i < PARTICLE_COUNT; i++)
+       {
+           // Get my own data
+           const PARTICLE& me = src[i];
+           vmath::vec3 delta_v(0.0f);
+
+           // For all the other particles
+           for (int j = 0; j < PARTICLE_COUNT; j++)
+           {
+               if (i != j) // ... not me!
+               {
+                   // Get the vector to the other particle
+                   vmath::vec3 delta_pos = src[j].position -
+   me.position;
+                   float distance = vmath::length(delta_pos);
+                   // Normalize
+                   vmath::vec3 delta_dir = delta_pos / distance;
+                   // This clamp stops the system from blowing up if
+                   // particles get too close...
+                   distance = distance < 0.005f ? 0.005f : distance;
+                   // Update velocity
+                   delta_v += (delta_dir / (distance * distance));
+               }
+           }
+           // Add my current velocity to my position
+           dst[i].position = me.position + me.velocity;
+           // Produce new velocity from my current velocity plus
+              // the calculated delta
+              dst[i].velocity = me.velocity + delta_v * deltaTime *
+   0.01f;
+              // Write to mapped buffer
+              mapped_buffer[i].position = dst[i].position;
+         }
+
+         // Count frames so we can double-buffer next frame
+         frame_index++;
+   }
+
+Listing 14.1: OpenMP particle updater
+
+As you can see, the code in Listing 14.1 looks like regular C++ code with
+variables and loops right where you would expect them to be. However,
+before the body of the outer for loop, you’ll see the line starting #pragma
+omp ..., which tells the compiler that we want to execute this loop in
+parallel. This particular declaration tells the compiler to schedule work
+dynamically in blocks of 16 iterations of the loop. It will create as many
+threads as there are CPU cores in the system and then allocate blocks of 16
+particles to each thread in turn until all particles have been processed.
+This is a very crude particle system whose only purpose is to demonstrate
+basic use of OpenMP to take advantage of multiple CPU cores in a system.
+However, you should notice that the inner loop writes to mapped_buffer
+after updating the position of the particles in system memory. This is the
+actual data store of the buffer object we’ll be drawing from. In effect, the
+particle system is sending its output directly to OpenGL.
+The mapped_buffer variable points to a buffer we mapped earlier in the
+application. During start-up, we created a buffer object and mapped it with a
+persistent map, which means we can leave it mapped and render directly
+from it. The code to create the buffer is shown in Listing 14.2.
+Click here to view code image
+
+   // Create GPU buffer
+   glGenBuffers(1, &particle_buffer);
+   glBindBuffer(GL_ARRAY_BUFFER, particle_buffer);
+   glBufferStorage(GL_ARRAY_BUFFER,
+                   PARTICLE_COUNT * sizeof(PARTICLE),
+                   nullptr,
+                   GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT);
+   mapped_buffer = (PARTICLE*)glMapBufferRange(
+       GL_ARRAY_BUFFER,
+       0,
+       PARTICLE_COUNT * sizeof(PARTICLE),
+       GL_MAP_WRITE_BIT | GL_MAP_PERSISTENT_BIT |
+   GL_MAP_FLUSH_EXPLICIT_BIT);
+
+Listing 14.2: Setting up a persistent mapped buffer
+
+When we map the buffer in Listing 14.2, we specify the
+GL_MAP_WRITE_BIT, GL_MAP_PERSISTENT_BIT, and
+GL_MAP_FLUSH_EXPLICIT_BIT flags. The first tells OpenGL that we’re
+going to write to the mapped buffer, the second tells OpenGL that we want to
+leave the buffer mapped for an extended period of time and render from it
+while it’s mapped, and the third tells OpenGL that we’ll let it know when
+we’re done changing data in the buffer. We store the returned pointer in
+mapped_buffer for the lifetime of the application.
+Our main rendering loop is very simple. All it does is compute a time delta,
+update the particles, clear the viewport, and execute a single drawing
+command. The complete code is shown in Listing 14.3.
+Click here to view code image
+
+   void ompparticles_app::render(double currentTime)
+   {
+       static const GLfloat black[] = { 0.0f, 0.0f, 0.0f, 0.0f };
+       static double previousTime = 0.0;
+
+         // Calculate delta time
+         float deltaTime = (float)(currentTime - previousTime);
+         previousTime = currentTime;
+
+         // Update particle positions using OpenMP... or not
+         if (use_omp)
+         {
+             update_particles_omp(deltaTime * 0.001f);
+         }
+         else
+         {
+             update_particles(deltaTime * 0.001f);
+         }
+
+         // Clear
+         glViewport(0, 0, info.windowWidth, info.windowHeight);
+         glClearBufferfv(GL_COLOR, 0, black);
+
+         // Bind our vertex arrays
+         glBindVertexArray(vao);
+        // Let OpenGL know we've changed the contents of the buffer
+        glFlushMappedBufferRange(GL_ARRAY_BUFFER, 0,
+                                 PARTICLE_COUNT * sizeof(PARTICLE));
+
+        // Draw!
+        glUseProgram(draw_program);
+        glDrawArrays(GL_POINTS, 0, PARTICLE_COUNT);
+   }
+
+Listing 14.3: OpenMP particle rendering loop
+
+As you can see, before calling glDrawArrays() in Listing 14.3, we call
+glFlushMappedBufferRange(). This tells OpenGL that the data in the
+mapped buffer has changed and that it should invalidate any caches that might
+be holding data from the buffer or otherwise prepare to use the new data that
+has been written to the shared memory.
+Notice that we do not call any other OpenGL functions to actually transfer
+data around. There are no calls to glBufferSubData(),
+glMapBufferRange() (except for the one in start-up), or other similar
+functions in the inner rendering loop.
+Also notice that this program does not include any synchronization. That is,
+we don’t wait for OpenGL to finish drawing from the buffer before
+overwriting it with the next frame’s data. In this case, such an approach works
+well because the worst that will happen is that a particle will be drawn with
+the next frame’s position rather than the current frame’s. If there were more
+sensitivity to data correctness, you’d want to double- or triple-buffer the GPU
+data, too.
+The result of running this application is shown in Figure 14.1. In this
+screenshot, we bumped the point size up to 3.0 to make the particles a little
+easier to see.
+            Figure 14.1: Output of the OpenMP particle simulator
+The ompparticles application contains two versions of the particle
+update function. They are identical to each other except that one uses OpenMP
+and the other does not. On the author’s machine, which is fitted with a six-
+core processor, the application runs almost exactly six times faster with
+OpenMP enabled than it does with OpenMP disabled. Figure 14.2 shows the
+CPU utilization with OpenMP enabled.
+      Figure 14.2: CPU utilization of the ompparticles application
+As you can see in Figure 14.2, the ompparticles application fully utilizes
+all CPU cores in the system. It is using 99% of the available CPU time. The
+observant reader may notice that the application has actually created seven
+threads, even though the host CPU contains only six cores. Most OpenGL
+drivers are themselves multi-threaded and create at least one worker thread
+for internal use. When OpenGL is idle (because it is waiting for the
+application to create work for it), the internal driver thread goes idle. In this
+case, it is the six application threads that are using all of the CPU time, not the
+driver.
+Packet Buffers
+In the previous section we demonstrated how it is possible, by sharing the
+pointer to a mapped buffer with other threads, to make use of the multiple
+processor cores provided by today’s CPUs. However, we’re still stuck with
+the issue of how to generate OpenGL commands from multiple threads.
+Normally, we would have a single context for each thread. We can create
+more than one context, but that can be a pretty heavy burden for the
+application and drivers—OpenGL needs to manage multiple complete copies
+of all state for you, and must assume that you’re going to share any object
+across any number of threads at any time. In theory, you could even create a
+new context while you’re already rendering with another context and start
+sharing its objects. This makes for a pretty inefficient system.
+When we think about what an OpenGL implementation does, we realize that
+it’s really translating the OpenGL commands and parameters that you pass it
+into something that the underlying graphics card can understand. It packages
+up lists of commands and then fires them off as they become ready for the
+GPU to execute them. These blocks of commands are commonly known as
+command buffers. Command buffer generation can be quite an involved
+process but, in theory, assuming the only thing your application does is call
+OpenGL functions, one thread should be enough to drive a modern GPU
+efficiently. In practice, in a complex application, it’s hard to only call
+OpenGL. You need to at least figure out what to render and rendering code
+generally ends up interspersed with logic, data access, and other mundane
+tasks that your application performs.
+
+Building Packet Buffers
+The strategy presented in this section is to try to separate the logic that
+decides what to do from the calls that end up in OpenGL. Ideally, we’ll be
+able to work in parallel while deciding what to draw from the intricacies of
+calling OpenGL and the pitfalls associated with trying to render from multiple
+threads. We’re basically going to create our own command buffers—we’ll
+call them packet buffers. The packet buffers are what our rendering code will
+generate; when they’re ready, a single, tightly optimized loop will fire them
+off to OpenGL as quickly as possible.
+In code, each packet represents one or more commands for OpenGL. As we
+produce the packets, though, rather than calling OpenGL directly, we store the
+parameters away in a data structure that we append to a list. This is a really
+low-overhead operation and we can build multiple lists in parallel on
+multiple threads. An example data structure from the packetbuffer
+sample is shown in Listing 14.4, along with its base class.
+Click here to view code image
+   // Forward declare base packet structure so we can use
+   // it in a function declaration
+   struct base;
+
+   // Define the base execution function pointer
+   typedef void (APIENTRYP PFN_EXECUTE)(const base* __restrict
+   pParams);
+
+   // Base packet only includes pointer to execution function
+   struct base
+   {
+       PFN_EXECUTE     pfnExecute;
+   };
+
+   // This packet represents a call to
+   glDrawElementsBaseVertexBaseInstance
+   struct DRAW_ELEMENTS : public base
+   {
+       // All the OpenGL parameters go here.
+       GLenum mode;
+       GLsizei count;
+       GLenum type;
+       GLvoid *indices;
+       GLsizei primcount;
+       GLint basevertex;
+       GLuint baseinstance;
+
+       // This is the execution function
+       static void APIENTRY execute(const DRAW_ELEMENTS* __restrict
+   pParams)
+       {
+           // Simply send all the parameters to OpenGL
+           glDrawElementsInstancedBaseVertexBaseInstance(
+               pParams->mode,
+               pParams->count,
+               pParams->type,
+               pParams->indices,
+               pParams->primcount,
+               pParams->basevertex,
+               pParams->baseinstance);
+       }
+   };
+Listing 14.4: Example packet data structure
+
+In the example packet shown in Listing 14.4, the DRAW_ELEMENTS packet
+derives from the base packet called base (don’t worry about the generic
+names—this is all wrapped up in a namespace) from which all of our packets
+are derived. The base class consists solely of a pointer to a function with a
+prototype that matches PFN_EXECUTE. In the derived packet, we store all
+the parameters needed to make a call to OpenGL.
+Further, there is a class that maintains a list of these packets. In the most basic
+form, we form a union of all known packet types and then use an array of these
+unions to store the packets appended during rendering. The start of this union
+is shown in Listing 14.5.
+Click here to view code image
+
+   union ALL_PACKETS
+   {
+   public:
+       PFN_EXECUTE         execute;
+   private:
+       base                Base;
+       BIND_PROGRAM        BindProgram;
+       BIND_VERTEX_ARRAY   BindVertexArray;
+       DRAW_ELEMENTS       DrawElements;
+       DRAW_ARRAYS         DrawArrays;
+       // More packet types go here...
+   };
+
+Listing 14.5: Union of all packets
+
+In the union shown in Listing 14.5, the first member is the function pointer,
+execute, which matches the function pointer stored in base, which,
+because all other packets derive from it, appears in the same location in
+memory in all packets. As we fill in packets in our packet buffer, we point this
+function at the appropriate execution function for that packet. Appending a
+packet therefore becomes a simple operation of getting a pointer to the next
+packet in the buffer, filling in its parameters, and pointing the execution
+function at the right place. An example is shown in Listing 14.6.
+Click here to view code image
+   void packet_stream::DrawElements(
+       GLenum mode,
+       GLsizei count,
+         GLenum type,
+         GLuint start,
+         GLsizei instancecount,
+         GLint basevertex,
+         GLuint baseinstance)
+   {
+         packet::DRAW_ELEMENTS* __restrict pPacket =
+             NextPacket<packet::DRAW_ELEMENTS>();
+
+       pPacket->pfnExecute =
+   packet::PFN_EXECUTE(packet::DRAW_ELEMENTS::execute);
+       pPacket->mode = mode;
+       pPacket->count = count;
+       pPacket->indices = (GLvoid*)start;
+       pPacket->primcount = instancecount;
+       pPacket->basevertex = basevertex;
+       pPacket->baseinstance = baseinstance;
+   }
+
+Listing 14.6: Appending a packet to a packet buffer
+
+Notice that the packet_stream::DrawElements function does almost
+no work. The NextPacket<> function simply returns a pointer to a packet
+of the right type and increments the internal packet pointer. We can replace the
+implementation of NextPacket<> at any time (using a linked list, resizing
+array, or some other mechanism) and this code will keep working. This is the
+code that’s executed from your rendering code, not the actual call into
+OpenGL. You can have as many instances of the packet_stream class as
+you like—you can build multiple packet buffers in parallel, you can rebuild
+them and fire them off once, or you can keep some of them around for many
+frames. For example, if part of your scene never changes, build a packet
+buffer that represents it and keep it. Dynamic parts of the scene, meanwhile,
+would be rebuilt more frequently.
+When it comes time to render the packet buffers, we simply execute their
+contents. This is accomplished by calling the
+packet_stream::execute function, whose body is shown in Listing
+14.7.
+Click here to view code image
+
+   void packet_stream::execute(void)
+   {
+       const packet::ALL_PACKETS* __restrict pPacket;
+
+         // Quick check for empty buffers
+         if (!num_packets)
+             return;
+
+       // Go until you get a packet that's got a null execution
+   function
+       for (pPacket = m_packets; pPacket->execute != nullptr;
+   pPacket++)
+       {
+           // Call the packet's execution function
+           pPacket->execute((packet::base*)pPacket);
+       }
+   }
+
+Listing 14.7: Executing a packet buffer
+
+The code shown in Listing 14.7 is the only code here that actually talks to
+OpenGL (via the packet execution functions). The loop is extremely tight and
+consumes very little CPU overhead relative to the OpenGL implementation
+underneath. Just to demonstrate, the disassembly1 of the inner loop of
+packet_stream::execute is shown in Listing 14.8. Don’t worry if you
+don’t understand assembly—this example is provided just to illustrate how
+tight the final loop ends up being.
+  1. As generated by Visual Studio 2013 for 32-bit X86 in release mode.
+Click here to view code image
+
+   loop:
+       push          esi                     ; Push pointer to packet on stack
+       call          eax                     ; Call execute function
+       mov           eax, [esi+20h]          ; Get next packet's execute function
+       add           esi, 20h                ; Move to next packet
+       test          eax, eax                ; If its execute function is not
+   NULL...
+       jnz           short loop              ; Go around again
+
+Listing 14.8: Disassembly of packet_stream::execute
+
+Tiny chunks of code like that of Listing 14.8, along with the packet execution
+functions (which tend to be just as small), also have an excellent chance of
+remaining in an instruction cache relative to generalized rendering code,
+which tends to be spread out across a large executable.
+Optimizing Packet Buffers
+In an application, we can create one or more instances of our
+packet_stream class and fill them from any threads we like. Once they’re
+built, we can submit them from our main rendering thread without worrying
+about the current context or calling OpenGL from multiple threads. The
+compiling of OpenGL commands in this way also provides opportunities
+beyond simply allowing effective multi-threaded access to OpenGL.
+One such opportunity arises when we optimize our command stream. An
+example optimization is the elimination of redundant state setting commands.
+By recording a small amount of state in each packet stream, we can do two
+things:
+     • Ignore attempts to set one of OpenGL’s states to the value it’s already
+       set to. This includes binding the same programs, textures, or buffers;
+       enabling or disabling things that are already enabled or disabled; or
+       otherwise sending the same value to OpenGL more than once.
+     • Send only the states that will be used by draws. For example, if the
+       application disables a state and then enables it again without drawing
+       anything in between, then we can safely ignore the request to disable
+       that state, and possibly the request to re-enable it (assuming it becomes
+       redundant once we eliminate the disablement).
+As an example, take a look at Listing 14.9, which shows the implementation
+of packet_stream::EnableDisable. Here you will see that we have
+added the state member structure that tracks a small amount of OpenGL’s
+state as the packet buffer sees it. If the incoming state change matches what the
+state tracker believes it is already, then it returns early and does not append to
+the packet buffer. If the state is different, then the tracked state is updated and
+the command appended to the buffer. Also, if the state is not one we’re
+tracking (or not one we recognize at all), then we let it through to the buffer.
+Click here to view code image
+
+   void packet_stream::EnableDisable(GLenum cap, GLboolean enable)
+   {
+       switch (cap)
+       {
+           case GL_CULL_FACE:
+               if (state.valid.cull_face == 1 &&
+                   state.enables.cull_face == enable)
+                   return;
+               state.enables.cull_face = enable;
+           state.valid.cull_face = 1;
+           break;
+       case GL_RASTERIZER_DISCARD:
+           if (state.valid.rasterizer_discard == 1 &&
+               state.enables.rasterizer_discard == enable)
+               return;
+           state.enables.rasterizer_discard = enable;
+           state.valid.rasterizer_discard = 1;
+           break;
+       case GL_DEPTH_TEST:
+           if (state.valid.depth_test == 1 &&
+               state.enables.depth_test == enable)
+               return;
+           state.enables.depth_test = enable;
+           state.valid.depth_test = 1;
+           break;
+       case GL_STENCIL_TEST:
+           if (state.valid.stencil_test == 1 &&
+               state.enables.stencil_test == enable)
+               return;
+           state.enables.stencil_test = enable;
+           state.valid.stencil_test = 1;
+           break;
+       case GL_DEPTH_CLAMP:
+           if (state.valid.depth_clamp == 1 &&
+               state.enables.depth_clamp == enable)
+               return;
+           state.enables.depth_clamp = enable;
+           state.valid.depth_clamp = 1;
+           break;
+       default:
+           break;
+   }
+
+   packet::ENABLE_DISABLE* __restrict pPacket =
+       NextPacket<packet::ENABLE_DISABLE>();
+
+    if (enable)
+    {
+        pPacket->pfnExecute =
+            packet::PFN_EXECUTE(packet::ENABLE_DISABLE::execute_e
+nable);
+    }
+    else
+    {
+        pPacket->pfnExecute =
+            packet::PFN_EXECUTE(packet::ENABLE_DISABLE::execute_d
+isable);
+    }
+}
+Listing 14.9: Implementation of packet_stream::EnableDisable
+
+The other thing you’ll notice about Listing 14.9 is that we’ve changed the API
+slightly. Rather than having separate Enable and Disable functions as
+OpenGL usually does, we have only a single EnableDisable function that
+takes, as inputs, both the setting to change and what to change it to. With this
+strategy, we can track state with a single switch statement and employ a
+more data-driven approach to state settings: The calling code doesn’t need to
+look at state to know which functions to call, but rather just passes the state
+through to our API to change it.
+After packet_stream::EnableDisable determines that the state is
+indeed not redundant, it sets the execution function to one of two values—
+execute_enable to enable the state and execute_disable to disable
+it. Both of these values are members of the ENABLE_DISABLE packet and
+call through to glEnable() and glDisable(), respectively. As far as
+OpenGL is concerned, your application is just calling glEnable() and
+glDisable() directly without any extra fuss.
+In Listing 14.9, you’ll see that we have also associated a valid bit with
+each of the states we’re tracking. For state tracking to work correctly, it’s
+important to know that your idea of state is actually what’s current in OpenGL.
+For that reason, we need to allow the packet buffer to reset state to some
+known defaults. We provide the packet_stream::reset function that
+can reset the packet buffer in one of three modes:
+     • Reset all states to known defaults, including sending the state to
+       OpenGL.
+     • Inherit the state from another packet_stream object, assuming it
+       will be executed immediately before this one.
+     • Inherit the state from an unknown source, marking all tracked state as
+       invalid.
+For the first mode, in a naïve implementation, we could simply mark all
+tracked state as invalid, and then call our own functions to reset the state to
+the defaults. However, this could potentially burn quite a bit of packet space
+in the buffer and be quite inefficient to execute because each individual state
+would be set by a separate packet. Alternatively, we can create a special
+packet that means “copy all tracked state to OpenGL” and calls a whole bunch
+of OpenGL functions to get its state to match ours. Now all we need to do is
+set all state to the desired defaults, mark it valid, and then insert this packet.
+For the second mode, we simply copy all state and valid bits from another
+packet_stream instance. Assuming the new packet_stream instance
+is executed immediately after the one from which it inherits its state, then we
+can continue sending state changes to OpenGL uninterrupted with no
+incoherence between our state mirror and OpenGL.
+For the final mode, we just take all current state as is. Marking all state as
+invalid just means that the next request to change state will be honored no
+matter what that state is.
+Finally, we include a packet_stream::sync() function that
+synchronizes the OpenGL state with our shadow. By default, it sends only
+state that is not marked valid to OpenGL (and then marks it valid). By setting
+the force parameter to true, we can force the packet stream to send all
+state to OpenGL, including those state items that it believes to already be
+valid.
+Using these mechanisms—resetting to defaults, inheriting from another stream,
+and invalidating everything—we can efficiently move between states and
+chain packet buffers together.
+     • Creating a new packet stream and immediately resetting it with
+       RESET_TO_DEFAULT mode gives us a stream that we can use to get
+       OpenGL state to some known defaults.
+     • Inheriting state from a default stream, changing a few states, and then
+       syncing produces a stream that updates all state to a specified set of
+       defaults.
+     • Inheriting state from a longer stream and then issuing a reset to the
+       default values produces a stream that will move state from the tail of
+       one stream to the defaults. Other streams subsequently executed may
+       safely assume that state is in its default.
+Packet Buffer Specialization
+Another optimization is to recognize certain patterns of commands or
+parameters as very commonly executed and to provide more optimal
+execution functions. For example, suppose that the most common primitive
+mode in your application is GL_TRIANGLES, and that you normally don’t
+use instancing (that is, instanceCount is usually 1). We can provide the
+slightly optimized modified versions of
+packet_stream::DrawElements shown in Listing 14.10 and
+DRAW_ELEMENTS::execute shown in Listing 14.11.
+Click here to view code image
+
+   void packet_stream::DrawElements(
+       GLenum mode,
+       GLsizei count,
+       GLenum type,
+       GLuint start,
+       GLsizei instancecount,
+       GLint basevertex,
+       GLuint baseinstance)
+   {
+       packet::DRAW_ELEMENTS* __restrict pPacket =
+           NextPacket<packet::DRAW_ELEMENTS>();
+
+         // If parameters match some very commonly used defaults...
+         if (mode == GL_TRIANGLES &&
+             instancecount == 1 &&
+             baseinstance == 0)
+         {
+             // Use a more optimal execution function
+             pPacket->pfnExecute =
+                 packet::PFN_EXECUTE(
+                     packet::DRAW_ELEMENTS::execute_tris_noinstance);
+         }
+         else
+         {
+             // Otherwise, use a more generic execution function
+             pPacket->pfnExecute =
+                 packet::PFN_EXECUTE(packet::DRAW_ELEMENTS::execute);
+         }
+         // Either way, record the parameters as normal
+         pPacket->mode = mode;
+         pPacket->count = count;
+         pPacket->indices = (GLvoid*)start;
+         pPacket->primcount = instancecount;
+         pPacket->basevertex = basevertex;
+         pPacket->baseinstance = baseinstance;
+   }
+Listing 14.10: Optimized packet insertion
+
+As you can see in Listing 14.10, we check for our expected defaults (mode is
+GL_TRIANGLES, instancecount is 1, and baseinstance is 0). If
+we see a match, we simply point the execution function at the slightly more
+optimal version shown in Listing 14.11.
+Click here to view code image
+   void APIENTRY DRAW_ELEMENTS::execute_tris_noinstance(
+       const DRAW_ELEMENTS* __restrict pParams)
+   {
+       // Simply send a subset of the parameters to OpenGL
+       glDrawElementsBaseVertex(
+           // Hard-code GL_TRIANGLES instead of reading pParams-
+   >mode
+           GL_TRIANGLES,
+           pParams->count,
+           pParams->type,
+           pParams->indices,
+           pParams->basevertex);
+       // pParams->primcount, pParams->basevertex, and
+       // pParams->baseinstance are ignored
+   }
+
+Listing 14.11: Optimized packet execution
+
+When using the code in Listings 14.10 and 14.11 there will be slightly more
+overhead when recording the packet buffer, but there will be lower overhead
+when executing it. Overall, this can be a performance boost for a number of
+reasons. First, the idea is to record multiple packet buffers in parallel across
+many threads, so we have more CPU cycles to spend during recording than
+playback. Second, if the parameters being checked are passed as constant
+literals, the compiler may be able to eliminate the additional if check,
+eliminating the expense on both ends. Finally, because the packet buffers can
+be built once and submitted many times, we get to pay the cost once but reap
+the benefits many times.
+Low-Overhead OpenGL
+In the previous section we covered some techniques to make better use of
+CPU cycles to drive OpenGL. By buffering work and reusing it, and by
+moving work to other CPU cores, you can get the same work done in less time
+(or more work done in the same time). However, we haven’t fundamentally
+reduced the amount of work your application does. In fact, the overhead of
+buffering and spreading the work across many execution threads actually
+means that your application does more work, even though it may do it in less
+time.
+In this section, we cover some techniques designed to reduce the overhead of
+OpenGL. Some of them have become known as the AZDO (Approaching Zero
+Driver Overhead) techniques, after a talk given by the author and some of his
+colleagues at a developer conference that subsequently became quite popular.
+
+Indirect Rendering
+In Chapter 7, “Vertex Processing and Drawing Commands,” we introduced the
+idea of indirect draws, which are drawing commands where the parameters
+are passed in buffer objects rather than directly through your code. We also
+introduced glMultiDrawArraysIndirect() and
+glMultiDrawElementsIndirect(), which allow a large number of
+drawing commands to be batched and sent to OpenGL in a single call. The
+asteroid rendering program presented in Chapter 7, for example, is able to
+produce tens of millions of independent draws each second. However, in that
+example, the list of draws is fixed—it is generated on the CPU ahead of time
+and the number of draws is known. Also, the transformation matrix for each
+object is calculated directly in the vertex shader, and so although performance
+is great, flexibility is very limited.
+In this section, we’ll cover a few methods to increase the scope of what can
+be done with indirect rendering, and show how to generate indirect rendering
+lists on the GPU.
+Flexible Indirect Rendering
+One of the significant drawbacks of indirect rendering is that during a long
+sequence of draws produced by glMultiDrawArraysIndirect() or
+glMultiDrawElementsIndirect(), no states can change. All objects
+must use the same program, same vertex buffers, same set of textures, and so
+on. On the surface, it would seem that this limits what we can do with these
+commands. However, it’s possible with some creative arrangement of our
+shaders and data to get around some of these limitatons. Remember, we’re not
+trying to cram an entire frame of rendering into a single call to
+glMultiDrawElementsIndirect(); rather, we’re trying to batch
+enough work that the GPU becomes busy and we free up CPU cycles to go do
+something else in the meantime.
+The first technique available to us is to make use of the baseInstance
+member of the indirect draw command structures. Again, for reference, the
+structures consumed by glMultiDrawArraysIndirect() and
+glMultiDrawElementsIndirect() are, respectively,
+Click here to view code image
+   typedef struct {
+       GLuint vertexCount;
+       GLuint instanceCount;
+       GLuint firstVertex;
+       GLuint baseInstance;
+   } DrawArraysIndirectCommand;
+
+   typedef struct {
+       GLuint vertexCount;
+       GLuint instanceCount;
+       GLuint firstIndex;
+       GLint baseVertex;
+       GLuint baseInstance;
+   } DrawElementsIndirectCommand;
+
+Note that each has a baseInstance member into which we can place
+whatever we like. The data fetched for any instanced vertex attributes will be
+fetched from their respective vertex buffers at a location offset by this
+member’s value. We can also get at the values found in this structure (and
+passed directly to any other drawing command) using the
+GL_ARB_shader_draw_parameters extension, which introduces three
+new built-in variables to GLSL that become available to the vertex shader
+     • gl_BaseVertexARB contains the value passed in the baseVertex
+       parameter.
+     • gl_BaseInstanceARB contains the value passed in the
+       baseInstance parameter.
+     • gl_DrawIDARB contains the index of the draw.
+The first two of these are self-explanatory; they each contain the value of the
+similarly named parameter to the draw function. gl_BaseVertexARB
+contains the value of baseVertex passed to
+glDrawElementsBaseVertex() or any of the other functions that
+accepts this parameter. For functions that don’t have a baseVertex
+parameter, its value is still available in the shader, but will be zero. Likewise,
+gl_BaseInstanceARB contains the value passed to
+glDrawArraysInstancedBaseInstance() or similar functions; as
+with gl_BaseVertexARB, if the function has no baseInstance
+parameter, it will be zero. Both of these inputs also work when the parameters
+are sourced from memory by one of the indirect drawing commands.
+We could use gl_BaseInstanceARB to do some of the work needed in
+the example presented earlier—rather than filling a buffer with an identity
+mapping as we did in the asteroids sample, we could just use the value of
+gl_BaseInstanceARB directly. This means less data to fetch, but still
+uses the baseInstance field in a way that it wasn’t strictly designed for
+and is therefore incompatible with many instancing techniques. Instead, we
+use the last of these parameters, gl_DrawIIDARB, which contains the raw
+index of the draw.
+In the indirectmaterial application, we put together a simple example
+to demonstrate how you might be able to batch a lot of draws into a single
+buffer while still allowing each object to have different material properties.
+We have reused the asteroid models from Chapter 7 and the lighting shader
+from the blinnphong example from Chapter 13. When given a shiny,
+colorful material, the asteroids look like gemstones. There are 100 unique
+objects in the asteroids model file, and each is drawn using a separate
+element of the draw indirect buffer.
+To combine the many draws into one, first we make a large uniform block
+with the object transforms in it, declared in our vertex shader. Next we use a
+second uniform block to store per-frame data. These blocks’ declarations are
+shown in Listing 14.12.
+Click here to view code image
+   layout (std140, binding = 0) uniform FRAME_DATA
+   {
+       mat4 view_matrix;
+       mat4 proj_matrix;
+       mat4 viewproj_matrix;
+   };
+
+   layout (std430, binding = 0) readonly buffer OBJECT_TRANSFORMS
+   {
+       mat4 model_matrix[];
+   };
+
+Listing 14.12: Uniform block declarations for indirect materials
+
+The per-frame data (stored in the FRAME_DATA block) is bound to uniform
+block binding 0. The per-object transform data (OBJECT_TRANSFORMS) is
+bound at shader storage buffer binding 0. Note that the number of objects we
+can batch together is limited by the size of the shader storage block used to
+store their transforms. As each matrix is 16 floating-point values, for a total of
+64 bytes each, the maximum number of matrices we can put into a single
+shader storage block is more than 2 million! If we were to use a uniform
+block for the transforms, then we’d be limited to 16K.2
+  2. All implementations of OpenGL must be able to support uniform blocks of at least 16K, but some
+     implementations may support much larger blocks.
+In our vertex shader, we read positions and normals using regular vertex
+attributes, and do our vertex transformations as we did in the blinnphong
+sample from Chapter 13. However, rather than using a single model–view
+matrix, we use a separate model matrix for each mesh, indexed by
+gl_DrawIDARB, and form the model–view matrix locally in the shader. In
+addition to outputting the normal, light, and view vectors, we output the
+material index, which we derive from gl_BaseInstanceARB. This
+makes the shaders incompatible with instanced vertex attributes. However,
+that might not be an issue, as we can turn small batches of instances into
+multiple draws of a single instance. The main body of this shader is shown in
+Listing 14.13.
+Click here to view code image
+   out VS_OUT
+   {
+       smooth vec3 N;
+       smooth vec3 L;
+       smooth vec3 V;
+       flat int material_id;
+   } vs_out;
+
+   void main(void)
+   {
+       vec4 position = vec4(position_3, 1.0);
+       mat4 mv_matrix = view_matrix * model_matrix[gl_DrawIDARB];
+
+         // Calculate view-space coordinate
+         vec4 P = mv_matrix * position;
+
+         // Calculate normal in view space
+         vs_out.N = mat3(mv_matrix) * normal;
+
+         // Calculate light vector
+         vs_out.L = light_pos - P.xyz;
+
+         // Calculate view vector
+         vs_out.V = -P.xyz;
+
+         vs_out.material_id = gl_BaseInstanceARB;
+         gl_Position = proj_matrix * P;
+   }
+
+Listing 14.13: Passing material index through a vertex shader
+
+When the data stored in the VS_OUT block arrives in the fragment shader, we
+apply our shading computations using the parameters stored in yet another
+uniform block. We put the parameters for our Blinn-Phong shading model into
+a structure and create a uniform block with a large array of these structures in
+it. This block is associated with binding 2 in our shader, and its definition is
+shown in Listing 14.14.
+Click here to view code image
+   struct MaterialProperties
+   {
+       vec4        ambient;
+       vec4        diffuse;
+       vec3        specular;
+       float       specular_power;
+   };
+
+   layout (binding = 2) uniform MATERIALS
+   {
+         MaterialProperties material[100];
+   };
+
+Listing 14.14: Declaration of material properties
+
+The main body of our shader is basically the same as it was in the
+blinnphong example, except that rather than using values directly from our
+uniform block, we use values taken from the array, indexed by the value given
+to us by the vertex shader. The main body of the fragment shader is shown in
+Listing 14.15.
+Click here to view code image
+   void main(void)
+   {
+       vec3 ambient = material[fs_in.material_id].ambient.rgb;
+       vec3 specular_albedo =
+   material[fs_in.material_id].specular.rgb;
+       vec3 diffuse_albedo =
+   material[fs_in.material_id].diffuse.rgb;
+       float specular_power =
+   material[fs_in.material_id].specular_power;
+
+         // Normalize the incoming N, L, and V vectors
+         vec3 N = normalize(fs_in.N);
+         vec3 L = normalize(fs_in.L);
+         vec3 V = normalize(fs_in.V);
+         vec3 H = normalize(L + V);
+
+       // Compute the diffuse and specular components for each
+   fragment
+       vec3 diffuse = max(dot(N, L), 0.0) * diffuse_albedo;
+       vec3 specular = pow(max(dot(N, H), 0.0), specular_power *
+   1.0) * specular_albedo;
+
+         o_color = vec4(ambient + specular + diffuse, 1.0);
+   }
+
+Listing 14.15: Passing material index through a vertex shader
+
+As you can see from Listing 14.15, each material has a unique ambient,
+specular, and diffuse color, and its own specular power factor. The shading
+function here is relatively simple. Of course, our material structure could
+contain texture handles to bindless textures, like those introduced in Chapter
+11. Which material to use in the fragment shader is specified entirely in the
+baseInstance field of the indirect draw parameters structure. The output
+of this program is shown in Figure 14.3.
+
+                  Figure 14.3: Indirect material parameters
+Every object shown in Figure 14.3 is effectively a separate object. Each has
+its own set of vertices and can use a different material—so long as all of the
+objects use the same shader. As you can see from the frame capture, this
+image is generated in roughly 2.5 ms on a modern GPU that is by no means a
+top-of-the-line model. In fact, as we reduce the number of objects in the
+frame, we see that the frame time does not go down, suggesting that even with
+thousands of draws every frame, we’re limited by the speed of the CPU in this
+demo. If we use a larger uniform block to store our transforms, we could
+easily throw more draws at the GPU. In fact, it’s very unlikely that you can
+render a complex scene with a single shader. However, it’s reasonable to
+expect that an advanced rendering application could break its content into a
+handful of fairly generic shaders and batch draws by shader. Each batch
+would be represented by one section of the indirect draw buffer and rendered
+with a single call to glMultiDrawArraysIndirect().
+
+GPU Work Generation
+In the previous section (and in the original asteroids sample), we
+skimmed over a few minor limitations of stock OpenGL. The most
+problematic of these constraints is that the draws sent to the GPU are all
+fixed, and the list of draws is of a known length. As the draw indirect buffer is
+just a regular OpenGL buffer object, we can generate it on the GPU using
+image stores, transform feedback, or even glReadPixels() if we wish.
+However, that leaves us with one problem: How do we know how many
+draws were produced? If we want to pass the list back to
+glMultiDrawArraysIndirect(), then we need to read back the draw
+count so that we can pass it straight back to OpenGL.
+In this section, we’ll demonstrate how to dynamically generate the list of
+draws and dispatch a list of commands, the length of which is never known to
+your application. To implement this, we’ll use the
+GL_ARB_indirect_parameters extension, which introduces the
+following two functions:
+Click here to view code image
+   void glMultiDrawArraysIndirectCountARB(GLenum mode,
+                                          const void *indirect,
+                                          GLintptr drawcount,
+                                          GLsizei maxdrawcount,
+                                          GLsizei stride);
+
+   void glMultiDrawElementsIndirectCountARB(GLenum mode,
+                                            GLenum type,
+                                            const void *indirect,
+                                            GLintptr drawcount,
+                                            GLsizei maxdrawcount,
+                                            GLsizei stride);
+
+glMultiDrawArraysIndirectCountARB() and
+glMultiDrawElementsIndirectCountARB() behave similarly to
+glMultiDrawArraysIndirect() and
+glMultiDrawElementsIndirect(), respectively, except that the
+drawcount parameter now specifies an offset into a buffer where the actual
+count is stored. This can be any old buffer but it is bound to a new target,
+GL_PARAMETER_BUFFER_ARB.
+To demonstrate the use of these two functions, we’ll adapt the previous
+example to perform culling using a compute shader, produce a new indirect
+draw buffer by appending draws into a shader storage buffer using an atomic
+counter, resolve the atomic counter into a buffer, and then use that buffer to
+source the draw count for a call to
+glMultiDrawArraysIndirectCountARB().
+The first complication is that because we are removing draws from the list,
+there is no longer a one-to-one relationship between gl_DrawID and the
+array of model matrices presented to our vertex shader. Therefore, in addition
+to producing a new list of draws, we’ll need to produce a new list of model
+matrices, or otherwise communicate the original matrix to the vertex shader
+via some kind of indirection. We’ll choose the latter approach here because
+it’s simpler, as we have less data to forward from the compute shader into our
+graphics shaders.
+In the cullindirect sample, we’ll use the compute shader to cull entire
+objects that won’t be seen by the viewer. The compute shader we’ll
+implement will process a list of draws, determine the visibility for each of
+them, and then copy the parameters for those draws that may contribute to the
+scene into an output buffer. The number of draws copied is stored in an atomic
+counter. The resulting output buffer and count are referenced by a call to
+glMultiDrawArraysIndirectCountARB() to actually draw the
+visible geometry.
+We define a structure, CandidateDraw, which contains the center (in
+object coordinates) and radius of a sphere that completely surrounds the
+object, and the parameters that can be used to draw the object. We place an
+unsized array of these parameter structures in an SSBO declared in our
+compute shader. Its definition is shown in Listing 14.16.
+Click here to view code image
+   struct CandidateDraw
+   {
+       vec3 sphereCenter;
+       float sphereRadius;
+       uint firstVertex;
+       uint vertexCount;
+       uint pad0;
+       uint pad1;
+   };
+
+   layout (binding = 0, std430) buffer CandidateDraws
+   {
+         CandidateDraw draw[];
+   };
+
+Listing 14.16: Candidate draws used for culling
+
+In addition to the candidate draws, the compute shader has access to the
+model, view, and projection matrices that will be used by the vertex shader to
+draw the resulting geometry, along with a precomputed view-projection
+matrix. These matrices are declared and placed in a pair of uniform blocks as
+shown in Listing 14.17.
+Click here to view code image
+   layout (binding = 0, std140) uniform MODEL_MATRIX_BLOCK
+   {
+       mat4    model_matrix[1024];
+   };
+
+   layout (binding = 1, std140) uniform TRANSFORM_BLOCK
+   {
+       mat4    view_matrix;
+       mat4    proj_matrix;
+       mat4    view_proj_matrix;
+   };
+
+Listing 14.17: Matrix data used for compute shader culling
+
+As you can see in Listing 14.17, we have separated the model matrices from
+the view, projection, and view-projection product matrices. This allows us to
+have as many model matrices as will fit into a single uniform block. The
+shader uses its global invocation index to look up the incoming model matrix
+from the MODEL_MATRIX_BLOCK uniform block, uses that matrix along
+with the view_proj_matrix to transform the center of the sphere defined
+for the candidate draw into clip space, and then determines whether anything
+within that sphere could potentially be visible. Of course, we could
+implement a more advanced culling mechanism—we could use a tighter
+bounding volume than a sphere, or multiple volumes per object, for example
+—but this serves to demonstrate the principle.
+We expand the culling distance to allow for the radius of the sphere. The
+definition of clip space tells us that if the projection of the sphere intersects
+the region from −w to w in the x and y dimensions (we’re not worrying about
+z in this example), then the object may be visible. Therefore, we can make this
+comparison in our compute shader to perform culling. The main body of our
+compute shader is shown in Listing 14.18.
+Click here to view code image
+   struct DrawArraysIndirectCommand
+   {
+       uint vertexCount;
+       uint instanceCount;
+       uint firstVertex;
+       uint baseInstance;
+   };
+
+   layout (binding = 1, std430) writeonly buffer OutputDraws
+   {
+       DrawArraysIndirectCommand command[];
+   };
+
+   layout (binding = 0, offset = 0) uniform atomic_uint
+   commandCounter;
+
+   void main(void)
+   {
+       const CandidateDraw thisDraw = draw[gl_GlobalInvocationID.x];
+       const mat4 thisModelMatrix =
+   model_matrix[gl_GlobalInvocationID.x];
+
+         vec4 position = view_proj_matrix *
+                         thisModelMatrix *
+                         vec4(thisDraw.sphereCenter, 1.0);
+
+       if ((abs(position.x) - thisDraw.sphereRadius) < (position.w *
+   1.0) &&
+           (abs(position.y) - thisDraw.sphereRadius) < (position.w *
+   1.0))
+       {
+           uint outDrawIndex =
+   atomicCounterIncrement(commandCounter);
+
+           command[outDrawIndex].vertexCount = thisDraw.vertexCount;
+           command[outDrawIndex].instanceCount = 1;
+           command[outDrawIndex].firstVertex = thisDraw.firstVertex;
+           command[outDrawIndex].baseInstance =
+   uint(gl_GlobalInvocationID.x);
+       }
+   }
+
+Listing 14.18: Object culling in a compute shader
+As you can see in Listing 14.18, we declared an SSBO called
+OutputDraws into which we’re writing the resulting draw commands.
+We’ve also declared our atomic counter, commandCounter, which stores
+the count of the number of draws produced. We’re using the baseInstance
+member of the output command to record the original invocation index that
+produced it. We can use this information later in our vertex shader, through the
+gl_BaseInstanceARB built-in variable, to look up the appropriate
+model matrix to transform the real geometry into world coordinates.
+The code to drive all this from the application might seem a little complex at
+first, but it is not really all that advanced. First, we bind our atomic counter
+buffer and clear it with a call to glClearBufferSubData(), which
+resets the counter to zero. Next, we bind the model matrix uniform buffer, map
+it, and update all the model matrices for the objects in the scene. We do this
+again for the view, projection, and view-projection product matrices. In a
+more advanced application, we could do this work ahead of time, or through a
+persistent mapping. Next, we dispatch our culling compute shader.
+After the compute shader has run, the commandCounter atomic counter
+contains the number of draws written to the OutputDraws SSBO. Because
+we’re about to use this buffer as the source of commands for an indirect
+drawing command, we need to issue a memory barrier. To do so, we call
+glMemoryBarrier() with the GL_COMMAND_BARRIER_BIT flag set.
+This ensures that all the commands written to the buffer by the compute shader
+will be seen by the subsequent indirect draw command. The buffer bound to
+the GL_ATOMIC_COUNTER_BUFFER binding that backs
+commandCounter is then bound to the GL_PARAMETER_BUFFER_ARB
+binding. Next, we call glMultiDrawArraysIndirectCountARB(),
+passing a zero offset for both the base of the commands and the offset of the
+count parameter.
+glMultiDrawArraysIndirectCountARB() also takes a maximum
+number of draws to process. We set this parameter to the total number of
+objects in our scene, as we know that we can never render more objects than
+this limit. The final code is shown in Listing 14.19.
+Click here to view code image
+   void cullindirect_app::render(double currentTime)
+   {
+       static const GLfloat farplane[] = { 1.0f };
+       static float lastTime = 0.0f;
+    static int frames = 0;
+    float nowTime = float(currentTime);
+    int i;
+
+    // Set viewport and clear
+    glViewport(0, 0, info.windowWidth, info.windowHeight);
+    glClearBufferfv(GL_COLOR, 0, sb7::color::Black);
+    glClearBufferfv(GL_DEPTH, 0, farplane);
+
+    // Bind and clear atomic counter
+    glBindBufferBase(GL_ATOMIC_COUNTER_BUFFER, 0,
+buffers.parameters);
+    glClearBufferSubData(GL_ATOMIC_COUNTER_BUFFER, GL_R32UI,
+                         0, sizeof(GLuint),
+                         GL_RED_INTEGER, GL_UNSIGNED_INT,
+nullptr);
+
+    // Bind shader storage buffers
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 0,
+buffers.drawCandidates);
+    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, 1,
+buffers.drawCommands);
+
+    // Bind model matrix UBO and fill with data
+    glBindBufferBase(GL_UNIFORM_BUFFER, 0,
+buffers.modelMatrices);
+    vmath::mat4* pModelMatrix =
+        (vmath::mat4*)glMapBufferRange(GL_UNIFORM_BUFFER,
+                                       0, 1024 *
+sizeof(vmath::mat4),
+                                       GL_MAP_WRITE_BIT |
+                                       GL_MAP_INVALIDATE_BUFFER_B
+IT);
+
+    for (i = 0; i < 1024; i++)
+    {
+        float f = float(i) / 127.0f + nowTime * 0.025f;
+        float g = float(i) / 127.0f;
+        const vmath::mat4 model_matrix =
+            vmath::translate(70.0f * vmath::vec3(sinf(f * 3.0f),
+                                                 cosf(f * 5.0f),
+                                                 cosf(f * 9.0f)))
+*
+            vmath::rotate(nowTime * 140.0f,
+                vmath::normalize(vmath::vec3(sinf(g * 35.0f),
+                                             cosf(g * 75.0f),
+                                             cosf(g * 39.0f))));
+        pModelMatrix[i] = model_matrix;
+    }
+   glUnmapBuffer(GL_UNIFORM_BUFFER);
+
+    // Bind view + projection matrix UBO and fill
+    glBindBufferBase(GL_UNIFORM_BUFFER, 1, buffers.transforms);
+    TransformBuffer* pTransforms =
+        (TransformBuffer*)glMapBufferRange(GL_UNIFORM_BUFFER,
+                                           0,
+sizeof(TransformBuffer),
+                                           GL_MAP_WRITE_BIT |
+                                           GL_MAP_INVALIDATE_BUFF
+ER_BIT);
+
+   float t = nowTime * 0.1f;
+
+    const vmath::mat4 view_matrix =
+        vmath::lookat(vmath::vec3(150.0f * cosf(t), 0.0f, 150.0f
+* sinf(t)),
+                      vmath::vec3(0.0f, 0.0f, 0.0f),
+                      vmath::vec3(0.0f, 1.0f, 0.0f));
+    const vmath::mat4 proj_matrix =
+        vmath::perspective(50.0f,
+                           (float)info.windowWidth /
+(float)info.windowHeight,
+                           1.0f,
+                           2000.0f);
+
+   pTransforms->view_matrix = view_matrix;
+   pTransforms->proj_matrix = proj_matrix;
+   pTransforms->view_proj_matrix = proj_matrix * view_matrix;
+   glUnmapBuffer(GL_UNIFORM_BUFFER);
+
+   // Bind the culling compute shader and dispatch it
+   glUseProgram(programs.cull);
+   glDispatchCompute(CANDIDATE_COUNT / 16, 1, 1);
+
+   // Barrier
+   glMemoryBarrier(GL_COMMAND_BARRIER_BIT);
+
+   // Get ready to render
+   glEnable(GL_DEPTH_TEST);
+   glEnable(GL_CULL_FACE);
+
+   glBindVertexArray(object.get_vao());
+
+   glActiveTexture(GL_TEXTURE0);
+   glBindTexture(GL_TEXTURE_2D, texture);
+
+   // Bind indirect command buffer and parameter buffer
+   glBindBuffer(GL_DRAW_INDIRECT_BUFFER, buffers.drawCommands);
+   glBindBuffer(GL_PARAMETER_BUFFER_ARB, buffers.parameters);
+         glUseProgram(programs.draw);
+
+         // Draw
+         glMultiDrawArraysIndirectCountARB(GL_TRIANGLES, 0, 0,
+                                           CANDIDATE_COUNT, 0);
+         // Update overlay
+         if (nowTime > (lastTime + 0.25f))
+         {
+             fps = float(frames) / (nowTime - lastTime);
+             frames = 0;
+             lastTime = nowTime;
+         }
+
+         glDisable(GL_CULL_FACE);
+         updateOverlay();
+
+         frames++;
+   }
+
+Listing 14.19: Driving compute culling shaders
+
+The astute reader might have noticed * 1.0 sitting in the middle of our
+culling shader in Listing 14.18:
+Click here to view code image
+   if ((abs(position.x) - thisDraw.sphereRadius) < (position.w *
+   1.0) &&
+       (abs(position.y) - thisDraw.sphereRadius) < (position.w *
+   1.0))
+   {
+       // Produce output draw...
+
+Of course, as this shader simply culls items that would not be visible to you
+anyway, the program’s output doesn’t differ from the output that would be
+produced if the culling did not happen. However, by reducing the value in the
+shader from 1.0, we effectively reduce the visible area of clip space.
+Changing it to 0.5, for example, reduces clip space by half, and we start to see
+objects being culled as they approach halfway from the center of the viewport
+to the edge. The output of the program is shown in Figure 14.4.
+           Figure 14.4: Output of the cullindirect application
+The top image in Figure 14.4 is the full-frame output of the application. Again,
+we’ve used our asteroid pack to demonstrate the technique. The bottom image
+in Figure 14.4 is the same application but with the culling region reduced by
+half. As you can see, the asteroids have been reduced to fit within a window
+half the width and height of the viewport.
+
+Zero Copy
+By now you should be very familiar with functions like
+glMapBufferRange() and glTextureStorageSubImage2D(),
+which allow you to get a pointer to a buffer object’s data store and place
+texture data into memory, respectively. Sometimes, these functions will make
+a copy of your data, transferring it from your application’s memory into
+OpenGL’s own memory, usually located on the graphics card or otherwise
+managed by OpenGL. If your application uses the data only once or twice, this
+copy can be a significant amount of work done by OpenGL on your behalf. By
+managing shared memory yourself with the help of persistent maps, we can
+avoid that overhead.
+We mentioned persistent maps earlier in this chapter and briefly introduced
+them when we first discussed the flags that you can pass to
+glMapNamedBufferRange() and glNamedBufferStorage(). In
+this section we cover a few methods you can use to synchronize access to
+shared memory, to use it to upload texture data, and to update the contents of
+buffers synchronously without stalling OpenGL.
+
+Persistent Mapping
+A persistent map is so called because the mapping—getting a pointer valid
+for the application—sticks around until you release it. If a mapping is not
+marked as persistent, then you are responsible for releasing it before you
+draw anything that might access the buffer. OpenGL will do its best to find
+buffers that are mapped when you call one of the drawing commands and
+generate a GL_INVALID_OPERATION error, but it’s not required to find
+every last case. In practice, this means that drawing from a mapped buffer
+produces undefined behavior. We can make that behavior well defined by
+telling OpenGL that this is really what we want to do.
+There are two steps to making a persistent mapped buffer. First, you need to
+declare, when you allocate storage for the buffer, that you want to be able to
+map it persistently. This doesn’t make the persistent map, but it does give
+OpenGL the opportunity to allocate storage for the buffer object in a region of
+memory that can be seen by both the GPU and the CPU in the system. Next, we
+need to actually map the buffer using glMapNamedBufferRange() and
+tell OpenGL that this is the mapping we want to keep around. At this point,
+you are presented with a pointer that you can use to access the same memory
+that OpenGL is using to draw from.
+An example of creating this kind of mapping can be found in Listing 14.2
+earlier in this chapter. Here, we specify the GL_MAP_PERSISTENT_BIT
+flag both when we call glNamedBufferStorage() and when we call
+glMapNamedBufferRange(). Once we have a persistent mapped buffer,
+we are responsible for synchronization of any access to it.
+
+Synchronizing Access to Buffers
+When the GPU and the CPU can both access the same memory at the same
+time, we need to make sure that the two parts of our process are in sync. If we
+start overwriting chunks of data that are in use by the GPU, we will get
+inconsistent results. This might have no ill effect in our application, but more
+than likely it will result in parts of a frame being rendered with old
+information and other parts being rendered with new information. Readers
+familiar with multi-threaded programming will recognize this as a race
+condition. The visible side effect might be objects being out of place, pieces
+of geometry missing, or corrupted textures or other elements. In the worst
+case, it could be catastrophic.
+In the example presented earlier in this chapter, we decided that we didn’t
+care if the frame was partially updated. However, that will not always be the
+case, especially in more complex applications. There are several mechanisms
+for dealing with synchronization, presented here from most naïve to most
+advanced:
+     • Just call glFinish() before starting any frame. This ensures that the
+       GPU has completely finished rendering everything from the previous
+       frame and is done with any shared data.
+     • Use a fence object associated with the resource, ask OpenGL to signal it
+       with a call to glFenceSync() after it’s done consuming the shared
+       data on the GPU side, and then wait on the resulting fence with a call to
+       glClientWaitSync() before overwriting that data on the CPU
+       side.
+     • Partition the shared data into multiple regions and then use several
+       fences, one for each region, to allow the CPU to move ahead of the GPU
+       without waiting.
+We have implemented the pmbstreaming application to demonstrate all
+three methods, along with the “I don’t care” strategy of not waiting at all. The
+example application renders a spinning object with a simple lighting model
+and a texture applied to it. On the author’s machine, the application runs at
+several thousand frames per second regardless of synchronization settings.
+When fences are in use, the application also tests the fences to see if it will be
+stalled by waiting on them.
+The application creates a buffer and uses it as a uniform buffer that contains
+the matrices used by the program. We use a persistent map to share the
+uniform buffer between the CPU and the GPU, and we update the values of the
+uniforms in the buffer by simply writing new values into memory. The
+application never unmaps the buffer.
+If we just let the application run with no synchronization, we see a frame time
+of 0.36 milliseconds per frame. The rendered output looks good in this
+application because the frame is very simple and we’re updating only a few
+uniform block members—there is little chance for partial updates and
+incoherent data to slip in. When we introduce synchronization using the first
+strategy (just call glFinish()), we can assume that the application will
+stall. After all, we just asked OpenGL to do a lot of work for us and then
+immediately asked it to do everything. In this scenario, the frame time
+increases to 0.64 milliseconds per frame—almost double the time associated
+with not waiting at all.
+Next, we move to the strategy of using a single fence to marshal access to the
+shared buffer. Fences in OpenGL are single-use objects. That is, calling
+glFenceSync() creates a new fence in the unsignaled state. When the
+GPU executes the fence, it moves to the signaled state. We can check the state
+later with glGetSynciv() and we can wait for it to become signaled by
+calling glClientWaitSync(). Once a fence becomes signaled, it can
+never become unsignaled again; all we can do with it is delete it. Therefore,
+after issuing the drawing command that uses the data in the shared buffer, we
+call glFenceSync() and store the result. Before updating the mapped
+buffer, we call glClientWaitSync(). This causes the application to
+wait before writing into the buffer. We then delete the sync object using
+glDeleteSync() and start the procedure again in the next frame.
+When we run this strategy inside the pmbstreaming application, we see
+that when we begin waiting for the sync object, it is not yet signaled and
+therefore we know that the application will stall. Indeed, we see the frame
+time remain at roughly 0.60 milliseconds. We haven’t done much better than
+our brute-force method of calling glFinish() at the start of every frame.
+Now we get to the last method, which involves keeping multiple copies of our
+shared data and associating a fence with each one. Here, we make our buffer
+big enough to hold four complete copies of our uniforms. We also create an
+array of four sync objects to represent our fences. Each copy of our uniform
+data is associated with one of the fences. Each time we need to send a new
+copy of the uniforms to our shader, we wait for the fence associated with the
+next available slot in the buffer to become signaled. Then we delete that
+fence, update the uniforms, send the drawing command to OpenGL, and create
+a new fence object to represent that draw. On each frame, we move to the next
+slot in the buffer and its associated fence. Every four frames, we wrap around
+and reuse the old slots.
+The slot is communicated to the shader by using the baseInstance
+parameter to the drawing command and is picked up in the shader using the
+gl_BaseInstanceARB built-in variable, which is part of the
+GL_ARB_shader_draw_parameters extension. Of course, you can use
+any other mechanism to communicate the slot index to the shader—vertex
+attributes work quite well for this. With this synchronization mechanism, the
+application reports that it is never stalled and the frame time decreases to
+0.37 milliseconds per frame, which is almost exactly the same as the no-
+synchronization version.
+Figure 14.5 shows the output of the application. In the upper left of each
+image is the frame time (and the corresponding frame rate), the mode that the
+application is in, and the stall marker.
+            Figure 14.5: Synchronizing access to a mapped buffer
+As you can see in Figure 14.5, the unsynchronized update method is fastest,
+but it is technically incorrect. This is shown in the upper-left image. Calling
+glFinish() (as seen in the upper-right image) synchronizes access in a
+brute-force manner. While correct, it’s certainly sub-optimal, with a frame
+time almost double that of the unsynchronized method. On the lower left, we
+see the “single fence” method. Again, this is correct, but the frame time is
+really no better than with the full glFinish() method. Finally, on the
+lower right, we see the result of the “ringed fence” method, which subdivides
+a large buffer into several small parts and arbitrates access to each part
+individually with its own fence. This method is both correct and fast, with a
+frame time approximately equal to that of the unsynchronized method, and no
+detected stalls.
+Unmappable Resources
+In the last few sections, we’ve discussed directly sharing data between the
+GPU and the CPU by using persistent mapped buffers. With this technique,
+you map a buffer and then keep it mapped even while you’re drawing.
+With careful organization of your data and some thought devoted to
+synchronization, you can remove any calls to upload or copy data from your
+application into OpenGL’s memory, and instead use the data in place. In some
+cases, though, it’s not possible to do this. There are a couple things that you
+can’t map, as the following examples highlight:
+      • It’s currently not possible to map a texture. If you want to give OpenGL
+        data that it can use as a texture, you still need to move the data into a
+        texture object before you can bind it into your shaders.
+      • If you have very large buffers—on the order of hundreds of megabytes
+        —it’s very likely that OpenGL will not be able to map them because
+        memory that can be shared between application and GPU is limited.
+Even so, we can employ certain techniques to take advantage of persistent
+mapped buffers while still being able to use these kinds of resources.
+For textures, we can copy the data from a persistent mapped buffer into a
+texture using calls to glTextureStorageSubImage2D() (or the
+appropriate version for different dimensionalities of texture). Compare this
+approach to calling glTextureStorageSubImage2D() using client
+memory. When you do this, OpenGL must make a copy of your texture data
+before returning control to your application because you’re allowed to
+overwrite that data right away. By using a persistent mapped buffer, you can
+still write data directly to memory as you can with client data, but OpenGL
+can delay uploading data from there into the texture, probably avoiding at
+least one copy.
+For buffers, we can copy from our persistent mapped buffer into the target
+buffer using glCopyNamedBufferSubData(). Again, there is a copy
+here, so this is not technically zero-copy. However, as with textures, if the
+source of the data is memory that is not otherwise accessible to the GPU, then
+OpenGL may need to make a first copy to get the data ready for upload and
+then a second copy to get the data into its final location. Further, unless you
+mark the target buffer as dynamic (using the GL_DYNAMIC_STORAGE_BIT
+flag when you call glBufferStorage()), then you can’t directly load
+data into it from application memory—uploading from another buffer is your
+only choice, so you may as well make that staging buffer a persistent mapped
+buffer.
+In the pmbfractal example, we demonstrate the use of a persistent mapped
+buffer to update a texture. To create this example, we ported3 the Julia fractal
+example shown in Listing 13.34 from the GPU back to the CPU. The resulting
+fractal generation loop is shown in Listing 14.20.
+  3. Clearly, the best place for this code to run is the GPU, but this example is provided for illustration
+     purposes.
+Click here to view code image
+   void pmbfractal_app::update_fractal()
+   {
+       const vmath::vec2 C = fractparams.C; // (0.03f, -0.2f);
+       const float thresh_squared = 256.0f;
+       const float zoom = fractparams.zoom;
+       const vmath::vec2 offset = fractparams.offset;
+
+   #pragma omp parallel for schedule (dynamic, 16)
+       for (int y = 0; y < FRACTAL_HEIGHT; y++)
+       {
+           for (int x = 0; x < FRACTAL_WIDTH; x++)
+           {
+               vmath::vec2 Z;
+               Z[0] = zoom * (float(x) / float(FRACTAL_WIDTH) - 0.5)
+   + offset[0];
+               Z[1] = zoom * (float(y) / float(FRACTAL_WIDTH) - 0.5)
+   + offset[1];
+               unsigned char * ptr = mapped_buffer + y *
+   FRACTAL_WIDTH + x;
+               int it;
+               for (it = 0; it < 256; it++)
+               {
+                   vmath::vec2 Z_squared;
+
+                             Z_squared[0] = Z[0] * Z[0] - Z[1] * Z[1];
+                             Z_squared[1] = 2.0f * Z[0] * Z[1];
+                             Z = Z_squared + C;
+
+                             if ((Z[0] * Z[0] + Z[1] * Z[1]) > thresh_squared)
+                                 break;
+                      }
+                      *ptr = it;
+                }
+         }
+   }
+Listing 14.20: Julia fractals on the CPU
+
+As you can see from Listing 14.20, we have again used OpenMP to accelerate
+our fractal rendering function. The mapped_buffer variable is a pointer to
+our persistent mapped buffer, which we create and map during application
+start-up.
+In the inner rendering loop, which is shown in Listing 14.21, we bind the
+persistent mapped buffer to the GL_PIXEL_UNPACK_BUFFER target and
+call glTexSubImage2D() to update the contents of the texture. This
+causes OpenGL to copy the texture data that we just generated into our texture.
+We then immediately draw the texture to the screen using a simple full-screen
+quad program.
+Click here to view code image
+
+   void pmbfractal_app::render(double currentTime)
+   {
+       static float lastTime = 0.0f;
+       static int frames = 0;
+       float nowTime = float(currentTime);
+
+       fractparams.C = vmath::vec2(1.5f - cosf(nowTime * 0.4f) *
+   0.5f,
+                                   1.5f + cosf(nowTime * 0.5f) *
+   0.5f) * 0.3f;
+       fractparams.offset = vmath::vec2(cosf(nowTime * 0.14f),
+                                        cosf(nowTime * 0.25f)) *
+   0.25f;
+       fractparams.zoom = (sinf(nowTime) + 1.3f) * 0.7f;
+
+         update_fractal();
+
+         glViewport(0, 0, info.windowWidth, info.windowHeight);
+
+         glUseProgram(program);
+         glActiveTexture(GL_TEXTURE0);
+         glBindTexture(GL_TEXTURE_2D, texture);
+
+         glBindBuffer(GL_PIXEL_UNPACK_BUFFER, buffer);
+         glTexSubImage2D(GL_TEXTURE_2D, 0,
+                         0, 0,
+                         FRACTAL_WIDTH, FRACTAL_HEIGHT,
+                         GL_RED, GL_UNSIGNED_BYTE,
+                         nullptr);
+         glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+
+         glBindVertexArray(vao);
+        glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+
+        if (nowTime > (lastTime + 0.25f))
+        {
+            fps = float(frames) / (nowTime - lastTime);
+            frames = 0;
+            lastTime = nowTime;
+        }
+
+        updateOverlay();
+
+        frames++;
+   }
+
+Listing 14.21: Persistent mapped fractal rendering
+
+The resulting output is shown in Figure 14.6. As you can see, we have been
+able to render a moderatly detailed fractal in roughly 13 milliseconds. In this
+application, we use six threads to render the fractal into memory shared with
+the GPU. There is a single-step copy from that buffer into a texture that is
+immediately usable by our shader.
+                  Figure 14.6: Persistent mapped Julia fractal
+Rendering Julia fractals is perhaps not the greatest use for our CPU—after all,
+we already saw that the GPU is very well suited to this kind of highly parallel
+workload. However, the data written here could be anything. For example, it
+could be the output of a video codec in a video streaming application, or data
+produced by a third-party library that doesn’t interface natively with OpenGL.
+In this case, we can map the buffer and hand the pointer to the library as if it’s
+normal application memory, and the library will know no different.
+A word of caution is warranted, however, when sharing pointers to mapped
+buffers with software that’s not expecting this kind of use case. Mapped
+buffers are very often uncached and write combined. This means that write
+performance is very good, and writing to those buffers does not pollute caches
+that might hold other, more useful data. However, read performance of these
+kinds of mappings can be extremely slow. In fact, unless you map the buffer
+with the GL_MAP_READ_BIT flag set, it’s not even legal to read from the
+resulting memory. You should ensure that whatever software you use
+(especially third-party software that you didn’t write), it doesn’t try to read
+from a write-only buffer or write to a read-only buffer.
+
+Performance Analysis Tools
+In this section we’ll cover some of the performance analysis tools that are
+freely available and don’t rely on any non-free tools. That is, you can
+download and install them right now! The first of these tools is GPUView,
+which is part of the Windows Performance Toolkit offered by Microsoft. The
+second is AMD’s GPU PerfStudio. Both of these tools are available for
+download from their respective vendors’ Web sites.
+
+Windows Performance Toolkit and GPUView
+Microsoft’s Windows Performance Toolkit (WPT) is a suite of tools for
+measuring the performance of various parts of the Windows operating system.
+It can measure CPU usage and events, memory and disk accesses, network
+activity, and a multitude of other things. What we are most interested in here is
+measuring GPU activity.
+Modern graphics processors operate by processing command buffers, which
+are sequences of commands encoded in some form of byte code and sent from
+the application (or in this case, the OpenGL driver) to the graphics card.
+Sending a command buffer to the graphics card is sometimes known as
+submission. The GPU picks up the command buffers, interprets their contents,
+and acts on the instructions they contain. Command buffers are stored in one
+or more queues. When the driver first submits a command buffer for
+execution, the operating system (or some component of it) manages that queue
+and holds the command buffer in a ring waiting to send it to the hardware; this
+queue is referred to as the software queue or CPU queue. Once the hardware
+is ready to execute a new command buffer, a low-level component of the
+graphics driver signals the GPU to pick up the command buffer at the front of
+the queue and execute it. The GPU can usually get one or more command
+buffers lined up and ready to execute while it is still working on previously
+enqueued buffers. The command buffers that have been sent to the hardware
+but are still waiting to execute are held in a hardware queue.
+GPUView is a tool included in the WPT that allows you to visualize command
+buffer submission and the activity in the hardware and software queues. It can
+track all of the submissions that the application makes (through the OpenGL
+driver) into the operating system queues, tell you which types of submissions
+are being made, and show how they are batched, sent to the hardware, and
+executed. You can see how long each command buffer spent waiting in the
+software queue before being sent to the hardware, how long each spent in the
+hardware queue, and how long it spent being executed. An annotated
+screenshot of GPUView is shown in Figure 14.7.
+
+                       Figure 14.7: GPUView in action
+The application under analysis in Figure 14.7 is the asteroid field example
+from Chapter 7, a screenshot of which is shown in Figure 7.9. This particular
+application uses almost all of the available GPU time. The system used to
+capture this trace contained an AMD Phenom X6 1050T processor with six
+CPU cores and an NVIDIA GeForce GTX 560 SE graphics card with two
+displays attached to it. The application was running in full screen on one of
+the displays while the other display was used for development tools. The top
+hardware queue is clearly executing the application under test. The small
+submissions on the second queue are related to Windows’ Desktop Window
+Manager (DWM) performing composition on the second display. The vertical
+lines running through the trace are the vertical refresh events that are
+associated with the display. In this application, synchronization to vertical
+refresh (also known as vsync) is off. Now take a look at Figure 14.8.
+
+                     Figure 14.8: Vsync seen in GPUView
+In Figure 14.8, we start running the application in full-screen mode with vsync
+turned off (which is the default). Then, during the run, we turn on vsync. This
+point is clearly visible in the GPUView image. When vsync is turned on, the
+software and hardware queues drain, and the operating system takes over
+presentation of the rendered frames. When vsync is off, OpenGL tells the
+graphics hardware to finish its rendering and show the result to the user as
+soon as possible. When it’s on, the operating system holds back the graphics
+hardware and tells it to wait for a vertical refresh event before showing the
+frame to the user. This causes the GPU to idle for short periods of time
+between each frame, which shows up as gaps in the hardware queue. This is
+effectively wasted time. Here, we have wasted time on purpose to prevent the
+application from getting too far ahead of the display (and to show what this
+looks like in the tool). However, anything that causes the GPU to wait will
+waste GPU time.
+When you install the WPT, its program directory will contain a gpuview
+folder, which is where the GPUView tool is located. In that same directory is
+the file log.cmd, which is a script for starting and stopping recording of
+logging events into ETL files—event trace logs. These files contain the raw
+data that is interpreted by the GPUView tool. ETL files can be extremely
+large. To start recording data, run log.cmd from a command prompt with
+administrative privileges; to stop it, run log.cmd again. Even running a
+simple application for a minute or so can generate gigabytes of data, so it’s
+best to keep recording times short and sweet. Other suggestions include
+minimizing the number of other applications running (especially those with
+graphical output) and disabling the Aero user interface (which turns off DWM
+composition). Also, you can implement a pause feature in your application
+such that it can be made to stop rendering. Then, pause the application, start
+logging, allow the application to render for a few seconds, pause it again, and
+stop logging. When logging is active, a number of ETL files are written into
+the directory from which logging is started. One file is created for each of
+several of the major Windows subsystems. When logging is terminated, they
+are all merged together into a single file called Merged.etl, which is what
+is loaded into GPUView.
+In addition to regular command buffer submissions (referred to by GPUView
+as standard queue packets in the CPU queue and standard DMA packets once
+they reach the hardware), the tool can show you a number of other events that
+might be inserted into the graphics pipeline. For example, present packets are
+events that instruct the operating system to display the results of rendering
+(triggered by the SwapBuffers() command) with a cross-hatch pattern in
+GPUView. Clicking on a packet brings up a dialog similar to the one shown in
+Figure 14.9.
+                  Figure 14.9: A packet dialog in GPUView
+You can see a number of useful pieces of information in the dialog shown in
+Figure 14.9. First, we see several timestamps; the first is the packet creation
+time, which is the time that the command buffer was allocated (which is when
+the OpenGL would start filling it in). Next, we see the
+SubmittedToHardwareQueueTime, which is when the packet was sent
+to the hardware for processing. It is then picked up by the hardware at the
+time noted by GpuStartProcessingTime. When the GPU is done
+processing the packet, it triggers an interrupt, which is handled by an interrupt
+service routine (ISR)—the time at which this interrupt is serviced by the ISR
+is shown in CompletedByISRTime. Next, the graphics subsystem
+processes the packet using a deferred procedure call (DPC); the time at which
+this completes is shown as CompletedByDPCTime. The total time
+between when the command buffer is submitted to the hardware
+(SubmittedToHardwareQueueTime) and when the command buffer is
+completed and signals the ISR (CompletedByISRTime) is given by Time
+in HW queue. This is effectively the amount of time it took the GPU to
+execute the command buffer. The sum of these packets for a given frame
+places the upper limit on the frame rate of your application.
+GPUView can show you quite a bit more information about your application’s
+use of the graphics processor. As your applications become more and more
+complex, they will start to exhibit behavior that only a tool such as GPUView
+can illustrate. The goal of performance tuning is twofold:
+     • Ensure that the GPU does as much work as possible by feeding it
+       efficiently and not causing it to stall.
+     • Ensure that the work the GPU does contributes to the final scene and
+       don’t ask it to do more than necessary.
+In the remainder of this chapter, we’ll use GPUView to analyze our
+applications and show the effects of the tuning advice we’ll give.
+
+GPU PerfStudio
+GPU PerfStudio is a free tool provided by AMD that’s designed for the
+analysis of graphics applications written using OpenGL and other graphics
+APIs. GPU PerfStudio supports three major modes of operation: an API trace
+tool, a frame debugger, and a frame profiler. The frame profiler requires
+AMD hardware to be present, but the API trace and the frame debugger work
+well on hardware from any vendor. Figure 14.10 shows a screenshot of GPU
+PerfStudio’s API trace window running the displacement example from
+Chapter 8, “Primitive Processing.”
+        Figure 14.10: GPU PerfStudio running an example application
+As you can see, GPU PerfStudio has captured all of the OpenGL calls made
+by the application and has produced a timeline of the application making those
+calls. Along with each OpenGL command, the amount of CPU time taken to
+execute the call is shown in both the timeline and the function call list. The
+function call list also logs the parameters sent to each command. The frame
+debugger window of GPU PerfStudio is shown in Figure 14.11.
+                Figure 14.11: GPU PerfStudio frame debugger
+In the GPU PerfStudio frame debugger in Figure 14.11, you can see the
+OpenGL pipeline with the vertex array object (VAO), vertex shader (VS),
+tessellation control and evaluation shaders (TCS and TES), fragment shader
+(FS), and framebuffer (FB) active. We also see that this particular drawing
+command is not using the geometry or compute shader stages (GS and CS).
+The fragment shader stage is selected, and in the main window we see the
+source code of the current fragment shader along with the texture that’s bound
+for rendering.
+Finally, in addition to being able to display information about the timing of
+drawing commands, the resources bound, and the code used for shaders, GPU
+PerfStudio is able to overlay data in your application. Clicking on the “HUD
+Controls” button in the frame debugger displays the window shown in Figure
+14.12.
+             Figure 14.12: GPU PerfStudio HUD control window
+By using the HUD control window shown in Figure 14.12, we can select
+certain textures for viewing inside the application whenever the application is
+paused. A screenshot of the landscape example from Chapter 8 with the in-use
+textures is shown in Figure 14.13. In the top left, the height map used by the
+tessellation evaluation shader is visible. On the top right of the screenshot is
+the depth buffer (pure white because it’s been cleared to 1.0) and the content
+of the framebuffer. At the bottom left is the texture used by the fragment shader
+for shading the terrain.
+           Figure 14.13: GPU PerfStudio overlaying information
+If you happen to have access to AMD hardware, GPU PerfStudio can read a
+number of hardware performance counters from OpenGL to measure the
+impact of the drawing commands that your application executes. This includes
+measurements of things like primitives processed, the amount of texture data
+read, the amount of information written to the framebuffer, and so on. This
+feature is called the Frame Profiler, and a screenshot of GPU PerfStudio in
+this mode is shown in Figure 14.14.
+     Figure 14.14: GPU PerfStudio showing AMD performance counters
+Because this mode isn’t universally available, we will leave it as an exercise
+for AMD users to explore this feature on their own. GPU PerfStudio comes
+with some excellent help documentation and more is available online.
+
+Tuning Your Application for Speed
+In this section, we discuss a number of things that you can do to make sure that
+your application runs more efficiently, minimize the amount of work that the
+OpenGL driver needs to do, and maximize the amount of work you can get
+from a GPU.
+Reading State or Data from OpenGL
+In general, reading state or data back from OpenGL into your application is
+not a great idea. If we can offer one piece of advice, it’s to not do anything
+that might stall the OpenGL pipeline. This includes reading the framebuffer
+using glReadPixels(); reading the results4 of occlusion queries,
+transform feedback queries, or other objects whose results depend on
+rendering; or performing a wait on a fence that is unlikely to have completed.
+In particular, it should never be necessary to call glFinish().
+  4. As noted in the “Getting OpenGL to Make Decisions for You” section in Chapter 12, you can use
+     conditional rendering to avoid reading the result of occlusion queries.
+Furthermore, cases that might be less obvious can be avoided. For example,
+functions such as glGetError(), glGetIntegerv(),
+glGetUniformLocation(), and so on may not stall the GPU, but could
+well stall a multi-threaded driver and damage application performance. It’s
+best to stay away from functions that have the words “get” or “is” in their
+names. Also, while it should be common sense to not allocate and destroy
+objects frequently during the normal operation of your application, try to
+avoid generating names through the various “gen” functions.
+When reading data from OpenGL back into client memory, there are ways to
+achieve this without stalling—most of which involve allowing the GPU to lag
+far enough behind your application that it’s almost certainly done gathering the
+information you need before you read it.
+The first case we cover here is reading data from the framebuffer using
+glReadPixels(). If the intent is to use the resulting data for some other
+purpose in OpenGL, simply bind a buffer to the GL_PIXEL_PACK_BUFFER
+target, read pixel data into it, bind the buffer to whichever target you want to
+use it with, and continue rendering. There is no reason for the pixel data to
+ever leave the graphics card’s memory or for the CPU to ever see it. If,
+however, you really must have the data in application memory, you can get at
+it in a number of ways.
+First and simplest, you can call glReadPixels() and pass the address of
+a region of your application’s memory into which OpenGL should place the
+data. In almost all cases, this will cause a bubble to form in the OpenGL
+pipeline. You can see the effect in Figure 14.15.
+   Figure 14.15: GPUView showing the effect of glReadPixels() into
+                            system memory
+In Figure 14.15, the application starts by not calling glReadPixels() at
+all. As you can see on the left side of the screenshot, the GPU is nicely
+utilized, is not stalling, and always has at least one frame queued up ready to
+render. As soon as the application starts calling glReadPixels(), the
+CPU and GPU synchronize and we can clearly see that the GPU is starving for
+work to do, with big gaps in its execution queue. Of course, we can bind a
+buffer to the GL_PIXEL_PACK_BUFFER target before calling
+glReadPixels() to retrieve data into a pixel pack buffer, which is what
+we’re doing toward the end of the trace in Figure 14.15. However, although
+there seems to be a significant change in activity, there are still gaps in the
+queue, which is not what we want.
+What’s happening here is that we’re still calling glReadPixels(), but
+with a buffer bound to the GL_PIXEL_PACK_BUFFER target. This allows
+the GPU to complete rendering and then copy the resulting data into the buffer
+object without interruption. However, we then read the data back into the
+application by calling glMapBufferRange(). As a consequence, our
+application has to wait for OpenGL to copy the data from the framebuffer into
+the buffer object before it can continue. This is even worse! Not only do we
+stall the GPU, but it actually does more work between each stall.
+Now take a look at Figure 14.16. In this new trace, something interesting is
+going on. At first, we continue to call glReadPixels() to get the data into
+the buffer object and then immediately map it to get the data into our
+application. This is causing stalls and inefficient use of the GPU. However,
+partway through Figure 14.16, we change our strategy: We still call
+glReadPixels() to transfer data from the framebuffer into a buffer
+object, but then map the buffer from the previous frame. We create multiple
+buffer objects, but because we map only buffers that haven’t been written to in
+at least one frame time, the GPU has more time to keep up with us. Although
+quite a bit of work is going on, the GPU remains fully utilized and the
+performance of our application is not significantly impacted.
+
+  Figure 14.16: GPUView showing the effect of glReadPixels() into a
+                                buffer
+Effective Buffer Mapping
+Once you have a buffer object whose data store has been allocated using a
+call to glBufferData(), you can map the entire buffer into the
+application’s memory by calling glMapBuffer(). However, several
+caveats apply to the use of this function. First, if you just overwrite some part
+of the buffer, the rest of the buffer remains intact, meaning that OpenGL has to
+keep that data alive. Second, the buffer itself could be quite large and
+OpenGL could fail to find enough available address space to provide you
+with a single pointer to one contiguous region of memory representing the
+buffer. Finally, if you want to write into the buffer, either OpenGL has to wait
+until the GPU is done reading from it before giving you the pointer, or it must
+keep multiple copies of the data around, giving you a pointer to one of the
+copies that is not currently being used by the GPU.
+To address these issues, we can call the glMapBufferRange() function,
+which allows you to map only part of the buffer into your application, and
+which provides several more flags that can be used to control how the data is
+mapped and how synchronization is performed with the rest of the OpenGL
+pipeline. The prototype of glMapBufferRange() is
+Click here to view code image
+   void *glMapBufferRange(GLenum target,
+                          GLintptr offset,
+                          GLsizeiptr length,
+                          GLbitfield access);
+
+The target parameter is the buffer target to which the buffer you wish to
+map is bound, just as in the other buffer functions such as glMapBuffer()
+and glBindBuffer(). The offset and length parameters specify the
+range of the buffer that you want to map. Their units are bytes, with offset
+0 being the first byte in the buffer and length being the size of the mapped
+range, in bytes. Besides being able to map a small part of the buffer, the
+additional power of glMapBufferRange() comes from the last
+parameter, access, which is used to specify a number of flags that control
+how the mapping is performed. Table 14.1 shows the possible bitfield values
+that can be passed in access.
+                    Table 14.1: Map Buffer Access Types
+As you can see, glMapBufferRange() gives you quite a bit of control
+over how OpenGL performs the requested mapping operation. The
+GL_MAP_READ_BIT and GL_MAP_WRITE_BIT flags are self-
+explanatory. Setting the read bit indicates that you wish to read from the buffer
+and setting the write bit indicates that you want to write to it. Those
+preferences are more strictly enforced with glMapBufferRange() than
+the equivalent GL_READ_ONLY and GL_WRITE_ONLY parameters to
+glMapBuffer(), though. Incorrect use can cause your application to crash,
+so get them right! Of course, you can specify both the GL_MAP_READ_BIT
+and GL_MAP_WRITE_BIT flags at the same time by simply ORing them
+together.
+The GL_MAP_INVALIDATE_RANGE_BIT and
+GL_MAP_INVALIDATE_BUFFER_BIT flags tell OpenGL that you no
+longer care about the data in the buffer and that it can throw that data out if it
+wishes. If you don’t need the old contents of the buffer after the mapping
+operation, it’s important to set one of these bits5; otherwise, OpenGL has to
+make sure that whatever you don’t write in the buffer has valid data after you
+unmap it. Setting the GL_MAP_INVALIDATE_RANGE_BIT flag tells
+OpenGL to discard the data in the range being mapped, whereas setting
+GL_MAP_INVALIDATE_BUFFER_BIT tells it to discard everything in the
+buffer—even parts outside the mapped range. If you map the whole range of
+the buffer by setting offset to 0 and length to the size of the buffer
+object, then these two bits become equivalent.
+  5. You could set both, but GL_MAP_INVALIDATE_BUFFER_BIT is clearly a superset of
+     GL_MAP_INVALIDATE_RANGE_BIT.
+You use the GL_MAP_FLUSH_EXPLICIT_BIT flag if you want to
+overwrite only part of the buffer, but you don’t know which part when you
+call glMapBufferRange(). This flag tells OpenGL that you might
+overwrite the whole range, or just a single byte of it, and that when you know
+what was overwritten, you will tell it. To do that, call
+glFlushMappedBufferRange(), whose prototype is
+Click here to view code image
+   GLvoid glFlushMappedBufferRange(GLenum target,
+                                   GLintptr offset,
+                                   GLsizeiptr length);
+
+You can also use this function if you want to update multiple independent
+regions of the buffer but don’t want to make multiple calls to
+glMapBufferRange(). A second possible benefit of calling
+glFlushMappedBufferRange() is that if you map a very large buffer
+and then update different ranges of it over time, you can use
+glFlushMappedBufferRange() to tell OpenGL that you’re done with
+updating parts of it as you go. This might allow OpenGL to overlap work such
+as moving data to the GPU’s memory with any additional work that your
+application might be doing, such as reading data from a file. You should be
+careful with GL_MAP_FLUSH_EXPLICIT_BIT, however: Setting it and
+then not calling glFlushMappedBufferRange() correctly will likely
+result in your new data not being used.
+Finally, GL_MAP_UNSYNCHRONIZED_BIT tells OpenGL not to wait until
+it has finished using the data in a buffer before giving you a pointer to the
+buffer’s memory. If you don’t set this flag and OpenGL is planning to provide
+a pointer to the same memory that’s about to be used by a previously issued
+command, it will wait for that command to finish executing before returning,
+which can slow your application down. However, if you know that you won’t
+overwrite any data that hasn’t already been used, you can set this bit to turn
+off the synchronization. If you do this, though, you’re on your own. There are a
+number of mechanisms to provide your own synchronization, from calling
+glFinish() (which is a bit like a sledgehammer—don’t call this function)
+to fences, which were covered in the “Synchronization and Fences” section in
+Chapter 12.
+Finally, it should be clear that calling glMapBufferRange() with
+offset set to 0, length set to the size of the buffer object being mapped,
+and the GL_MAP_READ_BIT and GL_MAP_WRITE_BIT flags set
+appropriately is essentially equivalent to calling glMapBuffer().
+However, glMapBufferRange() gives you so much additional flexibility
+that it’s recommended that you always prefer glMapBufferRange() over
+glMapBuffer(), making sure to set the read, write, invalidation, and
+synchronization flags appropriately.
+
+Use the Features OpenGL Gives You
+OpenGL is a large and feature-packed programming interface. Some parts of
+it are more advanced than others, while other things aren’t quite optimal. One
+advantage of OpenGL’s expansive nature is that it is relatively easy to just get
+something simple working quickly. The disadvantage, of course, is that you
+need to know an awful lot to make a OpenGL program that truly makes use of
+all of the advanced features of the API.
+Notably, OpenGL has quite a few container objects. These objects represent
+blocks of state; examples are vertex array objects, framebuffer objects, and
+transform feedback objects. In general, you should prefer to use a container
+object rather than modifying lots of state. For example, a vertex array object
+contains the state for all of the vertex arrays associated with the front end of
+OpenGL. This includes the bound buffer stores, the vertex attribute formats,
+strides and offsets within those stores, and which attributes are enabled and
+disabled. You can very quickly switch between complete sets of information
+using a single call to glBindVertexArray(). The sb7::object
+object wrapper internally uses a vertex array object to represent all of its
+vertex array state. When you call sb7::object::render, it simply
+binds the vertex array object and calls the appropriate drawing command,
+giving it extremely low software overhead.
+Likewise, for framebuffer state, framebuffer objects wrap up all of the
+parameters describing the color, depth, and stencil attachments of the current
+framebuffer. It is far more efficient to create a framebuffer once at
+initialization time and then bind it before rendering than it is to explicitly
+reconfigure the current attachments on a single framebuffer object right before
+rendering.
+Finally, transform feedback objects wrap up all of the state required to
+represent the transform feedback stage of OpenGL. Not only is it required to
+use a transform feedback object if you want to make use of
+glDrawTransformFeedback() or any of its variants, but it is
+substantially more efficient to make a single call to
+glBindTransformFeedback() than it is to reconfigure all of the
+transform feedback-related state directly before use.
+
+Use Only the Data You Need
+Just because the inputs to your vertex shader are floating-point numbers, or the
+return value from the GLSL texture function is a floating-point number, it
+doesn’t mean that you need to store the data in memory as floating-point data.
+In many cases, smaller data formats are sufficient to represent the data you’ll
+actually be using. Using more data than you need can have two effects:
+     • Your application will use more memory than is really necessary,
+       meaning that OpenGL may not be able to fit all your data in the most
+       optimal areas of memory—or worse, it may fail to allocate data for your
+       objects at all.
+     • The more data OpenGL must read from your buffers, the more pressure
+       will be put on resources such as caches, memory controllers, and so on.
+       This can reduce absolute performance. Also, the buses that connect the
+       GPU to memory are big power consumers, so generating more memory
+       accesses can increase the power consumption of a device and drain
+       batteries faster.
+For example, for position data (which is normally stored in object space),
+there is almost no requirement for full floating-point precision. In a
+preprocessing step, try normalizing your object-space data such that it lies in
+the region −1.0 to 1.0. This will allow you to store coordinates using signed
+normalized data—for example, by passing GL_SHORT to
+glVertexAttribPointer() and setting the normalized parameter
+to GL_TRUE. You can then include a scale factor in any model matrices to
+return the object to its original scale, for free. This allows you to use only 16
+bits per component rather than the 32 bits that would be needed for full-
+precision floating-point data, and at the same time provides for more
+precision than would be afforded by 16-bit half-precision floating-point data.
+Furthermore, for object-space coordinate data, the w component is virtually
+always 1.0. Therefore, there’s really no reason to store it—you may as well
+store only three components and assume that the fourth is 1.0. Similar tactics
+can be used for object normals and tangents. Many OpenGL implementations
+will internally require that each vertex’s data be aligned on a 4-byte boundary,
+even if it’s not a multiple of 4 bytes. Three 16-bit components is 6 bytes or 48
+bits and is not a multiple of 4. Therefore, when you want to use 16-bit
+components and store only three of them, it’s best to try to fill the fourth
+component with something useful rather than leave it out.
+In object files, normals (and tangents) are usually stored in object space.
+When you want to perform normal mapping, bump mapping, or any other
+technique that might rely on tangents and normals (see the “Normal Mapping”
+section in Chapter 13), you use the tangent and normal to construct the
+binormal by taking their cross product, and then use the tangent, binormal, and
+normal to construct the TBN matrix. The precision required for the normal
+and tangent vectors is usually not that high. In fact, 10 bits is generally enough,
+so you could consider using packed data for them. To do this, pass
+GL_INT_2_10_10_10_REV as the type parameter to
+glVertexAttribPointer(). Again, this uses signed normalized data
+(the normalized parameter is set to GL_TRUE) and provides a similar
+level of precision as 16-bit half-precision floating-point data in the range
+−1.0 to 1.0.
+When it comes to storing normals in textures, you can take this one step further
+by making the assumption that because normals are in tangent space and they
+all point away from the surface, their z components are always positive. Now,
+also considering that the normals stored in your normal map are always unit
+length (that is, they are normalized), we know that
+Given this, we can store only the x and y components of our tangent-space
+normals in our normal maps and then reconstruct the z component in our
+fragment shader. This is known as trading texture performance for arithmetic
+and logic unit (ALU) performance. Graphics processors generally have
+substantially more performance available for performing general math
+operations than memory transactions. It can often turn out to be a net win to do
+more math in your shader if that approach can avoid consumption of memory
+bandwidth. A reasonable format for normal maps is a 2-component, 8-bit
+signed normalized format. Here, x and y are stored with 7 bits of precision
+(plus the sign bit) and the z component is reconstructed from the x and y
+components on use.
+Applying texture compression to normal maps doesn’t turn out well unless the
+compression format is chosen well and a good-quality compressor is used to
+compress the data. Some texture compression formats are designed to be able
+to cope with normal data (some of the BPTC formats, for example), but all too
+often discontinuities in normals are seen. However, for other data such as
+diffuse and specular albedos, compressed textures can work well. You should
+always consider whether a compressed texture can adequately represent your
+data.
+The preceding advice focuses on data that might be read by OpenGL, but it
+also holds for data written by OpenGL. For example, if you are rendering to
+an off-screen texture using an FBO and want to use HDR, it might be tempting
+to make all of your framebuffer attachments use the GL_RGBA32F internal
+format and be done with it. However, this consumes very large amounts of
+memory both for storage and in bandwidth terms. If you don’t need the
+rendered textures to hold an alpha channel, don’t allocate one! Rather, use
+GL_RGB32F. Better yet, if you don’t need a full 32 bits of precision,
+consider using GL_RGBA16F.
+Similar advice applies for operations such as writing into images from a
+shader or using transform feedback, although you should be aware that the
+number of formats that are writable with these methods may not be as great as
+those that are writable through framebuffer operations or readable by the front
+end. Even so, in many of these cases, it’s quite possible to use GLSL’s
+packing functions to construct the data in your shader and then write it into
+integer images or buffers.
+
+Shader Compilation Performance
+Not only does OpenGL do graphics well, but it also includes a complete
+compiler environment! Of course, you’ve been using this throughout this book
+and by now you should have realized that GLSL is pretty complex. GLSL
+compilers have to do quite a bit of work to make sure that your shaders are
+compiled correctly and efficiently to run on the underlying graphics hardware.
+While you might not think that shader compilation performance can affect the
+running time of your application (after all, you don’t compile shaders in the
+middle of rendering... do you?), it actually does impact the user’s experience
+when running your application.
+First, and most obviously, the start-up time of your application will be
+affected by how quickly you can get all the shaders ready for running. Some
+OpenGL implementations may use additional CPU threads to compile your
+shaders and may even be able to compile multiple shaders in parallel.
+However, just as you should consider the OpenGL pipeline as something that
+shouldn’t be stalled, so you can consider OpenGL drivers and
+implementations as pipelines—even before the GPU gets involved. So, if you
+compile a shader using glCompileShader() and then immediately call
+glGetShaderiv() to get the compilation status or the shader’s
+information log, you will stall the implementation because it must complete
+compilation of your shader to provide your answer. Rather than simply
+running through all the shaders your application needs, compiling them one at
+a time, and then querying their compilation results, you can do the following:
+     • Run through the list of shaders that you’ll need to compile, create their
+       shader objects, and call glCompileShader() on each one, but
+       don’t query the compilation result.
+     • In debug or development builds of your application, either query the
+       compilation results and the information log after all of the shaders have
+       been compiled, or simply rely on debug output to send the log to you.
+       Make sure you have a way to turn this off, though. Presumably, once
+       your shaders are debugged and your application is ready to ship, you
+       won’t need the compilation status—you can assume that it’s always
+       successful.
+      • Likewise, run through a list of all of the program objects your
+        application needs, attach shaders to them, and call
+        glLinkProgram(), but don’t query the link result. Again, this step
+        can be deferred or included only in debug builds of your application.
+In large applications, you will undoubtedly have a very large number of
+shaders, and possibly a huge number of combinations of shaders that need to
+be linked into program objects. A naïve way to manage this is to simply
+create a set of shader objects for each combination, recompile each shader as
+it’s referenced, and attach it to the resulting program objects in a one-to-one
+relationship. However, given that you can attach a shader to multiple program
+objects, it’s reasonable to load all of the shaders you might need, compile
+them each once, and then attach the compiled shaders as needed to program
+objects and link them. This allows the OpenGL implementation to cache
+compiled shader data inside the shader objects and not have to regenerate it
+multiple times.
+There may be some GPU-side performance advantages to using large,
+monolithic program objects, but more often than not, well-written shaders
+don’t see much gain from this approach. Therefore, if you have a large number
+of shaders, you might want to consider compiling and linking them into
+separable program objects. You might want to have a program object for
+each combination of front-end shaders that you’re likely to use and a program
+object with just a fragment shader in it for the back end. This technique might
+allow the OpenGL implementation to, for example, optimize tessellation
+control and evaluation shaders together, or vertex and geometry shaders,
+while leaving the interface from the front end and the back end as separable.
+When you do use separate shader objects and link your program in separable
+mode, you attach them to another container object, the program pipeline
+object. This object can store validated information about the stages in the
+current pipeline, and it will be more efficient to switch between multiple
+program pipeline objects than to reconfigure a single program pipeline object
+when you want to switch shaders. While creating a program pipeline object
+for each combination of shaders your application is going to use might land
+you with the same combinatorial explosion of pipeline objects, it may be
+worthwhile maintaining a list of 100 or so objects and then using them as a
+cache. If the pipeline object you need is still in the cache, pull it out and use
+it. If not, either add a new object to the cache or pull an object from the cache
+and reconfigure it for your use. This allows you to rapidly switch between
+combinations of program stages without necessarily maintaining a pipeline
+object for each combination of states.
+Once you have done your best to get your application’s shader management in
+good shape, it might be worthwhile to take a look at the complexity of your
+shaders themselves. Shader compilation consists of many parts. First, the
+preprocessor is run, which expands macros, removes comments, and so on.
+Next, the shader is tokenized, checked for syntax, and finally compiled into an
+internal format, at which point optimization and code generation takes place.
+Often, a code optimizer will operate by making a pass over a section of code,
+performing local optimizations if it can, and then saving the result. It will then
+make subsequent passes, repeating the process until no more optimizations
+can be made or some maximum number of passes is performed. When the
+optimizer stops running, one of two things will have happened:
+     • If the optimizer stops because it cannot find any more transformations to
+       make on your code, the resulting executable is probably as efficient as
+       possible, but the optimizer may have taken many passes over the shader
+       to reach this point, increasing optimization time.
+     • If the optimizer stops because it has run out of available passes, it’s
+       quite possible that the code is not as optimal as it could be. In addition,
+       the optimizer has burned all of the time that it has allotted to it.
+To cope with this, it is in your best interest as a developer to help the shader
+compiler to do the best job that it can. First, and most obviously, try to write
+efficient shader code. However, you can do a number of other things to
+improve the runtime performance of OpenGL shader compilers. First, you can
+run your compiler through a preprocessor offline, ahead of shipping your
+application. This allows you to use macros, preprocessor definitions, and
+other features of the preprocessor, but doesn’t place a burden on the shader
+compiler to produce the final shader for you.
+If you want take things further, you can pre-optimize your shaders. This
+effectively involves running them through an offline shader compiler that
+preprocesses, parses, and compiles your shader code into an intermediate
+representation and then performs many common optimizations on it (such as
+dead code elimination, constant folding and propagation, common
+subexpression elimination, and so forth) before spitting the optimized code
+back out as GLSL. When the runtime GLSL compiler takes this shader and
+tries to optimize it, it should find that there’s not much to do and finish
+quickly.
+Finally, recall that we covered program binaries in Chapter 6, “Shaders and
+Programs.” Program binaries offer you a way to compile your shaders and
+link them into program objects once, and then save the results into files. When
+you need the program again, rather than compiling it from source code, you
+can simply load up the program binary and hand it to OpenGL to use. OpenGL
+can almost certainly skip most, if not all, of the compilation procedures by
+caching information in the binaries it gives you. With program binaries, you
+may be able to eliminate shader compilation, or at least greatly reduce the
+time it takes.
+
+Making Use of Multiple GPUs
+Some users choose to install multiple graphics cards in a single machine and
+produce what is known as a multi-GPU system. AMD calls this CrossFire,
+while NVIDIA calls it SLI. Whatever the name, the technique to improve
+performance by using multiple graphics cards usually involves what is known
+as alternate frame rendering (AFR) mode, where one GPU renders a frame,
+the next GPU renders the next frame, and so on for as many GPUs as there are
+in the system. Most such systems have two GPUs in them, but some may have
+three, four, or even more GPUs present. Also, AFR isn’t the only way to
+achieve scaling using multiple GPUs, although it is certainly the most
+common.
+One piece of advice is commonly given when optimizing for AFR systems:
+Avoid producing data on one GPU and then using that data on another GPU.
+There are two reasons for this. First, this approach requires that the two GPUs
+be synchronized—because one relies on the output of the other, the GPUs
+can’t run in parallel and the performance advantages of having two or more
+GPUs in a single system are lost. Second, the cost of actually moving the data
+from one GPU to another is high because the data must generally cross a bus
+(such as PCI-express), which has much lower throughput than the memory on
+the graphics card.
+While this advice might seem obvious, it’s not obvious at first which types of
+operations might trigger OpenGL to have to transfer data from one GPU to
+another. Here is a list of behaviors that might trigger a copy operation from
+one GPU to another:
+• Rendering into a texture and then using it in the next frame. This is
+  perhaps the most obvious reason to need to transfer a texture between
+  GPUs. For example, if you write an application that produces a dynamic
+  environment map and try to optimize it by only updating the environment
+  every other frame, you might find that this operation does indeed go
+  faster on single-GPU systems. However, on a multi-GPU system, that
+  environment must cross the bus after being rendered into, which will
+  cause a GPU synchronization. It may be better to generate a new
+  environment map every frame in this case, and avoid the copy. If you
+  must reuse resources, try to reuse the resource from two frames ago if
+  there is a chance you’re running on a dual-GPU system.
+• Rendering into a texture without clearing it first. This was a common
+  trick used in the late 1990s to avoid the memory bandwidth costs of
+  clearing the framebuffer when application developers knew that they
+  would overwrite the whole thing by the end of the frame anyway. This is
+  almost universally a bad idea on modern graphics hardware. First, any
+  hardware designed in the last decade likely implements some form of
+  compression for framebuffers, which can very quickly clear the
+  framebuffer. Not clearing the framebuffer will likely turn off
+  compression and make your application run more slowly, even on
+  single-GPU systems. On multi-GPU systems, the issue is more severe. If
+  you don’t clear the framebuffer, then OpenGL doesn’t know that when
+  you start drawing into it again, you’re going to overwrite everything. In
+  this situation, before it can execute the first drawing command, OpenGL
+  must wait for the previous frame to complete (on the other GPU), and
+  then transfer the result to the new GPU so that any part of it that’s not
+  overwritten contains valid data.
+• Writing into buffer objects in one frame and then using the result in
+  another frame. This practice can cause synchronization and transfers.
+  For example, if you implement one of the physics simulation algorithms
+  described earlier in the book, you may find that the application doesn’t
+  scale because each step of the algorithm relies on data produced in the
+  previous frame. If your application has some awareness that it’s running
+  on two GPUs, you may want to effectively run two copies of the physics
+  simulation in parallel, with the second a half-step ahead of the first, and
+  occasionally synchronize them.
+     • Using conditional rendering with the result of an occlusion query
+       generated by one GPU being used to determine execution of commands
+       on the other. Again, this behavior will cause synchronization of the
+       GPUs. While the amount of data transferred to convey the result of the
+       occlusion query probably isn’t large, the synchronization may have a
+       devastating effect on performance. If you can, either issue the occlusion
+       queries very early in the frame and then use their results very late in the
+       frame, or use two sets of occlusion queries so that you can use the result
+       of queries issued two frames earlier. Don’t forget—you’ll need to make
+       this delay longer if there are more GPUs present.
+Unfortunately, there is no standard way of determining whether your
+application is running on a multi-GPU system or how many GPUs are present.
+Although some extensions exist for this purpose, other extensions allow you to
+create contexts that render explicitly to one of the GPUs in a multi-GPU set. If
+these extensions are available, and you’re willing to go that far, you might
+want to see if you can scale the performance of your application by rendering
+different parts of your scene on different GPUs and explicitly merging the
+results.
+
+Using Multiple Threads
+OpenGL is fully multi-threaded and has a well-defined threading model. Each
+thread owns a “current context” and changing contexts for a thread is
+performed by calling wglMakeCurrent(), glXMakeCurrent(), or
+the equivalent for your platform from that thread. Once contexts are current for
+a thread, the thread can create objects, compile shaders, load textures, and
+even render into windows at the same time. This is in addition to any multi-
+threading that OpenGL drivers may implement internally on your behalf. In
+fact, if you look at your application running inside a debugger or other
+profiling tool, you may well see multiple threads that have their starting
+procedure inside the OpenGL driver for your graphics card.
+Although OpenGL does have a well-supported multi-threading system and a
+well-defined object sharing model that allows multiple contexts that are
+current in different threads to use the same set of objects, this may not be what
+you want. For example, it’s very tempting to simply decide that you’ll create
+two contexts, make one current in each of two threads, and then use one for
+loading textures and compiling shaders while the other does the rendering. If
+you do this, though, you might find that you don’t get the performance scaling
+that you want. Ultimately, there is one GPU and one command buffer, and
+OpenGL guarantees that everything is rendered in a well-defined order. That
+means that most access to OpenGL will be serialized, and the overhead of
+synchronizing and coordinating access to OpenGL from multiple threads may
+well outweigh any benefits of having multiple CPUs work on your
+application.
+To avoid the serialization issues, it’s also tempting to create two or more
+contexts and just switch between them using wglMakeCurrent() (or your
+platform’s equivalent) in a single thread. While this does help you isolate
+state changes from one context to another, switching contexts can be an
+expensive operation. In particular, most window system bindings specify that
+switching contexts comes with an implicit flush.
+Having said that, there are many ways to use multiple threads in an OpenGL
+application. First, most complex applications will have non-graphics tasks
+(such as artificial intelligence, sound effects, object management, input and
+network handling, physics simulation, and so on) going on that can be
+offloaded to other threads. If you create a single OpenGL context and make it
+current in your main “rendering” thread, this thread will be the only one that
+actually talks to OpenGL—it will be the arbiter of all things graphics.
+Next, suppose you want to upload some texture data from a file into a texture
+object. Here, your main OpenGL thread will create a buffer object, bind it to
+the GL_PIXEL_UNPACK_BUFFER target, and then map it for writing into. It
+will then signal a worker thread that the buffer is ready for writing and send it
+a pointer to write to. The worker thread will then read the texture data from
+the file and into the buffer object via the pointer it received from the main
+thread, signaling back to the main thread when it has finished loading the
+texture. At this point, the main thread can call glTexSubImage2D() to
+copy the now loaded data from the buffer into the target texture object.
+This same technique can be applied to any data that’s stored in buffer objects,
+including vertex and index data, shader constants stored in uniform blocks,
+image data for textures and images, and even parameters to drawing
+commands via the GL_DRAW_INDIRECT_BUFFER target. You can use this
+to your advantage and essentially make your rendering engine data driven. In
+your rendering thread, create two sets of all the buffers that might be buffers
+updated dynamically by your application. Before rendering a frame, map all
+of the buffers for the next frame. You can, of course, bind new buffers for
+rendering while the buffers for the next frame are mapped. Now, in one or
+more worker threads, prepare all of the data for the next frame—perform CPU
+culling, implement dynamic vertex generation, update constants, and set up
+drawing parameters. Each batch of drawing should have its constants placed
+at a new offset within any uniform buffers. You can allocate space in these
+buffers in a thread-safe manner using atomic additions on the CPU.
+While your worker threads are busy getting ready for the next frame, the
+OpenGL thread is rendering the current frame. This thread walks through a list
+of draws generated by the worker threads, binding objects needed by each
+draw—for example, textures, buffers (or ranges of them), and so on—and then
+issuing drawing commands. If you can merge textures together into texture
+arrays and store the offsets within the arrays in uniform blocks, even that data
+preparation can be offloaded to other threads. The upshot is that while scene
+traversal, culling, data preparation, and so on are fully offloaded to worker
+threads and should scale nicely across multiple CPU cores (keeping in mind,
+of course, that some CPU time should be preserved for sound, AI, physics,
+communication, and so on), only the main OpenGL thread actually calls any
+OpenGL commands. However, the workload of the main thread is really light,
+as it performs only buffer maps and unmaps, basic state changes, and draws,
+and does not do any work in between. Between this and the efficient multi-
+threading implemented in most OpenGL drivers, good scaling across multiple
+CPU cores should be achievable in most scenarios.
+
+Throw Out What You Don’t Need
+Graphics applications can use a tremendous amount of memory. Textures,
+framebuffer attachments, and the buffers you use for vertices and other data
+can all consume a lot of resources. In the previous subsections, we
+recommended that you always clear a framebuffer before you start rendering
+to it. This is partly so that optimizations such as framebuffer compression can
+be effective. It’s also a signal to OpenGL that you’re done with the contents of
+the framebuffer and that it is free to reuse that memory for something else.
+After all, it’s pretty easy for OpenGL to recreate the cleared framebuffer
+attachments if it needs to.
+This is fine, but it’s not ideal to rely on hints and suggestions for optimization.
+In fact, OpenGL allows you to tell it much more explicitly which resources it
+should keep around and which ones it’s free to throw out. First, for textures,
+we have two functions—glInvalidateTexImage() and
+glInvalidateTexSubImage(). Their prototypes are
+Click here to view code image
+
+   void glInvalidateTexImage(GLuint texture,
+                             GLint level);
+
+   void glInvalidateTexSubImage(GLuint texture,
+                                GLint level,
+                                GLint xoffset,
+                                GLint yoffset,
+                                GLint zoffset,
+                                GLsizei width,
+                                GLsizei height,
+                                GLsizei depth);
+
+The first function, glInvalidateTexImage(), tells OpenGL that you’re
+done with an entire mipmap level of a texture. The name of the texture object
+should be given in texture and the mipmap level given in level. When
+you call this function, OpenGL knows that it’s free to throw out the data in the
+image (although the texture itself remains allocated). At this point, the contents
+of the texture’s mipmap level become undefined. In a multi-GPU setup, for
+example, OpenGL would then know that it doesn’t need to copy data from one
+GPU to another to keep the texture in sync across the system. The second
+function, glInvalidateTexSubImage(), is slightly more gentle in that
+it invalidates only the region you specify in the xoffset, yoffset,
+zoffset, width, height, and depth parameters. The first three are the
+origin of the region and the last three are its size—these parameters have the
+same meanings as they do in glTexSubImage3D().
+Next, we have similar functions for buffer objects:
+glInvalidateBufferData() and
+glInvalidateBufferSubData(). Their prototypes are
+Click here to view code image
+
+   void glInvalidateBufferData(GLuint buffer);
+
+   void glInvalidateBufferSubData(GLuint buffer,
+                                  GLintptr offset,
+                                  GLsizeiptr length);
+
+Like glInvalidateTexImage(), glInvalidateBufferData()
+throws out any data contained in the buffer object whose name you pass in
+buffer. After you call this function, the entire contents of the buffer become
+undefined, but are still allocated and owned by OpenGL. You might call this
+function, for example, if you store data into an intermediate buffer using
+transform feedback and then immediately draw from the buffer by calling
+glDrawTransformFeedback(). After calling
+glDrawTransformFeedback(), you can call
+glInvalidateBufferData() to tell OpenGL that you’re done with the
+data and that it’s free to reuse the buffer for another pass if necessary. The
+second function, glInvalidateBufferSubData(), is the finer version
+and throws out only the contents of the buffer defined by the offset and
+length parameters.
+The final two functions essentially perform the same operations on
+framebuffer attachments; they are glInvalidateFramebuffer() and
+glInvalidateSubFramebuffer(). Their prototypes are
+Click here to view code image
+
+   void glInvalidateFramebuffer(GLenum target,
+                                GLsizei numAttachments,
+                                const GLenum * attachments);
+
+   void glInvalidateSubFramebuffer(GLenum target,
+                                   GLsizei numAttachments,
+                                   const GLenum * attachments,
+                                   GLint x,
+                                   GLint y,
+                                   GLint width,
+                                   GLint height);
+
+For both functions, target is the target of the operation and can be
+GL_FRAMEBUFFER, GL_DRAW_FRAMEBUFFER, or
+GL_READ_FRAMEBUFFER (where GL_FRAMEBUFFER is treated as
+equivalent to GL_DRAW_FRAMEBUFFER). The numAttachments
+parameter is the number of elements in the array pointed to by
+attachments, which is a list of attachments to invalidate. The elements of
+the array should be values such as GL_COLOR_ATTACHMENT0,
+GL_DEPTH_ATTACHMENT, or GL_STENCIL_ATTACHMENT.
+If you want to invalidate the contents of a framebuffer that’s not currently
+bound, then you can call either
+glInvalidateNamedFramebufferData() or
+glInvalidateNamedFramebufferSubData(), whose prototypes
+are
+Click here to view code image
+   void glInvalidateNamedFramebufferData(GLuint framebuffer,
+                                         GLsizei numAttachments,
+                                         const GLenum *attachments);
+
+   void glInvalidateNamedFramebufferSubData(GLuint framebuffer,
+                                            GLsizei numAttachments,
+                                            const GLenum
+   *attachments,
+                                            GLint x,
+                                            GLint y,
+                                            GLsizei width,
+                                            GLsizei height);
+
+These two functions work exactly like the variants that take a target
+parameter, except that they directly affect the framebuffer object you give them
+in the framebuffer parameter rather than indirectly affecting it through a
+binding point.
+glInvalidateFramebuffer() and
+glInvalidateNamedFramebufferData() throw out the contents of
+each of the attachments in the attachments array. However, the
+glInvalidateSubFramebuffer() and
+glInvalidateNamedFramebufferSubData() functions are again a
+little gentler and allow you to throw away only a region of the framebuffer
+attachments. This region is specified by the x, y, width, and height
+parameters.
+Invalidating resources allows OpenGL to do a number of things that otherwise
+might have adverse effects. For example:
+      • OpenGL may be able to reclaim memory for buffers or textures that
+        have been invalidated and are no longer in use.
+      • It can avoid copying data from resource to resource, especially in multi-
+        GPU systems.
+      • It can return framebuffer attachments to a compressed state without
+        necessarily making their contents valid.
+In general, you should call one of the invalidation functions when you’re done
+with the contents of a resource but may reuse it for something else later. At
+worst, OpenGL will ignore you and do nothing. At best, you can avoid
+expensive copies, clears, paging operations, or memory starvation that may
+otherwise occur.
+Summary
+In this chapter, you have seen a number of techniques that you can use to
+improve the performance of your OpenGL programs. We took a look at multi-
+threading in OpenGL—that is, the use of multiple threads to feed data to
+OpenGL by sharing a pointer to a mapped buffer between many threads, and
+by decoupling logic that decides what to render from the code that calls
+OpenGL functions. We also saw how to move more work from the CPU to the
+GPU in the form of indirect rendering, and how to have the GPU feed itself
+work with very little interaction from your program. In addition, we
+considered how to avoid calling expensive OpenGL functions such as
+glMapBufferRange(), which could otherwise lead to stalls or copies
+between CPU and GPU memory.
+We have discussed several methods to analyze the performance of your
+application and to figure out how to make it go faster and use the graphics
+processing resources as efficiently as possible. With this knowledge, you
+should be able to make best use of OpenGL and produce high-performance
+programs.

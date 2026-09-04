@@ -1,0 +1,41 @@
+![](media/index-4_1.jpg)
+
+SYSTEM PROGRAMMING IN LINUX. Copyright © 2026 by Stewart N. Weiss.
+
+All rights reserved. No part of this work may be reproduced or transmitted in any form or by any means, electronic or mechanical, including photocopying, recording, or by any information storage or retrieval system, without the prior written permission of the copyright owner and the publisher.
+
+First printing
+
+29 28 27 26 25 1 2 3 4 5
+
+ISBN-13: 978-1-7185-0356-4 (print) ISBN-13: 978-1-7185-0357-1 (ebook)
+
+Published by No Starch Press®, Inc.
+
+245 8th Street, San Francisco,
+
+CA 94103
+
+phone: +1.415.863.9900
+
+[www.nostarch.com;](http://www.nostarch.com/) <info@nostarch.com>
+
+Publisher: William Pollock
+
+Managing Editor: Jill Franklin Production Manager: Sabrina Plomitallo-González Production Editor: Miles Bond Developmental Editor: Jill Franklin Cover Illustrator: Octopod Studios Interior Design: Octopod Studios Technical Reviewer: Mitch Frazier Proofreader: Lisa McCoy Indexer: BIM Creatives, LLC
+
+Sunflower photograph by Gilberto da Silva Moraes used under license from [Shutterstock.com](http://shutterstock.com/).
+
+Library of Congress Control Number: 2025017198
+
+For customer service inquiries, please contact [info@nostarch.com.](mailto:info@nostarch.com) For information on distribution, bulk sales, corporate sales, or translations: <sales@nostarch.com>. For permission to translate this work: [rights@nostarch.com.](mailto:rights@nostarch.com) To report counterfeit copies or piracy:
+
+[counterfeit@nostarch.com.](mailto:counterfeit@nostarch.com) The authorized representative in the EU for product safety and compliance is EU Compliance Partner, Pärnu mnt. 139b-14, 11317 Tallinn, Estonia,
+
+<hello@eucompliancepartner.com>, +3375690241.
+
+No Starch Press and the No Starch Press iron logo are registered trademarks of No Starch Press, Inc. Other product and company names mentioned herein may be the trademarks of their respective owners. Rather than use a trademark symbol with every occurrence of a trademarked
+
+name, we are using the names only in an editorial fashion and to the benefit of the trademark owner, with no intention of infringement of the trademark.
+
+The information in this book is distributed on an “As Is” basis, without warranty. While every precaution has been taken in the preparation of this work, neither the author nor No Starch Press, Inc. shall have any liability to any person or entity with respect to any loss or damage caused or alleged to be caused directly or indirectly by the information contained in it.

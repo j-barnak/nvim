@@ -1,0 +1,1964 @@
+# Index
+
+### Symbols
+
+- ! operator, Arithmetic, Bitwise, Comparison, and Logical Operators, Unary Operators
+- != operator, Arithmetic, Bitwise, Comparison, and Logical Operators, Equivalence Comparisons
+- \#\![feature\] attribute, Attributes
+- \#\[allow\] attribute, Attributes
+- \#\[cfg\] attribute, Attributes, Platform-Specific Features
+- \#\[derive\] attribute, Serving Pages to the Web
+- \#\[inline\] attribute, Attributes
+- \#\[link\] attribute, Using Functions from Libraries
+- \#\[repr(C)\] attribute, Finding Common Data Representations
+- \#\[repr(i16)\] attribute, Finding Common Data Representations
+- \#\[should_panic\] attribute, Tests and Documentation
+- \#\[test\] attribute, Attributes
+- \$ (command prompt), rustup and Cargo
+- % operator, Arithmetic, Bitwise, Comparison, and Logical Operators
+- & operator, Handling Command-Line Arguments, References to Values, Arithmetic, Bitwise, Comparison, and Logical Operators, Reference Patterns
+- & pattern, Reference Patterns
+- && operator, Arithmetic, Bitwise, Comparison, and Logical Operators
+- &mut operator, References to Values
+- &mut type, mut and Mutex
+- &mut \[T\] type, References
+- &str (string slice), Strings in Memory
+- &\[T\] type, References
+- \* operator
+  - accessing referenced value, Reference Operators
+  - dereferencing, Handling Command-Line Arguments, Rust References Versus C++ References, Deref and DerefMut, Raw Pointers
+  - multiplication, Arithmetic, Bitwise, Comparison, and Logical Operators
+  - overloading of, Deref and DerefMut
+  - pattern matching and, Reference Patterns
+- \* wildcard, for crate versions, Versions
+- \*const T, Raw Pointers
+- \*mut T, Raw Pointers
+- + operator, Arithmetic, Bitwise, Comparison, and Logical Operators, Binary Operators, Appending and Inserting Text
+- - operator, Arithmetic, Bitwise, Comparison, and Logical Operators, Unary Operators
+- . operator, Rust References Versus C++ References, Fields and Elements, Deref and DerefMut
+- .. operator, Fields and Elements
+- ..= operator, Fields and Elements
+- / operator, Arithmetic, Bitwise, Comparison, and Logical Operators
+- /// (documentation comments), What the Mandelbrot Set Actually Is, Documentation
+- :: operator, Paths and Imports
+- ::\<...\> (turbofish symbol), Function and Method Calls, Generic Structs
+- \< operator, Arithmetic, Bitwise, Comparison, and Logical Operators, Ordered Comparisons, Raw Pointers
+- \<\< operator, Arithmetic, Bitwise, Comparison, and Logical Operators
+- \<= operator, Arithmetic, Bitwise, Comparison, and Logical Operators, Ordered Comparisons
+- = operator, Assignment
+- == operator, Arithmetic, Bitwise, Comparison, and Logical Operators, Equivalence Comparisons, Raw Pointers
+- =\> operator, Arithmetic, Bitwise, Comparison, and Logical Operators
+- \> operator, Arithmetic, Bitwise, Comparison, and Logical Operators, Ordered Comparisons
+- \>= operator, Ordered Comparisons
+- \>\> operator, Arithmetic, Bitwise, Comparison, and Logical Operators
+- ? operator, Propagating Errors
+- @ patterns, Binding with @ Patterns
+- ^ operator, Arithmetic, Bitwise, Comparison, and Logical Operators
+- {:?} format parameter, Formatting Values for Debugging
+- {:p} format parameter, Formatting Pointers for Debugging
+- \| (vertical bar) in matching patterns, Matching Multiple Possibilities
+- \| operator, Arithmetic, Bitwise, Comparison, and Logical Operators
+- \|\| operator, Arithmetic, Bitwise, Comparison, and Logical Operators
+- ~ operator, Arithmetic, Bitwise, Comparison, and Logical Operators
+
+### A
+
+- aborting, Aborting
+- absolute path, Paths and Imports
+- "Abstraction and the C++ Machine Model" (Stroustrup), And Yet Rust Is Still Fast
+- accumulation methods for iterators, Simple Accumulation: count, sum, product, fold and rfold
+- actix-web framework, Serving Pages to the Web-Serving Pages to the Web, Callbacks, Networking
+- adapter methods
+  - enumerate, A Concurrent Mandelbrot Program
+  - fuse, Futures
+- adapter methods for iterators, Iterator Adapters-cycle
+  - by_ref, by_ref-by_ref
+  - chain, chain
+  - cloned, cloned, copied
+  - copied, cloned, copied
+  -  cycle, cycle
+  - enumerate, enumerate, zip
+  - filter_map and flat_map, filter_map and flat_map-filter_map and flat_map
+  - flatten, flatten-flatten
+  - fuse, fuse
+  - inspect, inspect
+  - map and filter, map and filter-map and filter
+  - peekable, peekable
+  - reversible iterators and rev, Reversible Iterators and rev-Reversible Iterators and rev
+  - skip and skip_while, skip and skip_while
+  - take and take_while, take and take_while, by_ref
+  - zip, zip
+- adapter methods for readers
+  - bytes method, Readers
+  - chain method, Readers
+  - take method, Readers
+- algebraic data types, Enums and Patterns
+- alignment value, required by types, Type Sizes and Alignments
+- align_of function, Type Sizes and Alignments
+- align_of_val function, Type Sizes and Alignments
+- all, iterator method, any and all
+- \#\[allow\] attribute, Attributes
+- any, iterator method, any and all
+- anyhow error handling crate, Working with Multiple Error Types, Error and Result Types
+- Arc pointer type, Rc and Arc: Shared Ownership-Rc and Arc: Shared Ownership, Passing Self as a Box, Rc, or Arc-Passing Self as a Box, Rc, or Arc, Sharing Immutable Data Across Threads, Mutex\<T\>
+- args function, Handling Command-Line Arguments, skip and skip_while
+- Arguments type, for string formatting, Using the Formatting Language in Your Own Code
+- arithmetic operators, Arithmetic, Bitwise, Comparison, and Logical Operators, Arithmetic and Bitwise Operators-Arithmetic and Bitwise Operators
+  - compound assignment operators, Compound Assignment Operators-Compound Assignment Operators
+  - overloading, Binary Operators
+- arithmetic, pointer, Pointer Arithmetic-Pointer Arithmetic
+- array patterns, Array and Slice Patterns
+- arrays, Arrays
+  - concatenating arrays of, Joining
+  - raw pointers to, Pointer Arithmetic-Pointer Arithmetic
+  - slices and, Slices
+  - tuples versus, Tuples
+- arrays, joining arrays of, Joining
+- as operator, Conversions to and from Integers
+- ASCII characters, Integer Types, ASCII, Latin-1, and Unicode, Classifying Characters, Handling Digits
+- Ascii string type, unsafe code for conversion into String, Example: An Efficient ASCII String Type-Unsafe Functions
+- AsMut trait, AsRef and AsMut
+- AsRef trait, AsRef and AsMut, OsStr and Path
+- assert! macro, Rust Functions, Tests and Documentation
+- assert_eq! macro, Tests and Documentation, Macros, Macro Basics-Macro Basics
+- assignment
+  - C++ versus Rust, Moves-Moves
+  - compound assignment operators, Assignment, Compound Assignment Operators-Compound Assignment Operators
+  - expressions, Assignment
+  - moves and (see moves)
+  - Python versus Rust, Moves-Moves
+  - references, Assigning References
+  - in Rust, More Operations That Move-Moves and Indexed Content
+  - to a variable, More Operations That Move
+- assignment operators, Assignment
+- associated consts, Associated Consts, Associated Consts
+- associated functions, Defining Methods with impl
+- associated types, Associated Types (or How Iterators Work)-Associated Types (or How Iterators Work)
+- associativity, Precedence and Associativity
+- async functions, Async Functions and Await Expressions-Calling Async Functions from Synchronous Code: block_on, Building Async Functions from Async Blocks
+- async move blocks, Async Blocks
+- async streams, Receiving Packets: More Asynchronous Streams-Receiving Packets: More Asynchronous Streams
+- async-std crate, Asynchronous Programming, Futures, Async Functions and Await Expressions, Spawning Async Tasks
+- asynchronous programming, Asynchronous Programming-When Is Asynchronous Code Helpful?
+  - async blocks, Asynchronous Programming, Async Blocks-Building Async Functions from Async Blocks
+  - async functions, Async Functions and Await Expressions-Calling Async Functions from Synchronous Code: block_on, Building Async Functions from Async Blocks
+  - client and server, An Asynchronous Client and Server-Chat Groups: tokio’s Broadcast Channels
+  - compared with synchronous programming, From Synchronous to Asynchronous-A Real Asynchronous HTTP Client
+  - futures and executors, coordinating, Primitive Futures and Executors: When Is a Future Worth Polling Again?-Implementing block_on
+  - HTTP client crate, A Real Asynchronous HTTP Client
+  - pinning futures, Pinning-The Unpin Trait
+  - tasks versus traditional threads, Asynchronous Programming
+  - useful situations for, When Is Asynchronous Code Helpful?-When Is Asynchronous Code Helpful?
+- as_mut_ptr method, Raw Pointers
+- as_ptr method, Raw Pointers
+- atomic integer operations, Global Variables
+- atomic reference count (see Arc pointer type)
+- Atomic types and operations, Atomics, Global Variables
+- attributes, Writing and Running Unit Tests, Attributes-Attributes
+- await expressions, Async Functions and Await Expressions-Calling Async Functions from Synchronous Code: block_on, Spawning Async Tasks-Spawning Async Tasks
+
+### B
+
+- background thread, Concurrency
+- backpressure
+  - asynchronous client and chat server, Chat Groups: tokio’s Broadcast Channels-Chat Groups: tokio’s Broadcast Channels
+  - pipeline approach, Channel Features and Performance
+- bat command, Filesystems and Command-Line Tools
+- binary input/output, Binary Data, Compression, and Serialization
+- binary numeric literal, Integer Types
+- binary operators, Arithmetic, Bitwise, Comparison, and Logical Operators, Binary Operators
+- binary, formatting numbers in, Formatting Numbers
+- BinaryHeap, Overview, BinaryHeap\<T\>-BinaryHeap\<T\>
+- BinaryTree type, Generic Enums, Populating a Binary Tree, Implementing Your Own Iterators-Implementing Your Own Iterators
+- bindgen crate, A Raw Interface to libgit2
+- bitwise operators, Arithmetic, Bitwise, Comparison, and Logical Operators, Compound Assignment Operators-Compound Assignment Operators
+- blocks, Blocks and Semicolons-Declarations
+  - asynchronous, Asynchronous Programming, Async Blocks-Building Async Functions from Async Blocks
+  - declarations in, Declarations
+  - extern block, Declaring Foreign Functions and Variables-Declaring Foreign Functions and Variables
+  - impl block, Defining Methods with impl-Type-Associated Functions
+  - unsafe, Raw Pointers, Unsafe Code, Unsafe Blocks-Example: An Efficient ASCII String Type, Unsafe Block or Unsafe Function?
+- block_on, Calling Async Functions from Synchronous Code: block_on-Calling Async Functions from Synchronous Code: block_on, Primitive Futures and Executors: When Is a Future Worth Polling Again?, Implementing block_on-Implementing block_on
+- Boolean type (bool), The bool Type, Formatting Other Types
+- Borrow trait, Borrow and BorrowMut-Borrow and BorrowMut
+- Borrow\<str\> trait, Borrowing as Other Text-Like Types
+- borrowing, References
+  - futures and, Spawning Async Tasks, The Two Life Stages of a Future-The Two Life Stages of a Future
+  - iteration and, Handling Command-Line Arguments, by_ref
+  - local variables and, Borrowing a Local Variable-Borrowing a Local Variable
+  - unions, Borrowing Unions
+  - values of arbitrary expressions, Borrowing References to Arbitrary Expressions
+- BorrowMut trait, Borrow and BorrowMut-Borrow and BorrowMut
+- bounds, reverse-engineering, Reverse-Engineering Bounds-Reverse-Engineering Bounds
+- Box type, Boxes, Ownership, Passing Self as a Box, Rc, or Arc-Passing Self as a Box, Rc, or Arc
+- break expressions, Control Flow in Loops
+- broadcast channel, Chat Groups: tokio’s Broadcast Channels-Chat Groups: tokio’s Broadcast Channels
+- BTreeMap\<K, V\> collection type, HashMap\<K, V\> and BTreeMap\<K, V\>-Map Iteration
+- BTreeSet collection type, HashSet\<T\> and BTreeSet\<T\>-Whole-Set Operations
+- BTreeSet::new, HashSet\<T\> and BTreeSet\<T\>
+- buffered readers, Buffered Readers-Collecting Lines
+- BufRead trait, Buffered Readers
+  - consume method, Buffered Readers
+  - fill_buf method, Buffered Readers
+  - read_line method, Buffered Readers
+  - read_until method, Buffered Readers
+  - split method, Buffered Readers
+- BufReader type, Buffered Readers
+- BufReader\<TcpStream\>, Receiving Packets: More Asynchronous Streams
+- BufWriter::with_capacity, Writers
+- bugs, unsafe code and, Unsafe Functions
+- build profiles, Build Profiles
+- build script, Using Functions from Libraries
+- BuildHasher trait, Using a Custom Hashing Algorithm
+- by value/by reference
+  - passing a collection, IntoIterator Implementations, Collections
+  - passing function arguments, References to Values-References to Values
+- byte literals, Integer Types
+- byte strings, Byte Strings
+- byteorder crate, Binary Data, Compression, and Serialization
+- by_ref iterator adapter, by_ref-by_ref
+
+### C
+
+- C, Systems Programmers Can Have Nice Things
+  - (see also foreign functions)
+  - enums, Enums-Enums
+  - passing strings between Rust and, Finding Common Data Representations
+  - pointers in, Raw Pointers, Raw Pointers
+  - rules for avoiding undefined behavior, Systems Programmers Can Have Nice Things
+  - type representations, Finding Common Data Representations-Finding Common Data Representations
+- C#
+  - asynchronous functions, Comparing Asynchronous Designs
+  - enums, Enums and Patterns-Enums
+  - traits versus virtual methods, Using Traits
+- C++, Systems Programmers Can Have Nice Things
+  - (see also foreign functions)
+  - assignment in, Moves-Moves
+  - constexpr, Global Variables
+  - enums, Enums and Patterns-Enums
+  - invalidation errors and, Sharing Versus Mutation, Collections, Rust Rules Out Invalidation Errors
+  - macros, Macros, Unintended Consequences
+  - mutexes in, What Is a Mutex?-What Is a Mutex?
+  - ownership in, Ownership-Ownership
+  - pointers in, Raw Pointers, Raw Pointers
+  - pointers to const versus shared references, Sharing Versus Mutation
+  - reference creation in, Rust References Versus C++ References
+  - rules for avoiding undefined behavior, Systems Programmers Can Have Nice Things
+  - traits versus virtual methods, Using Traits
+- calculate_tides method, Handling Errors in main()
+- callbacks, closures and, Callbacks-Callbacks
+- cancellation, atomics and, Atomics
+- capacity of a vector, Vectors, Growing and Shrinking Vectors
+- captures_iter method on Regex type, Basic Regex Use
+- Cargo, Rust Makes Collaboration Easier
+  - build script, Using Functions from Libraries
+  - documentation, Documentation-Doc-Tests
+  - rustup and, rustup and Cargo-rustup and Cargo
+  - src/bin directory, The src/bin Directory-The src/bin Directory
+  - versioning, Specifying Dependencies
+- cargo build, Crates-Crates
+- cargo command, rustup and Cargo
+- cargo doc command, Documentation
+- cargo package command, Publishing Crates to crates.io
+- cargo test command, Tests and Documentation-Tests and Documentation
+- Cargo.lock, Cargo.lock
+- case conversion
+  - for characters, Case Conversion for Characters
+  - for strings, Case Conversion for Strings
+- casts, Type Casts
+- catch_unwind function, Unwinding
+- Cell type, Interior Mutability
+- \#\[cfg\] attribute, Attributes, Platform-Specific Features
+- cfg! macro, Built-In Macros
+- ch.to_digit method, Handling Digits
+- chain adapter, chain
+- channels, Channels-Beyond Pipelines
+  - broadcast channel, Chat Groups: tokio’s Broadcast Channels-Chat Groups: tokio’s Broadcast Channels
+  - deadlock with, Deadlock
+  - features and performance, Channel Features and Performance-Channel Features and Performance
+  - multiconsumer channels using mutex, Multiconsumer Channels Using Mutexes
+  - non-pipeline uses, Beyond Pipelines
+  - piping iterator to, Piping Almost Any Iterator to a Channel-Piping Almost Any Iterator to a Channel
+  - receiving values, Receiving Values
+  - Send and Sync for thread safety, Thread Safety: Send and Sync-Thread Safety: Send and Sync
+  - sending values, Channels-Beyond Pipelines
+- character literals, Characters
+- characters (char), Characters-Characters, Characters (char)-Conversions to and from Integers
+  - case conversion, Case Conversion for Characters
+  - classifying, Classifying Characters-Classifying Characters
+  - digits, Handling Digits
+  - integer conversion, Conversions to and from Integers
+  - is_digit method, Handling Digits
+  - is_lowercase method, Case Conversion for Characters
+  - is_uppercase method, Case Conversion for Characters
+  - numeric types versus, Characters
+  - Rust and C type commonalities, Finding Common Data Representations
+  - to_digit method, Handling Digits
+  - to_lowercase method, Case Conversion for Characters
+  - to_uppercase method, Case Conversion for Characters
+- chat groups, tokio’s broadcast channels, Chat Groups: tokio’s Broadcast Channels-Chat Groups: tokio’s Broadcast Channels
+- checked operations, Checked, Wrapping, Saturating, and Overflowing Arithmetic
+- child process, Other Reader and Writer Types
+- ChildStdin type, Other Reader and Writer Types
+- client and server, asynchronous chat, An Asynchronous Client and Server-Chat Groups: tokio’s Broadcast Channels
+  - chat connections with async mutexes, Handling Chat Connections: Async Mutexes-Handling Chat Connections: Async Mutexes
+  - chat groups, tokio’s broadcast channels, Chat Groups: tokio’s Broadcast Channels-Chat Groups: tokio’s Broadcast Channels
+  - client’s main function, The Client’s Main Function-The Client’s Main Function
+  - error and result types, Error and Result Types
+  - protocol, The Protocol-The Protocol
+  - receiving packets, Receiving Packets: More Asynchronous Streams-Receiving Packets: More Asynchronous Streams
+  - sending packets, Sending Packets
+  - server's main function, The Server’s Main Function
+  - streams to take user input, Taking User Input: Asynchronous Streams-Taking User Input: Asynchronous Streams
+- clone method, Moves, Using Traits
+- Clone trait, Clone, Copy and Clone for Closures, Accessing Elements
+- cloned adapter method for iterators, cloned, copied
+- closed (end-inclusive) ranges, Fields and Elements
+- closures, A Concurrent Mandelbrot Program, Closures, Closures-Using Closures Effectively
+  - borrowing references, Closures That Borrow
+  - callbacks, Callbacks-Callbacks
+  - capturing variables, Capturing Variables
+  - Clone for, Copy and Clone for Closures
+  - Copy for, Copy and Clone for Closures
+  - dropping values, Closures That Kill-FnOnce
+  - effective use of, Using Closures Effectively
+  - FnMut, FnMut-FnMut
+  - FnOnce, FnOnce-FnOnce
+  - inspect adapter and, inspect
+  - layout in memory, Closure Performance
+  - move keyword, Closures That Steal
+  - performance, Closure Performance
+  - safety, Closures and Safety-Copy and Clone for Closures
+  - "that kill", Closures That Kill
+  - types, Function and Closure Types-Function and Closure Types
+  - in web server example, Serving Pages to the Web
+- code fragments, macros, Basics of Macro Expansion-Unintended Consequences
+- collaboration, Rust and, Rust Makes Collaboration Easier
+- collect method, A Concurrent Mandelbrot Program, The Command-Line Interface, Building Collections: collect and FromIterator-Building Collections: collect and FromIterator, partition, Collecting Lines
+- collections, Collections-Beyond the Standard Collections
+  - BinaryHeap\<T\>collection type, BinaryHeap\<T\>-BinaryHeap\<T\>
+  - BTreeMap\<K, V\>, HashMap\<K, V\> and BTreeMap\<K, V\>-Map Iteration
+  - BTreeSet\<T\>, HashSet\<T\> and BTreeSet\<T\>-Whole-Set Operations
+  - custom, Beyond the Standard Collections
+  - hashing, Hashing-Using a Custom Hashing Algorithm
+  - HashMap\<K, V\>, HashMap\<K, V\> and BTreeMap\<K, V\>-Map Iteration
+  - HashSet\<T\>, HashSet\<T\> and BTreeSet\<T\>-Whole-Set Operations
+  - iterating over by value, IntoIterator Implementations, Collections
+  - iterators and, iter and iter_mut Methods
+  - strings as generic, Strings as Generic Collections
+  - Vec\<T\>, Vec\<T\>-Rust Rules Out Invalidation Errors
+  - VecDeque\<T\>, VecDeque\<T\>-VecDeque\<T\>
+- column! macro, Built-In Macros
+- command prompt (\$), rustup and Cargo
+- Command type, Other Reader and Writer Types
+- command-line arguments, Handling Command-Line Arguments-Handling Command-Line Arguments, Parsing Pair Command-Line Arguments-Parsing Pair Command-Line Arguments
+- command-line interface, Filesystems and Command-Line Tools-The Command-Line Interface
+- community, Rust, More Nice Things
+- comparison operators, The bool Type, Arithmetic, Bitwise, Comparison, and Logical Operators
+  - with iterators, Comparing Item Sequences
+  - overloading, Ordered Comparisons
+  - references and, Comparing References
+  - with strings, Using Strings
+- compatibility equivalence for Unicode characters, Normalization Forms
+- complex numbers, Parsing Pair Command-Line Arguments
+- composed versus decomposed Unicode characters, Normalization
+- compound assignment operators, Assignment, Compound Assignment Operators-Compound Assignment Operators
+- compression, Binary Data, Compression, and Serialization
+- concat method, String
+- concat! macro, Built-In Macros
+- concurrency, Parallel Programming Is Tamed, Concurrency-What Hacking Concurrent Code in Rust Is Like
+  - channels, Channels-Beyond Pipelines
+  - fork-join parallelism, Fork-Join Parallelism-Revisiting the Mandelbrot Set
+  - Mandelbrot set, A Concurrent Mandelbrot Program-A Concurrent Mandelbrot Program
+  - Rust's support for, Concurrency-Safety Is Invisible, Ownership and Moves
+  - shared mutable state, Shared Mutable State-Global Variables
+- condition (with if statement), if and match
+- condition variables (Condvar), Condition Variables (Condvar)
+- const function, Global Variables
+- const generics, Generic Structs with Constant Parameters, Generic Functions and Type Parameters
+- constants, Modules, Statics and Constants, Global Variables
+- consts, Statics and Constants
+  - \*const T, Raw Pointers
+  - associated, Associated Consts, Associated Consts
+  - shared references versus pointers to, Sharing Versus Mutation
+- consume method, Buffered Readers
+- consuming iterators, Consuming Iterators-for_each and try_for_each
+  - accumulation methods, Simple Accumulation: count, sum, product
+  - any and all methods, any and all
+  - collect method, Building Collections: collect and FromIterator-Building Collections: collect and FromIterator
+  - comparing item sequences, Comparing Item Sequences
+  - count method, Simple Accumulation: count, sum, product
+  - ExactSizeIterator, position, rposition, and ExactSizeIterator
+  - Extend trait, The Extend Trait
+  - find, rfind, and find_map methods, find, rfind, and find_map
+  - fold method, fold and rfold
+  - for_each method, for_each and try_for_each
+  - FromIterator trait, Building Collections: collect and FromIterator
+  - last method, last
+  - max_by and min_by methods, max_by, min_by
+  - max_by_key and min_by_key methods, max_by_key, min_by_key
+  - min and max methods, max, min
+  - nth and nth_back methods, nth, nth_back
+  - partition method, partition
+  - position method, position, rposition, and ExactSizeIterator
+  - product method, Simple Accumulation: count, sum, product
+  - rfind method, find, rfind, and find_map
+  - rfold method, fold and rfold
+  - rposition method, position, rposition, and ExactSizeIterator
+  - sum method, Simple Accumulation: count, sum, product
+  - try_fold and try_rfold methods, try_fold and try_rfold-try_fold and try_rfold
+  - try_for_each method, for_each and try_for_each
+- contracts
+  - unsafe feature and, Unsafe from What?
+  - unsafe functions and, Unsafe Functions
+  - unsafe traits and, Unsafe Traits
+- copied adapter, cloned, copied
+- copy method, Readers and Writers
+- Copy type, Copy Types: The Exception to Moves-Copy Types: The Exception to Moves, Copy, Copy and Clone for Closures
+- count method, Simple Accumulation: count, sum, product
+- Cow (clone on write) type, Borrow and ToOwned at Work: The Humble Cow, Putting Off Allocation-Putting Off Allocation
+- crates, Crates-Build Profiles
+  - \#\[inline\] attribute, Attributes
+  - \$crate fragment versus crate keyword, Importing and Exporting Macros
+  - doc-tests, Doc-Tests-Doc-Tests
+  - publishing to crates.io, Publishing Crates to crates.io
+  - specifying dependencies, Specifying Dependencies-Cargo.lock
+  - src/bin directory and, The src/bin Directory-The src/bin Directory
+  - workspaces, Workspaces
+- crates.io, Publishing Crates to crates.io
+- critical section in code, What Is a Mutex?
+- crossbeam crate, A Concurrent Mandelbrot Program
+- Cursor::new, Other Reader and Writer Types
+- cycle adapter, cycle
+
+### D
+
+- dangling pointer, Ownership and Moves, Sharing Versus Mutation
+- data parallelism, Concurrency
+- data races, Concurrency, Safety Is Invisible, What Is a Mutex?, Why Mutexes Are Not Always a Good Idea
+- deadlock, Deadlock
+- Debug formatting trait, Converting Other Types to Strings, Raw Pointers
+- debugging
+  - formatting values for, Formatting Values for Debugging-Formatting Pointers for Debugging
+  - macros, Debugging Macros-Debugging Macros
+- debug_assert! macro, Rust Functions, Tests and Documentation
+- debug_assert_eq! macro, Tests and Documentation
+- declarations, Declarations, Declaring Foreign Functions and Variables-Using Functions from Libraries
+- decomposed versus composed Unicode characters, Normalization
+- Default trait, Default-Default, partition
+- default trait implementation, Default Methods
+- dependencies
+  - Cargo.lock, Cargo.lock
+  - in crate context, Crates
+  - specifying, Specifying Dependencies-Cargo.lock
+  - versions and, Specifying Dependencies
+- dependency graph, Crates
+- Deref coercions, Type Casts, Deref and DerefMut, Raw Pointers
+- Deref trait, Deref and DerefMut-Deref and DerefMut
+- dereferencing
+  - \* operator, Handling Command-Line Arguments, Rust References Versus C++ References, Raw Pointers
+  - raw pointers, Raw Pointers, Unsafe from What?, Unsafe Blocks, Dereferencing Raw Pointers Safely-Example: RefWithFlag
+- DerefMut trait, Deref and DerefMut-Deref and DerefMut
+- \#\[derive\] attribute, Serving Pages to the Web
+- Deserialize trait, Receiving Packets: More Asynchronous Streams
+- digits, handling, Handling Digits
+- directionality of text, Text Directionality
+- directories
+  - modules and, Modules in Separate Files
+  - reading, Reading Directories-Reading Directories
+  - src/bin, The src/bin Directory-The src/bin Directory
+- DirEntry struct, Reading Directories
+  - file_name method, Reading Directories
+  - file_type method, Reading Directories
+  - metadata method, Reading Directories
+  - path method, Reading Directories
+- discriminated unions, Enums and Patterns
+- Display formatting trait, Converting Other Types to Strings, Raw Pointers
+- divergent function, Why Rust Has loop
+- doc comments, Documentation
+- doc-tests, Doc-Tests-Doc-Tests
+- documentation, Documentation-Doc-Tests
+- documentation comments (///), What the Mandelbrot Set Actually Is, Documentation
+- double quotes, Serving Pages to the Web
+- DoubleEndedIterator trait, Reversible Iterators and rev
+- drain method, drain Methods
+- Drop trait, Drop-Drop, Readers
+- dropping values
+  - in closures, Closures That Kill-FnOnce
+  - FnOnce, FnOnce-FnOnce
+  - ownership and, Ownership
+  - in Rust, Ownership
+- duck typing, Fundamental Types
+- dynamic widths and precisions, Dynamic Widths and Precisions
+
+### E
+
+- editions, Editions
+- elapsed method, Dealing with Errors That “Can’t Happen”
+- elements
+  - tuple-like struct values, Tuple-Like Structs
+  - Vec\<T\> collection type, Accessing Elements-Accessing Elements, Random Elements
+- embarrassingly parallel algorithm, Concurrency
+- end-exclusive (half-open) ranges, Fields and Elements, Matching Multiple Possibilities
+- end-inclusive (closed) ranges, Fields and Elements
+- entries, map key-value pairs as, HashMap\<K, V\> and BTreeMap\<K, V\>
+- Entry type, HashMap and BTreeMap, Entries-Entries
+- enumerate adapter, A Concurrent Mandelbrot Program, enumerate, zip
+- enumerated type (enum), What the Mandelbrot Set Actually Is, Enums and Patterns-The Big Picture
+  - C-style, Enums-Enums
+  - with data, Enums with Data
+  - generic, Generic Enums-Generic Enums
+  - hash implementation, Hashing
+  - in memory, Enums in Memory
+  - rich data structures with, Rich Data Structures Using Enums-Rich Data Structures Using Enums
+- env module, Handling Command-Line Arguments
+- env! macro, Built-In Macros
+- eprintln! macro, Handling Command-Line Arguments
+- Eq trait, Hashing
+- equality operators, Arithmetic, Bitwise, Comparison, and Logical Operators, Equivalence Comparisons-Equivalence Comparisons
+- error handling, Error Handling-Why Results?
+  - across threads, Error Handling Across Threads
+  - anyhow crate, Working with Multiple Error Types
+  - asynchronous chat, Error and Result Types
+  - avoiding syntax errors in macro matching, Avoiding Syntax Errors During Matching
+  - catching errors, Catching Errors-Catching Errors
+  - channels and, Sending Values
+  - declaring a custom error type, Declaring a Custom Error Type
+  - errors that "can't happen", Dealing with Errors That “Can’t Happen”
+  - formatting error types, Formatting Other Types
+  - ignoring errors, Ignoring Errors
+  - invalidation errors, Collections, Rust Rules Out Invalidation Errors
+  - in main function, Handling Errors in main()
+  - with multiple error types, Working with Multiple Error Types-Working with Multiple Error Types
+  - panic, Panic-Aborting
+  - PoisonError::into_inner, Poisoned Mutexes
+  - printing errors, Printing Errors-Printing Errors
+  - propagating errors, Propagating Errors
+  - Result type, Result-Why Results?, Error and Result Types
+  - unsafe code and, A Safe Interface to libgit2
+- Error trait
+  - source method, Printing Errors
+  - to_string method, Printing Errors
+- escape_time function, from_fn and successors
+- ExactSizeIterator trait, position, rposition, and ExactSizeIterator
+- exceptions, Result versus, Why Results?
+- exclusive (half-open) ranges, Fields and Elements
+- executors (asynchronous)
+  - block_on, Calling Async Functions from Synchronous Code: block_on-Calling Async Functions from Synchronous Code: block_on, Primitive Futures and Executors: When Is a Future Worth Polling Again?, Implementing block_on-Implementing block_on
+  - spawn function, spawn and join-spawn and join, Error Handling Across Threads, Spawning Async Tasks, Spawning Async Tasks on a Thread Pool
+  - spawn_local, Spawning Async Tasks-Spawning Async Tasks, Spawning Async Tasks on a Thread Pool
+- expect method, Handling Command-Line Arguments, Writing Image Files, Handling Errors in main()
+- expressions, Expressions-Onward
+  - assignment, Assignment
+  - blocks and semicolons, Blocks and Semicolons-Declarations
+  - closures, Closures
+  - declarations, Declarations
+  - fields and elements, Fields and Elements
+  - function/method calls, Function and Method Calls
+  - if and match, if and match-if let
+  - if let, if let
+  - loops, Control Flow in Loops-Control Flow in Loops
+  - precedence and associativity, Precedence and Associativity
+  - reference operators, Reference Operators
+  - regular expressions, Regular Expressions-Building Regex Values Lazily
+  - return, return Expressions
+  - Rust as expression language, An Expression Language
+  - statements versus, An Expression Language
+  - struct, Named-Field Structs
+  - type casts, Type Casts
+- extend function, Sharing Versus Mutation
+- Extend trait, The Extend Trait
+- extend_from_slice method, Sharing Versus Mutation
+- extension traits, Traits and Other People’s Types, Taking User Input: Asynchronous Streams
+- extern block, Declaring Foreign Functions and Variables-Declaring Foreign Functions and Variables
+
+### F
+
+- fat pointer, Slices, References to Slices and Trait Objects, Raw Pointers
+- \#\![feature\] attribute, Attributes
+- FFI (see foreign functions)
+- fields, expressions and, Fields and Elements
+- File type, Using the Formatting Language in Your Own Code, Seeking
+- file! macro, Built-In Macros
+- File::create, Files
+- File::open, Files
+- filename types, OsStr and Path
+- files, Files and Directories-Platform-Specific Features
+  - filesystem access functions, Filesystem Access Functions-Filesystem Access Functions
+  - OsStr and Path, OsStr and Path-OsStr and Path
+  - Path and PathBuf types, Path and PathBuf Methods-Path and PathBuf Methods
+  - platform-specific features, Platform-Specific Features-Platform-Specific Features
+  - reading and writing, Reading and Writing Files, Files
+  - reading directories, Reading Directories-Reading Directories
+- filesystems, Filesystems and Command-Line Tools-Find and Replace, Filesystem Access Functions
+- fill_buf method, Buffered Readers
+- filter adapter, map and filter-map and filter
+- filter_map adapter, filter_map and flat_map-filter_map and flat_map
+- find and replace, Find and Replace
+- find method, Parsing Pair Command-Line Arguments, find, rfind, and find_map
+- find_iter iterator, Basic Regex Use
+- find_map method, find, rfind, and find_map
+- fixed-width numeric types, Fixed-Width Numeric Types-Floating-Point Types
+- flate2 crate, Binary Data, Compression, and Serialization
+- flatten adapter, flatten-flatten
+- flat_map adapter, filter_map and flat_map-filter_map and flat_map
+- floating-point literals, Floating-Point Types
+- floating-point types, Floating-Point Types-Floating-Point Types, max, min, Formatting Numbers
+- flow-sensitive analyses, Why Rust Has loop
+- flush method, Default Methods
+- Flux architecture, Using Closures Effectively
+- fmt module, Formatting Your Own Types
+- fn keyword, Rust Functions, Declarations
+- Fn trait, FnMut
+- fn type, Callbacks
+- FnMut trait, FnMut-FnMut, from_fn and successors
+- FnOnce trait, FnOnce-FnOnce
+- fnv crate, Using a Custom Hashing Algorithm
+- fold method, Iterators, fold and rfold
+- for loop, Handling Command-Line Arguments
+  - control flow in, Control Flow in Loops
+  - IntoIterator, The Iterator and IntoIterator Traits, IntoIterator Implementations, IntoIterator Implementations
+- foreign functions, Foreign Functions-A Safe Interface to libgit2
+  - declaring foreign functions and variables, Declaring Foreign Functions and Variables-Declaring Foreign Functions and Variables
+  - finding common data representations, Finding Common Data Representations-Finding Common Data Representations
+  - from libraries, Using Functions from Libraries-Using Functions from Libraries
+  - raw interface to libgit2, A Raw Interface to libgit2-A Raw Interface to libgit2
+  - safe interface to libgit2, A Safe Interface to libgit2-A Safe Interface to libgit2
+  - unsafe code and, Unsafe Blocks
+- fork-join parallelism, Fork-Join Parallelism-Revisiting the Mandelbrot Set
+  - error handling across threads, Error Handling Across Threads
+  - Mandelbrot set rendering, Revisiting the Mandelbrot Set-Revisiting the Mandelbrot Set
+  - Rayon library, Rayon-Rayon
+  - shared immutable data across threads, Sharing Immutable Data Across Threads-Sharing Immutable Data Across Threads
+  - spawn and join, spawn and join-spawn and join
+- format parameters, Formatting Values
+- format! macro, String, Formatting Values
+- formatting arguments, by index or name, Referring to Arguments by Index or Name
+- formatting numbers, Formatting Numbers-Formatting Numbers
+- formatting values, Formatting Values-Using the Formatting Language in Your Own Code
+  - Boolean values, Formatting Other Types
+  - for debugging, Formatting Values for Debugging-Formatting Pointers for Debugging
+  - Display trait, Converting Other Types to Strings, Raw Pointers
+  - dynamic widths and precisions, Dynamic Widths and Precisions
+  - error types, Formatting Other Types
+  - format string directive notation, Formatting Your Own Types
+  - formatting language in your own code, Using the Formatting Language in Your Own Code-Using the Formatting Language in Your Own Code
+  - implementing traits for your own types, Formatting Your Own Types-Formatting Your Own Types
+  - internet protocol address types, Formatting Other Types
+  - Pointer trait, Raw Pointers
+  - referring to arguments by index or name, Referring to Arguments by Index or Name
+  - string examples, Formatting Values
+  - text values, Formatting Text Values-Formatting Text Values
+- format_args! macro, Formatting Values, Using the Formatting Language in Your Own Code
+- for_each method, for_each and try_for_each
+- free functions, Defining Methods with impl
+- From trait, From and Into-From and Into, Using Traits with Macros
+- FromIterator trait, Building Collections: collect and FromIterator, The Extend Trait, Creating String Values
+- FromStr trait, Parsing Other Types from Strings
+- from_digit method, Handling Digits
+- from_fn method, from_fn and successors-from_fn and successors
+- from_slice function, Type-Associated Functions
+- from_str method, Handling Command-Line Arguments
+- fs module, Filesystem Access Functions
+- fully qualified method calls, Fully Qualified Method Calls-Fully Qualified Method Calls
+- function arguments, receiving references as, Receiving References as Function Arguments-Receiving References as Function Arguments
+- function pointers (fn type), Callbacks
+- functional language, Vectors
+- functions
+  - associated, Defining Methods with impl
+  - async, Async Functions and Await Expressions-Calling Async Functions from Synchronous Code: block_on, Building Async Functions from Async Blocks
+  - calling, Function and Method Calls
+  - const, Global Variables
+  - filesystem access, Filesystem Access Functions-Filesystem Access Functions
+  - foreign (see foreign functions)
+  - free, Defining Methods with impl
+  - generic, Parsing Pair Command-Line Arguments, Fundamental Types, Generic Functions and Type Parameters-Generic Functions and Type Parameters
+  - passing references to, Passing References to Functions
+  - syntax for, Rust Functions-Rust Functions
+  - type-associated, Type-Associated Functions, Type-Associated Functions
+  - types, Function and Closure Types-Function and Closure Types
+  - unsafe, Unsafe Code, Unsafe Functions-Unsafe Functions
+- fuse adapter, fuse, Futures
+- Future trait, Futures-Futures
+- FutureExt trait, The Client’s Main Function
+- futures, From Synchronous to Asynchronous-A Real Asynchronous HTTP Client, Primitive Futures and Executors: When Is a Future Worth Polling Again?-Implementing block_on
+  - async blocks, Async Blocks-Building Async Functions from Async Blocks
+  - async functions, Async Functions and Await Expressions-Calling Async Functions from Synchronous Code: block_on, Building Async Functions from Async Blocks
+  - asynchronous HTTP client crate, A Real Asynchronous HTTP Client
+  - await expression, Async Functions and Await Expressions
+  - block_on, Calling Async Functions from Synchronous Code: block_on-Calling Async Functions from Synchronous Code: block_on, Implementing block_on-Implementing block_on
+  - borrowing and, Spawning Async Tasks
+  - comparing asynchronous designs, Comparing Asynchronous Designs
+  - implementing Send, But Does Your Future Implement Send?-But Does Your Future Implement Send?
+  - long-running computations, Long Running Computations: yield_now and spawn_blocking-Long Running Computations: yield_now and spawn_blocking
+  - pinning, Pinning-The Unpin Trait
+  - spawning async tasks, Spawning Async Tasks-Spawning Async Tasks, Spawning Async Tasks on a Thread Pool
+  - spawn_blocking, Invoking Wakers: spawn_blocking-Invoking Wakers: spawn_blocking
+
+### G
+
+- GapBuffer, Example: GapBuffer-Panic Safety in Unsafe Code
+- garbage collection, Pointer Types, Ownership and Moves, Capturing Variables
+- gcd function, Rust Functions, Serving Pages to the Web
+- generic code, Traits and Generics, Traits and Generics
+  - associated types and, Associated Types (or How Iterators Work)-Associated Types (or How Iterators Work)
+  - consts, Associated Consts
+  - generic functions, Parsing Pair Command-Line Arguments, Fundamental Types, Generic Functions and Type Parameters-Generic Functions and Type Parameters
+  - generic traits, Generic Traits (or How Operator Overloading Works)-impl Trait
+  - IntoIterator and, IntoIterator Implementations
+  - reverse-engineering bounds, Reverse-Engineering Bounds-Reverse-Engineering Bounds
+  - trait objects versus, Which to Use-Which to Use
+- generic collections, strings as, Strings as Generic Collections
+- generic enums, Generic Enums-Generic Enums
+- generic functions
+  - with constant parameters, Generic Functions and Type Parameters
+- generic parameters
+  - constants, Generic Structs with Constant Parameters, Generic Functions and Type Parameters
+- generic structs, What the Mandelbrot Set Actually Is, Generic Structs-Generic Structs
+- generic swaps, Tuples
+- generic types
+  - with constant parameters, Generic Structs with Constant Parameters
+- get method, Interior Mutability
+- get_form function, Concurrency
+- get_index function, Serving Pages to the Web
+- git2-rs crate, Foreign Functions
+- global event loop versus Rust executors, Comparing Asynchronous Designs
+- global variables, Global Variables-Global Variables
+- grep utility, Reading Lines
+- guards, Match Guards
+
+### H
+
+- half-open (end-exclusive) ranges, Fields and Elements
+- half-open ranges, Matching Multiple Possibilities
+- handle.join method, Error Handling Across Threads
+- hash method, Using a Custom Hashing Algorithm
+- Hash trait, Hashing-Using a Custom Hashing Algorithm
+- Hasher, Hashing
+- HashMap trait, Rich Data Structures Using Enums
+- HashMap::with_capacity, HashMap\<K, V\> and BTreeMap\<K, V\>
+- HashMap\<K, V\> collection type, HashMap\<K, V\> and BTreeMap\<K, V\>-Map Iteration
+- HashSet::new, HashSet\<T\> and BTreeSet\<T\>
+- HashSet::with_capacity, HashSet\<T\> and BTreeSet\<T\>
+- HashSet\<T\> collection type, HashSet\<T\> and BTreeSet\<T\>-Whole-Set Operations
+- Hashtable, Sharing Versus Mutation
+- heap.peek method, BinaryHeap\<T\>
+- heap.peek_mut method, BinaryHeap\<T\>
+- heap.pop method, BinaryHeap\<T\>
+- heap.push method, BinaryHeap\<T\>
+- hexadecimal numeric literal, Integer Types, Characters
+- hexadecimal, formatting numbers in, Formatting Numbers
+- HTTP client crate, A Real Asynchronous HTTP Client
+- hygienic macros, Scoping and Hygiene
+
+### I
+
+- if expression, Rust Functions, if and match-if let
+- if let expressions, if let
+- image files, for Mandelbrot set, Writing Image Files-Writing Image Files
+- image space, mapping to complex number plane, Mapping from Pixels to Complex Numbers
+- immutable references, References
+- impl block, Defining Methods with impl-Type-Associated Functions
+- impl trait, impl Trait-impl Trait
+- imports, Paths and Imports
+- inbound.lines method, Receiving Packets: More Asynchronous Streams
+- include! macro, Built-In Macros
+- include_bytes! macro, Built-In Macros
+- include_str! macro, Built-In Macros
+- Index trait, Index and IndexMut-Index and IndexMut
+- indexed content, Moves and Indexed Content-Moves and Indexed Content, Referring to Arguments by Index or Name, Sending Values-Running the Pipeline, Piping Almost Any Iterator to a Channel-Piping Almost Any Iterator to a Channel
+- IndexMut trait, Index and IndexMut-Index and IndexMut
+- infinite loops, Loops
+- \#\[inline\] attribute, Attributes
+- inlining, Closure Performance
+- input and output, Input and Output-Networking
+  - files and directories, Files and Directories-Platform-Specific Features
+  - networking, Networking-Networking
+  - readers and writers, Readers and Writers-Binary Data, Compression, and Serialization
+- inspect adapter, inspect
+- installation, Rust, rustup and Cargo-rustup and Cargo
+- integer literals, Integer Types, Floating-Point Types, Literals, Variables, and Wildcards in Patterns
+- integer types, Integer Types-Integer Types, Formatting Numbers
+- integers, Rust Functions
+  - converting characters to/from, Conversions to and from Integers
+  - converting to raw pointers, Raw Pointers
+  - division by zero panic, Arithmetic, Bitwise, Comparison, and Logical Operators
+  - Rust and C type commonalities, Finding Common Data Representations
+- integration tests, Integration Tests
+- interior mutability, Rc and Arc: Shared Ownership, Interior Mutability-Interior Mutability
+- internet protocol address types, formatting, Formatting Other Types
+- Into trait, From and Into-From and Into
+- IntoIter, associated type of, The Iterator and IntoIterator Traits
+- IntoIterator trait, The Iterator and IntoIterator Traits-The Iterator and IntoIterator Traits, IntoIterator Implementations-IntoIterator Implementations, Implementing Your Own Iterators
+- into_iter iterator, A Concurrent Mandelbrot Program
+- into_iter method, The Iterator and IntoIterator Traits
+- invalidation errors, Collections, Rust Rules Out Invalidation Errors
+- invariants, mutexes and, What Is a Mutex?, Poisoned Mutexes
+- inverted index, Sending Values-Running the Pipeline, Piping Almost Any Iterator to a Channel-Piping Almost Any Iterator to a Channel
+- invoking wakers, in spawn_blocking, Invoking Wakers: spawn_blocking-Invoking Wakers: spawn_blocking
+- io module, Readers and Writers
+- IpAddr type, Parsing Other Types from Strings, Formatting Other Types
+- irrefutable patterns, Where Patterns Are Allowed
+- isize type, Integer Types
+- item declarations, Declarations
+- items, Modules, Attributes-Attributes
+- iter method, iter and iter_mut Methods, IntoIterator Implementations
+- iter.collect method, HashMap\<K, V\> and BTreeMap\<K, V\>, HashSet\<T\> and BTreeSet\<T\>, Creating String Values
+- iterable type, The Iterator and IntoIterator Traits
+- iterating
+  - borrowing and, by_ref
+  - over a map, Map Iteration
+  - over sets, Set Iteration
+  - over text, Iterating over Text-Iterating over Text
+- iterator adapters (see adapter methods)
+- Iterator methods, The Iterator and IntoIterator Traits
+- Iterator trait, Traits That Define Relationships Between Types, The Iterator and IntoIterator Traits, Implementing Your Own Iterators
+- iterators, Handling Command-Line Arguments, Iterators-Implementing Your Own Iterators
+  - adapter methods, Iterator Adapters-cycle
+  - associated types and, Associated Types (or How Iterators Work)-Associated Types (or How Iterators Work)
+  - consuming (see consuming iterators)
+  - creating, Creating Iterators-Other Iterator Sources
+  - implementing for your own types, Implementing Your Own Iterators-Implementing Your Own Iterators
+  - in standard library, Other Iterator Sources
+  - traits, The Iterator and IntoIterator Traits-The Iterator and IntoIterator Traits
+- iter_mut method, iter and iter_mut Methods, IntoIterator Implementations
+
+### J
+
+- Java
+  - ConcurrentModificationException, Sharing Versus Mutation
+  - object-mutex relationship in, What Is a Mutex?
+- JavaScript, asynchronous function, Comparing Asynchronous Designs
+- join method
+  - combining strings, String
+  - on rayon parallel iterators, Rayon
+  - waiting for thread, spawn and join
+- JSON (JavaScript Object Notation), Rich Data Structures Using Enums
+- json! macro, Building the json! Macro-Importing and Exporting Macros
+  - fragment types, Fragment Types-Fragment Types
+  - importing and exporting, Importing and Exporting Macros-Importing and Exporting Macros
+  - recursion in, Recursion in Macros
+  - scoping and hygiene, Scoping and Hygiene-Scoping and Hygiene
+  - using traits with, Using Traits with Macros-Using Traits with Macros
+
+### K
+
+- Keep, Daniel
+  - The Little Book of Rust Macros, Beyond macro_rules!
+- key argument, map, HashMap\<K, V\> and BTreeMap\<K, V\>
+
+### L
+
+- language extension traits, Utility Traits
+- last method, last
+- Latin-1 character set, ASCII, Latin-1, and Unicode
+- lazy_static crate, Building Regex Values Lazily, Global Variables
+- len method, Vectors, Strings in Memory, position, rposition, and ExactSizeIterator
+- let statement, Rust Functions, More Operations That Move, Declarations
+- Li, Peng, Systems Programmers Can Have Nice Things
+- libgit2, Foreign Functions, Using Functions from Libraries-Using Functions from Libraries
+  - raw interface to, A Raw Interface to libgit2-A Raw Interface to libgit2
+  - safe interface to, A Safe Interface to libgit2-A Safe Interface to libgit2
+- libraries, Turning a Program into a Library-Turning a Program into a Library
+  - doc-tests, Doc-Tests-Doc-Tests
+  - documentation, Documentation-Doc-Tests
+  - foreign functions from, Using Functions from Libraries-Using Functions from Libraries
+  - src/bin directory, The src/bin Directory-The src/bin Directory
+  - third-party (see crates)
+- lifetime
+  - parameters for generic functions, Generic Functions and Type Parameters
+  - parameters for references, Reference Safety, Receiving References as Function Arguments-Omitting Lifetime Parameters
+  - reference constraints, Raw Pointers
+  - structs with, Generic Structs with Lifetime Parameters
+- line! macro, Built-In Macros
+- lines method, on input streams, try_fold and try_rfold, Taking User Input: Asynchronous Streams
+- \#\[link\] attribute, Using Functions from Libraries
+- Linux
+  - Rust package for, rustup and Cargo
+  - using functions from libraries, Using Functions from Libraries
+- literals, in patterns, Literals, Variables, and Wildcards in Patterns
+- The Little Book of Rust Macros (Keep), Beyond macro_rules!
+- lock method, Mutex\<T\>
+- locking data
+  - mutexes, Mutex\<T\>-Multiconsumer Channels Using Mutexes
+  - read/write locks, Read/Write Locks (RwLock\<T\>)
+- logging
+  - channels for, Beyond Pipelines
+  - formatting pointers for, Using the Formatting Language in Your Own Code
+  - formatting values for, Formatting Values for Debugging
+- logical operators, Arithmetic, Bitwise, Comparison, and Logical Operators
+- log_syntax! macro, Debugging Macros
+- long-running computations, asynchronous programming, Long Running Computations: yield_now and spawn_blocking-Long Running Computations: yield_now and spawn_blocking
+- loop (for infinite loops), Loops
+- looping expressions, Loops-Control Flow in Loops
+- lvalues, Fields and Elements
+
+### M
+
+- machine language, Finding Common Data Representations
+- machine types, integer types, Integer Types-Integer Types
+- machine word, Fixed-Width Numeric Types
+- macOS
+  - Rust package for, rustup and Cargo
+  - using functions from libraries, Using Functions from Libraries
+- macros, Macros-Beyond macro_rules!
+  - built-in, Built-In Macros-Built-In Macros
+  - debugging, Debugging Macros-Debugging Macros
+  - expansion, Macros, Basics of Macro Expansion-Basics of Macro Expansion
+  - fragment types, Fragment Types-Fragment Types
+  - importing and exporting, Importing and Exporting Macros-Importing and Exporting Macros
+  - json!, Building the json! Macro-Importing and Exporting Macros
+  - procedural, Beyond macro_rules!
+  - recursion in, Recursion in Macros
+  - repetition, Repetition-Repetition
+  - scoping and hygiene, Scoping and Hygiene-Scoping and Hygiene
+  - unintended consequences, Unintended Consequences-Unintended Consequences
+  - using traits with, Using Traits with Macros-Using Traits with Macros
+- macro_rules!, Macro Basics, Fragment Types
+- main function, Handling Command-Line Arguments, Serving Pages to the Web, Handling Errors in main()
+- Mandelbrot set, Concurrency-What the Mandelbrot Set Actually Is
+  - concurrent implementation, Concurrency-Safety Is Invisible
+  - mapping from pixels to complex numbers, Mapping from Pixels to Complex Numbers
+  - parsing pair command-line arguments, Parsing Pair Command-Line Arguments-Parsing Pair Command-Line Arguments
+  - plotting, Plotting the Set
+  - rendering with fork-join parallelism, Revisiting the Mandelbrot Set-Revisiting the Mandelbrot Set
+  - running the plotter, Running the Mandelbrot Plotter
+  - writing image files, Writing Image Files-Writing Image Files
+- map (HashMap and BTreeMap) methods
+  - append method, HashMap\<K, V\> and BTreeMap\<K, V\>
+  - btree_map.split_off method, HashMap\<K, V\> and BTreeMap\<K, V\>
+  - clear method, HashMap\<K, V\> and BTreeMap\<K, V\>
+  - contains_key method, HashMap\<K, V\> and BTreeMap\<K, V\>
+  - entry(key) method, Entries
+  - entry(key).and_modify method, Entries
+  - entry(key).or_default method, Entries
+  - entry(key).or_insert method, Entries
+  - entry(key).or_insert_with method, Entries
+  - extend method, HashMap\<K, V\> and BTreeMap\<K, V\>
+  - get method, HashMap\<K, V\> and BTreeMap\<K, V\>
+  - get_mut method, HashMap\<K, V\> and BTreeMap\<K, V\>
+  - insert method, HashMap\<K, V\> and BTreeMap\<K, V\>
+  - into_iter method, Map Iteration
+  - into_keys method, Map Iteration
+  - into_values method, Map Iteration
+  - is_empty method, HashMap\<K, V\> and BTreeMap\<K, V\>
+  - keys method, Map Iteration
+  - len method, HashMap\<K, V\> and BTreeMap\<K, V\>
+  - remove method, HashMap\<K, V\> and BTreeMap\<K, V\>
+  - remove_entry method, HashMap\<K, V\> and BTreeMap\<K, V\>
+  - retain method, HashMap\<K, V\> and BTreeMap\<K, V\>
+  - values method, Map Iteration
+  - values_mut method, Map Iteration
+- map adapter, map and filter-map and filter
+- map and mapping, Mapping from Pixels to Complex Numbers
+  - BTreeMap\<K, V\>, Overview, HashMap\<K, V\> and BTreeMap\<K, V\>-Map Iteration
+  - filter_map and flat_map adapters, map and filter-filter_map and flat_map
+  - find_map method, find, rfind, and find_map
+  - HashMap trait, Rich Data Structures Using Enums
+  - HashMap\<K, V\>, Overview, HashMap\<K, V\> and BTreeMap\<K, V\>-Map Iteration
+  - map and filter, map and filter-map and filter
+- marker traits, Utility Traits, Thread Safety: Send and Sync-Thread Safety: Send and Sync, But Does Your Future Implement Send?-But Does Your Future Implement Send?, The Unpin Trait-The Unpin Trait, Unsafe Traits
+- match expression, Parsing Pair Command-Line Arguments, if and match, Patterns-Patterns
+- match statement, Writing Image Files
+- matches! macro, Built-In Macros
+- matching unions, Matching Unions
+- Matsakis, Niko, Rayon
+- max method, max, min
+- max_by method, max_by, min_by
+- max_by_key method, max_by_key, min_by_key
+- MaybeUninit type, A Raw Interface to libgit2
+- memory, Ownership and Moves
+  - (see also ownership)
+  - closure layout in, Closure Performance
+  - enums in, Enums in Memory
+  - raw pointers and, Moving into and out of Memory-Moving into and out of Memory
+  - reinterpreting with unions, Reinterpreting Memory with Unions-Borrowing Unions
+  - strings in, Strings in Memory-Strings in Memory
+  - types for representing sequence of values in, Arrays, Vectors, and Slices-Slices
+- memory ordering, for atomic operations, Atomics
+- methods
+  - calling, Function and Method Calls
+  - defining with impl, Defining Methods with impl-Type-Associated Functions
+  - fully qualified method calls, Fully Qualified Method Calls-Fully Qualified Method Calls
+- min method, max, min
+- min_by method, max_by, min_by
+- min_by_key method, max_by_key, min_by_key
+- Model-View-Controller (see MVC)
+- modules, Modules-Statics and Constants
+  - libraries and, Turning a Program into a Library-Turning a Program into a Library
+  - nested, Nested Modules
+  - paths and imports, Paths and Imports-Paths and Imports
+  - prelude, Modules
+  - in separate files, Modules in Separate Files
+  - standard prelude, The Standard Prelude
+- monomorphization, Generic Functions and Type Parameters
+- Morris worm, Systems Programmers Can Have Nice Things
+- moves, Moves-Moves and Indexed Content
+  - closures and, Closures That Steal
+  - constructing new values, More Operations That Move
+  - control flow and, Moves and Control Flow
+  - Copy types as exception to, Copy Types: The Exception to Moves-Copy Types: The Exception to Moves
+  - indexed content and, Moves and Indexed Content-Moves and Indexed Content
+  - passing values to a function, More Operations That Move
+  - returning values to a function, More Operations That Move
+  - assigning to a variable, More Operations That Move
+- mpsc (multiproducer, single-consumer) module, Sending Values, Channel Features and Performance, Multiconsumer Channels Using Mutexes
+- Mul (multiplication trait), Generic Traits (or How Operator Overloading Works)
+- multiple readers, References to Values
+- multithreaded programming, Concurrency-Concurrency, Thread Safety: Send and Sync
+  - (see also asynchronous programming; concurrency)
+- mut (mutable) keyword, Rust Functions
+- mut (mutable) reference, mut and Mutex
+- mutability, interior, Interior Mutability-Interior Mutability
+- mutable references (&mut T), References, References to Values
+  - FnMut, FnMut-FnMut
+  - IntoIterator implementation, IntoIterator Implementations
+  - Mutex and, mut and Mutex
+  - rules for, Sharing Versus Mutation
+  - shared references versus, References to Values, Sharing Versus Mutation-Sharing Versus Mutation
+  - splitting and, Splitting-Splitting
+- mutable slice, Arrays, Vectors, and Slices
+- mutable state, shared, Shared Mutable State-Global Variables
+- mutable statics, Receiving References as Function Arguments, Statics and Constants, Unsafe Blocks
+- Mutex type, The Group Table: Synchronous Mutexes-The Group Table: Synchronous Mutexes
+- Mutex::new, Mutex\<T\>
+- mutexes, What Is a Mutex?-What Is a Mutex?
+  - chat connections with async mutexes, Handling Chat Connections: Async Mutexes-Handling Chat Connections: Async Mutexes
+  - creating with Mutex\<T\>, Mutex\<T\>-Mutex\<T\>
+  - deadlocks and, Deadlock
+  - invariants and, What Is a Mutex?, Poisoned Mutexes
+  - limitations, Why Mutexes Are Not Always a Good Idea
+  - multiconsumer channels using, Multiconsumer Channels Using Mutexes
+  - mut reference and, mut and Mutex
+  - poisoned, Poisoned Mutexes
+- MVC (Model-View-Controller), Using Closures Effectively
+
+### N
+
+- named-field structs, Named-Field Structs-Named-Field Structs
+- namespaces (see modules)
+- NaN (not-a-number) values, Equivalence Comparisons
+- native_tls crate, Networking
+- nested modules, Nested Modules
+- net module, Networking
+- networking, Networking-Networking
+- newtypes, Tuple-Like Structs, Example: An Efficient ASCII String Type
+- next method, Associated Types (or How Iterators Work), by_ref, Taking User Input: Asynchronous Streams
+- non-mut references, splitting, Splitting-Splitting
+- normalization, Unicode, Normalization-The unicode-normalization Crate
+- not-a-number (NaN) values, Equivalence Comparisons
+- nth and nth_back methods, nth, nth_back
+- nth triangle number, Iterators
+- null pointers, References Are Never Null
+- null raw pointers, Raw Pointers, Nullable Pointers
+- null references not allowed, References, References Are Never Null
+- numbers, complex, Parsing Pair Command-Line Arguments
+- numeric types
+  - fixed-width, Fixed-Width Numeric Types-Floating-Point Types
+  - floating-point types, Floating-Point Types-Floating-Point Types
+  - integer types, Integer Types-Integer Types, Formatting Numbers
+
+### O
+
+- OccupiedEntry type, HashMap and BTreeMap, Entries
+- octal numeric literal, Integer Types
+- octal, formatting numbers in, Formatting Numbers
+- offset method, Unsafe from What?, Raw Pointers, Dereferencing Raw Pointers Safely, Pointer Arithmetic
+- One Definition Rule, Traits and Other People’s Types
+- OpenOptions struct, Files
+- operator overloading, Operator Overloading-Other Operators
+  - arithmetic/bitwise operators, Arithmetic and Bitwise Operators-Compound Assignment Operators
+  - binary operators, Binary Operators
+  - compound assignment operators, Compound Assignment Operators-Compound Assignment Operators
+  - equality tests, Equivalence Comparisons-Equivalence Comparisons
+  - generic traits and, Generic Traits (or How Operator Overloading Works)
+  - Index and IndexMut, Index and IndexMut-Index and IndexMut
+  - limitations on, Other Operators
+  - ordered comparisons, Ordered Comparisons-Ordered Comparisons
+  - unary operators, Unary Operators
+- operator precedence, Precedence and Associativity
+- operators
+  - arithmetic, Arithmetic, Bitwise, Comparison, and Logical Operators, Arithmetic and Bitwise Operators-Arithmetic and Bitwise Operators, Compound Assignment Operators-Compound Assignment Operators
+  - as operator, Conversions to and from Integers
+  - binary, Arithmetic, Bitwise, Comparison, and Logical Operators, Binary Operators
+  - bitwise, Arithmetic, Bitwise, Comparison, and Logical Operators, Compound Assignment Operators-Compound Assignment Operators
+  - comparison, The bool Type, Using Strings, Comparing References, Arithmetic, Bitwise, Comparison, and Logical Operators, max_by, min_by
+  - equality, Equivalence Comparisons-Equivalence Comparisons
+  - reference, Reference Operators
+  - unary, Unary Operators
+- Option\<&T\>, References Are Never Null
+- option_env! macro, Built-In Macros
+- ordered comparison operators, Ordered Comparisons-Ordered Comparisons
+- Ordering::SeqCst, atomic memory ordering, Atomics
+- orphan rule, Traits and Other People’s Types
+- os module, Platform-Specific Features
+- OsStr string type, OsStr and Path-OsStr and Path
+- Outbound type, Handling Chat Connections: Async Mutexes
+- overflowing operations, Checked, Wrapping, Saturating, and Overflowing Arithmetic
+- ownership, Ownership and Moves-Rc and Arc: Shared Ownership
+  - Arc, Rc and Arc: Shared Ownership-Rc and Arc: Shared Ownership
+  - C++ versus Rust, Ownership-Ownership
+  - Cow, Borrow and ToOwned at Work: The Humble Cow
+  - iteration and, Handling Command-Line Arguments
+  - moves, Moves-Moves and Indexed Content
+  - Rc, Rc and Arc: Shared Ownership-Rc and Arc: Shared Ownership
+  - shared, Rc and Arc: Shared Ownership-Rc and Arc: Shared Ownership
+- owning type, OsStr and Path
+
+### P
+
+- panic, Rust Functions, Panic-Aborting
+  - aborting, Aborting
+  - poisoned mutexes, Poisoned Mutexes
+  - safety in unsafe code, Panic Safety in Unsafe Code
+  - unwinding, Unwinding-Unwinding
+- panic! macro, Panic, Formatting Values, Macros
+- parallel programming, Parallel Programming Is Tamed
+  - (see also concurrency)
+- ParallelIterator, Rayon
+- parameters
+  - formatting, Formatting Values, Formatting Values for Debugging, Dynamic Widths and Precisions
+  - lifetime, Reference Safety, Receiving References as Function Arguments-Omitting Lifetime Parameters, Generic Functions and Type Parameters
+  - type, Parsing Pair Command-Line Arguments, Generic Structs, Generic Functions and Type Parameters, Equivalence Comparisons
+- parse method, Parsing Other Types from Strings
+- parse_args function, Reading and Writing Files
+- parse_complex function, Parsing Pair Command-Line Arguments
+- parse_pair function, Parsing Pair Command-Line Arguments
+- PartialEq trait, Equivalence Comparisons-Equivalence Comparisons
+- PartialOrd trait, Ordered Comparisons-Ordered Comparisons
+- partition method, partition
+- part_iter method, Rayon
+- Path type, iter and iter_mut Methods, Formatting Text Values, OsStr and Path-Path and PathBuf Methods
+  - ancestors method, Path and PathBuf Methods
+  - components method, Path and PathBuf Methods
+  - display method, Path and PathBuf Methods
+  - file_name method, Path and PathBuf Methods
+  - is_absolute method, Path and PathBuf Methods
+  - is_relative method, Path and PathBuf Methods
+  - join method, Path and PathBuf Methods
+  - parent method, Path and PathBuf Methods
+  - to_str method, Path and PathBuf Methods
+  - to_string_lossy method, Path and PathBuf Methods
+- Path::new method, Path and PathBuf Methods
+- PathBuf type, Path and PathBuf Methods
+- paths, standard library, Paths and Imports-Paths and Imports
+- patterns, Patterns-The Big Picture
+  - @ patterns, Binding with @ Patterns
+  - array, Array and Slice Patterns
+  - avoiding syntax errors during matching in macros, Avoiding Syntax Errors During Matching
+  - guards, Match Guards
+  - literals in, Literals, Variables, and Wildcards in Patterns
+  - match expressions and, if and match
+  - matching multiple possibilities with, Matching Multiple Possibilities
+  - populating a binary tree, Populating a Binary Tree
+  - reference, Reference Patterns-Reference Patterns
+  - searching and replacing, Patterns for Searching Text-Searching and Replacing
+  - situations that allow, Where Patterns Are Allowed
+  - slice, Array and Slice Patterns
+  - struct, Tuple and Struct Patterns
+  - tuple, Tuple and Struct Patterns
+  - variables in, Literals, Variables, and Wildcards in Patterns
+  - wildcards in, Literals, Variables, and Wildcards in Patterns
+- peek method, peekable
+- Peekable iterator, peekable
+- Pin type, Pinned Pointers
+- pinned pointer, Pinned Pointers-Pinned Pointers
+- pinning futures, Pinning-The Unpin Trait
+- pipeline approach
+  - concurrent programming, Concurrency
+  - iterator stages, Iterators, Creating Iterators
+  - multiple threads, Sending Values-Running the Pipeline, Channel Features and Performance, Piping Almost Any Iterator to a Channel-Piping Almost Any Iterator to a Channel
+- pixel_to_point function, A Concurrent Mandelbrot Program
+- plotting, Mandelbrot set, Plotting the Set, Running the Mandelbrot Plotter
+- Pointer formatting trait, Raw Pointers
+- pointer types, Pointer Types-Raw Pointers
+  - boxes, Boxes
+  - non-owning, References to Values
+  - pinned pointer, Pinned Pointers-Pinned Pointers
+  - raw pointers, Raw Pointers, Raw Pointers-Panic Safety in Unsafe Code
+  - references (see references (pointer type))
+- pointers, Rust's restrictions on, Ownership and Moves
+- PoisonError::into_inner, Poisoned Mutexes
+- poll method, Futures, Long Running Computations: yield_now and spawn_blocking
+- polling interface, asynchronous programming, Futures-Futures, Comparing Asynchronous Designs, Primitive Futures and Executors: When Is a Future Worth Polling Again?-Implementing block_on
+- polymorphism, Traits and Generics
+- position method, position, rposition, and ExactSizeIterator
+- post_gcd function, Serving Pages to the Web, Concurrency
+- precedence, operator, Precedence and Associativity
+- prelude module, Modules, Platform-Specific Features, Taking User Input: Asynchronous Streams
+- print! macro, Formatting Values, Writers
+- println! macro, Serving Pages to the Web, String, Formatting Values, Writers
+- println! method, Printing Errors
+- print_error function, Ignoring Errors
+- print_padovan function, Ownership
+- print_usage function, The Command-Line Interface
+- procedural macros, Beyond macro_rules!
+- process_files function, Fork-Join Parallelism
+- product method, Simple Accumulation: count, sum, product
+- profiler, Build Profiles
+- propagating errors, Propagating Errors
+- protocol
+  - client and server as asynchronous, The Protocol-The Protocol
+  - internet protocol address types, formatting, Formatting Other Types
+- ptr module, Moving into and out of Memory
+- ptr.copy_to, Moving into and out of Memory
+- ptr.copy_to_nonoverlapping, Moving into and out of Memory
+- ptr::copy, Moving into and out of Memory
+- ptr::copy_nonoverlapping, Moving into and out of Memory
+- ptr::read, Moving into and out of Memory
+- ptr::write , Moving into and out of Memory
+- public vocabulary traits, Utility Traits
+- Python, assignment in, Moves-Moves
+
+### R
+
+- race method, The Client’s Main Function
+- rand crate, Random Elements
+- rand::thread_rng method, Random Elements
+- ranges
+  - closed, Fields and Elements
+  - end-exclusive, Matching Multiple Possibilities
+  - half-open, Fields and Elements, Matching Multiple Possibilities
+  - in loop expressions, Loops
+  - unbounded, Matching Multiple Possibilities
+- raw module, Finding Common Data Representations, A Raw Interface to libgit2-A Raw Interface to libgit2
+- raw pointers, Raw Pointers, Unsafe Code, Raw Pointers-Panic Safety in Unsafe Code
+  - dereferencing, Raw Pointers, Unsafe from What?, Unsafe Blocks, Dereferencing Raw Pointers Safely-Example: RefWithFlag
+  - GapBuffer example, Example: GapBuffer-Example: GapBuffer
+  - moving into/out of memory, Moving into and out of Memory-Moving into and out of Memory
+  - nullable pointers, Nullable Pointers
+  - panic safety in unsafe code, Panic Safety in Unsafe Code
+  - pointer arithmetic, Pointer Arithmetic-Pointer Arithmetic
+  - RefWithFlag example, Example: RefWithFlag-Example: RefWithFlag
+  - type sizes and alignments, Type Sizes and Alignments
+- raw strings, String Literals
+- Rayon library (Matsakis and Stone), Rayon-Rayon
+- Rc pointer type, Rc and Arc: Shared Ownership-Rc and Arc: Shared Ownership, Passing Self as a Box, Rc, or Arc-Passing Self as a Box, Rc, or Arc
+- Read trait, Input and Output, Readers and Writers
+  - bytes method, Readers
+  - chain method, Readers
+  - lines method, Buffered Readers
+  - read method, Readers
+  - read_exact method, Readers
+  - read_to_end method, Readers
+  - read_to_string method, Readers
+  - take method, Readers
+- read-only access, shared access as, Sharing Versus Mutation
+- read/write locks (RwLock), Read/Write Locks (RwLock\<T\>)
+- ReadBytesExt trait, Binary Data, Compression, and Serialization
+- readers, Readers-Collecting Lines
+  - binary data, compression, serialization, Binary Data, Compression, and Serialization-Binary Data, Compression, and Serialization
+  - buffered, Buffered Readers-Collecting Lines
+  - collecting lines, Collecting Lines
+  - files, Files
+  - other types, Other Reader and Writer Types-Other Reader and Writer Types
+  - reading lines, Reading Lines-Reading Lines
+  - Seek trait, Seeking
+- read_dir method, Reading Directories
+- read_numbers function, Working with Multiple Error Types
+- read_to_string function, Reading and Writing Files
+- read_unaligned, Moving into and out of Memory
+- read_volatile, Moving into and out of Memory
+- Receiver type, Multiconsumer Channels Using Mutexes
+- receiving packets, asynchronous chat, Receiving Packets: More Asynchronous Streams-Receiving Packets: More Asynchronous Streams
+- recursion, macros, Recursion in Macros
+- RefCell type
+  - borrow methid, Interior Mutability
+  - borrow_mut method, Interior Mutability
+  - try_borrow method, Interior Mutability
+  - try_borrow_mut method, Interior Mutability
+- RefCell::new(value), Interior Mutability
+- RefCell\<T\> struct, Interior Mutability
+- reference (ref) patterns, Reference Patterns-Reference Patterns
+- reference operators, Reference Operators
+- reference-counted (Rc) pointer type, Rc and Arc: Shared Ownership-Rc and Arc: Shared Ownership
+- references (pointer type), References, References-Taking Arms Against a Sea of Objects
+  - assigning, Assigning References
+  - borrowing, Borrowing References to Arbitrary Expressions, Borrowing a Local Variable-Borrowing a Local Variable, Closures That Borrow
+  - C++ versus Rust, Rust References Versus C++ References
+  - comparing, Comparing References
+  - constraints on, Reference Safety-Structs Containing References, Raw Pointers
+  - immutable, References
+  - IntoIterator implementation, IntoIterator Implementations
+  - iteration and, Handling Command-Line Arguments
+  - lifetime parameters and, Reference Safety, Receiving References as Function Arguments-Omitting Lifetime Parameters
+  - mutable (see mutable references)
+  - null, References
+  - null pointers and, References Are Never Null
+  - passing references to functions, Passing References to Functions
+  - receiving as function arguments, Receiving References as Function Arguments-Receiving References as Function Arguments
+  - returning, Returning References
+  - safety of, Reference Safety-Omitting Lifetime Parameters
+  - "sea of objects" and, Taking Arms Against a Sea of Objects-Taking Arms Against a Sea of Objects
+  - shared versus mutable, References to Values, Sharing Versus Mutation-Sharing Versus Mutation
+  - structs containing, Structs Containing References-Structs Containing References
+  - to references, References to References
+  - to slices and trait objects, References to Slices and Trait Objects
+  - to values, References to Values-References to Values
+- refutable patterns, Where Patterns Are Allowed
+- RefWithFlag\<'a, T\>, Example: RefWithFlag-Example: RefWithFlag
+- Regex struct, Find and Replace
+- Regex::captures method, Basic Regex Use
+- Regex::new constructor, Building Regex Values Lazily-Building Regex Values Lazily
+- regular expressions (regex), Regular Expressions-Building Regex Values Lazily
+  - basic use, Basic Regex Use-Basic Regex Use
+  - building values on demand, Building Regex Values Lazily
+  - macros versus, Basics of Macro Expansion
+- relational operators, Arithmetic, Bitwise, Comparison, and Logical Operators
+- replace_all method, Find and Replace
+- \#\[repr(C)\] attribute, Finding Common Data Representations
+- \#\[repr(i16)\] attribute, Finding Common Data Representations
+- reqwest crate, Networking
+- resource-constrained programming, Preface
+- Result type, Handling Command-Line Arguments, Result-Why Results?
+  - as_mut method, Catching Errors
+  - as_ref method, Catching Errors
+  - catching errors, Error Handling, Catching Errors-Catching Errors
+  - dealing with errors that "can't happen", Dealing with Errors That “Can’t Happen”
+  - declaring a custom error type, Declaring a Custom Error Type
+  - err method, Catching Errors
+  - error handling across threads, Error Handling Across Threads
+  - expect method, Catching Errors
+  - handling errors in main function, Handling Errors in main()
+  - ignoring errors, Ignoring Errors
+  - is_err method, Catching Errors
+  - is_ok method, Catching Errors
+  - key points of design, Why Results?
+  - with multiple error types, Working with Multiple Error Types-Working with Multiple Error Types
+  - ok method, Catching Errors
+  - printing errors, Printing Errors-Printing Errors
+  - propagating errors, Propagating Errors
+  - type aliases, Result Type Aliases
+  - unwrap method, Catching Errors
+  - unwrap_or method, Catching Errors
+  - unwrap_or_else method, Catching Errors
+- return expressions, Rust Functions, Rust Functions, return Expressions
+- rev adapter, Reversible Iterators and rev-Reversible Iterators and rev
+- reverse method, Vectors
+- reversible iterators, Reversible Iterators and rev-Reversible Iterators and rev
+- rfind method, find, rfind, and find_map
+- rfold method, fold and rfold
+- Rhs type parameter, Equivalence Comparisons
+- root module, Turning a Program into a Library
+- route method, Serving Pages to the Web
+- routers, callbacks and, Callbacks-Callbacks
+- rposition method, position, rposition, and ExactSizeIterator
+- Rust, A Tour of Rust-Find and Replace
+  - command-line arguments, Handling Command-Line Arguments-Handling Command-Line Arguments
+  - command-line interface, Filesystems and Command-Line Tools-The Command-Line Interface
+  - community, More Nice Things
+  - concurrency, Concurrency-Safety Is Invisible
+  - filesystems, Filesystems and Command-Line Tools-Find and Replace
+  - find and replace, Find and Replace
+  - functions in, Rust Functions-Rust Functions
+  - installation, rustup and Cargo-rustup and Cargo
+  - reading files, Reading and Writing Files
+  - reasons for using, Rust Shoulders the Load for You-Rust Makes Collaboration Easier
+  - rules for well-behaved program, Undefined Behavior
+  - simple web server, Serving Pages to the Web-Serving Pages to the Web
+  - unit testing in, Writing and Running Unit Tests
+  - website, rustup and Cargo
+- rustc command, rustup and Cargo, Crates, Debugging Macros
+- rustdoc command, rustup and Cargo
+- rustup, rustup and Cargo-rustup and Cargo
+- RwLock, Read/Write Locks (RwLock\<T\>)
+
+### S
+
+- safe interface to libgit2, A Safe Interface to libgit2-A Safe Interface to libgit2
+- safety
+  - closures and, Closures and Safety-Copy and Clone for Closures
+  - invisibility of, Safety Is Invisible
+  - with references, Reference Safety-Omitting Lifetime Parameters
+  - thread safety with Send and Sync, Thread Safety: Send and Sync-Thread Safety: Send and Sync
+- saturating operations, Checked, Wrapping, Saturating, and Overflowing Arithmetic
+- say_hello function, Generic Functions and Type Parameters
+- scopes and scoping, Rayon, Scoping and Hygiene-Scoping and Hygiene
+- searching
+  - slices, Sorting and Searching, Searching and Replacing
+  - text, Conventions for Searching and Iterating-Searching and Replacing
+- Seek trait, Seeking
+- self argument, Passing Self as a Box, Rc, or Arc-Passing Self as a Box, Rc, or Arc
+- self keyword, Paths and Imports
+- Self type, Self in Traits-Self in Traits
+- semicolons following expressions, Blocks and Semicolons
+- SEMVER variable, Building Regex Values Lazily
+- Send marker trait, Thread Safety: Send and Sync-Thread Safety: Send and Sync, But Does Your Future Implement Send?-But Does Your Future Implement Send?, Unsafe Traits
+- send_as_json, Sending Packets
+- serde library/crate, Traits and Other People’s Types, Binary Data, Compression, and Serialization, An Asynchronous Client and Server
+- serde_json crate, Rich Data Structures Using Enums, Binary Data, Compression, and Serialization, An Asynchronous Client and Server
+- serialization, Binary Data, Compression, and Serialization
+- set method, Interior Mutability
+- set types (HashMap and BTreeMap)
+  - contains method, HashSet\<T\> and BTreeSet\<T\>
+  - difference method, Whole-Set Operations
+  - get method, When Equal Values Are Different
+  - insert method, HashSet\<T\> and BTreeSet\<T\>
+  - intersection method, Whole-Set Operations
+  - is_disjoint method, Whole-Set Operations
+  - is_empty method, HashSet\<T\> and BTreeSet\<T\>
+  - is_subset method, Whole-Set Operations
+  - is_superset method, Whole-Set Operations
+  - iter method, Set Iteration
+  - len method, HashSet\<T\> and BTreeSet\<T\>
+  - remove method, HashSet\<T\> and BTreeSet\<T\>
+  - replace method, When Equal Values Are Different
+  - retain method, HashSet\<T\> and BTreeSet\<T\>
+  - symmetric_difference method, Whole-Set Operations
+  - take method, When Equal Values Are Different
+  - union method, Whole-Set Operations
+- sets, HashSet\<T\> and BTreeSet\<T\>
+  - (see also Mandelbrot set)
+  - BTreeSet\<T\>, HashSet\<T\> and BTreeSet\<T\>-Whole-Set Operations
+  - HashSet\<T\> type, HashSet\<T\> and BTreeSet\<T\>-Whole-Set Operations
+- shadowing, Declarations
+- shared access, Sharing Versus Mutation
+- shared immutable data across threads, Sharing Immutable Data Across Threads-Sharing Immutable Data Across Threads
+- shared mutable state, Shared Mutable State-Global Variables
+  - atomics, Atomics, Global Variables
+  - condition variables (Condvar), Condition Variables (Condvar)
+  - deadlock, Deadlock
+  - global variables, Global Variables-Global Variables
+  - multiconsumer channels using mutex, Multiconsumer Channels Using Mutexes
+  - mut and Mutex, mut and Mutex
+  - mutex limitations, Why Mutexes Are Not Always a Good Idea
+  - Mutex\<T\>, Mutex\<T\>-Mutex\<T\>
+  - poisoned mutexes, Poisoned Mutexes
+  - read/write locks (RwLock), Read/Write Locks (RwLock\<T\>)
+- shared references (&T), References to Values
+  - C's pointers to const values versus, Sharing Versus Mutation
+  - IntoIterator implementation, IntoIterator Implementations
+  - mutable references versus, Sharing Versus Mutation-Sharing Versus Mutation
+  - rules for, Sharing Versus Mutation, Sharing Versus Mutation
+- shared slice of Ts, Arrays, Vectors, and Slices
+- Shared struct, spawn_blocking, Invoking Wakers: spawn_blocking
+- \#\[should_panic\] attribute, Tests and Documentation
+- show_it function, Deref and DerefMut
+- signed integer types, Integer Types
+- single writer, multiple readers rule, References to Values
+- SipHash-1-3, Using a Custom Hashing Algorithm
+- Sized trait, Sized-Sized, Type Sizes and Alignments
+- size_hint method, by_ref, Building Collections: collect and FromIterator
+- size_of_val function, Type Sizes and Alignments
+- skip and skip_while adapters, skip and skip_while
+- slice patterns, Array and Slice Patterns
+- slices, Slices
+  - &str (string slice), String
+  - binary_search method, Sorting and Searching
+  - binary_search_by method, Sorting and Searching
+  - binary_search_by_key method, Sorting and Searching
+  - borrowing as other text-like types, Borrowing as Other Text-Like Types
+  - bytes method, Iterating over Text
+  - case conversion for strings, Case Conversion for Strings
+  - chars method, Iterating over Text
+  - char_indices method, Iterating over Text
+  - choose method, Random Elements
+  - chunks method, Splitting
+  - chunks_exact method, Splitting
+  - chunks_exact_mut method, Splitting
+  - chunks_mut method, Splitting
+  - comparing, Comparing Slices
+  - concat method, Joining
+  - contains method, Sorting and Searching, Searching and Replacing
+  - ends_with method, Comparing Slices, Searching and Replacing
+  - find method, Searching and Replacing
+  - first method, Accessing Elements
+  - first_mut method, Accessing Elements
+  - get method, Accessing Elements
+  - get_mut method, Accessing Elements
+  - IntoIterator implementation, IntoIterator Implementations
+  - is_char_boundary method, Simple Inspection
+  - is_empty method, Growing and Shrinking Vectors, Simple Inspection
+  - iter method, Splitting
+  - iterating over text, Iterating over Text-Iterating over Text
+  - iter_mut method, Splitting
+  - join method, Joining
+  - joining in arrays of arrays, Joining
+  - last method, Accessing Elements
+  - last_mut method, Accessing Elements
+  - len method, Growing and Shrinking Vectors, Simple Inspection
+  - lines method, Iterating over Text
+  - matches method, Iterating over Text
+  - match_indices method, Iterating over Text
+  - random output, Random Elements
+  - rchunks method, Splitting
+  - rchunks_exact method, Splitting
+  - rchunks_exact_mut method, Splitting
+  - rchunks_mut method, Splitting
+  - references to, References to Slices and Trait Objects
+  - replace method, Searching and Replacing
+  - replacen method, Searching and Replacing
+  - reverse method, Sorting and Searching
+  - rfind method, Searching and Replacing
+  - rmatch_indices method, Iterating over Text
+  - rsplit method, Splitting, Iterating over Text
+  - rsplitn method, Splitting, Iterating over Text
+  - rsplitn_mut method, Splitting
+  - rsplit_mut method, Splitting
+  - rsplit_terminator method, Iterating over Text
+  - searching, Sorting and Searching, Searching and Replacing
+  - shuffle method, Random Elements
+  - slice\[range\], Simple Inspection
+  - sort method, Sorting and Searching
+  - sorting, Sorting and Searching
+  - sort_by method, Sorting and Searching
+  - sort_by_key method, Sorting and Searching
+  - split method, Splitting, Iterating over Text
+  - splitn method, Splitting, Iterating over Text
+  - splitn_mut method, Splitting
+  - splitting non-mut references, Splitting-Splitting
+  - split_ascii_whitespace method, Iterating over Text
+  - split_at method, Splitting, Simple Inspection
+  - split_at_mut method, Splitting
+  - split_first method, Splitting
+  - split_first_mut method, Splitting
+  - split_last method, Splitting
+  - split_last_mut method, Splitting
+  - split_mut method, Splitting
+  - split_terminator method, Iterating over Text
+  - split_whitespace method, Iterating over Text
+  - starts_with method, Comparing Slices, Searching and Replacing
+  - strip_prefix method, Trimming
+  - strip_suffix method, Trimming
+  - swap method, Swapping
+  - swapping contents of, Swapping
+  - to_lowercase method, Case Conversion for Strings
+  - to_owned method, Creating String Values
+  - to_string method, Creating String Values
+  - to_uppercase method, Case Conversion for Strings
+  - to_vec method, Accessing Elements
+  - trim method, Trimming
+  - trimming strings, Trimming
+  - trim_matches method, Trimming
+  - UTF-8 and, Accessing Text as UTF-8-Producing Text from UTF-8 Data
+  - windows method, Splitting
+- snake-case, Named-Field Structs
+- SocketAddr type, Formatting Other Types
+- sorting slices, Sorting and Searching
+- spawn function
+  - for asynchronous tasks, Asynchronous Programming, Spawning Async Tasks, Spawning Async Tasks on a Thread Pool
+  - for creating threads, spawn and join-spawn and join, Error Handling Across Threads
+- spawning async tasks, Spawning Async Tasks-Spawning Async Tasks, Spawning Async Tasks on a Thread Pool
+- spawn_blocking, Long Running Computations: yield_now and spawn_blocking-Long Running Computations: yield_now and spawn_blocking, Invoking Wakers: spawn_blocking-Invoking Wakers: spawn_blocking
+- spawn_local, Spawning Async Tasks-Spawning Async Tasks, Spawning Async Tasks on a Thread Pool
+- splice method, Self in Traits
+- src/bin directory, The src/bin Directory-The src/bin Directory
+- stack unwinding, Unwinding-Unwinding
+- standard prelude, The Standard Prelude
+- statements, expressions versus, An Expression Language
+- static keyword, Statics and Constants, Unsafe Blocks
+- static methods, Function and Method Calls
+- static values (statics), Receiving References as Function Arguments, Modules
+- std (standard library), Paths and Imports
+- Stderr type, Other Reader and Writer Types
+- Stdin type, Other Reader and Writer Types
+- StdinLock type, Other Reader and Writer Types
+- Stdout type, Other Reader and Writer Types
+- Stone, Josh, Rayon
+- str::from_utf8, Producing Text from UTF-8 Data
+- str::from_utf8_unchecked, Producing Text from UTF-8 Data
+- Stream trait, Taking User Input: Asynchronous Streams
+- streams
+  - async streams, Receiving Packets: More Asynchronous Streams-Receiving Packets: More Asynchronous Streams
+  - client and server as asynchronous, Taking User Input: Asynchronous Streams-Taking User Input: Asynchronous Streams
+  - TcpStream, Other Reader and Writer Types, Receiving Packets: More Asynchronous Streams
+- String and str types, Parsing Pair Command-Line Arguments, String Types-Other String-Like Types, String and str-Strings as Generic Collections
+  - appending text, Appending and Inserting Text-Appending and Inserting Text
+  - Ascii, Example: An Efficient ASCII String Type-Unsafe Functions
+  - borrowing slice's content, Borrowing as Other Text-Like Types
+  - byte strings, Byte Strings
+  - case conversion, Case Conversion for Strings
+  - clear method, Removing and Replacing Text
+  - converting nontextual values to, Converting Other Types to Strings-Converting Other Types to Strings
+  - creating String values, Creating String Values
+  - drain method, Removing and Replacing Text
+  - extend method, Appending and Inserting Text
+  - filename types, OsStr and Path
+  - from_utf8, Producing Text from UTF-8 Data
+  - from_utf8_lossy, Producing Text from UTF-8 Data
+  - from_utf8_unchecked, Producing Text from UTF-8 Data
+  - as generic collections, Strings as Generic Collections
+  - insert method, Appending and Inserting Text
+  - inserting text, Appending and Inserting Text-Appending and Inserting Text
+  - insert_str method, Appending and Inserting Text
+  - iterating over text, Conventions for Searching and Iterating, Iterating over Text-Iterating over Text
+  - non-Unicode strings, Other String-Like Types
+  - parsing values from, Parsing Other Types from Strings
+  - pop method, Removing and Replacing Text
+  - producing text from UTF-8 data, Producing Text from UTF-8 Data
+  - push method, Appending and Inserting Text
+  - push_str method, Appending and Inserting Text
+  - putting off allocation, Putting Off Allocation-Putting Off Allocation
+  - remove method, Removing and Replacing Text
+  - removing and replacing text, Removing and Replacing Text
+  - replace_range method, Removing and Replacing Text
+  - searching text, Conventions for Searching and Iterating-Searching and Replacing
+  - simple inspection, Simple Inspection
+  - strings in memory, Strings in Memory-Strings in Memory
+  - trimming text, Trimming
+  - truncate method, Removing and Replacing Text
+  - UTF-8 and, Characters, Accessing Text as UTF-8-Producing Text from UTF-8 Data
+- string literals, String Literals, Byte Strings, String
+- string slice (&str), String
+- String::new, Creating String Values
+- String::with_capacity, Creating String Values, Appending and Inserting Text
+- stringify! macro, Built-In Macros
+- strings and text, Strings and Text-The unicode-normalization Crate
+  - characters (char), Characters (char)-Conversions to and from Integers
+  - formatting values, Formatting Values-Using the Formatting Language in Your Own Code
+  - normalization, Normalization-The unicode-normalization Crate
+  - passing between Rust and C, Finding Common Data Representations
+  - regular expressions, Regular Expressions-Building Regex Values Lazily
+  - Unicode background, Some Unicode Background-Text Directionality
+  - unsafe code for conversion of Ascii into String, Example: An Efficient ASCII String Type-Unsafe Functions
+- Stroustrup, Bjarne
+  - "Abstraction and the C++ Machine Model", And Yet Rust Is Still Fast
+- struct expression, Named-Field Structs
+- struct patterns, Tuple and Struct Patterns
+- structs, Making Struct Fields pub, Structs-Interior Mutability
+  - defining methods with impl, Defining Methods with impl-Type-Associated Functions
+  - deriving common traits for struct types, Deriving Common Traits for Struct Types
+  - generic, Generic Structs-Generic Structs
+  - hash implementation, Hashing
+  - interior mutability, Interior Mutability-Interior Mutability
+  - layout, Struct Layout
+  - with lifetime parameters, Generic Structs with Lifetime Parameters
+  - named-field, Named-Field Structs-Named-Field Structs
+  - references in, Structs Containing References-Structs Containing References
+  - tuple-like, Tuple-Like Structs
+  - unit-like, Unit-Like Structs
+- submodules, Nested Modules
+- subtraits, Subtraits
+- successors method, from_fn and successors-from_fn and successors
+- sum method, Simple Accumulation: count, sum, product
+- sum types, Enums and Patterns
+- supertrait, Subtraits
+- switch statement, Literals, Variables, and Wildcards in Patterns
+- symlink method, Platform-Specific Features-Platform-Specific Features
+- Sync type, Thread Safety: Send and Sync-Thread Safety: Send and Sync, Unsafe Traits
+- synchronized objects, Concurrency
+- synchronous channel, concurrency, Channel Features and Performance
+- synchronous to asynchronous programming, From Synchronous to Asynchronous-A Real Asynchronous HTTP Client
+  - async blocks, Async Blocks-Building Async Functions from Async Blocks
+  - async functions, Async Functions and Await Expressions-Calling Async Functions from Synchronous Code: block_on, Building Async Functions from Async Blocks
+  - asynchronous HTTP client crate, A Real Asynchronous HTTP Client
+  - await expression, Async Functions and Await Expressions
+  - comparing asynchronous designs, Comparing Asynchronous Designs
+  - futures (see futures)
+  - implementing Send, But Does Your Future Implement Send?-But Does Your Future Implement Send?
+  - long-running computations, Long Running Computations: yield_now and spawn_blocking-Long Running Computations: yield_now and spawn_blocking
+  - spawning async tasks, Spawning Async Tasks-Spawning Async Tasks, Spawning Async Tasks on a Thread Pool
+  - thread pool, spawning async tasks from, Spawning Async Tasks on a Thread Pool
+- syntax errors, macros and, Avoiding Syntax Errors During Matching
+- system calls, From Synchronous to Asynchronous
+- systems programming, Preface, Systems Programmers Can Have Nice Things
+
+### T
+
+- \<T\>, Tuples
+- \[T\] slices, Slices
+  - (see also slices)
+- take and take_while adapters, take and take_while, by_ref
+- task_local! macro, Spawning Async Tasks on a Thread Pool
+- TcpStream, Other Reader and Writer Types, Receiving Packets: More Asynchronous Streams
+- templates, macro, Basics of Macro Expansion
+- \#\[test\] attribute, Attributes
+- tests, Tests and Documentation-Doc-Tests
+  - doc-tests, Doc-Tests-Doc-Tests
+  - integration tests, Integration Tests
+- text, ASCII, Latin-1, and Unicode
+  - (see also strings and text; UTF-8)
+  - appending and inserting, Appending and Inserting Text-Appending and Inserting Text
+  - ASCII, ASCII, Latin-1, and Unicode, Classifying Characters, Handling Digits, Example: An Efficient ASCII String Type-Unsafe Functions
+  - case conversion, Case Conversion for Characters, Case Conversion for Strings
+  - conventions for searching/iterating, Conventions for Searching and Iterating
+  - directionality of, Text Directionality
+  - GapBuffer example, Example: GapBuffer-Panic Safety in Unsafe Code
+  - iterating over, Iterating over Text
+  - removing and replacing, Removing and Replacing Text
+  - searching, Conventions for Searching and Iterating-Searching and Replacing
+  - trimming, Trimming
+- text values, formatting, Formatting Text Values-Formatting Text Values
+- thread pool, spawning async tasks on, Spawning Async Tasks on a Thread Pool
+- threads
+  - asynchronous tasks versus, Asynchronous Programming
+  - background thread, Concurrency
+  - channels and, Channels-Beyond Pipelines
+  - deadlock, Deadlock
+  - error handling across, Error Handling Across Threads
+  - safety with Send and Sync, Thread Safety: Send and Sync-Thread Safety: Send and Sync
+  - shared immutable data across, Sharing Immutable Data Across Threads-Sharing Immutable Data Across Threads
+- todo! macro, Built-In Macros
+- token tree, Fragment Types
+- tokens, macro patterns, Basics of Macro Expansion
+- tokio crate, Comparing Asynchronous Designs, An Asynchronous Client and Server, Chat Groups: tokio’s Broadcast Channels-Chat Groups: tokio’s Broadcast Channels
+- ToOwned trait, ToOwned-Borrow and ToOwned at Work: The Humble Cow
+- to_owned method, String
+- to_string method, Find and Replace, String
+- trace_macros! macro, Debugging Macros
+- trait objects, Trait Objects-Trait object layout
+  - generic code versus, Which to Use-Which to Use
+  - layout, Trait object layout
+  - references to, References to Slices and Trait Objects
+  - unsized types and, Sized
+- traits, Handling Command-Line Arguments, Copy Types: The Exception to Moves, Traits and Generics-Traits as a Foundation
+  - associated consts, Associated Consts
+  - defining and implementing, Defining and Implementing Traits-Type-Associated Functions
+  - for defining relationships between types, Traits That Define Relationships Between Types-Associated Consts
+  - fully qualified method calls, Fully Qualified Method Calls-Fully Qualified Method Calls
+  - impl, impl Trait-impl Trait
+  - implementing for your own types, Formatting Your Own Types-Formatting Your Own Types
+  - iterators and associated types, Associated Types (or How Iterators Work)-Associated Types (or How Iterators Work)
+  - with macros, Using Traits with Macros-Using Traits with Macros
+  - for operator overloading, Generic Traits (or How Operator Overloading Works), Operator Overloading
+  - other people's types and, Traits and Other People’s Types-Traits and Other People’s Types
+  - reverse-engineering bounds, Reverse-Engineering Bounds-Reverse-Engineering Bounds
+  - Self as type, Self in Traits-Self in Traits
+  - for struct types, Deriving Common Traits for Struct Types
+  - subtraits, Subtraits
+  - type-associated functions, Type-Associated Functions
+  - unsafe, Unsafe Traits-Unsafe Traits
+  - utility (see utility traits)
+- transitive dependencies, Crates
+- Travis CI, More Nice Things
+- trees, Ownership
+- trimming string text, Trimming
+- try! macro, Propagating Errors
+- TryFrom trait, TryFrom and TryInto
+- TryInto trait, TryFrom and TryInto
+- try_fold and try_rfold methods, try_fold and try_rfold-try_fold and try_rfold
+- try_for_each method, for_each and try_for_each
+- tuple patterns, Tuple and Struct Patterns
+- tuple-like structs, Tuple-Like Structs
+- tuples, Tuples-Tuples
+- type aliases, Type Aliases, Result Type Aliases, Making use Declarations pub
+- type alignment, raw pointers and, Type Sizes and Alignments
+- type inference, Fundamental Types
+- type parameters, Parsing Pair Command-Line Arguments, Generic Structs, Generic Functions and Type Parameters, Equivalence Comparisons
+- type size, raw pointers and, Type Sizes and Alignments
+- type-associated functions, Type-Associated Functions, Type-Associated Functions
+- types, Fundamental Types-Beyond the Basics
+  - arrays, Arrays
+  - associated, Associated Types (or How Iterators Work)-Associated Types (or How Iterators Work)
+  - casts and, Type Casts
+  - of closures and functions, Function and Closure Types-Function and Closure Types
+  - error handling, Result-Why Results?, Formatting Other Types, Error and Result Types
+  - filename, OsStr and Path
+  - floating-point, Floating-Point Types-Floating-Point Types, max, min, Formatting Numbers
+  - formatting values, Formatting Other Types, Formatting Your Own Types-Formatting Your Own Types
+  - implementing iterators for your own, Implementing Your Own Iterators-Implementing Your Own Iterators
+  - IntoIterator implementation, IntoIterator Implementations-IntoIterator Implementations
+  - numeric, Fixed-Width Numeric Types-Floating-Point Types, Formatting Numbers
+  - operator overloading and, Operator Overloading
+  - parameters, Generic Structs, Generic Functions and Type Parameters, Equivalence Comparisons
+  - pointers (see pointer types)
+  - for representing sequence of values in memory, Arrays, Vectors, and Slices-Slices
+  - Sized, Sized-Sized
+  - slices, Slices
+  - String and str (see String and str types)
+  - traits for adding methods to, Traits and Other People’s Types
+  - traits for defining relationships between, Traits That Define Relationships Between Types-Associated Consts
+  - tuples, Tuples-Tuples
+  - unsized, Sized-Sized
+  - user-defined, Making Struct Fields pub
+  - vectors, Vectors-Vectors
+
+### U
+
+- unary operators, Unary Operators
+- unbounded ranges, Matching Multiple Possibilities
+- undefined behavior, Systems Programmers Can Have Nice Things, Unsafe from What?, Undefined Behavior-Undefined Behavior
+- Unicode, Some Unicode Background-Text Directionality
+  - ASCII and, ASCII, Latin-1, and Unicode
+  - character literals, Characters
+  - Latin-1 and, ASCII, Latin-1, and Unicode
+  - normalization, Normalization-The unicode-normalization Crate
+  - OsStr and, OsStr and Path
+  - text directionality, Text Directionality
+  - UTF-8, UTF-8-UTF-8
+- unicode-normalization crate, The unicode-normalization Crate-The unicode-normalization Crate
+- unimplemented! macro, Built-In Macros
+- unions, Enums and Patterns, Unsafe Blocks, Reinterpreting Memory with Unions-Borrowing Unions
+- unit testing, Writing and Running Unit Tests
+- unit type, Tuples
+- unit-like structs, Unit-Like Structs
+- Unix
+  - files and directories, Platform-Specific Features-Platform-Specific Features
+  - pipes, Channels-Sending Values
+- Unpin marker trait, The Unpin Trait-The Unpin Trait
+- Unpin trait, Sending Packets
+- unsafe blocks, Raw Pointers, Unsafe Code, Unsafe Blocks-Example: An Efficient ASCII String Type, Unsafe Block or Unsafe Function?
+- unsafe code, Unsafe Code-Borrowing Unions
+  - foreign functions (see foreign functions)
+  - libgit2 raw interface, A Raw Interface to libgit2-A Raw Interface to libgit2
+  - raw pointers (see raw pointers)
+  - undefined behavior, Undefined Behavior-Undefined Behavior
+  - unions, Reinterpreting Memory with Unions-Borrowing Unions
+  - unsafe blocks, Raw Pointers, Unsafe Code, Unsafe Blocks-Example: An Efficient ASCII String Type, Unsafe Block or Unsafe Function?
+  - unsafe feature, Unsafe from What?-Unsafe from What?
+  - unsafe functions, Unsafe Code, Unsafe Functions-Unsafe Functions
+  - unsafe traits, Unsafe Traits-Unsafe Traits
+- unsafe functions, Unsafe Code, Unsafe Functions-Unsafe Functions
+- unsafe traits, Unsafe Traits-Unsafe Traits
+- unsigned integer types, Integer Types
+- unsized types, Sized-Sized
+- unwinding, Unwinding-Unwinding
+- unwrap method, Writing Image Files, Error Handling Across Threads
+- use declarations, Paths and Imports, Making use Declarations pub
+- user-defined types, Making Struct Fields pub
+- usize type, Integer Types, Accessing Elements
+- UTF-8, UTF-8-UTF-8
+  - accessing text as, Accessing Text as UTF-8
+  - ASCII methods with, Classifying Characters
+  - char type and, Characters
+  - OsStr and, OsStr and Path-OsStr and Path
+  - producing text from data, Producing Text from UTF-8 Data
+  - String and str handling, String and str
+  - strings in memory, Strings in Memory
+  - unsafe code and, Example: An Efficient ASCII String Type-Example: An Efficient ASCII String Type
+- utility traits, Utility Traits-Borrow and ToOwned at Work: The Humble Cow
+  - AsRef and AsMut, AsRef and AsMut
+  - Borrow and BorrowMut, Borrow and BorrowMut-Borrow and BorrowMut
+  - Clone, Clone, Copy and Clone for Closures, Accessing Elements
+  - Copy, Copy, Copy and Clone for Closures
+  - Cow, Borrow and ToOwned at Work: The Humble Cow, Putting Off Allocation-Putting Off Allocation
+  - Default, Default-Default, partition
+  - Deref and DerefMut, Deref and DerefMut-Deref and DerefMut
+  - Drop, Drop-Drop
+  - From and Into, From and Into-From and Into, Using Traits with Macros
+  - Sized, Sized-Sized
+  - ToOwned, ToOwned-Borrow and ToOwned at Work: The Humble Cow
+  - TryFrom and TryInto, TryFrom and TryInto
+- utils module, Error and Result Types
+
+### V
+
+- VacantEntry type, HashMap and BTreeMap, Entries
+- values
+  - building on demand, Building Regex Values Lazily
+  - dropping, Ownership, Ownership, Closures That Kill-FnOnce
+  - formatting, Formatting Values-Using the Formatting Language in Your Own Code, Raw Pointers
+  - fundamental types for representing, Fundamental Types-Beyond the Basics
+  - moves, More Operations That Move
+  - passing by, References to Values, IntoIterator Implementations, Collections
+  - receiving via channels, Receiving Values
+  - references and, References to Values-References to Slices and Trait Objects
+  - sending via channels, Sending Values-Sending Values
+  - sets and differences in “equal” values, When Equal Values Are Different
+  - static, Receiving References as Function Arguments, Modules, Statics and Constants
+  - String and str types, Parsing Other Types from Strings-Converting Other Types to Strings
+- variable capture, Capturing Variables
+- variables
+  - assigning to, More Operations That Move
+  - borrowing local, Borrowing a Local Variable-Borrowing a Local Variable
+  - condition, Condition Variables (Condvar)
+  - declaring from foreign libraries, Declaring Foreign Functions and Variables-Declaring Foreign Functions and Variables
+  - global, Global Variables-Global Variables
+  - ownership, Handling Command-Line Arguments, Ownership and Moves-Rc and Arc: Shared Ownership, Borrow and ToOwned at Work: The Humble Cow
+  - in patterns, Literals, Variables, and Wildcards in Patterns
+  - static, Global Variables
+- Vec type, Handling Command-Line Arguments
+  - append method, Growing and Shrinking Vectors
+  - building from VecDeque, VecDeque\<T\>
+  - capacity method, Growing and Shrinking Vectors
+  - clear method, Growing and Shrinking Vectors
+  - dedup method, Growing and Shrinking Vectors
+  - dedup_by method, Growing and Shrinking Vectors
+  - dedup_by_key method, Growing and Shrinking Vectors
+  - drain method, Growing and Shrinking Vectors
+  - extend method, Growing and Shrinking Vectors
+  - insert method, Growing and Shrinking Vectors
+  - pop method, Growing and Shrinking Vectors
+  - push method, Growing and Shrinking Vectors
+  - remove method, Growing and Shrinking Vectors
+  - reserve method, Growing and Shrinking Vectors
+  - reserve_exact method, Growing and Shrinking Vectors
+  - resize method, Growing and Shrinking Vectors
+  - resize_with method, Growing and Shrinking Vectors
+  - retain method, Growing and Shrinking Vectors
+  - shrink_to_fit method, Growing and Shrinking Vectors
+  - split_off method, Growing and Shrinking Vectors
+  - swap_remove method, Swapping
+  - truncate method, Growing and Shrinking Vectors
+  - with_capacity method, Growing and Shrinking Vectors
+- vec! macro, Vectors, Vec\<T\>, Repetition-Repetition
+- Vec\<T\> collection type, Arrays, Vectors, and Slices, Vectors, Overview, Vec\<T\>-Rust Rules Out Invalidation Errors
+  - accessing elements, Accessing Elements-Accessing Elements
+  - comparing slices, Comparing Slices
+  - growing/shrinking vectors, Growing and Shrinking Vectors-Growing and Shrinking Vectors
+  - invalidation errors, ruling out, Rust Rules Out Invalidation Errors
+  - iteration, Iteration
+  - joining, Joining
+  - random elements, Random Elements
+  - searching, Sorting and Searching
+  - sorting, Sorting and Searching
+  - splitting, Splitting-Splitting
+  - swapping, Swapping
+- Vec\<u8\>, Other Reader and Writer Types
+- VecDeque, Overview, VecDeque\<T\>-VecDeque\<T\>
+  - back method, VecDeque\<T\>
+  - back_mut method, VecDeque\<T\>
+  - front method, VecDeque\<T\>
+  - front_mut method, VecDeque\<T\>
+  - make_contiguous method, VecDeque\<T\>
+  - pop_back method, VecDeque\<T\>
+  - pop_front method, VecDeque\<T\>
+  - push_back method, VecDeque\<T\>
+  - push_front method, VecDeque\<T\>
+- VecDeque::from(vec), VecDeque\<T\>
+- vector of Ts, Arrays, Vectors, and Slices
+- vectors, Vectors-Vectors, Growing and Shrinking Vectors-Growing and Shrinking Vectors
+- versions, file, Specifying Dependencies
+- vertical bar (\|), Matching Multiple Possibilities
+- virtual table (vtable), Trait object layout
+
+### W
+
+- waker, Futures, Primitive Futures and Executors: When Is a Future Worth Polling Again?-Implementing block_on
+- weak pointers, Rc and Arc: Shared Ownership
+- web server, creating with Rust, Serving Pages to the Web-Serving Pages to the Web
+- well-behaved program, Rust’s rules for, Undefined Behavior
+- while let loop, Loops
+- while loop, Rust Functions, Loops, Control Flow in Loops
+- whole-set operations, Whole-Set Operations
+- wildcards, Paths and Imports, Versions, Literals, Variables, and Wildcards in Patterns
+- Windows
+  - files and directories, Platform-Specific Features
+  - OsStr and, OsStr and Path
+  - Rust package for, rustup and Cargo
+  - using functions from libraries, Using Functions from Libraries
+- work-stealing, Rayon
+- worker pools, Concurrency
+- workspaces, Workspaces
+- wrapping operations, Checked, Wrapping, Saturating, and Overflowing Arithmetic, Checked, Wrapping, Saturating, and Overflowing Arithmetic
+- wrapping_offset method, Raw Pointers, Dereferencing Raw Pointers Safely
+- write function, Reading and Writing Files
+- write method, Traits and Generics, Default Methods
+- Write trait, Input and Output
+  - appending and inserting text, Appending and Inserting Text
+  - flush method, Writers
+  - using formatting language in your code, Using the Formatting Language in Your Own Code
+  - write method, Writers
+  - write_all method, Writers
+- write! macro, Binary Operators, Appending and Inserting Text, Formatting Values, Writers
+- WriteBytesExt trait, Binary Data, Compression, and Serialization
+- writeln! macro, Printing Errors, Appending and Inserting Text, Formatting Values, Writers
+- writers, Readers and Writers, Writers-Writers
+  - binary data, compression, serialization, Binary Data, Compression, and Serialization-Binary Data, Compression, and Serialization
+  - files, Files
+  - other types, Other Reader and Writer Types-Other Reader and Writer Types
+  - Seek trait, Seeking
+- write_image function, Writing Image Files
+- write_unaligned, Moving into and out of Memory
+- write_volatile, Moving into and out of Memory
+
+### Y
+
+- yield_now, Long Running Computations: yield_now and spawn_blocking-Long Running Computations: yield_now and spawn_blocking
+
+### Z
+
+- zero-overhead principle, And Yet Rust Is Still Fast
+- zero-tuple, Tuples
+- Zeroable trait, Unsafe Traits
+- zip adapter, zip

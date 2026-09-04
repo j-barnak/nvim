@@ -1,0 +1,1749 @@
+SIGNALS AND SYSCALLS
+ A flashlight across the street calling us to warmth.
+Now that the debugger implements breakpoints, stepping, and
+watchpoints, it’s close to being a useful tool for everyday use. In
+this chapter, you’ll extend its signal handling and add the ability
+to trace syscalls. You’ll also learn how syscalls work on Linux
+and how the operating system sends signals to processes when
+certain events occur.
+
+Signal Handlers
+
+One common debugger feature we don’t yet support is the
+ability to press CTRL-C on the command line to interrupt the
+inferior process. Pressing CTRL-C sends a SIGINT signal to the
+currently executing process, and at the moment, this causes sdb
+to terminate. Ideally, the sdb process should send a SIGSTOP to the
+inferior, then continue reading input from the user. This will
+force the inferior to halt and allow the user to examine the
+program state.
+
+We can receive notifications of SIGINT signals sent to sdb by
+installing a signal handler, a function that a process registers
+with the operating system to deal with a specific signal. When
+the process receives a signal, the operating system calls the
+corresponding signal handler.
+Importantly, a call to your signal handler could happen at any
+time. Your program could be in the middle of performing a
+calculation, running some other signal handler, or sending an
+email. As such, you need to be mindful of the kinds of
+operations you carry out in a signal handler. The handler
+should be reentrant, or able to be safely interrupted and
+resumed without issue. Depending on the settings used when
+installing the handler, it may also need to allow multiple
+concurrent calls. This means that signal handlers can’t perform
+I/O operations, acquire a mutex, or take actions that rely on
+external state.
+
+POSIX defines a list of functions deemed async-signal-safe,
+meaning you can safely call them from inside a signal handler.
+The list is too long to include here, but you can find it by
+running man signal-safety.
+
+You can install signal handlers using the signal syscall, which
+takes a signal ID on which to install a handler and a pointer to
+the handler function. This handler function can be either SIG_IGN,
+which ignores the signal; SIG_DFL, which invokes the default
+handler; or a pointer to a function of type void (*sighandler_t) (int),
+which installs that function as the handler. (For those who don’t
+like reading C function pointer syntax, that’s a pointer to a
+function returning void and taking a single int, the received
+signal.)
+
+Let’s install a SIGINT signal handler that sends a SIGSTOP to the
+inferior. We have no way to pass custom data to a signal
+handler, so we must add the current process as a global
+variable. (I know, mutable global variables are evil. Let this be a
+reminder to tread extra carefully inside of signal handlers.) In
+sdb/tools/sdb.cpp, add a g_sdb_process variable:
+
+   namespace {
+       sdb::process* g_sdb_process = nullptr;
+   }
+
+Then, create a signal handler that calls kill with the PID of the
+inferior. The kill syscall is async-signal-safe, so we shouldn’t
+encounter any issues:
+
+   namespace {
+       void handle_sigint(int) {
+               kill(g_sdb_process->pid(), SIGSTOP);
+           }
+   }
+
+Now install this signal handler and update g_sdb_process from main:
+   #include <csignal>
+
+   int main(int argc, const char* argv[]) {
+       --snip--
+
+         try {
+               auto process = attach(argc, argv);
+               g_sdb_process = process.get();
+               signal(SIGINT, handle_sigint);
+               main_loop(process);
+         }
+         --snip--
+   }
+
+After the call to attach, save a pointer to the process in the
+g_sdb_process global variable and then install the handle_sigint
+
+function as a signal handler for SIGINT signals before starting the
+main loop.
+
+This code may seem fine and dandy, but fine and dandy it is not.
+You may notice that if you test it, the child process receives both
+a SIGINT and a SIGSTOP:
+
+   $ tools/sdb test/targets/run_endlessly
+   Launched process with PID 414
+   sdb> c
+   ^CProcess 414 stopped with signal INT at 0x555555
+   0x0000555555555138: jmp 0x0000555555555131
+   0x000055555555513a: add %al, (%rax)
+   0x000055555555513c: endbr64
+   0x0000555555555140: sub $0x08, %rsp
+   0x0000555555555144: add $0x08, %rsp
+   sdb> c
+   Process 414 stopped with signal STOP at 0x5555555
+   0x0000555555555138: jmp 0x0000555555555131
+   0x000055555555513a: add %al, (%rax)
+   0x000055555555513c: endbr64
+   0x0000555555555140: sub $0x08, %rsp
+   0x0000555555555144: add $0x08, %rsp
+
+What gives? Well, when you press CTRL-C, you don’t merely send
+a SIGINT to the running process; you send it to all processes in the
+same process group. Forked processes run in the same process
+group as their parent, so when sdb gets a SIGINT, the inferior gets
+a SIGINT. You can see these process group IDs with the ps
+command:
+
+   $ ps xao pid,pgid,comm
+      PID   PGID COMMAND
+        1      0 init
+    --snip--
+     4600    4600 sdb
+     4601    4600 run_endlessly
+
+Note that sdb and run_endlessly have different PIDs but the
+same process group ID (PGID).
+
+“Okay,” I hear you say, “let’s just set SIG_IGN as the signal handler
+on sdb to ignore the signal and let the child process get the
+SIGINT.”
+
+Not so fast. If we do that, the inferior will also catch other
+signals we don’t want it to. For example, when the user presses
+CTRL-Z to suspend sdb to the background, they will also suspend
+
+the inferior. Even worse, resizing the window of the terminal in
+which sdb is running will stop the inferior with a SIGWINCH.
+
+The correct approach is to keep the SIGINT handler in sdb, but
+change the inferior’s process group when we fork it. We can do
+this with setpgid, which has the following signature:
+
+    int setpgid(pid_t pid, pid_t pgid);
+
+If you call setpgid with two 0s, it automatically applies to the PID
+of the running process and sets the PGID to the same value as
+the PID. Modify sdb::process::launch in sdb/src/process.cpp like so:
+   std::unique_ptr<sdb::process> sdb::process::launc
+             std::filesystem::path path, bool debug,
+             std::optional<int> stdout_replacement) {
+         --snip--
+
+         if (pid == 0) {
+              if (setpgid(0, 0) < 0) {
+                   exit_with_perror(channel, "Could not
+              }
+              personality(ADDR_NO_RANDOMIZE);
+              --snip--
+         }
+   }
+
+Before the call to personality, call setpgid and ensure that it causes
+no error. Now, if you build and restart sdb, you can see that the
+PGID of the inferior differs from that of sdb:
+
+   $ ps xao pid,pgid,comm
+       PID   PGID COMMAND
+       1         0 init
+    #...
+    4698     4698 sdb
+    4699     4699 run_endlessly
+Try sending a CTRL-C. You should see a SIGSTOP in the inferior only:
+
+   $ tools/sdb test/targets/run_endlessly
+   Launched process with PID 507
+   sdb> c
+   ^CProcess 507 stopped with signal STOP at 0x55555
+   0x0000555555555131: movl $0x2A, -0x04(%rbp)
+   0x0000555555555138: jmp 0x0000555555555131
+   0x000055555555513a: add %al, (%rax)
+   0x000055555555513c: endbr64
+   0x0000555555555140: sub $0x08, %rsp
+   sdb> c
+
+Much better.
+
+Another improvement we could make to the user experience is
+printing more complete information about why a stop occurred.
+Right now, if the user hits a breakpoint, the debugger tells them
+that a SIGTRAP occurred, but not whether it was due to a single
+step, a watchpoint, or a breakpoint. If a breakpoint or a
+watchpoint caused the stop, the user doesn’t know which one
+was hit, and for watchpoints, they can’t know the new value
+written to the address without running a memory read command
+themselves. Let’s fix that.
+Printing Stop Information
+
+The waitpid function identifies the signal that caused the child to
+stop, but it doesn’t give us much information to report back to
+the user. Fortunately, ptrace comes to the rescue with the
+PTRACE_GETSIGINFO command, which provides the following
+
+information about a signal:
+
+   typedef struct {
+       int           si_signo;                /* Signal number
+       int           si_code;                 /* Signal code */
+       pid_t         si_pid;                  /* Sending proces
+       uid_t         si_uid;                  /* Real user ID o
+       void         *si_addr;                 /* Address of fau
+       int           si_status;               /* Exit value or
+       union sigval si_value;                 /* Signal value *
+   } siginfo_t;
+
+The value we’re particularly interested in here is si_code, which
+gives us detailed information about the source of a signal. For
+example, while si_signo indicates that the signal was a SIGFPE for
+floating-point errors, si_code can tell us whether it was a division
+by zero, an overflow, an invalid operation, and so on. In theory,
+si_code may have one of the following values on a SIGTRAP:
+  SI_KERNEL     Generic trap sent from the kernel
+  TRAP_BRKPT    Software breakpoint
+  TRAP_HWBKPT    Hardware breakpoint
+  TRAP_TRACE    Single step
+
+Somewhat amusingly, however, the Linux kernel actually
+reports the wrong values on x64: SI_KERNEL for software
+breakpoints and TRAP_BRKPT for single-stepping over a syscall.
+Enough important tools rely on this bug’s behavior that it’s just
+not worth fixing anymore.
+
+Let’s add support to sdb::stop_reason for displaying extended signal
+information. In sdb/include/libsdb/process.hpp, add a new enum
+called sdb::trap _type and add a member to stop_reason to optionally
+hold one:
+
+   namespace sdb {
+       enum class trap_type {
+                 single_step, software_break,
+                 hardware_break, unknown
+         };
+
+         struct stop_reason {
+             --snip--
+                 std::optional<trap_type> trap_reason;
+           };
+    }
+
+The trap_type enum describes whether a SIGTRAP occurred due to a
+single step, a software breakpoint, a hardware breakpoint, or
+an unknown reason. We add a std::optional<trap_type> member to
+sdb::stop_reason to store a trap reason if the stop occurred due to a
+
+SIGTRAP.
+
+Next, add a new private member function to sdb::process called
+augment _stop_reason, which we’ll call once we know that the process
+
+stopped because of a signal rather than because it exited or
+terminated. Make the following change to
+sdb/include/libsdb/process.hpp:
+
+    namespace sdb {
+        class process{
+        private:
+            --snip--
+            void augment_stop_reason(stop_reason& rea
+            --snip--
+        };
+    }
+Now implement the function in sdb/src/process.cpp by calling
+ptrace with PTRACE_GETSIGINFO:
+
+   void sdb::process::augment_stop_reason(sdb::stop_
+       siginfo_t info;
+       if (ptrace(PTRACE_GETSIGINFO, pid_, nullptr,
+                error::send_errno("Failed to get signal i
+          }
+
+          reason.trap_reason = trap_type::unknown;
+          if (reason.info == SIGTRAP) {
+              switch (info.si_code) {
+              case TRAP_TRACE:
+                  reason.trap_reason = trap_type::singl
+                  break;
+              case SI_KERNEL:
+                  reason.trap_reason = trap_type::softw
+                  break;
+              case TRAP_HWBKPT:
+                  reason.trap_reason = trap_type::hardw
+                  break;
+              }
+          }
+   }
+First, we call ptrace to get the signal information and report any
+error. If the stop occurred due to a SIGTRAP, we record the trap
+reason based on the si_code member of the signal information,
+defaulting to unknown. Remember that x64 uses SI_KERNEL, not
+TRAP_BRKPT, for software breakpoints.
+
+Call this new function in sdb::process::wait_on_signal after reading all
+registers. We don’t rely on the state of registers in
+augment_stop_reason yet, but we will once we implement syscall
+
+tracing:
+
+   sdb::stop_reason sdb::process::wait_on_signal() {
+       --snip--
+       if (is_attached_ and state_ == process_state
+            read_all_registers();
+            augment_stop_reason(reason);
+
+               auto instr_begin = get_pc() - 1;
+               --snip--
+           }
+           --snip--
+   }
+
+Before we update the print_stop_reason function to expose this new
+data, we must implement a couple of other missing elements.
+Notably, we don’t have an easy way to identify which
+watchpoint or hardware breakpoint was hit. Also, we don’t
+keep track of the value previously stored at a watchpoint
+location so we can print out what change occurred, if any. Let’s
+tackle these in turn.
+
+Tracking Debug Register Assignments
+
+When we receive a trap due to a hardware breakpoint, we can
+check the debug status register (DR6) to see which breakpoint
+was hit. We can then check the corresponding register in the
+range DR0–DR3 to retrieve the address at which the debugger set
+the breakpoint and use this to locate the corresponding
+breakpoint or watchpoint. We’ll add a function to sdb::process to
+achieve this. In sdb/include/libsdb/process.hpp, make the
+following modification:
+
+   namespace sdb {
+       class process {
+       public:
+           --snip--
+           std::variant<breakpoint_site::id_type, wa
+           get_current_hardware_stoppoint() const;
+           --snip--
+         };
+   }
+
+You may notice that breakpoint_site::id_type and watchpoint::id_type
+happen to be aliases to the same type. It’s acceptable to use
+multiple options of the same type in a std::variant, as the
+std::variant::index function distinguishes them.
+
+Recall from Chapter 9 that the DR6 status register uses the least
+significant 4 bits to encode the hit breakpoint. For example,
+setting bit 0 means the breakpoint described by DR0 was hit,
+setting bit 1 means the breakpoint in DR1 was hit, and so on. GCC
+and Clang provide a handy function for finding the position of
+the least significant set bit: __builtin_ctz, short for “count trailing
+zeros.” The name is formulated in different words, but if you
+think about it, you can convince yourself that “count trailing
+zeros” and “find position of the least significant set bit” are
+equivalent.
+
+With the help of this function, we can find the hardware stop
+point that caused the process to trap. Implement
+get_current_hardware_stoppoint in sdb/src/process.cpp:
+
+   std::variant<sdb::breakpoint_site::id_type, sdb:
+   sdb::process::get_current_hardware_stoppoint() co
+         auto& regs = get_registers();
+         auto status = regs.read_by_id_as<std::uint64_
+         auto index = __builtin_ctzll(status); ➊
+
+         auto id = static_cast<int>(register_id::dr0)
+         auto addr = virt_addr(
+               regs.read_by_id_as<std::uint64_t>(static_
+
+         using ret = std::variant<sdb::breakpoint_site
+         if (breakpoint_sites_.contains_address(addr)
+             auto site_id = breakpoint_sites_.get_by_a
+             return ret{ std::in_place_index<0>, site_
+         }
+         else {
+             auto watch_id = watchpoints_.get_by_addre
+             return ret{ std::in_place_index<1>, watch
+         }
+   }
+
+We read the contents of the status register, then find the index
+of the set bit. Here, we use the ll (unsigned long long) flavor of the
+__builtin_ctz function ➊. We calculate the ID of the relevant
+
+register by using the same trick we used in Chapter 9: casting
+the ID of DR0 to an integer, adding the index of the register we
+want, and then casting it back to the register_id type. Reading the
+register with this ID gives us the address at which the stop point
+is set.
+
+We need to return a std::variant<sdb::breakpoint_site::id_type, sdb::
+watchpoint::id_type> value, and we make an alias for it to avoid
+
+having to write it twice. If the breakpoint sites collection
+contains the stop point’s address, we find the breakpoint site
+corresponding to that address and return the breakpoint site ID.
+We use std::in_place_index<0> to specify that we’re setting the type at
+index 0 of the std::variant, which is sdb::breakpoint _site::id_type ➋. If
+no breakpoint site with that address exists, this must be a
+watchpoint, so we find the corresponding watchpoint and
+return its ID, using std::in_place_index<1> to specify that the ID
+corresponds to a watchpoint.
+
+Tracking Watchpoint Values
+
+Next, we’ll enable watchpoints to track the values to which they
+point. Add two new fields to sdb::watchpoint to hold the current
+value at the watched address and the previously read value.
+Also add an update_data function that rereads the value at the
+watched memory location. We’ll call this function whenever a
+watchpoint triggers a stop. Edit
+sdb/include/libsdb/watchpoint.hpp like so:
+    namespace sdb {
+          class process;
+
+          class watchpoint {
+          public:
+                  --snip--
+                  std::uint64_t data() const { return data_
+                  std::uint64_t previous_data() const { ret
+
+                  void update_data();
+
+          private:
+              --snip--
+              std::uint64_t data_ = 0;
+              std::uint64_t previous_data_ = 0;
+          };
+    }
+
+Now implement update_data and call it from the constructor in
+sdb/src/watchpoint.cpp. The function should read the new data
+from address_ into data_ and put the old value of data_ into
+previous_data_:
+
+    #include <utility>
+
+    sdb::watchpoint::watchpoint(
+         process& proc, addr_t address, stoppoint_mode
+         : process_{ &proc }, address_{ address }, is_
+         mode_{ mode }, size_{ size } {
+         --snip--
+         update_data();
+   }
+
+   void sdb::watchpoint::update_data() {
+       std::uint64_t new_data = 0;
+       auto read = process_->read_memory(address_, s
+       memcpy(&new_data, read.data(), size_);
+       previous_data_ = std::exchange(data_, new_dat
+   }
+
+We call update_data at the end of the constructor and then
+implement update_data. We declare a new_data variable, read the
+necessary amount of memory from the watched address, copy
+this data into new_data, and store the result in the data_ member,
+putting the old value of data_ in previous_data_.
+
+We should also call the update_data function whenever a
+watchpoint triggers a stop. We can do this inside
+sdb::process::wait_on_signal, in sdb/src/process.cpp. Modify the file
+
+like this:
+         --snip--
+         if (is_attached_ and state_ == process_state
+             --snip--
+              auto instr_begin = get_pc() - 1;
+              if (reason.info == SIGTRAP) {
+                    if (reason.trap_reason == trap_type:
+                         breakpoint_sites_.contains_addres
+                         breakpoint_sites_.get_by_address
+                         set_pc(instr_begin);
+                    }
+                    else if (reason.trap_reason == trap_t
+                         auto id = get_current_hardware_st
+                      ➊ if (id.index() == 1) {
+                             watchpoints_.get_by_id(std::g
+                         }
+                    }
+              }
+         }
+         --snip--
+
+We change the if statement that begins with the reason.info ==
+SIGTRAP test. When we get a SIGTRAP, we check the reason for it. If a
+
+software breakpoint caused the stop, we walk the program
+counter back 1 byte to the start of the int3 instruction. If, instead,
+a hardware stop point caused the stop and the current
+hardware stop point is a watchpoint (which we check by
+examining the index of the variant returned by
+get_current_hardware_stoppoint ➊), we update the watchpoint’s data.
+
+Note that multiple watchpoints could be triggered by the
+execution of a single instruction; for example, 16 bytes could be
+watched with two contiguous 8-byte watchpoints, which are
+then simultaneously triggered by a 16-byte write. We don’t deal
+with this edge case here, but you can choose to add handling for
+it if you desire.
+
+Displaying Stop Information
+
+Now we can put these pieces together to greatly improve the
+debugger’s reporting about stop reasons. In print_stop_reason, we
+currently print a generic stopped with signal <signal> at <pc> message.
+If the signal was a SIGTRAP, we should augment this message with
+information about the specific stop point or indicate that the
+stop occurred due to a single step. For watchpoints, we should
+also print out the value stored at that address.
+
+We’ll do this work in a get_sigtrap_info function, which we’ll
+implement shortly. First, though, let’s call it from print_stop_reason
+in sdb/tools/sdb.cpp. Modify the sdb::process_state::stopped case of
+the switch statement as follows:
+              case sdb::process_state::stopped:
+                    message = fmt::format("stopped with s
+                        sigabbrev_np(reason.info), proces
+                    if (reason.info == SIGTRAP) {
+                        message += get_sigtrap_info(proce
+                    }
+                    break;
+
+We begin the message with the same text as before. If the
+process stopped because of a SIGTRAP, we also call get_sigtrap_info
+and append the result to the message.
+
+Let’s start implementing get_sigtrap_info by adding the breakpoint
+ID to the message for software breakpoints. We can look up the
+breakpoint site using the current program counter. Write the
+following in sdb/tools/sdb.cpp:
+
+   namespace {
+       std::string get_sigtrap_info(
+             const sdb::process& process, sdb::stop_
+           if (reason.trap_reason == sdb::trap_type
+               auto& site = process.breakpoint_sites
+                    return fmt::format(" (breakpoint {})
+              }
+If the trap occurred due to a software breakpoint, we find the
+breakpoint site corresponding to the current program counter
+and return a string giving the site’s ID.
+
+For hardware breakpoints, we should find the current
+hardware stop point. In the case of a hardware breakpoint, we
+print just the ID, but for a watchpoint, we should also print the
+current value, along with the previous value if it differs:
+
+              --snip--
+              if (reason.trap_reason == sdb::trap_type
+                   auto id = process.get_current_hardwa
+
+                   if (id.index() == 0) {
+                       return fmt::format(" (breakpoint
+                   }
+
+                   std::string message;
+                   auto& point = process.watchpoints().g
+                   message += fmt::format(" (watchpoint
+
+                   if (point.data() == point.previous_da
+                       message += fmt::format("\nValue:
+                   }
+                   else {
+                       message += fmt::format("\nOld val
+                           point.previous_data(), point
+                   }
+                   return message;
+              }
+
+For traps caused by hardware stop points, we retrieve the ID of
+the current hardware stop point. If the index of the returned
+variant is 0, we’re looking at a hardware breakpoint, so we
+return a message containing that breakpoint’s ID. Otherwise,
+we’re looking at a watchpoint. We grab the relevant
+watchpoint, start a message with the ID of the watchpoint, and
+then handle the watchpoint’s data. If the current data matches
+the previous data, we just report the current data. Otherwise,
+we print both the old value and the new value.
+
+For traps caused by a single step, we simply return (single step).
+Otherwise, we don’t know the reason for the stop, so we return
+an empty string:
+
+              --snip--
+              if (reason.trap_reason == sdb::trap_type
+                   return " (single step)";
+              }
+
+              return "";
+         }
+   }
+
+We can test this new reporting feature with the anti_debugger
+program. Launch this program under sdb and set a read/write
+watchpoint at the start of an_innocent_function, whose file address
+you can find with objdump and whose load address is at
+/proc/<pid>/maps. Then, resume the process. You should see the
+watchpoint ID and value printed out:
+
+   $ tools/sdb test/targets/anti_debugger
+   Launched process with PID 2815
+   sdb> watch set 0x5555555551a9 rw 1
+   sdb> c
+   Process 2815 stopped with signal TRAP at 0x555555
+   Value: 0xf3
+   0x00005555555552c3: movsx %al, %eax
+   0x00005555555552c6: add %eax, -0x14(%rbp)
+   0x00005555555552c9: addq $0x01, -0x08(%rbp)
+   0x00005555555552ce: mov -0x08(%rbp), %rax
+   0x00005555555552d2: cmp -0x10(%rbp), %rax
+
+The debugger is starting to look like the real thing! You can
+repeat this test with hardware breakpoints if you’d like
+(remembering to delete the watchpoint first).
+Soon, we’ll do a deep dive into how the inferior actually
+receives those SIGTRAP signals, but first, let’s add support for
+catching syscalls.
+
+Catchpoints
+
+In this section, we’ll introduce a new concept to the debugger:
+catchpoints. A catchpoint stops the process when a specific
+event occurs. We’ll implement only one catchpoint, for syscalls,
+but you may choose to add additional catchpoints for C++
+exceptions and shared library loading or unloading (see
+Chapter 22 for more on this).
+
+Tracing Syscalls
+
+We won’t need to create an sdb::catchpoint type to implement
+catchpoints for syscalls, as we can adjust our use of ptrace to
+trace them. By enabling the PTRACE_O_TRACESYSGOOD option, we can
+extend the signal information that ptrace provides so it becomes
+much easier to distinguish SIGTRAP signals that come from
+syscalls. We’ll do this in sdb::process::launch and sdb::process:: attach.
+Make the following changes to sdb/src/process.cpp:
+
+   namespace {
+       void set_ptrace_options(pid_t pid) {
+              if (ptrace(PTRACE_SETOPTIONS, pid, nullpt
+                  sdb::error::send_errno("Failed to set
+              }
+         }
+   }
+   std::unique_ptr<sdb::process>
+   sdb::process::launch(std::filesystem::path path,
+         std::optional<int> stdout_replacement) {
+       --snip--
+       if (debug) {
+            proc->wait_on_signal();
+            set_ptrace_options(proc->pid());
+       }
+       return proc;
+   }
+
+   std::unique_ptr<sdb::process>
+   sdb::process::attach(pid_t pid) {
+       --snip--
+       set_ptrace_options(proc->pid());
+
+         return proc;
+   }
+
+We introduce a new set_ptrace_options function that calls ptrace and
+sets the PTRACE_O_TRACESYSGOOD option, being sure to handle potential
+errors. We call this function from both launch and attach, right
+before returning.
+
+Now that we’ve enabled this option, the signal number will
+have its eighth bit set if the SIGTRAP came from a syscall. This
+means we can use signal == (SIGTRAP|0x80) to check whether we’re
+trapped by a syscall. To actually receive traps from syscalls, we
+use the PTRACE_SYSCALL request instead of PTRACE_CONT when resuming
+the process.
+
+Let’s add a new member to sdb::process to track which syscalls
+we’re tracing. We may want to trace only a subset of them, as a
+multitude of syscalls can occur. We’ll create a new
+sdb::syscall_catch_policy type to capture this information. In
+
+sdb/include/libsdb/process.hpp, make the following changes:
+
+   namespace sdb {
+         class syscall_catch_policy {
+         public:
+             enum mode {
+                 none, some, all
+             };
+
+               static syscall_catch_policy catch_all() {
+                    return { mode::all, {} };
+               }
+              static syscall_catch_policy catch_none()
+                    return { mode::none, {} };
+              }
+
+              static syscall_catch_policy catch_some(st
+                    return { mode::some, std::move(to_cat
+              }
+
+              mode get_mode() const { return mode_; }
+              const std::vector<int>& get_to_catch() co
+
+         private:
+             syscall_catch_policy(mode mode, std::vect
+                  mode_(mode), to_catch_(std::move(to_c
+
+              mode mode_ = mode::none;
+              std::vector<int> to_catch_;
+         };
+   }
+
+We’ll either catch no syscalls, all syscalls, or certain syscalls, so
+we create an enum called mode that can express this. We add two
+data members: one for the mode (which defaults to catching no
+syscalls) and a std::vector<int> that lists the syscall IDs we should
+be catching in the case that mode_ is mode:: some. We also add a
+private constructor that fills these in. We make it private rather
+than public because we use named constructors to make
+creating a syscall_catch_policy less verbose. These are the static
+catch_all, catch_none, and catch_some functions. Finally, we add
+
+members to retrieve the stored data.
+
+Add a member of this type to sdb::process, along with a member to
+set the current policy:
+
+   namespace sdb {
+       class process {
+       public:
+           --snip--
+           void set_syscall_catch_policy(syscall_cat
+                syscall_catch_policy_ = std::move(inf
+           }
+
+         private:
+             --snip--
+             syscall_catch_policy syscall_catch_policy
+                  syscall_catch_policy::catch_none();
+         };
+   }
+
+We default the catching policy to catch no syscalls.
+In sdb::process::resume, we tune the ptrace request we send based on
+this member. In sdb/src/process.cpp, make the following change
+to the PTRACE_CONT call:
+
+   void sdb::process::resume() {
+       --snip--
+       auto request =
+            syscall_catch_policy_.get_mode() == sysca
+            PTRACE_CONT : PTRACE_SYSCALL;
+       if (ptrace(request, pid_, nullptr, nullptr) <
+            error::send_errno("Could not resume");
+       }
+       --snip--
+   }
+
+If the current syscall catch policy is to catch no syscalls, we pass
+PTRACE_CONT to ptrace. Otherwise, we’ll want to catch at least some
+
+syscalls, so we pass PTRACE_SYSCALL. Now the inferior will trap
+whenever a syscall is entered or exited. We should
+communicate data about these stops in sdb::process::wait_on _signal.
+
+If we request a PTRACE_SYSCALL, the inferior will halt twice for each
+syscall: once on entry and once on exit. This enables the tracer
+to check the arguments to the syscall before it’s executed and
+then check the return value on exit. Let’s add a type,
+sdb::syscall_information, to express this. Define it in
+
+sdb/include/libsdb/process.hpp:
+
+   namespace sdb {
+       struct syscall_information {
+               std::uint16_t id;
+               bool entry;
+               union {
+                   std::array<std::uint64_t, 6> args;
+                   std::int64_t ret;
+               };
+         };
+   }
+
+We create a member for the syscall number: for example, 0 for
+read and 1 for write. We also store whether this stop occurred due
+
+to an entry or exit event. The args member stores the arguments
+to the syscall, and we’ll use it only for entry events. The ret
+member stores the return code, and we’ll use it only for exit
+events. We put these last two members in a union because they
+can share storage.
+
+Add sdb::syscall_information as an optional member to sdb::stop_reason,
+and add syscall as an enumerator value for sdb::trap_type:
+   namespace sdb {
+         enum class trap_type {
+             single_step, software_break, hardware_bre
+         };
+
+         struct stop_reason {
+              stop_reason(int wait_status);
+
+              process_state reason;
+              std::uint8_t info;
+              std::optional<trap_type> trap_reason;
+              std::optional<syscall_information> syscal
+         };
+   }
+
+If the stop occurred due to a syscall, we will fill in the syscall_info
+member with information about the event.
+
+Next, let’s further augment the augmented stop reason. In
+newer versions of the Linux kernel, a PTRACE_GET_SYSCALL_INFO call
+can get us all the information we need. However, some of you
+may be stuck using older kernel versions, so we’ll calculate
+these details manually.
+
+We need a way to tell whether we’re stopped due to a syscall
+entry or exit. To record this detail, we’ll add a simple Boolean
+member to sdb::process to track whether we’re waiting for an exit
+event:
+
+   namespace sdb {
+         class process {
+              --snip--
+
+         private:
+             --snip--
+              bool expecting_syscall_exit_ = false;
+         };
+   }
+
+Now we need to extend the sdb::process::augment_stop_reason function
+to handle syscalls:
+
+   void sdb::process::augment_stop_reason(sdb::stop_
+       siginfo_t info;
+       if (ptrace(PTRACE_GETSIGINFO, pid_, nullptr,
+           error::send_errno("Failed to get signal i
+       }
+
+         if (reason.info == (SIGTRAP | 0x80)) {
+             // Fill in syscall information
+
+          ➊ reason.info = SIGTRAP;
+             reason.trap_reason = trap_type::syscall;
+               return;
+         }
+
+         expecting_syscall_exit_ = false;
+
+         reason.trap_reason = trap_type::unknown;
+         if (reason.info == SIGTRAP) {
+             --snip--
+         }
+   }
+
+After the PTRACE_GETSIGINFO call, we check whether we stopped due
+to a syscall. Recall that the signal communicates this
+information by being SIGTRAP | 0x80. If we stopped due to a syscall,
+we fill in the syscall information. I’ve left this as a comment for
+now; we’ll write this code next. After filling in this information,
+we change reason.info from SIGTRAP | 0x80 to just SIGTRAP so it’s easier
+to check later ➊, and we record that the trap occurred due to a
+syscall. If we didn’t stop due to a syscall, we clear execting_syscall
+_exit_ and then handle the rest of the SIGTRAP possibilities, as done
+
+previously.
+
+To fill in the syscall information, we’ll check the
+expecting_syscall_exit_ flag. If it’s set, we can assume that a syscall
+exit caused the stop. In this case, ptrace stores the syscall number
+in the fake orig_rax register and the return value in rax:
+
+        --snip--
+        if (reason.info == (SIGTRAP | 0x80)) {
+              auto& sys_info = reason.syscall_info.empl
+              auto& regs = get_registers();
+
+              if (expecting_syscall_exit_) {
+                   sys_info.entry = false;
+                   sys_info.id = regs.read_by_id_as<std
+                       register_id::orig_rax);
+                   sys_info.ret = regs.read_by_id_as<std
+                       register_id::rax);
+                ➊ expecting_syscall_exit_ = false;
+              }
+              else {
+                   // Handle entry
+              }
+
+              reason.info = SIGTRAP;
+              reason.trap_reason = trap_type::syscall;
+              return;
+        }
+        --snip--
+We default-construct a syscall_info object in the std::optional<syscall
+_info>syscall_info member with the emplace function. If we’re
+
+expecting an exit event, we set entry to false, then read the
+syscall number from orig_rax and the return code from rax.
+Finally, we clear expecting_syscall_exit_ so the next syscall event will
+be interpreted as an entry event ➊.
+
+For an entry event, we once again store the syscall number in
+orig_rax. According to the SYSV ABI, the system stores the
+
+arguments to the syscall in registers rdi, rsi, rdx, r10, r8, and r9, in
+that order:
+
+         --snip--
+         if (reason.info == (SIGTRAP | 0x80)) {
+              auto& sys_info = reason.syscall_info.empl
+              auto& regs = get_registers();
+
+               if (expecting_syscall_exit_) {
+                   --snip--
+               }
+               else {
+                   sys_info.entry = true;
+                   sys_info.id = regs.read_by_id_as<std
+                       register_id::orig_rax);
+
+                     std::array<register_id, 6> arg_regs =
+                          register_id::rdi, register_id::rs
+                          register_id::r10, register_id::r8
+                     };
+                     for (auto i = 0; i < 6; ++i) {
+                          sys_info.args[i] = regs.read_by_i
+                              arg_regs[i]);
+                     }
+
+                     expecting_syscall_exit_ = true;
+               }
+
+               reason.info = SIGTRAP;
+               reason.trap_reason = trap_type::syscall;
+               return;
+         }
+         --snip--
+
+If expecting_syscall_exit_ is false, we know we have an entry event.
+We set entry to true, read the syscall number from orig_rax, and
+then set up an array of the register IDs that store the arguments
+for the syscall. We loop over these, reading each register into
+the args member of sys_info. Finally, we set expecting_syscall_exit_ to
+true to interpret the next syscall event as an exit event.
+
+After we’ve augmented the stop information, we may need to
+resume the process if the current syscall at which we’re stopped
+isn’t one for which the user requested tracing. Add a
+maybe_resume_from_syscall private member to sdb::process. In
+
+sdb/include/libsdb/process.hpp, make the following
+modifications:
+
+   namespace sdb {
+       class process {
+           --snip--
+       private:
+           --snip--
+           sdb::stop_reason maybe_resume_from_syscal
+           --snip--
+       };
+   }
+
+Now implement the member in sdb/src/process.cpp:
+
+   sdb::stop_reason sdb::process::maybe_resume_from_
+         const stop_reason& reason) {
+       if (syscall_catch_policy_.get_mode() ==
+            syscall_catch_policy::mode::some) {
+           auto& to_catch = syscall_catch_policy_.ge
+               auto found = std::find(
+                   begin(to_catch), end(to_catch), reaso
+
+               if (found == end(to_catch)) {
+                    resume();
+                    return wait_on_signal();
+               }
+         }
+
+         return reason;
+   }
+
+First, we check the active syscall catch policy. If we’re only
+catching some syscalls and the current one isn’t in the list, we
+resume and call wait_on_signal. Note that we don’t need to check
+syscall_catch_policy::mode::none, because in that case, we don’t
+
+continue the process with PTRACE_SYSCALL and therefore don’t
+trigger a stop in the first place.
+
+               NOTE
+
+              The recursive call to wait_on_signal could result in the
+              debugger’s stack getting very large in the case that a
+              catchpoint is set for only some syscalls and the
+              inferior makes many syscalls that don’t match the
+              catch policy before halting for a reason that should
+              be reported back to the user. I’ve chosen this
+              recursive solution for simplicity for now, but we’ll
+              eventually rewrite this function in a way that
+              eliminates this problem.
+
+Call this function from sdb::process::wait_on_signal:
+
+   sdb::stop_reason sdb::process::wait_on_signal() {
+       --snip--
+       if (state_ == process_state::stopped) {
+            --snip--
+
+               if (reason.info == SIGTRAP) {
+                    if (reason.trap_reason == trap_type:
+                        --snip--
+                    }
+                    else if (reason.trap_reason == trap_t
+                        --snip--
+                    }
+                 ➊ else if (reason.trap_reason == trap_t
+                        reason = maybe_resume_from_syscal
+                    }
+               }
+         }
+         --snip--
+   }
+We add a branch that checks whether the trap occurred due to
+a syscall ➊. If so, we call maybe_resume_from_syscall and replace the
+current stop reason with the one it returns. With this work
+complete, we can add user-facing commands to enable syscall
+tracing.
+
+Exposing Syscall Catchpoints
+
+We’ll support a few different catchpoint commands: catchpoint
+syscall should trace all syscalls, catchpoint syscall none should trace
+
+no syscalls, and catchpoint syscall <list of syscalls> should trace the
+syscalls given by the list. The supplied list of syscalls should be
+comma-separated and allow both syscall numbers and syscall
+names. To support this command, we’ll need functions to map
+syscall numbers to names. We’ll also want to support the
+reverse operation so we can report user-readable syscall names
+when the inferior traps.
+
+You might expect the operating system to provide functions for
+these conversions, but unfortunately, it doesn’t. We have to
+implement them ourselves. This might seem like a lot of work
+(for example, my system has 360 syscalls), but we don’t have to
+write each mapping manually. With a bit of ingenuity and X-
+Macros, we can automate it.
+The operating system does provide a header file at
+asm/unistd_64.h that contains syscall macros, which look like
+this:
+
+   --snip--
+   #define __NR_read 0
+   #define __NR_write 1
+   #define __NR_open 2
+   #define __NR_close 3
+   --snip--
+
+We can manipulate this file slightly to get what we need. Our
+goal is to produce something like the following:
+
+   DEFINE_SYSCALL(read,0)
+   DEFINE_SYSCALL(write,1)
+   DEFINE_SYSCALL(open,2)
+   DEFINE_SYSCALL(close,3)
+   --snip--
+
+We can convert the header file into the desired format with sed,
+a program available on all Unix systems for filtering and
+transforming text, often by using regular expressions. Here is
+the command we’ll use:
+   $ sed -n -r 's/^#define __NR_(.+) (.+)/DEFINE_SYSCALL(\1,\
+   /usr/include/x86_64-linux-gnu/asm/unistd_64.h
+
+The -n flag keeps the command from printing anything. This will
+let us print only the lines that match the regular expression.
+Next, -r specifies the use of extended regular expressions, which
+means we won’t need to escape certain special characters.
+
+The form s/pattern/replacement/p will substitute text matching the
+pattern with the given replacement and then print it out. In the
+regular expression ^#define __NR_(.+) (.+), the ^ matches the
+beginning of the line, #define __NR_ matches that exact text, and
+(.+) (.+) matches the syscall name and number, capturing them
+
+for use in the replacement string. We replace the tokens \1 and
+\2 with the data captured by those parenthesized groups.
+
+Finally, we pass the path to asm/unistd_64.h, which may differ
+on your platform.
+
+You can paste the text printed by this command into a file or
+redirect it to one using >filename. Either way, place these
+DEFINE_SYSCALL lines into sdb/src/include/syscalls.inc and add a
+
+guard at the top. Note that we save this file in the private
+include directory, inside the sdb/src directory, and not in the
+public include directory. The file’s contents should look like this:
+   #ifndef DEFINE_SYSCALL
+   #error "This file is intended for textual inclusi
+   DEFINE_SYSCALL macro defined"
+   #endif
+
+   DEFINE_SYSCALL(read,0)
+   DEFINE_SYSCALL(write,1)
+   DEFINE_SYSCALL(open,2)
+   DEFINE_SYSCALL(close,3)
+   --snip--
+
+This regular expression technique saved us a huge amount of
+error-prone typing. Now we’ll expose syscalls to users with a
+new header in sdb/include/libsdb/syscalls.hpp. This header will
+declare functions to convert syscall IDs to syscall names and
+vice versa:
+
+   #ifndef SDB_SYSCALLS_HPP
+   #define SDB_SYSCALLS_HPP
+
+   #include <string_view>
+
+   namespace sdb {
+       std::string_view syscall_id_to_name(int id);
+       int syscall_name_to_id(std::string_view name
+   }
+   #endif
+
+Implement these functions in a new file called
+sdb/src/syscalls.cpp. We’ll create a big switch statement for
+syscall_id_to_name and use std::unordered_map for syscall_name_to_id. Start
+
+with the former:
+
+   #include <libsdb/syscalls.hpp>
+   #include <libsdb/error.hpp>
+
+   std::string_view sdb::syscall_id_to_name(int id)
+       switch (id) {
+           #define DEFINE_SYSCALL(name,id) case id:
+           #include "include/syscalls.inc"
+           #undef DEFINE_SYSCALL
+       default: sdb::error::send("No such syscall")
+       }
+   }
+
+We define the DEFINE_SYSCALL macro to be case id: return #name; and
+include the syscall file inside a switch statement. That hash
+character is the stringification operator, which turns the macro
+parameter into a string to produce code like this:
+   switch (id) {
+   case 0: return "read";
+   case 1: return "write";
+   case 2: return "open";
+   case 3: return "close";
+   --snip--
+   default: sdb::error::send("No such syscall");
+   }
+
+To implement syscall_name_to_id, we’ll initialize a std::unordered_map at
+startup and then look up IDs in this map when they’re
+requested:
+
+   #include <unordered_map>
+
+   namespace {
+       const std::unordered_map<std::string_view, in
+           #define DEFINE_SYSCALL(name,id) { #name,
+           #include "include/syscalls.inc"
+           #undef DEFINE_SYSCALL
+       };
+   }
+
+   int sdb::syscall_name_to_id(std::string_view name
+       if (g_syscall_name_map.count(name) != 1)
+           sdb::error::send("No such syscall");
+         return g_syscall_name_map.at(name);
+   }
+
+We define the DEFINE_SYSCALL macro to be { #name, id }, and then
+include the syscalls file inside the initializer for a
+std::unordered_map. Note the trailing comma, which will separate the
+
+map entry initializers. The function syscall_name_to_id looks up the
+given name in this map and returns the corresponding ID, if
+one exists. The code generated by that macro looks like this:
+
+         const std::unordered_map<std::string_view, in
+             { "read", 0 },
+             { "write", 1 },
+             { "open", 2 },
+             { "close", 3},
+             --snip--
+         };
+
+Add syscalls.cpp to sdb/src/CMakeLists.txt:
+
+   add_library(libsdb ... syscalls.cpp)
+
+Now add a quick test for syscalls to sdb/test/tests.cpp:
+   #include <libsdb/syscalls.hpp>
+
+   TEST_CASE("Syscall mapping works", "[syscall]") {
+         REQUIRE(sdb::syscall_id_to_name(0) == "read"
+         REQUIRE(sdb::syscall_name_to_id("read") == 0
+         REQUIRE(sdb::syscall_id_to_name(62) == "kill
+         REQUIRE(sdb::syscall_name_to_id("kill") == 62
+   }
+
+We ensure that we can translate between the names and IDs of
+the read and kill syscalls in both directions. This test should pass.
+
+Now that we can translate between syscall numbers and names,
+we can add the new catchpoint command to sdb/tools/sdb.cpp and
+report the syscall information when the process stops. Add the
+new option to handle_command:
+
+               --snip--
+               else if (is_prefix(command, "catchpoint"
+                    handle_catchpoint_command(*process, a
+               }
+               --snip--
+
+We’ll defer the syscall catch handling to a
+handle_syscall_catchpoint_command function, as this will make it easier to
+handle other types of catchpoints later:
+
+   namespace {
+        void handle_catchpoint_command(
+              sdb::process& process, const std::vecto
+             if (args.size() < 2) {
+                 print_help({ "help", "catchpoint" })
+                 return;
+             }
+
+             if (is_prefix(args[1], "syscall")) {
+                 handle_syscall_catchpoint_command(pro
+             }
+        }
+   }
+
+This function will parse the arguments and set the syscall catch
+policy on the process:
+
+   #include <libsdb/syscalls.hpp>
+
+   namespace {
+       void handle_syscall_catchpoint_command(
+             sdb::process& process, const std::vecto
+           sdb::syscall_catch_policy policy =
+               sdb::syscall_catch_policy::catch_all
+              if (args.size() == 3 and args[2] == "none
+                   policy = sdb::syscall_catch_policy::c
+              }
+              else if (args.size() >= 3) {
+                   auto syscalls = split(args[2], ',');
+                   std::vector<int> to_catch;
+                   std::transform(begin(syscalls), end(s
+                       std::back_inserter(to_catch),
+                       [](auto& syscall) {
+                           return isdigit(syscall[0]) ?
+                               sdb::to_integral<int>(sys
+                               sdb::syscall_name_to_id(s
+                       });
+                   policy = sdb::syscall_catch_policy::c
+              }
+
+              process.set_syscall_catch_policy(std::mov
+        }
+   }
+
+We define a policy variable to store the new syscall catch policy
+and default to catching all syscalls. If the user passed none as an
+argument, we change this policy to catching no syscalls.
+
+If the user passed additional arguments, those arguments
+represent syscalls the user wants to trace. We split the
+arguments on commas and then use the std::transform algorithm
+to process them. This algorithm calls a function on every
+element of a range, storing the result in some other range. In
+this case, we call a lambda on each argument to check whether
+the argument starts with a digit. If so, it must be a syscall
+number, so we parse it to an integer. Otherwise, it must be a
+syscall name, so we call syscall_name_to_id on it to retrieve the
+corresponding syscall number.
+
+We also pass a std::back_inserter(to_catch) value to std::transform to call
+push_back on to_catch with the result of every call to the lambda. We
+
+then set the policy to catch this list of syscalls. Finally, we call
+set_syscall_catch_policy to set the process’s catch policy.
+
+Add some help info to print_help about catchpoints:
+
+               --snip--
+              if (args.size() == 1) {
+                  std::cerr << R"(Available commands:
+         --snip--
+         catchpoint - Commands for operating on catch
+         --snip--
+   )";
+               }
+               --snip--
+               else if (is_prefix(args[1], "catchpoint"
+                   std::cerr << R"(Available commands:
+         syscall
+         syscall none
+         syscall <list of syscall IDs or names>
+   )";
+              }
+
+Finally, we can print extended stop information for syscalls.
+Add a new branch to get_sigtrap_info that prints out this new data:
+
+              --snip--
+              if (reason.trap_reason == sdb::trap_type
+                   const auto& info = *reason.syscall_in
+                   std::string message = " ";
+                   if (info.entry) {
+                       message += "(syscall entry)\n";
+                       message += fmt::format("syscall:
+                           sdb::syscall_id_to_name(info
+                           fmt::join(info.args, ","));
+                   }
+                   else {
+                       message += "(syscall exit)\n";
+                       message += fmt::format("syscall
+                   }
+                   return message;
+              }
+              --snip--
+
+If a trap occurs due to a syscall, we check whether it’s an entry
+or an exit event. For entry events, we print out the syscall’s
+name, followed by all of the arguments to the syscall. For exit
+events, we print out the return code of the syscall. Now let’s test
+syscall catchpoints.
+
+Testing Syscall Catchpoints
+
+The anti_debugger program we wrote in the previous chapter is a
+good target on which to test syscall tracing. Let’s use the new
+catchpoints to try to catch it in the act of putting pineapple on
+pizza! We can launch the program and trace the write syscall to
+halt the program just before it does so.
+
+Launch the program, set the syscall catch policy, and continue
+past the first few write calls, which aren’t part of the main
+program. Then, you should encounter two calls whose first
+argument to the syscall is 1 (the specifier for stdout). If you
+continue past these, you’ll see that they correspond to the
+printing of the function pointer and the forbidden pineapple
+placing:
+$ tools/sdb test/targets/anti_debugger
+Launched process with PID 2812
+sdb> catch sys write
+sdb> c
+--snip--
+Process 3499 stopped with signal TRAP at 0x7ffff7
+syscall: write(0x1,0x7fffffffdf30,0x8,0x7ffff7fc3
+0x00007ffff7ea3a77: cmp $-0x1000, %rax
+0x00007ffff7ea3a7d: jnbe 0x00007FFFF7EA3AD0
+0x00007ffff7ea3a7f: ret
+0x00007ffff7ea3a80: sub $0x28, %rsp
+0x00007ffff7ea3a84: mov %rdx, 0x18(%rsp)
+sdb> c
+QUUUUProcess 3499 stopped with signal TRAP at 0x7
+syscall returned: 0x8
+0x00007ffff7ea3a77: cmp $-0x1000, %rax
+0x00007ffff7ea3a7d: jnbe 0x00007FFFF7EA3AD0
+0x00007ffff7ea3a7f: ret
+0x00007ffff7ea3a80: sub $0x28, %rsp
+0x00007ffff7ea3a84: mov %rdx, 0x18(%rsp)
+sdb> c
+Process 3499 stopped with signal TRAP at 0x7ffff7
+0x00007ffff7e259fc: mov %eax, %r13d
+0x00007ffff7e259ff: neg %r13d
+0x00007ffff7e25a02: cmp $-0x1000, %eax
+0x00007ffff7e25a07: mov $0x00, %eax
+0x00007ffff7e25a0c: cmovbe %eax, %r13d
+sdb> c
+   Process 3499 stopped with signal TRAP at 0x7ffff7
+   syscall: write(0x1,0x5555555592a0,0x1e,0x77,0x0,0
+   0x00007ffff7ea3a77: cmp $-0x1000, %rax
+   0x00007ffff7ea3a7d: jnbe 0x00007FFFF7EA3AD0
+   0x00007ffff7ea3a7f: ret
+   0x00007ffff7ea3a80: sub $0x28, %rsp
+   0x00007ffff7ea3a84: mov %rdx, 0x18(%rsp)
+   sdb> c
+   Putting pineapple on pizza...
+   Process 3499 stopped with signal TRAP at 0x7ffff7
+   syscall returned: 0x1e
+   0x00007ffff7ea3a77: cmp $-0x1000, %rax
+   0x00007ffff7ea3a7d: jnbe 0x00007FFFF7EA3AD0
+   0x00007ffff7ea3a7f: ret
+   0x00007ffff7ea3a80: sub $0x28, %rsp
+   0x00007ffff7ea3a84: mov %rdx, 0x18(%rsp)
+
+Let’s write a simple test to ensure that the process halts for the
+catchpoints. We’ll check that both entry and exit breaks work.
+Add this case to sdb/test/tests.cpp:
+
+   #include <fcntl.h>
+
+   TEST_CASE("Syscall catchpoints work", "[catchpoin
+       auto dev_null = open("/dev/null", O_WRONLY);
+       auto proc = process::launch("targets/anti_deb
+        auto write_syscall = sdb::syscall_name_to_id
+        auto policy = sdb::syscall_catch_policy::catc
+        proc->set_syscall_catch_policy(policy);
+
+        proc->resume();
+        auto reason = proc->wait_on_signal();
+
+        REQUIRE(reason.reason == sdb::process_state:
+        REQUIRE(reason.info == SIGTRAP);
+        REQUIRE(reason.trap_reason == sdb::trap_type
+        REQUIRE(reason.syscall_info->id == write_sysc
+        REQUIRE(reason.syscall_info->entry == true);
+
+        proc->resume();
+        reason = proc->wait_on_signal();
+
+        REQUIRE(reason.reason == sdb::process_state:
+        REQUIRE(reason.info == SIGTRAP);
+        REQUIRE(reason.trap_reason == sdb::trap_type
+        REQUIRE(reason.syscall_info->id == write_sysc
+        REQUIRE(reason.syscall_info->entry == false)
+
+        close(dev_null);
+   }
+
+We don’t want the output of this program to pollute the output
+of our test runner. The usual way to ensure that is to redirect
+the output of the program to /dev/null, which is like a black hole
+that swallows anything sent to it. To do this, we open a file
+descriptor for /dev/null and pass it as the stdout descriptor when
+we launch the process. We then find the ID of the write syscall,
+set the process’s catch policy, and resume twice, ensuring that
+we stop due to syscalls both times, that the syscall is the same
+ID as the one we supplied, and that the entry field is set correctly.
+Finally, we close the file descriptor for /dev/null.
+
+Signal and Interrupt Internals
+
+We’ve improved the debugger’s signal handling and
+implemented syscall catchpoints. Let’s take a deep dive into
+how these features work under the hood on Linux. Take, for
+example, ptrace with PTRACE_PEEKUSER: how does this call actually
+enter kernel space, save the current registers, and communicate
+them to the user? Well, the Linux kernel defines ptrace as a
+syscall at linux/kernel/ptrace.c:
+
+   SYSCALL_DEFINE4(ptrace, long, request, long, pid
+                   unsigned long, data) {
+       --snip--
+   }
+This rather ugly and complex macro is responsible for setting
+up metadata about the syscall, such as its name and parameter
+types, and then defining a function called sys_<name>. In this case,
+the macro defines sys_ptrace.
+
+This isn’t the function we call when we call ptrace, however.
+We’re in user space, not kernel space, so we call a function from
+the C standard library. In the GNU implementation, glibc, this
+function lives at glibc/sysdeps/unix/sysv/linux/ptrace.c. It’s
+actually fairly short:
+
+   long int
+   ptrace (enum __ptrace_request request, ...)
+   {
+     long int res, ret;
+     va_list ap;
+     pid_t pid;
+     void *addr, *data;
+
+      va_start (ap, request);
+      pid = va_arg (ap, pid_t);
+      addr = va_arg (ap, void *);
+      data = va_arg (ap, void *);
+      va_end (ap);
+
+      if (request > 0 && request < 4)
+        data = &ret;
+   ➊ res = INLINE_SYSCALL (ptrace, 4, request, pid,
+
+       if (res >= 0 && request > 0 && request < 4)
+          {
+              __set_errno (0);
+              return ret;
+          }
+
+       return res;
+   }
+
+The magic happens at that INLINE_SYSCALL macro invocation ➊.
+Through a bunch of code generation machinery in the glibc
+build system, it ends up executing a syscall instruction with rax
+set to 101.
+
+Why 101? Essentially, in the Linux kernel, some code generation
+machinery in the build system defines the numbers for syscalls,
+whether they’re specific to 32-bit or 64-bit architectures or
+common to both, what the name of each is, and which C
+function to call when that syscall is executed. You can find the
+Linux kernel source code at https://github.com/torvalds/linux.
+You’ll see an entry in arch/x86/entry/syscalls/syscall_64.tbl that
+looks like this:
+   101         64     ptrace        sys_ptrace
+
+This is the sys_ptrace function defined as part of the SYSCALL_DEFINE4
+call. Let’s explore the link between the execution of the syscall
+instruction and the call of sys_ptrace. The kernel initialization
+calls a function named syscall_init, which lives in
+arch/x86/kernel/cpu/common.c. The first few lines of syscall_init
+look like this:
+
+   void syscall_init(void)
+   {
+       wrmsr(MSR_STAR, 0, (__USER32_CS << 16) | __KE
+       wrmsrl(MSR_LSTAR, (unsigned long)entry_SYSCAL
+       --snip--
+   }
+
+That wrmsrl function stands for “write model specific 64-bit
+register” and refers to registers that allow the configuration of
+key operating system tasks. MSR_LSTAR is the register for
+configuring system calls. When the processor executes a syscall
+instruction, it executes the function at the address stored in the
+register. This essentially sets up a callback function in the
+hardware to call entry_SYSCALL_64 when the CPU executes a syscall
+instruction.
+The entry_SYSCALL_64 function, in arch/x86/entry/entry_64.S, isn’t
+written in C, but in assembly. Its definition is long and detailed,
+but let’s look at a few of its lines:
+
+   SYM_CODE_START(entry_SYSCALL_64)
+         --snip--
+         PUSH_AND_CLEAR_REGS rax=$-ENOSYS
+         --snip--
+         call       do_syscall_64
+         --snip--
+   SYM_CODE_END(entry_SYSCALL_64)
+
+The PUSH_AND_CLEAR_REGS macro is responsible for saving the current
+state of system registers onto the stack in a format that exactly
+matches the pt_regs C structure:
+
+   .macro PUSH_AND_CLEAR_REGS rdx=%rdx rcx=%rcx rax=
+       PUSH_REGS rdx=\rdx, rcx=\rcx, rax=\rax, save_
+       CLEAR_REGS
+   .endm
+
+   .macro PUSH_REGS rdx=%rdx rcx=%rcx rax=%rax save_
+       .if \save_ret
+       pushq    %rsi          /* pt_regs->si */
+         movq         8(%rsp), %rsi /* Temporarily store t
+         movq         %rdi, 8(%rsp) /* pt_regs->di (overw
+         .else
+         pushq        %rdi                /* pt_regs->di */
+         pushq        %rsi                /* pt_regs->si */
+         .endif
+         pushq        \rdx                /* pt_regs->dx */
+         pushq        \rcx                /* pt_regs->cx */
+         pushq    \rax                    /* pt_regs->ax */
+         pushq    %r8                     /* pt_regs->r8 */
+         pushq    %r9                     /* pt_regs->r9 */
+         pushq    %r10                    /* pt_regs->r10 */
+         pushq    %r11                    /* pt_regs->r11 */
+         pushq    %rbx                    /* pt_regs->rbx */
+         pushq    %rbp                    /* pt_regs->rbp */
+         pushq    %r12                    /* pt_regs->r12 */
+         pushq    %r13                    /* pt_regs->r13 */
+         pushq    %r14                    /* pt_regs->r14 */
+         pushq    %r15                    /* pt_regs->r15 */
+         UNWIND_HINT_REGS
+
+       .if \save_ret
+       pushq    %rsi                      /* Return address on t
+       .endif
+   .endm
+
+The entry_SYSCALL_64 function then calls do_syscall_64, which is
+hooked up to the code generated from that syscall table and
+calls sys_ptrace. So, we’ve traveled from user space, through glibc,
+and into kernel space through the CPU syscall handler, where
+we saved the state of the registers and called sys_ptrace.
+
+The sys_ptrace function itself handles some architecture-
+independent commands, like PTRACE_ATTACH and PTRACE_INTERRUPT, and
+carries out security checks to make sure the caller is actually
+permitted to call ptrace. Then, it dispatches to the architecture-
+specific handler, which in our case is arch_ptrace, inside
+arch/x86/kernel/ptrace.c. The code for PTRACE_POKEUSER looks like
+this:
+
+        case PTRACE_POKEUSR: /* Write the word at loc
+            ret = -EIO;
+            if ((addr & (sizeof(data) - 1)) || addr >
+                break;
+
+              if (addr < sizeof(struct user_regs_struct
+                  ret = putreg(child, addr, data);
+              else if (addr >= offsetof(struct user, u_
+                       addr <= offsetof(struct user, u_
+                  addr -= offsetof(struct user, u_debug
+                  ret = ptrace_set_debugreg(child,
+                          addr / sizeof(data), data);
+              }
+              break;
+The PTRACE_POKEUSER command gives the illusion that it’s writing a
+solid mapped region of memory, but on x64, this is actually a
+total lie. If you try to read anything that isn’t a GPR or debug
+register, it returns an error code. Remember how, in Chapter 5,
+we had to use PTRACE_SETFPREGS instead of PTRACE_POKEUSER for FPU
+registers? This is why.
+
+The putreg function contains several levels of indirection but
+ends up writing to the pt_regs struct shown earlier, which was
+constructed on the stack when the syscall handler was invoked.
+
+Control passes back to the assembly code in
+arch/x86/entry/entry_64.S when the syscall exits. It can choose
+from a few different methods to get back to the user-mode
+process, but in all of them, it first calls POP_REGS:
+
+   .macro POP_REGS pop_rdi=1
+         popq %r15
+         popq %r14
+         popq %r13
+         popq %r12
+         popq %rbp
+         popq %rbx
+         popq %r11
+         popq %r10
+         popq %r9
+        popq %r8
+        popq %rax
+        popq %rcx
+        popq %rdx
+        popq %rsi
+        .if \pop_rdi
+        popq %rdi
+        .endif
+   .endm
+
+This function restores all the registers from the stack. Because
+putreg wrote all the changes into this structure inside the call to
+
+sys_ptrace, this restoration writes the desired values into the
+
+system registers, completing the process.
+
+Signals touch very similar parts of the Linux kernel. In
+particular, let’s see how a SIGTRAP gets sent to a process when it
+executes an int3 instruction. The int3 instruction is a special
+version of the int <n> instruction. When the operating system
+starts, it registers a bunch of interrupt handlers with the
+hardware that get called in various circumstances, and int <n>
+generates a call to the interrupt handler at index n. In x64, int 3
+is given its own instruction so it can be encoded as a single byte,
+which makes setting breakpoints easier.
+The kernel sets up interrupt handlers in arch/x86/kernel/idt.c,
+where it defines asm_exc_int3 as the handler for interrupt 3:
+
+   static const __initconst struct idt_data early_id
+       --snip--
+         SYSG(X86_TRAP_BP, asm_exc_int3),
+         --snip--
+   };
+
+   void __init idt_setup_early_traps(void)
+   {
+       idt_setup_from_table(
+           idt_table, early_idts, ARRAY_SIZE(early_i
+       load_idt(&idt_descr);
+   }
+
+You’ll find x86_TRAP_BP defined as 3 in
+arch/x86/include/asm/trapnr.h, so this file sets the handler for
+interrupt 3 to be asm_exc_int3. In arch/x86/kernel/traps.c, this
+function sends a SIGTRAP to the process:
+
+   DEFINE_IDTENTRY_RAW(exc_int3)
+   {
+       --snip--
+            do_int3_user(regs);
+       --snip--
+   }
+
+   static void do_int3_user(struct pt_regs *regs)
+   {
+       if (do_int3(regs))
+              return;
+
+        cond_local_irq_enable(regs);
+        do_trap(X86_TRAP_BP, SIGTRAP, "int3", regs, 0
+        cond_local_irq_disable(regs);
+   }
+
+That do_trap call triggers the SIGTRAP. We’ve successfully traced the
+execution of the int3 instruction all the way to the kernel
+sending SIGTRAP to the process!
+
+Summary
+
+In this chapter, you extended your debugger to handle signals
+from the command line gracefully and report detailed
+information about signals to the user. You also added support
+for syscall tracing to the debugger. Finally, we performed a deep
+dive into how the Linux kernel handles signals and interrupts,
+and you saw the real code that gets executed in the operating
+system to facilitate these tools.
+In the next chapter, you’ll implement an ELF parser, which is
+the first step to adding source-level debugging support to your
+debugger.
+
+Check Your Knowledge
+
+1.
+1. Which function installs signal handlers on a process?
+2.
+2. Which signal gets sent to a process when you press CTRL-C at a
+  command line?
+3.
+3. What are reentrant functions?
+4.
+4. Which function sets the process group of a process?
+5.
+5. Which debug register on x64 is the status register?
+6.
+6. Which ptrace request causes it to halt on syscall entry and exit?

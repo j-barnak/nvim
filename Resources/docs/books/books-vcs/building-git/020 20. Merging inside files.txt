@@ -1,0 +1,1244 @@
+20. Merging inside files
+The last three chapters have set us up with a complete merging workflow. In Chapter 17,
+Basic merging we reused some of the checkout infrastructure to perform merges of branches
+changing different files, and amended the log and revision selection code to deal with merge
+commits. In Chapter 18, When merges fail we investigated the causes of merge conflicts, and
+how we should change the state of the repository when they occur. And in Chapter 19, Conflict
+resolution we updated the status and diff commands to report merge conflicts, and changed
+the add, commit and merge commands to let the user resolve the conflicts and finish off the
+merge.
+
+Through this process we’ve discovered that merges are straightforward when each side of the
+merge has changed different files, and conflicts occur when each side’s edits overlap. It would
+be nice if we could go one step further and merge changes even when both sides have edited
+the same file. For example, here’s a history in which all commits contain a single file; each
+commit is annotated with its content for that file.
+
+Figure 20.1. Merging branches changing the same file
+
+              alfa             alfa
+              bravo            bravo
+              charlie          delta               ?
+
+                A                 B               M
+                o <---------- o <---------- o [master] <== [HEAD]
+                  \                             /
+                    \                          /
+                      \                       /
+                        `-------------------o [topic]
+                                            C
+
+                                           echo
+                                           bravo
+                                           charlie
+
+It looks as though commit B changes line 3, while commit C changes line 1. Our current merge
+implementation will generate a conflict here and dump this content into the file:
+      <<<<<<<
+      alfa
+      bravo
+      delta
+      =======
+      echo
+      bravo
+      charlie
+      >>>>>>>
+
+It would be preferable for the merge command to detect that each side has modified different
+regions of the file and reconcile their changes, producing:
+      echo
+      bravo
+      delta
+
+                                                      Merging inside files
+
+As you’ll have noticed when using Git, it can indeed do this. But, it’s more tricky than detecting
+and merging changes between trees. In trees, every file has a name, which means we can
+unambiguously identify which parts of the tree each commit has changed. A file, however, is
+just a list of lines (or words, or characters, or however you decided to break it up), and so it’s
+harder to characterise changes to it in a way that facilitates merging.
+
+For example, suppose we describe the changes on either side as ‘Alice inserted a new line at
+line 3’ and ‘Bob deleted line 5’. For example, suppose we have the following file contents:
+
+Figure 20.2. Initial file contents
+
+       alfa
+       bravo
+       charlie
+       delta
+       echo
+
+If we apply the changes ‘insert a new line at 3’ and ‘delete line 5’ in that order, we get:
+
+Figure 20.3. Inserting a new line and deleting another
+
+       alfa                                             alfa                          alfa
+       bravo                 insert @ 3                 bravo         delete @ 5      bravo
+       charlie               ------------>              foxtrot       ------------>   foxtrot
+       delta                                            charlie                       charlie
+       echo                                             delta                         echo
+                                                        echo
+
+If we apply these changes in the opposite order, we get:
+
+Figure 20.4. Deleting a line and then inserting one
+
+       alfa                                             alfa                          alfa
+       bravo                 delete @ 5                 bravo         insert @ 3      bravo
+       charlie               ------------>              charlie       ------------>   foxtrot
+       delta                                            delta                         charlie
+       echo                                                                           delta
+
+We arrive at a different result, because ‘line 5’ does not refer to the same piece of content in
+each case. If you think about all the ways a file’s lines can be changed — inserted, removed,
+modified, reordered — this line-number-based description quickly looks unsuitable.
+
+Now, some collaborative editing applications do use a model like this, and they adjust the
+description of each person’s edits in light of edits from others that are applied beforehand. There
+is a broad category of techniques in this space, known as operational transforms1. However, in
+situations where we can’t decide which order to apply edits in — like in Git’s partially ordered
+histories — ‘line N’ is not a good identifier for a piece of content because it leads to ambiguity,
+as shown above.
+
+In Git merges, we’re also not typically looking at small, fine-grained edits. Instead, we’re
+performing a three-way merge between the tips of two branches and their common ancestor,
+ https://en.wikipedia.org/wiki/Operational_transformation
+
+                                                   Merging inside files
+
+and each branch could have made substantial changes. We need a way of comparing the two
+merged versions to their common ancestor and producing a single merge result, and fortunately,
+such an algorithm does exist. In studying it, we’ll see how diffs can be used as a basis for further
+computation, rather than just as a way to display changes to the end user, as they have been
+until now.
+
+20.1. The diff3 algorithm
+To perform this task, Git and many other version control systems use the diff3 algorithm.
+diff3 is a Unix utility originally created in 1988 by Randy Smith, and described formally in
+a paper by Sanjeev Khanna, Keshav Kunal and Benjamin C. Pierce3. The algorithm takes as
+input three texts: the two versions to be merged, and the original version they both derive from,
+and produces a single merged version, which may contain conflicts if some sections have been
+edited by both parties.
+
+20.1.1. Worked example
+Let’s walk through an example to see how it works. This is adapted from the one given in section
+2 of the Khanna, Kunal and Pierce paper. Say Alice and Bob are part of a team developing a
+recipe book. One of the recipes is for a fish soup and includes the following list of ingredients:
+
+Figure 20.5. Original ingredient list
+
+                                             1. celery
+                                             2. garlic
+                                             3. onions
+                                             4. salmon
+                                             5. tomatoes
+                                             6. wine
+
+Now, Alice and Bob are both going through the book and making edits. They each get their
+own copy of the original version and make some changes to it. Alice takes garlic and onions
+and moves them to appear after tomatoes in the list, while Bob moves salmon to appear second.
+
+Figure 20.6. Alice and Bob’s changes to the ingredient list
+
+                    Alice                        Original              Bob
+
+                1. celery                    1. celery              1. celery
+                2. salmon                    2. garlic              2. salmon
+                3. tomatoes                  3. onions              3. garlic
+                4. garlic                    4. salmon              4. onions
+                5. onions                    5. tomatoes            5. tomatoes
+                6. wine                      6. wine                6. wine
+
+To merge the changes made by Alice and Bob into a single document, the first thing diff3 does
+is calculate a diff between the original copy and Alice’s version, and between the original and
+Bob’s. We know there are multiple possible minimal diffs between two strings, but let’s assume
+the diffs come out as follows. Here is Alice’s:
+ https://manpages.ubuntu.com/manpages/bionic/en/man1/diff3.1.html
+ https://www.cis.upenn.edu/~bcpierce/papers/diff3-short.pdf
+
+                                                  Merging inside files
+
+Figure 20.7. Alice’s diff against the original
+                   Alice                         Original
+
+              1. celery                   1. celery
+      -                                   2. garlic
+      -                                   3. onions
+              2. salmon                   4. salmon
+              3. tomatoes                 5. tomatoes
+      +       4. garlic
+      +       5. onions
+              6. wine                     6. wine
+
+And here is Bob’s:
+Figure 20.8. Bob’s diff against the original
+                                                 Original            Bob
+
+                                          1. celery               1. celery
+      +                                                           2. salmon
+                                          2. garlic               3. garlic
+                                          3. onions               4. onions
+      -                                   4. salmon
+                                          5. tomatoes             5. tomatoes
+                                          6. wine                 6. wine
+
+Once we have these diffs, the next thing we do is find any lines that are unchanged in both diffs.
+If you look at the diffs above you’ll see that they both have matching line content for celery
+(line 1 in all versions), tomatoes (line 3 in Alice’s version, line 5 in the others), and wine (line
+6 in all versions). We align the lines of the documents into chunks, so that these unchanged
+lines are matched up:
+Figure 20.9. Aligning the three versions on unchanged lines
+                   Alice                         Original            Bob
+
+              1. celery           1. celery           1. celery         A
+              -----------------------------------------------------------
+                                  2. garlic           2. salmon         B
+              2. salmon           3. onions           3. garlic
+                                  4. salmon           4. onions
+              -----------------------------------------------------------
+              3. tomatoes         5. tomatoes         5. tomatoes       C
+              -----------------------------------------------------------
+              4. garlic                                                 D
+              5. onions
+              -----------------------------------------------------------
+              6. wine             6. wine             6. wine           E
+
+Having done this, the merge result is generated by scanning through these chunks. For chunks
+where all three versions agree — chunks A, C and E above — we can just output the original
+text since neither Alice nor Bob changed it. For chunks like B where both Alice and Bob differ
+from the original, we have a conflict; the merge algorithm, having no understanding of the
+meaning of the text, cannot decide how to resolve this and the conflict is emitted for the user
+to resolve by hand. In contrast, in chunk D Bob’s version is equal to the original (in this case
+it is empty) while Alice’s differs. In chunks like this where only one new version differs from
+the original, we pick the version that changed.
+
+                                      Merging inside files
+
+To summarise, for each block we emit the following:
+
+• A: all equal; emit celery
+
+• B: Both differ; emit all versions as a conflict
+
+• C: all equal; emit tomatoes
+
+• D: Alice differs; emit garlic, onions
+
+• E: all equal: emit wine
+
+When Git emits these results as into the target file, conflicts are denoted by a <<<<<<< line,
+followed by Alice’s version, then ======= followed by Bob’s version, then a >>>>>>> line:
+         celery
+         <<<<<<< Alice
+         salmon
+         =======
+         salmon
+         garlic
+         onions
+         >>>>>>> Bob
+         tomatoes
+         garlic
+         onions
+         wine
+
+If you set merge.conflictStyle = diff3 in your Git config, or use the standalone diff3
+program, you’ll also see the original version of a conflicted chunk, denoted by the ||||||| line:
+         celery
+         <<<<<<< Alice
+         salmon
+         ||||||| Original
+         garlic
+         onions
+         salmon
+         =======
+         salmon
+         garlic
+         onions
+         >>>>>>> Bob
+         tomatoes
+         garlic
+         onions
+         wine
+
+20.1.2. Implementing diff3
+Now that we understand at a high level how the algorithm works, let’s look at implementing
+it. I’m going to create a class for doing this, since the algorithm uses several bits of state that
+I’d rather store as instance variables, rather than passing them between functions. We’ll start
+by creating a method called Merge::Diff3.merge that takes o, a and b; the original version and
+the two versions to be merged.
+
+                                      Merging inside files
+
+After creating a new Diff3 object we call merge on it, which is going to set up some initial
+state, then generate the output chunks, and then return a new Result object containing those
+chunks. We’ll see the Result class in more detail later.
+     # lib/merge/diff3.rb
+
+     module Merge
+       class Diff3
+
+         def self.merge(o, a, b)
+           o = o.lines if o.is_a?(String)
+           a = a.lines if a.is_a?(String)
+           b = b.lines if b.is_a?(String)
+
+           Diff3.new(o, a, b).merge
+         end
+
+         def initialize(o, a, b)
+           @o, @a, @b = o, a, b
+         end
+
+         def merge
+           setup
+           generate_chunks
+           Result.new(@chunks)
+         end
+
+       end
+     end
+
+First, let’s look at the setup method, which initialises a few bits of state needed to run the
+algorithm. It creates an empty list called @chunks that we will append new chunks to as we
+discover them. Then it sets a @line variable for each document o, a and b to record how far we
+have scanned through all the documents; this begins at zero for all of them. Finally, we create
+two match sets that record which lines in each version are equal to the original, and identifies
+those matches by line number.
+     # lib/merge/diff3.rb
+
+         def setup
+           @chunks = []
+           @line_o = @line_a = @line_b = 0
+
+           @match_a = match_set(@a)
+           @match_b = match_set(@b)
+         end
+
+To recap Chapter 11, The Myers diff algorithm, the Diff.diff method returns an array of Edit
+objects, each of which has a type which is one of :del, :ins or :eql. Each Edit also has an
+a_line and a b_line, both of which are Line values representing lines from each of the input
+strings. For example, if we call Diff.diff(a, b) where a is the Original string above, and
+b is the Bob version:
+
+     >> Diff.diff(a, b)
+     => [
+          Edit(type=:eql, a_line=Line(1, "celery"),      b_line=Line(1, "celery")),
+
+                                      Merging inside files
+
+             Edit(type=:ins, a_line=nil,                 b_line=Line(2, "salmon")),
+             Edit(type=:eql, a_line=Line(2, "garlic"),   b_line=Line(3, "garlic")),
+             Edit(type=:eql, a_line=Line(3, "onions"),   b_line=Line(4, "onions")),
+             Edit(type=:del, a_line=Line(4, "salmon"),   b_line=nil),
+             Edit(type=:eql, a_line=Line(5, "tomatoes"), b_line=Line(5, "tomatoes")),
+             Edit(type=:eql, a_line=Line(6, "wine"),     b_line=Line(6, "wine"))
+        ]
+
+The a_line values of the edits are the lines from the first Diff.diff input, and the b_line
+values come from the second input. The :eql edits tell us which lines have been matched up
+between the two documents. We use this in match_set to build an index of line numbers in the
+a input and their matched line number in the b input.
+
+     # lib/merge/diff3.rb
+
+            def match_set(file)
+              matches = {}
+
+             Diff.diff(@o, file).each do |edit|
+               next unless edit.type == :eql
+               matches[edit.a_line.number] = edit.b_line.number
+             end
+
+              matches
+            end
+
+For our ingredient list example above, the match sets will look like this:
+             @match_a = { 1 => 1, 4 => 2, 5 => 3, 6 => 6 }
+             @match_b = { 1 => 1, 2 => 3, 3 => 4, 5 => 5, 6 => 6 }
+
+Now we come to the main body of the algorithm. The generate_chunks method loops through
+a sequence of steps for finding and recording matching and differing chunks until it’s reached
+the end of all the documents. Each turn of the loop performs the following steps:
+
+• Find the start of the next non-matching chunk, returning i as the number of lines away from
+  our current position that is. (If we’re in a matching chunk, then the end of that chunk will be
+  the same number of lines away in all three documents.)
+
+• If i is 1, then we’re already in a non-matching chunk and we need to find the start of the next
+  matching one. We try to find the start of the next matching chunk and record o, a and b as
+  the line offset in each document of the start of that chunk.
+
+  • If we found a match and a and b are therefore set, we emit a chunk up to the offsets we
+    just found.
+
+  • Otherwise, there are no further matches and we emit the remainder of all documents as
+    the final chunk.
+
+• If i exists and is not 1, then we’ve found the start of the next non-match and we can emit a
+  chunk up to i steps from our current line offsets.
+
+• If i does not exist, then we’ve searched to the end of all three documents and we emit the
+  remainder of all of them as the final chunk.
+
+                                      Merging inside files
+
+Here is an implementation that draws that process out, leaving the implementation of finding
+the next match or mismatch, and emitting chunks, to other methods.
+     # lib/merge/diff3.rb
+
+         def generate_chunks
+           loop do
+             i = find_next_mismatch
+
+              if i == 1
+                o, a, b = find_next_match
+
+                if a and b
+                  emit_chunk(o, a, b)
+                else
+                  emit_final_chunk
+                  return
+                end
+
+              elsif i
+                emit_chunk(@line_o + i, @line_a + i, @line_b + i)
+
+             else
+               emit_final_chunk
+               return
+             end
+           end
+         end
+
+Now we just need the methods for finding the next match or mismatch, and for emitting chunks.
+
+To find the start of the next mismatch, we start a counter i at 1, and step through each document
+line-by-line from our current position. If i has not counted past the end of all the documents,
+and if the current line in all the documents match, we increment i and keep looping. Once the
+loop stops, if i is still within the bounds of any of the documents then we return it, otherwise
+we return nothing.
+     # lib/merge/diff3.rb
+
+         def find_next_mismatch
+           i = 1
+           while in_bounds?(i) and
+                 match?(@match_a, @line_a, i) and
+                 match?(@match_b, @line_b, i)
+             i += 1
+           end
+           in_bounds?(i) ? i : nil
+         end
+
+         def in_bounds?(i)
+           @line_o + i <= @o.size or
+           @line_a + i <= @a.size or
+           @line_b + i <= @b.size
+         end
+
+         def match?(matches, offset, i)
+           matches[@line_o + i] == offset + i
+
+                                      Merging inside files
+
+         end
+
+The match? method works by using the match sets we created at the start of the process. Rather
+than scanning through and comparing the actual text of the documents for equality, we use
+these match sets as an index. We know that line (@line_a + i) in document @a matches line
+(@line_o + i) in the original, if @match_a contains a mapping from the original line number
+to that in @a.
+
+For instance, when we run this code at the beginning of our recipe example, @line_o, @line_a
+and @line_b are all 0. We run the loop with i = 1, and checking the match sets we see that
+@match_a[1] == 1 and @match_b[1] == 1, so we try again with i = 2. On this turn, the value
+of @match_b[2] is 3 and @match_a doesn’t even have an entry for 2, so we’ve found the start
+of a non-matching chunk. This value of i means the next non-matching chunk begins on line
+2 relative to our current position, so we can emit one line from each document as a matching
+chunk. The emit_chunk(@line_o + i, @line_a + i, @line_b + i) call in generate_chunks
+accomplishes this.
+
+Finding the start of the next match is a little simpler. We start a counter o at one more than
+our current @line_o offset, and we increment it until either it exceeds the size of @o or until
+both match sets have an entry for that line number, indicating that both diffs leave that line
+unchanged. We then return the final value of o, and the corresponding line numbers from each
+match set. If we didn’t find any matches, these latter two values will be nil.
+     # lib/merge/diff3.rb
+
+         def find_next_match
+           o = @line_o + 1
+           until o > @o.size or (@match_a.has_key?(o) and @match_b.has_key?(o))
+             o += 1
+           end
+           [o, @match_a[o], @match_b[o]]
+         end
+
+Returning to our example, after emitting the first matching chunk, @line_o, @line_a and
+@line_b are all 1, and recall that the match sets are as follows, the line numbers in @o appearing
+on the left-hand side of the arrows:
+            @match_a = { 1 => 1, 4 => 2, 5 => 3, 6 => 6 }
+            @match_b = { 1 => 1, 2 => 3, 3 => 4, 5 => 5, 6 => 6 }
+
+We start with o = 2. @match_b has an entry for 2 but @match_a does not, so we try o = 3.
+Again, @match_b has an entry but @match_a does not, so we try o = 4. This time, @match_a has
+an entry but @match_b does not. Finally we try o = 5 and see that both match sets contain an
+entry: @match_a[5] = 3 and @match_b[5] = 5. So, we return [5, 3, 5] in this instance and
+generate_chunks calls emit_chunk(5, 3, 5).
+
+The methods for emitting chunks are what construct the output of the merge algorithm, and
+keep the line offsets up to date, moving them to the end of the chunk we just emitted in each
+document. emit_chunk creates a chunk from the current line offsets up to a given index in each
+document, and then sets the line offsets to the end of these ranges. We subtract one from all the
+offsets we’re given because the diffs and the finder methods use 1-indexed line numbers, but
+our @line variables are 0-indexed offsets from the start of each document. emit_final_chunk
+just emits whatever is left from all the documents from their current line offsets onwards.
+
+                                       Merging inside files
+
+     # lib/merge/diff3.rb
+
+          def emit_chunk(o, a, b)
+            write_chunk(
+              @o[@line_o ... o - 1],
+              @a[@line_a ... a - 1],
+              @b[@line_b ... b - 1])
+
+            @line_o, @line_a, @line_b = o - 1, a - 1, b - 1
+          end
+
+          def emit_final_chunk
+            write_chunk(
+              @o[@line_o .. -1],
+              @a[@line_a .. -1],
+              @b[@line_b .. -1])
+          end
+
+Finally, we reach the end of our chain of methods with write_chunk. This takes a set of lines
+from each document and emits the appropriate kind of chunk depending on their contents. If
+all three sets are equal, then we emit a Clean chunk object containing the original version; if
+Alice’s chunk is equal to the original then we emit Bob’s and vice versa; and if neither is equal
+then we emit a Conflict chunk containing all three versions.
+     # lib/merge/diff3.rb
+
+          def write_chunk(o, a, b)
+            if a == o or a == b
+              @chunks.push(Clean.new(b))
+            elsif b == o
+              @chunks.push(Clean.new(a))
+            else
+              @chunks.push(Conflict.new(o, a, b))
+            end
+          end
+
+Once generate_chunks finishes looping, the merge method returns Result.new(@chunks),
+creating a data structure representing the result of the whole process. That data structure comes
+with a to_s method for turning the whole thing into a string that can be written back to a file, but
+keeping it as a structure lets us inspect it, particularly to check whether the merge was clean or
+not. While the to_s methods assume the original inputs were a series of lines of text, exposing
+the merge result as a data structure allows us to use this algorithm with other types of input.
+
+We can also use these structures to generate the output text with added data that isn’t necessary
+for the merge algorithm itself, for example the the Result#to_s takes two optional arguments
+which it uses as the names of the two versions to annotate the conflict markers.
+     # lib/merge/diff3.rb
+
+          Clean = Struct.new(:lines) do
+            def to_s(*)
+              lines.join("")
+            end
+          end
+
+          Conflict = Struct.new(:o_lines, :a_lines, :b_lines) do
+
+                                     Merging inside files
+
+            def to_s(a_name = nil, b_name = nil)
+              text = ""
+              separator(text, "<", a_name)
+              a_lines.each { |line| text.concat(line) }
+              separator(text, "=")
+              b_lines.each { |line| text.concat(line) }
+              separator(text, ">", b_name)
+              text
+            end
+
+           def separator(text, char, name = nil)
+             text.concat(char * 7)
+             text.concat(" #{ name }") if name
+             text.concat("\n")
+           end
+         end
+
+         Result = Struct.new(:chunks) do
+           def clean?
+             chunks.none? { |chunk| chunk.is_a?(Conflict) }
+           end
+
+           def to_s(a_name = nil, b_name = nil)
+             chunks.map { |chunk| chunk.to_s(a_name, b_name) }.join("")
+           end
+         end
+
+We now have a complete implementation that we can use to merge data from different sources,
+and print out the result:
+     merged = Diff3.merge(original, alice, bob)
+
+     puts merged
+
+     # =>   celery
+     #      <<<<<<< alice.txt
+     #      salmon
+     #      =======
+     #      salmon
+     #      garlic
+     #      onions
+     #      >>>>>>> bob.txt
+     #      tomatoes
+     #      garlic
+     #      onions
+     #      wine
+
+While the diff3 algorithm is relatively simple, it is highly sensitive to the output of the
+underlying diff algorithm. Depending on the lines the underlying diffs mark as equal, a merge
+can result in a conflict while another choice of diff algorithm could lead to a clean merge.
+
+20.1.3. Using diff3 during a merge
+Having Diff3.merge lets us modify the merge_blobs method inside Merge::Resolve so that,
+if both sides have edited the file, we try to merge their changes rather than just concatenating
+both versions.
+
+                                           Merging inside files
+
+       # lib/merge/resolve.rb
+
+              def merge_blobs(base_oid, left_oid, right_oid)
+                result = merge3(base_oid, left_oid, right_oid)
+                return result if result
+
+                 oids = [base_oid, left_oid, right_oid]
+                 blobs = oids.map { |oid| oid ? @repo.database.load(oid).data : "" }
+                 merge = Diff3.merge(*blobs)
+
+                 data = merge.to_s(@inputs.left_name, @inputs.right_name)
+                 blob = Database::Blob.new(data)
+                 @repo.database.store(blob)
+
+                [merge.clean?, blob.oid]
+              end
+
+We’ve replaced the old merged_data method with a call to Diff3.merge, and we serialise
+the result with to_s and store it as a blob as before. The call to merge.clean? returns the
+boolean that same_path_conflict uses to determine whether the path merged cleanly. The
+merge command is now able to merge changes to the same file, as long as those changes affect
+different regions.
+
+20.2. Logging merge commits
+When we amended the diff command for conflicts4, we came across the concept of a combined
+diff. It’s now possible for a merge commit to contain a version of a file that differs from the
+version in both of its parents, and the log command likewise uses combined diffs to display
+such changes.
+
+Suppose that the versions of some file in the left and right inputs to a merge, and the version
+in the merge commit, are as follows:
+       left = <<~EOF
+         alfa
+         bravo
+         delta
+       EOF
+
+       right = <<~EOF
+         echo
+         bravo
+         charlie
+       EOF
+
+       merged = <<~EOF
+         echo
+         bravo
+         delta
+         foxtrot
+       EOF
+
+When viewing this trio of versions, either with the diff command during the merge, or by
+running log --cc after the merge is committed, Git will display the diff as follows:
+ Section 19.3, “Conflicted diffs”
+
+                                      Merging inside files
+
+     diff --cc f.txt
+     index d8556a9,9d24e3e..09cba68
+     --- a/f.txt
+     +++ b/f.txt
+     @@@ -1,3 -1,3 +1,4 @@@
+     - alfa
+     + echo
+       bravo
+      -charlie
+      +delta
+     ++foxtrot
+
+This diff is characterised by the --cc flag on the diff line, the three @ symbols on hunk headers,
+and the multiple columns of plus/minus symbols preceding the line text. It is a combination of
+the diff between the left version and the merge result, and between the right version and the
+merge result, which are as follows:
+     >> left_diff = Diff.diff(left, merged)
+     => [
+          Edit(type=:del, a_line=Line(1, "alfa"), b_line=nil),
+          Edit(type=:ins, a_line=nil,              b_line=Line(1, "echo")),
+          Edit(type=:eql, a_line=Line(2, "bravo"), b_line=Line(2, "bravo")),
+          Edit(type=:eql, a_line=Line(3, "delta"), b_line=Line(3, "delta")),
+          Edit(type=:ins, a_line=nil,              b_line=Line(4, "foxtrot"))
+        ]
+
+     >> left_diff.each { |edit| puts edit }
+
+     -alfa
+     +echo
+      bravo
+      delta
+     +foxtrot
+
+     >> right_diff = Diff.diff(right, merged)
+     => [
+          Edit(type=:eql, a_line=Line(1, "echo"),    b_line=Line(1, "echo")),
+          Edit(type=:eql, a_line=Line(2, "bravo"),   b_line=Line(2, "bravo")),
+          Edit(type=:del, a_line=Line(3, "charlie"), b_line=nil),
+          Edit(type=:ins, a_line=nil,                b_line=Line(3, "delta")),
+          Edit(type=:ins, a_line=nil,                b_line=Line(4, "foxtrot"))
+        ]
+
+     >> right_diff.each { |edit| puts edit }
+
+      echo
+      bravo
+     -charlie
+     +delta
+     +foxtrot
+
+If we compare these diffs to the combined diff above, we see that the first column of the
+combined diff represents the left changes and the second column the right. We also see that
+lines that appear in both diffs are combined into a single change. For example, foxtrot appears
+with the prefix ++ as it’s added in both diffs, but also echo appears with a plus in the first
+column and nothing in the second — it’s added in the left diff but an unchanged line in the
+
+                                      Merging inside files
+
+right. Similarly, delta has a plus in the second column. bravo has nothing in either column;
+it’s unchanged in both diffs.
+
+The above code listing illustrates how the list of Diff::Edit objects returned by Diff.diff
+correspond to the printed output. If we examine the combined diff, we see that its lines of text
+could correspond to a list of pairs of Edit objects, one from the left and one from the right. In
+fact, it corresponds to this recombination of the above diff structures:
+     [
+         [ Edit(:del, Line(1, "alfa"), nil),    nil                                 ],
+         [ Edit(:ins, nil, Line(1, "echo")),    Edit(:eql, ..., Line(1, "echo"))    ],
+         [ Edit(:eql, ..., Line(2, "bravo")),   Edit(:eql, ..., Line(2, "bravo"))   ],
+         [ nil,                                 Edit(:del, Line(3, "charlie"), nil) ],
+         [ Edit(:eql, ..., Line(3, "delta")),   Edit(:ins, nil, Line(3, "delta"))   ],
+         [ Edit(:ins, nil, Line(4, "foxtrot")), Edit(:ins, nil, Line(4, "foxtrot")) ]
+     ]
+
+(I have omitted the type, a_line and b_line labels to save space, but the fields of the Edit
+objects appear in their usual order. The expression … indicates a Line object whose text is equal
+to the other Line in the edit, which happens for edits with the :eql type.)
+
+The first members of each pair are the Edit objects from the left diff, and the second
+members are those from the right. Because left_diff and right_diff both result from calling
+Diff.diff with merged as the second input, their edits will contain the same sequence of values
+in their b_line fields: the lines from the merged version. They can therefore be paired up by
+finding edits with the same b_line.
+
+Deletions do not have a b_line and so cannot be paired up — they sit in a row by themselves
+with nil filling the other columns. Insertions and unchanged lines can be matched up with each
+other: both have a b_line value, but only :eql edits also have an a_line. So in a combined diff,
+each row contains either a single deletion, or some combination of insertions and unchanged
+lines all having the same text.
+
+For example, take our two diffs we saw above. We’ll also make an empty list called combined
+where we’ll build up our combined diff.
+     left_diff = [
+       Edit(type=:del, a_line=Line(1, "alfa"),        b_line=nil),
+       Edit(type=:ins, a_line=nil,                    b_line=Line(1, "echo")),
+       Edit(type=:eql, a_line=Line(2, "bravo"),       b_line=Line(2, "bravo")),
+       Edit(type=:eql, a_line=Line(3, "delta"),       b_line=Line(3, "delta")),
+       Edit(type=:ins, a_line=nil,                    b_line=Line(4, "foxtrot"))
+     ]
+
+     right_diff = [
+       Edit(type=:eql, a_line=Line(1, "echo"),    b_line=Line(1, "echo")),
+       Edit(type=:eql, a_line=Line(2, "bravo"),   b_line=Line(2, "bravo")),
+       Edit(type=:del, a_line=Line(3, "charlie"), b_line=nil),
+       Edit(type=:ins, a_line=nil,                b_line=Line(3, "delta")),
+       Edit(type=:ins, a_line=nil,                b_line=Line(4, "foxtrot"))
+     ]
+
+     combined = []
+
+                                      Merging inside files
+
+left_diff begins with a deletion, so we’ll immediately shift that off into a pair in the combined
+list, with nil in the second column.
+     left_diff = [
+       Edit(type=:ins, a_line=nil,                    b_line=Line(1, "echo")),
+       Edit(type=:eql, a_line=Line(2, "bravo"),       b_line=Line(2, "bravo")),
+       Edit(type=:eql, a_line=Line(3, "delta"),       b_line=Line(3, "delta")),
+       Edit(type=:ins, a_line=nil,                    b_line=Line(4, "foxtrot"))
+     ]
+
+     right_diff = [
+       Edit(type=:eql, a_line=Line(1, "echo"),    b_line=Line(1, "echo")),
+       Edit(type=:eql, a_line=Line(2, "bravo"),   b_line=Line(2, "bravo")),
+       Edit(type=:del, a_line=Line(3, "charlie"), b_line=nil),
+       Edit(type=:ins, a_line=nil,                b_line=Line(3, "delta")),
+       Edit(type=:ins, a_line=nil,                b_line=Line(4, "foxtrot"))
+     ]
+
+     combined = [
+       [ Edit(:del, Line(1, "alfa"), nil), nil ]
+     ]
+
+Now, the next two edits in both left_diff and right_diff contain a b_line — a line from the
+merged version. We can shift these off in pairs and add them to the combined list.
+
+     left_diff = [
+       Edit(type=:eql, a_line=Line(3, "delta"),       b_line=Line(3, "delta")),
+       Edit(type=:ins, a_line=nil,                    b_line=Line(4, "foxtrot"))
+     ]
+
+     right_diff = [
+       Edit(type=:del, a_line=Line(3, "charlie"), b_line=nil),
+       Edit(type=:ins, a_line=nil,                b_line=Line(3, "delta")),
+       Edit(type=:ins, a_line=nil,                b_line=Line(4, "foxtrot"))
+     ]
+
+     combined = [
+       [ Edit(:del, Line(1, "alfa"), nil), nil                                ],
+       [ Edit(:ins, nil, Line(1, "echo")), Edit(:eql, ..., Line(1, "echo")) ],
+       [ Edit(:eql, ..., Line(2, "bravo")), Edit(:eql, ..., Line(2, "bravo")) ]
+     ]
+
+We now see a deletion at the head of right_diff, so we’ll shift that into the combined list with
+a nil in the first column.
+     left_diff = [
+       Edit(type=:eql, a_line=Line(3, "delta"),       b_line=Line(3, "delta")),
+       Edit(type=:ins, a_line=nil,                    b_line=Line(4, "foxtrot"))
+     ]
+
+     right_diff = [
+       Edit(type=:ins, a_line=nil,                    b_line=Line(3, "delta")),
+       Edit(type=:ins, a_line=nil,                    b_line=Line(4, "foxtrot"))
+     ]
+
+     combined = [
+       [ Edit(:del, Line(1, "alfa"), nil),     nil                                    ],
+       [ Edit(:ins, nil, Line(1, "echo")),     Edit(:eql, ..., Line(1, "echo"))       ],
+
+                                                       Merging inside files
+
+           [ Edit(:eql, ..., Line(2, "bravo")), Edit(:eql, ..., Line(2, "bravo"))   ],
+           [ nil,                               Edit(:del, Line(3, "charlie"), nil) ]
+       ]
+
+And finally, left_diff and right_diff now only contain edits with a b_line that can be paired
+up, leaving us with:
+       left_diff = []
+
+       right_diff = []
+
+       combined = [
+         [ Edit(:del, Line(1, "alfa"), nil),    nil                                 ],
+         [ Edit(:ins, nil, Line(1, "echo")),    Edit(:eql, ..., Line(1, "echo"))    ],
+         [ Edit(:eql, ..., Line(2, "bravo")),   Edit(:eql, ..., Line(2, "bravo"))   ],
+         [ nil,                                 Edit(:del, Line(3, "charlie"), nil) ],
+         [ Edit(:eql, ..., Line(3, "delta")),   Edit(:ins, nil, Line(3, "delta"))   ],
+         [ Edit(:ins, nil, Line(4, "foxtrot")), Edit(:ins, nil, Line(4, "foxtrot")) ]
+       ]
+
+This process generalises to any number of diffs, with the rows in the combined diff having one
+column per input diff. At each step, we shift off any deletions from the input diffs and put them
+in their own rows, and then we add a combined row where all the elements are insertions or
+unchanged lines.
+
+Let’s write a class the performs this process. As input it will take a list of diffs, which are arrays
+of Edit objects.
+       # lib/diff/combined.rb
+
+       module Diff
+         class Combined
+
+             def initialize(diffs)
+               @diffs = diffs
+             end
+
+             # ...
+
+         end
+       end
+
+We can generate a list from this class by including the Enumerable5 module and implementing
+the each method to yield rows of the combined diff; calling to_a on this class will then return
+an array containing all the rows.
+
+Rather than actually removing edits from the front of the diffs, we’ll track how far we’ve
+scanned into each one. @offsets = @diffs.map { 0 } creates an array with one element
+for each diff, where initially each offset is zero. Then in a loop, we check each diff for any
+deletions we can consume, and yield a row for each one. We check if we’ve reached the end
+of all the diffs and return if so. The final step in the loop fetches the current edit from all the
+diffs (which will all be insertions or unchanged), and advances the offsets of each diff by one,
+before yielding a row containing these grouped edits.
+ https://docs.ruby-lang.org/en/2.3.0/Enumerable.html
+
+                                                     Merging inside files
+
+       # lib/diff/combined.rb
+
+             include Enumerable
+
+             def each
+               @offsets = @diffs.map { 0 }
+
+                loop do
+                  @diffs.each_with_index do |diff, i|
+                    consume_deletions(diff, i) { |row| yield row }
+                  end
+
+                   return if complete?
+
+                   edits = offset_diffs.map { |offset, diff| diff[offset] }
+                   @offsets.map! { |offset| offset + 1 }
+
+                 yield Row.new(edits)
+               end
+             end
+
+The consume_deletions method takes a diff and its position in the @diffs array. While that
+diff’s current offset points at a deletion edit, we yield a row containing just that edit, in the
+appropriate column. Array.new(@diffs.size) makes an array the same size as @diffs, and
+we place the current edit in the correct column of that array before advancing the diff’s offset
+and yielding the row.
+       # lib/diff/combined.rb
+
+             def consume_deletions(diff, i)
+               while @offsets[i] < diff.size and diff[@offsets[i]].type == :del
+                 edits = Array.new(@diffs.size)
+                 edits[i] = diff[@offsets[i]]
+                 @offsets[i] += 1
+
+                 yield Row.new(edits)
+               end
+             end
+
+There are two other small helper methods in this class. offset_diffs returns a list of pairs
+of [offset, diff] for each diff, using Enumerable#zip6. complete? returns true if we’ve
+consumed all the input, that is all the offsets are equal to the corresponding diff’s size.
+       # lib/diff/combined.rb
+
+             def offset_diffs
+               @offsets.zip(@diffs)
+             end
+
+             def complete?
+               offset_diffs.all? { |offset, diff| offset == diff.size }
+             end
+
+ https://docs.ruby-lang.org/en/2.3.0/Enumerable.html#method-i-zip
+
+                                      Merging inside files
+
+The Diff::Combined class generates an array of Row objects, which are defined as follows.
+They just exist to hold an array of edits and turn them into a string, with the appropriate plus/
+minus markers and text selected from the Edit objects.
+     # lib/diff/combined.rb
+
+         Row = Struct.new(:edits) do
+           def to_s
+             symbols = edits.map { |edit| SYMBOLS.fetch(edit&.type, " ") }
+
+              del = edits.find { |edit| edit&.type == :del }
+              line = del ? del.a_line : edits.first.b_line
+
+             symbols.join("") + line.text
+           end
+         end
+
+Finally, a helper method on the Diff module will let us pass in an array of merged file versions
+(as), and the merge result (b), and receive the combined diff in return.
+     # lib/diff.rb
+
+       def self.combined(as, b)
+         diffs = as.map { |a| Diff.diff(a, b) }
+         Combined.new(diffs).to_a
+       end
+
+20.2.1. Unifying hunks
+Just like normal diffs, combined diffs are displayed in hunks, highlighting just the changed
+parts and omitting long stretches of unchanged content. Here’s our example again:
+     @@@ -1,3 -1,3 +1,4 @@@
+     - alfa
+     + echo
+       bravo
+      -charlie
+      +delta
+     ++foxtrot
+
+Whereas normal diffs have hunk headers that look like @@ -a,b +c,d @@, these headers have
+three @ symbols and they have multiple offsets listed with a minus sign, but still only one offset
+with a plus sign. That’s because all the diffs we’ve combined have the same b_line values,
+but different a_line values; they’re all diffs from some prior version to the merge result. The
+minus-signed offsets are the offsets of those a_line values from the pre-merge versions. Is
+there a way we can make our existing Diff::Hunk code process a list of Combined::Row objects
+to get this output?
+
+Well let’s look at what Hunk relies on. It currently takes a list of Edit objects, where Edit and
+Line are defined as:
+
+       Edit = Struct.new(:type, :a_line, :b_line)
+       Line = Struct.new(:number, :text)
+
+Diff::Hunk expects to be able to call type on its inputs and get one of :eql, :ins or :del.
+It expects to be able to call edit.a_line.number or edit.b_line.text and get something
+
+                                      Merging inside files
+
+meaningful. To make Combined::Row objects work, we need to make them respond to this
+interface.
+
+Defining type for Combined::Row is fairly simple. Diff::Hunk wants to know the type so it
+can check for unchanged lines, and Command::PrintDiff wants to use it to select the colour
+in which to print the edit. A row contains either one :del edit, or multiple :eql/:ins edits.
+We’ll make Row#type return :del or :ins if any of its edits are of that type, otherwise we’ll
+return :eql.
+     # lib/diff/combined.rb
+
+         Row = Struct.new(:edits) do
+           # ...
+
+           def type
+             types = edits.compact.map(&:type)
+             types.include?(:ins) ? :ins : types.first
+           end
+         end
+
+Defining Row#b_line is even simpler. All the edits in a Row have the same b_line — it’s either
+nil or it’s the line they were matched up on. So we can just return the b_line of the first edit
+in the row.
+     # lib/diff/combined.rb
+
+         Row = Struct.new(:edits) do
+           # ...
+
+           def b_line
+             edits.first&.b_line
+           end
+         end
+
+Defining Row#a_line is more tricky: a row contains multiple edits and all of them have a
+different a_line. Which do we pick? The answer is, we don’t pick: we use all of them, and
+adjust the Hunk code to handle this.
+
+Diff::Hunk currently assumes Edit objects respond to a_line by returning a single Line object.
+But our combined hunk headers need to display multiple a_line offsets. This can be resolved
+by realising that having a single value is just a special case of having multiple values. What if
+we adjust Diff::Hunk so that everywhere it expected a single a_line, it now expects an array
+of them? The filter method changes like so:
+     # lib/diff/hunk.rb
+
+       Hunk = Struct.new(:a_starts, :b_start, :edits) do
+         def self.filter(edits)
+           # ...
+
+           loop do
+             # ...
+
+              a_starts = (offset < 0) ? [] : edits[offset].a_lines.map(&:number)
+              b_start = (offset < 0) ? nil : edits[offset].b_line.number
+
+                                    Merging inside files
+
+             hunks.push(Hunk.new(a_starts, b_start, []))
+             offset = Hunk.build(hunks.last, edits, offset)
+           end
+         end
+
+         # ...
+       end
+
+And the Hunk#header method can be similarly adjusted so that it prints one @ symbol for each
+file version included in the diff.
+     # lib/diff/hunk.rb
+
+         def header
+           a_lines = edits.map(&:a_lines).transpose
+           offsets = a_lines.map.with_index { |lines, i| format("-", lines, a_starts[i]) }
+
+           offsets.push(format("+", edits.map(&:b_line), b_start))
+           sep = "@" * offsets.size
+
+           [sep, *offsets, sep].join(" ")
+         end
+
+         private
+
+         def format(sign, lines, start)
+           lines = lines.compact
+           start = lines.first&.number || start || 0
+
+           "#{ sign }#{ start },#{ lines.size }"
+         end
+
+Now, Row#a_lines can be simply defined to return the a_line of all the edits:
+     # lib/diff/combined.rb
+
+         Row = Struct.new(:edits) do
+           # ...
+
+           def a_lines
+             edits.map { |edit| edit&.a_line }
+           end
+         end
+
+And to make Diff::Edit compatible with the changes to Diff::Hunk, we need it to respond
+to a_lines by returning its single a_line wrapped in an array.
+     # lib/diff.rb
+
+       Edit = Struct.new(:type, :a_line, :b_line) do
+         # ...
+
+         def a_lines
+           [a_line]
+         end
+       end
+
+                                      Merging inside files
+
+This unification of the Edit and Row interfaces allows us to use the same presentation code for
+both types of diff. All we need now is a convenient function to take a list of pre-merge versions
+and a merge result, and return the hunk-filtered combined diff of them all.
+     # lib/diff.rb
+
+       def self.combined_hunks(as, b)
+         Hunk.filter(Diff.combined(as, b))
+       end
+
+20.2.2. Diffs during merge conflicts
+We can now use combined diffs to complete some functionality we skipped over in Section 19.3,
+“Conflicted diffs”: showing a combined diff for conflicted files. In Command::Diff, we can
+adjust print_conflict_diff so that it does a bit more than just printing Unmerged path if you
+didn’t specify a stage.
+     # lib/command/diff.rb
+
+         def print_conflict_diff(path)
+           targets = (0..3).map { |stage| from_index(path, stage) }
+           left, right = targets[2], targets[3]
+
+           if @options[:stage]
+             puts "* Unmerged path #{ path }"
+             print_diff(targets[@options[:stage]], from_file(path))
+           elsif left and right
+             print_combined_diff([left, right], from_file(path))
+           else
+             puts "* Unmerged path #{ path }"
+           end
+         end
+
+Command::PrintDiff#print_combined_diff is very similar to the print_diff method, it just
+presents the header information a little differently to a regular diff. After that, displaying the
+hunks and edits works exactly the same way.
+     # lib/command/shared/print_diff.rb
+
+         def print_combined_diff(as, b)
+           header("diff --cc #{ b.path }")
+
+            a_oids = as.map { |a| short a.oid }
+            oid_range = "index #{ a_oids.join(",") }..#{ short b.oid }"
+            header(oid_range)
+
+            unless as.all? { |a| a.mode == b.mode }
+              header("mode #{ as.map(&:mode).join(",") }..#{ b.mode }")
+            end
+
+            header("--- a/#{ b.diff_path }")
+            header("+++ b/#{ b.diff_path }")
+
+           hunks = ::Diff.combined_hunks(as.map(&:data), b.data)
+           hunks.each { |hunk| print_diff_hunk(hunk) }
+         end
+
+                                      Merging inside files
+
+20.2.3. Diffs for merge commits
+We can also use combined diffs to accurately display merge commits, which will help people
+reviewing changes on a branch before merging it, should that branch itself contain merges.
+Let’s add a method to Database::Commit to check if it’s a merge:
+     # lib/database/commit.rb
+
+         def merge?
+           @parents.size > 1
+         end
+
+We’ll define the --cc option to the log command so that it sets the :patch and :combined
+options.
+     # lib/command/log.rb
+
+         def define_options
+           # ...
+
+           @parser.on "--cc" do
+             @options[:combined] = @options[:patch] = true
+           end
+         end
+
+If both these options are set, then the log command will invoke this new method,
+show_merge_patch. Taking a commit, it works out the tree diff between each of the commit’s
+parents and itself. It then selects the paths that appear in all the commits, by filtering
+diffs.first.keys against the keys in the other diffs, diffs.drop(1). For each selected path,
+it selects the pre-images for the file from each tree diff and uses these to print a combined diff,
+using the print_combined_diff method we defined above.
+     # lib/command/log.rb
+
+         def show_patch(commit)
+           return unless @options[:patch]
+           return show_merge_patch(commit) if commit.merge?
+
+           # ...
+         end
+
+         def show_merge_patch(commit)
+           return unless @options[:combined]
+
+            diffs = commit.parents.map { |oid| @rev_list.tree_diff(oid, commit.oid) }
+
+            paths = diffs.first.keys.select do |path|
+              diffs.drop(1).all? { |diff| diff.has_key?(path) }
+            end
+
+            blank_line
+
+            paths.each do |path|
+              parents = diffs.map { |diff| from_entry(path, diff[path][0]) }
+              child   = from_entry(path, diffs.first[path][1])
+
+                                    Merging inside files
+
+             print_combined_diff(parents, child)
+           end
+         end
+
+One other small change we can make to the log command while we’re here: for merge
+commits, the medium format prints a line showing the IDs of the merge commit’s parents before
+displaying all the other usual details.
+     # lib/command/log.rb
+
+         def show_commit_medium(commit)
+           blank_line
+           puts fmt(:yellow, "commit #{ abbrev(commit) }") + decorate(commit)
+
+           if commit.merge?
+             oids = commit.parents.map { |oid| repo.database.short_oid(oid) }
+             puts "Merge: #{ oids.join(" ") }"
+           end
+
+           # ...
+         end
+

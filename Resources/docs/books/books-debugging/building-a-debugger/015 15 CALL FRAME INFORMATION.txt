@@ -1,0 +1,1129 @@
+CALL FRAME INFORMATION
+ The tower flows endlessly down through the depths and we
+ search for the light that marks its home.
+In this chapter, you’ll learn about DWARF call frame
+information, which will enable you to implement the backtrace,
+one of a debugger’s most useful tools for finding issues in a
+program. For any state, it shows the sequence of function calls
+the program used to arrive there, which is invaluable for
+determining the actions leading to a bug.
+
+We generate a backtrace by unwinding the function call stack:
+finding the current function’s return address, locating the
+function to which that address belongs, finding the return
+address of that function, and so on. Unwinding the stack also
+lets us restore the state of saved registers so the user can
+examine the values of variables in functions higher up the call
+stack while the program is stopped inside of a callee.
+
+We’ll write parsers for key elements of the call frame
+information, which will provide the information needed to
+unwind the stack in the next chapter.
+
+A Backtrace Example
+
+To understand why backtraces are helpful, consider the
+following program:
+
+   #include <cstdio>
+
+   void say_hello() {
+        puts("Hello");
+        puts("My name is Marshmallow");
+   }
+   void say_hello_twice() {
+       ➊ say_hello();
+       ➋ say_hello();
+   }
+   int main() {
+         say_hello_twice();
+       ➌ say_hello();
+   }
+
+If we set a breakpoint on the say_hello function and keep
+resuming the program, we’ll hit the breakpoint three times:
+once inside each of the two calls in say_hello_twice ➊ ➋, and once
+inside the call in main ➌. When stopped at those three points in
+the program execution, a debugger may generate the following
+three backtraces:
+
+   *[0]: 0x555555555151 say_hello
+    [1]: 0x55555555517a say_hello_twice
+    [2]: 0x55555555518f main
+
+   *[0]: 0x555555555151 say_hello
+    [1]: 0x55555555517f say_hello_twice
+    [2]: 0x55555555518f main
+   *[0]: 0x555555555151 say_hello
+     [1]: 0x555555555194 main
+
+Each line of the backtrace represents a function in the current
+call stack, numbered beginning with 0. The hexadecimal values
+are the value of the program counter for each stack frame.
+
+The first two backtraces have three functions in the call stack,
+because main called say_hello_twice, which called say_hello. In the
+third case, main called say_hello directly.
+
+Note that the only difference between the first two backtraces is
+the value of the program counter inside of say_hello_twice. This
+difference occurs because there are two call instructions in the
+generated code for each of the two function calls. If we look at
+the generated assembly, we can see this fact more clearly:
+
+   say_hello_twice:
+         endbr64
+         push      %rbp
+         mov       %rsp,%rbp
+     ➊ call        say_hello
+     ➋ call        say_hello
+         nop
+        pop       %rbp
+        ret
+
+In the first backtrace, the program counter points to the first
+call instruction ➊. In the second backtrace, it points to the
+second ➋.
+
+Let’s look at how DWARF encodes information about stack
+unwinding.
+
+DWARF Call Frame Information
+
+Recall from Chapter 2 that the call stack includes a frame to
+represent each function call. To unwind a single frame of the
+stack, we must know how to locate the canonical frame address
+(CFA), which is a specific point in the stack frame that we use as
+the base address for other computations. We must also know
+where the return address is stored and how to restore any
+registers whose values were saved onto the stack as part of the
+callee’s function prologue.
+
+We can obtain these details using DWARF call frame
+information, which essentially defines a huge table. Each row of
+the table lists a program counter value, and the rules in that
+row apply to the instructions ranging from that address up to,
+but not including, the program counter value in the next table
+row (or the end of the function, in the case of the last row in the
+table). Table rows encode two things: the CFA for the start of the
+current stack frame, and rules for restoring registers to the
+values that they would have if the current function
+immediately returned to its caller.
+
+Because storing the entire call frame information table would
+be infeasible due to its size, object files encode it as a space-
+efficient binary program for the DWARF parser to run, much
+like the line table program we interpreted in Chapter 13.
+
+Unfortunately, call frame information is architecture-specific,
+so the DWARF specification alone isn’t sufficient to describe
+how to unwind the stack for a given platform. Instead, we must
+consult the platform’s ABI. For instance, DWARF specifies that
+an object file should store its call frame information in the
+.debug_frame section, but compilers targeting Linux and the SYSV
+
+ABI tend to leave that section blank, instead storing a similar
+(but slightly incompatible) format in the .eh_frame section. This
+format is specified in the SYSV ABI and extended by the Linux
+Standard Base (LSB) specification, which standardizes many
+features of Linux distributions. We’ll focus on this format,
+which we’ll call the EH format.
+To complicate matters, the SYSV ABI and LSB documents are
+outdated and don’t reflect what systems use today. They
+describe a format based on DWARF 2, but more recent
+compilers sometimes output formats based on more recent
+versions of DWARF. Even worse, the version of call frame
+information they output is not tied to the version of the DWARF
+information they output outside of the .eh_frame section. For
+example, GCC may output DWARF 4 debug information but use
+an EH format based on DWARF 2 for call frame information. As
+such, we’ll support call frame information based on DWARF 2,
+3, and 4.
+
+The call frame information contains frame description entries
+(FDEs), which cover ranges of instructions. Usually, you’ll find
+an entry for each function in the program. However, many
+entries contain the same pieces of information; for example,
+they may store the return address at the same offset from the
+CFA. To avoid repetition, the call frame information can place
+these common parts in common information entries (CIEs) to
+which multiple FDEs can link.
+
+Together, CIEs and FDEs encode a series of call frame
+information instructions that describe how to compute rows of
+that huge table we just discussed. A DWARF parser can
+interpret these instructions for the entry containing the current
+program counter value to figure out how to unwind the current
+stack frame. By repeating this process using the address of the
+call instruction that led to the current function, the parser can
+unwind another stack frame, and so on, until it reaches the
+beginning of the program (which for the purposes of this
+chapter is the main function, but in reality is usually the _start
+function provided by your C++ toolchain).
+
+Common Information Entries
+
+In the EH format, CIEs consist of 10 fields:
+
+  length (std::uint32_t)   The byte size of this CIE, not including the
+  length field itself.
+
+  CIE_id (std::uint32_t)   Distinguishes CIEs from FDEs. The
+  DWARF standard specifies this field to be 0xffffffff for CIEs,
+  but the EH format specifies it to be 0.
+  version (std::uint8_t)   The version of the call frame information
+  that this CIE is representing. For formats based on DWARF 2,
+  this is 1, for formats based on DWARF 3, it is 3, and for
+  formats based on DWARF 4, it is 4.
+  augmentation_string (null-terminated string)      ABI-specific
+  augmentations. I’ll detail the options that the EH format
+  specifies momentarily.
+  address_size (std::uint8_t)   The byte size of an address on the
+  target machine. On x64, this is 8. This field is present only in
+  CIEs based on DWARF 4 and up.
+  segment_size (std::uint8_t)   The byte size of segment selectors on
+  the target machine. On x64, this is 0. This field is present only
+  in CIEs based on DWARF 4 and up.
+  code_alignment_factor (ULEB128)   Tunes the behavior of certain CFI
+  instructions.
+  data_alignment_factor (SLEB128)   Tunes the behavior of certain CFI
+  instructions.
+  return_address_register (std::uint8_t in DWARF 2, ULEB128
+
+  otherwise)       The DWARF register number for the register
+  that stores the return address. On x64, this will be register 16,
+  which is a made-up register number specifically for return
+  addresses, but which we’ve assigned to rip so that restoring
+  rip is like returning from a function.
+
+  augmentation_data (array of std::uint8_t values)   Stores data that is
+  outlined in the augmentation_string field. This field is present only
+  in the EH format, not in DWARF.
+  initial_instructions (array of std::uint8_t values)   A sequence of
+  CFI instructions that specify how to unwind the stack and are
+  prepended to all FDEs linked to this CIE.
+
+The EH format can specify augmentation data, which provides
+platform-and language-specific information, and alternate data
+encoding schemes. The augmentation_string field describes the
+contents and order of the augmentation data, and the
+augmentation_data field contains the data itself. The augmentation_string
+
+field may have the following specifiers:
+
+  z   Indicates that there is a ULEB128 specifying the size of the
+  augmentation data (not including the ULEB128 itself). If there is
+  augmentation data, this must be the first entry in it.
+  L   Indicates that there is a byte specifying the encoding of a
+  pointer to additional information for exception handling
+  routines called the language-specific data area (LSDA). We
+  won’t use this pointer in our debugger.
+  R   Indicates that there is a byte specifying the encoding of
+  FDE code pointers for linked FDEs.
+  P   Indicates that there is a byte specifying the encoding of a
+  pointer, followed by the encoded pointer itself, which
+  indicates a personality function used to handle language-
+  specific tasks by exception handling routines. We won’t use
+  this pointer in our debugger.
+
+The pointer encoding bytes are constructed from the following
+values. This scheme is woefully underdocumented, and real
+implementations don’t follow the specifications, so I’ve
+included the values that compilers actually output and noted
+how they deviate from the SYSV ABI and LSB:
+0x0    The value is stored as a pointer-sized integer (8 bytes on
+x64).
+00x1    The value is stored as an LEB128.
+00x2    The value is stored as a 2-byte integer.
+00x3    The value is stored as a 4-byte integer.
+00x4    The value is stored as an 8-byte integer.
+00x8    The value is signed.
+00x10 (program counter relative)         The value is relative to
+the current parser position (not the current program counter,
+as specified in the SYSV ABI and LSB).
+00x20 (.text section relative)    The value is relative to the start
+of the .text section. GCC doesn’t generate this encoding for
+x64, but we’ll implement it anyway.
+00x30 (data section relative)      The trickiest value, as it’s
+completely architecture-dependent and nearly
+undocumented. The value is relative to the start of the
+.eh_frame_hdr section if the pointer is in the .eh_frame_hdr section
+
+and to 0 otherwise (on x64). The LSB and SYSV ABI describe
+this value differently, and neither reflects what real tools
+output.
+00x40 (function relative)      The value is relative to the start of
+the function to which the unwind information applies.
+00x50 (aligned absolute)       The encoded pointer value has
+been padded to lie on a word-sized address boundary. Never
+  used for x64; necessary only for platforms whose exception
+  information needs updating at runtime and who don’t
+  support unaligned writes.
+  00x80 (indirect)    The value gives a memory address that
+  stores the actual pointer value to use. On x64, this is only
+  ever used to encode the pointer to the personality routine.
+  This routine usually lives in the standard library, which is
+  usually dynamically loaded, meaning the pointer needs
+  updating at runtime. Because we don’t use the personality
+  routine in our debugger, we don’t need to handle this
+  encoding.
+
+Fun fact: the indirect encoding doesn’t come from the DWARF
+standard, the SYSV ABI, or the LSB; it’s an undocumented GCC
+extension that the entire ecosystem now depends on because
+GCC is so ubiquitous.
+
+Pointer encoding bytes are constructed by bitwise ORing the
+integer type identifier (bits 0, 1, and 2), the signedness (bit 3),
+and the relativity (the remaining bits).
+
+Let’s consider an augmentation example to make this
+information more concrete. If the augmentation_string field contains
+the string zR, the augmentation _data field contains a ULEB128 that
+encodes the size of the rest of the augmentation data, followed
+by a byte that gives the encoding for code pointers in FDEs
+linked to this CIE. This byte could specify that pointers are
+encoded as signed LEB128 values relative to the start of the .text
+section. In this case, the bit pattern would be 0x1 | 0x8 | 0x20 =
+0b00101001.
+
+Frame Description Entries
+
+FDEs consist of only 6 fields, compared to the 10 fields of CIEs:
+
+   length (std::uint32_t)   The byte size of this FDE, not including
+   the length field itself.
+   CIE_id (std::int32_t)    The negative distance from the current
+   parse position to the linked CIE. For example, a value of 40
+   means that the CIE starts at 40 bytes before the current parse
+   position.
+   initial_location (encoded pointer)      A pointer to the first
+   instruction to which this FDE applies. The encoding for this
+   pointer is given by the R augmentation of the linked CIE and
+   defaults to 64-bit absolute values if there is no R
+   augmentation.
+   address_range (encoded integer)      The byte size of the code to
+   which this FDE applies. The encoding for this pointer is given
+   by the R augmentation of the linked CIE and defaults to 64-bit
+   absolute values if there is no R augmentation. However, this
+  value should always be interpreted as an absolute integer
+  value, even if the R augmentation says it should be relative to
+  some base address.
+  augmentation_data (array of std::uint8_t)   Stores data that is
+  outlined in the linked CIE’s augmentation_string field. This field is
+  present only in the EH format, not DWARF.
+  instructions (array of std::uint8_t)   A sequence of call frame
+  information instructions that specify how to unwind the
+  stack.
+
+To implement stack unwinding, we’ll begin by parsing the call
+frame information, then write an interpreter for call frame
+information instructions that can unwind a single stack frame.
+We can use this interpreter to unwind the entire stack.
+
+Parsing Common Information Entries
+
+Let’s start by writing a type we’ll use to manage call frame
+information and store CIEs. We don’t need to store all of a CIE’s
+fields, because version, CIE_id, and return_address_register should
+always be the same. Also, we’ll check whether linked FDEs
+contain augmentation information (meaning the CIE’s
+augmentation string is non-empty) and, if so, record the
+encoding for FDE code pointers. Begin defining the type in
+sdb/include/libsdb/dwarf.hpp, above the definition of sdb::dwarf:
+   namespace sdb {
+        class dwarf;
+        class call_frame_information {
+        public:
+            struct common_information_entry {
+                  std::uint32_t length;
+                  std::uint64_t code_alignment_factor;
+                  std::int64_t data_alignment_factor;
+                  bool fde_has_augmentation;
+                  std::uint8_t fde_pointer_encoding;
+                  span<const std::byte> instructions;
+             };
+
+             call_frame_information() = delete;
+             call_frame_information(const call_frame_i
+             call_frame_information& operator=(const c
+
+             const dwarf& dwarf_info() const { return
+
+        private:
+            const dwarf* dwarf_;
+        };
+   }
+
+We delete the type’s copy and default construction operations,
+but we’ll add a constructor to this type soon. We store a pointer
+to the sdb::dwarf object that this call frame information belongs to,
+as we’ll need to use it in a few places in the parser.
+
+FDEs reference CIEs by their offset in the object file. As such,
+when parsing an FDE, we’ll need to be able to quickly retrieve a
+CIE from this offset. To facilitate this retrieval, we’ll parse CIEs
+when they are required and cache them in a map from offsets
+to sdb::call_frame_information objects. We’ll parse FDEs when the
+stack unwinder requires them. Add this map to
+sdb::call_frame_information:
+
+    namespace sdb {
+        class call_frame_information {
+        public:
+            --snip--
+            const common_information_entry& get_cie(f
+
+          private:
+              --snip--
+              mutable std::unordered_map<std::uint32_t
+          };
+    }
+
+We add a member that stores the map and a function to
+retrieve a CIE from the offset at which it begins. We declare
+cie_map_ as mutable because it’s used as a cache.
+
+Let’s implement get_cie and assume that we’ve already written a
+parse_cie function that parses the CIE at the given offset.
+
+Implement get_cie in sdb/src/dwarf.cpp:
+
+   const sdb::call_frame_information::common_informa
+   sdb::call_frame_information::get_cie(file_offset
+       auto offset = at.off();
+       if (cie_map_.count(offset)) {
+           return cie_map_.at(offset);
+       }
+
+         auto section = at.elf_file()->get_section_con
+         cursor cur({ at.elf_file()->file_offset_as_da
+         auto cie = parse_cie(cur);
+         cie_map_.emplace(offset, cie);
+         return cie_map_.at(offset);
+   }
+
+We look up the given offset in the CIE cache. If we’ve already
+parsed this CIE, we return it. Otherwise, we construct a cursor
+from the specified offset into the ELF file up to the end of the
+.eh_frame section. We parse the CIE there, emplace it into the map,
+
+and return a reference to the stored CIE.
+Now we can start writing the parser. Add a parse_cie function to
+sdb/src/dwarf.cpp that will parse a single CIE at a given cursor
+position. We’ll write it piece by piece, starting by parsing all the
+components up to the augmentation string:
+
+   namespace {
+       sdb::call_frame_information::common_informati
+       parse_cie(cursor cur) {
+           auto start = cur.position();
+           auto length = cur.u32() + 4;
+           auto id = cur.u32();
+           auto version = cur.u8();
+
+              if (!(version == 1 or version == 3 or ve
+                  sdb::error::send("Invalid CIE version
+              }
+
+We record the start of the CIE for later use. We then parse all
+the elements of the CIE one by one. We add 4 to the parsed
+length because the length field doesn’t include its own size. If the
+CIE version is a value other than 1, 3, or 4, we throw an error.
+
+Next, we parse up to the augmentation data:
+              --snip--
+              auto augmentation = cur.string();
+
+              if (!augmentation.empty() and augmentatio
+                  sdb::error::send("Invalid CIE augment
+              }
+
+              if (version == 4) {
+                  auto address_size = cur.u8();
+                  auto segment_size = cur.u8();
+                  if (address_size != 8)
+                      sdb::error::send("Invalid address
+                  if (segment_size != 0)
+                      sdb::error::send("Invalid segment
+              }
+
+              auto code_alignment_factor = cur.uleb128
+              auto data_alignment_factor = cur.sleb128
+              auto return_address_register =
+                  version == 1 ? cur.u8() : cur.uleb128
+
+We first parse the augmentation string. If this string is not
+empty, it must start with z, the specifier for the augmentation
+data size, to enable consumers to easily skip over the
+augmentation data if they want to. We throw an error if this is
+not the case. If the CIE version is 4, then there are fields for the
+address and segment sizes. We parse them and throw errors if
+they have unexpected values. We then parse the code and data
+alignment factors and the return address register, whose
+encoding depends on the CIE version.
+
+Next, we’ll handle the augmentation data. The data for the z, R,
+and P specifiers is of fixed length, so these specifiers are easy to
+parse. The L specifier is trickier, as the pointer’s length depends
+on the specified encoding. Because we won’t actually use this
+pointer, we don’t care about the relative part of the encoding.
+We’ll assume that a parse_eh_frame_pointer_with_base function parses a
+pointer at the given cursor position with a given encoding and a
+given base address. Its signature will look like this:
+
+   std::uint64_t parse_eh_frame_pointer_with_base(
+        cursor& cur, std::uint8_t encoding, std::uin
+
+Whether the base address and return value are file offsets or
+file addresses depends on the context in which we parse the
+pointer, so we use bare integers here. We’ll implement this
+function when we’ve finished writing parse_cie, which continues
+as follows:
+              --snip--
+              std::uint8_t fde_pointer_encoding = DW_EH
+              for (auto c : augmentation) {
+                   switch (c) {
+                   case 'z': cur.uleb128(); break;
+                   case 'R': fde_pointer_encoding = cur
+                   case 'L': cur.u8(); break;
+                   case 'P': {
+                       auto encoding = cur.u8();
+                       (void)parse_eh_frame_pointer_with
+                       break;
+                   }
+                   default: sdb::error::send("Invalid CI
+                   }
+              }
+
+We define an fde_pointer_encoding type to hold the encoding. By
+default, an FDE code pointer’s encoding uses an absolute 64-bit
+address. The DW_EH _PE_* macros produce understandable names
+for the bitmask values you saw in “Common Information
+Entries” on page 430. We then loop over all specifiers in the
+augmentation string.
+
+The z specifier gives the length of the augmentation data as a
+ULEB128. We don’t need this value, so we parse it and throw it
+
+away. The R specifier gives the pointer encoding for code
+pointers in linked FDEs as a byte. We do need this information
+for decoding FDE data, so we save it.
+
+We don’t need the L specifier, so we throw it away. The P
+specifier gives the pointer encoding for the personality routine
+as a byte, followed by a pointer encoded using that scheme. We
+don’t need this pointer, so we first parse the encoding, then
+parse the encoded pointer and throw it away.
+
+Finally, we can save a span representing the call frame
+information instructions and package the data in a
+common_frame_information object:
+
+                --snip--
+                sdb::span<const std::byte> instructions =
+                     cur.position(), start + length
+                };
+                bool fde_has_augmentation = !augmentation
+                return { length, code_alignment_factor,
+                          data_alignment_factor, fde_has_a
+                          fde_pointer_encoding, instructio
+          }
+   }
+The instructions span from the end of the augmentation data to
+the end of the CIE. We could execute these instructions now and
+save the state of the interpreter to avoid recomputing the same
+data, but for simplicity, we’ll just store the instruction bytes.
+Linked FDEs contain augmentation data so long as the CIE also
+contains augmentation data, so we compute whether there is
+data. We then return the common_frame_information object.
+
+Now we can implement parse_eh_frame_pointer_with_base, the pointer
+parsing function. The least significant 4 bits of the encoding
+byte tell us how to interpret the pointer:
+
+   namespace {
+       std::uint64_t parse_eh_frame_pointer_with_bas
+           cursor& cur, std::uint8_t encoding, std:
+           switch (encoding & 0x0f) {
+           case DW_EH_PE_absptr: return base + cur.u
+           case DW_EH_PE_uleb128: return base + cur
+           case DW_EH_PE_udata2: return base + cur.u
+           case DW_EH_PE_udata4: return base + cur.u
+           case DW_EH_PE_udata8: return base + cur.u
+           case DW_EH_PE_sleb128: return base + cur
+           case DW_EH_PE_sdata2: return base + cur.s
+              case DW_EH_PE_sdata4: return base + cur.s
+              case DW_EH_PE_sdata8: return base + cur.s
+              default: sdb::error::send("Unknown eh_fra
+               }
+         }
+   }
+
+We retrieve the integer encoding specifier from the encoding
+byte, then compare the result with the binary encoding macros.
+Using the macro that matches the data, we parse the relevant
+integral type and add it to the base address. We handle
+unknown encodings and then return the computed pointer
+value.
+
+We also need to deal with the most significant 4 bits of the
+encoding byte, which tell us what address the pointer is relative
+to. We’ll define a parse _eh_frame_pointer function that will take the
+cursor, the encoding, and the four base addresses to use for the
+four relative encoding schemes we need to handle:
+
+   namespace {
+       std::uint64_t parse_eh_frame_pointer(
+             const sdb::elf& elf,
+             cursor& cur, std::uint8_t encoding,
+             std::uint64_t pc, std::uint64_t text_se
+             std::uint64_t data_section_start, std:
+           std::uint64_t base = 0;
+           switch (encoding & 0x70) {
+              case DW_EH_PE_absptr: break;
+              case DW_EH_PE_pcrel:
+                  base = pc; break;
+              case DW_EH_PE_textrel:
+                  base = text_section_start; break;
+              case DW_EH_PE_datarel:
+                  base = data_section_start; break;
+              case DW_EH_PE_funcrel:
+                  base = func_start; break;
+              default: sdb::error::send("Unknown eh_fra
+              }
+
+              return parse_eh_frame_pointer_with_base(c
+         }
+   }
+
+Like in parse_eh_frame_pointer_with_base, whether the base addresses
+and return value are file offsets or file addresses is context-
+dependent, so we use raw integers for them. We initialize base to
+0. We then mask out the least significant 4 bits and the most
+
+significant bit and determine which of the relevant DW_EH_PE_*
+macros the result corresponds to. We mask out the most
+significant bit (0x80) because it corresponds to the indirect
+encoding scheme, which we don’t need to handle.
+If the pointer is absolute, the base address is 0. Otherwise, the
+base address is one of the four values given as arguments. In
+each case, we throw an exception if no supplied base address
+exists for the requested encoding. We then call
+parse_eh_frame_pointer_with_base with the base address we calculated
+
+and return the result.
+
+This function completes the CIE parser. We’ll hook it into the
+rest of our code later, after we’ve implemented FDE parsing.
+Let’s move on to that now.
+
+Parsing Frame Description Entries
+
+FDEs are simpler than CIEs but quite similar in structure, so
+you don’t need to learn any new concepts to parse them. Let’s
+add a nested type to sdb::call _frame_information to hold their data.
+We don’t need to store the augmentation information, as the
+debugger won’t use it. Define the type in
+sdb/include/libsdb/dwarf.hpp, below the definition of
+common_information_entry:
+
+    namespace sdb {
+        class call_frame_information {
+        public:
+            --snip--
+              struct frame_description_entry {
+                  std::uint32_t length;
+                    const common_information_entry* cie;
+                    file_addr initial_location;
+                    std::uint64_t address_range;
+                    span<const std::byte> instructions;
+              };
+              --snip--
+         };
+   }
+
+We’ll implement the FDE parser in sdb/src/dwarf.cpp. It will take
+a reference to the sdb::call_frame_information object to which the FDE
+belongs and a cursor to the beginning of the FDE. As with the
+CIE parser, we’ll implement this function piece by piece, starting
+with the code to handle the length:
+
+   namespace {
+       sdb::call_frame_information::frame_descriptio
+       parse_fde(const sdb::call_frame_information&
+           auto start = cur.position();
+           auto length = cur.u32() + 4;
+
+Like in the CIE parser, we save the start location and add 4 to
+the parsed length, because the length field doesn’t include its
+own size.
+
+Next, we parse the offset to the linked CIE, which the FDE
+expresses as a negative offset from the current parse position.
+To look up the parsed CIE in the CIE map, we need to convert it
+into a file offset. No function in sdb::elf can achieve this, so let’s
+add a couple of simple helpers to sdb/include/libsdb/elf.hpp:
+
+   namespace sdb {
+       class elf {
+       public:
+           --snip--
+           file_offset data_pointer_as_file_offset(c
+                return file_offset(*this, ptr - data_
+           }
+           const std::byte* file_offset_as_data_poin
+                return data_ + offset.off();
+           }
+           --snip--
+       };
+   }
+
+These functions convert between file offsets and data pointers.
+Now, back in the implementation of parse_fde, we can parse CIE
+offsets and look them up in the CIE map:
+              --snip--
+              auto elf = cfi.dwarf_info().elf_file();
+              auto current_offset = elf->data_pointer_a
+              sdb::file_offset cie_offset { *elf, curre
+              auto& cie = cfi.get_cie(cie_offset);
+
+We retrieve the sdb::elf object to which this call frame
+information belongs and convert the current cursor position
+into a file offset. We then parse the distance to the linked CIE
+and subtract it from the current cursor offset to get the offset of
+the linked CIE from the start of the object file. We use this offset
+to retrieve the CIE, potentially parsing it and caching it.
+
+The next field to parse is initial_location. The FDE encodes this
+field according to the R augmentation in the linked CIE, so we’ll
+make use of the parse_eh_frame_pointer function we wrote earlier to
+decode it:
+
+              --snip--
+              current_offset = elf->data_pointer_as_fil
+              auto text_section_start = elf->get_sectio
+                   .value_or(sdb::file_addr{});
+              auto initial_location_addr = parse_eh_fra
+                   *elf, cur, cie.fde_pointer_encoding,
+                    text_section_start.addr(), 0, 0);
+                sdb::file_addr initial_location{ *elf, in
+
+We recalculate the current parse offset and retrieve the start of
+the .text section from the ELF file. We then pass this information
+to parse_eh_frame _pointer to parse the encoded pointer. We’re not in
+the .eh_frame_hdr section, so we pass 0 for the penultimate
+argument. No function is currently being executed, so we pass 0
+for the final argument as well.
+
+Next, we parse the address_range field. While also encoded
+according to the R augmentation in the linked CIE, only the low
+4 bits are used for address _range, so we can call
+parse_eh_frame_pointer_with_base rather than parse_eh _frame_pointer to
+
+handle it:
+
+                --snip--
+                auto address_range = parse_eh_frame_point
+                     cur, cie.fde_pointer_encoding, 0);
+
+Next is the augmentation data. We’ve recorded whether this
+data should exist in the fde_has_augmentation section of the linked
+CIE. If the FDE has augmentation data, the first entry must be
+the size of the augmentation data. Because we don’t need any of
+this information, we’ll just read the length of the data and skip
+past it:
+
+               --snip--
+               if (cie.fde_has_augmentation) {
+                   auto augmentation_length = cur.uleb12
+                   cur += augmentation_length;
+               }
+
+Finally, we create a span that captures the position of the CFI
+instructions and return all of the data we parsed:
+
+               --snip--
+               sdb::span<const std::byte> instructions =
+               return { length, &cie, initial_location,
+           }
+   }
+
+Before we hook these parsers into our codebase and move on to
+interpreting the call frame information instructions, we must
+add one more substantial piece of support: a fast way to look up
+the FDE that corresponds to a given instruction.
+
+Looking Up Frame Description Entries
+If we want to unwind the stack from a given instruction, we
+need the ability to take the address of that instruction and find
+the FDE that holds the unwind information for it. However,
+there may be thousands, tens of thousands, or even hundreds of
+thousands of FDEs, so performing a linear search is impractical.
+
+Fortunately, a section in the ELF file called .eh_frame_hdr contains a
+fast lookup table for FDEs. You can find a description of this EH
+frame header section in section 10.6.2 of the generic part of the
+LSB core specification
+(https://refspecs.linuxbase.org/LSB_5.0.0/LSB-Core-generic/LSB-
+Core-generic.html).
+
+By parsing this section, we can perform a binary search on the
+initial _location value to locate the FDE that corresponds to a
+
+given instruction. Let’s implement such a parser.
+
+Parsing the EH Frame Header
+
+The .eh_frame_hdr section contains a binary search table that maps
+addresses to offsets of the FDEs that store the corresponding
+unwind information. The section consists of seven fields:
+
+  version (std::uint8_t)   The version of the .eh_frame_hdr format
+  (must be 1).
+  eh_frame_ptr_enc (std::uint8_t)   The encoding format of the
+  eh_frame_ptr field.
+
+  fde_count_enc (std::uint8_t)   The encoding format of the fde_count
+  field.
+  table_enc (std::uint_8_t)   The encoding format of the entries in
+  the binary search table. This will always be a fixed-size
+  encoding (that is, not ULEB128) because otherwise jumping to
+  arbitrary entries would not be possible.
+  eh_frame_ptr (encoded pointer)        A pointer to the start of the
+  .eh_frame section.
+
+  fde_count (encoded integer)         The number of entries in the
+  binary search table. This will always be an absolute
+  encoding.
+  binary_search_table (array of integers encoded according to the
+
+  table_enc field)      A table containing the number of entries
+  given by the fde_count field. Each entry of the table corresponds
+  to a single FDE and consists of two encoded integers: the
+  value of the initial_location field for the FDE and the offset of
+  the FDE from the start of the object file. The entries are
+  sorted in an ascending order by the initial_location value.
+
+Fields that specify encoding formats follow the scheme used in
+the CIE and FDE augmentations, described in “Common
+Information Entries” on page 430.
+To hold the header information, we’ll add a nested eh_hdr type to
+sdb:: call_frame_information in sdb/src/dwarf.hpp:
+
+   namespace sdb {
+       class call_frame_information {
+         public:
+             --snip--
+             struct eh_hdr {
+                  const std::byte* start;
+                  const std::byte* search_table;
+                  std::size_t count;
+                  std::uint8_t encoding;
+                  call_frame_information* parent;
+                  const std::byte* operator[](file_add
+             };
+             --snip--
+         };
+   }
+
+We store a pointer to the start of the .eh_frame_hdr section, as we’ll
+need this value to decode certain pointers. We also need a
+pointer to the start of the search table, the number of entries in
+the table, the entries’ encoding, and a pointer to the parent call
+frame information. We then declare a function that takes an
+instruction’s object file offset and returns a pointer to the start
+of the FDE for that instruction.
+To perform the parsing, we’ll write a parse_eh_hdr function in
+sdb/src/dwarf.cpp. We begin by gathering information from the
+ELF file about the start of various sections, as we’ll need it to
+initialize our cursor and parse encoded pointers:
+
+   namespace {
+       sdb::call_frame_information::eh_hdr
+       parse_eh_hdr(sdb::dwarf& dwarf) {
+           auto elf = dwarf.elf_file();
+           auto eh_hdr_start = *elf->get_section_sta
+           auto text_section_start = *elf->get_secti
+
+We retrieve the sdb::elf for the given sdb::dwarf and then retrieve
+start addresses for the .eh_frame_hdr and .text sections, which we’ll
+need to decode pointers. Next, we initialize the cursor with the
+data from the .eh_frame _hdr section and parse the first four fields:
+
+              --snip--
+              auto eh_hdr_data = elf->get_section_conte
+              cursor cur(eh_hdr_data);
+
+              auto start = cur.position();
+              auto version = cur.u8();
+              auto eh_frame_ptr_enc = cur.u8();
+               auto fde_count_enc = cur.u8();
+               auto table_enc = cur.u8();
+
+Now we parse the encoded pointer to the .eh_frame section. We
+don’t really need this value, as we can easily retrieve the
+pointer from sdb::elf, so we throw away the encoded pointer:
+
+               --snip--
+               (void)parse_eh_frame_pointer_with_base(cu
+
+Next, we parse the FDE count. This value should always be
+absolute, so we use parse_eh_frame_pointer_with_base:
+
+               --snip--
+               auto fde_count = parse_eh_frame_pointer_w
+                    cur, fde_count_enc, 0);
+
+Finally, we save the current cursor position, which points to the
+start of the search table, and return the parsed eh_frame_hdr object:
+
+               --snip--
+               auto search_table = cur.position();
+               return { start, search_table, fde_count,
+         }
+   }
+
+We don’t yet have an sdb::call_frame_information object to store as the
+parent for this object, so we pass nullptr for now; we’ll fill in the
+parent later. With the parser complete, we can implement the []
+operator for looking up entries in the table.
+
+Searching the EH Frame Table
+
+It’s time to write a binary search algorithm. Unfortunately, we
+can’t use the existing std::binary_search function in the C++
+standard library, because we’re operating on raw bytes that we
+must interpret as we go. Also, while we’ll perform a more or
+less standard binary search, we don’t require an exact match.
+In other words, rather than retrieving the FDE’s initial address,
+we might look for an address that lies in that FDE’s range of
+addresses. The algorithm we’ll implement looks like this:
+
+1. Start with low = 0 and high = fde_count - 1.
+2. Find the midpoint (mid) between low and high.
+3. Decode the initial address of the table entry whose index is
+  mid.
+
+4. If that address is less than the address we’re looking for, set
+  low to mid + 1. If, instead, that address is greater than the
+  address we’re looking for, set high to mid - 1. Otherwise, set high
+  to mid and stop looking.
+5. Go back to step 2 so long as low doesn’t exceed high.
+
+At the end of this process, high will contain the index of the entry
+whose initial address is closest to, but doesn’t exceed, the
+address we’re looking for.
+
+To jump to an arbitrary table entry, we must know each entry’s
+byte size, held in the table_enc field of the .eh_frame_hdr section. Let’s
+write a function in sdb/src/dwarf.cpp to get the byte size for a
+given encoding scheme:
+
+   namespace {
+       std::size_t eh_frame_pointer_encoding_size(st
+           switch (encoding & 0x7) {
+           case DW_EH_PE_absptr: return 8;
+           case DW_EH_PE_udata2: return 2;
+           case DW_EH_PE_udata4: return 4;
+           case DW_EH_PE_udata8: return 8;
+           default: sdb::error::send("Invalid pointe
+               }
+         }
+   }
+Recall from the description in “Common Information Entries”
+on page 430 that the least significant 3 bits of the encoding byte
+determine whether the value is encoded as an LEB128 or as a 2-
+byte, 4-byte, or 8-byte integer. As such, we mask out the other
+bits and compare the result to the relevant DW_EH_PE_* macro. Note
+that we don’t need to check the signed versions of those macros,
+because we mask out the sign bit.
+
+With this helper function written, we can implement the binary
+search function. Let’s begin by retrieving the start of the .text
+section, so we can use it for decoding pointers, and then
+calculating the size of each table row:
+
+   const std::byte*
+   sdb::call_frame_information::eh_hdr::operator[](f
+       auto elf = address.elf_file();
+       auto text_section_start = *elf->get_section_s
+       auto encoding_size = eh_frame_pointer_encodin
+        auto row_size = encoding_size * 2;
+
+Each row of the table stores two values, so the row size is twice
+the size of the pointer encoding. Next is the main loop, which
+translates the algorithm I described in this section into code:
+--snip--
+std::size_t low = 0;
+std::size_t high = count - 1;
+while (low <= high) {
+    std::size_t mid = (low + high) / 2;
+
+    cursor cur({ search_table + mid * row_siz
+                 search_table + count * row_s
+    auto current_offset = elf->data_pointer_a
+    auto eh_hdr_offset = elf->data_pointer_as
+    auto entry_address = parse_eh_frame_point
+        text_section_start.addr(), eh_hdr_off
+
+    if (entry_address < address.addr()) {
+        low = mid + 1;
+    }
+    else if (entry_address > address.addr())
+        if (mid == 0)
+            sdb::error::send("Address not fou
+        high = mid - 1;
+    }
+    else {
+        high = mid;
+        break;
+    }
+}
+The trickiest bit of this algorithm is calculating the cursor
+position and then parsing the pointer value found there ➊. The
+cursor’s start location is search_table + mid * row_size because mid *
+row_size translates the midpoint table index into a byte offset
+
+from the start of the search table. Adding this offset to the
+pointer to the start of the search table gives us a pointer to the
+byte corresponding to the table entry at index mid. Similarly, count
+* row_size gives us the byte offset of the end of the search table.
+
+When we call parse_eh_frame_pointer, we pass the current parse
+offset as the program counter value and the offset of the start of
+the .eh_frame_hdr section as the data section base address. The
+current function being executed is irrelevant, so we pass 0 as
+the last argument.
+
+Another tricky bit of this algorithm involves the if...else blocks
+toward the end. If we find an entry that is lower than the
+desired address, we set low to mid + 1. If the desired address is
+between the entries at mid and mid + 1 at that point of the
+algorithm, however, we’ll end up looking at the element one
+past the one we actually want. This is fine, because in the
+condition where we find an entry greater than the desired
+address, we set high to mid - 1, which gets us to the correct entry
+in the end.
+After this code runs, the table index for the desired entry will
+be stored in high. All that’s left is to parse the second pointer in
+that entry to retrieve the object file offset of the FDE we’re
+looking for:
+
+         --snip--
+         cursor cur({ search_table + high * row_size +
+                       search_table + count * row_size
+         auto current_offset = elf->data_pointer_as_fi
+         auto eh_hdr_offset = elf->data_pointer_as_fil
+         auto fde_offset_int = parse_eh_frame_pointer
+              *elf, cur, encoding, current_offset.off(
+              text_section_start.addr(), eh_hdr_offset
+         sdb::file_offset fde_offset{ *elf, fde_offset
+         return elf->file_offset_as_data_pointer(fde_o
+   }
+
+The cursor’s start position is search_table + high * row_size + encoding
+_size, because search_table + high * row_size gives us a pointer to the
+
+start of the desired entry and adding encoding_size skips over the
+initial_address value, resulting in a pointer to the encoded FDE
+
+pointer. We parse this pointer, convert it to a data pointer from
+which we can read, and return it.
+
+Adding the Parsers to the Debugger
+At this point, we’ve created a functional lookup table for FDEs.
+Now we can hook our various parsers into the sdb::dwarf and
+sdb::call_frame_information types. Add an eh_hdr member to
+
+sdb::call_frame_information as well as a constructor that fills in all of
+
+the members in sdb/include/libsdb/dwarf.hpp:
+
+   namespace sdb {
+       class call_frame_information {
+       public:
+           --snip--
+           call_frame_information(const dwarf* dwarf
+                : dwarf_(dwarf), eh_hdr_(hdr) {
+                eh_hdr_.parent = this;
+           }
+
+         private:
+             --snip--
+             eh_hdr eh_hdr_;
+         };
+   }
+
+The constructor fills in the members of sdb::call_frame_information
+and then sets the parent of eh_hdr_ to itself. Add members to
+sdb::dwarf to store and expose the call frame information:
+   namespace sdb {
+         class dwarf {
+         public:
+             --snip--
+               const call_frame_information& cfi() const
+
+         private:
+             --snip--
+             std::unique_ptr<call_frame_information> c
+         };
+   }
+
+Recall that sdb::call_frame_information objects can’t be copied or
+default-constructed, so we store a std::unique_ptr instead of storing
+the call_frame _information object directly.
+
+In sdb/src/dwarf.cpp, we implement a parse_call_frame_information
+type that parses the .eh_frame_hdr section:
+
+   namespace {
+       std::unique_ptr<sdb::call_frame_information>
+       parse_call_frame_information(sdb::dwarf& dwa
+           auto eh_hdr = parse_eh_hdr(dwarf);
+
+               return std::make_unique<sdb::call_frame_i
+                   &dwarf, eh_hdr);
+          }
+   }
+
+We parse the .eh_frame_hdr section and then wrap the data in an
+sdb::call _frame_information object.
+
+Call the parse_call_frame_information function in the constructor for
+sdb:: dwarf to initialize the CIE map:
+
+   sdb::dwarf::dwarf(const sdb::elf& parent) : elf_
+       compile_units_ = parse_compile_units(*this, p
+       cfi_ = parse_call_frame_information(*this);
+   }
+
+All the parsing and data plumbing of the call frame information
+is now complete.
+
+Summary
+
+In this chapter, you learned how DWARF call frame information
+encodes the information that a debugger needs to unwind the
+program stack. You implemented parsers for CIEs and FDEs and
+hooked them in to libsdb.
+In the next chapter, you’ll implement a stack unwinder that
+uses the parsers you just implemented.
+
+Check Your Knowledge
+
+1.
+1. What are the two kinds of entry in DWARF call frame
+  information?
+2.
+2. Why are there two kinds of entry rather than just one?
+3.
+3. What is the canonical frame address (CFA)?
+4.
+4. What DWARF register number is used for the return address
+  on x64?
+5.
+5. What is augmentation data?
+6.
+6. In which documents is the format of call frame information
+  on Linux systems defined?

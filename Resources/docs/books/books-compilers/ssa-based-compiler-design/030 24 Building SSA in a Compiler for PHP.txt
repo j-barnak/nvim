@@ -1,0 +1,473 @@
+Chapter 24
+Building SSA in a Compiler for PHP
+
+Paul Biggar and David Gregg
+
+Dynamic scripting languages such as PHP, Python, and JavaScript are among the
+most widely used programming languages.
+   Dynamic scripting languages provide flexible high-level features, a fast modify-
+compile-test environment for rapid prototyping, strong integration with popular
+strongly typed programming languages, and an extensive standard library. Dynamic
+scripting languages are widely used in the implementation of many of the best-
+known web applications of the last decade such as Facebook, Wikipedia, and Gmail.
+Most web browsers support scripting languages such as JavaScript for client-side
+applications that run within the browser. Languages such as PHP and Ruby are
+popular for server-side web pages that generate content dynamically and provide
+close integration with back-end databases.
+   One of the most widely used dynamic scripting languages is PHP, a general-
+purpose language that was originally designed for creating dynamic web pages.
+PHP has many of the features that are typical of dynamic scripting languages. These
+include a simple syntax, dynamic typing and the ability to dynamically generate new
+source code during runtime, and execute that code. These simple flexible features
+facilitate rapid prototyping, exploratory programming, and in the case of many non-
+professional websites, a copy-paste-and-modify approach to scripting by non-expert
+programmers.
+   Constructing SSA form for languages such as C/C++ and Java is a well-studied
+problem. Techniques exist to handle the most common features of static languages,
+and these solutions have been tried and tested in production-level compilers over
+many years. In these static languages, it is not difficult to identify a set of scalar
+
+P. Biggar ()
+Darklang, New York, NY, USA
+e-mail: paul.biggar@gmail.com
+D. Gregg
+Trinity College, Dublin, Ireland
+e-mail: David.Gregg@tcd.ie
+
+© The Author(s), under exclusive license to Springer Nature Switzerland AG 2022   347
+F. Rastello, F. Bouchez Tichadou (eds.), SSA-based Compiler Design,
+https://doi.org/10.1007/978-3-030-80515-9_24
+348                                                              P. Biggar and D. Gregg
+
+variables that can be safely renamed. Better analysis may lead to more such variables
+being identified, but significant numbers of such variables can be found with very
+simple analysis.
+   In our study of optimizing dynamic scripting languages, specifically PHP, we
+find this is not the case. The information required to build SSA form—that is, a
+conservatively complete set of unaliased scalars, and the locations of their uses and
+definitions—is not available directly from the program source and cannot be derived
+from a simple analysis. Instead, we find a litany of features whose presence must be
+ruled out, or heavily analysed, in order to obtain a non-pessimistic estimate.
+   Dynamic scripting languages commonly feature runtime generation of source
+code, which is then executed, built-in functions, and variable-variables, all of which
+may alter arbitrary unnamed variables. Less common—but still possible—features
+include the existence of object handlers which have the ability to alter any part of
+the program state, most dangerously a function’s local symbol table. The original
+implementations of dynamic scripting languages were all interpreted, and in many
+cases, this led to their creators including very dynamic language features that are
+easy to implement in an interpreter but make program analysis and compilation
+very difficult.
+   Ruling out the presence of these features requires precise, inter-procedural,
+whole-program analysis. We discuss the futility of the pessimistic solution, the
+analyses required to provide a precise SSA form, and how the presence of variables
+of unknown types affects the precision of SSA.
+   Note that dynamic scripting languages share similar features of other kinds of
+dynamic programming languages, such as Lisp and Smalltalk. The main distin-
+guishing feature of dynamic languages is that they resolve at runtime behaviours
+that many other languages perform at compile time. Thus, languages such as Lisp
+support dynamic typing and runtime generation of source code which can then
+be executed. The main difference between scripting languages and other dynamic
+languages is their intended use, rather than the features of the language. Scripting
+languages were originally designed for writing short scripts, often to invoke other
+programs or services. It was only later that developers started to write large complex
+programs using scripting languages.
+   The rest of this chapter describes our experiences with building SSA in PHC, an
+open source compiler for PHP. We identify the features of PHP that make building
+SSA difficult, outline the solutions we found to these some of these challenges, and
+draw some lessons about the use of SSA in analysis frameworks for PHP.
+
+24.1 SSA Form in Statically Typed Languages
+
+In statically typed, non-scripting languages, such as C, C++, and Java, it is
+straightforward to identify which variables may be converted into SSA form. In
+Java, all scalars may be renamed. In C and C++, any scalar variables that do not
+have their address taken may be renamed. Figure 24.1 shows a simple C function,
+24 Building SSA in a Compiler for PHP                                             349
+
+Fig. 24.1 Simple C code                             1: int factorial(int num) {
+                                                    2:   int result = 1, i;
+                                                    3:
+                                                    4:   while ( num > 1 ) {
+                                                    5:     result = result * num;
+                                                    6:     num --;
+                                                    7:   }
+                                                    8:   return result;
+                                                    9: }
+
+Fig. 24.2 C code with                                           1:   void func() {
+pointers                                                        2:     int x=5, *y;
+                                                                3:     y = &x;
+                                                                4:     *y = 7;
+                                                                5:     return x;
+                                                                6:   }
+
+whose local variables may all be converted into SSA form. In Fig. 24.1, it is trivial
+to convert each variable into SSA form. For each statement, the list of variables that
+are used and defined is immediately obvious from a simple syntactic check.
+   By contrast, Fig. 24.2 contains variables that cannot be trivially converted into
+SSA form. On Line 3, the variable x has its address taken. As a result, to convert x
+into SSA form, we must know that Line 4 modifies x and introduce a new version
+of x accordingly. Chapter 16 describes HSSA form, a powerful way to represent
+indirect modifications to scalars in SSA form.
+   To discover the modification of x on Line 4 requires an alias analysis. Alias
+analyses detect when multiple program names (aliases) represent the same memory
+location. In Fig. 24.2, x and ∗y alias each other.
+   There are many variants of alias analysis, of varying complexity. The most
+complex ones analyse the entire program text, taking into account the control flow,
+the function calls, and multiple levels of pointers. However, it is not difficult to
+perform a very simple alias analysis. Address-taken alias analysis identifies all
+variables whose addresses are taken by a referencing assignment. All variables
+whose address has been taken anywhere in the program are considered to alias each
+other (that is, all address-taken variables are in the same alias set).
+   When building SSA form with address-taken alias analysis, variables in the alias
+set are not renamed into SSA form. All other variables are converted. Variables not
+in SSA form do not possess any SSA properties, and pessimistic assumptions must
+be made. As a result of address-taken alias analysis, it is straightforward to convert
+any C program into SSA form, without sophisticated analysis. In fact, this allows
+more complex alias analyses to be performed on the SSA form.
+350                                                                P. Biggar and D. Gregg
+
+24.2 PHP and Aliasing
+
+In PHP, it is not possible to perform an address-taken alias analysis. The syntactic
+clues that C provides—notably as a result of static typing—are not available in PHP.
+Indeed, statements that may appear innocuous may perform complex operations
+behind the scenes, affecting any variable in the function. Figure 24.3 shows a small
+piece of PHP code. Note that in PHP, variable names start with the $ sign.
+    The most common appearance of aliasing in PHP is due to variables that store
+references. Creating references in PHP does not look so very different from C. In
+Fig. 24.3, the variable y becomes a reference to the variable x. Once y has become
+an alias for x, the assignment to y (in Line 3) also changes the value of x.
+    On first glance, the PHP code in Fig. 24.3 is not very different from similar C
+code in Fig. 24.2. From the syntax, it is easy to see that a reference to the variable x
+is taken. Thus, it is clear that x cannot be easily renamed. However, the problem is
+actually with the variable y which contains the reference to the variable x.
+    There is no type declaration to say that y in Fig. 24.3 is a reference. In fact, due
+to dynamic typing, PHP variables may be references at one point in the program
+and stop being references a moment later. Or at a given point in a program, a given
+variable may be a reference variable or a non-reference variable depending upon
+the control flow that preceded that point. PHP’s dynamic typing makes it difficult to
+simply identify when this occurs, and a sophisticated analysis over a larger region
+of code is essential to building a more precise conservative SSA form.
+    The size of this larger region of code is heavily influenced by the semantics of
+function parameters in PHP. Consider the PHP function in Fig. 24.4a. Superficially,
+it resembles the C function in Fig. 24.4b. In the C version, we know that x and y are
+simple integer variables and that no pointer aliasing relationship between them is
+possible. They are separate variables that can be safely renamed. In fact, a relatively
+simple analysis can show that the assignment to x in Line 2 of the C code can be
+optimized away because it is an assignment to a dead variable.
+    In the PHP version in Fig. 24.4a, x may alias y upon function entry. This can
+happen if x is a reference to y, or vice versa, or if both x and y are references to a
+
+                                      1:   $x = 5;
+                                      2:   $y =& $x;
+                                      3:   $y = 7;
+
+Fig. 24.3 Creating and using a reference in PHP
+
+        1:   function foo($x, $y) {               1:   int foo(int x, int y) {
+        2:     $x = $x + $y;                      2:     x = x + y;
+        3:     return $y;                         3:     return y;
+        4:   }                                    4:   }
+
+Fig. 24.4 Similar (a) PHP and (b) C functions with parameters
+24 Building SSA in a Compiler for PHP                                                 351
+
+third variable. It is important to note, however, that the possibility of such aliasing is
+not apparent from the function prototype or any type declarations. Instead, whether
+the formal parameter x and/or y are references depends on the types of actual
+parameters that are passed when the function is invoked. If a reference is passed as a
+parameter to a function in PHP, the corresponding formal parameter in the function
+also becomes a reference.
+    The addition operation in Line 2 of Fig. 24.4a may therefore change the value of
+y, if x is a reference to y or vice versa. In addition, recall that dynamic typing in PHP
+means that whether or not a variable contains a reference can depend on control flow
+leading to different assignments. Therefore, on some executions of a function, the
+passed parameters may be references, whereas on other executions they may not.
+    In the PHP version, there are no syntactic clues that variables may alias.
+Furthermore, as we show in Sect. 24.4, there are additional features of PHP that
+can cause the values of variables to be changed without simple syntactic clues. In
+order to be sure that no such features can affect a given variable, an analysis is
+needed to detect such features. As a result, a simple conservative aliasing estimate
+that does not take account of PHP’s references and other difficult features—similar
+to C’s address-taken alias analysis—would need to place all variables in the alias
+set. This would leave no variables available for conversion to SSA form. Instead, an
+inter-procedural analysis is needed to track references between functions.
+
+24.3 Our Whole-Program Analysis
+
+PHP’s dynamic typing means that program analysis cannot be performed a function
+at a time. As function signatures do not indicate whether parameters are references,
+this information must be determined by inter-procedural analysis. Furthermore, each
+function must be analysed with full knowledge of its calling context. This requires
+a whole-program analysis. We present an overview of the analysis below. A full
+description is beyond the scope of this chapter.
+
+24.3.1 The Analysis Algorithm
+
+The analysis is structured as a symbolic execution. This means the program is
+analysed by processing each statement in turn and modelling the effect of the
+statement on the program state. This is similar in principle to the sparse conditional
+constant propagation (SSA-CCP) algorithm described in Sect. 8.3.1
+   The SCCP algorithm models a function at a time. Instead, our algorithm models
+the entire program. The execution state of the program begins empty, and the
+
+1 The analysis is actually based on a variation, conditional constant propagation.
+352                                                                  P. Biggar and D. Gregg
+
+analysis begins at the first statement in the program, which is placed in a worklist.
+The worklist is then processed a statement at a time.
+    For each analysed statement, the results of the analysis are stored. If the analysis
+results change, the statement’s direct successors (in the control-flow graph) are
+added to the worklist. This is similar to to the treatment of CFG edges (through
+CFGWorkList) in the SCCP algorithm. There is no parallel to the treatment of SSA
+edges (SSAWorkList), since the analysis is not performed on the SSA form. Instead,
+loops must be fully analysed if their headers change.
+    This analysis is therefore less efficient than the SCCP algorithm, in terms of time.
+It is also less efficient in terms of space. SSA form allows results to be compactly
+stored in a single array, using the SSA index as an array index. This is very space
+efficient. In our analysis, we must instead store a table of variable results at all points
+in the program.
+    Upon reaching a function or method call, the analysis begins analysing the callee
+function, pausing the caller’s analysis. A new worklist is created and initialized with
+the first statement in the callee function. The worklist is then run until it is exhausted.
+If another function call is analysed, the process recurses.
+    Upon reaching a callee function, the analysis results are copied into the scope of
+the callee. Once a worklist has ended, the analysis results for the exit node of the
+function are copied back to the calling statement’s results.
+
+24.3.2 Analysis Results
+
+Our analysis computes and stores three different kinds of results. Each kind of result
+is stored at each point in the program.
+    The first models the alias relationships in the program in a points-to graph.
+The graph contains variable names as nodes, and the edges between them indicate
+aliasing relationships. An aliasing relationship indicates that two variables either
+must-alias or may-alias. Two unconnected nodes cannot alias. A points-to graph is
+stored for each point in the program. Graphs are merged at CFG join nodes.
+    Secondly, our analysis also computes a conservative estimate of the types of
+variables in the program. Since PHP is an object-oriented language, polymorphic
+method calls are possible, and they must be analysed. As such, the set of possible
+types of each variable is stored at each point in the program. This portion of the
+analysis closely resembles using SCCP for type propagation.
+    Finally, like the SCCP algorithm, constants are identified and propagated through
+the analysis of the program. Where possible, the algorithm resolves branches
+statically using propagated constant values. This is particularly valuable because
+our PHC ahead-of-time compiler for PHP creates many branches in the interme-
+diate representation during early stages of compilation. Resolving these branches
+statically eliminates unreachable paths, leading to significantly more precise results
+from the analysis algorithm.
+24 Building SSA in a Compiler for PHP                                                       353
+
+24.3.3 Building Def-Use Sets
+
+To build SSA form, we need to be able to identify the set of points in a program
+where a given variable is defined or used. Since we cannot easily identify these sets
+due to potential aliasing, we build them as part of our program analysis. Using our
+alias analysis, any variables that may be written to or read from during a statement’s
+execution are added to a set of defs and uses for that statement. These are then used
+during construction of the SSA form.
+   For an assignment by copy, $x = $y:
+1. $x’s value is defined.
+2. $x’s reference is used (by the assignment to $x).
+3. For each alias $x_alias of $x, $x_alias’s value is defined. If the alias is possible,
+   $x_alias’s value is may-defined instead of defined. In addition, $x_alias’s
+   reference is used.
+4. $y’s value is used.
+5. $y’s reference is used.
+   For an assignment by reference, $x =& $y:
+1. $x’s value is defined.
+2. $x’s reference is defined (it is not used—$x does not maintain its previous
+   reference relationships).
+3. $y’s value is used.
+4. $y’s reference is used.
+
+24.3.4 HSSA
+
+Once the set of locations where each variable is defined or used has been identified,
+we have the information needed to construct SSA. However, it is important to
+note that due to potential aliasing and potential side effects of some difficult-to-
+analyse PHP features (see Sect. 24.4), many of the definitions we compute are
+may-definitions. Whereas a normal definition of a variable means that the variable
+will definitely be defined, a may-definition means that the variable may be defined
+at that point.2
+    In order to accommodate these may-definitions in our SSA form for PHP, we
+adapt a number of features from Hashed SSA form.
+
+2 Or more precisely, a may-definition means that there exists at least one possible execution of
+
+the program where the variable is defined at that point. Our algorithm computes a conservative
+approximation of may-definition information. Therefore, our algorithm reports a may-definition
+in any case where the algorithm cannot prove that no such definition can exist on any possible
+execution.
+354                                                             P. Biggar and D. Gregg
+
+   After performing our alias analysis, we convert our intermediate representation
+into SSA form. As in HSSA form, we give names to all memory locations in
+our program, including locations inside arrays and hash tables, if they are directly
+referred to in source being analysed.
+   We augment our SSA form with μ and χ functions, representing may-uses and
+may-definitions, respectively.
+   Principally, the difference between our SSA form and traditional SSA is that all
+names in the program are included in the SSA representation. In addition, for each
+statement in the program, we maintain a set of names which must be defined, which
+might be defined, and which are used (either possibly or definitely). Names that may
+be defined are the same concept as χ variables in HSSA, but there may also be more
+than one name that must be defined.
+   We also add φ-functions for names that are only used in χ operations or which
+must be defined but are not syntactically present in the statement. As these φ-
+functions are not for real variables, we cannot add copies to represent them when
+destructing SSA form and must instead drop all SSA indices. While this is a valid
+means of destructing SSA form, it slightly limits the optimizations that can be
+performed. For example, copy-propagation cannot move copies past the boundary
+of a variable’s live range.
+   We do not use virtual variables, zero versioning, or global value numbering (the
+hash in Hashed SSA). However, in order to scale our SSA form in the future, it
+would be necessary to incorporate these features.
+   The final distinction from traditional SSA form is that we do not only model
+scalar variables. All names in the program, such as fields of objects or the contents
+of arrays, can be represented in SSA form.
+
+24.4 Other Challenging PHP Features
+
+For simplicity, the description so far of our algorithm has only considered the
+problems arising from aliasing due to PHP reference variables. However, in the
+process of constructing SSA in our PHP compiler several other PHP language
+features make it difficult to identify all the points in a program where a variable
+may be defined. In this section, we briefly describe these language features and how
+they may be dealt with in order to conservatively identify all may-definitions of all
+variables in the program.
+
+24.4.1     Runtime Symbol Tables
+
+Figure 24.5 shows a program which accesses a variable indirectly. On line 2, a string
+value is read from the user and stored in the variable var_name. On line 3, some
+variable—whose name is the value in var_name—is set to 5. That is, any variable
+24 Building SSA in a Compiler for PHP                                               355
+
+Fig. 24.5 PHP code using a                            1:   $x = 5;
+variable-variable                                     2:   $var_name = readline( );
+                                                      3:   $$var_name = 6;
+                                                      4:   print $x;
+
+can be updated, and the updated variable is chosen by the user at runtime. It is not
+possible to know whether the user has provided the value “x” and so know whether
+x has the value 5 or 6.
+    This feature is known as variable-variables. They are possible because a
+function’s symbol table in PHP is available at runtime. Variables in PHP are not
+the same as variables in C. A C local variable is a name which represents a memory
+location on the stack. A PHP local variable is the domain of a map from strings
+to values. The same runtime value may be the domain of multiple string keys
+(references, discussed above). Similarly, variable-variables allow the symbol table
+to be accessed dynamically at runtime, allowing arbitrary values to be read and
+written.
+    Upon seeing a variable-variable, all variables may be written to. In HSSA form,
+this creates a χ -function for every variable in the program. In order to reduce the set
+of variables that might be updated by assigning to a variable-variable, the contents of
+the string stored in var_name may be modelled using a string analysis by Wasserman
+and Su.
+    String analysis is a static program analysis that models the structure of strings.
+For example, string analysis may be able to tell us that the name stored in the
+variable-variable (that is the name of the variable that will be written to) begins with
+the letter “x.” In this case, all variables that do not begin with “x” do not require a
+χ -function, leading to a more precise SSA form.
+
+24.4.2 Execution of Arbitrary Code
+
+PHP provides a feature that allows an arbitrary string to be executed as a code. This
+eval statement simply executes the contents of any string as if the contents of the
+string appeared inline in the location of the eval statement. The resulting code can
+modify local or global variables in arbitrary ways. The string may be computed by
+the program or read in from the user or from a web form.
+    The PHP language also allows the contents of a file to be imported into the
+program text using the include statement. The name of the file is an arbitrary
+string which may be computed or read in at runtime. The result is that any file
+can be included in the text of the program, even one that has just been created by
+the program. Thus, the include statement is potentially just as flexible as the eval
+statement for arbitrarily modifying program state.
+    Both of these may be modelled using the same string analysis techniques as
+discussed in Sect. 24.4.1. The eval statement may also be handled using profiling,
+356                                                               P. Biggar and D. Gregg
+
+which restricts the set of possible eval statements to those which actually are used
+in practice.
+
+24.4.3 Object Handlers
+
+PHP’s reference implementation allows classes to be partially written in C. Objects
+that are instantiations of these classes can have special behaviour in certain cases.
+For example, the objects may be dereferenced using array syntax. Or a special
+handler function may be called when the variable holding the object is read or
+written to.
+   The handler functions for these special cases are generally unrestricted, meaning
+that they can contain arbitrary C code that does anything the programmer chooses.
+Being written in C, they are given access to the entire program state, including all
+local and global variables.
+   These two characteristics of handlers make them very powerful but break any
+attempts at function-at-a-time analysis. If one of these objects is passed into a
+function and is read, it may overwrite all variables in the local symbol table.
+The overwritten variables might then have the same handlers. These can then be
+returned from the function or passed to any other called functions (indeed, it can
+also call any function). This means that a single unconstrained variable in a function
+can propagate to any other point in the program, and we need to treat this case
+conservatively.
+
+24.5 Concluding Remarks and Further Reading
+
+In this chapter, we have described our experience of building SSA in PHC, an ahead-
+of-time compiler for PHP. PHP is quite different to static languages such as C/C++
+and Java. In addition to dynamic typing, it has other dynamic features such as very
+flexible and powerful reference types, variable-variables, and features that allow
+almost arbitrary code to be executed.
+    The main result of our experience is to show that SSA cannot be used as an end-
+to-end intermediate representation (IR) for a PHP compiler. The main reason is that
+in order to build SSA, significant analysis of the PHP program is needed to deal
+with aliasing and to rule out potential arbitrary updates of variables. We have found
+that in real PHP programs these features are seldom used in ways that make analysis
+really difficult [28]. But analysis is nonetheless necessary to show the absence of the
+bad use of these features.
+    In principle, our analysis could perform only the alias analysis prior to building
+SSA and perform type analysis and constant propagation in SSA. But our experience
+is that combining all three analyses greatly improves the precision of alias analysis.
+24 Building SSA in a Compiler for PHP                                             357
+
+In particular, type analysis significantly reduces the number of possible method
+callees in object-oriented PHP programs.
+   Once built, the SSA representation forms a platform for further analysis and
+optimization. For example, we have used it to implement an aggressive dead-
+code elimination pass which can eliminate both regular assignments and reference
+assignments.
+   In recent years, there has been an increasing interest in the static analysis
+of scripting languages, with a particular focus on detecting potential security
+weaknesses in web-based PHP programs. For example, Jovanovic et al. [156]
+describe an analysis of PHP to detect vulnerabilities that allow the injection of
+executable code into a PHP program by a user or web form. Jensen et al. describe
+an alias analysis algorithm for JavaScript, which works quite differently to ours [28]
+but works well for JavaScript [150].
+   To our knowledge, we are the first to investigate building SSA in a PHP compiler.
+Our initial results show that building a reasonably precise SSA for PHP requires a
+great deal of analysis. Nonetheless, as languages such as PHP are used to build a
+growing number of web applications, we expect that there will be an increasing
+interest in tools for the static analysis of scripting languages.
+Further Reading
+The HSSA algorithm is described further in Chap. 16. Array SSA form—as
+described in Chap. 17—was also considered for our algorithm. While we deemed
+HSSA a better match for the problem space, we believe we could also have adapted
+Array SSA for this purpose.
+    Our propagation algorithm is based on the Conditional Constant Propagation
+algorithm by Pioli and Hind [227]. It was also based on the SSA-based cousin of
+CCP, Sparse Conditional Constant Propagation (SSA-CCP). SSA-CCP is described
+earlier, in Chaps. 8 and 17.
+    Our type-inference algorithm is based on the work by Lenart [181], which itself
+is based on SSA-CCP.
+    The variant of CCP on which we based our analysis considers alias analysis [110]
+alongside constant propagation. Our alias analysis was based on “points-to” analysis
+by Emami et al. [110]. A more detailed analysis of our alias analysis and how it
+interacts with constant propagation is available [28]. Previous work also looked at
+alias analysis in PHP, taking a simpler approach to analyse a subset of PHP [156].
+    Further propagation algorithms can lead to a more precise analysis. In particular,
+we believe string analysis, based on the work by Wassermann and Su [302], can
+help reduce the set of possible variables in an alias set.
+    This chapter is based on original research by Biggar [28], containing more
+discussion on our alias analysis, our form of SSA construction, and the problem
+of static analysis of dynamic scripting languages.

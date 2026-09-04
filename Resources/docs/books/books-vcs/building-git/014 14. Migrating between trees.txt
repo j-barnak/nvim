@@ -1,0 +1,1103 @@
+14. Migrating between trees
+In the previous chapter we developed the branch command, which creates files under .git/
+refs/heads that contain pointers to specific commits. On its own, this is not particularly useful;
+it allows us to give memorable names to commits in a linear history, but it doesn’t allow us to
+retrieve the contents of those commits and load them back into our workspace.
+
+For example, if we have a chain of commits where .git/HEAD points at the latest one, and every
+commit points to its parent:
+Figure 14.1. Chain of commits
+              A       B       C       D
+              o <---- o <---- o <---- o
+                                      |
+                                   [HEAD]
+
+We can use branch to create another pointer to the latest commit, or to any previous one. For
+example, running branch foo will create another pointer to commit D stored in .git/refs/
+heads/foo. In the following diagrams, HEAD is a shorthand for the pointer stored in .git/HEAD,
+while other names are shorthands for pointers in .git/refs/heads/<name>.
+Figure 14.2. New branch pointing to the last commit
+              A       B       C       D
+              o <---- o <---- o <---- o
+                                      |
+                                    [foo]
+                                   [HEAD]
+
+We can create pointers to older commits using the revisions notation1. Running branch bar
+@~2 will create a pointer to commit B:
+
+Figure 14.3. New branch pointing to an older commit
+              A       B       C       D
+              o <---- o <---- o <---- o
+                      |               |
+                    [bar]           [foo]
+                                   [HEAD]
+
+To make branches truly useful, we need to be able to switch between different versions of the
+codebase so that we can begin to build a new chain of commits off that version. For example,
+if we’re in the above state, then we’d like to be able to go back to commit B, loading its tree
+back into our workspace so we can make changes to it. This would also move HEAD to reflect
+what the currently checked-out commit is.
+Figure 14.4. Moving HEAD to a different branch
+              A       B       C       D
+              o <---- o <---- o <---- o
+                      |               |
+                    [bar]           [foo]
+                   [HEAD]
+
+ Section 13.3, “Setting the start point”
+
+                                    Migrating between trees
+
+The checkout command’s job is to apply changes to the repository so that when we run
+checkout bar, the workspace, index and HEAD are restored to the state they were in after creating
+the commit bar points at. In this chapter we’ll examine how these changes are performed, before
+tying the branch, checkout and commit commands together in the next chapter to produce fully
+working branches.
+
+This is the first time that Jit will be making changes to the workspace and index that are not
+explicitly specified by the user. The user might have made changes to the workspace and index
+such that they differ from HEAD, putting the repository in an unclean state. We’d like to avoid
+overwriting such changes if possible, otherwise they’ll be lost. If we can’t perform the checkout
+without discarding the user’s changes, we should bail out and display an error to the user. To
+make these decisions, we’re going to need a way to tell which files need changing in order to
+migrate from the current HEAD to whichever commit <rev> resolves to. Then, we need to apply
+these changes to the workspace and index, and finally adjust HEAD to reflect our new position
+in the commit graph.
+
+When we run checkout, the first thing we need to do is amend the workspace so that it reflects
+the tree of the commit we’re moving to. This task begins with the question: which files do we
+need to change in order that the workspace reflects the new tree?
+
+14.1. Telling trees apart
+When the user has not made any uncommitted changes, the workspace and index reflect the
+tree that belongs to the commit that HEAD points at. Executing a checkout means that we change
+the contents of the workspace and index to reflect the tree of a different commit. The simplest
+way to implement this would be to delete every tracked file in the workspace and delete the
+index, and then rebuild both of them from the new tree. This is a straightforward way to ensure
+all the repository components are in a consistent state.
+
+However this suffers from two major drawbacks. First, any uncommitted changes made by
+the user will be lost, which severely restricts the utility of the checkout command. If the only
+files you’ve changed are ones that do not differ between HEAD and <rev>, there’s no reason
+you shouldn’t be able to keep those changes while switching from HEAD to <rev>, and quickly
+test your changes against different versions of the codebase without having to commit and
+merge your changes into multiple branches. Second, it’s wasteful. Typically, the number of
+files that differ between HEAD and <rev> is small relative to the total number of files in the
+tree, so there’s a performance win to be had in only changing those files that differ, rather than
+deleting everything and then recreating all the files as they were before.
+
+Therefore, it would be useful to figure out which files actually differ between HEAD and <rev>,
+so that we can update only those files, and leave any unchanged ones alone. This will also let us
+preserve non-conflicting uncommitted changes, and exit with an error if there are any conflicts.
+
+Imagine we have a project where the penultimate commit, @^, has the tree shown on the left, and
+the latest commit, @, has the tree on the right. Remember that a tree in the database is a list of
+entries that have a name, mode, and object ID, and those with mode 400008 are pointers to other
+trees. The listing below shows the fully expanded tree; the entries named config, database,
+lib and models point to sub-trees, and all the other entries point to blobs. Each entry is listed
+with its abbreviated object ID.
+
+                                           Migrating between trees
+
+Figure 14.5. Trees of two adjacent commits
+       @^:                                                @:
+       ├── README.md [45a4fb7]                            ├── README.md [45a4fb7]
+       ├── TODO.md [ec63514]                              ├─┬ config [9bc815e]
+       ├─┬ config [9bc815e]                               │ └─┬ database [39995f4]
+       │ └─┬ database [39995f4]                           │   ├── development.json [d00491f]
+       │   ├── development.json [d00491f]                 │   └── production.json [0cfbf08]
+       │   └── production.json [0cfbf08]                  └─┬ lib [8be4dc3]
+       └─┬ lib [bfe70e0]                                    ├── app.rb [64bb6b7]
+         └── app.rb [00750ed]                               └─┬ models [0e0262f]
+                                                              ├── repository.rb [7ed6ff8]
+                                                              └── user.rb [b8626c4]
+
+We’d like to compile a list of files that differ between these two trees. Let’s start by examining
+just the top-level tree for each commit, ignoring any sub-trees that might be present. The
+following listing reproduces the above trees with all the sub-trees removed.
+Figure 14.6. Top level of trees from two commits
+       @^:                                                @:
+       ├── README.md [45a4fb7]                            ├── README.md [45a4fb7]
+       ├── TODO.md [ec63514]                              ├── config [9bc815e]
+       ├── config [9bc815e]                               └── lib [8be4dc3]
+       └── lib [bfe70e0]
+
+Let’s check the entries on the left one-by-one. README.md has object ID 45a4fb7 in both trees,
+and so this file has not changed. TODO.md is present on the left but not on the right, which tells
+us this file has been deleted.
+
+Next, the config entry has ID 9bc815e in both trees, and so it too is unchanged. Even though
+config is a directory, we don’t need to check inside it, because the config entries in each tree
+point at exactly the same tree object: 9bc815e. This lets us skip all the work of examining the
+files inside this sub-tree as we know they’ll be identical. This is one of the big advantages of the
+Merkle tree construction2: not only does it save space by causing trees to share references to a
+unique copy of an unchanged object, it also makes detecting changes across trees much faster.
+
+Finally, lib is also a tree entry, but its version differs: bfe70e0 on the left, 8be4dc3 on the right.
+Since it’s a tree entry, we don’t record that as a change in itself. Instead, we recurse into the
+lib subtree on each side by following the object pointers and comparing the results.
+
+The lib subtrees in our two commits look like this, again showing only their immediate children
+and no sub-trees:
+Figure 14.7. Trees for the lib sub-tree of two commits
+       @^:lib                                             @:lib
+       └── app.rb [00750ed]                               ├── app.rb [64bb6b7]
+                                                          └── models [0e0262f]
+
+Here we can see that the blob entry app.rb has changed from 00750ed to 64bb6b7, so we can
+record that as a change to lib/app.rb. Meanwhile, the tree entry models appears on the right
+but not on the left: it’s a new directory. Again, rather than marking that as a change in itself
+we usually want to know about the individual files inside the directory, so we follow the tree
+one level deeper into lib/models.
+ Section 5.2.2, “Building a Merkle tree”
+
+                                          Migrating between trees
+
+There is no sub-tree lib/models in the left-hand commit, so we’ll treat that as an empty tree,
+while the right-hand commit contains two blob entries for this tree:
+Figure 14.8. Trees for the lib/models sub-tree of two commits
+
+      @^:lib/models                                      @:lib/models
+                                                         ├── repository.rb [7ed6ff8]
+                                                         └── user.rb [b8626c4]
+
+Since the left-hand tree is empty, we just mark all the files on the right-hand side as newly
+created. Putting all the changes we noticed together, we end up with this set of changes:
+
+• TODO.md, which had the contents of blob ec63514, has been deleted
+
+• lib/app.rb has been edited, changing from blob 00750ed to 64bb6b7
+
+• lib/models/repository.rb has been created with the contents of blob 7ed6ff8
+
+• lib/models/user.rb has been created with the contents of blob b8626c4
+
+This information could be encoded as the following Ruby data structure, which maps pathnames
+to a pair of values representing the file’s content in each of the compared trees.
+      {
+          "TODO.md"                  => ["ec63514", nil      ],
+          "lib/app.rb"               => ["00750ed", "64bb6b7"],
+          "lib/models/repository.rb" => [nil,       "7ed6ff8"],
+          "lib/models/user.rb"       => [nil,       "b8626c4"]
+      }
+
+In practice, the structure will be slightly more complicated than this. We’ll have Pathname
+objects rather than bare strings as the keys, and Database::Entry objects (which have an oid
+and mode) rather than simple object IDs in the pairs on the right. We’ll also check the modes of
+entries as we compare them, not just the object IDs of their content.
+
+To translate this process into working code, we’ll create a new class called
+Database::TreeDiff that will implement the change detection routine. It will take a Database
+so that it can read trees from .git/objects, and exposes a hash called @changes that will
+accumulate a record of file differences.
+      # lib/database/tree_diff.rb
+
+      class Database
+        class TreeDiff
+
+            attr_reader :changes
+
+            def initialize(database)
+              @database = database
+              @changes = {}
+            end
+
+            # ...
+
+        end
+      end
+
+                                                     Migrating between trees
+
+Comparing two trees is done by passing their object IDs to the method compare_oids, along
+with an optional path prefix whose default value is empty. This prefix will be used to construct
+the full path to each changed file as we recurse down the trees.
+
+If the two given object IDs are the same (either the same string value, or both nil) then this
+method exits immediately since there cannot be any differences between two references to the
+same object. Otherwise, we use oid_to_tree with each ID to load the tree from the database
+and extract the entries from it, substituting the empty hash {} if either ID is nil. oid_to_tree
+can cope with being given either a commit or a tree ID as input; if it loads the object from the
+Database and gets a Commit object, then it just loads the commit’s tree pointer . Once we have
+two sets of tree entries, we invoke the detect_deletions and detect_additions methods to
+compare their contents.
+        # lib/database/tree_diff.rb
+
+              def compare_oids(a, b, prefix = Pathname.new(""))
+                return if a == b
+
+                 a_entries = a ? oid_to_tree(a).entries : {}
+                 b_entries = b ? oid_to_tree(b).entries : {}
+
+                detect_deletions(a_entries, b_entries, prefix)
+                detect_additions(a_entries, b_entries, prefix)
+              end
+
+              def oid_to_tree(oid)
+                object = @database.load(oid)
+
+                case object
+                when Commit then @database.load(object.tree)
+                when Tree   then object
+                end
+              end
+
+Recall that a Tree object’s entries structure is a hash mapping names of entries to Entry
+objects. For example, the root tree in the left-hand commit above looks like this:
+        {
+            "README.md" => Database::Entry(oid="45a4fb7", mode=0100644),
+            "TODO.md"   => Database::Entry(oid="ec63514", mode=0100644),
+            "config"    => Database::Entry(oid="9bc815e", mode=040000),
+            "lib"       => Database::Entry(oid="bfe70e0", mode=040000)
+        }
+
+The detect_deletions method shown below does most of the work of detecting changes
+between the two trees. It iterates over the entries in the first tree, and fetches the corresponding
+entry by name from the second tree — entry is the left-hand Entry object, other the right-hand
+one. If these entries are equal, that is, their modes and object IDs are the same, we skip to the
+next entry. Otherwise, we take two further processing steps, one for trees and one for blobs.
+
+The values tree_a and tree_b are set to the object IDs of entry and other respectively, if
+entry or other is not nil and points to a tree. If entry does not point to a tree then tree_a is
+
+ Git refers to an object that can be coerced into a tree object as a tree-ish. Commits are tree-ish because they all carry a pointer to a tree as
+part of their content.
+
+                                     Migrating between trees
+
+nil and similarly for other and tree_b. We then pass the resulting IDs to compare_oids, to
+recurse into the sub-trees if any are present at this point in the scan.
+
+Finally we compare blob entries, if any are present. blobs is set to the pair of Entry objects
+[entry, other], with either member set to nil if it refers to a sub-tree. That is, we only
+retain differences between files; if a file has been replaced with a directory, then this change
+is recorded as [entry, nil]. When we process these changes, directories will be implicitly
+created as needed in the workspace to contain any new files inside the new sub-tree. If this pair
+contains any non-nil values, then it’s added to @changes against the current path.
+     # lib/database/tree_diff.rb
+
+          def detect_deletions(a, b, prefix)
+            a.each do |name, entry|
+              path = prefix.join(name)
+              other = b[name]
+
+              next if entry == other
+
+              tree_a, tree_b = [entry, other].map { |e| e&.tree? ? e.oid : nil }
+              compare_oids(tree_a, tree_b, path)
+
+              blobs = [entry, other].map { |e| e&.tree? ? nil : e }
+              @changes[path] = blobs if blobs.any?
+            end
+          end
+
+detect_additions takes care of any entries that exist in the second tree but not in the first.
+Iterating over b rather than a, it skips any entries that exist in a. For the remaining missing
+entries, if the current entry in b points to a tree, then we recursively call compare_oids with its
+ID, passing nil for the first argument to represent the missing sub-tree on the left. Otherwise,
+the entry points to a blob and represents a newly added file, which we record in @changes.
+     # lib/database/tree_diff.rb
+
+          def detect_additions(a, b, prefix)
+            b.each do |name, entry|
+              path = prefix.join(name)
+              other = a[name]
+
+              next if other
+
+              if entry.tree?
+                compare_oids(nil, entry.oid, path)
+              else
+                @changes[path] = [nil, entry]
+              end
+            end
+          end
+
+As a convenience, we’ll add an interface in the Database class for calculating and returning the
+diff between two commits or trees, by invoking the TreeDiff class and returning the resulting
+changes hash.
+
+     # lib/database.rb
+
+                                               Migrating between trees
+
+           def tree_diff(a, b)
+             diff = TreeDiff.new(self)
+             diff.compare_oids(a, b)
+             diff.changes
+           end
+
+We now have a method for determining all the tree-level differences between commits. This
+will also be useful for commands like log4 and merge5, but for now we’ll focus on the next task
+checkout must perform: applying this diff to the workspace and index.
+
+14.2. Planning the changes
+Now that we have a method for detecting the differences between two trees, we can begin to
+build the checkout command around that. This command is given a revision as an argument,
+and it will begin by using the Revision class6 to resolve this to a commit ID. It will also fetch
+the current commit ID by reading .git/HEAD using Refs#read_head. Given these two IDs,
+we’ll create a migration by calling a new method, Repository#migration, and tell it to apply
+its changes to the repository state. The error handling for invalid revisions is similar to that
+from Command::Branch7.
+       # lib/command/checkout.rb
+
+       module Command
+         class Checkout < Base
+
+              def run
+                @target = @args[0]
+
+                 @current_oid = repo.refs.read_head
+
+                 revision    = Revision.new(repo, @target)
+                 @target_oid = revision.resolve(Revision::COMMIT)
+
+                 tree_diff = repo.database.tree_diff(@current_oid, @target_oid)
+                 migration = repo.migration(tree_diff)
+                 migration.apply_changes
+
+                 exit 0
+
+              rescue Revision::InvalidObject => error
+                handle_invalid_object(revision, error)
+              end
+
+              private
+
+              def handle_invalid_object(revision, error)
+                revision.errors.each do |err|
+                  @stderr.puts "error: #{ err.message }"
+                  err.hint.each { |line| @stderr.puts "hint: #{ line }" }
+                end
+                @stderr.puts "error: #{ error.message }"
+
+  Section 16.1.5, “Displaying patches”
+  Section 17.4, “Performing a merge”
+  Section 13.3, “Setting the start point”
+  Section 13.3.3, “Revisions and object IDs”
+
+                                   Migrating between trees
+
+           exit 1
+         end
+
+       end
+     end
+
+The Repository#migration method constructs and returns a Repository::Migration object,
+taking the current repository and the two given commit IDs as input.
+     # lib/repository.rb
+
+       def migration(tree_diff)
+         Migration.new(self, tree_diff)
+       end
+
+The Migration class’s job is to plan the changes that need to be made to the workspace, check
+they do not conflict with any uncommitted changes made by the user, and then execute those
+changes. We’ll skip conflict detection for now, and focus on planning the changes. The class
+has a structure called @changes that holds lists of files that need either creating, updating or
+deleting, and then two sets of directory names: @mkdirs collects directories we need to create,
+and @rmdirs collects directories we need to delete.
+     # lib/repository/migration.rb
+
+     class Repository
+       class Migration
+
+         attr_reader :changes, :mkdirs, :rmdirs
+
+         def initialize(repository, tree_diff)
+           @repo = repository
+           @diff = tree_diff
+
+           @changes = { :create => [], :update => [], :delete => [] }
+           @mkdirs = Set.new
+           @rmdirs = Set.new
+         end
+
+         # ...
+
+       end
+     end
+
+The apply_changes method that’s called by Command::Checkout is a high-level plan for the
+phases of the migration. For now, it just plans the changes, and then updates the workspace.
+     # lib/repository/migration.rb
+
+         def apply_changes
+           plan_changes
+           update_workspace
+         end
+
+The purpose of the plan_changes method is to figure out what changes we’d need to make in
+the filesystem so that the workspace is made to reflect the tree of the commit we’re checking
+out. The output of Database#tree_diff is not quite in the right shape for doing this; it’s enough
+
+                                     Migrating between trees
+
+information for, say, displaying a diff between two commits, but executing those changes
+requires a little more planning.
+
+Every tree in the database represents a valid arrangement of files that can exist on disk; the
+code we saw in Section 7.3, “Stop making sense” makes sure the index does not contain files
+whose names clash with directories required to hold other files. So it must be possible to apply
+a tree diff to a set of files on disk and get another valid arrangement, the only question is how
+can we guarantee that.
+
+In particular, the entries in a tree diff are not in any specific order. But, when we execute those
+changes in the filesystem, order becomes important. If the current HEAD contains a file called
+lib/app, but the new tree contains one called lib/app/user.rb, then the file lib/app must be
+deleted from the workspace before we try to create lib/app/user.rb. That is, this sequence
+of commands will work:
+     rm lib/app
+     mkdir lib/app
+     echo "<file contents>" > lib/app/user.rb
+
+Whereas the following will not — the existence of a file at lib/app means a directory cannot
+be created there, and mkdir will fail.
+     mkdir lib/app
+     echo "<file contents>" > lib/app/user.rb
+     rm lib/app
+
+So, splitting the changes in a tree diff into multiple categories means we can order things so
+that all deletions are performed first, clearing the path for any new files that should be created.
+Updates to files do not conflict with anything else; if a tree diff says a file has been updated,
+this implies all the directories above it still exist, and it has not been replaced with a directory.
+Nevertheless, it is useful for the purpose of clarity to separate out updates into their own list.
+
+The plan_changes method scans over the tree diff entries, dividing them into creations (those
+entries where the file does not exist in the old commit), updates (where the file exists in both
+commits) and deletions (where the file does not exist in the new commit). For deletions, all
+the file’s parent directories are added to the @rmdirs list as candidates for deletion, while for
+creations and updates we add the parent directories to @mkdirs to ensure these directories exist
+prior to writing the file.
+     # lib/repository/migration.rb
+
+          def plan_changes
+            @diff.each do |path, (old_item, new_item)|
+              record_change(path, old_item, new_item)
+            end
+          end
+
+          def record_change(path, old_item, new_item)
+            if old_item == nil
+              @mkdirs.merge(path.dirname.descend)
+              action = :create
+            elsif new_item == nil
+              @rmdirs.merge(path.dirname.descend)
+              action = :delete
+
+                                                   Migrating between trees
+
+                else
+                  @mkdirs.merge(path.dirname.descend)
+                  action = :update
+                end
+                @changes[action].push([path, new_item])
+              end
+
+We only need to record the new item in the change plan, because we don’t need to know the
+file’s old contents in order to delete or overwrite it. This data structure now encodes enough
+information to be directly executed against the filesystem.
+
+14.3. Updating the workspace
+Since applying these changes requires updating files in the workspace, we’ll delegate
+responsibility for performing them to the Workspace class rather than having the Migration
+class talk directly to the filesystem. The Migration#update_workspace method simply passes
+the migration object to the Workspace for execution.
+       # lib/repository/migration.rb
+
+              def update_workspace
+                @repo.workspace.apply_migration(self)
+              end
+
+Workspace#apply_migration takes a Migration and executes its change plan. It first applies
+the deletions, then it attempts to delete any directories that might have been left empty as a
+result of deleting these files. We iterate over rmdirs in reverse sort order because then we’ll
+delete each directory before attempting to delete its parent. You cannot delete a directory that is
+not empty, so it’s important that each directory’s empty subdirectories are deleted before trying
+to delete the directory itself.
+
+Next, it creates any directories that are necessary to hold the created and updated files. This
+is done in forward sort order on the directory name, because a directory must exist before
+sub-directories can be added to it. After creating these directories, we apply the updates and
+creations.
+       # lib/workspace.rb
+
+          def apply_migration(migration)
+            apply_change_list(migration, :delete)
+            migration.rmdirs.sort.reverse_each { |dir| remove_directory(dir) }
+
+            migration.mkdirs.sort.each { |dir| make_directory(dir) }
+            apply_change_list(migration, :update)
+            apply_change_list(migration, :create)
+          end
+
+apply_change_list does the work of putting the files in the workspace in the correct
+state. It fetches a list of changes from the Migration using the action key passed in by
+apply_migration, and iterates over them. For each file, we delete the file if it exists, including
+deleting any directory that might currently be at that path, by calling FileUtils.rm_rf8. If the
+action is :delete we skip to the next change at this point.
+ https://docs.ruby-lang.org/en/2.3.0/FileUtils.html#method-i-rm_rf
+
+                                                  Migrating between trees
+
+For creations and updates, we open the file and write the new data to it. We use the flags WRONLY
+as we only want to write to the file, CREAT so the file is created if it does not exist (which it
+should not as we just deleted it), and EXCL so that opening the file fails if it already exists. This
+prevents this writing bad data because another process was modifying the filesystem at the same
+time. Finally we use File.chmod9 to set the file’s mode to that stored in the tree.
+       # lib/workspace.rb
+
+          def apply_change_list(migration, action)
+            migration.changes[action].each do |filename, entry|
+              path = @pathname.join(filename)
+
+                FileUtils.rm_rf(path)
+                next if action == :delete
+
+                flags = File::WRONLY | File::CREAT | File::EXCL
+                data = migration.blob_data(entry.oid)
+
+              File.open(path, flags) { |file| file.write(data) }
+              File.chmod(entry.mode, path)
+            end
+          end
+
+This method is not given blob data immediately; we don’t want to read the contents of all
+updated files into memory all at once in case that gets particularly large. We’re given a
+Database::Entry from which we fetch the blob ID, and we can use this to ask the Migration
+to load the blob’s data for us.
+       # lib/repository/migration.rb
+
+             def blob_data(oid)
+               @repo.database.load(oid).data
+             end
+
+This method exists because Workspace and Database are low-level components with direct
+access to the filesystem and they’re not coupled to each other, which means Workspace cannot
+ask Database directly for information. Migration is a higher-level workflow tool that exists
+to integrate changes to multiple low-level subsystems, so it has access to all the repository’s
+components.
+
+The other elements of the Workspace#apply_migration method are calls to remove_directory
+and make_directory. These are wrappers around the Dir.rmdir10 and Dir.mkdir11 methods
+that reflect the purposes we’re using them for here. When we call remove_directory it’s
+because we’d like to remove any directories that are empty after deleting files. If the directory
+is not actually empty, or does not exist, or is not a directory, we don’t mind, so we rescue
+any of these errors if they happen. We use make_directory to create any directories that must
+exist in order for subsequent file writes to succeed, so this does a bit more work to make sure
+this happens. It calls stat() on the filename, deletes it if it’s a regular file, and then creates a
+directory there unless the file is already a directory.
+       # lib/workspace.rb
+
+ https://docs.ruby-lang.org/en/2.3.0/File.html#method-c-chmod
+   https://docs.ruby-lang.org/en/2.3.0/Dir.html#method-c-rmdir
+   https://docs.ruby-lang.org/en/2.3.0/Dir.html#method-c-mkdir
+
+                                    Migrating between trees
+
+       def remove_directory(dirname)
+         Dir.rmdir(@pathname.join(dirname))
+       rescue Errno::ENOENT, Errno::ENOTDIR, Errno::ENOTEMPTY
+       end
+
+       def make_directory(dirname)
+         path = @pathname.join(dirname)
+         stat = stat_file(dirname)
+
+         File.unlink(path) if stat&.file?
+         Dir.mkdir(path) unless stat&.directory?
+       end
+
+You might notice that these methods do more work than is strictly necessary if the repository
+is in a clean state with no uncommitted changes. If there’s a file somewhere that we expected
+a directory, or vice versa, that means that file is untracked, and we just deleted it. As it turns
+out, Git does not preserve all untracked changes; there are some situations where if you have
+a file where a directory was expected or vice versa, Git will delete the file and all its contents
+will be lost.
+
+14.4. Updating the index
+After running checkout, the status output should be clean — if your repository had no
+uncommitted changes, then nothing should be printed when you run status, and if there were
+uncommitted changes, those are the only things status should print after checkout. This means,
+the index should reflect what’s now in the workspace, and it should reflect the contents of the
+commit we’re moving to. We can make all these things the case by applying the migration
+changes to the index as well as the workspace, and by updating .git/HEAD to point at the commit
+we’re migrating to.
+
+In Command::Checkout, let’s open the Index for updates before applying the migration, and
+then save any updates after the migration succeeds. We’ll end by using Refs#update_head to
+put the new commit ID in .git/HEAD.
+     # lib/command/checkout.rb
+
+            repo.index.load_for_update
+
+            tree_diff = repo.database.tree_diff(@current_oid, @target_oid)
+            migration = repo.migration(tree_diff)
+            migration.apply_changes
+
+            repo.index.write_updates
+            repo.refs.update_head(@target_oid)
+
+We add a new step to Repository::Migration#apply_changes that will use Index#add and
+Index#remove to reflect the changes made to the workspace. Deletions can be performed
+simply by calling Index#remove, but other changes need to collect stat() information from
+the Workspace so we can cache it in the updated index entry. This is why the workspace should
+be up to date before we execute these index changes.
+     # lib/repository/migration.rb
+
+                                    Migrating between trees
+
+         def apply_changes
+           plan_changes
+           update_workspace
+           update_index
+         end
+
+         def update_index
+           @changes[:delete].each do |path, _|
+             @repo.index.remove(path)
+           end
+
+           [:create, :update].each do |action|
+             @changes[action].each do |path, entry|
+               stat = @repo.workspace.stat_file(path)
+               @repo.index.add(path, entry.oid, stat)
+             end
+           end
+         end
+
+Index#remove is actually a new method we’ve not used before, but it can be implemented
+fairly simply on top of methods already introduced in Section 7.3, “Stop making sense” for
+ensuring consistency. Given a pathname, it deletes the entry at exactly the given pathname if
+one exists, and deletes any index entries that are nested under that name if it’s a directory using
+the remove_children that we defined earlier.
+     # lib/index.rb
+
+       def remove(pathname)
+         remove_entry(pathname)
+         remove_children(pathname.to_s)
+         @changed = true
+       end
+
+Like the workspace changes, this is more destructive than we’d expect if the repository did
+not have any uncommitted changes, like a file being replaced with a directory containing other
+tracked files. However, again it turns out that Git will actually evict such entries from the index
+if you perform a checkout, and those changes will be lost.
+
+14.5. Preventing conflicts
+The methods we’ve been discussing for migrating the workspace and index are completely
+general; they should put the workspace and index in the correct state no matter what state it
+starts in. However, there are some states where we’d rather not execute any of these changes.
+A simple example is when you’ve made an unstaged change to a file, and that same file differs
+between the current HEAD and the target commit. Applying the tree diff in this situation would
+result in your changed file being overwritten and your changes — which are not persisted in
+the index or database — being discarded.
+
+In this situation and many other conflict scenarios, Git will refuse to execute the checkout. To
+decide whether a checkout can go ahead, it needs to check whether any files listed in the tree
+diff coincide with untracked, unstaged or uncommitted changes in your workspace and index.
+We already have a class that detects such things: the Repository::Status class. The problem
+is that we want to check specific individual files, whereas the Status class is a monolithic full-
+scan process of the entire workspace and index.
+
+                                                  Migrating between trees
+
+14.5.1. Single-file status checks
+We can extract some elements of Repository::Status that would be useful to us here.
+The trackable_file? method12 can be extracted wholesale, and that will let us detect
+that a path corresponds to an untracked file or a directory containing untracked files.
+The check_index_against_workspace method13 compares an index entry to the file in the
+workspace and either updates the cached index entry or records that the file contains unstaged
+changes; we don’t want these side effects when we’re checking a Migration but we could
+reuse the comparison logic. Similarly, check_index_against_head_tree14 contains the logic
+for comparing an index entry to an item from the HEAD tree, and logging an uncommitted change
+if they differ; the comparison performed by this method can also be extracted.
+
+Suppose that in the constructor of the Repository::Status class we create an instance of a
+new class called Repository::Inspector:
+       # lib/repository/status.rb
+
+              def initialize(repository)
+                @inspector = Inspector.new(repository)
+                # ...
+              end
+
+Then, in the Status methods for checking index entries, we replace the comparison logic with a
+call to a new method on the Inspector class, and leave the side effects in the Status class. Note
+how the Inspector class’s methods take File::Stat, Index::Entry and Database::Entry
+objects as input; the class isn’t responsible for statting files or fetching things from the index or
+database, it assumes the caller knows how to fetch the data it wants to compare. The Inspector
+methods return a symbol, one of :untracked, :modified, :added or :deleted to represent the
+state of the file, and Status uses this symbol to record the change.
+       # lib/repository/status.rb
+
+              def check_index_against_workspace(entry)
+                stat   = @stats[entry.path]
+                status = @inspector.compare_index_to_workspace(entry, stat)
+
+                if status
+                  record_change(entry.path, @workspace_changes, status)
+                else
+                  @repo.index.update_entry_stat(entry, stat)
+                end
+              end
+
+              def check_index_against_head_tree(entry)
+                item   = @head_tree[entry.path]
+                status = @inspector.compare_tree_to_index(item, entry)
+
+                if status
+                  record_change(entry.path, @index_changes, status)
+                end
+              end
+
+   Section 9.1.3, “Empty untracked directories”
+   Section 9.2.4, “Timestamp optimisation”
+   Section 10.2.2, “Modified files”
+
+                                   Migrating between trees
+
+The trackable_file? method and the comparison logic is then extracted into the new
+Repository::Inspector class. The trackable_file? method is a verbatim copy of the method
+from Status, while the other methods are a slightly modified version of the Status comparison
+logic that allows us to pass in any objects we want to compare and get a symbol back telling
+us if anything has changed. If the objects being compared are equal, then these comparison
+methods return nil.
+     # lib/repository/inspector.rb
+
+     class Repository
+       class Inspector
+
+         def initialize(repository)
+           @repo = repository
+         end
+
+         def trackable_file?(path, stat)
+           # as before
+         end
+
+         def compare_index_to_workspace(entry, stat)
+           return :untracked unless entry
+           return :deleted unless stat
+           return :modified unless entry.stat_match?(stat)
+           return nil if entry.times_match?(stat)
+
+             data = @repo.workspace.read_file(entry.path)
+             blob = Database::Blob.new(data)
+             oid = @repo.database.hash_object(blob)
+
+           unless entry.oid == oid
+             :modified
+           end
+         end
+
+         def compare_tree_to_index(item, entry)
+           return nil unless item or entry
+           return :added unless item
+           return :deleted unless entry
+
+           unless entry.mode == item.mode and entry.oid == item.oid
+             :modified
+           end
+         end
+
+       end
+     end
+
+We can now use the Inspector class inside the Migration class to check every entry in the
+tree diff for conflicts with uncommitted changes.
+
+14.5.2. Checking the migration for conflicts
+In the Migration constructor, let’s create an instance of Inspector, an @errors array to collect
+error messages to display to the user, and then a structure called @conflicts that will store the
+names of all conflicted files, organised by which type of conflict they’re exhibiting.
+
+                                   Migrating between trees
+
+     # lib/repository/migration.rb
+
+         Conflict = Class.new(StandardError)
+
+         attr_reader :changes, :mkdirs, :rmdirs, :errors
+
+         def initialize(repository, tree_diff)
+           # ...
+
+           @inspector = Inspector.new(repository)
+           @errors    = []
+
+           @conflicts = {
+             :stale_file            => SortedSet.new,
+             :stale_directory       => SortedSet.new,
+             :untracked_overwritten => SortedSet.new,
+             :untracked_removed     => SortedSet.new
+           }
+         end
+
+Git has four different error messages it can display for conflicting changes, and the four keys
+in the @conflicts hash will correspond to these messages.
+
+We need to populate the @conflicts record as we prepare the change plan, and once we’ve
+finished planning we should fill the @errors array with a list of messages derived from the
+conflicts we found. Let’s add a couple of hooks into the Migration#plan_changes method for
+performing these tasks:
+     # lib/repository/migration.rb
+
+         def plan_changes
+           @diff.each do |path, (old_item, new_item)|
+             check_for_conflict(path, old_item, new_item)
+             record_change(path, old_item, new_item)
+           end
+
+           collect_errors
+         end
+
+For each item in the tree diff, we call check_for_conflict with the item’s pathname, and its
+state in the old tree and in the new tree. path is a Pathname object, and old_item and new_item
+are both either a Database::Entry or nil. The check_for_conflict method runs through
+a series of checks for situations where executing the checkout would result in uncommitted
+changes being lost, and records any conflicts found in the @conflicts record.
+     # lib/repository/migration.rb
+
+         def check_for_conflict(path, old_item, new_item)
+           entry = @repo.index.entry_for_path(path)
+
+           if index_differs_from_trees(entry, old_item, new_item)
+             @conflicts[:stale_file].add(path.to_s)
+             return
+           end
+
+           stat = @repo.workspace.stat_file(path)
+           type = get_error_type(stat, entry, new_item)
+
+                                     Migrating between trees
+
+            if stat == nil
+              parent = untracked_parent(path)
+              @conflicts[type].add(entry ? path.to_s : parent.to_s) if parent
+
+            elsif stat.file?
+              changed = @inspector.compare_index_to_workspace(entry, stat)
+              @conflicts[type].add(path.to_s) if changed
+
+            elsif stat.directory?
+              trackable = @inspector.trackable_file?(path, stat)
+              @conflicts[type].add(path.to_s) if trackable
+            end
+          end
+
+The method begins by loading the Index::Entry for the given path. The first check it performs
+is a call to index_differs_from_trees, which returns true if the index entry differs from both
+the states given in the tree diff. If the index entry’s mode and object ID are equal to those of
+old_item, that means the index is unchanged from HEAD for this file, so there is no uncommitted
+change. If the index entry is equal to new_item, then applying the tree diff will have no effect,
+so it’s still safe. Only if the index entry differs from old_item and new_item do we have
+uncommitted content that will be lost if we migrate.
+     # lib/repository/migration.rb
+
+          def index_differs_from_trees(entry, old_item, new_item)
+            @inspector.compare_tree_to_index(old_item, entry) and
+            @inspector.compare_tree_to_index(new_item, entry)
+          end
+
+Recall that Inspector#compare_tree_to_index returns a truthy value (a symbol) if its inputs
+differ. If it returns a symbol for both old_item and new_item, then check_for_conflict
+records a :stale_file error and exits. If the index entry matches either old_item or new_item,
+then we move on to check for various conditions that could exist in the workspace. It grabs the
+File::Stat of the path in question, and performs a number of tests depending on the result.
+
+If stat is nil, i.e. there is no file in the workspace at the given path, that’s not a problem on
+its own. Applying a tree diff will either delete a file, which is fine if it doesn’t exist, or create
+or update it, which are also fine because there’s no data at the given path that would be lost.
+However, it’s possible that an untracked file exists at a parent path. For example, if we’re
+checking lib/app.rb, which is updated in our example tree diff, and that file no longer exists
+but a file exists at lib, then applying the tree diff would require deleting the file at lib so that
+lib/app.rb could be written. This would result in lost data and so it blocks the checkout from
+proceeding. This check is done using the Migration#untracked_parent method, which stats
+every path that contains the one in question to see if an untracked file is present there.
+     # lib/repository/migration.rb
+
+          def untracked_parent(path)
+            path.dirname.ascend.find do |parent|
+              next if parent.to_s == "."
+
+              parent_stat = @repo.workspace.stat_file(parent)
+              next unless parent_stat&.file?
+
+                                     Migrating between trees
+
+              @inspector.trackable_file?(parent, parent_stat)
+            end
+          end
+
+If stat represents a regular file, then we want to know if the file in the
+workspace contains changes that have not been added to the index. We call
+Inspector#compare_index_to_workspace to perform this check, and record an error if it
+returns anything, which would happen if the file is not in the index (entry is nil), or the index
+entry and the file have different contents. This check prevents the checkout from overwriting
+changes that exist only in the workspace and have not been committed to the index or database.
+
+Finally, if stat represents a directory, then it may be in conflict with the tree diff, because
+tree diffs only contain paths of regular files. We want to know if the directory contains any
+untracked files that would be deleted if we removed the directory to make way for a file present
+in the new tree. This check can be performed by a call to Inspector#tracked_file?.
+
+The above checks on the workspace file add conflicted pathnames to @conflicts[type], where
+type is determined by calling this method with the File::Stat, Index::Entry and the new
+Database::Entry for the path we’re checking.
+
+     # lib/repository/migration.rb
+
+          def get_error_type(stat, entry, item)
+            if entry
+              :stale_file
+            elsif stat&.directory?
+              :stale_directory
+            elsif item
+              :untracked_overwritten
+            else
+              :untracked_removed
+            end
+          end
+
+If the path is in the index, then we use :stale_file as the error type; if the path refers
+to a directory then it’s :stale_directory; if the path exists in the new tree then we use
+:untracked_overwritten and if none of the above apply it’s :untracked_removed. This
+choice of type simply determines which error message Git shows for each conflicting path.
+
+The check_for_conflict method is quite a lot to take in, but it’s a good example of the fact that
+validation and error detection logic can often account for much more code than the success-path
+behaviour of a component. By incorporating the above logic, Migration acts like a database
+transaction by making sure that a checkout can either be performed completely or not at all. We
+don’t want to begin executing a checkout and find out part-way through that one of its changes
+would cause data loss, because quitting at that point would leave the user’s repository in a very
+confusing state. It’s important in situations like this to plan a set of changes and verify that they
+are free of conflicts before performing any of them.
+
+14.5.3. Reporting conflicts
+The final stage of preventing conflicts is to report any problems you found to the user,
+so they know why we refused to run the checkout and can amend any problems. The
+
+                                    Migrating between trees
+
+Migration#collect_errors method is called at the end of plan_changes and gathers all the
+conflicts up into a list of error messages. If @conflicts contains any paths for a given type,
+we build a list of these paths and top-and-tail it with some copy contained in a constant called
+MESSAGES. If @errors is not empty at the end of this, we raise an exception to block the migration
+from proceeding.
+     # lib/repository/migration.rb
+
+         def collect_errors
+           @conflicts.each do |type, paths|
+             next if paths.empty?
+
+              lines = paths.map { |name| "\t#{ name }" }
+              header, footer = MESSAGES.fetch(type)
+
+              @errors.push([header, *lines, footer].join("\n"))
+            end
+
+           raise Conflict unless @errors.empty?
+         end
+
+The MESSAGES constant contains all the conflict error messages that Git uses to explain what’s
+wrong with the repository:
+     # lib/repository/migration.rb
+
+         MESSAGES = {
+           :stale_file => [
+             "Your local changes to the following files would be overwritten by checkout:",
+             "Please commit your changes or stash them before you switch branches."
+           ],
+           :stale_directory => [
+             "Updating the following directories would lose untracked files in them:",
+             "\n"
+           ],
+           :untracked_overwritten => [
+             "The following untracked working tree files would be overwritten by checkout:",
+             "Please move or remove them before you switch branches."
+           ],
+           :untracked_removed => [
+             "The following untracked working tree files would be removed by checkout:",
+             "Please move or remove them before you switch branches."
+           ]
+         }
+
+All we need to do now is catch this exception in Command::Checkout. We handle it by unlocking
+the index, discarding any changes that might have been made, and then printing all the messages
+we gathered during collect_errors.
+     # lib/command/checkout.rb
+
+         def run
+           # ...
+         rescue Repository::Migration::Conflict
+           handle_migration_conflict(migration)
+         end
+
+                                   Migrating between trees
+
+         def handle_migration_conflict(migration)
+           repo.index.release_lock
+
+           migration.errors.each do |message|
+             @stderr.puts "error: #{ message }"
+           end
+           @stderr.puts "Aborting"
+           exit 1
+         end
+
+14.6. The perils of self-hosting
+We now have a checkout command that can recall the tree from any commit in the repository,
+and load it into the workspace and index. Let’s test it out by checking which files exist
+in the lib/repository directory and then switching to a commit before inspector.rb was
+introduced. Here is the directory as of our latest commit:
+     $ ls lib/repository
+     inspector.rb migration.rb status.rb
+
+Let’s create a branch here, called master, so that we have a saved reference to the latest commit
+and we can retrieve it after we’ve checked out an older version.
+     $ jit branch master
+
+Now, if we checkout master~2, we see that inspector.rb has disappeared! We now have the
+codebase in the state it was in before we added conflict detection.
+     $ jit checkout master~2
+
+     $ ls lib/repository
+     migration.rb status.rb
+
+And, we can get back to the latest version of the code by checking out master again.
+     $ jit checkout master
+
+     $ ls lib/repository
+     inspector.rb migration.rb status.rb
+
+However, we must use our new-found power carefully. We can’t go back to arbitrary points in
+history, because the checkout command is running code that’s in this project’s workspace. If
+we go back too far, to a time before lib/command/checkout.rb existed:
+     $ jit checkout master~5
+
+     $ ls lib/command
+     add.rb    base.rb     branch.rb commit.rb diff.rb     init.rb    status.rb
+
+Then it becomes impossible to reach any other version, as the code for the checkout command
+has vanished.
+     $ jit checkout master
+     jit: 'checkout' is not a jit command.
+
+This sort of problem is endemic to projects that are self-hosting, which means that they
+somehow operate on their own source code. Much software that deals with source code, such
+
+                                   Migrating between trees
+
+as version control systems, compilers, linters and so on, can often process its own source code,
+and this sometimes means putting the project in a state where it will no longer run, and the code
+required to fix it no longer exists!
+
+This is why, if you’re ever uncertain about whether an action is safe, it’s best to save off a
+backup of the project when it’s in a working state. In Jit’s case, the code for checkout does
+still exist somewhere inside .git/objects, and it might be a fun exercise to try and retrieve
+it without using the command itself. But, I’ll leave that for you to try while we move on to
+finishing up branch management in the next chapter.
+

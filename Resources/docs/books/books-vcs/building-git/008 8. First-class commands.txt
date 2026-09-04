@@ -1,0 +1,1082 @@
+8. First-class commands
+Jit now supports three commands in its command-line interface: init, add and commit. While
+we’ve created abstractions to manage the data in .git, the commands that use these abstractions
+are still one long case expression in bin/jit. This design is beginning to hurt: the code is
+accruing a fair amount of logic, and it’s expressed as one big script rather than being broken
+down into smaller functions. For example, after the work of the last chapter, the add command
+looks like this:
+     # bin/jit
+
+     when "add"
+       root_path = Pathname.new(Dir.getwd)
+       git_path = root_path.join(".git")
+
+       workspace = Workspace.new(root_path)
+       database = Database.new(git_path.join("objects"))
+       index     = Index.new(git_path.join("index"))
+
+       begin
+         index.load_for_update
+       rescue Lockfile::LockDenied => error
+         $stderr.puts <<~ERROR
+           fatal: #{ error.message }
+
+           Another jit process seems to be running in this repository.
+           Please make sure all processes are terminated then try again.
+           If it still fails, a jit process may have crashed in this
+           repository earlier: remove the file manually to continue.
+         ERROR
+         exit 128
+       end
+
+       begin
+         paths = ARGV.flat_map do |path|
+           path = Pathname.new(File.expand_path(path))
+           workspace.list_files(path)
+         end
+       rescue Workspace::MissingFile => error
+         $stderr.puts "fatal: #{ error.message }"
+         index.release_lock
+         exit 128
+       end
+
+       begin
+         paths.each do |path|
+           data = workspace.read_file(path)
+           stat = workspace.stat_file(path)
+
+           blob = Database::Blob.new(data)
+           database.store(blob)
+           index.add(path, blob.oid, stat)
+         end
+       rescue Workspace::NoPermission => error
+         $stderr.puts "error: #{ error.message }"
+         $stderr.puts "fatal: adding files failed"
+
+                                     First-class commands
+
+         index.release_lock
+         exit 128
+       end
+
+       index.write_updates
+       exit 0
+
+This is quite a lot of logic to have sitting around in one big undifferentiated lump. It will be
+much easier to maintain this code if we start to discover some new abstractions in it and break it
+into smaller pieces. It should also become easier to test; the code is currently coupled to global
+objects like ENV, ARGV and the standard I/O streams, and it invokes exit which will end any
+Ruby process that invokes it. Removing these couplings will mean we can control the code
+from a test suite and get some automated checking in place for what is becoming a complex
+piece of logic.
+
+8.1. Abstracting the repository
+The init command is unusual among Git commands in that it’s run to create a repository
+rather to work with an existing one. But the others, add and commit, have some similar-looking
+boilerplate code to set up the objects they need to work with.
+
+Here’s the start of the add command:
+     # bin/jit
+
+     when "add"
+       root_path = Pathname.new(Dir.getwd)
+       git_path = root_path.join(".git")
+
+       workspace = Workspace.new(root_path)
+       database = Database.new(git_path.join("objects"))
+       index     = Index.new(git_path.join("index"))
+
+And here’s commit:
+     # bin/jit
+
+     when "commit"
+       root_path = Pathname.new(Dir.getwd)
+       git_path = root_path.join(".git")
+
+       database = Database.new(git_path.join("objects"))
+       index    = Index.new(git_path.join("index"))
+       refs     = Refs.new(git_path)
+
+As we add more commands, it would be good not to keep copy-pasting this boilerplate into each
+one, duplicating the information about where various pieces of the infrastructure are located
+in the filesystem. Let’s create an abstraction to tie all the pieces together and encapsulate this
+knowledge: the Repository class.
+
+Instead of the above boilerplate, what’s the minimum amount of code we could replace it with?
+In order to figure out the paths to all the Git components, the only thing we need to know is
+the path to the .git directory, which is inside the directory that jit is invoked from. We can
+instantiate a Repository object with that path and use it to build all the other pieces.
+     # bin/jit
+
+                                             First-class commands
+
+          root_path = Pathname.new(Dir.getwd)
+          repo = Repository.new(root_path.join(".git"))
+
+The commands will now use this repo object to get all other objects they want to talk to. For
+example, here’s a section of the commit command that loads the index and writes its contents
+as a tree to the database.
+       # bin/jit
+
+          repo.index.load
+
+          root = Database::Tree.build(repo.index.each_entry)
+          root.traverse { |tree| repo.database.store(tree) }
+
+The Repository class does not contain any logic per se; it just provides an interface for getting
+a Database, Index, Refs and Workspace, and it knows the filesystem locations each of these
+should be bound to.
+
+Each method uses memoization1, not for performance but for consistency. Because some of
+these objects are stateful, like Index, we want to make sure that each time we call repo.index
+we are getting the same Index instance. In Ruby this is done by caching the result of the first
+call to Repository#index with the guarded assignment @index ||=.
+       # lib/repository.rb
+
+       require_relative "./database"
+       require_relative "./index"
+       require_relative "./refs"
+       require_relative "./workspace"
+
+       class Repository
+         def initialize(git_path)
+           @git_path = git_path
+         end
+
+          def database
+            @database ||= Database.new(@git_path.join("objects"))
+          end
+
+          def index
+            @index ||= Index.new(@git_path.join("index"))
+          end
+
+          def refs
+            @refs ||= Refs.new(@git_path)
+          end
+
+         def workspace
+           @workspace ||= Workspace.new(@git_path.dirname)
+         end
+       end
+
+This may well look like overkill: in order to save about 3 lines of code in each command, we’ve
+written a 25-line class. However, the important thing is not the physical volume of code, it’s
+ https://en.wikipedia.org/wiki/Memoization
+
+                                                   First-class commands
+
+how many times the same fact is stated in the codebase. If every single command repeated the
+code that said, ‘the database is stored in .git/objects’, then we’d have to change a lot of code
+if we ever change our mind or want to change how the database works. The introduction of the
+Repository class means this bit of knowledge only exists once in the codebase, and so it makes
+the program easier to change. Every time multiple pieces of your program have an implicit
+agreement that’s not enforced, that’s an opportunity for a maintainer to change one piece of
+code without changing others that depend on it. This, rather than eliminating literal duplication
+of lines of code, is the essence of the DRY principle2.
+
+8.2. Commands as classes
+The other thing that’s noticeable about bin/jit is how long it’s getting. The prospect of it
+continuing to be one big case expression that contains the code of every single command that
+jit responds to is not an appealing one; it will make the code harder to maintain over time, it
+will make diffs less useful and merge conflicts more likely, and it also makes it harder to test
+all the code that’s in that file. A good step would be to make the jit executable as small as
+possible, so that it just invokes a class containing the code for the command it wants to run.
+This should result in all the logic being moved to places where it can be tested.
+
+As a first step towards this, let’s just move all the command code as-is into three new classes:
+Command::Init, Command::Add and Command::Commit. The bin/jit executable will be reduced
+to calling Command.exectute with the first element of ARGV to invoke one of these classes, plus
+a little error-handling code.
+       # bin/jit
+
+       #!/usr/bin/env ruby
+
+       require_relative "../lib/command"
+
+       begin
+         name = ARGV.shift
+         Command.execute(name)
+
+       rescue Command::Unknown => error
+         $stderr.puts "jit: #{ error.message }"
+         exit 1
+
+       rescue => error
+         $stderr.puts "fatal: #{ error.message }"
+         if ENV["DEBUG"]
+           error.backtrace.each do |line|
+             $stderr.puts "        from #{ line }"
+           end
+         end
+         exit 1
+       end
+
+Here we’re handling one specific kind of error that we expect: what happens when the given
+command name does not exist. I’ve also put in a catch-all rescue for any other errors so that
+they’re handled nicely, including printing the full stack trace3 only if the environment variable
+ https://en.wikipedia.org/wiki/Don%27t_repeat_yourself
+ https://en.wikipedia.org/wiki/Stack_trace
+
+                                      First-class commands
+
+DEBUG is set. That means end users won’t see this information but a maintainer can expose it
+if desired.
+
+Next we need to define this new Command.execute method. This will be a small wrapper that
+selects one of the classes from the Command namespace to invoke based on the name it’s given.
+If the name is not recognised it raises an error, otherwise it instantiates the selected class and
+calls its run method.
+     # lib/command.rb
+
+     require_relative "./command/add"
+     require_relative "./command/commit"
+     require_relative "./command/init"
+
+     module Command
+       Unknown = Class.new(StandardError)
+
+        COMMANDS = {
+          "init"   => Init,
+          "add"    => Add,
+          "commit" => Commit
+        }
+
+        def self.execute(name)
+          unless COMMANDS.has_key?(name)
+            raise Unknown, "'#{ name }' is not a jit command."
+          end
+
+         command_class = COMMANDS[name]
+         command_class.new.run
+       end
+     end
+
+The command classes themselves each contain nothing but a run method that houses the code
+extracted verbatim from bin/jit. I have not made any changes to the body of the command
+itself. For example, here is the Command::Commit class:
+     # lib/command/commit.rb
+
+     require "pathname"
+     require_relative "../repository"
+
+     module Command
+       class Commit
+
+          def run
+            root_path = Pathname.new(Dir.getwd)
+            repo = Repository.new(root_path.join(".git"))
+
+              repo.index.load
+
+              root = Database::Tree.build(repo.index.each_entry)
+              root.traverse { |tree| repo.database.store(tree) }
+
+              parent   = repo.refs.read_head
+              name     = ENV.fetch("GIT_AUTHOR_NAME")
+              email    = ENV.fetch("GIT_AUTHOR_EMAIL")
+
+                                       First-class commands
+
+             author = Database::Author.new(name, email, Time.now)
+             message = $stdin.read
+
+             commit = Database::Commit.new(parent, root.oid, author, message)
+             repo.database.store(commit)
+             repo.refs.update_head(commit.oid)
+
+            is_root = parent.nil? ? "(root-commit) " : ""
+            puts "[#{ is_root }#{ commit.oid }] #{ message.lines.first }"
+            exit 0
+          end
+
+       end
+     end
+
+The Command::Init#run and Command::Add#run methods contain the bodies of the init and
+add commands from bin/jit respectively. This a marginal improvement in that each command
+is now stored in its own file and so will be a bit easier to locate and maintain. However, the
+code is still hard to test and we must fix that before making further changes.
+
+8.2.1. Injecting dependencies
+Having the command code in classes that we can call lets us write scripts to test their
+functionality, but it’s still rife with problems. To demonstrate some of them, here’s a script that
+tries to initialise a new repository, create a file in it, add that file to the index, and then list the
+contents of the index. If you’re thinking this is hard to follow, that’s normal — we’ll examine
+why this is below.
+     # test_add.rb
+
+     require "fileutils"
+     require "pathname"
+
+     require_relative "./lib/command/init"
+     require_relative "./lib/command/add"
+     require_relative "./lib/index"
+
+     def exit(*)
+     end
+
+     repo_dir = File.expand_path("../tmp-repo", __FILE__)
+
+     ARGV.clear
+     ARGV << repo_dir
+     Command::Init.new.run
+
+     path = File.join(repo_dir, "hello.txt")
+     flags = File::RDWR | File::CREAT
+     File.open(path, flags) { |file| file.puts("hello") }
+
+     ARGV.clear
+     ARGV << "hello.txt"
+     FileUtils.cd(repo_dir) { Command::Add.new.run }
+
+     index_path = Pathname.new(repo_dir).join(".git", "index")
+     index = Index.new(index_path)
+
+                                                     First-class commands
+
+       index.load
+       index.each_entry do |entry|
+         puts [entry.mode.to_s(8), entry.oid, entry.path].join(" ")
+       end
+
+       FileUtils.rm_rf(repo_dir)
+
+Let’s run this file and see what it prints out.
+       $ ruby test_add.rb
+       Initialized empty Jit repository in /Users/jcoglan/jit/tmp-repo/.git
+       100644 ce013625030ba8dba906f756967f9e9ca394464a hello.txt
+
+This looks fine; the index contains the file we added with the right mode and object ID.
+However, the test script itself is full of quirks that would be good to get rid of.
+
+The first of these is that we’re overwriting the exit function with the line def exit(*) near
+the top of the file. That’s because each command internally calls exit with the status it should
+exit with, but because that code is in the same Ruby process as this test script, the entire process
+exits. If we didn’t override this method, then nothing after the call to Command::Init.new.run
+would execute.
+
+The next problem is that we’re manipulating the global argument array ARGV. This contains the
+arguments to the current invocation of ruby, but to make our commands work, we need to empty
+it out and fill it with the arguments we want the command to see. Not only is this awkward, it
+might break other code. If we’re running this code inside a test suite that uses command-line
+arguments, changing ARGV might break its behaviour. In general, it’s not a good idea to mutate
+process globals like this from deep inside application code.
+
+Another global setting we’re changing is the Ruby process’s working directory. The add
+command finds the root of the current repository using Dir.getwd4, so we need to change what
+this returns so the add command is executed in the temporary test repository, not the main one
+containing the Jit source code. This is done using FileUtils.cd5, which changes the current
+working directory for the duration of the block passed to it. Again, changing global process
+state can affect other code running within the process. For example, something that’s writing
+to a log file while this code runs might begin writing to the wrong path. It’s better to explicitly
+use absolute paths as inputs to components that need to use the filesystem, rather than changing
+global state.
+
+Then we have the problem of handling output from these commands. Running the
+Command::Init class has written Initialized empty Jit repository… to the terminal, before
+our own output that displays the contents of the index. In general, we don’t want runtime output
+from the commands intermingled with output from the test suite — it makes the test results
+harder to read, and it prevents us from using code in the tests to inspect what each command
+prints.
+
+A similar problem presents itself when we need to control the standard input stream to each
+command. Here’s an extra snippet that runs the commit command:
+ https://docs.ruby-lang.org/en/2.3.0/Dir.html#method-c-getwd
+ https://docs.ruby-lang.org/en/2.3.0/FileUtils.html#method-c-cd
+
+                                                     First-class commands
+
+       ARGV.clear
+       ENV["GIT_AUTHOR_NAME"] = "A. U. Thor"
+       ENV["GIT_AUTHOR_EMAIL"] = "author@example.com"
+       $stdin = StringIO.new("Commit message.")
+       FileUtils.cd(repo_dir) { Command::Commit.new.run }
+       $stdin = STDIN
+
+We’re mutating the ENV global because Command::Commit gets author information from it, and
+it’s a problem for similar reasons that mutating ARGV and Dir.getwd is. We’re also messing
+with the process’s input stream, temporarily reassigning $stdin to a StringIO6 containing
+the data we want the command to read, before setting it back to the real input stream STDIN.
+Ruby provides global variables — $stdin, $stdout, $stderr — rather than constants for its I/
+O streams, but replacing them still carries the risk that you’re affecting the entire Ruby process,
+not just the component we’re testing.
+
+All these problems can be solved by decoupling the Command classes from all the global
+references they’re using. Rather than reaching out into the global namespace for ARGV, for
+example, a command must have the command-line arguments explicitly passed into it. Let’s
+change bin/jit so that it passes in all the process components the commands will need. It also
+expects to receive an object back that contains the exit status.
+       # bin/jit
+
+           cmd = Command.execute(Dir.getwd, ENV, ARGV, $stdin, $stdout, $stderr)
+           exit cmd.status
+
+The Command.execute method now uses the first element of the argument list to select a
+command, and reserves the rest of the list for inputs to that command, without mutating ARGV.
+It instantiates the chosen command by passing all the process components into it, and it also
+returns the command object so that bin/jit can read its status.
+       # lib/command.rb
+
+           def self.execute(dir, env, argv, stdin, stdout, stderr)
+             name = argv.first
+             args = argv.drop(1)
+
+              unless COMMANDS.has_key?(name)
+                raise Unknown, "'#{ name }' is not a jit command."
+              end
+
+              command_class = COMMANDS[name]
+              command = command_class.new(dir, env, args, stdin, stdout, stderr)
+
+             command.execute
+             command
+           end
+
+To complete the change, we’ll introduce a new class called Command::Base, which all the other
+commands will inherit from. Its constructor takes all the process components and stores them
+as instance variables.
+       # lib/command/base.rb
+
+ https://docs.ruby-lang.org/en/2.3.0/StringIO.html
+
+                                    First-class commands
+
+     module Command
+       class Base
+
+         attr_reader :status
+
+         def initialize(dir, env, args, stdin, stdout, stderr)
+           @dir    = dir
+           @env    = env
+           @args   = args
+           @stdin = stdin
+           @stdout = stdout
+           @stderr = stderr
+         end
+
+       end
+     end
+
+The commands can now be changed to refer to these instance variables instead of the globals
+they were using. Dir.getwd becomes @dir, ENV becomes @env, ARGV becomes @args, and so on
+for the I/O streams. For example, here’s the new state of the Commit command:
+     # lib/command/commit.rb
+
+     require "pathname"
+
+     require_relative "./base"
+     require_relative "../repository"
+
+     module Command
+       class Commit < Base
+
+         def run
+           root_path = Pathname.new(@dir)
+           repo = Repository.new(root_path.join(".git"))
+
+             repo.index.load
+
+             root = Database::Tree.build(repo.index.each_entry)
+             root.traverse { |tree| repo.database.store(tree) }
+
+             parent = repo.refs.read_head
+             name    = @env.fetch("GIT_AUTHOR_NAME")
+             email   = @env.fetch("GIT_AUTHOR_EMAIL")
+             author = Database::Author.new(name, email, Time.now)
+             message = @stdin.read
+
+             commit = Database::Commit.new(parent, root.oid, author, message)
+             repo.database.store(commit)
+             repo.refs.update_head(commit.oid)
+
+           is_root = parent.nil? ? "(root-commit) " : ""
+           puts "[#{ is_root }#{ commit.oid }] #{ message.lines.first }"
+           exit 0
+         end
+
+       end
+     end
+
+                                     First-class commands
+
+There are still a few minor wrinkles to smooth out. The File.expand_path method expands
+paths relative to the Ruby process’s current working directory, unless a different one is
+specified. We must expand arguments relative to the command’s own directory instead:
+     # lib/command/init.rb
+
+            root_path = Pathname.new(File.expand_path(path, @dir))
+
+In fact, this is a common operation needed in several commands, so let’s add it to the Base class.
+     # lib/command/base.rb
+
+         def expanded_pathname(path)
+           Pathname.new(File.expand_path(path, @dir))
+         end
+
+Next, the existing puts calls with no receiver (as opposed to calls like @stderr.puts) in these
+classes will write to the Ruby process’s real standard output if left unchanged. We don’t need
+to change the calls themselves; instead, we can redefine puts in Command::Base, then any call
+to it from one of the command classes will use this new definition. Our version will write to
+the @stdout object stored by the command.
+     # lib/command/base.rb
+
+         def puts(string)
+           @stdout.puts(string)
+         end
+
+Finally, there’s the problem of calling exit inside these Command classes. It would be nice if
+calling exit within a command stopped the command executing any further, but did not exit the
+Ruby process. We can use Ruby’s throw/catch mechanism for this. In Command::Base we’ll
+define exit to store the exit code for the command, and then call throw :exit — this will halt
+further execution of the call stack that lead to the throw.
+     # lib/command/base.rb
+
+         attr_reader :status
+
+         def exit(status = 0)
+           @status = status
+           throw :exit
+         end
+
+To tie things together, we need a method that will catch the :exit signal. The
+Command::Base#execute method does just that: it calls the run method in a catch block, so
+that the effect is to execute the code in run up to the point that exit is called.
+     # lib/command/base.rb
+
+         def execute
+           catch(:exit) { run }
+         end
+
+If you look back at the Command.execute method, you’ll see it calls execute rather than run
+on the command object it creates, so the command’s code runs until it calls exit. By returning
+the command object to the caller, we can get the command’s status code.
+
+                                                      First-class commands
+
+The technique we’ve used above where bin/jit passes in all the things that Command will need,
+and Command then uses these values rather than global references, is known as dependency
+injection7 and it’s a simple yet powerful technique for decoupling program components,
+making them easier to reuse and test. We can now change our test script to use the new
+Command.execute interface — notice how we no longer need to redefine exit, mutate ARGV, or
+use FileUtils.cd.
+       require "fileutils"
+       require "pathname"
+
+       require_relative "./lib/command"
+       require_relative "./lib/index"
+
+       repo_dir = File.expand_path("../tmp-repo", __FILE__)
+       io = StringIO.new
+
+       cmd = Command.execute(Dir.getwd, {}, ["init", repo_dir], io, io, io)
+       puts "init: #{ cmd.status }"
+
+       path = File.join(repo_dir, "hello.txt")
+       flags = File::RDWR | File::CREAT
+       File.open(path, flags) { |file| file.puts("hello") }
+
+       cmd = Command.execute(repo_dir, {}, ["add", "hello.txt"], io, io, io)
+       puts "add: #{ cmd.status }"
+
+       index_path = Pathname.new(repo_dir).join(".git", "index")
+       index = Index.new(index_path)
+       index.load
+       index.each_entry do |entry|
+         puts [entry.mode.to_s(8), entry.oid, entry.path].join(" ")
+       end
+
+       FileUtils.rm_rf(repo_dir)
+
+This now expresses the syntax of each command more directly, lets us inspect the exit status
+of each one easily, and doesn’t produce any extraneous output such as the message printed by
+init.
+
+       $ ruby test_add.rb
+       init: 0
+       add: 0
+       100644 ce013625030ba8dba906f756967f9e9ca394464a hello.txt
+
+Testing the commit command still requires about the same amount of setup as before, but
+everything it uses is a local variable rather than a global object:
+       env = {
+         "GIT_AUTHOR_NAME" => "A. U. Thor",
+         "GIT_AUTHOR_EMAIL" => "author@example.com"
+       }
+       input = StringIO.new("Commit message.")
+       cmd = Command.execute(repo_dir, env, ["commit"], input, io, io)
+       puts "commit: #{ cmd.status }"
+
+ https://en.wikipedia.org/wiki/Dependency_injection
+
+                                      First-class commands
+
+The Command::Commit class now only has this small env hash to work with, rather than the
+ENV global that contains all the variables in your current environment. That means you can be
+much more explicit about what the command depends on, and make sure it’s not accidentally
+depending on a variable that happens to be set in your environment but isn’t stated in the test.
+We also didn’t need to rebind the standard input stream for the whole Ruby process.
+
+Dependency injection doesn’t necessarily make things simpler in the sense of there being less
+code. What it does is remove implicit couplings between system components in a way that
+makes it easier to isolate each component from the global environment. It means you can
+be more confident that you’re really testing the right thing, because there are fewer hidden
+assumptions, and it also means your components are less likely to leak side effects into the rest
+of the system or the process running your tests.
+
+8.3. Testing the commands
+The changes in the previous section have made it much easier to write automated tests for the
+Command classes. But rather than ad-hoc scripts as we saw above, let’s add tests to our automated
+minitest suite so they’re run every time we run rake.
+
+Let’s begin with a single test to help us work out a bunch of support code. I’d like to write a
+test that says, when I call add with a single file, that file gets added to the index. I’d like to be
+able to say this as tersely as possible, because the easier it is to write tests, the more I’m likely
+to write, and the more robust the codebase will be as a result.
+
+Here’s my first attempt at writing this test:
+     # test/command/add_test.rb
+
+     require "minitest/autorun"
+     require "command_helper"
+
+     describe Command::Add do
+       include CommandHelper
+
+       def assert_index(expected)
+         repo.index.load
+         actual = repo.index.each_entry.map { |entry| [entry.mode, entry.path] }
+         assert_equal expected, actual
+       end
+
+       it "adds a regular file to the index" do
+         write_file "hello.txt", "hello"
+
+          jit_cmd "add", "hello.txt"
+
+         assert_index [[0100644, "hello.txt"]]
+       end
+     end
+
+This test uses several high-level functions to drive the activity, and many of them are not defined
+directly in this file. Instead, I’m using this example to drive out a set of support code that I’m
+likely to need for testing other commands. repo should return me a Repository object tied to
+some temporary directory used for testing, write_file should write some content to a file, and
+jit_cmd runs a Jit command with the given arguments, capturing its output for later inspection.
+
+                                     First-class commands
+
+These methods are defined in the CommandHelper module that’s included at the top of the test.
+Below is an initial definition of that module that contains the required methods. repo_path
+returns a path inside the test directory, where we’ll initialise a temporary repository for the
+duration of each test. Just like the methods in Repository itself, repo is memoised in case we
+need to use it to access stateful objects. jit_cmd creates three new I/O stream objects and passes
+them into the Command.execute method, so that anything written to them can be inspected after
+we call the command.
+
+At the top of the module we define the included method, which Ruby executes whenever the
+CommandHelper is included into another class. It adds a before hook to the including test suite
+to initialise a temporary repository using the init command, and an after hook to delete this
+directory. These hooks mean that every test begins with a new empty repository and we get a
+clean slate on top of which to build each test scenario.
+     # test/command_helper.rb
+
+     require "fileutils"
+     require "pathname"
+
+     require "command"
+     require "repository"
+
+     module CommandHelper
+       def self.included(suite)
+         suite.before { jit_cmd "init", repo_path.to_s }
+         suite.after { FileUtils.rm_rf(repo_path) }
+       end
+
+       def repo_path
+         Pathname.new(File.expand_path("../test-repo", __FILE__))
+       end
+
+       def repo
+         @repository ||= Repository.new(repo_path.join(".git"))
+       end
+
+       def write_file(name, contents)
+         path = repo_path.join(name)
+         FileUtils.mkdir_p(path.dirname)
+
+         flags = File::RDWR | File::CREAT | File::TRUNC
+         File.open(path, flags) { |file| file.write(contents) }
+       end
+
+       def jit_cmd(*argv)
+         @stdin = StringIO.new
+         @stdout = StringIO.new
+         @stderr = StringIO.new
+
+         @cmd = Command.execute(repo_path.to_s, {}, argv, @stdin, @stdout, @stderr)
+       end
+     end
+
+With this infrastructure in place we can think about the other use cases for the add command.
+We’ve already tested some of its behaviour in Section 7.3, “Stop making sense”, so we know
+what the in-memory behaviour of the Index class is when different filenames are added to it.
+
+                                     First-class commands
+
+What we want to know now is how everything works together: does the command-line interface
+work, and does it integrate with the filesystem properly?
+
+For example, we should check that it stores the fact that some files are executable:
+     # test/command/add_test.rb
+
+       it "adds an executable file to the index" do
+         write_file "hello.txt", "hello"
+         make_executable "hello.txt"
+
+         jit_cmd "add", "hello.txt"
+
+         assert_index [[0100755, "hello.txt"]]
+       end
+
+This necessitates another helper method in CommandHelper:
+     # test/command_helper.rb
+
+       def make_executable(name)
+         File.chmod(0755, repo_path.join(name))
+       end
+
+We can check that add accepts multiple filenames and adds them to the index, and that if we call
+add twice with a different file each time, then the files are added incrementally. The second test
+implicitly asserts that the entries are kept ordered by filename, and that the .git/index.lock
+file is removed at the end — if it were not, the second invocation of add should fail.
+     # test/command/add_test.rb
+
+       it "adds multiple files to the index" do
+         write_file "hello.txt", "hello"
+         write_file "world.txt", "world"
+
+         jit_cmd "add", "hello.txt", "world.txt"
+
+         assert_index [[0100644, "hello.txt"], [0100644, "world.txt"]]
+       end
+
+       it "incrementally adds files to the index" do
+         write_file "hello.txt", "hello"
+         write_file "world.txt", "world"
+
+         jit_cmd "add", "world.txt"
+
+         assert_index [[0100644, "world.txt"]]
+
+         jit_cmd "add", "hello.txt"
+
+         assert_index [[0100644, "hello.txt"], [0100644, "world.txt"]]
+       end
+
+Then we have the ability to pass directory names to add. These tests make sure that we can pass
+a directory name to add the files inside it, and that the special directory name . is allowed to
+specify adding everything inside the project root.
+     # test/command/add_test.rb
+
+                                    First-class commands
+
+       it "adds a directory to the index" do
+         write_file "a-dir/nested.txt", "content"
+
+         jit_cmd "add", "a-dir"
+
+         assert_index [[0100644, "a-dir/nested.txt"]]
+       end
+
+       it "adds the repository root to the index" do
+         write_file "a/b/c/file.txt", "content"
+
+         jit_cmd "add", "."
+
+         assert_index [[0100644, "a/b/c/file.txt"]]
+       end
+
+We’ve tested the effect of the add command — that it modifies the index — but not what its
+outputs are. We ought to check that when successful, the command exits with status 0 and does
+not print anything to stdout or stderr.
+     # test/command/add_test.rb
+
+       it "is silent on success" do
+         write_file "hello.txt", "hello"
+
+         jit_cmd "add", "hello.txt"
+
+         assert_status 0
+         assert_stdout ""
+         assert_stderr ""
+       end
+
+Again, this requires some new helpers. We can use the information stored away by the jit_cmd
+helper to inspect its exit status and what it prints to the output streams.
+     # test/command_helper.rb
+
+       def assert_status(status)
+         assert_equal(status, @cmd.status)
+       end
+
+       def assert_stdout(message)
+         assert_output(@stdout, message)
+       end
+
+       def assert_stderr(message)
+         assert_output(@stderr, message)
+       end
+
+       def assert_output(stream, message)
+         stream.rewind
+         assert_equal(message, stream.read)
+       end
+
+It’s also important to check what happens in error scenarios, especially because these are
+situations we don’t expect to happen often in our day-to-day work and so it’s easy to overlook
+
+                                      First-class commands
+
+them. Code that’s not regularly exercised can easily accumulate bugs, and in error cases this
+can result in disastrous things happening to the user’s data.
+
+Let’s add some tests for the three error cases we’ve considered: missing files, unreadable files,
+and a locked index. In each case we check what’s written to stderr, we check the exit status,
+and we make sure nothing is written to the index itself.
+     # test/command/add_test.rb
+
+       it "fails for non-existent files" do
+         jit_cmd "add", "no-such-file"
+
+         assert_stderr <<~ERROR
+           fatal: pathspec 'no-such-file' did not match any files
+         ERROR
+         assert_status 128
+         assert_index []
+       end
+
+       it "fails for unreadable files" do
+         write_file "secret.txt", ""
+         make_unreadable "secret.txt"
+
+         jit_cmd "add", "secret.txt"
+
+         assert_stderr <<~ERROR
+           error: open('secret.txt'): Permission denied
+           fatal: adding files failed
+         ERROR
+         assert_status 128
+         assert_index []
+       end
+
+       it "fails if the index is locked" do
+         write_file "file.txt", ""
+         write_file ".git/index.lock", ""
+
+         jit_cmd "add", "file.txt"
+
+         assert_status 128
+         assert_index []
+       end
+
+There are now enough tests here for me to feel confident in changing the code, knowing I won’t
+break any of this functionality. That doesn’t mean they’re complete — there are certainly other
+things we could add tests for, and you should think through what other assumptions the code
+makes that aren’t expressed here. Testing is all about being able to change code with confidence,
+and how much test coverage you need to feel confident will depend on the person or team
+working with the code, and what the risks of making mistakes are. Personally, I tend to be a
+little forgetful, and so I like to have all the important requirements captured as tests so I don’t
+need to remember to manually check everything on each change.
+
+Testing is also limited by what you’re able to automate. For example, one thing I’ve not tested
+above is that the added files are written to the database. That’s because we’ve not yet written
+any code for reading the .git/objects database. We will need such code as we build up
+
+                                                  First-class commands
+
+more commands, and we can come back and expand these tests when we have more tools for
+inspecting the repository.
+
+8.4. Refactoring the commands
+Now that we have some more tests in place we can refactor8 the code, changing its structure
+without changing its behaviour. The tests make sure that we don’t change its behaviour in
+any significant way, and within the constraints imposed by the tests we can make any change
+we like. There are a couple of things I’d like to improve right now: there’s some duplication
+between commands, and the Command::Add#run is very long and hard to follow.
+
+8.4.1. Extracting common code
+This is a very minor thing, but both the Command::Add#run and Command::Commit#run methods
+both begin with the same code:
+                 root_path = Pathname.new(@dir)
+                 repo = Repository.new(root_path.join(".git"))
+
+This is much less boilerplate than we would have had before the changes we made in Section 8.1,
+“Abstracting the repository”, but it’s still wasteful and error-prone to have every command
+class repeat the instructions for finding the right directory and creating a Repository around it.
+
+Now that the commands inherit from Command::Base, we can simply replace the local variable
+repo with a method call by defining an appropriate method in the base class.
+
+       # lib/command/base.rb
+
+             def repo
+               @repo ||= Repository.new(Pathname.new(@dir).join(".git"))
+             end
+
+This is one nice thing about working in Ruby — because parentheses on method calls are
+optional, it’s easy to replace a local variable with a method call of the same name without
+needing to change any of the subsequent code. It makes it easy to extract parts of functions and
+break them into smaller pieces.
+
+8.4.2. Reorganising the add command
+The main reason I wanted to add all the tests for the add command in Section 8.3, “Testing the
+commands” is that the Command::Add#run method has become a sprawling mess. In the process
+of adding error handling in Section 7.4, “Handling bad inputs”, we turned the add command
+code from a short easy-to-follow script into a lengthy page of code that doesn’t tell a very clear
+story. We saw the current state of the add command at the beginning of this chapter, and the
+only difference is that it’s now been moved into a class.
+
+There are far too many things going on all in one function here. There’s the main functionality
+of the command — reading files, storing them as blobs, adding them to the index — but it’s
+mixed in with lots of error-handling in various places, including copy for each kind of error that
+really gets in the way when trying to understand the main purpose of the method. It becomes
+ https://en.wikipedia.org/wiki/Code_refactoring
+
+                                     First-class commands
+
+impossible to see important details about it, such as the fact that the whole process is bookended
+by claiming a lock on the index and writing any updates back to disk.
+
+Let’s break the method into smaller pieces so that it becomes easier to follow. We can begin by
+breaking the error-handling code out into separate methods, and moving all the rescue clauses
+to the end of the run method rather than having multiple begin/rescue blocks throughout the
+method. This makes it easier to see and change how each error is handled without cluttering
+the main method body.
+     # lib/command/add.rb
+
+         LOCKED_INDEX_MESSAGE = <<~MSG
+           Another jit process seems to be running in this repository.
+           Please make sure all processes are terminated then try again.
+           If it still fails, a jit process may have crashed in this
+           repository earlier: remove the file manually to continue.
+         MSG
+
+         def run
+           # [main method body elided]
+
+         rescue Lockfile::LockDenied => error
+           handle_locked_index(error)
+         rescue Workspace::MissingFile => error
+           handle_missing_file(error)
+         rescue Workspace::NoPermission => error
+           handle_unreadable_file(error)
+         end
+
+         private
+
+         def handle_locked_index(error)
+           @stderr.puts "fatal: #{ error.message }"
+           @stderr.puts
+           @stderr.puts LOCKED_INDEX_MESSAGE
+           exit 128
+         end
+
+         def handle_missing_file(error)
+           @stderr.puts "fatal: #{ error.message }"
+           repo.index.release_lock
+           exit 128
+         end
+
+         def handle_unreadable_file(error)
+           @stderr.puts "error: #{ error.message }"
+           @stderr.puts "fatal: adding files failed"
+           repo.index.release_lock
+           exit 128
+         end
+
+The run method’s main body is now reduced to the following:
+     # lib/command/add.rb
+
+            repo.index.load_for_update
+
+                                       First-class commands
+
+            paths = @args.flat_map do |path|
+              path = expanded_pathname(path)
+              repo.workspace.list_files(path)
+            end
+
+            paths.each do |path|
+              data = repo.workspace.read_file(path)
+              stat = repo.workspace.stat_file(path)
+
+              blob = Database::Blob.new(data)
+              repo.database.store(blob)
+              repo.index.add(path, blob.oid, stat)
+            end
+
+            repo.index.write_updates
+            exit 0
+
+This is considerably clearer than it was before, but we can break it up even further so that all
+run does is tell a high-level story and all the detail happens elsewhere:
+
+     # lib/command/add.rb
+
+          def run
+            repo.index.load_for_update
+            expanded_paths.each { |path| add_to_index(path) }
+            repo.index.write_updates
+            exit 0
+          rescue Lockfile::LockDenied => error
+            handle_locked_index(error)
+          rescue Workspace::MissingFile => error
+            handle_missing_file(error)
+          rescue Workspace::NoPermission => error
+            handle_unreadable_file(error)
+          end
+
+          private
+
+          def expanded_paths
+            @args.flat_map do |path|
+              repo.workspace.list_files(expanded_pathname(path))
+            end
+          end
+
+          def add_to_index(path)
+            data = repo.workspace.read_file(path)
+            stat = repo.workspace.stat_file(path)
+
+            blob = Database::Blob.new(data)
+            repo.database.store(blob)
+            repo.index.add(path, blob.oid, stat)
+          end
+
+This is as terse as I’d like this method to be: run loads the index, expands all the paths it’s given,
+adds each one to the index, and writes the index.
+
+To check we’ve not made any mistakes and introduced bugs by moving the code around, we
+can run the tests that we wrote in Section 8.3, “Testing the commands”.
+
+                                     First-class commands
+
+     $ rake
+     Run options: --seed 48441
+
+     # Running:
+
+     ..............
+
+     Finished in 0.057807s, 242.1852 runs/s, 380.5767 assertions/s.
+
+     14 runs, 22 assertions, 0 failures, 0 errors, 0 skips
+
+Everything seems to be working, so we’ll commit this and move on to adding more features.
+It’s worth stopping at regular intervals while working on a project to check that the code hasn’t
+got into a state that’s going to make it harder for you to keep making progress. Make sure the
+code is covered by tests that capture its external behaviour, and then you can restructure it to
+suit your needs without worrying about accidentally adding bugs.
+

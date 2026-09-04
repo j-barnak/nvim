@@ -1,0 +1,1307 @@
+7. Incremental change
+The work of the previous chapter has got us to a place where we can store all the project files
+in the index. In order to make the index truly useful, we need to be able to use it to compose
+commits, and that means we have two further changes to make. First, it should be possible
+to update the index incrementally, so we can add a single file to it and not lose all the other
+contents; this means we can be selective about which changes should go into the next commit.
+And second, we must change the commit command to read from the index, rather than the
+working tree.
+
+7.1. Modifying the index
+Our current Index implementation begins in an empty state in memory, and then has the inputs
+of the add command added to it before being dumped to disk. That means it overwrites whatever
+is currently stored there, so any files not mentioned in the call to add are forgotten.
+     $ jit add lib/database
+     $ git ls-files
+     lib/database/author.rb
+     lib/database/blob.rb
+     lib/database/commit.rb
+     lib/database/tree.rb
+
+     $ jit add lib/database/author.rb
+     $ git ls-files
+     lib/database/author.rb
+
+The second call to add in the above example should not cause all the other files to be forgotten;
+it should just update lib/database/author.rb and leave everything else alone. To make this
+happen, we need to read the existing index from disk before making changes to it.
+
+In bin/jit, let’s add an extra call before the loop where we iterate over the add arguments
+to update the index. We’ll call a new method, Index#load_for_update, to load the existing
+index into memory.
+     # bin/jit
+
+       workspace = Workspace.new(root_path)
+       database = Database.new(git_path.join("objects"))
+       index     = Index.new(git_path.join("index"))
+
+       index.load_for_update
+
+       ARGV.each do |path|
+         # ...
+       end
+
+7.1.1. Parsing .git/index
+The Index#load_for_update method takes care of all the steps needed to read the index data
+from .git/index, to rebuild the data that was in memory before the index was last written.
+We’ll take a look at how it works below.
+
+                                                     Incremental change
+
+       # lib/index.rb
+
+          def load_for_update
+            if @lockfile.hold_for_update
+              load
+              true
+            else
+              false
+            end
+          end
+
+load_for_update begins by trying to acquire a lock using Lockfile#hold_for_update.
+Previously we’ve only used this method when we’re about to change a file such as .git/
+HEAD — why is it necessary for reading?
+
+The point of a lock is to stop two processes from overwriting each other’s changes to the same
+file. If we didn’t take a lock before reading the file, then the following sequence of events is
+possible:
+
+• Alice runs add, which begins by reading the current index from disk
+
+• Bob runs add, which also reads the index, getting the same data as Alice
+
+• Alice adds alice.rb to her in-memory copy of the index
+
+• Alice acquires a write lock and writes her index to .git/index
+
+• Bob adds bob.py to his in-memory index
+
+• Bob acquires a write lock and writes his index to .git/index
+
+We now have a lost update: Alice’s addition of alice.rb has been lost because Bob, not
+knowing about the existence of alice.rb, overwrote .git/index.
+
+This situation can be prevented by requiring everyone to acquire the lock on .git/index before
+reading it, stopping anyone else from changing the file between the time you read it and the
+time you write it, releasing your lock. This strategy is a form of pessimistic locking, a type of
+concurrency control1.
+
+Having successfully opened the Lockfile, we call load, which does the real work of reading
+the index from disk.
+       # lib/index.rb
+
+          def load
+            clear
+            file = open_index_file
+
+             if file
+               reader = Checksum.new(file)
+               count = read_header(reader)
+               read_entries(reader, count)
+               reader.verify_checksum
+
+ https://en.wikipedia.org/wiki/Concurrency_control
+
+                                                       Incremental change
+
+             end
+           ensure
+             file&.close
+           end
+
+The first thing this method does is called Index#clear, which resets the in-memory state of
+the Index. It does the work we were previously doing in Index#initialize, with the addition
+of setting a flag called @changed that will signal whether the index has been modified since
+it was loaded.
+       # lib/index.rb
+
+           def initialize(pathname)
+             @pathname = pathname
+             @lockfile = Lockfile.new(pathname)
+             clear
+           end
+
+           def clear
+             @entries = {}
+             @keys    = SortedSet.new
+             @changed = false
+           end
+
+Next, we use Index#open_index_file to open a file handle for the locked file so we can read
+from it. This opens the real .git/index, rather than the lock file .git/index.lock which is
+currently empty awaiting new data to be written. If the file does not exist, this returns nil:
+this should not be treated as an error, as it’s perfectly normal for a file we’re changing not to
+exist yet.
+       # lib/index.rb
+
+           def open_index_file
+             File.open(@pathname, File::RDONLY)
+           rescue Errno::ENOENT
+             nil
+           end
+
+After opening the file, we instantiate a new kind of object called a Checksum. Just as we
+calculated a SHA-1 hash of the contents while writing the index, we must now calculate the
+same thing while reading it, and verify the stored value at the end. As this logic is similar to that
+used for writing, I’m creating an abstraction for it rather than adding more state to the Index
+class itself.
+
+The Index::Checksum class takes a file handle and creates a new Digest::SHA1 object. Its read
+method reads the requested number of bytes from the file, raising an error if there is less data left
+in the file than we were expecting2. It updates the checksum with this data and then returns it.
+It also has a verify_checksum method, which reads the final 20 bytes of the file and compares
+them to the checksum computed from the rest of the data.
+       # lib/index/checksum.rb
+
+       require "digest/sha1"
+
+ Ruby’s File#read method returns empty strings rather than raising an error once the end of the file is reached.
+
+                                                      Incremental change
+
+       class Index
+         class Checksum
+
+             EndOfFile = Class.new(StandardError)
+
+             CHECKSUM_SIZE = 20
+
+             def initialize(file)
+               @file   = file
+               @digest = Digest::SHA1.new
+             end
+
+             def read(size)
+               data = @file.read(size)
+
+                unless data.bytesize == size
+                  raise EndOfFile, "Unexpected end-of-file while reading index"
+                end
+
+               @digest.update(data)
+               data
+             end
+
+             def verify_checksum
+               sum = @file.read(CHECKSUM_SIZE)
+
+               unless sum == @digest.digest
+                 raise Invalid, "Checksum does not match value stored on disk"
+               end
+             end
+
+         end
+       end
+
+The first step in processing the file data called from Index#load is the read_header method.
+Remember that .git/index begins with 12 bytes containing the string DIRC, a 4-byte number
+representing the file format version, and another 4-byte number containing the number of
+entries. In read_header, we read 12 bytes from the file, then use String#unpack3 to parse them.
+String#unpack is the inverse of Array#pack: just as we can use a format string to serialise an
+array of data, we can use the same format to parse a string back into an array. This will save
+us a lot of work while parsing.
+       # lib/index.rb
+
+          HEADER_SIZE   = 12
+          HEADER_FORMAT = "a4N2"
+          SIGNATURE     = "DIRC"
+          VERSION       = 2
+
+          def read_header(reader)
+            data = reader.read(HEADER_SIZE)
+            signature, version, count = data.unpack(HEADER_FORMAT)
+
+             unless signature == SIGNATURE
+
+ https://docs.ruby-lang.org/en/2.3.0/String.html#method-i-unpack
+
+                                       Incremental change
+
+           raise Invalid, "Signature: expected '#{ SIGNATURE }' but found '#{ signature }'"
+         end
+         unless version == VERSION
+           raise Invalid, "Version: expected '#{ VERSION }' but found '#{ version }'"
+         end
+
+         count
+       end
+
+If either the signature or version is not what we expect, we raise an error, otherwise we return
+the entry count so it can be used by the next step of the process.
+
+Next, load calls read_entries with the Checksum instance and the entry count. This method
+reads the entries from disk into the in-memory @entries structure. It runs the following
+procedure either for count iterations, or until it runs out of data.
+
+First, we read 64 bytes from the file. This is the smallest size that an entry can be; ten 4-byte
+numbers, a 20-byte object ID, two bytes of flags and then a null-terminated string, which must
+be at least one character and a null byte, all of which adds up to 64 bytes. An entry must end
+with a null byte and its size must be a multiple of 8 bytes, so until the last byte of entry is
+\0 we read 8-byte blocks from the file and add them to entry. We could use the path length
+that’s stored in the flags bytes to make this run faster, but it would also make the code more
+complicated since we need to fall back to scanning for paths longer than 4,095 bytes. Scanning
+also works for short paths, and I’d rather keep the code as simple as possible for now.
+
+Once a complete entry has been read, we parse it by calling Entry.parse and store the result
+using Index#store_entry.
+     # lib/index.rb
+
+       ENTRY_FORMAT   = "N10H40nZ*"
+       ENTRY_BLOCK    = 8
+       ENTRY_MIN_SIZE = 64
+
+       def read_entries(reader, count)
+         count.times do
+           entry = reader.read(ENTRY_MIN_SIZE)
+
+            until entry.byteslice(-1) == "\0"
+              entry.concat(reader.read(ENTRY_BLOCK))
+            end
+
+           store_entry(Entry.parse(entry))
+         end
+       end
+
+Like Index#read_header, Entry.parse uses String#unpack with ENTRY_FORMAT to read the
+string into an Entry object. This lets us process quite a long list of different kinds of data with
+almost no code.
+     # lib/index/entry.rb
+
+         def self.parse(data)
+           Entry.new(*data.unpack(ENTRY_FORMAT))
+         end
+
+                                      Incremental change
+
+Index#store_entry does the work previously done by the Index#add method, by adding the
+Entry to the @entries hash and its key to the @keys set.
+
+     # lib/index.rb
+
+       def store_entry(entry)
+         @keys.add(entry.key)
+         @entries[entry.key] = entry
+       end
+
+We can now change Index#add to call store_entry with the Entry it creates, and we’ll also
+make it set the @changed flag to indicate something was added to the index since it was read
+from disk.
+     # lib/index.rb
+
+       def add(pathname, oid, stat)
+         entry = Entry.create(pathname, oid, stat)
+         store_entry(entry)
+         @changed = true
+       end
+
+Finally, load calls Index::Checksum#verify_checksum to check the data we’ve read is
+not corrupt. If all goes smoothly, the data has been successfully read from disk and
+Index#load_for_update returns true.
+
+7.1.2. Storing updates
+Once the data from .git/index has been loaded into memory, the add command uses the
+Index#add method to add new files to the index or overwrite existing ones. Index#add just
+modifies the data that’s already in place, and then sets the @changed flag so we know the index
+is different from what’s stored on disk.
+
+To complete the story of incrementally updating the index, some changes are needed to
+Index#write_updates. Whereas before it was responsible for acquiring the write lock, it no
+longer needs to do that; we acquired this lock before reading the file. Instead, we modify its
+functionality so that it sets @changed to false at the end, to indicate all changes are written to
+disk. If @changed is false when this method is called, we just call @lockfile.rollback and
+return, skipping all the work of serialising the index and writing it to the filesystem.
+
+I’ve also extracted the checksum functionality into the Index::Checksum class.
+     # lib/index.rb
+
+       def write_updates
+         return @lockfile.rollback unless @changed
+
+         writer = Checksum.new(@lockfile)
+
+         header = [SIGNATURE, VERSION, @entries.size].pack(HEADER_FORMAT)
+         writer.write(header)
+         each_entry { |entry| writer.write(entry.to_s) }
+
+         writer.write_checksum
+
+                                        Incremental change
+
+          @lockfile.commit
+
+         @changed = false
+       end
+
+Lockfile#rollback is similar to Lockfile#commit, except that rather than renaming the .lock
+file to the real path, it just deletes the .lock file so any changes are discarded and other processes
+are now free to acquire the lock.
+     # lib/lockfile.rb
+
+       def rollback
+         raise_on_stale_lock
+
+         @lock.close
+         File.unlink(@lock_path)
+         @lock = nil
+       end
+
+The write and write_checksum methods in Index::Checksum are just the old write and
+finish_write methods from Index, extracted into this new class. Since Index::Checksum is
+instantiated with a file handle, it can be used for writing as well as reading, as long as we pass
+all data flowing through it into the Digest::SHA1 object.
+     # lib/index/checksum.rb
+
+          def write(data)
+            @file.write(data)
+            @digest.update(data)
+          end
+
+          def write_checksum
+            @file.write(@digest.digest)
+          end
+
+We’ve now changed the add command so that it reads the index data from .git/index on disk,
+modifies it somehow, then writes the updated index back to the filesystem. This means we
+can update the index gradually as we work, and be selective about which changes we want to
+include in the next commit. The next step is to have the commit command use the index, rather
+than the working tree, to build the next commit tree.
+
+7.2. Committing from the index
+The index now works well enough that we can actually begin to use it. In Git, committed trees
+are prepared by reading from the index, rather than from the working tree. This means the
+commit command doesn’t need to hash the entire project every time — it just uses the blob IDs
+that are cached in .git/index.
+
+Here’s the state of the commit command up to the point where we store the trees, as we left
+it back in Section 5.2.2, “Building a Merkle tree”. It scans the Workspace for all the files in
+the project, stores blobs for all of them, and generates a list of Entry objects to feed into
+Database::Tree.build.
+
+     # bin/jit
+
+                                                       Incremental change
+
+          workspace = Workspace.new(root_path)
+          database = Database.new(db_path)
+          refs      = Refs.new(git_path)
+
+          entries = workspace.list_files.map do |path|
+            data = workspace.read_file(path)
+            blob = Database::Blob.new(data)
+
+             database.store(blob)
+
+            stat = workspace.stat_file(path)
+            Entry.new(path, blob.oid, stat)
+          end
+
+          root = Database::Tree.build(entries)
+          root.traverse { |tree| database.store(tree) }
+
+Much of this code can now be removed: the add command is now responsible for storing
+blobs, and the Index keeps a cache of everything needed to build a tree, including each entry’s
+pathname, blob ID and file mode. Rather than asking the Workspace for all the files, let’s instead
+put in a call to Index#load to get the index into memory, and then pass Index#each_entry to
+Database::Tree.build.
+
+       # bin/jit
+
+          database = Database.new(git_path.join("objects"))
+          index    = Index.new(git_path.join("index"))
+          refs     = Refs.new(git_path)
+
+          index.load
+
+          root = Database::Tree.build(index.each_entry)
+          root.traverse { |tree| database.store(tree) }
+
+We only need to call Index#load, not Index#load_for_update, because this command is not
+going to mutate the index. It can just read it once, and then it has no further interaction with
+the .git/index file.
+
+Index#each_entry is a method we’d previously used in Index#write_updates to save the
+entries to the file:
+       # lib/index.rb
+
+          def write_updates
+            # ...
+            each_entry { |entry| writer.write(entry.to_s) }
+
+In this use it takes a block, but we can change it slightly so that it’s also callable without
+a block, and it will then return a collection called an Enumerator4 containing the entries.
+enum_for(:each_entry) returns an object whose each method will iterate over the entries.
+
+       # lib/index.rb
+
+          def each_entry
+
+ https://docs.ruby-lang.org/en/2.3.0/Enumerator.html
+
+                                     Incremental change
+
+         if block_given?
+           @keys.each { |key| yield @entries[key] }
+         else
+           enum_for(:each_entry)
+         end
+       end
+
+This means that Database::Tree.build can simply call each on the value it receives. Rather
+than using each_entry, which would couple it to the Index interface, calling each allows
+Database::Tree.build to take any kind of Ruby collection and not care what type it is.
+Also, because Index keeps its entries in sorted order, Tree.build no longer needs to sort the
+collection it receives itself.
+
+To keep Tree.build and Tree#add_entry working, Index::Entry needs to support the
+same interface as the original Entry class. In particular, we need to implement the
+parent_directories and basename methods, this time using the entry’s path field.
+
+     # lib/index/entry.rb
+
+         def parent_directories
+           Pathname.new(path).descend.to_a[0..-2]
+         end
+
+         def basename
+           Pathname.new(path).basename
+         end
+
+One other small adjustment must be made to Database::Tree#to_s. The original Entry class
+had a mode method that returned the mode as a string, since that’s what Tree wanted to store it
+as. However, the Index::Entry class stores and returns mode as a number, and we must convert
+it to an octal string representation here.
+     # lib/database/tree.rb
+
+         def to_s
+           entries = @entries.map do |name, entry|
+             mode = entry.mode.to_s(8)
+             ["#{ mode } #{ name }", entry.oid].pack(ENTRY_FORMAT)
+           end
+
+           entries.join("")
+         end
+
+We’ll change the Tree#mode method to match; let’s store the numerical mode for trees in a
+constant because other code will need to refer to it later.
+     # lib/database/tree.rb
+
+         TREE_MODE = 040000
+
+         def mode
+           TREE_MODE
+         end
+
+We’ve not had to change a lot here to migrate from the workspace to the index. All we’ve done
+is remove the code for storing blobs in favour of reading from the index, and made some small
+
+                                      Incremental change
+
+additions to make Index::Entry compatible with Database::Tree. The overall structure of the
+Database::Tree logic has remained largely unchanged.
+
+7.3. Stop making sense
+At this point, we need to take care of some edge cases in how the index works. To see what
+these are, let’s use Jit as we’ve built it so far to make a repository with two files in it.
+     $ jit init tmp
+     $ cd tmp
+     $ touch alice.txt bob.txt
+     $ jit add .
+     $ echo "first commit" | jit commit
+
+If we use git ls-files to examine the state of the index, we see the files that we just added.
+     $ git ls-files
+     alice.txt
+     bob.txt
+
+Now, suppose we remove the file alice.txt and replace it with a directory of the same name,
+placing another file inside it.
+     $ rm alice.txt
+     $ mkdir alice.txt
+     $ touch alice.txt/nested.txt
+     $ jit add .
+
+Let’s run ls-files again to check the index state:
+     $ git ls-files
+     alice.txt
+     alice.txt/nested.txt
+     bob.txt
+
+This list does not make sense: it is not possible to have both a file and a directory with the
+same name in a normal filesystem. Though our working tree only contains the regular files
+alice.txt/nested.txt and bob.txt, the index maintains that the file alice.txt still exists. If
+we turned this index into a commit, we’d never be able to check it out, since the files alice.txt
+and alice.txt/nested.txt cannot both exist at the same time.
+
+This is the problem with caches, especially those that are updated piecemeal. It’s easy to
+implement them naively such that the state they contain cannot possibly represent a state of
+affairs in the real world. When the index was overwritten on every invocation of add, this
+was not a problem: the contents would definitely reflect the state of the filesystem at a single
+point in time. But now that we can change it bit-by-bit, it might contain entries that are not
+compatible with one another, as the files on disk can change between add calls. We’d better fix
+the Index#add method so that it discards any existing entries that don’t fit with the new one.
+
+7.3.1. Starting a test suite
+All the code we’ve written so far is there to directly support the commands we wanted to run
+while developing the project. It would be easy for us to notice that some element of the add
+
+                                                       Incremental change
+
+or commit command was broken, because either Jit would crash and show a stack trace, or it
+would write bad data to the database or index and we’d be alerted to this when checking our
+work with Git’s status, log and show commands. In short it would be difficult for us not to
+notice bugs in this code in the normal course of our work on it.
+
+Now we’re about to start adding code to address edge cases; situations that don’t necessarily
+crop up in our project but will cause some repositories to become invalid if left unchecked. This
+is a good time to begin writing some automated tests so that we know we’ve not accidentally
+broken things without noticing.
+
+Let’s add a single test and the infrastructure needed to run it. We’ll check that adding a single
+item to Index causes that item to show up in Index#each_entry. The test below is written
+using minitest5, a gem6 that’s bundled with recent Ruby versions. Loading minitest/autorun
+means minitest will execute any tests that have been defined when this file is run. The lines
+that look like
+           let(:name) { expression }
+
+define values that are available within the tests. The first time name is mentioned in each test,
+expression will be evaluated to return its value.
+
+We set up index to refer to a new Index object, instantiated using a path inside the test
+directory. This path doesn’t particularly matter since we won’t write the index to disk during this
+test — it will only exist in memory. We’re only going to be testing how file paths are handled,
+but the Index#add method requires an object ID and a File::Stat value. It doesn’t matter what
+these are as long as they’re valid; we’ll use SecureRandom7 to generate an object ID, and use
+the File.stat of the test file itself for these values.
+
+The test proper begins with the line it "adds a single file"; minitest runs the code in this
+block and if the assertion fails, it reports an error. All we’re checking here is that the file paths
+in the index match the names we’ve passed to Index#add.
+       # test/index_test.rb
+
+       require "minitest/autorun"
+
+       require "pathname"
+       require "securerandom"
+       require "index"
+
+       describe Index do
+         let(:tmp_path)   { File.expand_path("../tmp", __FILE__) }
+         let(:index_path) { Pathname.new(tmp_path).join("index") }
+         let(:index)      { Index.new(index_path) }
+
+           let(:stat) { File.stat(__FILE__) }
+           let(:oid) { SecureRandom.hex(20) }
+
+           it "adds a single file" do
+             index.add("alice.txt", oid, stat)
+
+  http://docs.seattlerb.org/minitest/
+  Gems are libraries of third-party code that’s not part of Ruby’s standard library, although Ruby does include a few widely-used gems out of
+the box. Find out more at https://rubygems.org/.
+  https://docs.ruby-lang.org/en/2.3.0/SecureRandom.html
+
+                                        Incremental change
+
+            assert_equal ["alice.txt"], index.each_entry.map(&:path)
+          end
+        end
+
+This file can be run directly from the command-line by running ruby test/index_test.rb.
+However, as more test files are added to the project it’s more common to define a task for
+running them all. Rake8, a build tool included with Ruby, includes a task for doing just that.
+        # Rakefile
+
+        require "rake/testtask"
+
+        Rake::TestTask.new do |task|
+          task.pattern = "test/*_test.rb"
+        end
+
+        task :default => :test
+
+Now we can run rake and see the results of the single test we’ve defined. Rake and minitest are
+third-party packages bundled with Ruby, so if you have set RUBYOPT to disable gems9, you’ll
+need to unset that variable; run unset RUBYOPT before running the following command.
+        $ rake
+
+        # Running:
+
+        .
+
+        Finished in 0.002064s, 484.4961 runs/s, 484.4961 assertions/s.
+
+        1 runs, 1 assertions, 0 failures, 0 errors, 0 skips
+
+Everything seems to be working, so we’ll commit this and begin adding more tests.
+
+7.3.2. Replacing a file with a directory
+In Section 7.3, “Stop making sense”, we saw that adding a file whose parent directory had the
+same name as an existing file, left the existing file in the index.
+        $ git ls-files
+        alice.txt
+        alice.txt/nested.txt
+        bob.txt
+
+When we add alice.txt/nested.txt, we would like the entry for alice.txt to be removed,
+since that name is now bound to a directory and so cannot be a regular file. Let’s write a test
+to express this requirement.
+        # test/index_test.rb
+
+            it "replaces a file with a directory" do
+              index.add("alice.txt", oid, stat)
+              index.add("bob.txt", oid, stat)
+
+ https://ruby.github.io/rake/
+ Section 5.2, “Nested trees”
+
+                                         Incremental change
+
+             index.add("alice.txt/nested.txt", oid, stat)
+
+            assert_equal ["alice.txt/nested.txt", "bob.txt"],
+                         index.each_entry.map(&:path)
+          end
+
+This test follows the Arrange, Act, Assert10 pattern that’s common to a lot of unit testing. First
+we arrange the state of the system to some starting point; we add the files alice.txt and
+bob.txt to the index. Then we act, that is we perform the action we’re trying to test, which
+in this case means adding a new entry for alice.txt/nested.txt. Finally, we assert, to check
+the result of the action. Here, we’d like to see that when we list all the paths in the index, it
+contains alice.txt/nested.txt, but not alice.txt.
+
+Running the tests now shows us that this functionality does not work as required: alice.txt
+appears in the output.
+       $ rake
+
+       # Running:
+
+       .F
+
+       Finished in 0.020562s, 97.2668 runs/s, 97.2668 assertions/s.
+
+         1) Failure:
+       Index#test_0002_replaces a file with a directory
+       --- expected
+       +++ actual
+       @@ -1 +1 @@
+       -["alice.txt/nested.txt", "bob.txt"]
+       +["alice.txt", "alice.txt/nested.txt", "bob.txt"]
+
+       2 runs, 2 assertions, 1 failures, 0 errors, 0 skips
+       rake aborted!
+       Command failed with status (1)
+
+       Tasks: TOP => test
+       (See full trace by running task with --trace)
+
+Now we know that the test accurately expresses our requirement and identifies a shortcoming
+in the code, we can go about fixing it. In Index#add, we’ll add a step before storing the new
+Index::Entry that discards any entries that it might conflict with.
+
+       # lib/index.rb
+
+          def add(pathname, oid, stat)
+            entry = Entry.create(pathname, oid, stat)
+            discard_conflicts(entry)
+            store_entry(entry)
+            @changed = true
+          end
+
+The discard_conflicts method will remove any entries whose name matches the name
+of one of the new entry’s parent directories. For example, if the new entry is lib/index/
+  http://wiki.c2.com/?ArrangeActAssert
+
+                                       Incremental change
+
+entry.rb, then the entries for lib and lib/index must be removed if they exist. We can use
+the Index::Entry#parent_directories method for this.
+     # lib/index.rb
+
+       def discard_conflicts(entry)
+         entry.parent_directories.each do |dirname|
+           @keys.delete(dirname.to_s)
+           @entries.delete(dirname.to_s)
+         end
+       end
+
+Strictly speaking, removing entries from @keys is all that’s needed to make the test pass, since
+that means they won’t be yielded by Index#each_entry. However, having data in @entries
+that’s not mirrored in @keys is more likely to cause confusion and further errors, so I’d rather
+keep them consistent.
+
+We can go back to our original example and check that adding all the files again causes the
+unwanted entry to be removed:
+     $ git ls-files
+     alice.txt
+     alice.txt/nested.txt
+     bob.txt
+
+     $ jit add .
+
+     $ git ls-files
+     alice.txt/nested.txt
+     bob.txt
+
+That’s one problem fixed! The inverse of this problem is when a file is added whose name
+matches existing directories in the index, and this requires a little more work to remedy.
+
+7.3.3. Replacing a directory with a file
+Imagine you have an index containing two files: alice.txt, and nested/bob.txt. Now we
+try to add a file called simply nested. This means the existing entry nested/bob.txt is now
+invalid, because nested is now a regular file and so can no longer be a directory. All files inside
+this directory must be removed from the index.
+
+Below are a couple of tests to express this requirement. The first is a simple case where the
+conflicted directory name only has direct children. The second is more complicated in that the
+directory itself has subdirectories that must also be removed.
+     # test/index_test.rb
+
+       it "replaces a directory with a file" do
+         index.add("alice.txt", oid, stat)
+         index.add("nested/bob.txt", oid, stat)
+
+         index.add("nested", oid, stat)
+
+         assert_equal ["alice.txt", "nested"],
+
+                                     Incremental change
+
+                       index.each_entry.map(&:path)
+       end
+
+       it "recursively replaces a directory with a file" do
+         index.add("alice.txt", oid, stat)
+         index.add("nested/bob.txt", oid, stat)
+         index.add("nested/inner/claire.txt", oid, stat)
+
+         index.add("nested", oid, stat)
+
+         assert_equal ["alice.txt", "nested"],
+                      index.each_entry.map(&:path)
+       end
+
+Running the tests again, both these new examples fail.
+       1) Failure:
+     Index#test_0003_replaces a directory with a file
+     --- expected
+     +++ actual
+     @@ -1 +1 @@
+     -["alice.txt", "nested"]
+     +["alice.txt", "nested", "nested/bob.txt"]
+
+       2) Failure:
+     Index#test_0004_recursively replaces a directory with a file
+     --- expected
+     +++ actual
+     @@ -1 +1 @@
+     -["alice.txt", "nested"]
+     +["alice.txt", "nested", "nested/bob.txt", "nested/inner/claire.txt"]
+
+When the entry nested is added, the entries nested/bob.txt and nested/inner/claire.txt
+must be removed. Here’s the state of the Index before this new entry is added:
+         @keys = SortedSet.new([
+           "alice.txt",
+           "nested/bob.txt",
+           "nested/inner/claire.txt"
+         ])
+
+         @entries = {
+           "alice.txt"               => Entry.new(...),
+           "nested/bob.txt"          => Entry.new(...),
+           "nested/inner/claire.txt" => Entry.new(...)
+         }
+
+How should we detect which entries to remove when nested is added? We could use the data
+we already have and iterate over all the entries to find those that have this new file as one of
+their parent directories:
+         entries_to_remove = @entries.values.select do |entry|
+           entry.parent_directories.include?("nested")
+         end
+
+This would probably work, but I’d rather not iterate over the entire index every time we add a
+new entry. It would be nice to index the data in a way that makes deleting things easier.
+
+                                      Incremental change
+
+Maybe we could restructure @entries so that, rather than being a flat mapping from full paths
+to Entry objects, it’s a nested structure that mirrors the filesystem:
+         @entries = {
+           "alice.txt" => Entry.new(...),
+           "nested" => {
+             "bob.txt" => Entry.new(...),
+             "inner" => {
+               "claire.txt" => Entry.new(...)
+             }
+           }
+         }
+
+This makes removing entire directories much easier:
+         # delete "nested"
+         @entries.delete("nested")
+
+         # delete "nested/inner"
+         @entries["nested"].delete("inner")
+
+However, we still need the @keys set, because the entries must be sorted by their full pathname
+rather than filenames in each subtree being sorted. And we just made inserting and looking up
+a single entry more complicated; instead of
+         @entries["lib/index/entry.rb"]
+
+we now have to split the path up and do three hash lookups:
+         path = Pathname.new("lib/index/entry.rb")
+
+         entry = path.each_filename.reduce(@entries) do |table, filename|
+           table[filename]
+         end
+
+Attempting to restructure @entries to make some operations more convenient has made other
+operations harder. In such situations, you can always add another data structure, as long as you
+keep it in sync with the others. If you run a web application, you likely have a primary database,
+a search index, and a cache, and it’s fine to have copies of the same information in all of these
+as long as they’re consistent enough for your needs. Each data store exists to make certain kinds
+of queries easier or faster.
+
+In this case, I’m going to add another structure to Index that stores a set of all the entry keys
+that live inside each directory. Here’s our index state again:
+         @keys = SortedSet.new([
+           "alice.txt",
+           "nested/bob.txt",
+           "nested/inner/claire.txt"
+         ])
+
+         @entries = {
+           "alice.txt"               => Entry.new(...),
+           "nested/bob.txt"          => Entry.new(...),
+           "nested/inner/claire.txt" => Entry.new(...)
+         }
+
+                                                    Incremental change
+
+To these I’m going to add the following structure:
+             @parents = {
+               "nested"       => Set.new(["nested/bob.txt", "nested/inner/claire.txt"]),
+               "nested/inner" => Set.new(["nested/inner/claire.txt"])
+             }
+
+The @parents variable is a hash that maps directory names to a Set of all the entry keys that
+fall under that directory. Having this structure means that when a file is added, we can look up
+its name in @parents, and if it exists, remove all the entries named in the corresponding set.
+Let’s set it up in the Index#clear method; the syntax below creates a Hash that creates a new
+Set whenever we ask it for a key that doesn’t exist yet .
+
+       # lib/index.rb
+
+          def clear
+            @entries = {}
+            @keys    = SortedSet.new
+            @parents = Hash.new { |hash, key| hash[key] = Set.new }
+            @changed = false
+          end
+
+Now when we store an entry in the index, we iterate over its parent directories and add the
+entry’s path to each directory’s entry set in @parents.
+       # lib/index.rb
+
+          def store_entry(entry)
+            @keys.add(entry.key)
+            @entries[entry.key] = entry
+
+            entry.parent_directories.each do |dirname|
+              @parents[dirname.to_s].add(entry.path)
+            end
+          end
+
+With the @parents structure populated, we can extend Index#discard_conflicts and use it
+to remove directories that conflict with the new entry. If @parents contains the given path,
+then we clone the children for that path and pass each one to remove_entry. We need to clone
+@parents[path] before iterating it, because remove_entry will modify @parents as each child
+path is removed, and it’s an error to iterate over a Set while it’s being mutated.
+       # lib/index.rb
+
+          def discard_conflicts(entry)
+            entry.parent_directories.each { |parent| remove_entry(parent) }
+            remove_children(entry.path)
+          end
+
+          def remove_children(path)
+            return unless @parents.has_key?(path)
+
+             children = @parents[path].clone
+             children.each { |child| remove_entry(child) }
+
+  https://docs.ruby-lang.org/en/2.3.0/Hash.html#method-c-new
+
+                                      Incremental change
+
+       end
+
+Index#remove_entry consists of the logic that previously lived in discard_conflicts, plus
+logic for removing the entry from the @parents structure. This is the inverse of what we do in
+store_entry: we iterate over the entry’s parent directories and remove the entry’s path from
+each parent’s set in @parents. If this leaves any of these sets empty, the set is removed from
+@parents entirely.
+
+     # lib/index.rb
+
+       def remove_entry(pathname)
+         entry = @entries[pathname.to_s]
+         return unless entry
+
+         @keys.delete(entry.key)
+         @entries.delete(entry.key)
+
+         entry.parent_directories.each do |dirname|
+           dir = dirname.to_s
+           @parents[dir].delete(entry.path)
+           @parents.delete(dir) if @parents[dir].empty?
+         end
+       end
+
+Now, we rerun the tests and see that everything is passing.
+     $ rake
+
+     # Running:
+
+     ....
+
+     Finished in 0.004465s, 895.8567 runs/s, 895.8567 assertions/s.
+
+     4 runs, 4 assertions, 0 failures, 0 errors, 0 skips
+
+A little extra work when adding and removing an entry has made it easy to detect file/directory
+name conflicts and remove entries that are not compatible with the new addition. We don’t have
+to find one magic data structure that solves all our problems, we can use multiple structures
+that solve different problems, as long as we keep them in sync.
+
+7.4. Handling bad inputs
+The index functionality is now fleshed out enough to handle a lot of common use cases, and so
+we probably won’t want to radically change it for a while. Now is a good time to consider what
+might go wrong in the add command, and add code to handle any errors.
+
+The main work of this command is done between the call to load the index,
+index.load_for_update, and the one to commit the changes to disk, index.write_updates.
+That code currently looks like this:
+     # bin/jit
+
+       index.load_for_update
+
+                                     Incremental change
+
+       ARGV.each do |path|
+         path = Pathname.new(File.expand_path(path))
+
+         workspace.list_files(path).each do |pathname|
+           data = workspace.read_file(pathname)
+           stat = workspace.stat_file(pathname)
+
+           blob = Database::Blob.new(data)
+           database.store(blob)
+           index.add(pathname, blob.oid, stat)
+         end
+       end
+
+       index.write_updates
+
+The command gets all its inputs from the user, and there are various ways the user’s input might
+be wrong. Before we had incremental updating, the only viable use of add was to call it with the
+root directory of the project, but now, it’ll be more common to specify individual files to add.
+The arguments the user provides might name files that don’t exist, or they might be files we are
+not allowed to read. The add command should handle these situations by printing an appropriate
+error, exiting with a non-zero status and it should leave the index unchanged and unlocked.
+
+7.4.1. Non-existent files
+Let’s begin by creating a single file in an otherwise-empty directory:
+     $ echo "hello" > hello.txt
+
+When we try to add this file using Git, along with the name of another file that does not exist,
+we get an error, and nothing is written to the database:
+     $ git add hello.txt no-such-file
+     fatal: pathspec 'no-such-file' did not match any files
+
+     $ echo $?
+
+     $ tree .git/objects
+     .git/objects
+     ├── info
+     └── pack
+
+We can handle this in Jit by changing how Workspace#list_files works. If the path passed
+into it does not correspond to a file, then we’ll raise an error. We could also choose to handle
+this by returning an empty array, on the basis that the given name does not match any files,
+but then we would not be able to differentiate between calling add with the name of an empty
+directory (which is not an error) and calling it with a non-existent file (which is).
+
+Previously, Workspace#list_files was not checking if the filename it was given existed in
+the filesystem. Let’s add a check for that and continue to return an array containing that name
+if so. If the file does not exist, then we’ll raise an exception.
+     # lib/workspace.rb
+
+       MissingFile = Class.new(StandardError)
+
+                                      Incremental change
+
+       def list_files(path = @pathname)
+         relative = path.relative_path_from(@pathname)
+
+         if File.directory?(path)
+           filenames = Dir.entries(path) - IGNORE
+           filenames.flat_map { |name| list_files(path.join(name)) }
+         elsif File.exist?(path)
+           [relative]
+         else
+           raise MissingFile, "pathspec '#{ relative }' did not match any files"
+         end
+       end
+
+Next, we’ll separate the add code into two pieces. It currently loops over the arguments in ARGV
+once, and for each argument, it passes the value to Workspace#list_files and then iterates
+over the result of that call, adding all the files to the index. In the above example, that would
+result in hello.txt being written to the database before we discovered that no-such-file does
+not exist. Let’s break it up so that first we discover all the paths to be added, and then we add
+each of them to the index once we have the complete list.
+     # bin/jit
+
+       paths = ARGV.flat_map do |path|
+         path = Pathname.new(File.expand_path(path))
+         workspace.list_files(path)
+       end
+
+       paths.each do |path|
+         data = workspace.read_file(path)
+         stat = workspace.stat_file(path)
+
+         blob = Database::Blob.new(data)
+         database.store(blob)
+         index.add(path, blob.oid, stat)
+       end
+
+Then, we can put an error-catching begin/rescue block around the first loop so that if any
+of the inputs are found not to exist, we print an error and exit, before we even begin adding
+anything to the database.
+     # bin/jit
+
+       begin
+         paths = ARGV.flat_map do |path|
+           path = Pathname.new(File.expand_path(path))
+           workspace.list_files(path)
+         end
+       rescue Workspace::MissingFile => error
+         $stderr.puts "fatal: #{ error.message }"
+         index.release_lock
+         exit 128
+       end
+
+We’ve also added a call to Index#release_lock just before exiting. Recall that the add
+command begins by acquiring a lock on .git/index by creating the file .git/index.lock.
+
+                                        Incremental change
+
+We don’t want to leave that file in place after jit exits, because then further calls to the add
+command will always fail. The Index#release_lock method simply calls Lockfile#rollback
+to delete the .lock file along with any changes written to it.
+     # lib/index.rb
+
+       def release_lock
+         @lockfile.rollback
+       end
+
+7.4.2. Unreadable files
+When Git’s add command is given the names of files that exist but are unreadable, its behaviour
+is slightly different. It still avoids updating the index entirely; if any of the inputs to add cannot
+be read then none of the inputs gets added. Let’s create another file and make it unreadable
+using chmod -r:
+     $ echo "world" > world.txt
+     $ chmod -r world.txt
+
+Now, if we add our readable file hello.txt and the unreadable file world.txt, we get a
+different error, but the database contains a single object after the call:
+     $ git add hello.txt world.txt
+     error: open("world.txt"): Permission denied
+     error: unable to index file world.txt
+     fatal: adding files failed
+
+     $ echo $?
+
+     $ tree .git/objects
+     .git/objects
+     ├── ce
+     │   └── 013625030ba8dba906f756967f9e9ca394464a
+     ├── info
+     └── pack
+
+The object in .git/objects/ce has an object ID that you might recognise as the blob hello\n;
+it’s the contents of hello.txt, so that file did get added to the database. However, this blob is
+not in the index, indeed in this new repository there is no .git/index file and git ls-files
+does not print anything. I’m not entirely sure why Git adds this object to the database with no
+references in .git/index or .git/refs pointing to it — with nothing pointing to it, the object
+may very well get lost.
+
+Nevertheless, we should handle this kind of error, and we’ll just follow Git’s lead for
+compatibility purposes. We’ll begin by catching Errno::EACCES in Workspace#read_file and
+Workspace#stat_file, the methods for reading from the filesystem, and raising our own
+NoPermission error with a brief error message.
+
+     # lib/workspace.rb
+
+       NoPermission = Class.new(StandardError)
+
+       def read_file(path)
+
+                                     Incremental change
+
+         File.read(@pathname.join(path))
+       rescue Errno::EACCES
+         raise NoPermission, "open('#{ path }'): Permission denied"
+       end
+
+       def stat_file(path)
+         File.stat(@pathname.join(path))
+       rescue Errno::EACCES
+         raise NoPermission, "stat('#{ path }'): Permission denied"
+       end
+
+Next, we’ll put a handler for this new error around the loop that adds blobs to the database and
+the index, so that any paths up to the one that’s unreadable are successfully saved.
+     # bin/jit
+
+       begin
+         paths.each do |path|
+           data = workspace.read_file(path)
+           stat = workspace.stat_file(path)
+
+           blob = Database::Blob.new(data)
+           database.store(blob)
+           index.add(path, blob.oid, stat)
+         end
+       rescue Workspace::NoPermission => error
+         $stderr.puts "error: #{ error.message }"
+         $stderr.puts "fatal: adding files failed"
+         index.release_lock
+         exit 128
+       end
+
+The add command now handles the most common types of user input errors around reading
+files, but in solving them we’ve highlighted one further error condition it should handle: what
+if the .git/index.lock file exists when it’s invoked?
+
+7.4.3. Locked index file
+We can easily trigger Git’s error handler for a locked index file by touching the file .git/
+index.lock before running the add command.
+
+     $ touch .git/index.lock
+     $ git add hello.txt
+     fatal: Unable to create '/Users/jcoglan/git-add-errors/.git/index.lock': File exists.
+
+     Another git process seems to be running in this repository, e.g.
+     an editor opened by 'git commit'. Please make sure all processes
+     are terminated then try again. If it still fails, a git process
+     may have crashed in this repository earlier:
+     remove the file manually to continue.
+
+     $ echo $?
+
+Git prints more than just a one-line error message in this case — it tries to tell you why this
+might happen and what you should do about it. Curiously, the example it gives is misleading;
+
+                                                       Incremental change
+
+while the commit command has your editor open to compose a commit message, the index is
+not actually locked12.
+
+To handle this error we’re going to need some minor changes to existing code.
+Lockfile#hold_for_update currently returns true or false to indicate whether the lock was
+acquired or already held. In order to generate an error including the path of the .lock file, let’s
+instead make it raise an exception on failure, which is the rescue branch for Errno::EEXIST.
+       # lib/lockfile.rb
+
+          LockDenied = Class.new(StandardError)
+
+          def hold_for_update
+            unless @lock
+              flags = File::RDWR | File::CREAT | File::EXCL
+              @lock = File.open(@lock_path, flags)
+            end
+          rescue Errno::EEXIST
+            raise LockDenied, "Unable to create '#{ @lock_path }': File exists."
+          rescue Errno::ENOENT => error
+            raise MissingParent, error.message
+          rescue Errno::EACCES => error
+            raise NoPermission, error.message
+          end
+
+This change means that                             can be simplified to simply call
+                                           Index#load_for_update
+Lockfile#hold_for_update without checking its return value; if an exception is raised then
+load will not be called.
+
+       # lib/index.rb
+
+          def load_for_update
+            @lockfile.hold_for_update
+            load
+          end
+
+In the  add command code, we must catch this exception from our call to
+Index#load_for_update and print the necessary error messages. The symbol <<~ begins a
+heredoc13, where the tilde indicates that leading indentation should be stripped from the string’s
+lines.
+       # bin/jit
+
+          begin
+            index.load_for_update
+          rescue Lockfile::LockDenied => error
+            $stderr.puts <<~ERROR
+              fatal: #{ error.message }
+
+                 Another jit process seems to be running in this repository.
+                 Please make sure all processes are terminated then try again.
+
+   I assume this message was once true in some version of Git, but at some point the behaviour was changed and this message was not updated.
+Unlike our implementation so far, Git’s commit command does modify the index by caching additional information about trees in it, but it
+commits those changes and releases the lock before launching your editor. The current branch pointer in .git/refs/heads is not locked until
+the commit is written to the database
+   https://docs.ruby-lang.org/en/2.3.0/syntax/literals_rdoc.html#label-Here+Documents
+
+                                     Incremental change
+
+           If it still fails, a jit process may have crashed in this
+           repository earlier: remove the file manually to continue.
+         ERROR
+         exit 128
+       end
+
+This change to Lockfile#hold_for_update also allows the other caller of it to be simplified. In
+Refs#update_head we’re currently checking its return value and raising an exception on failure.
+
+     # lib/refs.rb
+
+       def update_head(oid)
+         lockfile = Lockfile.new(head_path)
+
+         unless lockfile.hold_for_update
+           raise LockDenied, "Could not acquire lock on file: #{ head_path }"
+         end
+
+         lockfile.write(oid)
+         lockfile.write("\n")
+         lockfile.commit
+       end
+
+Lockfile is now raising an exception for us, and so this check can be removed.
+
+     # lib/refs.rb
+
+       def update_head(oid)
+         lockfile = Lockfile.new(head_path)
+
+         lockfile.hold_for_update
+         lockfile.write(oid)
+         lockfile.write("\n")
+         lockfile.commit
+       end
+
+The add command is now much more robust against the common errors it will encounter, but
+these changes have left its code in a rather messy state. In the next chapter we will alter the
+command code to make it easier to work with.
+

@@ -1,0 +1,1476 @@
+TESTING REGISTERS WITH X64
+ASSEMBLY
+    We find ourselves in the lowest levels of what we wish we
+    knew and reach upwards to the light.
+The debugger library now has facilities for modeling CPU
+registers and reading and writing their values. Before adding
+more features, we should craft automated tests for these. In this
+chapter, you’ll learn about x64 assembly and use it to test the
+code you added in the previous chapter. We’ll also add
+commands to read and write registers to the command line
+driver.
+
+Why Test with Assembly?
+
+To test register writes, we could write some registers, read them
+back with ptrace, and make sure we received the same values.
+But it would be better to check the registers from inside the
+inferior itself, to make sure we wrote the registers in a way that
+actually affects the behavior of the code we’re debugging.
+
+One way to do this would be to write a program that uses printf
+to output the values of its registers. We could set a breakpoint
+on the main function, hit it, write the registers, and make sure the
+program prints what we expect.
+
+Unfortunately, we don’t yet have the ability to set a breakpoint
+on main. As an easy alternative, we could call kill(getpid(), SIGTRAP)
+or the synonymous raise(SIGTRAP) inside the debugged program to
+force it to stop and trap back into the debugger. This approach
+has one problem, though: if we call kill or raise, the program will
+halt while inside the code for kill or raise, rather than inside our
+main function.
+
+We could solve this problem by issuing a syscall from inside main
+using inline assembly, but getting inline assembly to work when
+changing registers from outside the process is tricky. Instead,
+we’ll write this test directly in x64 assembly. This approach
+requires going down a bit of a rabbit hole, but you’ll emerge
+with knowledge of x64 assembly and a better understanding of
+what these registers are and how they can be used. I’ll guide
+you through the code step by step, so you should be able to
+follow along even if you’ve never written assembly code before.
+
+An x64 Assembly Primer
+
+Assembly languages are human-readable programming
+languages that map very closely to the binary machine code of
+the processor that they target. Generally, a single assembly
+instruction maps to a single machine instruction. Assembly
+instructions look something like this:
+
+   movq      %rsp, %rbp
+
+The movq is the opcode, which represents the kind of instruction
+we want to carry out. In this case, it’s “move quadword,” which
+is used to move around 64 bits of data at a time. The x64
+processor has hundreds of different opcodes for carrying out
+various tasks, whereas other, smaller processors might have
+just a dozen. The human-readable name given to each opcode is
+called a mnemonic.
+
+The other part of the instruction (%rsp, %rbp) gives the operands,
+or the data on which to operate. In this case, we’re moving 64
+bits of data from the rsp register to the rbp register.
+
+Somewhat confusingly, x64 assembly language has two main
+competing formats: Intel and AT&T. The previous example uses
+AT&T syntax; the equivalent Intel instruction is mov rbp, rsp. Note
+that this syntax infers the size of the data to transfer from the
+register operands and flips the order of the source and
+destination registers. This book will use AT&T syntax, as GCC
+defaults to it.
+
+In addition to instructions, assembly language has labels and
+directives. Labels give us a way to mark portions of the code
+with names so we can reference pieces of data or blocks of
+instructions elsewhere. We form them by writing the label
+name followed by a colon, like my_label:. For example, the
+following code would loop forever, continually adding 1 to the
+rax register:
+
+   my_label:
+       add $1, %rax
+         jmp my_label
+
+The jmp instruction is an unconditional jump; when control flow
+reaches it, the program counter will set it to the location
+marked by the given label (my_label, in this case).
+
+Directives aren’t translated into machine code, but they tell the
+assembler tool to carry out some action. For example, the .global
+<symbol name> directive instructs the assembler to add the given
+
+symbol to the object file’s symbol table, enabling the linker to
+find it during linking. For more information about assembly
+language, see the manual for the GNU assembler.
+
+Test Setup
+
+Before we get started, we need a way to intercept the output of
+a child process so that we can communicate with our test
+programs. As we did in “Pipes for Inter-Process
+Communication” on page 54, we can use Unix pipes for this.
+These should allow us to replace the stdout of the launched
+process in sdb::process::launch. Modify the launch function in
+sdb/include/libsdb/process.hpp:
+
+   #include <optional>
+   --snip--
+   namespace sdb {
+        class process {
+        public:
+        --snip--
+             static std::unique_ptr<process> launch(st
+                   bool debug = true,
+                   std::optional<int> stdout_replacement
+        --snip--
+        };
+   }
+
+Add an optional parameter to sdb::process::launch with which the
+user can supply a file descriptor to use for stdout. In the
+implementation in sdb/src/process.cpp, carry out the stream
+replacement:
+
+   std::unique_ptr<process> process::launch(std::fil
+         bool debug,
+         std::optional<int> stdout_replacement) {
+       --snip--
+       if (pid == 0) {
+            channel.close_read();
+
+               if (stdout_replacement) {
+                ➊ if (dup2(*stdout_replacement, STDOUT_
+                            exit_with_perror(channel, "stdout
+                      }
+               }
+               --snip--
+         }
+         --snip--
+   }
+
+If the user supplied a replacement for stdout, we use the dup2
+syscall ➊, which closes the second file descriptor argument and
+then duplicates the first file descriptor argument to the second.
+This means that anything that goes to stdout now goes through
+whatever *stdout_replacement points to, which could be a file or a
+pipe.
+
+STD::OPTIONAL
+
+C++17 added std::optional as a way of expressing values that could
+be empty. It lets us construct and assign std::optional<T> for some T
+directly from a T object, so it’s quite ergonomic to use. The
+variable std::nullopt represents an empty optional.
+
+We can also convert std::optional to a bool in some contexts to
+indicate whether it’s empty. So, writing if (my_optional) is the same
+as writing if (my_optional.has_value()).
+To get the value of an optional, you can either use * as if it were a
+pointer or call .get(). The difference between these two
+approaches is that *my _optional triggers undefined behavior if
+my_optional is empty, whereas my_optional.get() will throw an
+
+exception.
+
+Unlike many languages, C++17’s std::optional doesn’t support a
+monadic interface, like map and flat_map or and_then. C++20 added
+one, however. In fact, I wrote the standards paper to propose it!
+It’s paper number P0798. If you’d like to use this interface in
+C++17, you can use my tl::optional library that lives on GitHub at
+https://github.com/TartanLlama/optional.
+
+See Casey Carter’s blog post “std::optional: How, When, and Why
+for more details:
+https://devblogs.microsoft.com/cppblog/stdoptional-how-when-
+and-why/.
+
+Next, we’ll write a skeleton program in x64 assembly that we
+can then expand into a test program. Create an
+sdb/test/targets/reg_write.s file, then add the following to it,
+which is equivalent to int main(){} in C++:
+   .global main
+
+   .section .data
+
+   .section .text
+
+   ➊ main:
+           push       %rbp
+           movq       %rsp, %rbp
+
+        ➋ popq       %rbp
+        ➌ movq       $0, %rax
+           ret
+
+First, we declare the symbol main so that the linker can find the
+main function when we link an executable from this code. We
+
+then declare the .data section, which is where initialized global
+data, such as strings, will go. We leave it empty for now. After
+the .data section comes the .text section, which is where code
+goes.
+
+We begin the code with a label that declares the start of the main
+function ➊. We then move on to the function prologue, which
+carries out any necessary setup, like initializing the stack frame.
+The rbp register points to the start of the stack frame for the
+caller. When main is called, we save the old value of rbp so we can
+change the contents of this register without losing track of the
+caller’s stack frame. The push instruction takes the value from a
+register and puts it at the top of the stack.
+
+After we’ve saved the old frame base, we set up the frame for
+main. The start of its stack will be where the stack pointer
+
+currently points; movq means “move quadword (64 bits)” and
+here copies the value from rsp to rbp. We leave an empty space
+where the body of the main function will go.
+
+Following the function body is the function epilogue, which
+carries out any necessary cleanup. Since we pushed our callee’s
+frame base pointer onto the stack at the start of the function,
+we restore it to rbp using the popq (pop quadword) instruction ➋.
+
+We want to return 0 from main, indicating that the function
+ended successfully. We do this by storing 0 in rax ➌ and then
+issuing ret to return to our caller. Before we fill in the function
+body, let’s integrate this code into our build. Place the following
+lines in sdb/test/targets/CMakeLists.txt:
+
+   --snip--
+   add_executable(reg_write reg_write.s)
+   target_compile_options(reg_write PRIVATE -pie)
+
+We add a command to create a reg_write executable and then
+add the -pie option to the compiler flags with target_compile_options.
+You’ll learn more about this option in Chapter 7, but for now, it
+suffices to know that it lets the code be positioned in memory in
+a more flexible way.
+
+If you configure this program, it will fail because assembly isn’t
+enabled in our CMake project. We can fix that in
+sdb/CMakeLists.txt as follows:
+
+   --snip--
+   project ("sdb" LANGUAGES CXX ASM)
+   --snip--
+
+Add ASM to the end of the project command. This enables assembly
+for the CMake project. Now we can add some code to main. First,
+let’s work out how to force the program to halt and return
+control to the debugger, which is referred to as trapping. For
+this, we’ll use the kill syscall.
+
+Issuing Syscalls
+To issue the kill syscall, we need to know how to invoke syscalls
+in x64 assembly more generally. We’ll look more at the anatomy
+of syscalls on Linux in Chapter 10, but here is the short version
+of how they’re invoked with the System V ABI: the syscall ID
+goes in rax; subsequent arguments go in rdi, rsi, rdx, r10, r8, and r9;
+and the return value of the syscall is stored in rax. In order to
+send a SIGTRAP to ourselves, we need to do the following:
+
+1. Put the syscall for kill in rax, which is 62, given by the SYS_kill
+  value in the <sys/syscall.h> header.
+2. Put the PID for the running process in rdi.
+3. Put the signal ID for SIGTRAP (5) in rsi.
+4. Issue the syscall instruction.
+
+The easiest way to get the PID of the running process is to use
+the getpid syscall, which has the syscall ID 39. Let’s start by issuing
+this syscall and saving the PID into some register that won’t be
+accidentally overwritten. I’ll use r12 for this purpose:
+
+   --snip--
+   main:
+         push        %rbp
+         movq        %rsp, %rbp
+
+         # Get PID
+    ➊ movq          $39, %rax
+         syscall
+         movq       %rax, %r12
+         --snip--
+
+We store 39 in the rax register ➊ and then issue the syscall
+instruction to call getpid. The system will store the result back in
+rax, which we then save into r12 for future use.
+
+Now we can perform the trapping. We issue the kill syscall with
+SIGTRAP as an argument:
+
+   main:
+         --snip--
+         # Trap
+         movq       $62, %rax
+         movq       %r12, %rdi
+
+         movq    $5, %rsi
+         syscall
+         --snip--
+
+The syscall ID for kill is 62, which we store in rax. Syscalls expect
+the first argument to be in rdi, and in the case of kill, the
+argument is the PID of the process to signal. We stored the PID
+in r12 earlier, so we copy the contents of r12 to rdi. The second
+argument—the signal ID we want to send— goes in rsi. The
+signal ID for SIGTRAP is 5, so we store this value in rsi.
+
+We’ll use these four lines of code a lot, so let’s put them in a
+macro to clean up main. Move the lines we just wrote to the top of
+the .text section and surround them with the .macro <macro name> and
+.endm directives:
+
+   --snip--
+   .section .text
+
+   .macro trap
+         movq $62, %rax
+         movq %r12, %rdi
+         movq $5, %rsi
+       syscall
+   .endm
+
+   main:
+         push        %rbp
+         movq        %rsp, %rbp
+
+         # Get PID
+         movq        $39, %rax
+         syscall
+         movq        %rax, %r12
+     ➊ trap
+
+         popq       %rbp
+         movq       $0, %rax
+         ret
+
+Now we can write the name of the macro as if it were an
+assembly instruction in the code ➊.
+
+printf
+
+Recall that our goal is to test the writing of registers. Let’s
+assume that, after we exit from the trap, the debugger has
+written a value into the rsi register, which is where the second
+argument to printf would go (the argument after the format
+string). We’ll call printf to send the text of this register back to
+the debugger. First, we need to store the format string in the
+.data section:
+
+   .global main
+
+   .section .data
+   hex_format: .asciz "%#x"
+   --snip--
+
+The .asciz directive encodes the string you give it into ASCII with
+a null terminator. We label it hex_format so we can reference it
+later in the code. The value %#x is the printf format string for
+hexadecimal integers.
+
+Now we can call printf, followed by fflush to ensure the output
+goes straight to the debugger without being buffered. Add this
+code after the call to trap:
+
+         --snip--
+         # Print contents of rsi
+     ➊ leaq         hex_format(%rip), %rdi
+     ➋ movq         $0, %rax
+     ➌ call         printf@plt
+     ➍ movq         $0, %rdi
+         call       fflush@plt
+         trap
+         --snip--
+
+We use leaq, which stands for “load effective address
+quadword,” to put the address of hex_format into the rdi register,
+where printf expects it ➊. The label(%rip) syntax uses RIP-relative
+addressing, a requirement when we pass that -pie flag.
+The printf function is a varargs function. It is declared like int
+printf (const char *format, ...);, where ... signifies “any number of
+
+arguments.” With the SYSV ABI, varargs functions expect rax to
+contain the number of vector registers that are involved in
+passing arguments. In our case this is 0, so we store 0 in rax ➋.
+
+Next, we call printf ➌. The @plt part here references the procedure
+linkage table (PLT), which is used to call functions defined in
+shared libraries. We’ll find out more about this in Chapter 17.
+
+Finally, we call fflush, passing 0 to in the rdi register to make it
+flush all streams ➍.
+
+Now we can write our test.
+
+General-Purpose Registers
+
+Let’s write a test to ensure that writing to a general-purpose
+register works. Add the following to sdb/test/tests.cpp:
+
+   #include <libsdb/pipe.hpp>
+   #include <libsdb/bit.hpp>
+
+   TEST_CASE("Write register works", "[register]") {
+       bool close_on_exec = false;
+    ➊ sdb::pipe channel(close_on_exec);
+       ➋ auto proc = process::launch(
+             "targets/reg_write", true, channel.get_w
+         channel.close_write();
+
+       ➌ proc->resume();
+         proc->wait_on_signal();
+
+          auto& regs = proc->get_registers();
+       ➍ regs.write_by_id(register_id::rsi, 0xcafecafe
+
+       ➎ proc->resume();
+          proc->wait_on_signal();
+
+          auto output = channel.read();
+       ➏ REQUIRE(to_string_view(output) == "0xcafecafe
+   }
+
+We need to read the output from the test, so set up a pipe ➊.
+Launch reg_write ➋, resume it until the first trap ➌, and then
+write a value to rsi ➍. Resume again until the next trap ➎, by
+which point the process should have written the value you just
+put in rsi to stdout. Read this value and ensure it matches what
+you wrote ➏. The to_string_view function we use to do so doesn’t
+exist yet, but we’ll write it now. Add these helpers to convert
+std::byte sequences into std::string_views to
+
+sdb/include/libsdb/bit.hpp:
+
+   #include <vector>
+   #include <string_view>
+
+   namespace sdb {
+       inline std::string_view to_string_view(
+             const std::byte* data, std::size_t size
+           return { reinterpret_cast<const char*>(da
+       }
+
+         inline std::string_view to_string_view(
+               const std::vector<std::byte>& data) {
+             return to_string_view(data.data(), data.s
+         }
+   }
+
+These construct std::string_views out of either a pointer to std::bytes
+and a size or a std::vector<std::byte>.
+
+Now, if you run the test, it should pass! However, we have a
+bunch of other register types and sizes. We won’t exhaustively
+test them, but we should at least try to test one x87, MMX, and
+SSE register. The x87 test is a bit tricky, so let’s do MMX next.
+MMX
+
+For MMX, we’ll write into mm0 from the debugger, then move this
+value into rsi on the assembly side and call printf with the same
+format specifier as before. Add the following after the last call
+to trap:
+
+           --snip--
+           # Print contents of mm0
+           movq       %mm0, %rsi
+           leaq       hex_format(%rip), %rdi
+           movq       $0, %rax
+           call       printf@plt
+           movq       $0, %rdi
+           call       fflush@plt
+           trap
+           --snip--
+
+The code is the same as the GPR version, but it copies mm0 to rsi
+first. Add the following test code to the end of the same test
+case:
+
+           --snip--
+           regs.write_by_id(register_id::mm0, 0xba5eba1
+
+           proc->resume();
+         proc->wait_on_signal();
+
+         output = channel.read();
+         REQUIRE(to_string_view(output) == "0xba5eba1
+
+Again, the test is the same as the GPR version, except it sets mm0
+instead of rsi. Let’s move on to SSE.
+
+SSE
+
+SSE’s xmm registers are used to perform floating-point operations,
+so we can write a floating-point number into one and format it
+using printf. We’ll use the format specifier %.2f, which prints out
+the number with two decimal places. Add this specifier to the
+.data section:
+
+   --snip--
+   .section .data
+
+   hex_format:                .asciz "%#x"
+   float_format:              .asciz "%.2f"
+   --snip--
+
+Then, make the printf call in the function body, after the last trap:
+         --snip--
+         # Print contents of xmm0
+         leaq    float_format(%rip), %rdi
+     ➊ movq         $1, %rax
+         call       printf@plt
+         movq       $0, %rdi
+         call       fflush@plt
+         trap
+
+Following the approach taken in the other assembly examples,
+we load the float format specifier into rdi. Since the xmm registers
+are vector registers, however, the approach we need to take is a
+little different than before. According to the SYSV ABI, instead of
+moving the value to print into rsi, we keep it in xmm0 and write 1
+into rax to tell printf that there is a vector argument ➊. Then, we
+can call printf and fflush like before.
+
+Here is the corresponding test code to add at the end of the test
+case:
+
+         --snip--
+         regs.write_by_id(register_id::xmm0, 42.24);
+
+         proc->resume();
+         proc->wait_on_signal();
+         output = channel.read();
+         REQUIRE(to_string_view(output) == "42.24");
+
+Write a value into xmm0, resume to the next trap, and ensure that
+the value prints. Finally, we’ll test the x87 registers.
+
+x87
+
+In Chapter 5, I mentioned that x87 registers provide long double
+support, so we can make use of them by getting printf to format
+a long double value. Unfortunately, this isn’t as easy as writing a
+register and calling printf.
+
+The x87 instructions operate on a stack of values within the st0
+through st7 registers. I’ll call this the FPU stack (floating-point
+unit stack) to distinguish it from the regular stack region of
+memory. A register indicates the current top of the FPU stack
+and provides instructions for manipulating it, such as fld and
+fstp for pushing and popping values from the top. Other
+
+instructions carry out arithmetic operations, like faddp, which
+pops the top two values from the FPU stack, adds them, and
+pushes the result.
+
+To make things more complicated, the SYSV ABI says that long
+double arguments must be passed on the function’s stack frame
+rather than using registers, and you can’t just use mov to transfer
+a value out of an st register.
+
+We’ll do the following: manually push a value to the FPU stack
+from the debugger, call fstp in our assembly code to pop the
+value from the FPU stack onto our function stack, and then call
+printf with the long double specifier.
+
+First, we add the new specifier to the .data section:
+
+        --snip--
+        .section .data
+
+        hex_format:                      .asciz "%#x"
+        float_format:                    .asciz "%.2f"
+   ➊ long_float_format:              .asciz "%.2Lf"
+
+The Lf in the format specifier stands for “long float” ➊. Then, we
+add code to pop a value from the FPU stack and call printf after
+the last trap call in the main function. We’ll also need to allocate
+some space on the function stack to store the data:
+
+         # Print contents of st0
+     ➊ subq         $16, %rsp
+     ➋ fstpt        (%rsp)
+         leaq        long_float_format(%rip), %rdi
+        movq        $0, %rax
+        call        printf@plt
+        movq        $0, %rdi
+       call         fflush@plt
+    ➌ addq         $16, %rsp
+        trap
+
+We start by allocating 16 bytes on the stack to store the contents
+of st0 ➊. The stack on x64 grows downward, so we do this by
+subtracting from the rsp register. We pop st0 from the top of the
+FPU stack with the fstpt instruction ➋ and then follow the same
+pattern we’ve used for the previous tests. After calling fflush, we
+clean up the space we allocated on the stack by incrementing
+the stack pointer to its original position ➌.
+
+To push a value to the FPU stack from the debugger, we first
+need to understand how the stack is represented. There are
+three registers involved: st0 (where we want to store the
+number), fsw (the FPU status word), and ftw (the FPU tag word).
+
+The st0 register is simple enough; we just write our float data to
+it. Add this to the bottom of the test:
+
+   regs.write_by_id(register_id::st0, 42.24l);
+Note the l suffix to the floating-point number that makes it a long
+double.
+
+The status word tracks the current size of the FPU stack and
+reports errors like stack overflows, precision errors, or
+divisions by zero. It’s 16 bits wide, and bits 11 through 13 track
+the top of the stack. The top of the stack starts at index 0 and
+actually goes down instead of up, wrapping around up to 7. So,
+to push our value to the stack, we set bits 11 through 13 to 7
+(0b111):
+
+    regs.write_by_id(register_id::fsw,
+           std::uint16_t{0b0011100000000000});
+
+Finally, the 16-bit tag register tracks which of the st registers are
+valid, empty, or special (meaning they contain NaNs or infinity).
+A tag of 0b11 means empty, 0b00 means valid. So, we want to set
+the first tag to 0b00 and the rest to 0b11:
+
+    regs.write_by_id(register_id::ftw,
+           std::uint16_t{0b0011111111111111});
+
+Then we can finish the test case:
+   TEST_CASE("Write register works", "[register]") {
+        --snip--
+        proc->resume();
+        proc->wait_on_signal();
+
+        output = channel.read();
+        REQUIRE(to_string_view(output) == "42.24");
+   }
+
+With that, our test case is done and should pass. This might
+seem like a lot of work for a test, but I hope it’s given you
+deeper insight into the various subparts of x64.
+
+We can also test reads in a similar way. Now that we know what
+we’re doing, it should be much faster.
+
+Register Reads
+
+To test the debugger’s ability to read from registers, we’ll start
+with the same structure we did with reg_write.s. Create this at
+sdb/test/targets/reg_read.s:
+
+   .global main
+
+   .section .data
+   .section .text
+
+   .macro trap
+        movq $62, %rax
+        movq %r12, %rdi
+        movq $5, %rsi
+        syscall
+   .endm
+
+   main:
+        push      %rbp
+        movq      %rsp, %rbp
+
+        # Get PID
+        movq    $39, %rax
+        syscall
+        movq      %rax, %r12
+
+        popq      %rbp
+        movq      $0, %rax
+        ret
+
+This is exactly the same as what we started with for the
+previous test case, except we’ve removed the trap call after we
+get the PID for the process since we’re not going to need to wait
+on the debugger at that point. Add a directive to store some
+floating-point data in the .data section, as we’ll need this to test
+x87 and MMX registers:
+
+   --snip--
+   .section .data
+   my_double: .double 64.125
+   --snip--
+
+Then, add the following assembly after the the movq %rax, %r12
+instruction to test GPR, MMX, SSE, and x87 registers. We don’t
+need to print any data to a pipe; we can just write to the
+registers and read those registers from the debugger:
+
+   --snip--
+         # Store to r13
+    ➊ movq         $0xcafecafe, %r13
+         trap
+
+         # Store to r13b
+    ➋ movb         $42, %r13b
+         trap
+
+         # Store to mm0
+    ➌ movq         $0xba5eba11, %r13
+         movq       %r13, %mm0
+         trap
+         # Store to xmm0
+     ➍ movsd       my_double(%rip), %xmm0
+         trap
+
+         # Store to st0
+     ➎ emms
+     ➏ fldl         my_double(%rip)
+         trap
+   --snip--
+
+To test GPRs, we write a value into r13 and then trap so we can
+read it from the debugger ➊. We do the same with r13b to test
+subregisters ➋.
+
+To test MMX registers, we need to do a bit more work. We can’t
+move directly from a 64-bit immediate to an MMX register, so
+we first store the value to r13, then transfer it to mm0 ➌. For XMM,
+we copy the floating-point number we embedded in the binary
+to xmm0 ➍.
+
+Finally, for the x87 registers, we first need to issue the emms
+instruction ➎ (which stands for “empty MMX technology state”)
+to clear the MMX state, as MMX and x87 share registers. We
+then use the fldl instruction (“load floating-point value”) to push
+a floating-point number to the FPU stack ➏.
+
+Add code to build this test to the sdb/test/targets/CMakeLists.txt
+file:
+
+    --snip--
+    add_executable(reg_read reg_read.s)
+    target_compile_options(reg_read PRIVATE -pie)
+
+Then add a test to sdb/test/tests.cpp to ensure that we can read
+all of the values we’ve written into the registers:
+
+    TEST_CASE("Read register works", "[register]") {
+        auto proc = process::launch("targets/reg_read
+        auto& regs = proc->get_registers();
+
+          proc->resume();
+          proc->wait_on_signal();
+
+        ➊ REQUIRE(regs.read_by_id_as<std::uint64_t>(reg
+               0xcafecafe);
+
+          proc->resume();
+          proc->wait_on_signal();
+       ➋ REQUIRE(regs.read_by_id_as<std::uint8_t>(regi
+
+         proc->resume();
+         proc->wait_on_signal();
+
+       ➌ REQUIRE(regs.read_by_id_as<byte64>(register_i
+              == to_byte64(0xba5eba11ull));
+
+         proc->resume();
+         proc->wait_on_signal();
+
+       ➍ REQUIRE(regs.read_by_id_as<byte128>(register_
+           ➎ to_byte128(64.125));
+
+         proc->resume();
+         proc->wait_on_signal();
+
+       ➏ REQUIRE(regs.read_by_id_as<long double>(regis
+              64.125L);
+   }
+
+We launch reg_read and resume to the first trap. At this point, it
+should have written 0xcafecafe to r13, so we check this ➊ and go on
+to test subregisters ➋, MMX ➌, XMM ➍, and x87 ➏. Note that we
+use the ull suffix ➌ to ensure that the integer is an unsigned long
+long (that is, a std::uint64_t) and the L suffix ➏ to ensure the
+
+floating-point number is a long double.
+
+Generally, you shouldn’t compare floating-point values by their
+bit representations due to precision and rounding issues.
+However, binary can exactly represent floating-point values
+whose denominators are powers of two (such as 0.5, 0.25, 0.125,
+and so on), so it’s safe for us to do so here ➎. We call such
+floating-point numbers dyadic rationals.
+
+Exposing Registers
+
+The last thing to do is expose the register reading and writing
+operations to the debugger’s user. We’ll support four types of
+commands: register read to read GPRs, register read all to read all
+registers, register read <register name> to read a given register, and
+register write <register name> <value>: to write a given register.
+
+Before we add this new set of commands, let’s implement a
+quick and easy way of getting help inside the debugger. This
+will enable users to see what commands are available and how
+to use them. It’ll also help remind you of the syntax for these
+commands as their number grows.
+
+The Help Command
+Add a new command to handle_command in sdb/tools/sdb.cpp:
+
+        void handle_command(
+                std::unique_ptr<sdb::process>& process
+                std::string_view line) {
+              --snip--
+              else if (is_prefix(command, "help")) {
+                   print_help(args);
+              }
+              --snip--
+        }
+
+Then, implement the print_help function. You can put as much or
+as little detail in here as you like. I’ll support subcommands so
+users can enter things like help register to get information about
+all register commands:
+
+   namespace {
+       void print_help(const std::vector<std::string
+           if (args.size() == 1) {
+             ➊ std::cerr << R"(Available commands:
+       continue     - Resume the process
+       register     - Commands for operating on regis
+   )";
+           }
+              else if (is_prefix(args[1], "register"))
+                  std::cerr << R"(Available commands:
+         read
+         read <register>
+         read all
+         write <register> <value>
+   )";
+              }
+              else {
+                  std::cerr << "No help available on th
+              }
+         }
+   }
+
+We call this R"(text)" syntax ➊ a raw string literal. It lets us
+include new-lines and other characters that normally require
+escape sequences in the string and have them be considered
+part of the string. Now we can implement register commands.
+
+Register Reading
+
+We’ll start by implementing handle_register_command. Add a new
+branch to the handle_command function in sdb/tools/sdb.cpp for the
+register commands:
+         void handle_command(
+                    std::unique_ptr<sdb::process>& process
+                    std::string_view line) {
+              --snip--
+              else if (is_prefix(command, "register"))
+                      handle_register_command(*process, arg
+              }
+              --snip--
+         }
+
+We’ll defer most of the work to handle_register_read and handle_register
+_write functions:
+
+   namespace {
+       void handle_register_command(
+             sdb::process& process,
+             const std::vector<std::string>& args) {
+           if (args.size() < 2) {
+                print_help({ "help", "register" });
+                return;
+           }
+
+              if (is_prefix(args[1], "read")) {
+                  handle_register_read(process, args);
+              }
+              else if (is_prefix(args[1], "write")) {
+                   handle_register_write(process, args)
+              }
+              else {
+                  print_help({ "help", "register" });
+              }
+        }
+   }
+
+If the user passes the wrong number of arguments, or a
+subcommand that wasn’t expected, we print the help
+information. Otherwise, we call the relevant handle_register_*
+function.
+
+The handle_register_read function must be able to display registers
+in a visually pleasing format. This requires doing some string
+formatting, which can be deeply unpleasant if you’re using the
+facilities built into C++17. Fortunately, there’s a library called
+fmtlib, which is a fast, modern alternative to iostreams. Facilities
+
+based on fmtlib were added to C++20, so if you’re using C++20,
+you can use them instead. Let’s add fmtlib as a dependency of the
+project so we can make use of the niceties it offers. First, we add
+the dependency to sdb/vcpkg.json:
+
+   {
+        "dependencies": ["libedit", "catch2", "fmt"]
+   }
+
+Then, we find the package in sdb/CMakeLists.txt:
+
+   --snip--
+   find_package(PkgConfig REQUIRED)
+   pkg_check_modules(libedit REQUIRED IMPORTED_TARGE
+   find_package(fmt CONFIG REQUIRED)
+   --snip--
+
+Finally, we link against fmt::fmt in sdb/tools/CMakeLists.txt:
+
+   --snip--
+   target_link_libraries(sdb PRIVATE sdb::libsdb Pkg
+   --snip--
+
+Now we can start writing the handle_register_read function by
+creating a formatter for register values:
+
+   #include <fmt/format.h>
+   #include <fmt/ranges.h>
+
+   namespace {
+       void handle_register_read(
+               sdb::process& process,
+               const std::vector<std::string>& args) {
+              auto format = [](auto t) {
+                ➊ if constexpr (std::is_floating_point_
+                        ➋ return fmt::format("{}", t);
+                    }
+                ➌ else if constexpr (std::is_integral_v
+                        ➍ return fmt::format("{:#0{}x}", t,
+                    }
+                    else {
+                      ➎ return fmt::format("[{:#04x}]", f
+                    }
+              };
+         }
+   }
+
+We include fmt/format.h for fmt::format and fmt/ranges.h for
+fmt::join. The formatter is a generic lambda function, so we can
+
+easily use it with std::variant later. It has three branches, for
+floating-point, integral, and vector registers. We use
+decltype(expression) to get the type of an expression, allowing us to
+
+check whether t is floating point ➊ or integral ➌. We then
+format floating-point numbers using the default format ({}) and
+fmt::format, which resembles fmt::print but returns a std::string
+
+rather than printing to stdout ➋.
+The integral formatter ➍ is a bit more complicated. As when
+printing breakpoint site addresses, {:#x} prints a hexadecimal
+value with a leading 0x, and {:#04x} pads the output with 0s to
+make it four characters wide. By writing the nested specifier
+{:#0{}x}, we enable one of the fmt::format arguments to determine
+
+the amount of padding to use. In this case, sizeof(t) * 2 + 2 adds
+two characters per byte of the integer, plus two characters for
+the leading 0x. This padding ensures that registers line up and
+have the correct size when we print them.
+
+To format vector registers ➎, we use fmt::join to join arrays using
+a comma and then format the internal bytes as hexadecimal
+with a leading 0x, padded to four characters.
+
+Next, we’ll write branches for the two main reading cases:
+reading many registers and reading one register. The first
+branch will print either all registers (if the user entered register
+read all) or just the GPRs (if the user entered register read). The
+
+second branch will print a single requested register:
+
+         void handle_register_read(
+              sdb::process& process,
+              const std::vector<std::string>& args) {
+             --snip--
+             if (args.size() == 2 or
+        (args.size() == 3 and args[2] == "all
+     ➊ for (auto& info : sdb::g_register_inf
+            auto should_print = (➋ args.size
+              ➌ info.type == sdb::register_t
+                 and info.name != "orig_rax"
+            if (!should_print) continue;
+            auto value = process.get_registe
+            fmt::print("{}:\t{}\n", info.name
+        }
+    }
+    else if (args.size() == 3) {
+         try {
+           ➍ auto info = sdb::register_info_by
+              auto value = process.get_registe
+           ➎ fmt::print("{}:\t{}\n", info.name
+         }
+      ➏ catch (sdb::error& err) {
+              std::cerr << "No such register\n
+              return;
+         }
+    }
+    else {
+      ➐ print_help({ "help", "register" });
+    }
+}
+We loop over the register information in the system ➊. If the
+user specified all registers ➋ or wants just GPRs and the current
+register info is a GPR ➌, we get the value of that register and
+print its value using the formatter we defined earlier. We don’t
+print out the orig_rax register if all registers are requested, as it’s
+not a real register, just something that ptrace uses to
+communicate information about syscalls.
+
+For the second branch, we search for the sdb::register_info value
+with the given name ➍. If this fails, sdb::register_info_by_name will
+throw an exception, which we can catch; we then print out an
+error message ➏. If the retrieval succeeds, we read the value
+and print it out using our formatter ➎.
+
+If none of these options match, we print a help message ➐.
+
+Register Writing
+
+To write to registers, we must write a small parser, which we’ll
+put in a function named parse_register_value. For now, here’s the
+usage code, which goes in sdb/tools/sdb.cpp:
+
+   namespace {
+       void handle_register_write(
+            sdb::process& process,
+                 const std::vector<std::string>& args) {
+             ➊ if (args.size() != 4) {
+                    print_help({ "help", "register" });
+                    return;
+               }
+               try {
+                ➋ auto info = sdb::register_info_by_nam
+                ➌ auto value = parse_register_value(inf
+                ➍ process.get_registers().write(info, v
+               }
+               catch (sdb::error& err) {
+                 ➎ std::cerr << err.what() << '\n';
+                    return;
+               }
+         }
+   }
+
+First, we print out some help if the user provides the wrong
+number of arguments ➊. Then, we try to look up the register
+info using the supplied register name ➋, parse the supplied
+value with the parse_register_value function we’ll write next ➌, and
+carry out the register write ➍. If any of these actions fail, we’ll
+print out the error message ➎.
+
+Inside parse_register_value, we’ll defer to parsers for integral,
+floating-point, and vector types. Again, we’ll write the usage
+code first, pretending those functions already exist:
+
+   #include <libsdb/parse.hpp>
+
+   namespace {
+       sdb::registers::value parse_register_value(
+            sdb::register_info info, std::string_vie
+           try {
+               if (info.format == ➊
+                     sdb::register_format::uint) {
+                   switch (info.size) {
+                   case 1: return sdb::to_integral<s
+                   case 2: return sdb::to_integral<s
+                   case 4: return sdb::to_integral<s
+                   case 8: return sdb::to_integral<s
+                   }
+               }
+               else if (info.format == ➌
+                     sdb::register_format::double_flo
+                   return sdb::to_float<double>(text
+                  }
+                  else if (info.format == ➎
+                       sdb::register_format::long_doubl
+                      return sdb::to_float<long double>
+                  }
+                  else if (info.format == ➏
+                       sdb::register_format::vector) {
+                        if (info.size == 8) {
+                               return sdb::parse_vector<8>(t
+                          }
+                          else if (info.size == 16) {
+                               return sdb::parse_vector<16>
+                          }
+                    }
+              }
+              catch (...) {} ➑
+              sdb::error::send("Invalid format");
+         }
+   }
+
+If the register we’re trying to write to expects an unsigned
+integer ➊, we’ll parse one of the correct size using a to_integral
+function ➋ that we’ll write shortly. If a double ➌ or long double ➎ is
+expected, we’ll call out to another helper that we’ll call to_float
+➍. Finally, if the register is a vector register ➏, we’ll use yet
+another helper, which we’ll call parse_vector ➐. We’ll just catch any
+exceptions that are thrown in this process ➑, then throw one of
+our own if we haven’t already returned a valid object. The
+std::optional:: value function throws an exception if there is no
+
+stored value, so this catch block will be triggered if any of our
+parsers returns an empty optional.
+C++ comes with several options for converting strings to
+integers. Unfortunately, the interfaces can be unwieldy, and
+they report success even if they don’t use the whole string in
+their conversion. We’ll write a small wrapper around
+std::from_chars to solve this problem. Eventually, we’ll use these
+
+functions elsewhere in libsdb, so create a new file at
+sdb/include/libsdb/parse.hpp with these contents:
+
+   #ifndef SDB_PARSE_HPP
+   #define SDB_PARSE_HPP
+
+   #include <charconv>
+   #include <cstdint>
+   #include <optional>
+   #include <string_view>
+
+   namespace sdb {
+       template <class I>
+    ➊ std::optional<I> to_integral(std::string_view
+           auto begin = sv.begin();
+        ➋ if (base == 16 and sv.size() > 1 and
+               begin[0] == '0' and begin[1] == 'x')
+                   begin += 2;
+              }
+
+             I ret;
+          ➌ auto result = std::from_chars(begin, sv.e
+             ➍ if (result.ptr != sv.end()) {
+                    return std::nullopt;
+               }
+               return ret;
+         }
+   }
+
+   #endif
+
+We return a std::optional<I> ➊, which represents “either I or
+nothing.” If the base is 16 (meaning hexadecimal), we want to
+allow an 0x prefix, so we skip past it ➋. We then call from_chars to
+do the main parsing ➌. The call to std::from_chars will succeed
+even if the entire string hasn’t been read, so we return an
+empty optional if some input remains ➍.
+
+We write to_float in a manner similar to to_integral:
+
+   namespace sdb {
+       template <class F>
+       std::optional<F> to_float(std::string_view sv
+           F ret;
+           auto result = std::from_chars(sv.begin()
+
+               if (result.ptr != sv.end()) {
+                   return std::nullopt;
+              }
+              return ret;
+        }
+   }
+
+This function simply calls std::from_chars and checks that all the
+input was used.
+
+              NOTE
+
+             Although std::from_chars is part of C++17, GCC’s
+             implementation only shipped in version 11. If you’re
+             stuck with an older version of GCC, you can use the
+             fast_float library:
+
+             https://github.com/fastfloat/fast_float. This library is
+             available in vcpkg in the fast-float port.
+
+The parse_vector function is going to parse text in the same format
+we output vectors in: a comma-separated list of hexadecimal
+integers with a leading 0x, surrounded with square brackets. We
+won’t allow spaces between the elements.
+
+We’ll start by checking that [ is the first character:
+   #include <array>
+   #include <cstddef>
+
+   namespace sdb {
+    ➊ template <std::size_t N>
+        auto parse_vector(std::string_view text) {
+          ➋ auto invalid = [] { sdb::error::send("Inv
+
+          ➌ std::array<std::byte, N> bytes;
+             const char* c = text.data();
+
+          ➍ if (*c++ != '[') invalid();
+
+Yes, templates can take compile-time integers as well as types
+➊! It’s pretty useful for cases like this. We write a simple
+lambda that we can use to signal there was an error just by
+calling invalid() ➋. We pass our template parameter to std::array so
+we have an array of the correct number of bytes requested ➌,
+then ensure that we got the expected first character ➍.
+
+Next, we’ll loop over the first N – 1 elements, parsing an
+element and a comma each time (we’ll do the Nth element after,
+since it won’t have a trailing comma):
+              --snip--
+              for (auto i = 0; i < N - 1; ++i) {
+                  bytes[i] = to_integral<std::byte>({ c
+                    c += 4;
+                    if (*c++ != ',') invalid();
+              }
+
+We first parse the four characters from c into a std::byte. The
+to_integral function doesn’t quite support std::byte, but we’ll add
+
+support for this after we’re done with this function. Then we
+skip c over the integer we just parsed and make sure there’s a
+comma.
+
+Finally, we parse the last value, then make sure we ended up
+with a ] and that we reached the end of the input:
+
+              --snip--
+              bytes[N - 1] = to_integral<std::byte>({ c
+              c += 4;
+
+              if (*c++ != ']') invalid();
+              if (c != text.end()) invalid();
+
+              return bytes;
+         }
+   }
+
+As mentioned, we need to extend to_integral with support for
+std::byte. We can add a specialization of to_integral for std::byte that
+
+just calls the std:: uint8_t version:
+
+   namespace sdb {
+       template<>
+       inline std::optional<std::byte> to_integral(
+             std::string_view sv, int base) {
+           auto uint8 = to_integral<std::uint8_t>(sv
+           if (uint8) return static_cast<std::byte>
+           return std::nullopt;
+       }
+   }
+
+This version of to_integral will be called only if std::byte is specified
+as the template argument. Make sure that you write it below
+the implementation of the primary template for to_integral, but
+above the implementation of parse_vector so that parse_vector will
+use this specialization when needed. Also make sure that you
+declare it as inline so that this header can be safely included in
+multiple translation units.
+With all that written, you should be able to read and write
+registers from the command line!
+
+Now that we can read the program counter, we can print this
+out when the process stops. The program counter is a virtual
+address, and we currently don’t have a type for representing
+virtual addresses. Let’s add one to sdb/include/libsdb/types.hpp.
+We’ll call it sdb::virt_addr. When we add support for ELF and
+DWARF parsing, we’ll also have to deal with other kinds of
+addresses, so having a specific type for virtual addresses rather
+than a simple type alias will make our code more robust and
+prevent us from mixing up our address types:
+
+   #include <cstdint>
+
+   namespace sdb {
+       class virt_addr {
+       public:
+           virt_addr() = default;
+           explicit virt_addr(std::uint64_t addr)
+               : addr_(addr) {}
+
+             std::uint64_t addr() const {
+                 return addr_;
+             }
+        private:
+            std::uint64_t addr_ = 0;
+        };
+   }
+
+This is essentially a wrapper for a std::uint64_t. We mark the
+constructor as explicit to disallow implicit conversions; this will
+prevent us from accidentally constructing a virt_addr from
+something that isn’t one. We write a getter function for the
+stored address. Finally, we declare a member to hold the
+wrapped address.
+
+We want to be able to compare virtual addresses and change
+them by a given offset. The code to do so is a lot of repetitive
+boilerplate, but some-one’s got to write it:
+
+   namespace sdb {
+        class virt_addr {
+        public:
+            --snip--
+            virt_addr operator+(std::int64_t offset)
+                 return virt_addr(addr_ + offset);
+            }
+            virt_addr operator-(std::int64_t offset)
+                 return virt_addr(addr_ - offset);
+            }
+virt_addr& operator+=(std::int64_t offset
+    addr_ += offset;
+    return *this;
+}
+virt_addr& operator-=(std::int64_t offset
+    addr_ -= offset;
+    return *this;
+}
+bool operator==(const virt_addr& other) c
+     return addr_ == other.addr_;
+}
+bool operator!=(const virt_addr& other) c
+     return addr_ != other.addr_;
+}
+bool operator<(const virt_addr& other) co
+     return addr_ < other.addr_;
+}
+bool operator<=(const virt_addr& other) c
+     return addr_ <= other.addr_;
+}
+bool operator>(const virt_addr& other) co
+     return addr_ > other.addr_;
+}
+bool operator>=(const virt_addr& other) c
+     return addr_ >= other.addr_;
+}
+--snip--
+        };
+   }
+
+These functions are all fairly self-explanatory; they just wrap
+operations on the underlying address but maintain some type
+safety, so that we can’t, for example, compare a virtual address
+with some other kind of address.
+
+Next, add a helper for getting the program counter in
+sdb/include/libsdb/process.hpp:
+
+   #include <libsdb/types.hpp>
+
+   namespace sdb {
+       class process {
+       public:
+           --snip--
+           virt_addr get_pc() const {
+                return virt_addr{
+                    get_registers().read_by_id_as<std
+                };
+           }
+             --snip--
+        };
+   }
+Then refactor print_stop_reason in sdb/tools/sdb.cpp to use fmtlib and
+include the program counter if stopped due to a signal:
+
+         void print_stop_reason(const sdb::process& p
+             std::string message;
+              switch (reason.reason) {
+              case sdb::process_state::exited:
+                  message = fmt::format("exited with st
+                                        static_cast<int
+                  break;
+              case sdb::process_state::terminated:
+                  message = fmt::format("terminated wit
+                                        sigabbrev_np(re
+                  break;
+              case sdb::process_state::stopped:
+                  message = fmt::format("stopped with s
+                                        sigabbrev_np(re
+                  break;
+              }
+
+              fmt::print("Process {} {}\n", process.pid
+         }
+
+Register Interactions
+Here’s a short conversation I had with my debugger that shows
+the commands working:
+
+   $ tools/sdb test/targets/reg_read
+   sdb> c
+   Process 15811 stopped with signal TRAP at 0x558a7
+   sdb> reg read rax
+   rax:     0x0000000000000000
+   sdb> reg write ah 0x42
+   sdb> reg read rax
+   rax:     0x0000000000004200
+   sdb> reg read st0
+   st0:     0
+   sdb> reg read mm0
+   mm0:     [0x00,0x00,0x00,0x00,0x00,0x00,0x00,0x00
+   sdb> reg write st0 65.42
+   sdb> reg read st0
+   st0:     65.42
+   sdb> reg read mm0
+   mm0:     [0x0a,0xd7,0xa3,0x70,0x3d,0x0a,0xd7,0x82
+   sdb> reg read
+   rax:     0x0000000000004200
+   rdx:     0x00007fffffffe158
+   rcx:     0x0000555555555156
+   rbx:     0x0000000000000000
+   rsi:     0x0000000000000005
+   rdi:     0x00000000000036cf
+   rbp:     0x00007fffffffe030
+   rsp:       0x00007fffffffe030
+   r8:        0x00007ffff7fa9f10
+   r9:        0x00007ffff7fc9040
+   r10:       0x00007ffff7fc3908
+   r11:       0x0000000000000246
+   r12:       0x00000000000036cf
+   r13:    0x00000000cafecafe
+   r14:    0x0000555555557df8
+   r15:    0x00007ffff7ffd040
+   rip:    0x0000555555555156
+   eflags: 0x0000000000000246
+   cs:     0x0000000000000033
+   fs:     0x0000000000000000
+   gs:     0x0000000000000000
+   ss:     0x000000000000002b
+   ds:     0x0000000000000000
+   es:     0x0000000000000000
+
+I started by reading the rax register, which stored the value 0,
+and then I wrote 0x42 into the ah subregister. Reading rax again
+shows that 0x42 was correctly stored into the upper byte of the
+lowest 16 bits of the register. I then read st0 and mm0, which use
+the same memory and are both filled with 0 bits. After writing
+65.42 into st0, reading st0 returns the same value and reading mm0
+
+returns the byte pattern used to encode that floating-point
+number. Both of these behaviors are correct. I then read all
+GPRs, and it prints out a long list of registers with their names
+all correctly aligned.
+
+Summary
+
+In this chapter, you learned the basics of x64 assembly language
+and used it to write tests for the debugger’s register interaction
+functions. In the next chapter, you’ll learn about software
+breakpoints and add support for them to your debugger.
+
+Check Your Knowledge
+
+1.
+1. What does q stand for in the movq instruction?
+2.
+2. Which characters mark x64 assembler directives and labels?
+3.
+3. Machine instructions go in which ELF object file section?
+4.
+4. The system call ID you wish to execute goes in which register
+  before invoking the syscall instruction?
+5.
+5. What part of the x64 instruction set is used for long double
+  support?
+6.
+6. Which assembler directive is used to output a null-
+  terminated ASCII string?

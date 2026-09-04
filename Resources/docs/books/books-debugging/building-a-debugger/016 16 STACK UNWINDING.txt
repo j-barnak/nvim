@@ -1,0 +1,1750 @@
+STACK UNWINDING
+ Our fingers brush the edges of spirals of light winding down
+ through the cracked tiles.
+In the previous chapter, you learned about DWARF call frame
+information and implemented parsers for CIEs and FDEs. In
+this chapter, you’ll use these parsers to write a stack unwinder.
+First, you’ll write an unwinder for a single stack frame. Based
+on this unwinder, you’ll write a full stack unwinder that can
+handle an arbitrary number of frames, including inlined
+frames. Finally, you’ll expose the new functionality to command
+line users.
+
+Executing Call Frame Information
+
+Recall that DWARF call frame information essentially specifies a
+huge table. Each row of the table lists a program counter value.
+The rules in that row tell you how to unwind the current stack
+frame when the program counter has a value in the
+noninclusive range between that address and the program
+counter value in the next table row (or the end of the range
+represented by the matching FDE, in the case of the last row in
+the table). Table rows encode two things: the CFA for the start of
+the current stack frame, and rules for restoring registers to the
+values that they would have if the current function
+immediately returned to its caller. For example, consider the
+following four instructions that form a function prologue:
+
+   1149:           endbr64
+   114d:           push      %rbp
+   114e:           mov       %rsp,%rbp
+   1151:           lea       0xeac(%rip),%rax
+
+The important changes here are that the instruction at 0x114d
+pushes rbp to the stack and the instruction at 0x114e sets the base
+pointer for the current function to the current value of the stack
+pointer. When the program counter is at 0x114e, the call frame
+information should indicate how to restore the value of rbp from
+the stack.
+
+Here are the relevant CFI instructions, as printed by dwarfdump
+with the --print-eh-frame flag:
+
+   0x00001149: <off cfa=08(r7) > <off r16=-8(cfa) >
+   0x0000114e: <off cfa=16(r7) > <off r6=-16(cfa) >
+   0x00001151: <off cfa=16(r6) > <off r6=-16(cfa) >
+
+The entry with the program counter value 0x1149 gives unwind
+information for when the program counter is between 0x1149 and
+0x114e, noninclusive. It states that the CFA is at an offset of 8 bytes
+
+from the register with DWARF ID 7 (rsp) and that the old value
+for the register with DWARF ID 16 (the return address, so rip) is
+stored at an offset of –8 bytes from the CFA. When the program
+counter reaches 0x114e, there is a new set of unwind information.
+Since an 8-byte value was pushed to the stack, the CFA is now 16
+bytes away from rsp, and there’s a new rule giving the CFA offset
+for rbp (DWARF ID 6). When the program counter reaches 0x1151,
+the CFA rule is changed to use rbp for CFA calculations rather
+than rsp, so that the function can happily push to and pop from
+the stack without requiring further changes to the CFA rule.
+
+Storing the whole table for an entire program is infeasible, so
+it’s instead encoded as a stream of binary instructions that
+build it up piece by piece, similarly to the line table program.
+We can find the series of instructions to rebuild the table entry
+for a given program counter value in the matching FDE and its
+linked CIE.
+
+In this section, we’ll write an interpreter for DWARF call frame
+information that can compute the unwind rules for a single
+stack frame.
+
+Representing Rules
+
+The rule for restoring a register can be one of the following:
+
+  undefined     It’s not possible to restore the register value.
+  register(R)    The previous value of the register is stored in
+  another register, with the DWARF register number R.
+  same_value    The register hasn’t been modified from its previous
+  value. (This is a special case of register(R) where R is the same
+  as the register for which the rule is defined.)
+  offset(N)     The previous value of the register is saved at an
+  offset of N from the current CFA.
+  val_offset(N)   The previous value of the register is the current
+  CFA plus N.
+  expression(E)   The previous value of the register is located at
+  the address produced by executing the DWARF expression E.
+  val_expression(E)   The previous value of the register is the value
+  produced by executing the DWARF expression E.
+
+We’ll handle all but the last two rules in this chapter. DWARF
+expressions are considerably more complex, so we’ll wait until
+Chapter 19 to tackle them. In addition to register rules, we must
+handle the following rules for computing the CFA:
+
+  register_and_offset(R,N)   The CFA is calculated by taking the
+  address stored in the register with the DWARF register
+  number R and adding the offset N to it.
+  expression(E)   The CFA is calculated by executing the DWARF
+  expression E.
+
+Again, we’ll ignore the DWARF expression option for now. In
+sdb/src/dwarf.cpp, let’s create types to represent these rules:
+
+   namespace {
+       struct undefined_rule {};
+         struct same_rule {};
+         struct offset_rule {
+             std::int64_t offset;
+        };
+        struct val_offset_rule {
+              std::int64_t offset;
+        };
+        struct register_rule {
+              std::uint32_t reg;
+        };
+        struct cfa_register_rule {
+              std::uint32_t reg;
+              std::int64_t offset;
+        };
+   }
+
+Now we can think about the call frame information instructions
+we’ll need to interpret to build the relevant row of the unwind
+table for a given machine instruction. DWARF 4 has 25
+instructions that we need to handle. These instructions operate
+on an abstract machine similar to the one for the line table
+program and will do things like set the current register rule for
+a specific register or set the address of the instruction to which
+the current table row applies.
+
+Unlike for the line table program, the DWARF standard doesn’t
+lay out an explicit set of registers for the call frame information
+abstract machine, but you can piece one together by reading
+through the list of instructions. Fortunately, I’ve done that
+already, so you don’t have to. We’ll use the following set of fields
+for the abstract machine:
+
+  location   The file address of the instruction to which a line of
+  the table applies.
+  cfa_rule   The rule for computing the CFA.
+  register_rules   The set of rules for restoring registers.
+  cie_register_rule     The set of rules for restoring registers that
+  results from running only the instructions in the
+  initial_instructions field of the linked CIE for this FDE. We need
+
+  this to support an instruction that resets the register_rules field
+  back to this state.
+  register_rule_stack    A stack of register and CFA rules that can be
+  pushed to and popped from. We need this because certain
+  instructions can save and restore the register_rules field using
+  stack operations.
+
+Based on this information, we can define a type to represent
+our abstract machine, which we’ll call unwind_context. Alongside
+fields for these items, we’ll add a field to hold a parsing cursor.
+Add the type to sdb/src/dwarf.cpp:
+
+   #include <variant>
+
+   namespace {
+         struct unwind_context {
+             cursor cur{ {nullptr, nullptr} };
+              sdb::file_addr location;
+              cfa_register_rule cfa_rule;
+
+              using rule = std::variant<
+                  undefined_rule, same_rule, offset_rul
+                  val_offset_rule, register_rule>;
+              using ruleset = std::unordered_map<std::u
+              ruleset cie_register_rules;
+              ruleset register_rules;
+              std::vector<std::pair<ruleset, cfa_regist
+         };
+   }
+
+We initialize the cursor with a null span; we’ll fill it in manually
+later. We use a std::variant to store the potential register restore
+rules, and we define ruleset as a mapping from DWARF register
+numbers to register restore rules.
+
+Returning Registers
+
+With unwind_context defined, we can start to sketch out the main
+entry point to all the work we’ve done this chapter: the
+sdb::call_frame_information::unwind function. This function should take
+
+the sdb::process being debugged, the program counter value to
+unwind (as a file address), and the current set of registers. It
+should return a new set of registers that represents the
+machine state in the caller.
+
+To support this behavior, we’ll need to make some changes to
+our existing sdb::registers type. Currently, this type isn’t default-
+constructible or copyable, which makes it quite unwieldy for
+our current use cases. It can’t express undefined registers and
+doesn’t support modifying register values without also writing
+those values into the inferior. It should also track the CFA for
+the stack frame and have a function for writing all register
+updates to the inferior to accommodate situations in which we
+assign some register set to another set and want to reflect those
+registers in the running process. Let’s modify the type in
+sdb/include/libsdb/registers.hpp:
+
+   namespace sdb {
+         class process;
+         class registers {
+         public:
+             registers() = default;
+             registers(const registers&) = default;
+             registers& operator=(const registers&) =
+             --snip--
+             void write(const register_info& info, val
+             --snip--
+                void write_by_id(register_id id, value va
+                    write(register_info_by_id(id), val, c
+                }
+                bool is_undefined(register_id id) const;
+                void undefine(register_id id);
+
+                virt_addr cfa() const { return cfa_; }
+                void set_cfa(virt_addr addr) { cfa_ = add
+                void flush();
+
+         private:
+             --snip--
+             std::vector<std::size_t> undefined_;
+             virt_addr cfa_;
+         };
+   }
+
+We mark the default constructor and copy operations as
+defaulted rather than deleted. We also add commit parameters to
+the two register-writing functions and default them to true.
+These functions control whether to also write to the registers in
+the inferior.
+
+To avoid large refactors in the way we read and write registers,
+we implement undefined registers by keeping a list of offsets
+into the user area we should consider undefined. We track
+offsets rather than register IDs so that undefining a subregister
+also marks its superregister as undefined, and vice versa. Add a
+member to track this information and declare two functions,
+is_undefined and undefined, to push values to this list and query it.
+
+Also add a member that stores the CFA and members to set and
+get it. Finally, add a flush function that will write all of the
+current registers back to the process.
+
+Implement is_undefined and undefined in sdb/src/registers.cpp:
+
+   void sdb::registers::undefine(register_id id) {
+       std::size_t canonical_offset = register_info_
+       undefined_.push_back(canonical_offset);
+   }
+
+   bool sdb::registers::is_undefined(register_id id
+       std::size_t canonical_offset = register_info_
+       return std::find(begin(undefined_), end(undef
+               != end(undefined_);
+   }
+
+In both of these functions, we shift the register offset 1 bit to the
+right so that registers at a byte offset like hl are considered the
+same as their containing register. We then add this
+canonicalized offset to the undefined set, or look it up.
+In sdb/src/registers.cpp, modify the read function to throw an
+exception if the requested register is undefined:
+
+   sdb::registers::value sdb::registers::read(const
+       if (is_undefined(info.id))
+           sdb::error::send("Register is undefined"
+        --snip--
+   }
+
+Also implement flush, which should write all GPRs, FPRs, and
+debug registers:
+
+   void sdb::registers::flush() {
+       proc_->write_fprs(data_.i387);
+       proc_->write_gprs(data_.regs);
+       auto info = register_info_by_id(register_id:
+       for (auto i = 0; i < 8; ++i) {
+           if (i == 4 or i == 5) continue;
+           auto reg_offset = info.offset + sizeof(st
+           auto ptr = reinterpret_cast<std::byte*>(d
+             auto bytes = from_bytes<std::uint64_t>(pt
+             proc_->write_user_area(reg_offset, bytes
+        }
+   }
+We call write_gprs and write_fprs to write the GPRs and FPRs. For
+the debug registers, we loop eight times (one for each debug
+register), writing the data of each debug register into the user
+area. Recall that DR4 and DR5 are obsolete aliases for DR6 and DR7, so
+we don’t write those two.
+
+The last required modification is to implement conditional
+writing to the process registers. In the write function, guard the
+last if...else block with a check to the commit parameter:
+
+   void sdb::registers::write(const register_info& i
+       --snip--
+
+         if (commit) {
+             if (info.type == register_type::fpr) {
+                 proc_->write_fprs(data_.i387);
+             }
+             else {
+                 auto aligned_offset = info.offset & ~
+                 proc_->write_user_area(aligned_offset
+                     from_bytes<std::uint64_t>(bytes +
+             }
+         }
+   }
+In this way, we’ll write the new register value to the process
+only if commit is true. Now we can start writing the stack unwinder.
+
+Writing a Stack Unwinder
+
+The stack unwinding implementation will find the FDE for the
+given program counter value, parse it, and execute its call
+frame information instructions until it produces the table row
+corresponding to the program counter. Then, it will execute the
+unwind rules for that row. Declare this unwind function in
+sdb/include/libsdb/dwarf.hpp:
+
+   #include <libsdb/registers.hpp>
+
+   namespace sdb {
+        class process;
+        class call_frame_information {
+        public:
+              --snip--
+              registers unwind(
+                   const process& proc,
+                   file_addr pc,
+                   registers& regs) const;
+              --snip--
+        };
+   }
+The function takes the sdb::process being debugged, the program
+counter value to unwind, and the current set of registers. We
+take the program counter value as an sdb::file_addr rather than
+just retrieving it from the register set so that we know which
+ELF file is associated with that program counter value.
+(Knowing this will be important when we implement shared
+library support in the next chapter.) We can’t mark the register
+set as const because unwind will fill in the CFA information for the
+current register set. The function returns a new set of registers
+that represents the machine state for the caller.
+
+We’ll assume the existence of two functions. The first one,
+execute_cfi _instruction, takes the ELF file and the FDE, executes a
+
+single instruction at the given cursor, and updates the unwind
+context appropriately. The second function, execute_unwind_rules,
+executes the unwind rules computed by the instructions and
+returns the set of registers for the caller’s stack frame.
+Implement unwind in sdb/src/dwarf.cpp:
+
+   #include <libsdb/process.hpp>
+
+   sdb::registers sdb::call_frame_information::unwin
+         const sdb::process& proc, file_addr pc, reg
+       auto fde_start = eh_hdr_[pc];
+       auto eh_frame_end = dwarf_->elf_file()->get_s
+    cursor cur({ fde_start, eh_frame_end }); ➊
+    auto fde = parse_fde(*this, cur);
+    if (pc < fde.initial_location
+        or pc >= fde.initial_location + fde.addre
+        sdb::error::send("No unwind information a
+    }
+
+    unwind_context ctx{}; ➋
+    ctx.cur = cursor(fde.cie->instructions);
+
+    while (!ctx.cur.finished()) {
+        execute_cfi_instruction(*dwarf_->elf_file
+    }
+
+    ctx.cie_register_rules = ctx.register_rules;
+    ctx.cur = cursor(fde.instructions);
+    ctx.location = fde.initial_location;
+
+    while (!ctx.cur.finished() and ctx.location <
+        execute_cfi_instruction(*dwarf_->elf_file
+    }
+
+    return execute_unwind_rules(ctx, regs, proc)
+}
+We begin by looking up the program counter value in the
+.eh_frame_hdr search table, which gives us a pointer to the start of
+
+the relevant FDE. We need an end location for the cursor we’ll
+use to parse the FDE, so we retrieve a pointer to the end of the
+.eh_frame section. We then create the cursor, parse the FDE, and
+
+make sure this FDE contains the given program counter value
+➊.
+
+With the FDE located and parsed, we create an unwind context
+and initialize the cursor with the instructions stored in the
+linked CIE ➋. We then loop, continually executing the
+instructions until the cursor reaches the end of the span.
+
+After the loop terminates, ctx.register_rules will store the current
+set of register rules, so we copy it into the ctx.cie_register_rules
+field to save the register rules for later ➌. We reset the cursor to
+point to the instructions for the FDE and set the current location
+to the value in the FDE’s initial_location field.
+
+We now execute the instructions stored in the FDE until either
+the cursor reaches the end of the span or the location of the
+current entry in the table exceeds the program counter value
+we’re unwinding, indicating we’ve computed the correct row of
+the table. Recall that a table row applies to program counter
+values ranging from the one listed in the row up to, but not
+including, the one in the subsequent table row. After this loop,
+ctx.register_rules and ctx.cfa_rule will contain the correct set of rules
+
+for unwinding one stack frame from this program counter. We
+execute the unwind rules we just computed and return the
+result ➍.
+
+The last two big pieces of work we need to do are to implement
+the execute_cfi_instruction and execute_unwind_rules functions. We’ll start
+with execute_cfi_instruction.
+
+Executing Instructions
+
+The interpreter for call frame information instructions is
+essentially a big switch statement that updates the current
+unwind context based on the opcode and operands of each
+instruction.
+
+We must implement 25 instructions. Rather than me explaining
+all of them at once, we’ll tackle them in batches. Begin by
+writing the function signature and assigning some convenience
+variables:
+
+   namespace {
+       void execute_cfi_instruction(
+             const sdb::elf& elf,
+             const sdb::call_frame_information::fram
+                    unwind_context& ctx, sdb::file_addr pc
+                  auto& cie = *fde.cie;
+                  auto& cur = ctx.cur;
+
+                  auto text_section_start = *elf.get_sectio
+                  auto plt_start = elf.get_section_start_ad
+                      .value_or(sdb::file_addr{});
+
+We grab references to the CIE and current cursor; we’ll use
+these variables often, and the shorter names will clean up our
+code. We also grab the file addresses of the start of the .text and
+.got.plt sections, as we’ll need these to parse encoded pointers.
+
+Call frame information instructions require one or more bytes
+to encode. The most significant 2 bits of the first byte encode the
+primary opcode. The other 6 bits can store either an extended
+opcode or operands for the instruction.
+
+We’ll begin by implementing the three instructions that the
+primary opcode encodes, namely DW_CFA_advance_loc, DW_CFA_offset, and
+DW_CFA_restore:
+
+                  --snip--
+                  auto opcode = cur.u8();
+                  auto primary_opcode = opcode & 0xc0;
+                  auto extended_opcode = opcode & 0x3f;
+               if (primary_opcode) {
+                   switch (primary_opcode) {
+                    case DW_CFA_advance_loc:
+                        ctx.location += extended_opcode *
+                        break;
+                    case DW_CFA_offset: {
+                          auto offset = ➊
+                              static_cast<std::int64_t>(cu
+                          ctx.register_rules.emplace(extend
+                          break;
+                    }
+                    case DW_CFA_restore:
+                        ctx.register_rules.emplace(
+                            extended_opcode, ctx.cie_regi
+                        break;
+                    }
+               }
+
+We read the opcode byte from the cursor and retrieve the
+potential primary and extended opcodes by masking the
+appropriate values. If the primary opcode isn’t 0, we need to
+execute one of the three instructions just mentioned.
+
+The DW_CFA_advance_loc instruction advances the current location by
+the value encoded in the least significant 6 bits of the opcode,
+multiplied by the code_alignment_factor. The DW_CFA_offset instruction
+takes two operands: a DWARF register number encoded in the
+least significant 6 bits of the opcode and an additional ULEB128
+offset. Then, it sets the rule for the given register to offset(N),
+where N is the given offset multiplied by data_alignment_factor. The
+DW_CFA_restore instruction takes one operand, a DWARF register
+
+number encoded in the least significant 6 bits of the opcode,
+and then resets the rule for the given register to its original
+value in the CIE’s register rules. The CIE stores the values of
+code_alignment_factor and data_alignment_factor. Note that GCC’s
+
+unwinder treats DW_CFA_restore in the same way as DW_CFA_same_value,
+but we’re going to follow the spec and the behavior of libunwind.
+
+Note that we use the extended_opcode variable to refer to operands
+encoded in the least significant 6 bits of the opcode. Pay
+particular attention to the cast of the parsed ULEB128 ➊; we must
+do this because C++ integer promotion rules would otherwise
+cast the signed data_alignment_factor variable to an unsigned integer,
+potentially discarding the sign and making the offset positive
+when it shouldn’t be.
+
+The remaining instructions all use the extended opcode. The
+first batch we’ll focus on includes the set of instructions that
+change the current code location:
+               --snip--
+               else if (extended_opcode) {
+                   switch (extended_opcode) {
+                    case DW_CFA_set_loc: {
+                        auto current_offset = elf.data_po
+                          auto loc = parse_eh_frame_pointe
+                              elf, cur, cie.fde_pointer_enc
+                              current_offset.off(), text_se
+                              plt_start.addr(), fde.initial
+                          ctx.location = sdb::file_addr{ el
+                          break;
+                    }
+                    case DW_CFA_advance_loc1:
+                        ctx.location += cur.u8() * cie.co
+                        break;
+                    case DW_CFA_advance_loc2:
+                        ctx.location += cur.u16() * cie.c
+                        break;
+                    case DW_CFA_advance_loc4:
+                        ctx.location += cur.u32() * cie.c
+                        break;
+
+If the extended opcode isn’t 0, we switch based on its value. The
+instruction DW_CFA_set_loc takes an encoded pointer and sets the
+current location to that pointer value. This will always increase
+the value of the location. Next, the DW_CFA_advance_loc{1,2,4}
+instruction takes a fixed-width integer of the specified byte size
+and advances the current location by this amount.
+
+In the case of DW_CFA_set_loc, we use parse_eh_frame_pointer to parse the
+encoded pointer. As usual, we pass the current parser offset as
+well as the start of the .text and .got.plt sections, as the first two
+base addresses. Now, however, we have a function base address
+as well: the initial_location field of the FDE. The fixed-size
+advances are comparatively straightforward; we just parse the
+relevant integral type and advance the location.
+
+Next are the instructions for defining the CFA rule:
+
+                     --snip--
+                     case DW_CFA_def_cfa:
+                          ctx.cfa_rule.reg = cur.uleb128()
+                          ctx.cfa_rule.offset = cur.uleb128
+                          break;
+                     case DW_CFA_def_cfa_sf:
+                          ctx.cfa_rule.reg = cur.uleb128()
+                          ctx.cfa_rule.offset = cur.sleb128
+                         break;
+                     case DW_CFA_def_cfa_register:
+                         ctx.cfa_rule.reg = cur.uleb128()
+                         break;
+                     case DW_CFA_def_cfa_offset:
+                         ctx.cfa_rule.offset = cur.uleb128
+                          break;
+                      case DW_CFA_def_cfa_offset_sf:
+                          ctx.cfa_rule.offset = cur.sleb128
+                          break;
+                      case DW_CFA_def_cfa_expression:
+                            sdb::error::send("DWARF expressio
+
+We implement six instructions:
+
+  The DW_CFA_def_cfa instruction takes a ULEB128 representing a
+  DWARF register number R and a ULEB128 representing an offset
+  N, and then defines the CFA rule as register_and_offset(R,N).
+
+  The DW_CFA_def_cfa_sf instruction takes a ULEB128 representing a
+  DWARF register number R and an SLEB128 representing an
+  offset N, then defines the CFA rule as
+  register_and_offset(R,N*data_alignment _factor).
+
+  The DW_CFA_def_cfa_register instruction takes a ULEB128 representing
+  a DWARF register number and replaces the current register
+  number of the CFA rule with the given one, keeping the old
+  offset.
+  The DW_CFA_def_cfa_offset instruction takes a ULEB128 representing
+  an offset and replaces the current offset of the CFA rule with
+  the given one, keeping the old register.
+  The DW_CFA_def_cfa_offset instruction takes an SLEB128 representing
+  an offset and replaces the current offset of the CFA rule with
+  the given one multiplied by data_alignment_factor, keeping the old
+  register.
+  The DW_CFA_def_cfa_expression instruction takes a DW_FORM_exprloc
+  operand that encodes a DWARF expression E and then sets
+  the CFA rule to expression(E).
+
+We won’t support DWARF expressions until Chapter 19, so we
+throw an exception if we have to execute one. Note that, unlike
+for the DW_CFA_offset instruction, we don’t have to cast the offsets
+we parse here before multiplying them by the data alignment
+factor because they’re already signed.
+
+Now we implement the register rules. Once again, we’ll watch
+out for those unsigned offsets we need to multiply with the
+signed data-alignment factor:
+
+                    --snip--
+                    case DW_CFA_undefined:
+                        ctx.register_rules.emplace(cur.ul
+                        break;
+                    case DW_CFA_same_value:
+                        ctx.register_rules.emplace(cur.ul
+                        break;
+                    case DW_CFA_offset_extended: {
+                          auto reg = cur.uleb128();
+                          auto offset = static_cast<std::in
+        cur.uleb128()) * cie.data_ali
+    ctx.register_rules.emplace(reg, o
+    break;
+}
+case DW_CFA_offset_extended_sf: {
+    auto reg = cur.uleb128();
+    auto offset = cur.sleb128() * cie
+    ctx.register_rules.emplace(reg, o
+    break;
+}
+case DW_CFA_val_offset: {
+    auto reg = cur.uleb128();
+    auto offset = static_cast<std::in
+        cur.uleb128()) * cie.data_ali
+    ctx.register_rules.emplace(reg, v
+    break;
+}
+case DW_CFA_val_offset_sf: {
+    auto reg = cur.uleb128();
+    auto offset = cur.sleb128() * cie
+    ctx.register_rules.emplace(reg, v
+    break;
+}
+case DW_CFA_register: {
+    auto reg = cur.uleb128();
+    ctx.register_rules.emplace(
+        reg, register_rule{ static_ca
+    break;
+                      }
+                      case DW_CFA_expression:
+                          sdb::error::send("DWARF expressio
+                      case DW_CFA_val_expression:
+                          sdb::error::send("DWARF expressio
+                      case DW_CFA_restore_extended: {
+                            auto reg = cur.uleb128();
+                            ctx.register_rules.emplace(reg, c
+                            break;
+                      }
+
+Each instruction takes a ULEB128 representing the DWARF register
+whose rule it should change. First, the DW_CFA_undefined instruction
+sets the rule to undefined, while DW_CFA_same_value sets it to same_value.
+
+The next four instructions take an additional argument
+representing an offset N. The DW_CFA_offset_extended instruction takes
+a ULEB128 operand and sets the rule to offset(N * data_alignment_factor).
+The DW_CFA_offset_extended _sf instruction takes an SLEB128 operand
+and sets the rule to offset(N * data _alignment_factor). The
+DW_CFA_val_offset instruction takes a ULEB128 operand and sets the
+
+rule to val_offset(N * data_alignment_factor). DW_CFA_val_offset_sf takes an
+SLEB128 operand and sets the rule to val_offset(N * data_alignment
+
+_factor).
+Next, DW_CFA_register takes an additional ULEB128 operand that
+represents a DWARF register number R and sets the rule for the
+first register operand to register(R). DW_CFA_expression takes an
+additional DW_FORM_block operand that represents a DWARF
+expression E and sets the rule for the register to expression(E).
+Prior to the execution of E, it will push the CFA onto the DWARF
+expression stack. (You’ll learn what this means in Chapter 19.)
+DW_CFA_val_expression is similar to the previous instruction, except it
+
+sets the rule for the register to val_expression(E). DW_CFA_restore_extended
+restores the register rule to the one in cie_register_rules.
+
+Finally, we implement the two stack operations:
+
+                      --snip--
+                      case DW_CFA_remember_state:
+                           ctx.rule_stack.push_back({ ctx.re
+                           break;
+                      case DW_CFA_restore_state:
+                           ctx.register_rules = ctx.rule_sta
+                           ctx.cfa_rule = ctx.rule_stack.bac
+                           ctx.rule_stack.pop_back();
+                           break;
+                      }
+               }
+         }
+   }
+
+The DW_CFA_remember_state instruction pushes the current register
+rules onto the rule stack without modifying the current ruleset,
+while DW_CFA_restore _state sets the current register rules to the
+ruleset on the top of the rule stack and then removes that
+ruleset from the stack.
+
+We covered many instructions, but we’re now done with the
+instruction interpreter. All that’s left to make the unwind function
+work is to implement execution of register rules.
+
+Executing Register Rules
+
+To execute the register rules, we should make a copy of the old
+register values, loop over the set of rules, and modify the
+register values based on the relevant rule. The register rules
+have the type std::variant<undefined_rule, same_rule, offset_rule,
+val_offset_rule, register_rule>, so we must check a few options to
+
+figure out which type a rule stores and then operate on it. For
+the sake of simplicity, we’ll opt to do this in an if...then...else
+chain. Implement execute_unwind_rules in sdb/src/dwarf.cpp:
+namespace {
+    sdb::registers execute_unwind_rules(
+          unwind_context& ctx, sdb::registers& ol
+          const sdb::process& proc) {
+        auto unwound_regs = old_regs;
+
+        auto cfa_reg_info = sdb::register_info_by
+        auto cfa = std::get<std::uint64_t>(
+            old_regs.read(cfa_reg_info)) + ctx.cf
+        old_regs.set_cfa(sdb::virt_addr{ cfa });
+        unwound_regs.write_by_id(sdb::register_id
+
+        for (auto [reg, rule] : ctx.register_rule
+            auto reg_info = sdb::register_info_by
+
+              if (auto undef = std::get_if<undefine
+                  unwound_regs.undefine(reg_info.id
+              }
+
+              else if (auto same = std::get_if<same
+                  // Do nothing.
+              }
+              else if (auto reg = std::get_if<regis
+                  auto other_reg = sdb::register_in
+                  unwound_regs.write(reg_info, old_
+              }
+              else if (auto offset = std::get_if<of
+                  auto addr = sdb::virt_addr{ cfa +
+                         auto value = sdb::from_bytes<std
+                             proc.read_memory(addr, 8).dat
+                         unwound_regs.write(reg_info, { va
+                    }
+                    else if (auto val_offset = std::get_i
+                         auto addr = cfa + val_offset->off
+                         unwound_regs.write(reg_info, { ad
+                    }
+              }
+              return unwound_regs;
+         }
+   }
+
+First, we make a copy of the old registers. We then calculate the
+CFA by reading the value of the register specified in the CFA
+rule and adding the supplied offset. We set the CFA for the old
+register set. The CFA for this frame marks both the beginning of
+the current stack frame and the end of the previous stack
+frame, which will have been the value of the stack pointer for
+the previous stack frame, so we restore rsp to the value of the
+CFA.
+
+We then loop over all the register rules and apply them to the
+copy we made of the registers. For undefined_rule, we call undefine on
+the new register set with the supplied register ID. If the rule is
+same_rule, we don’t have to do anything for that register: restoring
+it is a no-op. For register_rule, the old value is stored in the given
+register, so we read it and write the value into the register we’re
+restoring (making sure to supply false for the commit argument so
+we don’t write this value back into the process). For offset_rule,
+we read the memory at the current CFA plus the given offset
+and store that in the register. The val_offset value is similar, but
+we simply write the value of the CFA plus the offset rather than
+reading the memory there. Finally, we return the new register
+set.
+
+Now that we can unwind a single stack frame, we can move on
+to unwinding the whole stack, including handling inlined
+frames.
+
+Unwinding the Stack
+
+We’ll place the stack unwinding code in (you guessed it)
+sdb::stack. We’ll need a new type to represent a stack frame. We
+
+must also create a place to store frames in sdb::stack and
+functions to track and manipulate the current set of frames.
+
+Creating a Stack Frame Type
+
+Let’s start by defining a new sdb::stack_frame type. This type should
+wrap the set of registers for that frame, the address to report in
+backtraces for the frame, the DIE representing the function to
+which the frame belongs, whether the frame was inlined, and
+the source location to which it points. Add this type to
+sdb/include/libsdb/stack.hpp:
+
+   #include <libsdb/registers.hpp>
+
+   namespace sdb {
+        struct stack_frame {
+             registers regs;
+             virt_addr backtrace_report_address;
+             die func_die;
+             bool inlined = false;
+             source_location location;
+        };
+   }
+
+We need to hold a specific member for the backtrace report
+address because when we unwind the stack, the program
+counter value of caller frames will point to the instruction after
+the call instruction, where the callee will return after
+completion. We want to report the address of the call
+instruction for backtraces, so we’ll calculate it as we unwind.
+
+Tracking and Manipulating Frames
+Now we can augment sdb::stack with the functionality needed to
+work with stack frames:
+
+   #include <libsdb/types.hpp>
+
+   namespace sdb {
+       class stack {
+       public:
+           --snip--
+           void simulate_inlined_step_in() {
+                --inline_height_;
+                current_frame_ = inline_height_;
+           }
+
+             void unwind();
+             void up() { ++current_frame_; }
+             void down() { --current_frame_; }
+
+             span<const stack_frame> frames() const;
+             bool has_frames() const { return !frames_
+             const stack_frame& current_frame() const
+             std::size_t current_frame_index() const {
+                 return current_frame_ - inline_height
+             }
+
+             const registers& regs() const;
+             virt_addr get_pc() const;
+         private:
+             --snip--
+               std::vector<stack_frame> frames_;
+               std::size_t current_frame_ = 0;
+         };
+   }
+
+We add data members to track the current set of stack frames,
+as well as the frame that the debugger is currently examining.
+We then modify simulate_inlined_step_in to also update the current
+frame whenever a simulated step in occurs. We add an unwind
+function that will fill in frames_, which we’ll call whenever the
+process stops. The up and down functions change the current
+frame being debugged.
+
+The frames function will return the current set of frames, not
+including those that the compiler inlined (which we’re
+pretending the process hasn’t yet entered). The has_frames,
+current_frame, and current_frame_index functions are all simple retrieval
+
+functions, so we implement them inline. Finally, we add some
+convenience helpers to get the set of registers and the program
+counter for the current frame.
+
+Let’s implement these functions in sdb/src/stack.cpp. The unwind
+function is the most complex by far, so we’ll tackle it last. We’ll
+start with sdb::stack:: frames in sdb/src/stack.cpp:
+
+   sdb::span<const sdb::stack_frame>
+   sdb::stack::frames() const {
+       return { frames_.data() + inline_height_,
+                      frames_.size() - inline_height_ };
+   }
+
+All frames below inline_height_ in the frames_ member are inlined
+frames that we’re pretending the process hasn’t yet entered.
+Therefore, we return a span that begins at an offset of
+inline_height_ into the frames_ vector and has a size equal to that
+
+vector minus the inline height.
+
+Next, the regs function looks like this:
+
+   const sdb::registers& sdb::stack::regs() const {
+         return frames_[current_frame_].regs;
+   }
+
+We simply grab the current frame from the list and return a
+reference to its regs member.
+The get_pc function just returns the program counter from the
+result of regs:
+
+   sdb::virt_addr sdb::stack::get_pc() const {
+       return virt_addr{
+                  regs().read_by_id_as<std::uint64_t>(sdb:
+         };
+   }
+
+Now we move on to arguably the most difficult function we’ve
+had to implement in this chapter: sdb::stack::unwind. Recall that
+we’ll call this function every time the process stops and that it
+should recompute the current set of stack frames. Let’s call it
+from sdb::target::notify_stop. Replace the current implementation
+of that function in sdb/src/target.cpp with this:
+
+   void sdb::target::notify_stop(const sdb::stop_rea
+       stack_.unwind();
+   }
+
+The algorithm for the unwinder is quite involved, especially
+when it comes to dealing with inlined frames. As such, we’ll
+work through two full examples before implementing the unwind
+function.
+Understanding the Unwinding Algorithm
+
+The best way to understand the unwinding algorithm is to walk
+through some examples that highlight the differences between
+inlined and non-inlined functions. Consider the following code,
+from a file called force_inline.cpp:
+
+   #include <cstdio>
+
+   __attribute__((always_inline))
+   void inlined() {
+         puts("I am inlined");
+   }
+
+   void not_inlined() {
+         inlined();
+         puts("I am not inlined");
+   }
+
+   int main() {
+         not_inlined();
+   }
+
+The always_inline attribute inlines the function that follows it into
+all call sites. As a result, this code contains one inlined function
+and one non-inlined one. The generated assembly code for this
+program looks something like this:
+
+   not_inlined:
+   1163:          endbr64
+   1167:          push    %rbp
+   1168:          mov     %rsp,%rbp
+   116b:          lea     0xe92(%rip),%rax
+   1172:          mov     %rax,%rdi
+   1175:          call    puts
+   117a:          nop
+   117b:          lea     0xe8f(%rip),%rax
+   1182:          mov     %rax,%rdi
+   1185:          call    puts
+   118a:          nop
+   118b:          pop     %rbp
+   118c:          ret
+
+   main:
+   118d:          endbr64
+   1191:          push    %rbp
+   1192:          mov     %rsp,%rbp
+   1195:          call    not_inlined
+   119a:          mov     $0x0,%eax
+   119f:          pop     %rbp
+   11a0:          ret
+In not_inlined, the instructions ranging from file address 0x116b to
+0x117a represent the inlined body of the inlined function. The
+
+relevant DWARF information for this code looks like this:
+
+   DW_TAG_subprogram
+     DW_AT_external                          yes(1)
+      DW_AT_name                             not_inlined
+      DW_AT_decl_file                        0x00000001 force_in
+      DW_AT_decl_line                        0x00000008
+      DW_AT_decl_column                      0x00000006
+      DW_AT_low_pc                           0x00001163
+      DW_AT_high_pc                          0x0000118d
+      DW_TAG_inlined_subroutine
+        DW_AT_abstract_origin                   <points to following
+        DW_AT_low_pc                            0x0000116b
+        DW_AT_high_pc                           0x0000117b
+        DW_AT_call_file                         0x00000001 force_
+        DW_AT_call_line                         0x00000009
+        DW_AT_call_column                       0x0000000c
+
+   DW_TAG_subprogram
+     DW_AT_name                              inlined
+     DW_AT_decl_file                         0x00000001 /force_i
+     DW_AT_decl_line                         0x00000004
+      DW_AT_decl_column                      0x00000006
+      DW_AT_inline                           DW_INL_inlined
+Its line table looks like this:
+
+   Source lines (from CU-DIE at .debug_info offset 0
+
+                    NS new statement, BB new basic block
+                    PE prologue end, EB epilogue begin
+                    IS=val ISA number, DI=val discriminat
+   <pc>             [lno,col] NS BB ET PE EB IS= DI= uri
+   0x00001149       [   4,16] NS uri: "force_inline.cpp"
+   0x00001151       [   5, 9] NS
+   0x00001160       [   6, 1] NS
+   0x00001163       [   8,20] NS
+   0x0000116b       [   5, 9] NS
+   0x0000117a       [   6, 1] NS
+   0x0000117b       [ 10, 9] NS
+   0x0000118a       [ 11, 1] NS
+   0x0000118d       [ 13,12] NS
+   0x00001195       [ 14,16] NS
+   0x0000119a       [ 15, 1] NS
+   0x000011a1       [ 15, 1] NS ET
+
+Now let’s say that the process has stopped and that the program
+counter points to the load address of the instruction at file
+address 0x1185 (the second call instruction inside non_inlined). What
+stack frames should we report, and what should their contents
+be? Let’s focus on just the contents of the rip register, the source
+location that instruction is part of, and whether the frame
+represents an inlined function call.
+
+At the beginning of stack unwinding, rip will be 0x1185 (assuming
+the load address is the same as the file address, for simplicity).
+This program counter value falls between the DW_AT_low_pc and
+DW_AT_high_pc values for the not_inlined DIE:
+
+   DW_AT_low_pc                                 0x00001163
+   DW_AT_high_pc                                0x0000118d
+
+This value doesn’t fall within the range of a DW_TAG_inlined_subroutine
+DIE, so we know that there are no inlined frames at this
+program counter value. To get the source location, we look up
+the line table entry corresponding to 0x1185:
+
+   0x0000117b         [    10, 9] NS
+
+This is the last entry whose address doesn’t exceed the value
+we’re looking for, so it’s the correct entry. As such, the current
+stack frame looks like this:
+
+  Program counter           0x1185
+
+  Source location         force_inline.cpp:10
+
+  Inlined     false
+When we unwind a single frame, we should have the program
+counter value 0x119a. This part is very important: when we
+unwind a stack frame, the program counter value of the
+unwound frame will point to the instruction after the function
+call, not to the function call instruction itself. This is because the
+unwound program counter value is the return address of the
+function down the stack.
+
+However, users expect the debugger to report the functions
+above the deepest frame as stopped on function calls, so we
+need to fix the program counter values we receive when
+executing the call frame information instructions. We could
+examine the machine code to find the start of the call
+instruction, but an easier approach is to just subtract 1 from the
+unwound PC value and then look up that value in the line table.
+Carrying this out for the value 0x119a gives us the entry 0x00001195 [
+14,16] NS. Thus, we can generate the following stack frame for the
+
+main function:
+
+  Program counter        0x1195
+
+  Source location      force_inline.cpp:14
+
+  Inlined    false
+
+Further frames would give program counter values that lie
+outside of this ELF file, so we stop unwinding there.
+The stack unwinding process is a bit more complicated when
+inlining is involved. Let’s say that the process has stopped with
+the program counter pointing to the load address of the
+instruction at file address 0x1175 (the call instruction inside the
+inlined inlined function).
+
+At the beginning of stack unwinding, rip will be 0x1175. We can
+tell that there is an inlined frame here because 0x1175 falls within
+the range of a DW_TAG _inlined_subroutine DIE:
+
+      DW_TAG_inlined_subroutine
+        DW_AT_abstract_origin                    <points to follow
+        DW_AT_low_pc                             0x0000116b
+        DW_AT_high_pc                            0x0000117b
+        DW_AT_call_file                          0x00000001 force_
+        DW_AT_call_line                          0x00000009
+        DW_AT_call_column                        0x0000000c
+
+Because an inlined frame exists at this program counter value,
+we need to report two logical stack frames for this location. If
+inlined called a function that was itself inlined, we’d need to
+
+report three logical stack frames; the number of frames to
+report is theoretically unbounded.
+Let’s try to compute a stack frame for the inlined function. We
+already have the program counter, and we retrieve the
+following source location from the line table: 0x0000116b [ 5, 9] NS.
+The frame looks like this:
+
+   Program counter       0x1175
+
+   Source location     force_inline.cpp:5
+
+   Inlined     true
+
+We now need to work out what the stack frame for the outer
+non_inlined function should look like. The program counter
+
+shouldn’t be 0x1175: it should point to the start of the inlined
+frame because this is the machine instruction that most closely
+corresponds to the logical function call. Likewise, the source
+location should point to the location of the call to inlined within
+non_inlined.
+
+We retrieve the program counter value by looking at the
+DS_AT_low_pc value of the inlined subroutine DIE: 0x0000116b. We don’t
+
+retrieve the source location by looking up this value in the line
+table because the line table would report the source for the
+inlined function. Instead, we get this value from the DW_AT_call_*
+attributes on the inlined subroutine DIE:
+   DW_AT_call_file                           0x00000001 force_inli
+   DW_AT_call_line                           0x00000009
+
+The frame looks like this:
+
+  Program counter        0x116b
+
+  Source location      force_inline.cpp:9
+
+  Inlined    false
+
+We’d then follow the same process as the example with no
+inlining for unwinding the final frame representing the main
+function, which gives us this frame:
+
+  Program counter        0x1195
+
+  Source location      force_inline.cpp:14
+
+  Inlined    false
+
+After unwinding to the main function, we’re done.
+
+Writing the Unwinding Function
+
+Now that we’ve manually walked through the unwinding
+process, let’s try implementing unwind piece by piece in
+sdb/src/stack.cpp. As we removed the call to reset_inline_height in
+sdb::target::notify_stop, that function should be the first thing we
+call inside unwind. We should also set the current frame to
+whatever inline height we calculated:
+
+   void sdb::stack::unwind() {
+          reset_inline_height();
+          current_frame_ = inline_height_;
+
+Next, we’ll declare some variables to store the current program
+counter as both a virtual address and a file address. We’ll also
+store the process and current registers, then clear the old set of
+frames:
+
+          --snip--
+          auto virt_pc = target_->get_process().get_pc
+          auto file_pc = target_->get_pc_file_address(
+          auto& proc = target_->get_process();
+          auto regs = proc.get_registers();
+
+          frames_.clear();
+
+We’ll ensure that the program counter points to a valid ELF file
+and then keep unwinding frames until we hit a frame with a
+program counter that lives outside of the ELF file we’re
+operating on (indicating that this function belongs to some
+shared library or that we’ve hit the topmost frame):
+         --snip--
+         auto elf = file_pc.elf_file();
+         if (!elf) return;
+
+         while (virt_pc.addr() != 0 and elf == &target
+              // Create stack_frame objects and unwind
+         }
+
+For every frame, we’ll calculate the inline stack at the program
+counter for that frame. If we encounter inlined functions, we’ll
+need to create multiple sdb::stack_frame objects for the physical
+frame and push them into frames_. If we find no inlined functions,
+we need to create and push only a single frame.
+
+We’ll write a create_base_frame function that creates the frame for
+the bottommost function in the inline stack (which may be the
+only frame in the inline stack) and write a second function
+called create_inline_stack_frames that handles the additional multiple
+frames we need to create for inline stacks. After updating frames_,
+we unwind another frame using the call frame information and
+update the program counter values that our loop uses:
+
+         --snip--
+         while (virt_pc.addr() != 0 and elf == &target
+              auto& dwarf = elf->get_dwarf();
+              auto inline_stack = dwarf.inline_stack_at
+              if (inline_stack.empty()) return;
+
+              if (inline_stack.size() > 1) {
+                  create_base_frame(regs, inline_stack
+                    create_inline_stack_frames(regs, inli
+              }
+              else {
+                  create_base_frame(regs, inline_stack
+              }
+              regs = dwarf.cfi().unwind(proc, file_pc,
+              virt_pc = virt_addr{
+                  regs.read_by_id_as<std::uint64_t>(reg
+              };
+              file_pc = virt_pc.to_file_addr(target_->g
+              elf = file_pc.elf_file();
+         }
+   }
+
+We grab the DWARF information needed to calculate the inline
+stack. If we get no frame information, we return. We then call
+the create_* functions, which require the set of registers and the
+program counter on which we’re currently operating. We also
+pass the inline stack so we don’t have to recompute it. For inline
+stacks, we pass true as the last argument to create_base_frame to
+indicate that that frame should be marked as inlined.
+Conversely, we pass false if we find no inline stack, to mark it as
+not inlined.
+
+Note that after we unwind a frame, we subtract 1 from the
+program counter value in the returned frame before looping.
+Recall from the worked examples that the return address points
+to the instruction after the function call in the caller, but we
+need to continue unwinding from the function call instruction
+itself. Subtracting 1 from the program counter puts it into the
+range of the previous instruction; our line table parser can then
+find a line table entry that gives the starting address for that
+instruction. Finally, we compute the new program counter as a
+file address and extract the ELF file for it (which may be nullptr
+in the case that the program counter points inside code for a
+shared library or code that is just-in-time compiled).
+
+Declare those two create_* functions in
+sdb/include/libsdb/stack.hpp:
+
+   namespace sdb {
+       class stack {
+       public:
+           --snip--
+
+        private:
+            void create_inline_stack_frames(
+                   const sdb::registers& regs,
+                   const std::vector<sdb::die> inline_st
+                   file_addr pc);
+
+              void create_base_frame(
+                   const registers& regs,
+                   const std::vector<sdb::die> inline_st
+                   file_addr pc,
+                   bool inlined);
+
+              --snip--
+        };
+   }
+
+Now we’ll implement create_base_frame, as it’s the simpler of the
+functions. It should add a new stack frame to frames_:
+
+   void sdb::stack::create_base_frame(
+          const registers& regs,
+          const std::vector<sdb::die> inline_stack,
+          file_addr pc,
+          bool inlined) {
+        auto backtrace_pc = pc.to_virt_addr();
+        auto line_entry = pc.elf_file()->get_dwarf()
+        if (line_entry != line_table::iterator{})
+            backtrace_pc = line_entry->address.to_vi
+         frames_.push_back({ regs, backtrace_pc, inlin
+         frames_.back().location = source_location{
+               line_entry->file_entry, line_entry->line
+   }
+
+If this isn’t the bottommost frame of the entire call stack, the
+program counter passed to this function points inside the call
+instruction that led to the function for this frame, so we first
+need to find the start of the call instruction. We do this by
+finding the line table entry that corresponds to that instruction
+and then calculating its start address as a virtual address. If this
+frame is the bottommost frame of the entire call stack,
+following this process does no harm and shouldn’t modify the
+program counter value. (The approach creates additional
+overhead, but the code is simpler.)
+
+We create a new frame with the given registers, the calculated
+call instruction address, and the DIE at the end of the inline
+stack. We also pass the inlined parameter we were given to mark
+the frame in the correct manner. Finally, we update the location
+of the frame to point to the relevant file and line.
+
+The last piece of the puzzle is the create_inline_stack_frames function.
+This function should iterate backward over all frames other
+than the base frame, creating sdb::stack_frame objects as it goes:
+   void sdb::stack::create_inline_stack_frames(
+            const registers& regs,
+            const std::vector<sdb::die> inline_stack,
+          file_addr pc) {
+        for (auto it = inline_stack.rbegin() + 1; it
+              auto inlined_pc = std::prev(it)->low_pc(
+              frames_.push_back(stack_frame{ regs, inli
+              frames_.back().inlined = std::next(it) !=
+              frames_.back().location = std::prev(it)->
+        }
+   }
+
+We walk backward over the frames of the inline stack, save for
+the base one (which we’ve already handled), and create entries
+for each of them. As such, we use rbegin and rend rather than begin
+and end to loop backward, and we add 1 to the begin iterator to
+start at the second-to-last element.
+
+For each frame, we add a new sdb::stack_frame object to frames_.
+First, we compute the address at which the frame below this
+one was inlined, which is given by its low_pc value. We create a
+new sdb::stack_frame with the same set of registers as the base
+frame, the computed inline address, and the DIE that points to
+the relevant function.
+All frames other than the first one on inline_stack should be
+marked as inlined, so we set the inlined member of the frame
+based on whether incrementing this iterator would get you to
+the beginning of the list (not to the end, because we’re going
+backward). We also update the location for this frame based on
+the inline address.
+
+If you’ve gotten this far, you’ve successfully implemented a full
+stack unwinder. This is one of the most complex parts of the
+entire book, so take some time to congratulate yourself. Next,
+we’ll hook the unwinder into the user interface, which is
+considerably simpler.
+
+Exposing Stack Unwinding to the User
+
+We must augment the debugger’s user interface in a few ways.
+First, we’ll add up and down commands to change the current
+stack frame being examined. We’ll also make register read
+commands operate on the current stack frame and add a
+backtrace command.
+
+We won’t support the writing of registers on the current stack
+frame, as doing so isn’t possible in every situation (for example,
+for undefined registers) and in some cases, it could corrupt the
+program state (for example if the current value of a register_rule
+is also present in the callee).
+
+Let’s start with the up and down commands.
+
+Adding up and down Commands
+
+The up and down commands should call the up and down functions on
+the target’s stack and then print the current code location. Let’s
+factor the code printing functionality out of handle_stop so we can
+reuse it. Modify handle_stop in sdb/tools/sdb.cpp like this:
+
+   namespace {
+       void handle_stop(sdb::target& target, sdb::st
+           print_stop_reason(target, reason);
+           if (reason.reason == sdb::process_state:
+               print_code_location(target);
+           }
+       }
+   }
+
+We take the body out of the if statement and replace it with a
+call to print_code_location, which we’ll implement next. While we
+move that old code to print_code_location, we can also simplify it,
+because the stack now tells us what code we should be printing:
+    namespace {
+          void print_code_location(sdb::target& target
+              if (target.get_stack().has_frames()) {
+                   auto& frame = target.get_stack().cur
+                   print_source(frame.location.file->pat
+               }
+               else {
+                   print_disassembly(target.get_process
+               }
+          }
+    }
+
+If we have sufficient debug information to unwind the stack, we
+grab the current frame and print the corresponding code, along
+with three lines of context. Otherwise, we print the
+dissassembly around the program counter.
+
+We’ll add commands to the handle_command function to update the
+current frame and print the code location. In sdb/tools/sdb.cpp,
+create these branches above the handler for the disassemble
+command, so that d runs the down command rather than
+disassemble:
+
+    namespace {
+        void handle_command(
+                std::unique_ptr<sdb::target>& target,
+                std::string_view line) {
+             --snip--
+             else if (is_prefix(command, "up")) {
+                  target->get_stack().up();
+                    print_code_location(*target);
+             }
+             else if (is_prefix(command, "down")) {
+                  target->get_stack().down();
+                  print_code_location(*target);
+             }
+             --snip--
+         }
+   }
+
+Also add help information for these commands to print_help:
+
+   namespace {
+       void print_help(const std::vector<std::string
+            if (args.size() == 1) {
+                std::cerr << R"(Available commands:
+       --snip--
+         down           - Select the stack frame below th
+         --snip--
+         up             - Select the stack frame above th
+         --snip--
+   )";
+               }
+               --snip--
+         }
+   }
+
+Now we can move on to reading registers.
+
+Reading Registers from Other Frames
+
+Because users can now use the up and down commands to select
+the active stack frame, they’ll expect any registers reported by
+the debugger to correspond to the selected stack frame rather
+than the deepest one. Let’s modify the current register
+commands to do so.
+
+As the register commands must look at the call stack, we need
+to pass the sdb::target, rather than the sdb::process, to
+handle_register_command. Modify the call inside handle_command:
+
+   namespace {
+       void handle_command(
+             std::unique_ptr<sdb::target>& target,
+             std::string_view line) {
+           --snip--
+           else if (is_prefix(command, "register"))
+                handle_register_command(*target, args
+                }
+                --snip--
+          }
+    }
+
+Update handle_register_command to take the target and then forward it
+to handle_register_read:
+
+    namespace {
+        void handle_register_command(
+            sdb::target& target,
+            const std::vector<std::string>& args) {
+            --snip--
+            if (is_prefix(args[1], "read")) {
+                 handle_register_read(target, args);
+            }
+            else if (is_prefix(args[1], "write")) {
+                 handle_register_write(target.get_proc
+            }
+                --snip--
+          }
+    }
+
+Update the first parameter to be sdb::target& target rather than the
+process and then pass target to handle_register_read. Also update the
+call to handle_register_write to grab the process object out of the
+target.
+
+Next, modify handle_register_read so it retrieves the registers to
+print from the call stack rather than from the process. Also
+handle undefined registers:
+
+   namespace {
+       void handle_register_read(
+          ➊ sdb::target& target,
+              const std::vector<std::string>& args) {
+           auto format = [](auto t) {
+                --snip--
+           };
+
+           ➋ auto& regs = target.get_stack().regs();
+              auto print_register_value = [&](auto info
+                  if (regs.is_undefined(info.id)) {
+                      fmt::print("{}:\tundefined\n", in
+                  }
+                  else {
+                      auto value = regs.read(info);
+                      fmt::print("{}:\t{}\n", info.name
+                  }
+              };
+
+               if (args.size() == 2 or
+                  (args.size() == 3 and args[2] == "all
+                  for (auto& info : sdb::g_register_inf
+                        if (args.size() == 3 or info.type
+                            print_register_value(info);
+                        }
+                  }
+             }
+             else if (args.size() == 3) {
+                 try {
+                     auto info = sdb::register_info_by
+                     print_register_value(info);
+                 }
+                 catch (sdb::error& err) {
+                     std::cerr << "No such register\n
+                     return;
+                 }
+             }
+             else {
+                 print_help({ "help", "register" });
+             }
+        }
+   }
+
+Update the first parameter to be a reference to the target ➊.
+Grab a reference to the registers for the current stack frame,
+and declare a lambda function that prints out the value of a
+register or an indication that the register is undefined ➋. Then,
+modify the blocks that carry out the register printing and make
+them call print_register_value.
+
+Printing the Backtrace
+
+Now we can move on to printing a backtrace. Add a print_backtrace
+function to sdb/tools/sdb.cpp that prints a summary of the call
+stack to the console:
+
+   namespace {
+       void print_backtrace(const sdb::target& targe
+           auto& stack = target.get_stack();
+           auto i = 0;
+           for (auto& frame : stack.frames()) {
+               auto pc = frame.backtrace_report_add
+               auto func_name = target.function_name
+
+                     std::string message = i == stack.cur
+                     message += fmt::format("[{}]: {:#x} {
+                     if (frame.inlined) {
+                           message += fmt::format(" [inlined
+                     }
+                     fmt::print("{}\n", message);
+               }
+         }
+   }
+We retrieve the call stack from the target and initialize a loop
+counter for the stack frames. We then loop over each frame,
+printing out a summary of it. For each frame, we grab the
+address that the unwinder says to use for backtrace reports and
+retrieve the function name that corresponds to it. Next, we
+compute a message to print out. If the loop counter matches the
+current frame index, we begin the summary line with a star (*)
+to indicate that it is the active frame. We then append the loop
+counter, the program counter value, and the function name. If
+this frame is inlined, we add a marker to it and give the name of
+the inlined function. Finally, we print out the message.
+
+Add a command to handle_command that calls print_backtrace:
+
+   namespace {
+       void handle_command(
+             std::unique_ptr<sdb::target>& target,
+             std::string_view line) {
+           --snip--
+              else if (is_prefix(command, "backtrace")
+                   print_backtrace(*target);
+              }
+              --snip--
+         }
+   }
+We’re done with the main backtracing implementation! We can
+now go back to our implementation of sdb::target::step_out and use
+the stack unwinder rather than the rbp register. Also, because we
+know how many stack frames there currently are, we can
+support stepping out of recursive functions by repeatedly
+running up to the return address until a stack frame is popped.
+In sdb/src/target.cpp, replace the definitions of the frame_pointer,
+return_address_bytes, and return_address variables with this:
+
+         --snip--
+         auto& regs = stack.frames()[stack.current_fra
+         virt_addr return_address{
+              regs.read_by_id_as<std::uint64_t>(registe
+         };
+
+         sdb::stop_reason reason;
+         for (auto frames = stack.frames().size();
+             stack.frames().size() >= frames;) {
+             reason = run_until_address(return_address
+             if (!reason.is_breakpoint()
+                 or process_->get_pc() != return_addre
+                 return reason;
+             }
+         }
+         return reason;
+         --snip--
+We grab the stack frame above this one and retrieve the
+program counter value for that frame, which will be the return
+address for the current frame. We then keep running up to that
+address until the number of stack frames is less than it was at
+the start of the stepping procedure. As usual, if the process halts
+for some other reason, we return that reason.
+
+Testing
+
+Now we can write a small test to validate the code. Launch
+test/targets/step, set a breakpoint on scratch_ears, and continue the
+process. Because there are two levels of inlining at the first
+instruction of scratch_ears, the process halts two frames above
+that function, in find_happiness. Step in twice to get inside
+scratch_ears and then generate a backtrace. It should look like this:
+
+   $ tools/sdb test/targets/step
+   Launched process with PID 3046
+   sdb> break set scratch_ears
+   sdb> c
+   Process 1716 stopped with signal TRAP at 0x555555
+   step.cpp:5 (find_happiness) (breakpoint 1)
+     12 }
+     14 void find_happiness() {
+   > 15      pet_cat();
+  16        std::puts("Found happiness");
+  17 }
+  19 int main() {
+sdb> step
+Process 1716 stopped with signal TRAP at 0x555555
+step.cpp:5 (find_happiness) (single step)
+    8 __attribute__((always_inline))
+    9 void pet_cat() {
+> 10      scratch_ears();
+  11      std::puts("Done petting cat");
+  12 }
+  14 void find_happiness() {
+sdb> step
+Process 1716 stopped with signal TRAP at 0x555555
+step.cpp:5 (find_happiness) (single step)
+  3 __attribute__((always_inline))
+  4 void scratch_ears() {
+> 5      std::puts("Scratching ears");
+  6 }
+  8 __attribute__((always_inline))
+  9 void pet_cat() {
+   sdb> back
+   *[0]: 0x555555555195 find_happiness [inlined] sc
+    [1]: 0x555555555195 find_happiness [inlined] pet
+    [2]: 0x555555555195 find_happiness
+    [3]: 0x5555555551cf main
+
+Note that the first three frames all have the same program
+counter value due to the inlining.
+
+Let’s turn this exercise into an automated test. Add a new test
+case to sdb/test/tests.cpp:
+
+   TEST_CASE("Stack unwinding", "[unwind]") {
+       auto target = target::launch("targets/step")
+       auto& proc = target->get_process();
+       target->create_function_breakpoint("scratch_e
+       proc.resume();
+       proc.wait_on_signal();
+       target->step_in();
+       target->step_in();
+
+         std::vector<std::string_view> expected_names
+             "scratch_ears",
+             "pet_cat",
+             "find_happiness",
+             "main"
+        };
+
+        auto frames = target->get_stack().frames();
+        for (auto i = 0; i < frames.size(); ++i) {
+            REQUIRE(frames[i].func_die.name().value(
+                   == expected_names[i]);
+        }
+   }
+
+We follow the same steps as before: launch the test program, set
+a breakpoint on scratch_ears, resume, step in twice, and then
+check the backtrace. We ensure that the functions reported by
+the backtrace are the ones we expect. This test should pass.
+
+This is a very small test, but if we completely break stack
+unwinding, we’ll know about it.
+
+Summary
+
+In this chapter, you learned how ELF files express stack
+unwinding information. You wrote a parser for this information
+and created a function to unwind a frame of the call stack
+based on it. You then implemented a full stack unwinder based
+on this facility. Using this unwinder, you augmented the
+debugger with the ability to change the active stack frame being
+debugged, read register values from different frames, and
+generate a backtrace.
+
+In the next chapter, we’ll take a break from DWARF parsing to
+look at how processes load shared libraries and how we can
+trace this loading.
+
+Check Your Knowledge
+
+1.
+1. What register restore rules does DWARF call frame
+  information support?
+2.
+2. Why is the undefined register rule necessary?
+3.
+3. What CFA rules can be expressed in DWARF call information?
+4.
+4. How does inlining complicate stack unwinding?

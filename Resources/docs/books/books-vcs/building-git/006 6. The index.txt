@@ -1,0 +1,738 @@
+6. The index
+Our database implementation is now sophisticated enough to support storing arbitrary trees and
+executable files, and we could quite happily keep writing commits using this infrastructure.
+However, as the project grows, some problems will arise.
+
+For one, performance will tend to get worse over time. Our commit command currently reads
+and hashes every file in the project in order to store blobs, and as we add more code, that process
+will take longer. It’s especially wasteful because in most commits on large projects, most of the
+files in the project will not have changed, so no new blobs will be stored as a result of reading
+them. We only need to know the existing object IDs of the blobs in order to build the trees for
+the new commit.
+
+Performance is also a concern for the status and diff commands. While working we often
+want to know what we’ve changed since the last commit. Directly comparing the trees and blobs
+in the database with the files in the working tree again requires reading every file in the project,
+unless we have some other data source that we can use to avoid doing some of this work.
+
+Finally, and probably most importantly, it becomes cumbersome to use. You’ll notice that we
+do not currently have an add command; the commit command stores the current state of all the
+files. It would be nice to have finer control over what goes into the next commit, so that we can
+decide to store a chunk of work as multiple small commits, rather than one big one containing
+many logical changes.
+
+The add command and the index solve these problems by providing a cache of all the blobs
+representing the current state of the project. It contains the object IDs of the blobs corresponding
+to the current files, which is used to build the next commit. It also caches a lot of information
+from the filesystem, such as the size of files and the time at which they were last changed, which
+speeds up operations that need to detect changes in the working tree.
+
+6.1. The add command
+In Git, the commit command does not commit whatever we have changed automatically. To
+tell it which changes we want to include in the next commit, we use the add command, which
+adds files to the index or staging area. We can see this by using the status command to inspect
+the current state.
+
+Let’s create a new repository and create and empty file in it, and see what status reports after
+that.
+     $ git init git-add-status
+     $ cd git-add-status
+
+     $ touch file.txt
+     $ git status
+     On branch master
+
+     Initial commit
+
+     Untracked files:
+       (use "git add <file>..." to include in what will be committed)
+
+                                                              The index
+
+                    file.txt
+
+       nothing added to commit but untracked files present (use "git add" to track)
+
+Git reports that file.txt is an untracked file. That means it’s not in the latest commit, and
+it’s not in the index, and therefore won’t be included in the next commit. It helpfully tells us
+that to get file.txt into the repository, we need to run git add. Let’s do that and see what
+difference it makes:
+       $ git add file.txt
+       $ git status
+       On branch master
+
+       Initial commit
+
+       Changes to be committed:
+         (use "git rm --cached <file>..." to unstage)
+
+                    new file:          file.txt
+
+The file is now listed under changes to be committed. That means it’s in the index, and the
+indexed content differs from file.txt in the latest commit1.
+
+file.txt is currently empty. Let’s add some content to it, and see how that changes the status:
+
+       $ echo "new content" > file.txt
+       $ git status
+       On branch master
+
+       Initial commit
+
+       Changes to be committed:
+         (use "git rm --cached <file>..." to unstage)
+
+                    new file:          file.txt
+
+       Changes not staged for commit:
+         (use "git add <file>..." to update what will be committed)
+         (use "git checkout -- <file>..." to discard changes in working directory)
+
+                    modified:          file.txt
+
+The file is now listed in two places: changes to be committed, and changes not staged for
+commit. The version to be committed is the one that’s just an empty file: the version of the file
+as it was when we ran git add file.txt. The changes not staged are everything we’ve added
+since running git add. When a file in the working tree differs from what’s in the index, it is
+listed here until we add the file to update it in the index.
+
+6.2. Inspecting .git/index
+Let’s have a look at what’s stored in the index so that we understand what the status command
+is telling us. What does it mean for changes to be staged? We can run our old friend hexdump
+to have a look at what’s been stored in .git/index:
+ This is a new repository, so there aren’t any commits, but if we were working in a repository where .git/HEAD existed it would mean the file
+either doesn’t exist in that commit, or the indexed content differs from that commit.
+
+                                                The index
+
+       $ hexdump -C .git/index
+
+       00000000       44 49 52 43 00 00 00 02   00 00 00 01 5a 4f 7e c1   |DIRC........ZO~.|
+       00000010       00 00 00 00 5a 4f 7e c0   00 00 00 00 00 00 00 29   |....ZO~........)|
+       00000020       00 00 00 52 00 00 81 a4   00 00 03 e8 00 00 03 e8   |...R............|
+       00000030       00 00 00 00 e6 9d e2 9b   b2 d1 d6 43 4b 8b 29 ae   |...........CK.).|
+       00000040       77 5a d8 c2 e4 8c 53 91   00 08 66 69 6c 65 2e 74   |wZ....S...file.t|
+       00000050       78 74 00 00 4d 1e 21 ff   5f ef 09 29 52 d2 7d f4   |xt..M.!._..)R.}.|
+       00000060       83 ac d5 a7 20 49 d8 0f                             |.... I..|
+
+Spend a few moments trying to guess what any of this data might mean. Do any of the values
+look familiar to you? For example, we can see the filename file.txt appears in there. Does
+anything else jump out?
+
+Fortunately, we don’t need to guess our way through this, because Git includes documentation
+for the index file format2. It tells us that the file begins with:
+            - A 12-byte header consisting of
+
+               4-byte signature:
+                 The signature is { 'D', 'I', 'R', 'C' } (stands for "dircache")
+
+               4-byte version number:
+                 The current supported versions are 2, 3 and 4.
+
+               32-bit number of index entries.
+
+32 bits is 4 bytes, so this header is 12 bytes in total. Let’s snip the first 12 bytes out of our
+hexdump:
+       00000000       44 49 52 43 00 00 00 02   00 00 00 01               |DIRC........      |
+
+As expected, we see the string DIRC, and then two four-byte numbers: 00 00 00 02 and 00 00
+00 01. This tells us the index is using version 2 of the file format, and there is 1 entry in it.
+
+The documentation tells us that the header is followed by the entries themselves, and each
+entry begins with a few values that we get by calling stat() on the file, comprising ten 4-byte
+numbers in all:
+          32-bit ctime seconds, the last time a file's metadata changed
+          32-bit ctime nanosecond fractions
+          32-bit mtime seconds, the last time a file's data changed
+          32-bit mtime nanosecond fractions
+          32-bit dev
+          32-bit ino
+          32-bit mode
+          32-bit uid
+          32-bit gid
+          32-bit file size
+
+The ctime is the file’s change time, which is the last time either its contents or any of its metadata
+(like its permissions) was changed. The mtime is the modify time, which is the last time the file’s
+contents was changed, ignoring metadata changes. dev is the ID of the hardware device the file
+ https://git-scm.com/docs/index-format
+
+                                                 The index
+
+resides on, and ino is the number of the inode3 storing its attributes. The mode is the number we
+studied in Section 5.1.1, “File modes”, and uid and gid are the IDs of the file’s user and group
+respectively. All these numbers are part of the data structure returned by the stat() system call.
+
+Looking at our hexdump again, we can see the first four time-related values in the next block
+of 16 bytes. The nanosecond fields are zero because this system doesn’t report the ctime and
+mtime at that level of granularity.
+       00000000                                                5a 4f 7e c1   |             ZO~.|
+       00000010        00 00 00 00 5a 4f 7e c0   00 00 00 00                 |....ZO~.....     |
+
+Following that, we see the six numbers storing the device and inode IDs, the mode, user and
+group IDs, and the file size. The final four bytes here (00 00 00 00) are the size, which is zero
+as we didn’t write any data to the file.
+       00000010                                              00 00 00 29     |            ...)|
+       00000020        00 00 00 52 00 00 81 a4   00 00 03 e8 00 00 03 e8     |...R............|
+       00000030        00 00 00 00                                           |....            |
+
+The documentation then says the 160-bit (20-byte) SHA-1 of the object appears. This is the
+ID of the blob created by writing the file’s contents to the .git/objects database. Since it’s
+20 bytes, we know the object ID is being stored in packed binary form, not as text. Here it is
+in the hexdump:
+       00000030                    e6 9d e2 9b   b2 d1 d6 43 4b 8b 29 ae     |    .......CK.).|
+       00000040        77 5a d8 c2 e4 8c 53 91                               |wZ....S.        |
+
+If we look up that object in the database, cat-file prints no output: this object is the empty blob.
+       $ git cat-file -p e69de29bb2d1d6434b8b29ae775ad8c2e48c5391
+
+The final elements of an entry are a two-byte set of flags — just like file modes, these two bytes
+pack several pieces of information into a small space — and the file’s name. The whole entry
+is padded with zeroes such that its total length is a multiple of 8.
+       00000040                                  00 08 66 69 6c 65 2e 74     |        ..file.t|
+       00000050        78 74 00 00                                           |xt..            |
+
+For now, the only thing we need to know about the flags bytes (00 08 above) are that they
+contain the length of the filename: the string file.txt is 8 bytes long.
+
+The index is ended by another 20-byte SHA-1 hash, only this time it’s the hash of the index
+contents itself. This is just used to check the integrity of the index, and doesn’t refer to anything
+in the object database.
+       00000050                    4d 1e 21 ff   5f ef 09 29 52 d2 7d f4     |    M.!._..)R.}.|
+       00000060        83 ac d5 a7 20 49 d8 0f                               |.... I..|
+
+When the status command lists a file under changes to be committed, it means that the file is
+listed in the index with a blob ID that differs from the blob ID in the latest commit. When it
+lists that file under changes not staged for commit, that means the file is in the index, but the
+file in the working tree differs from its information — metadata and blob ID — that’s stored in
+ https://en.wikipedia.org/wiki/Inode
+
+                                                 The index
+
+the index. To include the changes in the next commit, we must use the add command to write
+the latest version as a blob and store that blob’s ID in the index.
+
+If we run git add file.txt again after updating its contents, we can see its size and object
+ID in the index change:
+       $ git add file.txt
+       $ hexdump -C .git/index
+
+Here’s the section of the index listing the file’s size (00 00 00 0c) and its object ID (b6 6b
+a0 …):
+
+       00000030        00 00 00 0c b6 6b a0 6d   31 5d 46 28 0b b0 9d 54   |.....k.m1]F(...T|
+       00000040        61 4c c5 2d 16 77 80 9f                             |aL.-.w..        |
+
+And again, if we look up this blob in the database it does contain the file’s new contents:
+       $ git cat-file -p b66ba06d315d46280bb09d54614cc52d1677809f
+       new content
+
+Let’s also check what’s been stored in the database. Even though we’ve not run commit on this
+repository yet, the index contains object IDs, so these objects must exist. Indeed, .git/objects
+does contain the two blobs we’ve seen in the index:
+       $ tree .git/objects/
+       .git/objects/
+       ├── b6
+       │   └── 6ba06d315d46280bb09d54614cc52d1677809f
+       ├── e6
+       │   └── 9de29bb2d1d6434b8b29ae775ad8c2e48c5391
+       ├── info
+       └── pack
+
+When the index is updated, the old blob isn’t removed. We only add new blobs to the database
+and change what the index points to. From our observations, we can deduce that the add
+command does two things: it stores the given file as a blob in .git/objects, and it adds a
+reference to that blob along with a cache of the file’s current metadata to .git/index.
+
+Finally, it’s worth knowing the ls-files command. This lists all the files in the index, and if
+you pass the --stage flag it also lists the file’s mode and object ID.
+       $ git ls-files --stage
+       100644 b66ba06d315d46280bb09d54614cc52d1677809f 0             file.txt
+
+It also lists the file’s stage, which is the single 0 above, but we don’t need to concern ourselves
+with that for now. We’ll come back to this when we look at merge conflicts4.
+
+6.3. Basic add implementation
+There are quite a few details to get right for a properly working add command, but we can
+tackle them in small incremental steps. At first, add will just add things to the index and the
+commit command will remain unchanged; once we’re happy with how the index is working
+we’ll change commit to read from there rather than from the working tree.
+ Section 18.3, “Conflicted index entries”
+
+                                            The index
+
+Below is a first pass at the top-level code for the add command in bin/jit. Just as in the
+previous commands, we begin by establishing the paths based on the current working directory,
+and create various pieces of Git infrastructure we’ll need. Here, we need a Workspace and
+Database, and we’ll also create a new kind of object: the Index.
+
+Initially, add will take a single file path, and use Workspace to read that file and its metadata.
+We’ll save the file contents as a blob, and then store the file path, the blob’s ID and the stat()
+metadata in the index.
+     # bin/jit
+
+     command = ARGV.shift
+
+     case command
+
+     # ...
+
+     when "add"
+       root_path = Pathname.new(Dir.getwd)
+       git_path = root_path.join(".git")
+
+       workspace = Workspace.new(root_path)
+       database = Database.new(git_path.join("objects"))
+       index     = Index.new(git_path.join("index"))
+
+       path = Pathname.new(ARGV.first)
+       data = workspace.read_file(path)
+       stat = workspace.stat_file(path)
+
+       blob = Database::Blob.new(data)
+       database.store(blob)
+       index.add(path, blob.oid, stat)
+
+       index.write_updates
+       exit 0
+
+The Workspace and Database classes work just as before; everything up to storing the blob in
+the database is unchanged from what we’ve been doing for the commit command. The first new
+method we need is Index#add.
+
+The job of Index is to manage the list of cache entries stored in the file .git/index. As such,
+we’ll instantiate it with a hash called @entries to store its data, and a Lockfile to handle saving
+this data to disk.
+     # lib/index.rb
+
+     require "digest/sha1"
+
+     require_relative "./index/entry"
+     require_relative "./lockfile"
+
+     class Index
+       def initialize(pathname)
+         @entries = {}
+         @lockfile = Lockfile.new(pathname)
+       end
+
+                                           The index
+
+       # ...
+     end
+
+The add method takes a Pathname, an object ID, and a File::Stat and creates a cache entry
+out of them. It doesn’t write this entry to disk immediately, it just stores it in memory — since
+we’ll soon want to add lots of files to the index in one go, it makes sense to batch them up into
+a single write to the filesystem.
+     # lib/index.rb
+
+       def add(pathname, oid, stat)
+         entry = Entry.create(pathname, oid, stat)
+         @entries[pathname.to_s] = entry
+       end
+
+This Entry class is not the one we have been using in the commit command. This actually
+refers to Index::Entry, a new class that will serve a similar purpose of packaging up a file
+path, blob ID and stat data, but with the addition of all the other fields contained in .git/
+index. It’s defined as a struct containing all the fields that appear in a .git/index entry, and
+the Entry.create method takes the pathname, object ID and stat value and extracts all the
+information the entry needs.
+     # lib/index/entry.rb
+
+     class Index
+       REGULAR_MODE    = 0100644
+       EXECUTABLE_MODE = 0100755
+       MAX_PATH_SIZE   = 0xfff
+
+       entry_fields = [
+         :ctime, :ctime_nsec,
+         :mtime, :mtime_nsec,
+         :dev, :ino, :mode, :uid, :gid, :size,
+         :oid, :flags, :path
+       ]
+
+       Entry = Struct.new(*entry_fields) do
+         def self.create(pathname, oid, stat)
+           path = pathname.to_s
+           mode = stat.executable? ? EXECUTABLE_MODE : REGULAR_MODE
+           flags = [path.bytesize, MAX_PATH_SIZE].min
+
+           Entry.new(
+             stat.ctime.to_i, stat.ctime.nsec,
+             stat.mtime.to_i, stat.mtime.nsec,
+             stat.dev, stat.ino, mode, stat.uid, stat.gid, stat.size,
+             oid, flags, path)
+         end
+       end
+     end
+
+The leading 0 in the values of REGULAR_MODE and EXECUTABLE_MODE means they’re octal
+numbers; unlike trees in .git/objects, the index stores file modes as numbers rather than text.
+The leading 0x in MAX_PATH_SIZE indicates a hexadecimal number. The path length is stored
+to make parsing easier: rather than scanning forward byte-by-byte until it finds a null byte, the
+
+                                            The index
+
+parser can read the length and jump forward that many bytes in one go. If the path is longer
+than FFF16 (4,09510) bytes, Git stores FFF16 here and falls back to incremental scanning. To
+make this more efficient, entries are padded so their size is a multiple of 8 bytes, so the parser
+can scan by 8 bytes at a time rather than 1 byte.
+
+That takes care of the Index#add method. To complete our basic version of the add command,
+we need the index to write itself to disk when we call Index#write_updates. We’ll do this
+using Lockfile; if we fail to acquire the lock that means .git/index.lock already exists so
+some other process is currently making changes to the index. Once we’ve acquired the lock,
+we write the header containing the file format version and number of entries, and then each
+of the entries in turn.
+       # lib/index.rb
+
+          HEADER_FORMAT = "a4N2"
+
+          def write_updates
+            return false unless @lockfile.hold_for_update
+
+             begin_write
+             header = ["DIRC", 2, @entries.size].pack(HEADER_FORMAT)
+             write(header)
+             @entries.each { |key, entry| write(entry.to_s) }
+             finish_write
+
+            true
+          end
+
+Here we’re again using Array#pack to serialise the header data; a4N2 means a 4-byte string
+followed by two 32-bit big-endian5 numbers.
+
+The begin_write, write and finish_write methods are defined as below. We need to end the
+file with a SHA-1 hash of its contents, so as we write content to the Lockfile, we also add it
+to a Digest::SHA1 object as we go. finish_write writes the resulting hash to the Lockfile
+and then commits it. SHA-1 hashing can be performed incrementally on a stream of data, so
+implementing the writing process like this means we don’t have to build up one big string of
+all the index data in memory and then get the SHA-1 of the whole thing.
+       # lib/index.rb
+
+          def begin_write
+            @digest = Digest::SHA1.new
+          end
+
+          def write(data)
+            @lockfile.write(data)
+            @digest.update(data)
+          end
+
+          def finish_write
+            @lockfile.write(@digest.digest)
+            @lockfile.commit
+          end
+
+ https://en.wikipedia.org/wiki/Endianness
+
+                                             The index
+
+Serialising the entries is handled by the Entry#to_s method:
+     # lib/index/entry.rb
+
+       ENTRY_FORMAT = "N10H40nZ*"
+       ENTRY_BLOCK = 8
+
+          def to_s
+            string = to_a.pack(ENTRY_FORMAT)
+            string.concat("\0") until string.bytesize % ENTRY_BLOCK == 0
+            string
+          end
+
+Calling to_a on a struct returns an array of the values of all its fields, in the order they’re
+defined in Struct.new. We’re using Array#pack again, where the format string represents the
+following fields that correspond to how Git lays data out in the index:
+
+• N10 means ten 32-bit unsigned big-endian numbers
+
+• H40 means a 40-character hex string, which will pack down to 20 bytes
+
+• n means a 16-bit unsigned big-endian number
+
+• Z* means a null-terminated string
+
+Finally, the string is padded with null bytes until its size is a multiple of the block size, 8 bytes.
+There must be at lease one null byte to terminate the entry’s path, so if this string’s length is
+already a multiple of 8, then 8 null bytes are appended.
+
+We can check our implementation by running git add and inspecting the .git/index file
+afterward, and then running jit add with the same file and checking the index looks the same
+as what Git wrote. Here’s the index state after using Git to add a file:
+     $ rm -f .git/index* ; git add lib/index.rb ; hexdump -C .git/index
+
+     00000000    44 49 52 43 00 00 00 02     00 00 00 01 5a 50 d1 c4      |DIRC........ZP..|
+     00000010    00 00 00 00 5a 50 d1 c4     00 00 00 00 00 00 00 2a      |....ZP.........*|
+     00000020    00 00 07 e1 00 00 81 a4     00 00 03 e8 00 00 03 e8      |................|
+     00000030    00 00 03 32 fc 27 b7 5e     0d 12 9d 00 d8 40 dc 12      |...2.'.^.....@..|
+     00000040    aa 92 df ac e7 b1 44 e1     00 0c 6c 69 62 2f 69 6e      |......D...lib/in|
+     00000050    64 65 78 2e 72 62 00 00     00 00 00 00 0d 5f e8 be      |dex.rb......._..|
+     00000060    24 1c bf 31 3d cc 97 88     67 32 95 07 ac 1d 76 10      |$..1=...g2....v.|
+
+And now the state after adding the same file using Jit:
+     $ rm -f .git/index* ; jit add lib/index.rb ; hexdump -C .git/index
+
+     00000000    44 49 52 43 00 00 00 02     00 00 00 01 5a 50 d1 c4      |DIRC........ZP..|
+     00000010    00 00 00 00 5a 50 d1 c4     00 00 00 00 00 00 00 2a      |....ZP.........*|
+     00000020    00 00 07 e1 00 00 81 a4     00 00 03 e8 00 00 03 e8      |................|
+     00000030    00 00 03 32 fc 27 b7 5e     0d 12 9d 00 d8 40 dc 12      |...2.'.^.....@..|
+     00000040    aa 92 df ac e7 b1 44 e1     00 0c 6c 69 62 2f 69 6e      |......D...lib/in|
+     00000050    64 65 78 2e 72 62 00 00     00 00 00 00 0d 5f e8 be      |dex.rb......._..|
+     00000060    24 1c bf 31 3d cc 97 88     67 32 95 07 ac 1d 76 10      |$..1=...g2....v.|
+
+                                                          The index
+
+The index is byte-for-byte identical, so we know Jit is generating the same blob ID as Git, and
+it’s writing all the same information to the index as Git does.
+
+6.4. Storing multiple entries
+Our basic add command works for the limited set of functionality we’ve covered so far: we can
+add a single file and Jit will write the same data to .git/index as Git does. But writing a single
+file to the index is not very useful — we’d like to have every file in the project indexed.
+
+Though we will eventually want to implement incremental updates to the index rather than
+overwriting it each time, doing so is quite a bit of work and won’t actually give us the feature we
+want right now in an easy-to-use way. It would be quite tedious to have to run jit add <file>
+by hand for every file in the project. It would be better if jit add could take multiple filenames
+at once, and we could combine this with other command-line programs to add all the files.
+
+For example, it would be good to be able to run this:
+       $ jit add $(find bin lib -type f)
+
+       # or,
+
+       $ find bin lib -type f | xargs jit add
+
+find    is a program that searches for files, and xargs7 takes the output of one program and turns
+it into command-line arguments for another.
+
+Accepting multiple inputs requires only a small change to the add command: rather than
+taking ARGV.first as the only input, we can iterate over everything in ARGV. In our original
+implementation, we wrote the following to store the file as a blob and add it to the index:
+       # bin/jit
+
+           path = Pathname.new(ARGV.first)
+           data = workspace.read_file(path)
+           stat = workspace.stat_file(path)
+
+           blob = Database::Blob.new(data)
+           database.store(blob)
+           index.add(path, blob.oid, stat)
+
+All we need to do is put a loop around this that uses all the values in ARGV:
+       # bin/jit
+
+           ARGV.each do |path|
+             path = Pathname.new(path)
+             data = workspace.read_file(path)
+             stat = workspace.stat_file(path)
+
+             blob = Database::Blob.new(data)
+             database.store(blob)
+             index.add(path, blob.oid, stat)
+           end
+
+ https://manpages.ubuntu.com/manpages/bionic/en/man1/find.1posix.html
+ https://manpages.ubuntu.com/manpages/bionic/en/man1/xargs.1posix.html
+
+                                                      The index
+
+We need to make a small adjustment to the Index class to make this work. Git requires the
+contents of .git/index to be sorted by filename, and that’s easy to achieve when there’s only
+one entry. Now that we have multiple entries, and inputs on the command-line won’t necessarily
+be given in name order, we need an explicit way to keep the entries in order.
+
+Ruby’s Hash data structure doesn’t provide a way to keep its keys sorted, but there is another
+structure we can use for this: SortedSet8. Like Set9, it’s a collection that only allows unique
+elements, and the rules for checking if two members are equal are the same ones used for keys
+in a hash. The difference is that the SortedSet#each method ensures that iteration happens over
+the set’s elements in sorted order.
+
+We’ll create a new SortedSet to hold the keys when we instantiate an Index:
+       # lib/index.rb
+
+           def initialize(pathname)
+             @entries = {}
+             @keys     = SortedSet.new
+             @lockfile = Lockfile.new(pathname)
+           end
+
+When an entry is added to the Index, we’ll add its key to this set, as well as to the original
+@entries hash.
+
+       # lib/index.rb
+
+           def add(pathname, oid, stat)
+             entry = Entry.create(pathname, oid, stat)
+             @keys.add(entry.key)
+             @entries[entry.key] = entry
+           end
+
+The Index::Entry#key method exists to encapsulate the data that’s used to sort the entries; it
+just returns the entry’s path.
+       # lib/index/entry.rb
+
+              def key
+                path
+              end
+
+With the @keys set in place, we can define a method for iterating over the index’s entries, called
+each_entry. It iterates over the @keys set and yields each value in @entries in this order.
+
+       # lib/index.rb
+
+           def each_entry
+             @keys.each { |key| yield @entries[key] }
+           end
+
+Finally, we use this new method to iterate over the entries when writing the index out to disk.
+Rather than our current implementation which iterates over @entries directly:
+       # lib/index.rb
+
+ https://docs.ruby-lang.org/en/2.3.0/SortedSet.html
+ https://docs.ruby-lang.org/en/2.3.0/Set.html
+
+                                             The index
+
+       def write_updates
+         # ...
+         @entries.each { |key, entry| write(entry.to_s) }
+
+We’ll use the new each_entry method to do the iteration, which makes sure the entries are
+written in order.
+     # lib/index.rb
+
+       def write_updates
+         # ...
+         each_entry { |entry| write(entry.to_s) }
+
+With these changes in place, we can pass a list of all the project files to the add command, and
+git ls-files will confirm that they’re all listed in the index.
+
+     $ rm -f .git/index* ; jit add $(find bin lib -type f) ; git ls-files
+
+     LICENSE.txt
+     bin/jit
+     lib/database.rb
+     lib/database/author.rb
+     lib/database/blob.rb
+     lib/database/commit.rb
+     lib/database/tree.rb
+     lib/entry.rb
+     lib/index.rb
+     lib/index/entry.rb
+     lib/lockfile.rb
+     lib/refs.rb
+     lib/workspace.rb
+
+With all the project files in the index, it just became easier to check the state of our work in
+progress. Having an up-to-date index means the git status and git diff commands will now
+work, so we can easily see what we’ve changed while continuing work on the project.
+
+6.5. Adding files from directories
+Though we’re now able to store all the project files in the index, it’s still not as convenient as
+it could be. It’s certainly nice that we can use other Unix tools like find to get all the project
+files, but it would be even better if Jit did this work for us.
+
+Git allows you to pass directory names to the add command, and it will add everything inside
+that directory. For example, we’d like to be able to run
+     $ jit add lib/database
+
+to add just the database-related files, or
+     $ jit add .
+
+to add everything in the project. The shell can do a certain amount of work for us, for example
+running this command will make the shell expand the * into a list of all the files in the directory
+before running jit:
+     $ jit add lib/database/*
+
+                                            The index
+
+However, there’s a limit to what the shell can do for us without the user interface becoming
+cumbersome. We’ll need to add direct support for adding directories.
+
+Currently, the add command code assumes that every argument given to it is a regular file, and
+so attempts to read it and store it as a blob.
+     # bin/jit
+
+       ARGV.each do |path|
+         path = Pathname.new(path)
+         data = workspace.read_file(path)
+         stat = workspace.stat_file(path)
+
+         blob = Database::Blob.new(data)
+         database.store(blob)
+         index.add(path, blob.oid, stat)
+       end
+
+To support adding directories, we need to expand each argument into a list of files. If an
+argument names a single file, then it should expand to a list containing just that file, but if it’s
+a directory, then it should expand to a list of all the files in that directory.
+
+We can work towards this by making a change to Workspace#list_files. This method is
+currently designed to be used without arguments by the caller, in order to list every file in
+the project. It calls itself recursively with directory names in order to search the entire tree.
+Therefore, it currently assumes that any input given to it is a directory name, and so it calls
+Dir.entries on it.
+
+If we improve this method so that it can also take names of regular files, then we can use it to
+expand any path into a list of files. Here’s an updated implementation:
+     # lib/workspace.rb
+
+       def list_files(path = @pathname)
+         if File.directory?(path)
+           filenames = Dir.entries(path) - IGNORE
+           filenames.flat_map { |name| list_files(path.join(name)) }
+         else
+           [path.relative_path_from(@pathname)]
+         end
+       end
+
+The input still defaults to the root of the Workspace so we can call it without arguments and get
+all the files in the project — this keeps our commit command working. If the input is indeed a
+directory, then we get all the entries inside the directory and recursively call list_files with
+each one. But, if the input is anything else, we return an array whose sole element is that input,
+relative to the root of the Workspace.
+
+We’ve essentially turned the method inside-out. Rather than getting a directory’s entries and
+checking if each of those is itself a directory, we check if the input is a directory and then list
+its contents if so.
+
+Our improved list_files method means we can come back to the add command and change
+it to accept directory names. With each path from the ARGV array, we first expand it using
+
+                                          The index
+
+File.expand_path — this makes all paths absolute, and converts things like . into the path to
+the current directory. Then, we pass the result to Workspace#list_files, which gives us a list
+of paths relative to the root of the project. With each of these relative paths, we do the same
+thing we were doing before: we store a blob and add the result to the index.
+     # bin/jit
+
+       ARGV.each do |path|
+         path = Pathname.new(File.expand_path(path))
+
+         workspace.list_files(path).each do |pathname|
+           data = workspace.read_file(pathname)
+           stat = workspace.stat_file(pathname)
+
+           blob = Database::Blob.new(data)
+           database.store(blob)
+           index.add(pathname, blob.oid, stat)
+         end
+       end
+
+The user interface of the add command is now complete. It can take any number of arguments,
+which can name files or directories, and it adds everything you would expect. Because of the
+use of OrderedSet to store the filenames, the index will only include each file once even if we
+call add with the same file multiple times.
+     $ jit add lib/database
+     $ git ls-files
+
+     lib/database/author.rb
+     lib/database/blob.rb
+     lib/database/commit.rb
+     lib/database/tree.rb
+

@@ -1,0 +1,7 @@
+# About the Authors
+
+Jonathan Corbet got his first look at the BSD Unix source back in 1981, when an instructor at the University of Colorado let him "fix" the paging algorithm. He has been digging around inside every system he could get his hands on ever since, working on drivers for VAX, Sun, Ardent, and x86 systems on the way. He got his first Linux system in 1993, and has never looked back. Mr. Corbet is currently the co-founder and executive editor of Linux Weekly News (<http://LWN.net/>); he lives in Boulder, Colorado with his wife and two children.
+
+Alessandro installed Linux 0.99.14 soon after getting his degree as electronic engineer. He then received a Ph.D. in computer science at the University of Pavia despite his aversion toward modern technology. He left the University after getting his Ph.D. because he didn't want to write articles. He now works as a free lancer writing device drivers and, um...articles. He used to be a young hacker before his babies were born; he's now an old advocate of Free Software who developed a bias for non-PC computer platforms.
+
+Greg Kroah-Hartman has been writing Linux kernel drivers since 1999, and is currently the maintainer for the USB, PCI, I2C, driver core, and sysfs kernel subsystems. He is also the maintainer of the udev and hotplug userspace programs, as well as being a Gentoo kernel maintainer, ensuring that his email inbox is never empty. He is a contributing editor to Linux Journal Magazine, and works for IBM's Linux Technology Center, doing various Linux kernel related tasks.

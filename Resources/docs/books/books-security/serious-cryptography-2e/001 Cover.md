@@ -1,0 +1,1 @@
+![Cover: Serious Cryptography, A Practical Introduction to Modern Encryption by Jean-Philippe Aumasson](media/341d1fb2e20e20d4daa39b1470f0cdc7b376d131.jpg)

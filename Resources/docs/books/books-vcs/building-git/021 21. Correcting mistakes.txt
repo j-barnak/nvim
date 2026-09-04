@@ -1,0 +1,1120 @@
+21. Correcting mistakes
+One of Git’s strengths it that it tries very hard to never lose your data. Once an object is written
+to the database, it should never change — if it’s changed, it should have a different ID and
+therefore be in a different file. Git can check whether a file has been corrupted by re-hashing
+the object inside it, and comparing the result to the object’s ID.
+
+This also means that once a commit is written, neither it nor anything it points to can be changed.
+If you change its tree, the tree would have a new ID, which would change the commit, and so
+change the commit’s ID. The same goes for the commit’s parents; a commit contains the IDs
+of its parent commits, so if those are changed, you have a different commit. So, every commit
+ID in Git implies a unique and unchangeable history, and its ID is a function of all the content
+in all the commits that lead up to it.
+
+That resistance to change is reassuring, but sometimes we do want to change things. While
+writing each commit, we’d like to change what’s in the index, removing things that should no
+longer be there. We might decide something we’ve added to the index should be reset to its
+version in HEAD. Or, we might decide a commit is wrong after we’ve made it, and we’d like to
+replace it with a different commit. In this chapter we’ll look at all these problems, and in the
+following chapter we’ll look at ways of changing the commit history more broadly.
+
+21.1. Removing files from the index
+So far, we’ve just been adding more and more code to our repository. The tree we write into
+each commit has only gained new files, never lost them. There was one exception to this: in
+Section 5.2, “Nested trees”, we migrated the project from a flat directory structure to one with
+nested trees. But that was before the index existed! Since then, the index has only grown bigger,
+accumulating new files with every command.
+
+What if we want to remove a file? Technically, there is a way of doing this: we can delete
+the file .git/index and then rebuild it by adding just the files we want to keep. But this is a
+tedious and error-prone process, especially if the index is already in a mixed state containing
+some staged changes, and there are other changes we don’t want staged yet. It would be much
+more direct to remove the unnecessary files with a single command.
+
+As it happens, our repository does contain a redundant file: lib/entry.rb is a relic from the
+very early commits where we developed the Tree class, and it was later superseded by the
+Index::Entry and Database::Entry classes, which represent references to blobs in the index
+and in tree objects. The root Entry class is no longer used and we can delete it, but first we
+need the tools to do so.
+
+Below is the beginnings of an rm command. In Git, this command takes a list of pathnames and
+removes those paths from the index and from the workspace. That’s not too complicated with
+the methods we already have.
+     # lib/command/rm.rb
+
+     module Command
+       class Rm < Base
+
+                                                  Correcting mistakes
+
+             def run
+               repo.index.load_for_update
+               @args.each { |path| remove_file(path) }
+               repo.index.write_updates
+
+               exit 0
+             end
+
+             private
+
+             def remove_file(path)
+               repo.index.remove(path)
+               repo.workspace.remove(path)
+               puts "rm '#{ path }'"
+             end
+
+         end
+       end
+
+This just requires one new method: Workspace#remove, which removes a single file. I’m
+rescuing ENOENT here because I don’t actually mind if it turns out the file does not exist — if
+it’s already absent, then we get the same end result.
+       # lib/workspace.rb
+
+          def remove(path)
+            File.unlink(@pathname.join(path))
+          rescue Errno::ENOENT
+          end
+
+What we should care about, however, is the possibility of accidentally losing data, or of deleting
+the wrong file. So next we’ll look at how Git’s rm tries to prevent such problems.
+
+21.1.1. Preventing data loss
+The regular Unix rm1 command is notoriously unsafe. Typically, if you delete files using the
+graphical interface, your computer won’t immediately delete them but move them to the Trash
+or the Recycle Bin. You can restore accidentally deleted files from there, or permanently remove
+them. But the rm command just deletes the file immediately, no questions asked.
+
+Git is supposed to stop you losing data, so its rm is a little safer. By default, it will only remove a
+file if the versions of it stored in the index and the workspace match what’s in the HEAD commit,
+i.e. there are no uncommitted or unstaged changes. If the index and workspace are in sync with
+HEAD, that means all their content is safely stored away in a commit and you can retrieve it if
+it’s lost.
+
+The rm command checks all the arguments you pass to make sure it’s safe to remove all of
+them, and only if this generates no errors does it go ahead and delete anything. If you ask to
+remove a file that’s not in the index, that’s also an error.
+
+To carry out these checks, we can use the Repository::Inspector class2. In Command::Rm#run,
+we’ll load the HEAD ID, create an Inspector instance, and create arrays to hold a couple of
+ https://manpages.ubuntu.com/manpages/bionic/en/man1/rm.1posix.html
+ Section 14.5, “Preventing conflicts”
+
+                                      Correcting mistakes
+
+different types of errors. Then we’ll check all the arguments for changes, and exit if any errors
+are found. Only if we get past this stage do we remove anything.
+     # lib/command/rm.rb
+
+         def run
+           repo.index.load_for_update
+
+           @head_oid    = repo.refs.read_head
+           @inspector   = Repository::Inspector.new(repo)
+           @uncommitted = []
+           @unstaged    = []
+
+           @args.each { |path| plan_removal(Pathname.new(path)) }
+           exit_on_errors
+
+           @args.each { |path| remove_file(path) }
+           repo.index.write_updates
+
+           exit 0
+
+         rescue => error
+           repo.index.release_lock
+           @stderr.puts "fatal: #{ error.message }"
+           exit 128
+         end
+
+The plan_removal method is where we check each file for changes, and add to the error
+lists if we find anything. The compare_* methods on Inspector return a symbol like :added,
+:modified or :deleted if there’s a difference detected, otherwise they return nil.
+
+     # lib/command/rm.rb
+
+         def plan_removal(path)
+           unless repo.index.tracked_file?(path)
+             raise "pathspec '#{ path }' did not match any files"
+           end
+
+           item = repo.database.load_tree_entry(@head_oid, path)
+           entry = repo.index.entry_for_path(path)
+           stat = repo.workspace.stat_file(path)
+
+           if @inspector.compare_tree_to_index(item, entry)
+             @uncommitted.push(path)
+           elsif stat and @inspector.compare_index_to_workspace(entry, stat)
+             @unstaged.push(path)
+           end
+         end
+
+Database#load_tree_entry is a new method for fetching a single Database::Entry from a
+commit by pathname. It takes a commit ID and a path, and loads the given commit to find its
+tree pointer. Then it breaks the path into its constituent filenames and walks down the tree
+to find the correct entry. For example, say we have the tree ID 27aa5de… and the path lib/
+database/tree.rb. If we look at the root tree object, we get:
+
+     $ git cat-file -p 27aa5de18a4faf281dd57e3a7b51a518b8a77b51
+
+                                    Correcting mistakes
+
+     100644 blob f288702d2fa16d3cdf0035b15a9fcbc552cd88e7       LICENSE.txt
+     100644 blob c8c218e0d599831338af0748af283a149b9ff8d2       Rakefile
+     040000 tree aaf2979e4659d597e74b17113dc5021af47547f1       bin
+     040000 tree 74dc30f7343f385ce50cfdd057b1aaf4439fb53a       lib
+     040000 tree c35b962bf69faff30c95df70f07839dbedac3f51       test
+
+The first element of the path is lib and we see that this has ID 74dc30f… in this tree. So, we
+go and load that tree:
+     $ git cat-file -p 74dc30f7343f385ce50cfdd057b1aaf4439fb53a
+
+     100644 blob 5adfddd8e98f4c02ab9affdc60736ed09d89b159       color.rb
+     100644 blob f56d4fc1daa7cc3a6ea3981870960dd639bc8c99       command.rb
+     040000 tree 4868804d2876d5113bc8f99e2c85cd7f1bcf61b2       command
+     100644 blob ff0ef6ddea5990ce27f5141d8a81164d25540045       database.rb
+     040000 tree e199b95109e92658ffdbd6a9d881f9f46058c139       database
+     ...
+
+The next part of the path is database, which has ID e199b95… in this sub-tree. Loading that
+tree gives us:
+     $ git cat-file -p e199b95109e92658ffdbd6a9d881f9f46058c139
+
+     100644 blob cb18dd1522725f068376a99a9739d4b2f230d7bd       author.rb
+     100644 blob 38fa8cbfd484894d4d727ec5d701d6f0152d5ab0       blob.rb
+     100644 blob 527e1a5cb86cc0d5e43b371785ff7b146e6c2539       commit.rb
+     100644 blob 28024a0d9c981e40531e343f98b0f8834859b5a7       entry.rb
+     100644 blob a37f716437edaea8169a409bc8c2ff82345cd8ba       tree.rb
+     100644 blob 0b8b7fa41f6b44e720b1aca980f6841b7c0e174a       tree_diff.rb
+
+Now we’ve found the blob we were looking for: tree.rb has ID a37f716…. So, we return the
+value Database::Entry(oid="a37f716…", mode=0100644). The method that carries out this
+lookup is shown below. It begins by constructing a virtual Database::Entry for the given
+commit’s tree pointer, then walks down each pathname segment, looking up each entry on
+the way.
+     # lib/database.rb
+
+       def load_tree_entry(oid, pathname)
+         commit = load(oid)
+         root   = Database::Entry.new(commit.tree, Tree::TREE_MODE)
+
+         return root unless pathname
+
+         pathname.each_filename.reduce(root) do |entry, name|
+           entry ? load(entry.oid).entries[name] : nil
+         end
+       end
+
+If any uncommitted changes are found in the requested files, the exit_on_errors method will
+print those files that are changed and exit the program.
+     # lib/command/rm.rb
+
+         def exit_on_errors
+           return if @uncommitted.empty? and @unstaged.empty?
+
+           print_errors(@uncommitted, "changes staged in the index")
+
+                                       Correcting mistakes
+
+            print_errors(@unstaged, "local modifications")
+
+            repo.index.release_lock
+            exit 1
+          end
+
+          def print_errors(paths, message)
+            return if paths.empty?
+
+            files_have = (paths.size == 1) ? "file has" : "files have"
+
+            @stderr.puts "error: the following #{ files_have } #{ message }:"
+            paths.each { |path| @stderr.puts "    #{ path }" }
+          end
+
+The rm command is now a lot safer, and will refuse to remove anything that would result in
+uncommitted data being lost.
+
+21.1.2. Refinements to the rm command
+Sometimes, we don’t want to remove a file from the workspace, just the index. Or, we want to
+remove things even if they have uncommitted changes. For these use cases, Git provides the
+--cached and --force options.
+
+     # lib/command/rm.rb
+
+          def define_options
+            @parser.on("--cached")      { @options[:cached] = true }
+            @parser.on("-f", "--force") { @options[:force] = true }
+          end
+
+Using --cached means that rm will remove the named entry only from the index, not from the
+workspace. That is, it modifies the remove_file method like so:
+     # lib/command/rm.rb
+
+          def remove_file(path)
+            repo.index.remove(path)
+            repo.workspace.remove(path) unless @options[:cached]
+            puts "rm '#{ path }'"
+          end
+
+The safety checks in this case are slightly modified. rm --cached refuses to delete an index
+entry if it differs from both the HEAD commit and the workspace, but if it differs from only one of
+them it’s safe to delete. If it matches HEAD, then its content is part of a commit, and if it matches
+the workspace, then its content is on disk and it can be restored to the index using the add
+command. Therefore we’ll introduce a new set, @both_changed, to report errors specifically
+for this case.
+     # lib/command/rm.rb
+
+          def run
+            repo.index.load_for_update
+
+            @head_oid       = repo.refs.read_head
+            @inspector      = Repository::Inspector.new(repo)
+
+                                     Correcting mistakes
+
+           @uncommitted = []
+           @unstaged     = []
+           @both_changed = []
+
+           # ...
+         end
+
+The plan_removal method now needs to take the --cached option into account, and it can also
+accommodate --force. This option just means that the safety checks should be skipped; if we
+run rm --force we’re asserting that we know it’s dangerous, but we want to do it anyway.
+The updated plan_removal just bails out if --force is set, and otherwise checks for changes
+between HEAD, the index, and the workspace. If both staged and unstaged changes are present,
+then the file goes in the @both_changed list. Otherwise, if --cached is not set, the checks are
+applied as before.
+     # lib/command/rm.rb
+
+         def plan_removal(path)
+           return if @options[:force]
+
+           stat = repo.workspace.stat_file(path)
+           raise "jit rm: '#{ path }': Operation not permitted" if stat&.directory?
+
+           item = repo.database.load_tree_entry(@head_oid, path)
+           entry = repo.index.entry_for_path(path)
+
+           staged_change   = @inspector.compare_tree_to_index(item, entry)
+           unstaged_change = @inspector.compare_index_to_workspace(entry, stat) if stat
+
+           if staged_change and unstaged_change
+             @both_changed.push(path)
+           elsif staged_change
+             @uncommitted.push(path) unless @options[:cached]
+           elsif unstaged_change
+             @unstaged.push(path) unless @options[:cached]
+           end
+         end
+
+To complete this functionality, we just need a new clause in exit_on_errors to print the right
+copy for files with both staged and unstaged changes.
+     # lib/command/rm.rb
+
+         BOTH_CHANGED      = "staged content different from both the file and the HEAD"
+         INDEX_CHANGED     = "changes staged in the index"
+         WORKSPACE_CHANGED = "local modifications"
+
+         def exit_on_errors
+           return if [@both_changed, @uncommitted, @unstaged].all?(&:empty?)
+
+           print_errors(@both_changed, BOTH_CHANGED)
+           print_errors(@uncommitted, INDEX_CHANGED)
+           print_errors(@unstaged, WORKSPACE_CHANGED)
+
+           repo.index.release_lock
+           exit 1
+         end
+
+                                        Correcting mistakes
+
+The final refinement to rm that we’ll implement is the -r flag. Sometimes it’s convenient to
+remove a whole directory, rather than removing each file one-by-one. Running rm -r with a
+directory name accomplishes this.
+     # lib/command/rm.rb
+
+          def define_options
+            @parser.on("--cached")      { @options[:cached]    = true }
+            @parser.on("-f", "--force") { @options[:force]     = true }
+            @parser.on("-r")            { @options[:recursive] = true }
+          end
+
+The -r option doesn’t affect the safety checks or the file removal process. Instead, it means
+that every argument passed to rm is expanded into a list of files — directory names are replaced
+with a list of their children, and file names are left as-is. We’ll add a line to the run method
+to accomplish this:
+     # lib/command/rm.rb
+
+            @args = @args.flat_map { |path| expand_path(path) }
+                         .map { |path| Pathname.new(path) }
+
+            @args.each { |path| plan_removal(path) }
+            exit_on_errors
+
+Command::Rm#expand_path takes one of the arguments and expands it into a list of files. If the
+name is that of a tracked directory, then we return its list of child paths from the index if the -r
+flag is set. Otherwise we throw an error — since recursive removal can be really destructive, the
+user has to explicitly say that’s what they want. If the name is that of a tracked file, it’s returned
+as a single-item list, and otherwise we throw an error as the name does not appear in the index.
+     # lib/command/rm.rb
+
+          def expand_path(path)
+            if repo.index.tracked_directory?(path)
+              return repo.index.child_paths(path) if @options[:recursive]
+              raise "not removing '#{ path }' recursively without -r"
+            end
+
+            return [path] if repo.index.tracked_file?(path)
+            raise "pathspec '#{ path }' did not match any files"
+          end
+
+This requires two new methods on the Index class: Index#child_paths returns an array of all
+the file names contained within a directory, and Index#tracked_directory? returns true if
+the given path is indeed a directory in the index. These are simply implemented on top of the
+@parents structure that caches directory names and their descendants.
+
+     # lib/index.rb
+
+       def child_paths(path)
+         @parents[path.to_s].to_a
+       end
+
+       def tracked_directory?(path)
+         @parents.has_key?(path.to_s)
+       end
+
+                                               Correcting mistakes
+
+While we’re in the process of removing directories, we can amend the Workspace#remove
+method to delete any directories that become empty as a result of deleting the files inside them.
+The Workspace#remove_directory method3, attempts to remove a directory and silently fails
+if the directory is not empty.
+       # lib/workspace.rb
+
+          def remove(path)
+            File.unlink(@pathname.join(path))
+            path.dirname.ascend { |dirname| remove_directory(dirname) }
+          rescue Errno::ENOENT
+          end
+
+The rm command is now complete and we can use it to remove our unused file:
+       $ jit rm lib/entry.rb
+
+       $ jit status
+       On branch master
+       Changes to be committed:
+
+                   deleted:          lib/entry.rb
+
+21.2. Resetting the index state
+While composing your next commit, you might add something to the index that you didn’t
+actually want to commit at this point. For example, say I’ve just added a new method to the
+Database class and I’ve added this version of the file to the index.
+
+       $ jit add lib/database.rb
+       $ jit status
+       On branch master
+       Changes to be committed:
+
+                   modified:         lib/database.rb
+
+Now, I decide I didn’t really want that, and I want to get this change out of the index — not
+remove the file entirely, just make it so that the indexed version matches that from HEAD, not
+my workspace file. Git provides the reset command for doing just that. We’d like to be able
+to run reset with the name of a file, and reset the index state for that file back to what it was
+in HEAD, so our changes are effectively ‘unstaged’.
+       $ jit reset lib/database.rb
+       $ jit status
+       On branch master
+       Changes not staged for commit:
+
+                   modified:         lib/database.rb
+
+       no changes added to commit
+
+The reset command also embodies other actions that affect the index, HEAD, and the workspace,
+but for now we’ll focus on its behaviour when given a list of pathnames, which is to change
+the index entries for those paths to match the current HEAD.
+ Section 14.3, “Updating the workspace”
+
+                                       Correcting mistakes
+
+Here’s a first implementation of Command::Reset#run. It reads the HEAD ID, opens the index
+for updates, passes each argument to a method called reset_path, and saves the index.
+     # lib/command/reset.rb
+
+     module Command
+       class Reset < Base
+
+          def run
+            @head_oid = repo.refs.read_head
+
+             repo.index.load_for_update
+             @args.each { |path| reset_path(Pathname.new(path)) }
+             repo.index.write_updates
+
+            exit 0
+          end
+
+          # ...
+
+       end
+     end
+
+The reset_path method works as follows. It reads the list of tree entries for the given path in
+the HEAD commit from the database, and it removes the path from the index. It then iterates over
+each of the tree entries returned and inserts them into the index. This method relies on a few
+new methods elsewhere in the system, which we’ll define below.
+     # lib/command/reset.rb
+
+          def reset_path(pathname)
+            listing = repo.database.load_tree_list(@head_oid, pathname)
+            repo.index.remove(pathname) if pathname
+
+            listing.each do |path, entry|
+              repo.index.add_from_db(path, entry)
+            end
+          end
+
+Database#load_tree_list returns all the entries under a given path in a commit, in a flattened
+structure. For example, given the name of a file, it returns a hash containing just that path and
+its corresponding Database::Entry.
+     >> db = Database.new(Pathname.new(".git/objects"))
+
+     >> db.load_tree_list("2a69362...", Pathname.new("lib/database.rb"))
+     => { "lib/database.rb" => Database::Entry(oid="ff0ef6d...", mode=0100644) }
+
+Whereas, given the name of a directory, it returns all the files within that directory, recursively,
+as a flattened map. In comparison to the nested tree structures stored in the database, this
+flattened structure is easier for working with the index, which contains a flat list of file paths.
+     >> db.load_tree_list("2a69362...", Pathname.new("lib/database"))
+     => {
+          "lib/database/author.rb"    => Database::Entry(oid="cb18dd1...", mode=0100644),
+          "lib/database/blob.rb"      => Database::Entry(oid="38fa8cb...", mode=0100644),
+          "lib/database/commit.rb"    => Database::Entry(oid="527e1a5...", mode=0100644),
+
+                                          Correcting mistakes
+
+                 "lib/database/entry.rb"     => Database::Entry(oid="28024a0...", mode=0100644),
+                 "lib/database/tree.rb"      => Database::Entry(oid="a37f716...", mode=0100644),
+                 "lib/database/tree_diff.rb" => Database::Entry(oid="0b8b7fa...", mode=0100644)
+            }
+
+In Section 10.2, “HEAD/index differences”, we defined a method in Command::Status (later
+moved to Repository::Status) for doing just this, called load_head_tree. We’re going to
+replace that method with something similar and more general in the Database class, so we can
+now just call this new Database method from Repository::Status.
+        # lib/repository/status.rb
+
+                 @head_tree = @repo.database.load_tree_list(@repo.refs.read_head)
+
+The Database#load_tree_list method itself works like this. If it’s not given an object
+(for example if HEAD does not exist), then it returns an empty hash. Otherwise it loads the
+Database::Entry for the given path inside the commit, using the load_tree_entry method
+we defined earlier. Finally, it creates a new hash, calls build_list with this hash, the entry,
+and the pathname, and returns the hash. build_list takes these items and adds the entry to the
+hash if the entry represents a blob. If the entry represents a tree, then build_list calls itself
+recursively with each entry in the tree and its full path, so that eventually every file stored under
+this path is included.
+        # lib/database.rb
+
+           def load_tree_list(oid, pathname = nil)
+             return {} unless oid
+
+                entry = load_tree_entry(oid, pathname)
+                list = {}
+
+             build_list(list, entry, pathname || Pathname.new(""))
+             list
+           end
+
+           def build_list(list, entry, prefix)
+             return unless entry
+             return list[prefix.to_s] = entry unless entry.tree?
+
+             load(entry.oid).entries.each do |name, item|
+               build_list(list, item, prefix.join(name))
+             end
+           end
+
+That takes care of loading all the entries that should be put into the index. The index
+addition is done using this new method called Index#add_from_db, which uses the
+Index::Entry#create_from_db method . This creates an index entry from a database entry,
+with no filestat information, since the index entry does not mirror a file in the workspace.
+        # lib/index.rb
+
+           def add_from_db(pathname, item)
+             store_entry(Entry.create_from_db(pathname, item, 0))
+             @changed = true
+
+ Section 18.3.4, “Storing conflicts”
+
+                                        Correcting mistakes
+
+        end
+
+That’s reset is its most basic form: load a subtree from the HEAD commit, and write it to the
+index, so that any changes staged for that subtree are removed.
+
+21.2.1. Resetting to a different commit
+As well as letting you reset an index entry to match the current HEAD, you can also reset a file
+to match any commit in the history. For example, reset @~4 lib/database will reset every
+file in the lib/database directory to match the state of the commit four steps back from HEAD.
+
+We can begin to support this behaviour in Command::Reset#run by calling a method to select
+the commit ID at the beginning, rather than assuming we want the HEAD commit.
+     # lib/command/reset.rb
+
+          def run
+            select_commit_oid
+
+              repo.index.load_for_update
+              @args.each { |path| reset_path(Pathname.new(path)) }
+              repo.index.write_updates
+
+            exit 0
+          end
+
+Now, to how we determine which commit to use. The design of Git’s command-line user
+interface here presents a tricky parsing problem. The first argument to reset can be either a
+path to a file, or a revision, and there’s no way to tell it which type it is. Arguments after the first
+are definitely paths, and you can put arguments after -- to indicate they’re definitely paths, but
+if you have a file and a branch or object with the same name, the first argument is ambiguous.
+
+For example, this command definitely means ‘reset the file readme to match the HEAD commit’:
+     $ git reset -- readme
+
+Likewise, if there’s no file named @~12, this means ‘reset the file readme to match the commit
+twelve steps behind HEAD’:
+     $ git reset @~12 readme
+
+However, the following command is ambiguous: it could mean ‘reset the file readme to match
+the HEAD version’, or it could mean ‘reset the entire index to match the branch named readme’.
+     $ git reset readme
+
+This is a bad state of affairs: we cannot tell from the syntax of the command itself whether
+the word readme denotes the name of a file, or the name of a branch or other kind of commit
+identifier, and that means Git has to guess. It looks at the files in your index and the names of
+your branches and picks one. It would be much better if the user never had to remember this
+and the argument types were explicitly separated. For example, a revision argument could be
+called out with a switch and then all positional arguments could be assumed to be paths:
+     $ git reset readme                 # set "readme" entry in index to == HEAD
+     $ git reset --commit readme        # set entire index to match "readme" branch
+
+                                             Correcting mistakes
+
+Pretty much every Git command that accepts filenames suffers from this problem, probably for
+historical reasons. Plus, I believe Ruby’s OptionParser has no way to distinguish arguments
+that come before and after the -- stopword. It prevents arguments after that word being
+interpreted as option names, but that’s it. So I’d rather not get too bogged down in this problem
+and am going to resort to the simplest thing we can get away with. We’ll try to resolve the first
+argument as a revision, and if that fails we’ll assume it’s a filename and leave it in the @args
+array. If there are no arguments given, the revision defaults to HEAD.
+      # lib/command/reset.rb
+
+           def select_commit_oid
+             revision = @args.fetch(0, Revision::HEAD)
+             @commit_oid = Revision.new(repo, revision).resolve
+             @args.shift
+           rescue Revision::InvalidObject
+             @commit_oid = repo.refs.read_head
+           end
+
+With that change in place, we just need to modify reset_paths to use the selected commit ID
+rather than HEAD when it loads the file list for each path.
+      # lib/command/reset.rb
+
+           def reset_path(pathname)
+             listing = repo.database.load_tree_list(@commit_oid, pathname)
+             # ...
+           end
+
+21.3. Discarding commits from your branch
+What if you decide that the last few commits on your current branch aren’t right, and you want
+to throw them away and start over? Let’s say this is the current state:
+
+Figure 21.1. Chain of commits with HEAD pointing to the branch tip
+
+           A       B       C       D       E       F
+           o <---- o <---- o <---- o <---- o <---- o
+                                                   |
+                                               [master] <== [HEAD]
+
+Say we decide we don’t like commits D, E and F, and we’d like to go back to commit C and
+start committing from there. We need to move HEAD to point at C and start committing again,
+and we’d like that history to become the new master branch. We could do this by checking
+out commit C:
+
+Figure 21.2. Checking out an earlier commit, leaving the branch pointer in place
+
+      $ jit checkout @~3
+
+           A       B       C       D       E       F
+           o <---- o <---- o <---- o <---- o <---- o
+                           |                       |
+                        [HEAD]                 [master]
+
+Then we could delete the existing master branch and recreate it:
+
+                                              Correcting mistakes
+
+Figure 21.3. Deleting the old branch pointer and restarting it at the current HEAD
+
+      $ jit branch -D master
+      $ jit branch master
+
+           A       B       C       D       E       F
+           o <---- o <---- o <---- o <---- o <---- o
+                           |
+                       [master]
+                        [HEAD]
+
+Finally, we can check out the new master branch so HEAD starts to follow it.
+
+Figure 21.4. Checking out the moved branch
+
+      $ jit checkout master
+
+           A       B       C       D       E       F
+           o <---- o <---- o <---- o <---- o <---- o
+                           |
+                       [master] <== [HEAD]
+
+So technically, we can get the result we want using existing commands. However, it’s fairly
+tedious, and it has some significant downsides. We’ve now lost the reference to F — what if
+we decide it was a mistake to throw away the old master branch? We’ve also lost the state of
+the index and workspace. It’s quite common to want to keep the existing project files in your
+workspace, but rewind HEAD a few steps to redo the commits. This is the other main functionality
+that Git folds into the reset command.
+
+When it’s run without any file paths as arguments, the reset command runs in one of several
+modes. The most commonly used are:
+
+• soft: This just moves HEAD to point at the specified commit. Note that whereas checkout
+  changes the content of .git/HEAD itself, reset moves the branch that HEAD points at, just
+  like the commit and merge commands.
+
+• mixed: This does the same as soft, plus it updates the index to match the contents of the
+  selected commit. This mode is the default.
+
+• hard: This does what mixed does, plus it updates the workspace to match the index,
+  effectively removing any unstaged changes.
+
+None of these modes do any safety checks like rm does. They will overwrite the contents of
+the index and workspace without checking whether you’ll lose anything; their entire purpose
+is to throw content away.
+
+The soft and mixed modes are commonly used to pop the last few commits off the history
+while keeping the current workspace state, so you can redo the commits of the content you
+currently have. They’re also fairly easy to build on top of our current implementation. We’ll
+start by declaring the command-line options:
+      # lib/command/reset.rb
+
+           def define_options
+             @options[:mode] = :mixed
+
+                                     Correcting mistakes
+
+           @parser.on("--soft") { @options[:mode] = :soft }
+           @parser.on("--mixed") { @options[:mode] = :mixed }
+         end
+
+In the Command::Reset#run method, we’ll factor the logic for resetting paths out into its own
+method, reset_files. We’ll also update HEAD to the selected commit if no file paths were
+given — this happens in all modes.
+     # lib/command/reset.rb
+
+         def run
+           select_commit_oid
+
+           repo.index.load_for_update
+           reset_files
+           repo.index.write_updates
+
+           repo.refs.update_head(@commit_oid) if @args.empty?
+           exit 0
+         end
+
+reset_files takes care of updating the index. If we’re in soft mode, it does nothing. If no
+file paths were given, it completely clears the index and rebuilds it from the given commit, by
+calling reset_path with nil. Otherwise it carries out the logic we had before, resetting the
+index state for each path argument.
+     # lib/command/reset.rb
+
+         def reset_files
+           return if @options[:mode] == :soft
+
+           if @args.empty?
+             repo.index.clear!
+             reset_path(nil)
+           else
+             @args.each { |path| reset_path(Pathname.new(path)) }
+           end
+         end
+
+This expanded logic just requires one extra method on Index. It currently has a private method
+called clear which it uses to reset its internal variables. The new method clear! will call that
+and then just set the @changed flag, so that the index is still written to disk if it’s empty.
+     # lib/index.rb
+
+       def clear!
+         clear
+         @changed = true
+       end
+
+21.3.1. Hard reset
+It’s tempting to implement a hard reset by running the code paths for a mixed reset, and
+then updating the workspace. However, this is a false economy, and actually makes it hard
+to implement this operation correctly. Whereas we’ve been updating the index by removing
+
+                                      Correcting mistakes
+
+the existing entries and rebuilding them from the target commit, such an approach won’t work
+for updating the workspace. This is partly a performance concern; the index is an in-memory
+data structure and so making large changes to it is relatively cheap, compared to deleting and
+rewriting a lot of files in the workspace. Rebuilding the workspace is particularly expensive
+since it requires reading the blob for each file from the database, whereas the index just needs
+the object ID and mode from the tree items.
+
+More importantly, the command won’t behave in the right way if we implement it like this.
+Consider a repository in which the workspace includes two files, f.txt and g.txt. f.txt is
+in the index, while g.txt is not. Neither file exists in the current HEAD commit. So, the status
+of this repository will include:
+     A f.txt
+     ?? g.txt
+
+Now, when we run reset --hard, any differences between HEAD, the index and workspace
+should be eliminated, with one caveat: files that are untracked before the reset should be left
+alone, unless those files exist in the target commit and therefore need to be overwritten. If we
+update the index first, then both files f.txt and g.txt will be untracked. The reset should delete
+f.txt from the workspace but leave g.txt alone, but we’ve now lost the information we need
+to make that distinction. Deleting everything from the workspace and rebuilding it would also
+result in g.txt being lost.
+
+A better strategy would be to work out the differences in the index and workspace, relative to
+the target commit, before we make any changes to either. Any files discovered to have unstaged
+or uncommitted changes can then be updated in the workspace and the index. This results in
+the smallest amount of work necessary to reach the right state, and also means the index can be
+populated with updated stat(2) information for the corresponding workspace files.
+
+Since it’s going to differ in implementation from the existing reset code, I’m going to
+implement hard mode as a distinct method on the Repository class. This also means we can
+reuse this operation from other commands, as we’ll see shortly. Let’s declare the necessary
+option, and call Repository#hard_reset with the target commit if the option is set.
+     # lib/command/reset.rb
+
+         def define_options
+           @options[:mode] = :mixed
+
+           @parser.on("--soft") { @options[:mode] = :soft }
+           @parser.on("--mixed") { @options[:mode] = :mixed }
+           @parser.on("--hard") { @options[:mode] = :hard }
+         end
+
+         def reset_files
+           return if @options[:mode] == :soft
+           return repo.hard_reset(@commit_oid) if @options[:mode] == :hard
+
+           # ...
+         end
+
+The Repository#hard_reset method instantiates a class that does the actual work, calling its
+execute method.
+
+                                      Correcting mistakes
+
+     # lib/repository.rb
+
+       def hard_reset(oid)
+         HardReset.new(self, oid).execute
+       end
+
+The Repository::HardReset class takes a Repository and a commit ID as input, and updates
+the index and workspace to match that commit ID. It does not move HEAD — this is still taken
+care of in the Command::Reset#run code. To make the necessary updates, it takes the status of
+the repository against the target commit, and gets the list of changed paths from there. For each
+of these paths, it calls reset_path, which we’ll define below.
+     # lib/repository/hard_reset.rb
+
+     class Repository
+       class HardReset
+
+         def initialize(repo, oid)
+           @repo = repo
+           @oid = oid
+         end
+
+         def execute
+           @status = @repo.status(@oid)
+           changed = @status.changed.map { |path| Pathname.new(path) }
+
+           changed.each { |path| reset_path(path) }
+         end
+
+         def reset_path(path)
+           # ...
+         end
+
+       end
+     end
+
+The Repository#status method until now has not taken any arguments; it returns the status
+relative to the current HEAD. But now we want to know how the repository differs from an
+arbitrary target commit, and we can make Repository::Status report that by passing in the
+desired commit.
+     # lib/repository.rb
+
+       def status(commit_oid = nil)
+         Status.new(self, commit_oid)
+       end
+
+Instead of using the HEAD commit, Repository::Status can now load the tree from the
+requested commit, if given. Its changes attribute will then contain all the index and workspace
+paths that differ from that commit.
+     # lib/repository/status.rb
+
+         def initialize(repository, commit_oid = nil)
+           # ...
+
+             commit_oid ||= @repo.refs.read_head
+
+                                                         Correcting mistakes
+
+                 @head_tree           = @repo.database.load_tree_list(commit_oid)
+
+                # ...
+              end
+
+Back in Repository::HardReset, we need to fill out the reset_path method that updates the
+index and workspace for each path. It begins by removing the path from both places, and then
+fetches the tree entry from the listing loaded by the Repository::Status class. If there’s no
+entry for that path, then we can return. Otherwise, we load the blob that the entry points at,
+write its contents to the workspace, take the stat of the updated file, and use that to replace the
+index entry.
+        # lib/repository/hard_reset.rb
+
+              def reset_path(path)
+                @repo.index.remove(path)
+                @repo.workspace.remove(path)
+
+                 entry = @status.head_tree[path.to_s]
+                 return unless entry
+
+                 blob = @repo.database.load(entry.oid)
+                 @repo.workspace.write_file(path, blob.data, entry.mode, true)
+
+                stat = @repo.workspace.stat_file(path)
+                @repo.index.add(path, entry.oid, stat)
+              end
+
+When we call Workspace#remove, we’d like to remove whatever is there, if anything, rather
+than only removing files. Therefore we’ll amend this method to call FileUtils.rm_rf rather
+than File.unlink5, a wrapped for unlink(2)6 that only removes files.
+        # lib/workspace.rb
+
+           def remove(path)
+             FileUtils.rm_rf(@pathname.join(path))
+             path.dirname.ascend { |dirname| remove_directory(dirname) }
+           rescue Errno::ENOENT
+           end
+
+We also need to expand the job of Workspace#write_file. Rather than only writing data to the
+given path, we also need to be able to set the new file’s mode, and create its parent directory
+if necessary7.
+        # lib/workspace.rb
+
+           def write_file(path, data, mode = nil, mkdir = false)
+             full_path = @pathname.join(path)
+             FileUtils.mkdir_p(full_path.dirname) if mkdir
+
+              flags = File::WRONLY | File::CREAT | File::TRUNC
+              File.open(full_path, flags) { |f| f.write(data) }
+
+  https://docs.ruby-lang.org/en/2.3.0/File.html#method-c-unlink
+  https://manpages.ubuntu.com/manpages/bionic/en/man2/unlink.2.html
+  Previously, creating necessary directories for files was done as part of a migration between trees; see Section 14.3, “Updating the workspace”.
+
+                                             Correcting mistakes
+
+          File.chmod(mode, full_path) if mode
+        end
+
+This completes the logic for Repository#hard_reset, and allows us to get back to a known
+good state, regardless of what state we’ve got the workspace into.
+
+21.3.2. I’m losing my HEAD
+At the beginning of this section, we discussed how reset moves HEAD. This can result in a state
+where a chain of commits exists without any refs pointing to them.
+
+Figure 21.5. Chain of unreachable commits
+
+      $ jit reset @~3
+
+           A       B       C       D       E       F
+           o <---- o <---- o <---- o <---- o <---- o
+                           |
+                       [master] <== [HEAD]
+
+That might not be a problem — you may have decided to reset because those commits aren’t
+what you wanted and you never want to see them again. However, to be on the safe side,
+reset keeps a reference to the previous HEAD commit around, in case you want to go and
+look at those ‘lost’ commits or retrieve content from them. It puts this reference in the file
+.git/ORIG_HEAD — when Git does anything that might result in some commits becoming
+unreachable, it stores the current HEAD commit ID there. It stores the literal commit ID, not a
+symref to whatever HEAD was pointing at.
+
+Figure 21.6. ORIG_HEAD pointing to the previous HEAD position
+
+      $ jit reset @~3
+
+           A       B       C       D       E       F
+           o <---- o <---- o <---- o <---- o <---- o
+                           |                       |
+                       [master] <== [HEAD]    [ORIG_HEAD]
+
+Saving this file can be taken care of when we update HEAD in Command::Reset#run. We’ll have
+Refs#update_head return the previous ID that HEAD was pointing at, and then write that value
+to the ORIG_HEAD ref file.
+      # lib/command/reset.rb
+
+           def run
+             select_commit_oid
+
+              repo.index.load_for_update
+              reset_files
+              repo.index.write_updates
+
+              if @args.empty?
+                head_oid = repo.refs.update_head(@commit_oid)
+                repo.refs.update_ref(Refs::ORIG_HEAD, head_oid)
+              end
+
+              exit 0
+
+                                      Correcting mistakes
+
+         end
+
+Refs#update_head uses a method we introduced in Section 15.4, “Updating HEAD on commit”,
+called update_symref. This atomically updates the ref at the end of a chain of symbolic
+references, allowing commands like commit and merge to move the current branch pointer. To
+make sure that the value we write to ORIG_HEAD is really the value that was overwritten by
+update_symref, we should return the contents of the file that we read while it was locked as
+part of the update process.
+
+In Refs#update_symref, we already read the ref file to determine whether it’s a symref or
+a literal object ID. If it’s not a symref, then we write the new value to it and return. We’ll
+now modify the method to return the object ID that was read before overwriting the file. The
+recursive call to update_symref at the end means this return value will bubble up the chain
+back to the original caller.
+     # lib/refs.rb
+
+       def update_symref(path, oid)
+         lockfile = Lockfile.new(path)
+         lockfile.hold_for_update
+
+         ref = read_oid_or_symref(path)
+
+         unless ref.is_a?(SymRef)
+           write_lockfile(lockfile, oid)
+           return ref&.oid
+         end
+
+         begin
+           update_symref(@pathname.join(ref.path), oid)
+         ensure
+           lockfile.rollback
+         end
+       end
+
+After that, we just need a new method for updating arbitrary ref files, rather than HEAD. In this
+case we always want to write a literal object ID, not a symref, so we’ll use update_ref_file
+to implement this.
+     # lib/refs.rb
+
+       ORIG_HEAD = "ORIG_HEAD"
+
+       def update_ref(name, oid)
+         update_ref_file(@pathname.join(name), oid)
+       end
+
+The reset command is now safer, and we can get back to our pre-reset position by running
+reset ORIG_HEAD or checkout ORIG_HEAD.
+
+21.4. Escaping from merges
+One very common situation in which we want to throw our changes away and get back to a
+clean state is during a merge conflict. If the conflicts are particularly hard to fix, we might
+
+                                    Correcting mistakes
+
+immediately change our minds and want to cancel the merge, going back to the state of the
+current HEAD. Or, we might begin working on the conflicts but get bogged down, and change
+our mind about how our existing code should be structured before merging other changes into
+it, to make the merge easier.
+
+The merge --abort command is for doing just this. It discards all the pending commit state
+and gets you back to the state you were in before the merge started — effectively performing
+a hard reset to the prior HEAD position.
+
+Let’s declare this option in the merge command, and handle it in Command::Merge#run. Like
+reset, merge also sets ORIG_HEAD to the value of HEAD before the merge starts. However, the
+--abort option does not use this to determine what state to reset to.
+
+     # lib/command/merge.rb
+
+         def define_options
+           @options[:mode] = :run
+
+           @parser.on("--abort")    { @options[:mode] = :abort    }
+           @parser.on("--continue") { @options[:mode] = :continue }
+         end
+
+         def run
+           handle_abort if @options[:mode] == :abort
+           handle_continue if @options[:mode] == :continue
+           handle_in_progress_merge if pending_commit.in_progress?
+
+           @inputs = ::Merge::Inputs.new(repo, Revision::HEAD, @args[0])
+           repo.refs.update_ref(Refs::ORIG_HEAD, @inputs.left_oid)
+
+           # ...
+         end
+
+The handle_abort method does all the required clean-up. It clears the pending commit state,
+and performs a hard reset to the current HEAD.
+     # lib/command/merge.rb
+
+         def handle_abort
+           repo.pending_commit.clear
+
+           repo.index.load_for_update
+           repo.hard_reset(repo.refs.read_head)
+           repo.index.write_updates
+
+           exit 0
+         rescue Repository::PendingCommit::Error => error
+           @stderr.puts "fatal: #{ error.message }"
+           exit 128
+         end
+
+If there isn’t currently a pending commit in progress, then Repository::PendingCommit should
+raise an error. This error will be triggered by Ruby raising an ENOENT error when we try to
+delete the state files.
+     # lib/repository/pending_commit.rb
+
+                                   Correcting mistakes
+
+         def clear(type = :merge)
+           File.unlink(@head_path)
+           File.unlink(@message_path)
+         rescue Errno::ENOENT
+           name = @head_path.basename
+           raise Error, "There is no merge to abort (#{ name } missing)."
+         end
+
+And that’s it! We now have a way to bail out of a merge if we’ve got the repository into a
+bad state.
+

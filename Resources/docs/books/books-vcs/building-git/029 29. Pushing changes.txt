@@ -1,0 +1,1235 @@
+29. Pushing changes
+For users that can connect to one another’s computers over a network, the fetch command
+works fine for sharing changes between a team. However, most personal computers and
+workstations are not directly accessible from the public internet, so it’s not always possible
+to fetch content directly from another repository. In this case, it’s easier to share changes by
+pushing them to a repository that’s accessible to both parties. For example, rather than fetching
+the Jit repository directly from my personal laptop, I’d like you to be able to get it from the
+repository at ssh://git@github.com/jcoglan/jit.git.
+
+The push command is similar to fetch, but sends object data in the other direction, from the
+local repository to the remote. Just as fetch uses the remote agent program git-upload-pack,
+push relies on git-receive-pack. It sends a pack of objects to the git-receive-pack process
+running in the remote repo, which unpacks the objects and updates its refs as requested.
+
+However, there is an important difference in how push updates refs. The fetch command copies
+the refs/heads references from the remote to corresponding refs/remotes/<name> references
+in the local repository. These remote refs are a cache of the state of the remote repository’s
+branches, and are distinct from the local repo’s branches stored in refs/heads. push, on the
+other hand, modifies the refs/heads references in the remote repo, that is it changes the state
+of the branches in the remote repository. Because of this, it needs to take care not to overwrite
+changes written by other clients.
+
+We’ll explore this problem later in the chapter, but first we need to make some syntactic changes
+to the Refspec class.
+
+29.1. Shorthand refspecs
+In the last chapter, we saw that the fetch command decides which refs to fetch from the remote
+by using refspecs1 stored in the remote.<name>.fetch configuration variable. There does exist
+a corresponding remote.<name>.push variable, but it’s more common to give the refspec to
+push on the command-line. However, it is inconvenient to type out something like refs/heads/
+master:refs/heads/master every time we run push, and so Git provides some shorter ways
+of writing refspecs.
+
+For example, it is common to run git push origin master to push your master branch
+pointer to the origin remote. The second argument in this command, master, is a refspec, but
+it doesn’t look like those we’ve seen before. It doesn’t mention the refs directory, and there’s
+no : separating a source and target name. This refspec is a shorthand, and it’s been shortened
+in two distinct ways.
+
+First, a refspec lacking a separating : is equivalent to one where the source and target are the
+same. So, master is a shorthand for master:master.
+
+Second, each source and target is expanded to a canonical path under refs by examining its first
+path segment. If it begins with refs/, it is left unchanged. If it begins with heads/ or remotes/,
+ Section 26.3, “Refspecs”
+
+                                        Pushing changes
+
+it is prefixed with refs/. Otherwise it is prefixed with refs/heads/. So, master is expanded
+to refs/heads/master, and the refspec master is short for refs/heads/master:refs/heads/
+master, and it instructs the push command to copy the local refs/heads/master ref to the
+same location in the remote repository.
+
+The exception to this is that push accepts refspecs where the source is an arbitrary revision,
+for example @~3:master, meaning that our value for the revision @~3 should be written to the
+remote’s refs/heads/master. So if a ref is not a valid ref name, no prefix is added to it.
+
+One final shorthand rule is that the source is allowed to be blank, as in :master. This expands to
+a refspec whose target is refs/heads/master but whose source is nil, which means we want
+to delete the target ref from the remote repository.
+
+To accommodate these changes, we’ll update Remotes::Refspec.parse so that
+REFSPEC_FORMAT allows the source to be empty, and the : and target are optional. The source
+and target are canonicalised, and if the target is missing it is made equal to the source.
+     # lib/remotes/refspec.rb
+
+        REFSPEC_FORMAT = /^(\+?)([^:]*)(:([^:]*))?$/
+
+        Refspec = Struct.new(:source, :target, :forced) do
+          def self.parse(spec)
+            match = REFSPEC_FORMAT.match(spec)
+            source = Refspec.canonical(match[2])
+            target = Refspec.canonical(match[4]) || source
+
+            Refspec.new(source, target, match[1] == "+")
+          end
+
+          # ...
+        end
+
+Refspec.canonical converts a short path to its fully qualified name. It finds the first path out
+of refs, refs/heads and refs/remotes whose final segment matches the first segment of the
+given path. It prefixes the path as necessary to complete it, using the refs/heads directory if
+no matching prefix is found. If name is not a valid ref name (for example, it could be a revision
+like @~2) then it is left alone.
+     # lib/remotes/refspec.rb
+
+          def self.canonical(name)
+            return nil if name.to_s == ""
+            return name unless Revision.valid_ref?(name)
+
+            first = Pathname.new(name).descend.first
+            dirs   = [Refs::REFS_DIR, Refs::HEADS_DIR, Refs::REMOTES_DIR]
+            prefix = dirs.find { |dir| dir.basename == first }
+
+            (prefix&.dirname || Refs::HEADS_DIR).join(name).to_s
+          end
+
+A refspec’s source can now be nil, and Refspec#match_refs already takes this into account.
+Usually, this method matches the source against a list of refs to generate the output. If we run
+push foo:bar then we want to generate the mappings:
+
+                                         Pushing changes
+
+     { "refs/heads/bar" => ["refs/heads/foo", false] }
+
+However, if we run push :bar, then we want to update the target, refs/heads/bar, not from any
+of our refs but from nothing, i.e. we want to delete it. So in this case, the check at the beginning
+of Refspec#match_refs fails, and it returns the mapping { target => [nil, forced] }.
+     # lib/remotes/refspec.rb
+
+          def match_refs(refs)
+            return { target => [source, forced] } unless source.to_s.include?("*")
+
+            # ...
+          end
+
+The Refspec.parse method now canonicalises shorthand refspecs for us, and we can use these
+shorthands on the command-line.
+     >> Remotes::Refspec.parse("master")
+     => Refspec(source="refs/heads/master", target="refs/heads/master", forced=false)
+
+     >> Remotes::Refspec.parse(":master")
+     => Refspec(source=nil, target="refs/heads/master", forced=false)
+
+     >> Remotes::Refspec.parse(":heads/master")
+     => Refspec(source=nil, target="refs/heads/master", forced=false)
+
+     >> Remotes::Refspec.parse(":remotes/origin/master")
+     => Refspec(source=nil, target="refs/remotes/origin/master", forced=false)
+
+     >> Remotes::Refspec.parse(":refs/heads/master")
+     => Refspec(source=nil, target="refs/heads/master", forced=false)
+
+29.2. The push and receive-pack commands
+Just as we did for the fetch command, we’ll define a --force option for push. This makes
+the command overwrite refs in the remote repository even if the requested update is not a fast-
+forward. The --receive-pack option can be used to set a different command to run for the
+remote agent, in place of the default of git-receive-pack. We can use this for testing our own
+receive-pack implementation.
+
+     # lib/command/push.rb
+
+     module Command
+       class Push < Base
+
+          def define_options
+            @parser.on("-f", "--force") { @options[:force] = true }
+
+            @parser.on "--receive-pack=<receive-pack>" do |receiver|
+              @options[:receiver] = receiver
+            end
+          end
+
+          # ...
+
+       end
+     end
+
+                                         Pushing changes
+
+Again, following the pattern of the fetch command, push begins by configuring itself
+and making a connection to the remote repository. Here we’re opting in to the report-
+status capability, which will make receive-pack send some messages indicating whether the
+objects unpacked successfully and whether each ref was updated. After making a connection,
+Command::Push#run sets out the high-level procedure for the command: it receives the current
+state of the remote’s refs, then it sends a set of requests stating which refs it wants to update.
+After this it sends its pack of objects, begins printing a status report, and then receives the status
+messages from the remote.
+     # lib/command/push.rb
+
+          include FastForward
+          include RemoteClient
+          include SendObjects
+
+          CAPABILITIES = ["report-status"]
+
+          def run
+            configure
+            start_agent("push", @receiver, @push_url, CAPABILITIES)
+
+            recv_references
+            send_update_requests
+            send_objects
+            print_summary
+            recv_report_status
+
+            exit (@errors.empty? ? 0 : 1)
+          end
+
+Note that Command::Push includes SendObjects, the module used by Command::UploadPack to
+send object data. Like Command::Fetch, it includes FastForward and RemoteClient, enabling
+it to check for fast-forward violations, make a connection to the remote repo, receive the initial
+reference list and print any ref updates that were applied.
+
+The receive-pack command mirrors this sequence of steps, accepting the connection using
+accept_client, sending its reference list, receiving the update requests and object data, and
+then updating the refs in its own repository. It needs to advertise the capability report-status
+so that the client can send it back, and the delete-refs capability, since deleting refs is an
+optional feature and push will only attempt to use it if receive-pack says it supports it. We’ll
+also add the no-thin capability; Git’s push command assumes that receive-pack supports thin
+packs, a feature of the delta compression system, but since we don’t yet support compression
+we need to tell the push command not to use this feature.
+     # lib/command/receive_pack.rb
+
+     module Command
+       class ReceivePack < Base
+
+          include ReceiveObjects
+          include RemoteAgent
+
+          CAPABILITIES = ["no-thin", "report-status", "delete-refs"]
+
+          def run
+
+                                      Pushing changes
+
+             accept_client("receive-pack", CAPABILITIES)
+
+             send_references
+             recv_update_requests
+             recv_objects
+             update_refs
+
+           exit 0
+         end
+
+         # ...
+
+       end
+     end
+
+To configure itself, push needs to know where the remote repo is located, and which refs
+it should update. Like fetch, it gets the repo URL from the first argument, or from the
+configuration if this argument is the name of a configured remote. We need the fetch
+refspecs, given by the remote.<name>.fetch variable, in order to update our local cache of
+the remote’s refs. The receiver agent program is given either by the --receive-pack option,
+the remote.<name>.receivepack variable, or it defaults to git-receive-pack, and the push
+refspecs are either given on the command-line or taken from the remote.<name>.push config
+variable.
+     # lib/command/push.rb
+
+         RECEIVE_PACK = "git-receive-pack"
+
+         def configure
+           name   = @args.fetch(0, Remotes::DEFAULT_REMOTE)
+           remote = repo.remotes.get(name)
+
+           @push_url    = remote&.push_url || @args[0]
+           @fetch_specs = remote&.fetch_specs || []
+           @receiver    = @options[:receiver] || remote&.receiver || RECEIVE_PACK
+           @push_specs = (@args.size > 1) ? @args.drop(1) : remote&.push_specs
+         end
+
+The push_specs and receiver methods in the above snippet are part of the Remotes::Remote
+class for interacting with remote configuration.
+     # lib/remotes/remote.rb
+
+         def push_specs
+           @config.get_all(["remote", @name, "push"])
+         end
+
+         def receiver
+           @config.get(["remote", @name, "receivepack"])
+         end
+
+29.2.1. Sending update requests
+After running recv_references to download the current ref state from the remote repo, the
+push command will have information that looks something like this:
+
+             @remote_refs = {
+
+                                        Pushing changes
+
+                "HEAD"              => "5d826e972970a784bd7a7bdf587512510097b8c7",
+                "refs/heads/maint" => "98cdfbb84ad2ed6a2eb43dafa357a70a4b0a0fad",
+                "refs/heads/master" => "5d826e972970a784bd7a7bdf587512510097b8c7",
+                "refs/heads/todo"   => "b2cc3488ba006e3ba171e85dffbe6f332f84bf9a"
+            }
+
+Say we’ve run the command push origin master. That means @push_specs contains the
+following, indicating we want to update the remote’s refs/heads/master with our own value
+for that ref, without forcing a non-fast-forward update.
+            @push_specs = [
+              Refspec(source="refs/heads/master", target="refs/heads/master", forced=false)
+            ]
+
+We use this list to select which of our local refs should be used in the update. We can get a list
+of all our local refs by calling repo.refs.list_all_refs.map(&:path), which will return, for
+example, ["HEAD", "refs/heads/master", "refs/remotes/origin/master"]. By matching
+this list against @push_specs, we can select those refs that should be pushed to the remote.
+
+To send an update request, we need to send a message of the form <old_id> <new_id> <ref>.
+For example, if our own value of refs/heads/master is 3ab341d…, then we need to send the
+following message, where the IDs have been abbreviated to save space.
+         5d826e9... 3ab341d... refs/heads/master
+
+This message is interpreted by receive-pack as an instruction to update refs/heads/master
+from 5d826e9… to 3ab341d…. If the given ref does not currently exist in the remote repo, then
+the first ID should be given as 0000000…. push must send one such message for every ref it
+wants to update, followed by a flush-packet.
+
+In the Command::Push class, send_update_requests performs this task. Fetching a list of all
+the ref names present in the current repo, it matches them against the push specs to select which
+ones to push. Each of these targets is passed to select_update, which builds up the @updates
+structure recording the requests we want to make. Once this list is complete, each request is
+sent using send_update, and then a flush-packet is sent.
+     # lib/command/push.rb
+
+         def send_update_requests
+           @updates = {}
+           @errors = []
+
+            local_refs = repo.refs.list_all_refs.map(&:path).sort
+            targets    = Remotes::Refspec.expand(@push_specs, local_refs)
+
+            targets.each do |target, (source, forced)|
+              select_update(target, source, forced)
+            end
+
+           @updates.each { |ref, (*, old, new)| send_update(ref, old, new) }
+           @conn.send_packet(nil)
+         end
+
+select_update builds all the information required to send an update request for the given ref,
+as well as information we’ll need when printing status updates later. It loads the old ID from the
+
+                                                  Pushing changes
+
+references that receive-pack sent at the beginning, and determines the new ID by resolving
+it as a revision2 — in the push command, a refspec’s source can be any revision, not just a
+branch name.
+
+It checks whether these values are equal, and skips the update if so. It also checks if the update
+is a fast-forward, using the fast_forward_error method3. If it is a fast-forward, or the update
+is forced, then we store the necessary data in the @updates hash, otherwise we record an error.
+       # lib/command/push.rb
+
+              def select_update(target, source, forced)
+                return select_deletion(target) unless source
+
+                 old_oid = @remote_refs[target]
+                 new_oid = Revision.new(repo, source).resolve
+
+                 return if old_oid == new_oid
+
+                 ff_error = fast_forward_error(old_oid, new_oid)
+
+                if @options[:force] or forced or ff_error == nil
+                  @updates[target] = [source, ff_error, old_oid, new_oid]
+                else
+                  @errors.push([[source, target], ff_error])
+                end
+              end
+
+Note that if the old ID — the remote’s current value for the ref — does not exist in the local
+repository, then fast_forward_error will return the message fetch first. Unless an update
+is forced, push will only apply updates in cases where it has the commit for the old ID, and
+has checked it’s an ancestor of the new ID. This means that it can use the old ID as part of
+a RevList query to select which objects to send, and it will not cause any information to be
+lost from the remote.
+
+For example, consider this repository in which the local master branch is in sync with its remote
+counterpart.
+
+Figure 29.1. Repository in sync with the remote
+
+              A       B        C
+              o <---- o <---- o
+                               |
+                        [heads/master]
+                   [remotes/origin/master]
+
+We now add a couple more commits on top of C, and meanwhile, somebody else pushes F and G
+to the remote, which also build on top of C. We fetch those commits, and end up with this state:
+
+ Section 13.3, “Setting the start point”
+ Section 28.2.5, “Updating remote refs”
+
+                                               Pushing changes
+
+Figure 29.2. Local history diverges from the remote
+           A       B       C           D        E
+           o <---- o <---- o <---- o <---- o
+                             \                  |
+                               \         [heads/master]
+                                 \
+                                   \ F       G
+                                    o <---- o
+                                             |
+                               [remotes/origin/master]
+
+If we had not yet fetched these new commits from the remote, then we would know from the
+initial ref list from receive-pack that the remote repo has refs/heads/master pointing at G,
+but we would not have G in our local database, so we’d be unable to find out whether it’s an
+ancestor of our own master commit. After we’ve fetched, we can see that G is not an ancestor
+of our master commit E, and so we don’t push E. If we force the update, that will make the
+remote’s master branch point at E, and so F and G will be lost. If we don’t want to lose other
+people’s work, we need to fetch, merge the remote state with our own, and then push again.
+
+Running merge origin/master produces this state in our local repo:
+Figure 29.3. Merging the remote’s changes
+           A       B       C           D       E          M
+           o <---- o <---- o <---- o <---- o <---- o [heads/master]
+                             \                          /
+                               \                       /
+                                 \                    /
+                                   \ F      G       /
+                                    o <---- o <---'
+                                            |
+                               [remotes/origin/master]
+
+Since G is now an ancestor of our current master commit M, we can push our master to the
+remote without losing data. A similar result occurs if we rebase our changes instead of merging
+them.
+
+If select_update is called with nil as the source argument, it delegates to the
+select_deletion method. This handles cases where the refspec source is blank, meaning we
+want to delete a ref from the remote. To do this, we need to check that the remote supports the
+delete-refs capability, and if so, we store an update with no source, no fast-forward error, the
+current commit ID but no new ID.
+      # lib/command/push.rb
+
+           def select_deletion(target)
+             if @conn.capable?("delete-refs")
+               @updates[target] = [nil, nil, @remote_refs[target], nil]
+             else
+               @errors.push([[nil, target], "remote does not support deleting refs"])
+             end
+           end
+
+Sending the update requests to the remote agent just requires converting any nil references to
+the all-zero ID, and then sending a message containing the old ID, the new ID, and the name
+of the ref.
+
+                                        Pushing changes
+
+     # lib/command/push.rb
+
+         def send_update(ref, old_oid, new_oid)
+           old_oid = nil_to_zero(old_oid)
+           new_oid = nil_to_zero(new_oid)
+
+           @conn.send_packet("#{ old_oid } #{ new_oid } #{ ref }")
+         end
+
+         def nil_to_zero(oid)
+           oid == nil ? ZERO_OID : oid
+         end
+
+The remote agent reads these messages until it gets a flush-packet, and stores them in the
+@requests variable, converting any all-zero IDs back to the Ruby nil value.
+
+     # lib/command/receive_pack.rb
+
+         def recv_update_requests
+           @requests = {}
+
+           @conn.recv_until(nil) do |line|
+             old_oid, new_oid, ref = line.split(/ +/)
+             @requests[ref] = [old_oid, new_oid].map { |oid| zero_to_nil(oid) }
+           end
+         end
+
+         def zero_to_nil(oid)
+           oid == ZERO_OID ? nil : oid
+         end
+
+To determine which objects to send, the push command needs to select all those commits
+that are reachable from the refs it’s pushing, that the remote does not already have. We know
+which commits the remote has from the initial ref list sent by receive-pack that we stored in
+@remote_refs, and if we’re only pushing fast-forward updates, then we have those commits
+and all their history locally. The entries in the @updates hash consist of four values: the source
+ref name, a possible fast-forward error, the old ID and the new ID. So, we can get the objects
+we need using a RevList by starting with the last value from each update entry, and excluding
+all the commits we know the remote already has. If we’re not sending any new commits, i.e.
+@updates is empty or contains only deletions, then we don’t send any pack data.
+
+     # lib/command/push.rb
+
+         def send_objects
+           revs = @updates.values.map(&:last).compact
+           return if revs.empty?
+
+            revs += @remote_refs.values.map { |oid| "^#{ oid }" }
+
+           send_packed_objects(revs)
+         end
+
+In the  receive-pack command, we use the recv_packed_objects method from
+ReceiveObjects to read the pack that the push command sent, and send the status message
+unpack ok if it succeeded and unpack <error message> otherwise. report_status sends the
+given message if the remote client has enabled the report-status capability.
+
+                                       Pushing changes
+
+     # lib/command/receive_pack.rb
+
+         def recv_objects
+           @unpack_error = nil
+           recv_packed_objects if @requests.values.any?(&:last)
+           report_status("unpack ok")
+         rescue => error
+           @unpack_error = error
+           report_status("unpack #{ error.message }")
+         end
+
+         def report_status(line)
+           @conn.send_packet(line) if @conn.capable?("report-status")
+         end
+
+The receive-pack process now has a set of update requests sent by the push command, and
+it’s received all the objects necessary to complete those requests. The final step of the process
+is for receive-pack to update the refs in the remote repository and report the results back to
+the push process.
+
+29.2.2. Updating remote refs
+After receiving the update requests from the client, the receive-pack process will have a
+structure like this that maps ref names to pairs of old and new IDs.
+           @requests = {
+             "refs/heads/master" => ["5d826e9...", "3ab341d..."]
+           }
+
+Once it’s extracted all the objects from the pack it received, it can apply these updates so that
+its refs point at the desired objects. After completing these changes, it sends a flush-packet if
+the client has asked for status reports.
+     # lib/command/receive_pack.rb
+
+         def update_refs
+           @requests.each { |ref, (old, new)| update_ref(ref, old, new) }
+           report_status(nil)
+         end
+
+At this point we need to be very careful about how we update the refs in the remote repository,
+because multiple clients could try to push to the same repo concurrently. If Alice and Bob each
+start a push process at the same time on different machines, each will run a receive-pack
+process on the remote repo and will be told the current value of refs/heads/master is, say,
+5d826e9…. Each will then send an update request with their current value for the master branch.
+For example, Alice sends:
+         5d826e9... d11b2a4... refs/heads/master
+
+While Bob sends:
+         5d826e9... eca1052... refs/heads/master
+
+Let’s assume neither party is forcing the update, so they do not want the remote to lose any
+commits. Therefore, d11b2a4… and eca1052… are both descendants of 5d826e9…. But, because
+
+                                                Pushing changes
+
+Alice has not yet seen Bob’s latest commit and vice verse, neither is an ancestor of the other,
+and the combined history will look like this:
+
+Figure 29.4. Alice and Bob’s combined history
+
+                    5d826e9                  d11b2a4 (alice)
+           ... o <---- o <---- o ... o <---- o
+                        \
+                          \
+                            \            eca1052 (bob)
+                              o ... o <---- o
+
+If both these updates are applied by the remote, then whichever one is received last will
+overwrite the other — refs/heads/master in the remote ends up pointing at either d11b2a4…
+or eca1052…, and the other commit and its history back to 5d826e9… will effectively be lost.
+What we’d like to do is reject the second of these updates that we receive, and force its sender
+to merge the other party’s changes before trying to push again.
+
+For example, say Alice’s request is received first, and the remote updates its refs/heads/
+master to d11b2a4….
+
+Figure 29.5. Alice’s update is accepted
+
+                    5d826e9               d11b2a4
+           ... o <---- o <---- o ... o <---- o
+                                             |
+                                      [heads/master]
+
+If we make sure Bob’s request is not processed until the above update is complete, then we can
+compare his request to the current state. His request contains the old value 5d826e9… for the
+master branch, but this is no longer its current value, so we can reject this update.
+
+If Bob tries to push again, he’ll find out that the new value of refs/heads/master is d11b2a4…,
+which he does not have, so he will fetch. If he makes another attempt, he’ll learn that d11b2a4…
+is not an ancestor of his commit eca1052…, so he’ll perform a merge.
+
+Figure 29.6. Bob’s repository after merging Alice’s changes
+
+                    5d826e9                  d11b2a4
+           ... o <---- o <---- o ... o <---- o [remotes/origin/master]
+                        \                        \
+                          \                        \
+                            \            eca1052     \ M
+                              o ... o <---- o <---- o
+                                                      |
+                                             [heads/master]
+
+Bob can now push commit M to the remote master branch since it’s a descendant of d11b2a4…,
+and so the remote master now points at a commit that incorportates both Alice and Bob’s
+changes, and no updates are lost.
+
+This is a common problem in systems where two actors have concurrent access to modify a
+shared resource, in this case the remote’s refs/heads/master pointer. Indeed we’ve seen it
+several times before in this project, and have used our Lockfile class to prevent concurrent
+processes from updating the refs, index or configuration at the same time. In those cases, the
+
+                                                       Pushing changes
+
+lock prevents two processes from both reading a file, making some change to their in-memory
+copy, and writing the result back, with the last writer’s changes overwriting the others4.
+
+In this situation, we will build on top of Lockfile, but the concurrency mechanism presented
+to the clients is different. The push command does not take out a lock on the refs it wants to
+update, preventing other parties from pushing. Instead, it states what the current state was at
+the time it began its request — it sends the value of the ref that receive-pack sent, 5d826e9…,
+as part of its update request. receive-pack can then check this value against the current state,
+and if someone else has changed the ref while the push command was running, then it rejects
+the update.
+
+To do this, it needs to check the old value the client sent against the value stored in
+the ref at the instant before it updates it. In particular, it needs to make sure no other
+updates to the ref are done between reading the current value and writing the new one. In
+Command::ReceivePack#update_ref, we’ll call a new method called Refs#compare_and_swap
+to perform this task. If the update succeeds, we send the status report ok with the name of the
+ref, otherwise we send ng with an error message.
+       # lib/command/receive_pack.rb
+
+             def update_ref(ref, old_oid, new_oid)
+               return report_status("ng #{ ref } unpacker error") if @unpack_error
+
+               repo.refs.compare_and_swap(ref, old_oid, new_oid)
+               report_status("ok #{ ref }")
+             rescue => error
+               report_status("ng #{ ref } #{ error.message }")
+             end
+
+Compare-and-swap5 is a method of atomically updating a mutable value, only if its current
+value is equal to what we expected. The request update line 5d826e9… eca1052… refs/heads/
+master can be read as, ‘update the contents of refs/heads/master to eca1052…, only if its
+current value is 5d826e9…’. To make our ref updates atomic, we need to check the current value
+after acquiring a lock on the file, so that no other process can change the ref between the time
+we read it and the time we update it. This means our equality check remains valid until we
+ourselves change the value, thus avoiding a time of check to time of use6 race condition.
+
+In the Refs class, the logic for updating a ref file is stored in the update_ref_file method,
+which opens a Lockfile for the given ref to update its contents. We’d like to add some new
+behaviour during the time the lock is held, and we can do this by yielding after the lock is
+acquired, if a block was given. If the block raises an error, we should call lockfile.rollback
+to release the lock before letting the error bubble up. We’ll also augment this method so that
+if oid is nil, the given file will be deleted.
+       # lib/refs.rb
+
+          def update_ref_file(path, oid)
+            lockfile = Lockfile.new(path)
+
+             lockfile.hold_for_update
+
+  For example, Section 7.1.1, “Parsing .git/index”
+  https://en.wikipedia.org/wiki/Compare-and-swap
+  https://en.wikipedia.org/wiki/Time_of_check_to_time_of_use
+
+                                                        Pushing changes
+
+             yield if block_given?
+
+             if oid
+               write_lockfile(lockfile, oid)
+             else
+               File.unlink(path) rescue Errno::ENOENT
+               lockfile.rollback
+             end
+
+          rescue Lockfile::MissingParent
+            FileUtils.mkdir_p(path.dirname)
+            retry
+          rescue => error
+            lockfile.rollback
+            raise error
+          end
+
+This extension to update_ref_file lets us implement the compare_and_swap method. It calls
+update_ref_file with a block that, while the lock is held, reads the current ID that the ref
+points at. If it’s not equal to the given value, we can raise an exception, and this prevents the
+new ID from being written. The error will be caught in Command::ReceivePack#update_ref
+and communicated back to the push client.
+       # lib/refs.rb
+
+          StaleValue = Class.new(StandardError)
+
+          def compare_and_swap(name, old_oid, new_oid)
+            path = @pathname.join(name)
+
+            update_ref_file(path, new_oid) do
+              unless old_oid == read_symref(path)
+                raise StaleValue, "value of #{ name } changed since last read"
+              end
+            end
+          end
+
+Although receive-pack is using a lock internally to guarantee atomic changes, the interface
+presented to the push command is not lock-based. Instead, the push command states what it
+believes the ref’s current value is, and its request only succeeds if that is indeed the case.
+Whereas locking is a form of pessimistic concurrency control, this interface is a kind of
+optimistic7 control. Rather than preemptively locking resources, the caller attempts to make a
+change, and only succeeds if no other process has changed the same resource concurrently.
+
+In general, this strategy is vulnerable to the ABA problem8; if during Bob’s first push, Alice
+changes the remote’s master from 5d826e9… to d11b2a4… and then back again, it will appear as
+though the master ref has not changed, and Bob’s push will succeed. However, since commit
+IDs represent immutable states of history, in practice this does not pose a data loss problem
+in Git.
+
+Having sent back its unpack/ok/ng status messages, receive-pack is now finished and it’s the
+job of the push client to interpret these messages. It begins its printed output by displaying the
+ https://en.wikipedia.org/wiki/Optimistic_concurrency_control
+ https://en.wikipedia.org/wiki/ABA_problem
+
+                                        Pushing changes
+
+URL it’s pushing to, and any errors it detected itself before it attempted to send any update
+requests. This uses the report_ref_update method from RemoteClient that we saw in the
+previous chapter.
+     # lib/command/push.rb
+
+         def print_summary
+           if @updates.empty? and @errors.empty?
+             @stderr.puts "Everything up-to-date"
+           else
+             @stderr.puts "To #{ @push_url }"
+             @errors.each { |ref_names, error| report_ref_update(ref_names, error) }
+           end
+         end
+
+Then, unless the remote agent does not support report-status or there were no updates sent,
+recv_report_status reads the status lines from the receive-pack command. If the unpack
+line says anything other than ok then it’s printed as an error. Then we read until the flush-packet
+and call handle_status to process each individual ref update status.
+     # lib/command/push.rb
+
+         UNPACK_LINE = /^unpack (.+)$/
+
+         def recv_report_status
+           return unless @conn.capable?("report-status") and not @updates.empty?
+
+            unpack_result = UNPACK_LINE.match(@conn.recv_packet)[1]
+
+            unless unpack_result == "ok"
+              @stderr.puts "error: remote unpack failed: #{ unpack_result }"
+            end
+
+           @conn.recv_until(nil) { |line| handle_status(line) }
+         end
+
+The handle_status method takes a single status message from the remote, which will match
+either ok <ref>, or ng <ref> <error>. It extracts the information from the message, and calls
+report_update (defined below) to show the update to the user. Then it matches the given ref
+against the fetch refspecs, so that we can keep our refs/remotes cache of the remote’s state up
+to date. For example, if the remote says ok refs/heads/master, and we have a config variable
+remote.origin.fetch with value +refs/heads/*:refs/remotes/origin/*, then we’d like to
+update our refs/remotes/origin/master pointer to reflect the new state of the remote. We
+assume the remote’s ref has been updated to the ID we requested, if the status is ok.
+     # lib/command/push.rb
+
+         UPDATE_LINE = /^(ok|ng) (\S+)(.*)$/
+
+         def handle_status(line)
+           return unless match = UPDATE_LINE.match(line)
+
+            status = match[1]
+            ref    = match[2]
+            error = (status == "ok") ? nil : match[3].strip
+
+                                       Pushing changes
+
+           @errors.push([ref, error]) if error
+           report_update(ref, error)
+
+           targets = Remotes::Refspec.expand(@fetch_specs, [ref])
+
+           targets.each do |local_ref, (remote_ref, _)|
+             new_oid = @updates[remote_ref].last
+             repo.refs.update_ref(local_ref, new_oid) unless error
+           end
+         end
+
+report_update prints the update for the user to see. Because the status report only contains the
+name of the updated ref, we need to retrieve the IDs to show in the output from the @updates
+hash. We then use report_ref_update to print the update.
+     # lib/command/push.rb
+
+         def report_update(target, error)
+           source, ff_error, old_oid, new_oid = @updates[target]
+           ref_names = [source, target]
+           report_ref_update(ref_names, error, old_oid, new_oid, ff_error == nil)
+         end
+
+For example, if we had run push origin foo:bar, then @updates would contain an entry of
+the form:
+       "refs/heads/bar" => ["refs/heads/foo", nil, old_oid, new_oid]
+
+We would have asked the remote to update its refs/heads/bar pointer from the value of our
+refs/heads/foo. In this case, we’d like to update our refs/remotes/origin/bar pointer to
+reflect the remote state, but print the update as foo -> bar. In effect we’ve copied our refs/
+heads/foo to the remote’s refs/heads/bar, and then reflected that remote ref in our refs/
+remotes/origin/bar.
+
+29.2.3. Validating update requests
+As repositories that are being pushed to are typically a shared resource accessed and written to
+by multiple developers, it’s sometimes desirable to restrict what types of updates can be pushed
+to them, to make sure each client’s updates make sense and to prevent history being lost. Git
+provides a few configuration settings in the receive namespace that let you prevent deletions
+and non-fast-forward updates, and stop any changes at all being made to the current branch.
+
+In ReceivePack#update_ref, we can add a call out to validate the given update.
+validate_update will throw an error if the update violates the repository’s configuration, and
+that will be caught by the rescue block and relayed to the client.
+     # lib/command/receive_pack.rb
+
+         def update_ref(ref, old_oid, new_oid)
+           return report_status("ng #{ ref } unpacker error") if @unpack_error
+
+           validate_update(ref, old_oid, new_oid)
+           repo.refs.compare_and_swap(ref, old_oid, new_oid)
+           report_status("ok #{ ref }")
+         rescue => error
+
+                                        Pushing changes
+
+           report_status("ng #{ ref } #{ error.message }")
+         end
+
+To begin with we’ll perform a couple of safety checks to ensure that the client’s update requests
+make sense — that the refs they use are valid and the object IDs point to objects we have in our
+database. If the ref is not checked, a client could send a name like ../topic and write to a file
+outside of the .git directory, or overwrite system programs by using a name like /bin/bash.
+If the new object ID does not exist in our database after reading the pack from the client, then
+the client has made a mistake and not sent us the objects needed to complete its updates.
+     # lib/command/receive_pack.rb
+
+         def validate_update(ref, old_oid, new_oid)
+           raise "funny refname" unless Revision.valid_ref?(ref)
+           raise "missing necessary objects" if new_oid and not repo.database.has?(new_oid)
+
+           # ...
+         end
+
+If the request contains valid data, we’d still like to be able to prevent a client erasing history.
+Two simple checks we can make are to block branch deletions and non-fast-forward updates.
+If receive.denyDeletes is set, then we’ll raise an error if the new ID is nil indicating the ref
+should be deleted. If receive.denyNonFastForwards is set, we can call fast_forward_error
+to check the old and new IDs, and throw an error unless the new ID is a descendant of the old.
+     # lib/command/receive_pack.rb
+
+         include FastForward
+
+         def validate_update(ref, old_oid, new_oid)
+           # ...
+
+            if repo.config.get(["receive", "denyDeletes"])
+              raise "deletion prohibited" unless new_oid
+            end
+
+           if repo.config.get(["receive", "denyNonFastForwards"])
+             raise "non-fast-forward" if fast_forward_error(old_oid, new_oid)
+           end
+         end
+
+If the repository is one where a developer is working on the code, rather than a shared repo
+where no commit work happens directly, then we should not make any updates to the ref that
+HEAD currently points at. If we move HEAD while someone is making changes in the workspace
+and index, that will mess up the state of their commits, and possibly lead to them accidentally
+overwriting pushed changes.
+
+Git defines a bare repository as one that is just the contents of a .git directory, with a database
+and refs, but no workspace and possibly no HEAD or index. It exists purely to store commits
+pushed from elsewhere, not to author commits directly. A repository where developers work
+is not bare, and this is indicated by setting core.bare to false in .git/config. In our init
+command, let’s add a bit of code to set this variable when a new repo is created.
+     # lib/command/init.rb
+
+                                       Pushing changes
+
+         def run
+           # ...
+
+           config = ::Config.new(git_path.join("config"))
+           config.open_for_update
+           config.set(["core", "bare"], false)
+           config.save
+
+           # ...
+         end
+
+Git allows changes to the current branch — the ref linked to by HEAD — to be denied in non-bare
+repositories. receive.denyCurrentBranch prevents the current branch from being updated,
+while receive.denyDeleteCurrent stops it being deleted. These values are considered true
+unless explicitly set to false. Setting them to true in a bare repo has no effect. We can
+implement these by adding a section at the end of validate_update that’s only triggered if
+core.bare is false and the given ref is equal to the repo’s current ref.
+
+     # lib/command/receive_pack.rb
+
+         def validate_update(ref, old_oid, new_oid)
+           # ...
+
+           return unless repo.config.get(["core", "bare"]) == false and
+                         repo.refs.current_ref.path == ref
+
+           unless repo.config.get(["receive", "denyCurrentBranch"]) == false
+             raise "branch is currently checked out" if new_oid
+           end
+
+           unless repo.config.get(["receive", "denyDeleteCurrent"]) == false
+             raise "deletion of the current branch prohibited" unless new_oid
+           end
+         end
+
+It’s common to disallow non-fast-forward updates on shared repos. As we saw in Section 28.3.2,
+“Historic disagreement”, abandoning commits that others have fetched and committed on top
+of makes it very hard to achieve consensus over the state of the repository, without asking your
+teammates to make tricky manual changes to their histories.
+
+29.3. Progress meters
+Most of the commands we’ve implemented so far either execute quickly, or they print output
+so even if they take a long time (for example, running log --patch on a large repo), we can
+see they’re doing something. The fetch and push commands differ in that it can take them a
+long time to complete their task, depending on the speed of the network connection, and they
+don’t currently display anything meaningful to the user. Without monitoring what’s going on
+inside the .git directory, it would be easy to think the process was stuck.
+
+So that we can get some basic visibility into what these commands are doing, let’s add a progress
+meter. For example, when you clone a repository using Git, you’ll see something like this in
+your terminal:
+     remote: Enumerating objects: 99, done.
+
+                                       Pushing changes
+
+     remote: Counting objects: 100% (99/99), done.
+     remote: Compressing objects: 100% (85/85), done.
+     remote: Total 671065 (delta 36), reused 21 (delta 14), pack-reused 670966
+     Receiving objects: 100% (671065/671065), 172.98 MiB | 6.07 MiB/s, done.
+     Resolving deltas: 100% (495297/495297), done.
+     Checking out files: 100% (4036/4036), done.
+
+Most of these lines contain a progress meter: a message that updates in place, showing what
+is currently being done, its progress towards completion as a percentage and as a fraction of
+the total workload, and for some meters, a volume of data transferred. Ours won’t be quite this
+detailed, but there are a few places where we’d benefit from adding them.
+
+For example, in Command::SendObjects we have access to the current command’s standard
+I/O streams, and we can wrap a Progress object around standard error and pass it into the
+Pack::Writer we create.
+
+     # lib/command/shared/send_objects.rb
+
+         def send_packed_objects(revs)
+           # ...
+
+           writer = Pack::Writer.new(@conn.output, repo.database,
+                                     :compression => pack_compression,
+                                     :progress    => Progress.new(@stderr))
+
+           writer.write_objects(rev_list)
+         end
+
+Pack::Writer can then use this abstraction to emit notifications about what is going on inside
+it. To track how much data has been sent, we’ll need to add an @offset variable to the class.
+     # lib/pack/writer.rb
+
+         def initialize(output, database, options = {})
+           @output   = output
+           @database = database
+           @digest   = Digest::SHA1.new
+           @offset   = 0
+
+           @compression = options.fetch(:compression, Zlib::DEFAULT_COMPRESSION)
+           @progress    = options[:progress]
+         end
+
+That @offset should be updated whenever we write output to the pack.
+     # lib/pack/writer.rb
+
+         def write(data)
+           @output.write(data)
+           @digest.update(data)
+           @offset += data.bytesize
+         end
+
+Let’s now use the Progress object inside Pack::Writer. The Pack::Writer class is internal
+plumbing and is not concerned with user interface logic, so it should not emit progress in terms
+of printing output, per se. Instead it should just tell the Progress object what’s going on, and
+the Progress object can display this as it sees fit.
+
+                                       Pushing changes
+
+For example, in   prepare_pack_list, we’ll set the current activity by calling
+@progress&.start("Counting objects"). We don’t know how many objects there will be,
+so we can’t set an expected total here. Each time we find an object we call @progress&.tick,
+and when we’re finished we’ll call @progress&.stop.
+     # lib/pack/writer.rb
+
+         def prepare_pack_list(rev_list)
+           @pack_list = []
+           @progress&.start("Counting objects")
+
+           rev_list.each do |object, path|
+             add_to_pack_list(object, path)
+             @progress&.tick
+           end
+           @progress&.stop
+         end
+
+A more detailed use case can be found in write_entries. This starts the progress meter with
+a count, since it knows how many objects there are. It only emits progress here if it’s not
+writing to standard out, i.e. it’s being called by push rather than by upload-pack. When we call
+Progress#tick here we can also pass in the total amount of data transferred.
+
+     # lib/pack/writer.rb
+
+         def write_entries
+           count = @pack_list.size
+           @progress&.start("Writing objects", count) unless @output == STDOUT
+
+           @pack_list.each { |entry| write_entry(entry) }
+           @progress&.stop
+         end
+
+         def write_entry(entry)
+           # ...
+
+           @progress&.tick(@offset)
+         end
+
+These use cases are enough to flesh out a design for the Progress class. It will take an output
+stream that it should write to, and its @message property is initially nil.
+     # lib/progress.rb
+
+     class Progress
+       def initialize(output)
+         @output = output
+         @message = nil
+       end
+
+       # ...
+     end
+
+When we call Progress#start, we’re asking for a new progress meter to begin. We set the
+meter’s message and expected total from the arguments, and set the object and byte counts to
+zero. If the output is not a terminal, this method does nothing. In order to prevent the meter
+
+                                                       Pushing changes
+
+being redrawn too frequently, which can make it flicker and results in the program spending
+a lot of time writing data to the terminal, we track the last time at which the meter was
+updated. Process.clock_gettime9 provides data from a monotonic10 clock, whose time always
+increases and is not affected by timezone changes or the user setting the time. This works better
+than the wall clock time for measuring durations.
+       # lib/progress.rb
+
+          def start(message, total = nil)
+            return unless @output.isatty
+
+            @message = message
+            @total    = total
+            @count    = 0
+            @bytes    = 0
+            @write_at = get_time
+          end
+
+          def get_time
+            Process.clock_gettime(Process::CLOCK_MONOTONIC)
+          end
+
+When tick and stop are called, we can update the meter’s state and print it to the screen. tick
+increments the object count and sets the byte count if given. It then clears the current line in
+the terminal and writes a new one in its place, if enough time has elapsed since the last update.
+stop sets the total to equal the object count, prints the status, and unsets @message so that no
+further calls to tick or stop will have any effect until start is called. Neither method does
+anything unless @message is set.
+       # lib/progress.rb
+
+          def tick(bytes = 0)
+            return unless @message
+
+             @count += 1
+             @bytes = bytes
+
+             current_time = get_time
+             return if current_time < @write_at + 0.05
+             @write_at = current_time
+
+            clear_line
+            @output.write(status_line)
+          end
+
+          def stop
+            return unless @message
+
+             @total = @count
+
+            clear_line
+            @output.puts(status_line)
+            @message = nil
+          end
+
+ https://docs.ruby-lang.org/en/2.3.0/Process.html#method-c-clock_gettime
+  https://en.wikipedia.org/wiki/Monotonic_function
+
+                                       Pushing changes
+
+In Section 10.4, “Printing in colour” we encountered escape codes, sequences of special
+characters that affect how the terminal displays text. All such sequences begin with \e[, and
+the following characters encode formatting instructions. In clear_line, we use the code G to
+move the cursor to the beginning of the current line, and then K to clear it. Using write rather
+than puts in the tick method means there is no trailing line feed appended to the message, so
+the cursor remains on the same line.
+     # lib/progress.rb
+
+       def clear_line
+         @output.write("\e[G\e[K")
+       end
+
+The status_line method generates the text that should appear based on the meter’s current
+state. format_count returns the current count, with a percentage if an expected total has been
+set. format_bytes displays the number of bytes sent using an appropriate unit, from bytes to
+gigabytes.
+     # lib/progress.rb
+
+       UNITS = ["B", "KiB", "MiB", "GiB"]
+       SCALE = 1024.0
+
+       def status_line
+         line = "#{ @message }: #{ format_count }"
+
+         line.concat(", #{ format_bytes }") if @bytes > 0
+         line.concat(", done.") if @count == @total
+
+         line
+       end
+
+       def format_count
+         if @total
+           percent = (@total == 0) ? 100 : 100 * @count / @total
+           "#{ percent }% (#{ @count }/#{ @total })"
+         else
+           "(#{ @count })"
+         end
+       end
+
+       def format_bytes
+         power = Math.log(@bytes, SCALE).floor
+         scaled = @bytes / (SCALE ** power)
+
+         format("%.2f #{ UNITS[power] }", scaled)
+       end
+
+The completes the Progress class, and we can now spread it to other places in the codebase.
+For example, ReceiveObjects could use it to display its progress in extracting objects from
+the pack.
+     # lib/command/shared/receive_objects.rb
+
+         def recv_packed_objects(prefix = "")
+           stream   = Pack::Stream.new(@conn.input, prefix)
+           reader   = Pack::Reader.new(stream)
+
+                                         Pushing changes
+
+                progress = Progress.new(@stderr) unless @conn.input == STDIN
+
+                reader.read_header
+                progress&.start("Unpacking objects", reader.count)
+
+                reader.count.times do
+                  record, _ = stream.capture { reader.read_record }
+                  repo.database.store(record)
+                  progress&.tick(stream.offset)
+                end
+                progress&.stop
+
+               stream.verify_checksum
+             end
+
+As the pack writing process becomes more complex, these progress meters will become even
+more valuable in seeing what is going on inside, and seeing how our code is performing.
+
+Our push command is now fully functional, and can interact with Git’s git-receive-pack
+program. To demonstrate this, let’s initialise a new repository, and add it as a remote to Jit’s
+own repo.
+       $ jit init ../push-test
+       $ jit config --file ../push-test/.git/config receive.denyCurrentBranch false
+       $ jit remote add copy file://$PWD/../push-test
+
+If we push our master branch to this copy, we can see the objects being transferred, and how
+much data is sent.
+       $ jit push copy master
+
+       Counting objects: 100% (1619/1619), done.
+       Writing objects: 100% (1619/1619), 786.76 KiB, done.
+       To file:///Users/jcoglan/projects/building-git/jit/../push-test
+        * [new branch] master -> master
+
+If we switch into the other repository, we can use tree to show the state of the .git directory.
+The git/objects directory has stored the packs we sent as files in their own right, rather than
+as one file per object, and we’ll learn more about that when we look at storing packs in the
+database11.
+       $ cd ../push-test
+
+       $ tree .git
+       .git
+       ├── HEAD
+       ├── objects
+       │   └── pack
+       │        ├── pack-b3671307d1a15a297cdaa1cb554e2bc8aea26db5.idx
+       │        └── pack-b3671307d1a15a297cdaa1cb554e2bc8aea26db5.pack
+       └── refs
+           └── heads
+                └── master
+
+To verify the data was transferred correctly, let’s log the last few commits:
+  Chapter 32, Packs in the database
+
+                                    Pushing changes
+
+    $ git log --oneline @~5..
+
+    5121326 (HEAD -> master) Display progress of pack transfers
+    045a839 Reject updates from `push` based on configuration
+    fbb572b Push content via the `push` and `receive-pack` commands
+    a9fa963 Update ref values using compare-and-swap
+    6768fa6 Retrieve the `remote.<name>.{push,receivepack}` variables
+
+Indeed, everything appears to be working. And, since we added support for SSH URLs in the
+last chapter, we can run jit remote add origin ssh://git@github.com/jcoglan/jit.git,
+and begin pushing the repository to GitHub. Running jit push origin heads/* will push all
+our local branches up to the remote repository.
+

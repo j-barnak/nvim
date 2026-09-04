@@ -1,0 +1,73 @@
+# `REFERENCES`
+
+- Aho, Alfred V., Monica S. Lam, Ravi Sethi, and Jeffrey D. Ullman. “Machine-Independent Optimizations.” Chapter 9 in *Compilers: Principles, Techniques, & Tools*, 2nd ed. Boston: Addison-Wesley, 2006.
+- Ballman, Aaron. Comment on Issue 53631: “C Compiler: Missing Diagnostics ‘Dereferencing “void \*” Pointer.’ ” LLVM issue tracker. GitHub, September 21, 2022. *<https://github.com/llvm/llvm-project/issues/53631#issuecomment-1253653888>*.
+- Bendersky, Eli. “The Context Sensitivity of C’s Grammar, Revisited.” *Eli Bendersky’s Website*, May 2, 2011. *<https://eli.thegreenplace.net/2011/05/02/the-context-sensitivity-of-cs-grammar-revisited>*.
+- Bendersky, Eli. “Directed Graph Traversal, Orderings and Applications to Data-Flow Analysis.” *Eli Bendersky’s Website*, October 16, 2015. *<https://eli.thegreenplace.net/2015/directed-graph-traversal-orderings-and-applications-to-data-flow-analysis>*.
+- Bendersky, Eli. “Parsing Expressions by Precedence Climbing.” *Eli Bendersky’s Website*, August 2, 2012. *<https://eli.thegreenplace.net/2012/08/02/parsing-expressions-by-precedence-climbing>*.
+- Bendersky, Eli. “Position Independent Code (PIC) in Shared Libraries.” *Eli Bendersky’s Website*, November 3, 2011. *<https://eli.thegreenplace.net/2011/11/03/position-independent-code-pic-in-shared-libraries>*.
+- Bendersky, Eli. “Position Independent Code (PIC) in Shared Libraries on x64.” *Eli Bendersky’s Website*, November 11, 2011. *<https://eli.thegreenplace.net/2011/11/11/position-independent-code-pic-in-shared-libraries-on-x64>*.
+- Bendersky, Eli. “Some Problems of Recursive Descent Parsers.” *Eli Bendersky’s Website*, March 14, 2009. *<https://eli.thegreenplace.net/2009/03/14/some-problems-of-recursive-descent-parsers>*.
+- Borgwardt, Michael. The Floating-Point Guide. Accessed January 12, 2023. *<https://floating-point-gui.de>*.
+- Briggs, Preston, Keith D. Cooper, and Linda Torczon. “Improvements to Graph Coloring Register Allocation.” *ACM Transactions on Programming Languages and Systems* 16, no. 3 (May 1994): 428–455. *<https://doi.org/10.1145/177492.177575>*.
+- Chaitin, G. J. “Register Allocation & Spilling via Graph Coloring.” *ACM SIGPLAN Notices* 17, no. 6 (June 1982): 98–101. *<https://doi.org/10.1145/872726.806984>*.
+- Chaitin, Gregory J., Marc A. Auslander, Ashok K. Chandra, John Cocke, Martin E. Hopkins, and Peter W. Markstein. “Register Allocation via Coloring.” *Computer Languages* 6, no. 1 (January 1981): 47–57. *<https://doi.org/10.1016/0096-0551(81)90048-5>*.
+- Chu, Andy. “Pratt Parsing and Precedence Climbing Are the Same Algorithm.” *Oils Blog*, November 1, 2016. *<https://www.oilshell.org/blog/2016/11/01.html>*.
+- Chu, Andy. “Precedence Climbing Is Widely Used.” *Oils Blog*, March 30, 2017. *<https://www.oilshell.org/blog/2017/03/30.html>*.
+- Ciechanowski, Bartosz. Float Exposed. Accessed March 29, 2023. *<https://float.exposed>*.
+- Cooper, Keith D., and Linda Torczon. “Register Allocation.” Chapter 13 in *Engineering a Compiler*, 2nd ed. Boston: Morgan Kaufmann, 2011.
+- Cordes, Peter. Answer to “Is a Sign or Zero Extension Required When Adding a 32bit Offset to a Pointer for the x86-64 ABI?” Stack Overflow, April 21, 2016, updated April 30, 2019. *<https://stackoverflow.com/a/36760539>*.
+- cppreference.com. “C23.” Updated September 25, 2023. *<https://en.cppreference.com/w/c/23>*.
+- cppreference.com. “Order of Evaluation.” Updated September 20, 2023. *<https://en.cppreference.com/w/c/language/eval_order>*.
+- Cuoq, Pascal. Answer to “Unsigned 64-Bit to Double Conversion: Why This Algorithm from g++.” Stack Overflow, November 7, 2014, updated October 23, 2018. *<https://stackoverflow.com/a/26799227>*.
+- David542 and Peter Cordes. “Integer Overflow in gas.” Forum discussion. Stack Overflow, October 10, 2020. *<https://stackoverflow.com/q/64289590>*.
+- Dawson, Bruce. “Sometimes Floating Point Math Is Perfect.” *Random ASCII*, June 19, 2017. *<https://randomascii.wordpress.com/2017/06/19/sometimes-floating-point-math-is-perfect/>*.
+- Drysdale, David. “Beginner’s Guide to Linkers.” Updated 2009. *<https://www.lurklurk.org/linkers/linkers.html>*.
+- D’Silva, Vijay, Mathias Payer, and Dawn Song. “The Correctness-Security Gap in Compiler Optimization.” In *Proceedings of the 2015 IEEE Security and Privacy Workshops*, 73–87. San Jose, CA, 2015. *<https://doi.org/10.1109/SPW.2015.33>*.
+- Finley, Thomas. “Two’s Complement.” Department of Computer Science, Cornell University, April 2000. *<https://www.cs.cornell.edu/~tomf/notes/cps104/twoscomp.html>*.
+- Fog, Agner. “Calling Conventions for Different C++ Compilers and Operating Systems.” Updated February 1, 2023. *<https://www.agner.org/optimize/calling_conventions.pdf>*.
+- Friedl, Steve. “Reading C Type Declarations.” December 27, 2003. *<http://unixwiz.net/techtips/reading-cdecl.html>*.
+- GCC Wiki. “Semantics of Floating Point Math in GCC.” Updated April 13, 2021. *<https://gcc.gnu.org/wiki/FloatingPointMath>*.
+- George, Lal, and Andrew W. Appel. “Iterated Register Coalescing.” *ACM Transactions on Programming Languages and Systems* 18, no. 3 (May 1996): 300–324. *<https://doi.org/10.1145/229542.229546>*.
+- Ghuloum, Abdulaziz. “An Incremental Approach to Compiler Construction.” In *Proceedings of the 2006 Scheme and Functional Programming Workshop*, 27–37. Portland, OR, 2006. *<http://scheme2006.cs.uchicago.edu/11-ghuloum.pdf>*.
+- Gibbons, Phillip B. “Lecture 8: Induction Variable Optimizations.” Lecture slides for 15-745 Optimizing Compilers for Modern Architectures, Carnegie Mellon University, Spring 2019. *<https://www.cs.cmu.edu/afs/cs/academic/class/15745-s19/www/lectures/L8-Induction-Variables.pdf>*.
+- Gibbons, Phillip B. “Lecture 16: Pointer Analysis.” Lecture slides for 15-745 Optimizing Compilers for Modern Architectures, Carnegie Mellon University, Spring 2016. *<https://www.cs.cmu.edu/afs/cs/academic/class/15745-s16/www/lectures/L16-Pointer-Analysis.pdf>*.
+- Gibbons, Phillip B. “Lecture 23: Register Allocation: Coalescing.” Lecture slides for 15-745 Optimizing Compilers for Modern Architectures, Carnegie Mellon University, Spring 2019. *<https://www.cs.cmu.edu/afs/cs/academic/class/15745-s19/www/lectures/L23-Register-Coalescing.pdf>*.
+- Godbolt, Matt. Compiler Explorer. Updated September 27, 2023. *<https://godbolt.org>*.
+- Goldberg, David. “What Every Computer Scientist Should Know about Floating-Point Arithmetic.” *ACM Computing Surveys* 23, no. 1 (March 1991): 5–48. *<https://doi.org/10.1145/103162.103163>*. Edited reprint included as Appendix D of *Numerical Computation Guide*. Palo Alto: Sun Microsystems, 2000. *<https://docs.oracle.com/cd/E19957-01/806-3568/ncg_goldberg.html>*.
+- Gustedt, Jens. “C11 Defects: Initialization of Padding.” *Jens Gustedt’s Blog*, October 24, 2012. *<https://gustedt.wordpress.com/2012/10/24/c11-defects-initialization-of-padding/>*.
+- Gustedt, Jens. “Checked Integer Arithmetic in the Prospect of C23.” *Jens Gustedt’s Blog*, December 18, 2022. *<https://gustedt.wordpress.com/2022/12/18/checked-integer-arithmetic-in-the-prospect-of-c23/>*.
+- Hailperin, Max. “Comparing Conservative Coalescing Criteria.” *ACM Transactions on Programming Languages and Systems* 27, no. 3 (May 2005): 571–582. *<https://doi.org/10.1145/1065887.1065894>*.
+- Hilfinger, Paul. “Lecture 37: Global Optimization.” Lecture slides for CS 164: Programming Languages and Compilers, University of California, Berkeley, Spring 2011. *<https://inst.eecs.berkeley.edu/~cs164/sp11/lectures/lecture37-2x2.pdf>*.
+- Hyde, Randall. “Procedures.” Chap. 5 in *The Art of 64-Bit Assembly*, Vol. 1. San Francisco: No Starch Press, 2021.
+- IEEE. *IEEE Standard for Floating-Point Arithmetic*. IEEE Std. 754-2019. New York: IEEE, 2019. *[https://doi.org/10.1109/IEEESTD.2019.8766229](https://doi.org/10.1109/IEEESTD.2019.8766229.).*
+- Intel Corporation. *Intel® 64 and IA-32 Architectures Software Developer’s Manual*. Vol. 2, *Instruction Set Reference, A-Z*. Updated September 2023. *<https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html>*. Unofficial copy also available online at *<https://www.felixcloutier.com/x86/>*.
+- ISO/IEC. *Information Technology—Programming Languages—C*. 4th ed. ISO/IEC 9899:2018. Geneva, Switzerland: ISO, 2018.
+- ISO/IEC. *Information Technology—Programming Languages—C*. N3096 (working draft), April 1, 2023. *<https://open-std.org/JTC1/SC22/WG14/www/docs/n3096.pdf>*.
+- Jones, Joel. “Abstract Syntax Tree Implementation Idioms.” In *Proceedings of the 10th Conference on Pattern Languages of Programs (PLoP2003)*, 2003. *<https://hillside.net/plop/plop2003/Papers/Jones-ImplementingASTs.pdf>*.
+- Levien, Raph. “With Undefined Behavior, Anything Is Possible.” *Raph Levien’s Blog*, August 17, 2018. *<https://raphlinus.github.io/programming/rust/2018/08/17/undefined-behavior.html>*.
+- LLVM. “LLVM: lib/CodeGen/MachineCopyPropagation.Cpp Source File.” Source code. Accessed December 24, 2021. *<https://llvm.org/doxygen/MachineCopyPropagation_8cpp_source.html>*.
+- LLVM Project. “Controlling Floating Point Behavior.” Clang Compiler User’s Manual. Accessed April 11, 2023. *<https://clang.llvm.org/docs/UsersManual.html#controlling-floating-point-behavior>*.
+- LLVM Project. LLDB documentation. Updated October 4, 2023. *<https://lldb.llvm.org>*.
+- Lu, H.J., Michael Matz, Milind Girkar, Jan Hubička, Andreas Jaeger, and Mark Mitchell, eds. *System V Application Binary Interface AMD64 Architecture Processor Supplement (With LP64 and ILP32 Programming Models)*. Updated September 26, 2023. *<https://gitlab.com/x86-psABIs/x86-64-ABI>*.
+- MaskRay. “Copy Relocations, Canonical PLT Entries and Protected Visibility.” *MaskRay*, January 9, 2021. *<https://maskray.me/blog/2021-01-09-copy-relocations-canonical-plt-entries-and-protected>*.
+- Meneide, JeanHeyd. “Ever Closer—C23 Draws Nearer.” *The Pasture*, February 28, 2022. *<https://thephd.dev/ever-closer-c23-improvements>*.
+- Muchnick, Steven S. “Register Allocation.” Chapter 16 in *Advanced Compiler Design and Implementation*. San Francisco: Morgan Kaufmann, 1997.
+- Myers, Joseph. Comment on Bug 90472: “ ‘extern int i;’ Declaration Inside Function Isn’t Allowed to Shadow ‘static int i;’ at File Scope.” GCC Bugzilla, May 16, 2019. *<https://gcc.gnu.org/bugzilla/show_bug.cgi?id=90472#c3>*.
+- Nisan, Noam, and Shimon Schocken. “Boolean Arithmetic.” Chapter 2 in *The Elements of Computing Systems: Building a Modern Computer from First Principles*, 1st ed. Cambridge: MIT Press, 2008. *<https://www.nand2tetris.org/_files/ugd/44046b_f0eaab042ba042dcb58f3e08b46bb4d7.pdf>*.
+- Regan, Rick. “Decimal to Floating-Point Converter.” *Exploring Binary*. Accessed June 2, 2023. *<https://www.exploringbinary.com/floating-point-converter/>*.
+- Regan, Rick. “GCC Avoids Double Rounding Errors with Round-to-Odd.” *Exploring Binary*, January 15, 2014. *<https://www.exploringbinary.com/gcc-avoids-double-rounding-errors-with-round-to-odd/>*.
+- Regan, Rick. “Hexadecimal Floating-Point Constants.” *Exploring Binary*, October 4, 2010. *<https://www.exploringbinary.com/hexadecimal-floating-point-constants/>*.
+- Regan, Rick. “Number of Digits Required for Round-Trip Conversions.” *Exploring Binary*, April 9, 2015. *<https://www.exploringbinary.com/number-of-digits-required-for-round-trip-conversions/>*.
+- Regan, Rick. “The Spacing of Binary Floating-Point Numbers.” *Exploring Binary*, March 15, 2015. *<https://www.exploringbinary.com/the-spacing-of-binary-floating-point-numbers/>*.
+- Regehr, John. “A Guide to Undefined Behavior in C and C++, Part 1.” *Embedded in Academia*, July 9, 2010. *<https://blog.regehr.org/archives/213>*.
+- Ritchie, Dennis M. “The Development of the C Language.” In *The Second ACM SIGPLAN Conference on History of Programming Languages*, 201–8. Cambridge: ACM, 1993. *<https://doi.org/10.1145/154766.155580>*. Reproduced on the author’s home page, Bell Labs, 2003. *<https://www.bell-labs.com/usr/dmr/www/chist.html>*.
+- Stallman, Richard M., and the GCC Developer Community. “Integers.” *Using the GNU Compiler Collection (GCC)*. Accessed January 12, 2023. *<https://gcc.gnu.org/onlinedocs/gcc/Integers-implementation.html>*.
+- Stallman, Richard, Roland Pesch, Stan Shebs, et al. *Debugging with GDB: The GNU Source-Level Debugger*. Accessed January 29, 2024. *<https://sourceware.org/gdb/current/onlinedocs/gdb/index.html>*.
+- Taylor, Ian Lance. “Linkers.” Series of blog posts. *Airs – Ian Lance Taylor*, September 2007. First post available at *<https://www.airs.com/blog/archives/38>*, table of contents available at *<https://lwn.net/Articles/276782/>*.
+- Ullman, Jeffrey D. “Code Optimization I.” Lecture notes. Stanford University InfoLab, Stanford University. Accessed October 6, 2023. *<http://infolab.stanford.edu/~ullman/dragon/slides3.pdf>*.
+- Ullman, Jeffrey D. “Code Optimization II.” Lecture notes. Stanford University InfoLab, Stanford University. Accessed October 6, 2023. *<http://infolab.stanford.edu/~ullman/dragon/slides4.pdf>*.
+- Wang, Daniel C., Andrew W. Appel, Jeff L. Korn, and Christopher S. Serra. “The Zephyr Abstract Syntax Description Language.” In *Proceeedings of the Conference on Domain Specific Languages (DSL ’97)*. Santa Barbara, CA, 1997. *<https://www.cs.princeton.edu/~appel/papers/asdl97.pdf>*.
+- Wikipedia. “Double-Precision Floating-Point Format.” Last modified March 26, 2024. *<https://en.wikipedia.org/wiki/Double-precision_floating-point_format>*.
+- Yang, Edward Z. “The AST Typing Problem.” *Ezyang’s Blog*, May 28, 2013. *<http://blog.ezyang.com/2013/05/the-ast-typing-problem/>*.
+- Yang, Zhaomo, Brian Johannesmeyer, Anders Trier Olesen, Sorin Lerner, and Kirill Levchenko. “Dead Store Elimination (Still) Considered Harmful.” In *Proceedings of the 26th USENIX Security Symposium*, 1025–1040. Vancouver, BC, 2017. *<https://www.usenix.org/system/files/conference/usenixsecurity17/sec17-yang.pdf>*.

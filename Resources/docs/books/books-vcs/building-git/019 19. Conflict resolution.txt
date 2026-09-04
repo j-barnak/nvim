@@ -1,0 +1,754 @@
+19. Conflict resolution
+Over the course of the last two chapters, we’ve developed a merge command that can
+successfully merge non-conflicting branches, and stops if the index contains conflicts. To round
+out the merge command’s behaviour, we need to allow the user to find out which files are in
+conflict, fix them, and commit the result when all conflicts have been resolved.
+
+19.1. Printing conflict warnings
+The first step in this process is that the merge command should itself print some output to tell
+the user which files failed to merge cleanly. For example, Git’s merge command prints output
+like this when a conflict is encountered:
+     Auto-merging f.txt
+     CONFLICT (content): Merge conflict in f.txt
+     Automatic merge failed; fix conflicts and then commit the result.
+
+It tells you when it’s trying to perform any non-trivial merge rather than using a file version
+from one side of the merge, it alerts you when any file is conflicted, and it finishes off by telling
+you the merge failed and what to do about it.
+
+Now, it would be a mistake to litter the Merge::Resolve class with puts calls; that class is
+internal machinery, not user interface code, and we should be able to run it without printing
+to the terminal. However, the class does need to provide some way of surfacing what it’s
+doing, so that a user interface can display it. We’ll start by adding an on_progress hook to
+Merge::Resolve so that Command::Merge can listen for any log messages generated during the
+merge. We’ll also make it display the closing message should the index end up in a conflicted
+state.
+     # lib/command/merge.rb
+
+          def resolve_merge
+            repo.index.load_for_update
+
+            merge = ::Merge::Resolve.new(repo, @inputs)
+            merge.on_progress { |info| puts info }
+            merge.execute
+
+            repo.index.write_updates
+
+            if repo.index.conflict?
+              puts "Automatic merge failed; fix conflicts and then commit the result."
+              exit 1
+            end
+          end
+
+Merge::Resolve#on_progress simply stores off the given block, so that the internals of the
+class can invoke it and thereby pipe log information back to the caller.
+     # lib/merge/resolve.rb
+
+          def on_progress(&block)
+            @on_progress = block
+
+                                       Conflict resolution
+
+         end
+
+         private
+
+         def log(message)
+           @on_progress&.call(message)
+         end
+
+The same_path_conflict method can then use this log method to emit the fact that it’s auto-
+merging the current path. It also includes a call to log_conflict, which we’ll define below,
+when it adds something to the @conflicts set.
+     # lib/merge/resolve.rb
+
+         def same_path_conflict(path, base, right)
+           # ...
+
+            log "Auto-merging #{ path }" if left and right
+
+            oid_ok, oid = merge_blobs(base&.oid, left&.oid, right&.oid)
+            mode_ok, mode = merge_modes(base&.mode, left&.mode, right&.mode)
+
+            @clean_diff[path] = [left, Database::Entry.new(oid, mode)]
+            return if oid_ok and mode_ok
+
+           @conflicts[path] = [base, left, right]
+           log_conflict(path)
+         end
+
+Likewise, file_dir_conflict can log the fact it’s adding the file from one side of the diff,
+while recording a conflict on the file at the parent location that’s been renamed.
+     # lib/merge/resolve.rb
+
+         def file_dir_conflict(path, diff, name)
+           path.dirname.ascend do |parent|
+             # ...
+
+             log "Adding #{ path }" unless diff[path]
+             log_conflict(parent, rename)
+           end
+         end
+
+The log_conflict method is the most lengthy addition to the Merge::Resolve class, but’s it’s
+mostly fairly uninteresting bookkeeping that encodes all Git’s rules for how to report certain
+types of conflict. At the top level, it makes a decision about what type of message to emit, based
+on which versions are present in the named conflict set.
+     # lib/merge/resolve.rb
+
+         def log_conflict(path, rename = nil)
+           base, left, right = @conflicts[path]
+
+            if left and right
+              log_left_right_conflict(path)
+            elsif base and (left or right)
+              log_modify_delete_conflict(path, rename)
+
+                                      Conflict resolution
+
+           else
+             log_file_directory_conflict(path, rename)
+           end
+         end
+
+log_left_right_conflict prints CONFLICT (<type>): Merge conflict in <path>, where
+type is determined by whether the path exists in the merge base. If it does, then both sides have
+edited the given file, otherwise both sides have added it.
+     # lib/merge/resolve.rb
+
+         def log_left_right_conflict(path)
+           type = @conflicts[path][0] ? "content" : "add/add"
+           log "CONFLICT (#{ type }): Merge conflict in #{ path }"
+         end
+
+log_modify_delete_conflict logs something like this when one side of the merge has
+changed a file while the other removed it:
+     CONFLICT (modify/delete): f.txt deleted in HEAD and modified in topic.
+     Version topic of f.txt left in tree.
+
+If the file had to be renamed due to a file/directory conflict, that is flagged in the resulting
+message:
+     CONFLICT (modify/delete): f.txt deleted in HEAD and modified in topic.
+     Version topic of f.txt left in tree at f.txt~topic.
+
+The log_modify_delete_conflict method grabs the branch names for the two merged
+commits and generates the above message, including the rename notification if necessary.
+     # lib/merge/resolve.rb
+
+         def log_modify_delete_conflict(path, rename)
+           deleted, modified = log_branch_names(path)
+
+           rename = rename ? " at #{ rename }" : ""
+
+           log "CONFLICT (modify/delete): #{ path } " +
+               "deleted in #{ deleted } and modified in #{ modified }. " +
+               "Version #{ modified } of #{ path } left in tree#{ rename }."
+         end
+
+The log_branch_names helper function returns the names of the two merged branches from the
+Merge::Inputs object, swapping their order depending on whether the conflict set for the path
+contains an entry from the left or right commit.
+     # lib/merge/resolve.rb
+
+         def log_branch_names(path)
+           a, b = @inputs.left_name, @inputs.right_name
+           @conflicts[path][1] ? [b, a] : [a, b]
+         end
+
+Finally, log_file_directory_conflict emits a message that alerts the user to a renamed file
+in the tree as a result of a file/directory conflict.
+
+                                       Conflict resolution
+
+     # lib/merge/resolve.rb
+
+         def log_file_directory_conflict(path, rename)
+           type = @conflicts[path][1] ? "file/directory" : "directory/file"
+           branch, _ = log_branch_names(path)
+
+           log "CONFLICT (#{ type }): There is a directory " +
+               "with name #{ path } in #{ branch }. " +
+               "Adding #{ path } as #{ rename }"
+         end
+
+19.2. Conflicted status
+Showing which files are conflicted when the merge first runs is a good start, but the user might
+have a lot of conflicts to fix in order to reach a commit state. As they work towards that goal, it
+would be useful to show them which files are still in conflict via the status command, which
+is currently incapable of displaying the status of conflicted index entries.
+
+Fortunately, this is relatively straightforward to fix. In the Repository::Status class, we’ll
+add and expose a new set called @conflicts along with all the other structures we use to store
+information.
+     # lib/repository/status.rb
+
+         attr_reader :conflicts
+
+         def initialize(repository)
+           # ...
+
+            @changed           = SortedSet.new
+            @index_changes     = SortedHash.new
+            @conflicts         = SortedHash.new
+            @workspace_changes = SortedHash.new
+            @untracked_files   = SortedSet.new
+
+           # ...
+         end
+
+When we check each entry in the index in check_index_entries, we check the entry against
+the workspace and HEAD tree as normal if its stage is zero. Otherwise, we add its stage to a list
+of stages we hold for the entry’s path in the @conflicts set.
+     # lib/repository/status.rb
+
+         def check_index_entries
+           @repo.index.each_entry do |entry|
+             if entry.stage == 0
+               check_index_against_workspace(entry)
+               check_index_against_head_tree(entry)
+             else
+               @changed.add(entry.path)
+               @conflicts[entry.path] ||= []
+               @conflicts[entry.path].push(entry.stage)
+             end
+           end
+
+                                     Conflict resolution
+
+         end
+
+This means that after all the checks have run, @conflicts will map each conflicted path to an
+array containing some combination of the numbers 1, 2 and 3 representing which stages exist
+in the index for the given path.
+
+Now that Repository::Status generates the apppriate data for us, we can look at amending
+the two status formats to display it.
+
+19.2.1. Long status format
+To the Command::Status#print_long_format method we can add a clause between displaying
+the staged and unstaged changes, which lists the contents of the conflicts set.
+     # lib/command/status.rb
+
+         def print_long_format
+           print_branch_status
+
+           print_changes("Changes to be committed", @status.index_changes, :green)
+           print_changes("Unmerged paths", @status.conflicts, :red, :conflict)
+           print_changes("Changes not staged for commit", @status.workspace_changes, :red)
+           print_changes("Untracked files", @status.untracked_files, :red)
+
+           print_commit_status
+         end
+
+The print_changes method will need some new data structures to work with that contain the
+labels used for each possible conflict status. The values in Repository::Status#conflicts
+can be any possible subset of [1, 2, 3], except for [1] — that state would mean both sides
+had deleted a file, which is not a conflict. The CONFLICT_LONG_STATUS structure maps these
+values to appropriate display strings.
+     # lib/command/status.rb
+
+         CONFLICT_LABEL_WIDTH = 17
+
+         CONFLICT_LONG_STATUS = {
+           [1, 2, 3] => "both modified:",
+           [1, 2]    => "deleted by them:",
+           [1, 3]    => "deleted by us:",
+           [2, 3]    => "both added:",
+           [2]       => "added by us:",
+           [3]       => "added by them:"
+         }
+
+We also need to decide which set of labels to use for each set of changes. For all the existing
+change sets, we want the LONG_STATUS and LABEL_WIDTH values, whereas for conflicts we
+need CONFLICT_LONG_STATUS and CONFLICT_LABEL_WIDTH. We’ll encode this information as
+follows:
+     # lib/command/status.rb
+
+         UI_LABELS = { :normal => LONG_STATUS, :conflict => CONFLICT_LONG_STATUS }
+
+                                     Conflict resolution
+
+         UI_WIDTHS = { :normal => LABEL_WIDTH, :conflict => CONFLICT_LABEL_WIDTH }
+
+The print_changes method can now select which set of labels to use for the set of changes
+it’s been given. Existing calls default to label_set = :normal, but the conflict set overrides
+this by passing :conflict.
+     # lib/command/status.rb
+
+         def print_changes(message, changeset, style, label_set = :normal)
+           return if changeset.empty?
+
+           labels = UI_LABELS[label_set]
+           width = UI_WIDTHS[label_set]
+
+           puts "#{ message }:"
+           puts ""
+           changeset.each do |path, type|
+             status = type ? labels[type].ljust(width, " ") : ""
+             puts "\t" + fmt(style, status + path)
+           end
+           puts ""
+         end
+
+19.2.2. Porcelain status format
+The porcelain format likewise needs a set of states to display. For normal non-conflicting
+entries, the existing implementation takes two letters from the SHORT_STATUS structure, one for
+the difference between HEAD and index, the other between the index and workspace. For conflict
+statuses, it will be easier to map each possible combination of stages to a two-letter code.
+     # lib/command/status.rb
+
+         CONFLICT_SHORT_STATUS = {
+           [1, 2, 3] => "UU",
+           [1, 2]    => "UD",
+           [1, 3]    => "DU",
+           [2, 3]    => "AA",
+           [2]       => "AU",
+           [3]       => "UA"
+         }
+
+Then in Command::Status#status_for, we can select the appropriate two-letter code for
+conflicted entries. Because conflicted paths are included in Repository::Status#changed,
+their statuses will be included in alphabetical order with all the normal statuses we’ve seen
+previously.
+     # lib/command/status.rb
+
+         def status_for(path)
+           if @status.conflicts.has_key?(path)
+             CONFLICT_SHORT_STATUS[@status.conflicts[path]]
+           else
+             left = SHORT_STATUS.fetch(@status.index_changes[path], " ")
+             right = SHORT_STATUS.fetch(@status.workspace_changes[path], " ")
+             left + right
+           end
+
+                                       Conflict resolution
+
+         end
+
+19.3. Conflicted diffs
+The status command provides the most valuable signal about what’s conflicted. Most people’s
+workflow involves inspecting the conflicted files, finding the <<<<<<< markers, and selecting
+portions of the conflicting versions to compose a working version, leaning on their test suite to
+check things. However the diff command is also useful in showing you how the current state
+of the files differs from the versions that went into the merge.
+
+When the diff command is run with conflicting entries in the index, you’ll see something like
+the following:
+     diff --cc f.txt
+     index f719efd,2bdf67a..0000000
+     --- a/f.txt
+     +++ b/f.txt
+     @@@ -1,1 -1,1 +1,5 @@@
+     ++<<<<<<< HEAD
+      +two
+     ++=======
+     + three
+     ++>>>>>>> topic
+
+Notice the --cc switch instead of --git, the multiple object IDs before .. on the index line,
+the triple @@@ hunk markers and multiple minus-signed offsets, and the two columns of plus/
+minus markers on the lines of content. This is called a combined diff, and it shows the difference
+between the workspace copy of the file and the stage 2 and 3 index entries simultaneously. This
+diff format is also used by the log command when displaying patches for merge commits.
+
+We won’t implement this format immediately, since it’s a little complex and also hard to read.
+For now, we’ll just flag that some files are unmerged, and implement some options to diff to
+view the difference between specific versions of the file from before the merge.
+
+19.3.1. Unmerged paths
+The simplest change to make to the diff command is to put in a decision about how
+to handle conflicted files. Rather than just displaying the workspace changes from the
+Repository::Status object, we make a combined list of all the changed and conflicted
+paths before iterating over them. If the file is conflicted, we display it using a new method
+print_conflict_diff, otherwise we call print_workspace_diff which contains the existing
+display logic.
+     # lib/command/diff.rb
+
+         def diff_index_workspace
+           return unless @options[:patch]
+
+            paths = @status.conflicts.keys + @status.workspace_changes.keys
+
+            paths.sort.each do |path|
+              if @status.conflicts.has_key?(path)
+                print_conflict_diff(path)
+
+                                       Conflict resolution
+
+              else
+                print_workspace_diff(path)
+              end
+            end
+          end
+
+The print_conflict_diff method for now just prints Unmerged path with the name of the file,
+while print_workspace_diff prints a patch between a normal index entry and the workspace
+file as before.
+     # lib/command/diff.rb
+
+          def print_conflict_diff(path)
+            puts "* Unmerged path #{ path }"
+          end
+
+          def print_workspace_diff(path)
+            case @status.workspace_changes[path]
+            when :modified then print_diff(from_index(path), from_file(path))
+            when :deleted then print_diff(from_index(path), from_nothing(path))
+            end
+          end
+
+19.3.2. Selecting stages
+Rather than displaying a combined diff, Git gives the option to see the difference between a
+specific version of the file before the merge, and the file in the workspace. If you pass --base
+or -1, it shows the difference against the file from the base of the merge — the stage 1 index
+entry. With --ours or -2 it bases the diff on the left side of the merge, i.e. the current HEAD, and
+with --theirs or -3 it’s based on the right side, or the incoming merged commit.
+
+Here’s our example conflicted file compared to the merge base, where it contained the string
+one:
+
+     $ git diff --base
+
+     * Unmerged path f.txt
+     diff --git a/f.txt b/f.txt
+     index 5626abf..53e1e5a 100644
+     --- a/f.txt
+     +++ b/f.txt
+     @@ -1 +1,5 @@
+     -one
+     +<<<<<<< HEAD
+     +two
+     +=======
+     +three
+     +>>>>>>> topic
+
+Comparing to the left side of the merge, where the file had the contents two, we see one side
+of the conflicted region is the content from that version:
+     $ git diff --ours
+
+     * Unmerged path f.txt
+     diff --git a/f.txt b/f.txt
+
+                                     Conflict resolution
+
+     index f719efd..53e1e5a 100644
+     --- a/f.txt
+     +++ b/f.txt
+     @@ -1 +1,5 @@
+     +<<<<<<< HEAD
+      two
+     +=======
+     +three
+     +>>>>>>> topic
+
+Likewise, comparing to the right side of the merge highlights the other side of the conflicted
+region as unmodified.
+     $ git diff --theirs
+
+     * Unmerged path f.txt
+     diff --git a/f.txt b/f.txt
+     index 2bdf67a..53e1e5a 100644
+     --- a/f.txt
+     +++ b/f.txt
+     @@ -1 +1,5 @@
+     +<<<<<<< HEAD
+     +two
+     +=======
+      three
+     +>>>>>>> topic
+
+These diffs are in the usual format that we implemented in Chapter 12, Spot the difference,
+we just need some code to select the right index entry to compare the workspace file to. Let’s
+expand the Command::Diff#define_options method to include these stage-selection flags.
+     # lib/command/diff.rb
+
+         def define_options
+           @options[:patch] = true
+           define_print_diff_options
+
+           @parser.on "--cached", "--staged" do
+             @options[:cached] = true
+           end
+
+           @parser.on("-1", "--base")   { @options[:stage] = 1 }
+           @parser.on("-2", "--ours")   { @options[:stage] = 2 }
+           @parser.on("-3", "--theirs") { @options[:stage] = 3 }
+         end
+
+We can then expand the print_conflict_diff method to show a patch, if the user has specified
+a stage. If they have not, then @options[:stage] will be nil.
+     # lib/command/diff.rb
+
+         def print_conflict_diff(path)
+           puts "* Unmerged path #{ path }"
+
+           target = from_index(path, @options[:stage])
+           return unless target
+
+           print_diff(target, from_file(path))
+
+                                      Conflict resolution
+
+         end
+
+The from_index method needs to gain a stage parameter for selection particular items from
+the index. If stage is nil, or the index does not contain an entry with the required stage, then
+we return nil, which causes print_conflict_diff to do nothing.
+     # lib/command/diff.rb
+
+         def from_index(path, stage = 0)
+           entry = repo.index.entry_for_path(path, stage)
+           entry ? from_entry(path, entry) : nil
+         end
+
+The user now has enough information to accurately view the state of the repository with
+conflicted files, and we can provide tools for them to complete the merge once they’ve resolved
+all the conflicts.
+
+19.4. Resuming a merge
+Once we’ve resolved all the conflicts, we want to resume the merge — to tell Git what the
+merged tree should look like and have it write a merge commit as it would have done if there
+were no conflicts. Git lets us do this using the commit and merge --continue commands.
+
+To complete this functionality, a few moving parts are needed. First, we need to be able to evict
+conflicted entries from the index, using the add command to replace them with a clean version.
+Once we’ve removed all the conflicts from the index, we want to run a command to write a
+merge commit using the original message and the merged commit ID as the second parent. This
+requires storing the state of the original merge command before it failed due to the conflicts.
+When we run merge --continue or commit, we want to pick up the state from the in-progress
+merge and use it to write a multi-parent commit, as long as the index is clean.
+
+19.4.1. Resolving conflicts in the index
+Resolving conflicts in the index is straightforward. The add command invokes the Index#add
+method, and just like Index#add_conflict_set removes any stage-0 entries for the given path,
+we can make Index#add remove any conflict entries before inserting a stage-0 entry.
+     # lib/index.rb
+
+       def add(pathname, oid, stat)
+         (1..3).each { |stage| remove_entry_with_stage(pathname, stage) }
+
+         # ...
+       end
+
+19.4.2. Retaining state across commands
+When we run merge --continue or commit, with no further arguments, while a conflicted
+merge is in progress, it should write a merge commit using the original input message and the
+ID of the merged commit as the second parent. Before the merge command exits, it needs to
+write these values to disk so they can be recalled next time we run jit.
+
+                                      Conflict resolution
+
+We can start by saving the original message and the ID of the right-hand commit when
+we first run the merge command (the ID of the left-hand commit is in .git/HEAD, as
+usual). After gathering the required information, we’ll call pending_commit.start from the
+Command::Merge class.
+
+     # lib/command/merge.rb
+
+         def run
+           # ...
+
+             pending_commit.start(@inputs.right_oid, @stdin.read)
+             resolve_merge
+             commit_merge
+
+           exit 0
+         end
+
+pending_commit is a method in the mixed-in WriteCommit module that forwards the call to the
+Repository class and memoises the result.
+
+     # lib/command/shared/write_commit.rb
+
+         def pending_commit
+           @pending_commit ||= repo.pending_commit
+         end
+
+Repository#pending_commit in turn constructs a Repository::PendingCommit object using
+the repository’s .git pathname.
+     # lib/repository.rb
+
+       def pending_commit
+         PendingCommit.new(@git_path)
+       end
+
+The Repository::PendingCommit class itself manages the storage and retrieval of these saved
+merge values, and lets us check whether a merge is currently in progress. It saves off the commit
+ID and message passed to it into the files .git/MERGE_HEAD and .git/MERGE_MSG.
+     # lib/repository/pending_commit.rb
+
+     class Repository
+       class PendingCommit
+
+         def initialize(pathname)
+           @head_path    = pathname.join("MERGE_HEAD")
+           @message_path = pathname.join("MERGE_MSG")
+         end
+
+         def start(oid, message)
+           flags = File::WRONLY | File::CREAT | File::EXCL
+           File.open(@head_path, flags) { |f| f.puts(oid) }
+           File.open(@message_path, flags) { |f| f.write(message) }
+         end
+
+       end
+     end
+
+                                     Conflict resolution
+
+If the merge runs successfully, i.e. it does not exit due to a conflicted index, then we can
+immediately remove this data by calling PendingCommit#clear.
+     # lib/command/merge.rb
+
+         def commit_merge
+           parents = [@inputs.left_oid, @inputs.right_oid]
+           message = pending_commit.merge_message
+
+           write_commit(parents, message)
+
+           pending_commit.clear
+         end
+
+Repository::PendingCommit#clear simply removes the files it was storing information in.
+
+     # lib/repository/pending_commit.rb
+
+         def clear
+           File.unlink(@head_path)
+           File.unlink(@message_path)
+         end
+
+19.4.3. Writing a merge commit
+With all the necessary state now available inside the .git directory, it’s possible to resume a
+merge with the original inputs intact. Let’s add the --continue option to the merge command,
+and dispatch to a new method handle_continue if it’s set. We’ll also handle the special case
+where we try to start a new merge when there’s already a merge in progress.
+     # lib/command/merge.rb
+
+         def define_options
+           @options[:mode] = :run
+           @parser.on("--continue") { @options[:mode] = :continue }
+         end
+
+         def run
+           handle_continue if @options[:mode] == :continue
+           handle_in_progress_merge if pending_commit.in_progress?
+
+           # ...
+         end
+
+The handle_continue method just needs to load the index — for reading, not for
+updating — then write a merge commit by calling the resume_merge method from
+Command::WriteCommit, which we’ll define below. handle_in_progress_merge deals with
+calling merge when one is already in progress; if PendingCommit#in_progress? returns true,
+we print an error message and exit with a non-zero status.
+     # lib/command/merge.rb
+
+         def handle_continue
+           repo.index.load
+           resume_merge
+         rescue Repository::PendingCommit::Error => error
+           @stderr.puts "fatal: #{ error.message }"
+
+                                      Conflict resolution
+
+           exit 128
+         end
+
+         def handle_in_progress_merge
+           message = "Merging is not possible because you have unmerged files"
+           @stderr.puts "error: #{ message }."
+           @stderr.puts CONFLICT_MESSAGE
+           exit 128
+         end
+
+The PendingCommit#in_progress? method just needs to return true if a merge is unfinished,
+which we can detect by checking whether .git/MERGE_HEAD exists.
+     # lib/repository/pending_commit.rb
+
+         def in_progress?
+           File.file?(@head_path)
+         end
+
+If we’ve called merge with the --continue option, then we’ll try to write a merge commit using
+the stored state. We fetch the parents by reading .git/HEAD and .git/MERGE_HEAD, and get the
+message out of .git/MERGE_MSG. We then call our existing write_commit method, and clear
+the merge state before exiting.
+     # lib/command/shared/write_commit.rb
+
+         def resume_merge
+           parents = [repo.refs.read_head, pending_commit.merge_oid]
+           write_commit(parents, pending_commit.merge_message)
+
+           pending_commit.clear
+           exit 0
+         end
+
+The merge_oid and merge_message methods are defined on Repository::PendingCommit. If
+.git/MERGE_HEAD does not exist, we should raise an error, since we’re trying to resume a merge
+when none is in progress. This error will be caught in Command::Merge#handle_continue,
+which prints the error message and exits.
+     # lib/repository/pending_commit.rb
+
+         Error = Class.new(StandardError)
+
+         def merge_oid
+           File.read(@head_path).strip
+         rescue Errno::ENOENT
+           name = @head_path.basename
+           raise Error, "There is no merge in progress (#{ name } missing)."
+         end
+
+         def merge_message
+           File.read(@message_path)
+         end
+
+Now that we’re going to be invoking merge and commit in a potential conflict situation, the
+resume_merge method should prevent us from writing commits when the index is conflicted;
+we can’t generate a tree from the index unless all conflicts have been settled.
+
+                                      Conflict resolution
+
+We’ll add a check to the top of resume_merge that exits with an error if the index contains any
+conflict entries. Now commit and merge will complain if we try to run them when they’re not
+able to generate a tree successfully.
+     # lib/command/shared/write_commit.rb
+
+         CONFLICT_MESSAGE = <<~MSG
+           hint: Fix them up in the work tree, and then use 'jit add <file>'
+           hint: as appropriate to mark resolution and make a commit.
+           fatal: Exiting because of an unresolved conflict.
+         MSG
+
+         def resume_merge
+           handle_conflicted_index
+
+           # ...
+         end
+
+         def handle_conflicted_index
+           return unless repo.index.conflict?
+
+           message = "Committing is not possible because you have unmerged files"
+           @stderr.puts "error: #{ message }."
+           @stderr.puts CONFLICT_MESSAGE
+           exit 128
+         end
+
+The other bit of glue we need is that, if commit is invoked during a merge, it should write a
+merge commit by reading from PendingCommit, rather than writing a normal commit from its
+own inputs.
+     # lib/command/commit.rb
+
+         def run
+           repo.index.load
+           resume_merge if pending_commit.in_progress?
+
+           # ...
+         end
+
+We now have a complete merge workflow: we can merge any commit we like, and all potential
+edge cases are handled. Null and fast-forward merges are detected and executed, and merge
+conflicts cause the merge to fail. The conflicts are accurately presented to the user so they can
+fix them, and they’re able to mark files as clean and commit the result when they’re finished.
+

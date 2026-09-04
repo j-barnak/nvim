@@ -1,0 +1,801 @@
+PIPES, PROCFS, AND AUTOMATED
+TESTING
+    I sent vibrations across the sea just to hear you smile.
+In the last chapter, you implemented an sdb::process class that can
+launch or attach to a process on your computer. In this chapter,
+you’ll write automated tests for this class and implement error
+communication between the debugger and the inferior process.
+You’ll also learn how to use the Linux process filesystem
+(procfs) to retrieve information about existing processes.
+
+Test Cases
+
+Until now, our testing has been ad hoc and manual. This is
+acceptable so long as the debugger consists of two or three
+simple functions, but as the code gets bigger, manual testing will
+become infeasible very quickly. We should create an automated
+test suite to ensure we don’t regress any features as we make
+changes to the code.
+
+Currently, sdb::process has four pieces of functionality: launching
+a process, attaching to an existing process, continuing a process,
+and waiting for a process to be signaled. This functionality
+possesses a few error cases, which we can enumerate as
+follows:
+
+Launching a process
+
+  Insufficient permissions for PTRACE_TRACEME
+  Couldn’t execute the program
+Attaching to an existing process
+
+   Invalid PID
+   Insufficient permissions for PTRACE_ATTACH
+
+Continuing a process
+
+   Process already terminated
+
+Waiting for a process to be signaled
+
+   Process already terminated
+
+Some of these error conditions are more difficult to test than
+others (for example, PTRACE_TRACEME will only really fail if the
+system is misconfigured), but we should test as many of them as
+we can, as well as the case where everything goes well. We’ll
+start by testing sdb::process::launch.
+
+Testing Process Launching
+
+Let’s write a test to ensure that if we launch a program with
+sdb::process, a process is created on the system. We’ll use Catch2,
+
+which you set up in Chapter 1. Replace the current contents of
+sdb/test/tests.cpp with the following:
+       #include <catch2/catch_test_macros.hpp>
+       #include <libsdb/process.hpp>
+
+       using namespace sdb;
+
+       namespace {
+         ➊ bool process_exists(pid_t pid);
+       }
+
+   ➋ TEST_CASE("process::launch success", "[process
+         auto proc = process::launch("yes");
+       ➌ REQUIRE(process_exists(proc->pid()));
+   }
+
+Shortly, we’ll write a function to check if a process exists, so we
+declare it here ➊. We define the test case that ensures that
+process::launch works ➋. We tag the test case with [process] so that,
+
+once we’ve written more tests, we can run only the test cases
+related to sdb::process with ./tests [process]. We launch the process
+and require that a process with the stored PID exist ➌.
+
+Now we need to implement process_exists. One way to do this on
+Linux is with the kill syscall. If you call kill with a signal of 0, it
+doesn’t send a signal to the process but still carries out the
+existence and permission checks it would make when actually
+sending a signal:
+
+   #include <sys/types.h>
+   #include <signal.h>
+
+   namespace {
+       bool process_exists(pid_t pid) {
+              auto ret = kill(pid, 0);
+            ➊ return ret != -1 and errno != ESRCH;
+        }
+   }
+
+When kill fails because the process doesn’t exist, it returns -1
+and sets errno to ESRCH. To check that a process exists, we return an
+indication of whether both of those conditions are false ➊. When
+you build and run the test, you should see that it passes.
+
+Let’s also write a test to ensure that sdb::process throws an
+sdb::error exception when asked to launch a nonexistent
+
+program. Catch2 comes with a handy macro for doing exactly
+this:
+
+   #include <libsdb/error.hpp>
+
+   TEST_CASE("process::launch no such program", "[p
+         REQUIRE_THROWS_AS(process::launch("you_do_not
+   }
+
+The REQUIRE_THROWS_AS macro ensures that the given expression
+throws an exception of the given type. Unless you’re a massive
+Mary Oliver fan, you probably don’t have a program called
+you_do_not_have_to_be_good sitting in your PATH environment variable.
+
+(If you do, change the program name to something else.)
+
+When you build and run this test, you’ll notice that, contrary to
+our desires, the test fails because we don’t encounter an
+exception:
+
+   tests is a Catch2 host application.
+   Run with -? for options
+
+   ------------------------------------------------
+   process::launch no such program
+   ------------------------------------------------
+
+   ../../../test/tests.cpp:20
+   ................................................
+
+   ../../../test/tests.cpp:21: FAILED:
+     REQUIRE_THROWS_AS( process::launch("you_do_not_
+   because no exception was thrown where one was exp
+   =================================================
+   test cases: 2 | 1 passed | 1 failed
+   assertions: 2 | 1 passed | 1 failed
+
+What gives? Well, we check for execlp failures inside process::launch
+as follows:
+
+        if (pid == 0) {
+            if (ptrace(PTRACE_TRACEME, 0, nullptr, nu
+                error::send_errno("Tracing failed");
+            }
+            if (execlp(path.c_str(), path.c_str(), nu
+                error::send_errno("Exec failed");
+            }
+        }
+
+The issue, as you may have worked out, is that the child process
+throws the exception but doesn’t send this exception to the
+parent. To correct the problem, let’s discuss communications
+between the parent and child processes.
+
+Pipes for Inter-Process Communication
+C++ exceptions don’t flow between processes. To communicate
+errors between the debugger process and the inferior process,
+we need to use some other mechanism, such as a pipe. In Unix,
+a pipe is a one-way communication channel between two
+processes whereby data fed into one end of the pipe can be read
+at the other end. Pipes are a form of buffered communication,
+able to retain up to 64KiB of data by default before being read
+from.
+
+You can create pipes programmatically with the pipe syscall:
+
+   #include <unistd.h>
+
+   int fds[2];
+   pipe(fds);
+
+The pipe function creates a pipe, placing a file descriptor for the
+read end of the pipe into fds[0] and a file descriptor for the write
+end of the pipe into fds[1]. A second function, pipe2, allows you to
+set flags on the pipe while creating it, such as to force the pipe
+to close if the process calls an exec* function. We’ll use it for our
+inter-process communication.
+
+Interfacing with pipes is a bit unwieldy and requires us to use
+older C APIs. Let’s write a small wrapper around pipes to clean
+up the code, as we’ll be using them several times throughout
+the book. In sdb/include/libsdb/pipe.hpp, create an sdb::pipe type:
+
+   #ifndef SDB_PIPE_HPP
+   #define SDB_PIPE_HPP
+
+   #include <vector>
+   #include <cstddef>
+
+   namespace sdb {
+       class pipe {
+       public:
+        ➊ explicit pipe(bool close_on_exec);
+           ~pipe();
+
+              int get_read() const { return fds_[read_f
+              int get_write() const { return fds_[write
+              int release_read();
+              int release_write();
+              void close_read();
+              void close_write();
+
+          ➋ std::vector<std::byte> read();
+             void write(std::byte* from, std::size_t b
+
+        private:
+         ➌ static constexpr unsigned read_fd = 0;
+            static constexpr unsigned write_fd = 1;
+              int fds_[2];
+         };
+   }
+
+   #endif
+
+We perform a bunch of operations here, but none does
+anything too complicated. The close_on_exec parameter for the
+constructor ➊ tells the pipe whether it should automatically
+close the file descriptor if the process calls exec. This is desirable
+in cases where we expect to replace the process with another
+one and don’t want duplicate file handles hanging around. We
+declare a destructor that will do any necessary cleanup and
+then perform operations to retrieve, release, and close the two
+ends of the pipe.
+
+We also need read and write operations that operate on raw bytes
+➋. The std::byte type added in C++17 represents a single byte. It
+serves our purposes better than char, which has several other
+uses in C++ and allows operations like integer arithmetic that
+we should avoid when interacting with raw memory.
+
+Finally, a few private members, read_fd and write_fd, make it
+harder to use the wrong index into fds_, which holds the actual
+file descriptors ➌. Note that the wrapper follows a resource
+acquisition is initialization (RAII) approach, as described in the
+following box.
+
+RESOURCE ACQUISITION IS INITIALIZATION
+
+C++ programmers are great at acronyms, huh? Strange name
+aside, RAII means that an object acquires all of the resources
+and invariants it needs to function upon construction and
+releases all acquired resources upon destruction.
+
+The std::vector type is a classic example of RAII, as it internally
+manages dynamic memory, which gets freed automatically
+when the vector is destroyed:
+
+   {
+       std::vector<int> is {0,1,2,3};
+   }
+
+In this example, the object acquires sufficient dynamically
+allocated memory to store four int values on construction.
+When it’s destroyed at the end of the scope, the memory is freed
+automatically; we don’t need to remember to call some function
+to clean it up.
+Add pipe.cpp to sdb/src/CMakeLists.txt:
+
+   add_library(libsdb process.cpp pipe.cpp)
+
+Now implement the members in sdb/src/pipe.cpp, starting with
+the constructor:
+
+   #include <unistd.h>
+   #include <fcntl.h>
+   #include <libsdb/pipe.hpp>
+   #include <libsdb/error.hpp>
+
+   sdb::pipe::pipe(bool close_on_exec) {
+     ➊ if (pipe2(fds_, close_on_exec ? O_CLOEXEC : 0
+            error::send_errno("Pipe creation failed"
+        }
+   }
+
+We pass O_CLOEXEC to pipe2 if close_on_exec is true ➊, to ensure that the
+pipe gets closed when we call execlp. Otherwise, the process will
+hang while trying to read from the pipe due to the duplicated
+file descriptors. Of course, we also remember to check for
+errors.
+Next, implement the destructor and release_* and close_*
+functions:
+
+   #include <utility>
+
+   sdb::pipe::~pipe() {
+        close_read();
+        close_write();
+   }
+
+   int sdb::pipe::release_read() {
+    ➊ return std::exchange(fds_[read_fd], -1);
+   }
+
+   int sdb::pipe::release_write() {
+        return std::exchange(fds_[write_fd], -1);
+   }
+
+   void sdb::pipe::close_read() {
+        if (fds_[read_fd] != -1) {
+             close(fds_[read_fd]);
+             fds_[read_fd] = -1;
+        }
+   }
+
+   void sdb::pipe::close_write() {
+        if (fds_[write_fd] != -1) {
+             close(fds_[write_fd]);
+               fds_[write_fd] = -1;
+         }
+   }
+
+The destructor closes both the read and the write end of the
+pipe. The two release_* functions return the current file
+descriptor for the relevant end of the pipe and set it to some
+“empty” file descriptor (we use -1 here). The std::exchange(a, b) ➊
+convenience helper for auto tmp = a; a = b; return tmp; lives in the
+<utility> header. The two close_* functions call close on the relevant
+
+file descriptor so long as it’s valid and set it to -1.
+
+Finally, add the read and write functions to read from and write to
+the pipes. We’ll just read a single batch of at most 1,024 bytes
+when the user requests a read, as this is enough for our needs:
+
+   std::vector<std::byte> sdb::pipe::read() {
+    ➊ char buf[1024];
+       int chars_read;
+    ➋ if ((chars_read = ::read(fds_[read_fd], buf,
+           error::send_errno("Could not read from pi
+       }
+
+             auto bytes = reinterpret_cast<std::byte*>(b
+             return std::vector<std::byte>(bytes, bytes
+       }
+   ➌ void sdb::pipe::write(std::byte* from, std::si
+            if (::write(fds_[write_fd], from, bytes) <
+                error::send_errno("Could not write to p
+            }
+       }
+
+Inside sdb::pipe::read, we declare an array of 1,024 characters ➊ to
+use as a buffer. We use char instead of std::byte because read
+expects this type. We call ::read to fill the buffer from the read
+end of the pipe ➋, saving the number of characters that were
+actually read, as there are likely to be fewer than 1,024
+characters in the pipe. We use ::read with two colons at the start
+to ensure that we definitely call the read function in the global
+namespace rather than some other one. Finally, we fill a
+std::vector<std::byte> with the resulting data and return it.
+
+Implementing sdb::pipe::write is considerably simpler; we call
+::write with the data we’re given and check for errors ➌.
+
+Let’s now add a pipe to sdb::process for communicating errors
+when spawning a new process. At the start of launch, we create
+the pipe and then call fork. Modify sdb/src/process.cpp like this:
+   #include <libsdb/pipe.hpp>
+
+   std::unique_ptr<process> process::launch(std::fil
+       ➊ pipe channel(/*close_on_exec=*/true);
+          --snip--
+   }
+
+Note that it’s important to call pipe before fork, or your pipes
+won’t function; the pipes in the two processes will be
+completely distinct. Also, we’ll call execlp, and we want the pipe
+to be closed when this happens so we don’t leave stale file
+descriptors sitting around. Therefore, we pass true to the sdb::pipe
+constructor ➊.
+
+If we’re the child process, we call ptrace and execlp, and if we get
+any errors, we write them back to the parent process using the
+pipe:
+
+   namespace {
+    ➊ void exit_with_perror(
+           sdb::pipe& channel, std::string const& p
+        ➋ auto message = prefix + ": " + std::strer
+           channel.write(
+               reinterpret_cast<std::byte*>(message
+           exit(-1);
+        }
+   }
+
+   std::unique_ptr<process> process::launch(std::fil
+       --snip--
+        if (pid == 0) {
+            ➌ channel.close_read();
+               if (ptrace(PTRACE_TRACEME, 0, nullptr, nu
+                   exit_with_perror(channel, "Tracing fa
+               }
+               if (execlp(path.c_str(), path.c_str(), nu
+                   exit_with_perror(channel, "exec faile
+               }
+        }
+        --snip--
+   }
+
+We introduce a new function here called exit_with_perror that
+writes a representation of errno to a pipe with a given message
+prefix ➊. As we did when we wrote sdb::error, we use std::strerror
+to get a message based on errno and append this to the given
+prefix ➋. We send this message over the pipe and exit with an
+error code. On Linux, the error code -1 is idiomatic for any
+“something generally went wrong” error.
+After we ensure we’re inside the child process, we close its read
+end of the pipe ➌, as we won’t be using it. The parent will close
+its write end. On the parent side, we read the other end of the
+pipe and throw an exception if the child wrote anything to it:
+
+   std::unique_ptr<process> process::launch(std::fil
+       --snip--
+       channel.close_write();
+       auto data = channel.read();
+    ➊ channel.close_read();
+
+       ➋ if (data.size() > 0) {
+              waitpid(pid, nullptr, 0);
+              auto chars = reinterpret_cast<char*>(data
+              error::send(std::string(chars, chars + da
+          }
+
+         std::unique_ptr<process> proc (
+             new process(pid, /*terminate_on_end=*/tru
+         proc->wait_on_signal();
+
+         return proc;
+   }
+
+We close the write end of the pipe, read any message that may
+have been sent over the read end, and close the read end ➊.
+Always make sure you close file descriptors as soon as you don’t
+need them anymore. The versions of the file descriptors in the
+child process will close automatically because we passed true as
+the close_on_exec argument when we created channel. If we got
+something over the read pipe ➋, we wait for the child process to
+terminate and issue an error with the given message. Now,
+whenever there is an error in launching the child process, the
+parent process will throw an exception. We use the std::string
+constructor that takes a begin pointer and end pointer to copy
+string data from in order to construct the argument to error::send.
+
+Now that we’ve added pipes the the code, all tests in the current
+test suite should pass, as sdb::process correctly issues an exception
+if launching fails. Next, we’ll test the attach and resume functions.
+To achieve this, we’ll need a way to ask the operating system for
+information about existing processes.
+
+The Linux procfs
+
+When we tested sdb::process::launch, we wanted to make sure that a
+real process got created for the program we tried to launch.
+When testing attach, however, the process already exists; we
+instead want to check that we’ve actually attached to the
+program and halted its execution. Fortunately for us, Linux
+provides a way to do exactly this as part of the process
+filesystem (procfs), which lets us examine the processes running
+on a system through files.
+
+We’ll encounter the procfs several times on our quest to write a
+functional debugger. At its most basic, it’s a virtual filesystem
+located at /proc that presents a veritable treasure trove of
+information about the activities taking place on the system,
+organized in what look like regular files on the hard drive. For
+our current purposes, we’re interested in process stat files,
+which live in /proc/<pid>/stat and give high-level information
+about the state of a given process, such as the name of the
+executable the process is running, the PID of its parent, the
+amount of time for which it has been running, and, most
+importantly for us, the current process execution state.
+
+As an example, here is the state of the init process on my
+machine at the time of writing, accessible through /proc/1/stat:
+
+   1 (init) S 0 0 0 0 -1 4194560 3081 315 3 66 10 39
+   201 18446744073709551615 1 1 0 0 0 0 65536 214709
+   0 0 0 0 0 0 0 0 0 0
+
+The first value, 1, is the PID of the process; the second value,
+(init), is the name of the executable, enclosed in parentheses;
+and the third value, S, is the execution state. It’s this third entry
+we care about. In a process stat file, it can be one of these
+options:
+
+  R        Running
+
+  S        Sleeping in an interruptible wait
+
+  D        Waiting in uninterruptible disk sleep
+
+  Z        Zombie
+
+  T        Stopped on a signal or, before Linux 2.6.33, trace
+           stopped
+
+  t        Tracing stop (from Linux 2.6.33 onward)
+
+  W        Paging (before Linux 2.6.0 only)
+
+  X        Dead (from Linux 2.6.0 onward)
+
+  x        Dead (from Linux 2.6.33 to 3.13 only)
+
+  K        Wakekill (from Linux 2.6.33 to 3.13 only)
+  W       Waking (from Linux 2.6.33 to 3.13 only)
+
+  P       Parked (from Linux 3.9 to 3.13 only)
+
+This list varies depending on the kernel version you’re using.
+Even so, there are rather many possible states (and some mixed
+metaphors, given that a process can be dead, a zombie, or
+waking, but also parked). The one we care about is t, the tracing
+stop. Let’s write a function to retrieve this status in
+sdb/test/tests.cpp:
+
+      #include <fstream>
+
+      namespace {
+          char get_process_status(pid_t pid) {
+            ➊ std::ifstream stat("/proc/" + std::to_str
+               std::string data;
+            ➋ std::getline(stat, data);
+            ➌ auto index_of_last_parenthesis = data.rfi
+            ➍ auto index_of_status_indicator = index_of
+               return data[index_of_status_indicator];
+          }
+      }
+We open the stat file for the given PID ➊ and read the line of
+data it contains ➋. We assume that the file exists, as we’ll be
+using only this function in contexts where we know there’s a
+running process with the given PID. An easy, safe way to get the
+status indicator we want is to find the index of the last
+parenthesis ➌ in the line and move two characters to the right
+➍.
+
+You might think that we could parse this file by splitting on
+spaces and then retrieving the third entry. However, filenames
+can contain spaces, so this approach could fail. You also can’t
+perform parenthesis matching, because a filename may contain
+unmatched parentheses. For example, if a user named their file
+pathological), the /proc/<pid>/stat file would look like this:
+
+     11259 (pathological )) R 10381 11259 10381 34816
+     241 404 0 0 20 0 1 0 9608606 3276800 250 18446744
+     93841231670534 140730348743840 0 0 0 0 0 0 0 0 0
+     93841231683604 93841253511168 140730348745569 140
+     140730348748775 0
+
+Note the space and unmatched parenthesis. We must worry
+about these kinds of things when writing system tooling; users
+can be wild. With this support in place, we can test the attach
+function.
+
+Testing Process Attaching
+
+As usual, we implement the test for the attach function in
+sdb/test/tests.cpp:
+
+   TEST_CASE("process::attach success", "[process]"
+       auto pid = /* launch program without attachin
+       auto proc = process::attach(pid);
+       REQUIRE(get_process_status(pid) == 't');
+   }
+
+We could write a function to launch some test program without
+attaching to it. But process::launch already has the code to do the
+launching. It would serve us better to make attaching optional
+in process::launch so we can reuse it. We’ll add an option to launch
+that determines whether we should debug the launched process
+and track it with a new member in the object. In
+sdb/include/libsdb/process.hpp, make the following
+modifications:
+   namespace sdb {
+        class process {
+        public:
+              --snip--
+              static std::unique_ptr<process> launch(
+                   std::filesystem::path path, ➊ bool d
+              --snip--
+
+        private:
+            process(pid_t pid, bool terminate_on_end
+                 : pid_(pid),
+                   terminate_on_end_(terminate_on_end
+                   is_attached_(is_attached)
+            {}
+
+            --snip--
+         ➌ bool is_attached_ = true;
+        };
+   }
+
+We add a debug parameter ➊ to sdb::process::launch with which a
+caller can specify whether to attach to the launched process. We
+also add an is_attached parameter to the private constructor ➋
+and an is_attached_ member ➌. Now sdb/src/process.cpp needs
+some supporting edits:
+    std::unique_ptr<process> process::launch(
+             std::filesystem::path path, ➊ bool debug)
+           --snip--
+            ➋ if (debug and ptrace(PTRACE_TRACEME, 0, n
+                   exit_with_perror(channel, "Tracing fa
+                   }
+           --snip--
+
+          std::unique_ptr<process> proc (
+              new process(pid, /*terminate_on_end=*/tru
+
+        ➍ if (debug) {
+               proc->wait_on_signal();
+           }
+
+          return proc;
+    }
+
+We update the signature of launch ➊ and guard the PTRACE_TRACEME
+call so it runs only if the caller requested debugging ➋. We pass
+the new parameter to the private constructor of process ➌.
+Finally, if we don’t start tracing we shouldn’t wait for a signal
+after forking ➍ because the process won’t stop automatically
+after the exec call. We also update the private constructor call in
+process::attach:
+   std::unique_ptr<process> process::attach(pid_t pi
+        --snip--
+        std::unique_ptr<process> proc (
+              new process(pid, /*terminate_on_end=*/fal
+
+        proc->wait_on_signal();
+
+        return proc;
+   }
+
+Since we’re attaching to a process, we pass true as the is_attached
+parameter of the process constructor ➊.
+
+We should check if we need to call PTRACE_DETACH in ~process before
+doing so:
+
+   process::~process() {
+       if (pid_ != 0) {
+           int status;
+        ➊ if (is_attached_) {
+               if (state_ == process_state::running
+                         kill(pid_, SIGSTOP);
+                         waitpid(pid_, &status, 0);
+                   }
+                   ptrace(PTRACE_DETACH, pid_, nullptr,
+                   kill(pid_, SIGCONT);
+              }
+              --snip--
+        }
+   }
+
+We don’t want to detach if we’re not already attached, so we
+check is _attached_ first ➊. Now we can update the test:
+
+   TEST_CASE("process::attach success", "[process]"
+       auto target = ➊ process::launch("targets/run
+       auto proc = process::attach(target->pid());
+       REQUIRE(get_process_status(target->pid()) ==
+   }
+
+We replace the old comment with a call to process::launch ➊ and
+ensure that we pass false as the second argument so we don’t
+attach to the new process.
+
+We’ll write a small program that loops endlessly without
+writing anything to the console and integrate it into the test
+build. You can think of it as an artisanal version of yes. Create a
+new directory called sdb/test/targets and create a new file called
+run_endlessly.cpp in that directory with these contents:
+   int main() {
+        volatile int i;
+        while (true) i = 42;
+   }
+
+Why not just run while (true) {}? Empty infinite loops are
+technically undefined behavior in C++17, and we want to avoid
+encountering any weird issues, so we write to a volatile variable,
+which keeps us in the safe realm of defined behavior.
+
+Create a new CMakeLists.txt inside sdb/test/targets that creates
+a test executable:
+
+   add_executable(run_endlessly run_endlessly.cpp)
+
+Then, include this subdirectory in sdb/test/CMakeLists.txt:
+
+   --snip--
+   add_subdirectory("targets")
+
+This test should pass, letting us move on to testing the case
+where we pass an invalid PID:
+   TEST_CASE("process::attach invalid PID", "[proces
+         REQUIRE_THROWS_AS(process::attach(0), error)
+   }
+
+Attaching to PID 0 should fail, causing us to get an exception and
+passing the test.
+
+We’ve finished testing process::attach. Let’s move on to the last
+function we’ll test in this chapter, sdb::process::resume. We can
+consider wait_on_signal to be tested already, as we’ve relied on it
+for most of the other tests.
+
+Testing Process Resuming
+
+To evaluate the process-resuming code, we’ll test cases in which
+we continue both valid and invalid processes. For each of these
+cases, we’ll test processes launched by sdb as well as preexisting
+ones. Let’s begin with the successful case, in sdb/test/tests.cpp:
+
+   TEST_CASE("process::resume success", "[process]"
+    ➊ {
+           auto proc = process::launch("targets/run_
+           proc->resume();
+           auto status = get_process_status(proc->pi
+        ➋ auto success = status == 'R' or status ==
+               REQUIRE(success);
+         }
+
+         {
+             ➌ auto target = process::launch("targets/ru
+               auto proc = process::attach(target->pid(
+               proc->resume();
+               auto status = get_process_status(proc->pi
+               auto success = status == 'R' or status ==
+               REQUIRE(success);
+         }
+   }
+
+To reuse names within the same test case while avoiding
+collisions, we create blocks to scope their uses. Start a new
+block ➊, launch the run_endlessly program, and then resume it.
+The status of this process should be either R (running) or S
+(sleeping) if it is waiting to be scheduled by the operating
+system ➋.
+
+We also test the launching of the process without attaching to it
+until it’s already running. The only difference is that we pass
+false as the second parameter to process::launch ➌ and then call
+
+process::attach with its PID.
+To test that we get an error if we try to continue an already
+terminated program, let’s make a small program that
+immediately exits in sdb/test/targets/end_immediately.cpp:
+
+   int main() {}
+
+Not even a “Hello, world!” Let’s add this program to
+sdb/test/target/CMakeLists.txt:
+
+   --snip--
+   add_executable(end_immediately end_immediately.cp
+
+Then, we can write the tests:
+
+   TEST_CASE("process::resume already terminated",
+       auto proc = process::launch("targets/end_imme
+       proc->resume();
+       proc->wait_on_signal();
+       REQUIRE_THROWS_AS(proc->resume(), error);
+   }
+
+This test launches the process, resumes it, and then waits for it
+to terminate with wait_on_signal. After termination, we ensure that
+calling resume throws an exception. We don’t test attach here,
+because by the time we call process::attach, the process may have
+already completed. With all the tests written, we’ve completed
+the chapter.
+
+Summary
+
+In this chapter, you learned how to use pipes to communicate
+between processes. You wrote a type to manage the write and
+read ends of a pipe and used it to implement automated tests
+for the process-launching code from the previous chapter. You
+also learned how to retrieve information about existing
+processes from the Linux procfs.
+
+In the next chapter, you’ll build upon this work to extend your
+debugger with the ability to read from and write to CPU
+registers.
+
+Check Your Knowledge
+
+1.
+1. What kind of communication do pipes facilitate?
+2.
+2. What is the default data pipe buffer size?
+3.
+3. What does the pipe2 function provide that the pipe function
+  doesn’t?
+4.
+4. Which part of the Linux filesystem can be read to retrieve
+  information about processes on your system?
+5.
+5. Which specific file can be read to retrieve high-level
+  information about a process, such as its execution state and
+  PID?

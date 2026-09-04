@@ -1,0 +1,513 @@
+Chapter 20
+If-Conversion
+
+Christian Bruel
+
+Very long instruction word (VLIW) or explicitly parallel instruction computing
+(EPIC) architectures make instruction-level Parallelism (ILP) visible within the
+Instruction Set Architecture (ISA), relying on static schedulers to organize the
+compiler output such that multiple instructions can be issued in each cycle.
+   If-conversion is the process of transforming a control-flow region with condi-
+tional branches into an equivalent predicated or speculated sequence of instructions
+(into a region of basic blocks, possibly single) referred to as a Hyperblock.
+If-converted code replaces control dependencies by data dependencies and thus
+exposes instruction-level Parallelism very naturally within the new region at the
+software level.
+   Removing control hazards improves performance in several ways. When the
+misprediction penalty is removed, the instruction fetch throughput is increased
+and the instruction cache locality is improved. Enlarging the size of basic blocks
+allows earlier execution of long latency operations and the merging of multiple
+control-flow paths into a single flow of execution that can later be exploited
+by scheduling frameworks such as VLIW scheduling, hyperblock scheduling, or
+modulo scheduling.
+   Consider the simple example given in Fig. 20.1, which represents the execution
+of an if-then-else-end statement on a 4-issue processor with non-biased
+branches. In this figure, r = q ? r1 : r2 stands for a select instruction where
+r is assigned r1 if q is true, and r2 otherwise. With standard basic block ordering,
+assuming that all instructions have a one-cycle latency, the schedule height rises
+from five cycles in the most optimistic case to six cycles. After if-conversion, the
+execution path is reduced to four cycles with no branches, regardless of the test
+
+C. Bruel ()
+STMicroelectronics, Grenoble, France
+e-mail: christian.bruel@st.com
+
+© The Author(s), under exclusive license to Springer Nature Switzerland AG 2022   269
+F. Rastello, F. Bouchez Tichadou (eds.), SSA-based Compiler Design,
+https://doi.org/10.1007/978-3-030-80515-9_20
+270                                                                                  C. Bruel
+
+                Control flow                             with basic block ordering
+
+                                          After if-conversion
+
+Fig. 20.1 Static schedule of a simple region on a 4-issue processor
+
+outcome, and assuming a very optimistic one-cycle branch penalty. The main benefit
+here is that it can be executed without branch disruption.
+   From this introductory example, we can observe that:
+• The two possible execution paths have been merged into a single execution path,
+  implying a better exploitation of the available resources.
+• The schedule height has been reduced, because instructions can be control-
+  speculated before the branch.
+• The variables have been renamed, and a merge pseudo-instruction has been
+  introduced.
+   Thanks to SSA, the merging point is already materialized in the original control
+flow as a φ pseudo-instruction, and register renaming has been performed by SSA
+construction. Given this, the transformation to generate if-converted code seems
+natural locally. Exploiting these properties on larger-scale control-flow regions
+requires a framework that we will develop further.
+20 If-Conversion                                                                       271
+
+20.1 Architectural Requirements
+
+The merge pseudo-operations need to be mapped to a conditional form of execution
+in the target’s architecture. As illustrated in Fig. 20.2, we differentiate the following
+three models of conditional execution:
+• Fully predicated execution: Any instruction can be executed conditionally on the
+  value of a predicate operand.
+• (Control) speculative execution: The instruction is executed unconditionally and
+  then committed using conditional move (cmov or select) instructions.
+• Partially predicated execution: Only a subset of the ISA is predicated, usually
+  memory operations that are not easily speculated; other instructions are specu-
+  lated.
+   In this figure, we use the notation r = c ? r1 : r2 to represent a select -like
+operation. Its semantic is identical to the gating φif -function presented in Chap. 14:
+r takes the value of r1 if c is true, and r2 otherwise. Similarly, we also use the
+notation c ? r = op to represent the predicated execution of op if the predicate c is
+true; c ? r = op if the predicate c is false.
+   To be speculated, an instruction must not have any side effects or hazards. For
+instance, a memory load must not trap because of an invalid address. Memory
+operations are a major impediment to if-conversion. This is regrettable, because
+like any other long latency instructions, speculative loads can be very effective
+in fetching data earlier in the instruction stream, thereby reducing stalls. Modern
+architectures provide architectural support to dismiss invalid address exceptions.
+Examples are the ldw.d dismissible load operation in the Multiflow Trace series of
+computers, or in the STMicroelectronics ST231 processor, but also the speculative
+load of the Intel IA64. The main difference is that with a dismissible model,
+invalid memory access exceptions are not delivered, which can be problematic
+in an embedded or kernel environment that relies on memory exception for
+correct behaviour. A speculative model serves to catch the exception thanks
+to the token bit check instruction. Some architectures, such as the IA64, offer
+both speculative and predicated memory operations. Stores can also be executed
+conditionally by speculating part of their address value, with additional constraints
+on the ordering of the memory operations due to possible aliases between the
+two paths. Figure 20.3 shows examples of various forms of speculative memory
+operations.
+
+        fully predicated          speculative using select    speculative using cmov
+
+Fig. 20.2 Conditional execution using different models
+272                                                                               C. Bruel
+
+       IA64 speculative load                         Multiflow/ST231 dismissible load
+
+           base store hoisting                             index store hoisting
+
+Fig. 20.3 Examples of speculated memory operations
+
+    Note that the select instruction is an architecture instruction that does not
+need to be replaced during the SSA destruction phase. If the target architecture
+does not provide such a gating instruction, it can be emulated using two conditional
+moves. This translation can be done afterwards, and the select instruction can
+still be used as an intermediate form. It allows the program to stay in full SSA form
+where all the data dependencies are made explicit, and can thus be fed to all SSA
+optimizers.
+    This chapter is organized as follows. We begin by describing the SSA techniques
+to convert a CFG region into SSA form to produce an if-converted SSA repre-
+sentation using speculation. We then describe how this framework is extended to
+use predicated instructions, using the ψ-SSA form presented in Chap. 15. Finally,
+we outline a global framework to pull together these techniques, incrementally
+enlarging the scope of the if-converted region to its maximum beneficial size.
+
+20.2 Basic Transformations
+
+Unlike global approaches that identify a control-flow region and if-convert it in one
+shot, the technique described in this chapter is based on incremental reductions. To
+this end, we consider basic SSA transformations whose goal is to isolate a simple
+diamond-DAG structure (informally an if-then-else-end) that can be easily
+if-converted. The complete framework, which identifies and incrementally performs
+the transformation, is described in Sect. 20.3.
+
+20.2.1 SSA Operations on Basic Blocks
+
+The basic transformation that actually if-converts the code is the φ removal, which
+takes a simple diamond-DAG as an input, i.e., a single-entry node/single-exit node
+(SESE) DAG with only two distinct forward paths from its entry node to its
+20 If-Conversion                                                                      273
+
+Fig. 20.4 φ removal
+
+Fig. 20.5 φ reduction
+
+exit node. The φ removal consists in (1) speculating the code of both branches
+in the entry basic block (denoted head); then (2) replacing the φ-function by a
+select; and finally (3) simplifying the control flow to a single basic block. This
+transformation is illustrated in Fig. 20.4.
+    The goal of the φ reduction transformation is to isolate a diamond-DAG from a
+structure that resembles a diamond-DAG but has side entries to its exit block. This
+diamond-DAG can then be reduced using the φ removal transformation. Nested
+if-then-else-end in the original code can create such a control-flow region.
+Of note is the similarity with the nested arity-two φif -functions used for gated SSA
+(see Chap. 14). In the most general case, the joint node of the considered region
+has n direct predecessors with φ-functions of the form B0 : r = φ(B1 : r1 , B2 :
+r2 , . . . , Bn : rn ) and is such that removing edges from B3 , . . . , Bn would give a
+diamond-DAG. After the transformation, B1 and B2 point to a freshly created basic
+block, say B12 , that itself points to B0 ; a new variable B12 : r12 = φ(B1 : r1 , B2 :
+r2 ) is created in this new basic block; the φ-function in B0 is replaced by B0 : r =
+φ(B12 : r12 , . . . , Bn : rn ). This is illustrated in Fig. 20.5.
+    The goal of path duplication is to isolate a diamond-DAG from a structure that
+resembles a diamond-DAG but has side exit edges. Through path duplication, all
+edges that point to a node different from the exit node or to the willing entry node
+are “redirected” to the exit node. φ reduction can then be applied to the region
+obtained. More formally, consider two distinguished nodes, the first named head and
+the second a single-exit node of the region named exit, such that there are exactly
+two different control-flow paths from head to exit; consider (if it exists) the first node
+274                                                                                      C. Bruel
+
+sidei on one of the forward paths head → side0 → . . . sidep → exit, which has at
+least two direct predecessors. The transformation duplicates the path P = sidei →
+· · · → sidep → exit into P = side i → · · · → side p → exit and redirects sidei−1
+(or head if i = 0) to side i . All the φ-functions that are along P and P for which the
+number of direct predecessors has changed have to be updated accordingly. Hence,
+a r = φ(sidep : r1 , B2 : r2 , . . . , Bn : rn ) in exit will be updated into r = φ(sidep :
+r1 , B2 : r2 , . . . , Bn : rn , sidep : r1 ); a r = φ(sidei−1 : r0 , r1 , . . . , rm ) originally
+in sidei will be updated into r = φ(r1 , . . . , rm ) in sidei and into r = φ(r0 ), i.e.,
+r = r0 in side i . Variable renaming (see Chap. 5) along with copy folding can then
+be performed on P and P . All steps are illustrated in Fig. 20.6.
+     The last transformation, namely the conjunctive predicate merge, concerns the
+if-conversion of a control-flow pattern that sometimes appears on codes to represent
+logical and or or conditional operations. As illustrated in Fig. 20.7, the goal is to
+isolate a diamond-DAG from a structure that resembles a diamond-DAG but has side
+exit edges. As opposed to path duplication, the transformation is actually restricted
+
+Fig. 20.6 Path duplication
+20 If-Conversion                                                                275
+
+Fig. 20.7 Convergent conjunctive merge
+
+     if-conversion on minimal SSA                 if-conversion on pruned SSA
+
+Fig. 20.8 SSA predicate minimality
+
+to a very simple pattern, highlighted in Fig. 20.7, made up of three distinct basic
+blocks: head, which branches with predicate p to side, or exit. side, which is empty
+and branches itself with predicate q to another basic block outside of the region,
+or exit. Conceptually, the transformation can be understood as first isolating the
+outgoing path p → q and then if-converting the obtained diamond-DAG.
+   Implementing the same framework on a non-SSA-form program would require
+more effort: The φ reduction would do the renaming, involving either a global
+data-flow analysis or the insertion of copies at the exit node of the diamond-DAG;
+inferring the minimum amount of select operations would also require the upkeep of
+liveness information. SSA form solves the renaming issue without additional effort,
+and, as illustrated in Fig. 20.8, the minimality and the pruned type of the SSA form
+avoid inserting useless select operations.
+
+20.2.2 Handling of Predicated Execution Model
+
+The φ removal transformation described above involved a speculative execution
+model. As we will illustrate below, in the context of a predicated execution model,
+the choice of speculation versus predication is an optimization decision that should
+276                                                                               C. Bruel
+
+not be imposed by the intermediate representation. Also, transforming speculated
+code into predicated code can be viewed as a coalescing problem. The use of ψ-
+SSA (see Chap. 15) as the intermediate form of if-conversion serves to postpone the
+decision to speculate some code, while the coalescing problem is naturally handled
+by the ψ-SSA destruction phase.
+   Just as (control) speculating an operation on a control-flow graph means ignoring
+the control dependence with the conditional branch, speculating an operation
+on an if-converted code is the same as removing the data dependence with the
+corresponding predicate. On the other hand, after register allocation, speculation
+adds anti-dependencies. This trade-off is illustrated in the example of Fig. 20.9:
+For the fully predicated version of the code, the computation of p has to be done
+before the computations of x1 and x2 ; speculating the computation of x1 removes the
+dependence with p and allows it to be executed in parallel with the test (a < ? b); if
+the computation of both x1 and x2 is speculated, they cannot be coalesced, and when
+destruction of ψ-SSA, the ψ-function will give rise to some select instructions; if
+only the computation of x1 is speculated, then x1 and x2 can be coalesced to x, but
+then an anti-dependence from x = a + b and p ? x = c appears, forbidding its
+execution in parallel.
+   In practice, speculation is performed during the φ removal transformation,
+whenever it is possible (operations with side effect cannot be speculated) and
+considered as beneficial. As illustrated in Fig. 20.10b, only the operations part of
+
+      predicated code      fully speculated     partially speculated      after coalescing
+
+Fig. 20.9 Speculation removes the dependency with the predicate but adds anti-dependencies
+between concurrent computations
+
+         nested if          speculating the then branch      predicating both branches
+
+Fig. 20.10 Inner region ψ-functions
+20 If-Conversion                                                                     277
+
+one of the diamond-DAG branches are actually speculated. This partial speculation
+leads to the manipulation of predicated code.
+   Speculating code is the easiest part, as it could be done prior to the actual if-
+conversion by simply hoisting the code above the conditional branch. Still, it is
+worth pointing out that since ψ-functions are part of the intermediate representation,
+they can be considered for inclusion in a candidate region for if-conversion, and in
+particular for speculation. However, the strength of ψ-SSA allows ψ-functions to
+be treated just like any other operation. Consider the code in Fig. 20.10a containing
+a subregion that has already been processed. To speculate the operation d1 = f(x),
+the operation defining x, i.e., the ψ-function, also has to be speculated. Similarly, all
+the operations defining the operands x1 and x2 should also be speculated. If one of
+them can produce hazardous execution, then the ψ-function cannot be speculated,
+which in turn forbids the operation d1 = f(x) from being speculated. Marking
+operations that cannot be speculated can be done easily using a forward propagation
+along def-use chains.
+   All operations that cannot be speculated, possibly including some ψ-functions,
+should be predicated. Suppose we are considering a non-speculated operation that
+we aim to if-convert and that is part of the then branch on predicate q. Just as
+for x2 = c in Fig. 20.10a, this operation might already be predicated (on p here)
+prior to the if-conversion. In that case, a projection on q is performed, meaning that
+instead of predicating x2 = c by p it gets predicated by q ∧p. A ψ-function can also
+be projected on a predicate q, as described in Chap. 15: All gates of each operand
+are individually projected on q. As an example, originally non-gating operand x1
+gets gated by q, while the p-gated operand x2 gets gated by s = q ∧ p. Note that
+as opposed to speculating it, predicating a ψ-function does not impose predicating
+the operations that defined its operands. The only subtlety related to projection is the
+generation of the new predicate as the logical conjunction of the original guard (e.g.,
+p) and the current branch predicate (e.g., q). Here, s needs to be computed at some
+point. The heuristic consists in first listing the set of all necessary predicates and
+then emitting the corresponding code at the earlier place. Here, the used predicates
+are q, q, and q ∧ p, and q and q are already available. The earlier place where q ∧ p
+can be computed is just after calculating p.
+   Once operations have been speculated or projected (on q for the then branch,
+on q for the else), each φ-function at the merge point is replaced by a ψ-function:
+operands of speculated operations are placed first and guarded by true; operands of
+projected operations follow, guarded by the predicate of the corresponding branch.
+
+20.3 Global Analysis and Transformations
+
+Frequently executed regions are rarely just composed of simple if-then-else
+control-flow regions, but processors have limited resources: the number of registers
+will determine the acceptable level of data dependencies to minimize register
+278                                                                                C. Bruel
+
+pressure; the number of predicate registers will determine the depth of the if-
+conversion so that the number of conditions does not exceed the number of
+available predicates; and the number of processing units will determine the number
+of instructions that can be executed simultaneously. The inner–outer incremental
+process advocated in this chapter serves to evaluate precisely the profitability of
+if-conversion.
+
+20.3.1 SSA Incremental If-Conversion Algorithm
+
+The algorithm takes as input a CFG in SSA form and applies incremental reductions
+using the list of candidate-conditional basic blocks sorted in post-order. Each basic
+block in the list designates the head of a sub-graph that can be if-converted using
+the transformations described in Sect. 20.2. Post-order traversal serves to process
+each region from the inner to the outer. When the if-converted region cannot grow
+anymore because of resources, or because a basic block cannot be if-converted,
+then the next sub-graph candidate is considered until the entire CFG is explored.
+Note that as the reduction proceeds, maintaining SSA can be done using the general
+technique described in Chap. 5. Basic local ad hoc updates can also be implemented
+instead.
+   Consider for example the CFG reported in Fig. 20.11a. The exit node B6 and
+basic block B3 (which contains a function call) cannot be if-converted. The post-
+order list of conditional blocks (represented in bold) is [B9 , B14 , B13 , B11 , B8 , B7 ,
+B5 , B2 ]. (1) The first candidate region is composed of {B9 , B2 , B10 }; φ reduction
+can be applied, promoting the instructions of B10 in B9 ; B2 becomes the single
+direct successor of B9 . (2) The region headed by B14 is then considered; B15 cannot
+yet be promoted because of the side entries coming both from B12 and B13 ; B15
+is duplicated into a B15 with B2 as direct successor; B15 can then be promoted
+into B14 , which now has a single direct successor B2 . (3) The region headed by
+B13 , which has B14 and B15 as direct successors, is now considered; B15 is again
+duplicated into B15 ’, so as to promote B14 and B15 into B13 through φ reduction;
+B15 already contains predicated operations from the previous transformation, so a
+new merging predicate is computed and inserted. After the completion of φ removal,
+B13 has a unique direct successor, B2 . (4) B11 is the head of the new candidate
+region; here, B12 and B13 can be promoted. Again, since B13 contains predicated
+and predicate setting operations, a fresh predicate must be created to hold the
+merged conditions. (5) B8 is then considered; B11 needs to be duplicated to B11 .
+The process finishes with the region head B7 .
+
+20.3.2 Tail Duplication
+
+As shown in Fig. 20.11, some basic blocks (such as B3 ) may have to be excluded
+from the region to if-convert. Tail duplication can be used for this purpose. Similar
+20 If-Conversion                                                                                279
+
+                                                                          B1
+             B1
+
+                                                                          B2
+             B2
+                                                               B3                 B4
+   B3               B4
+                                                                          B5
+             B5
+                                                               B6                 B7
+   B6               B7
+                                                                                If-conversion
+                           B8
+                                                                           B1
+
+                   B11             B9
+                                                                           B2
+             B12           B13       B10
+                                                                B3                 B4
+                                   B14
+
+                           B15                                  B5                 B5
+
+                                                          B7        B6                    B7
+
+                         Initial                                         Tail duplication
+
+Fig. 20.11 If-conversion of wc (word count program). Basic blocks in the highlighted region
+cannot be if-converted. Tail duplication can be used to exclude B3 from the to-be-if-converted
+region
+
+to path duplication described in Sect. 20.1, the goal of tail duplication is to get rid of
+the incoming edges of a region to if-convert. This is usually done in the context of
+hyperblock formation, a technique that, unlike the inner-outer incremental technique
+described in this chapter, consists in if-converting a region in “one shot.” Consider
+again the example of Fig. 20.11a, and suppose that the set of selected basic blocks
+defining the region to if-convert consists of all basic blocks from B2 to B15 excluding
+B3 and B6 . Getting rid of the incoming edge from B3 to B5 is possible by duplicating
+all basic blocks of the region reachable from B5 , as shown in Fig. 20.11c.
+    Consider a region R made up of a set of basic blocks, a distinguished one entry
+and the others denoted (Bi )2≤i≤n , such that any Bi is reachable from entry in R.
+Suppose a basic block Bs has some direct predecessors out1 , . . . , outm that are
+not in R. Tail duplication involves the following steps: (1) for all Bj (including Bs )
+reachable from Bs in R, create a basic block Bj as a copy of Bj ; (2) any branch
+from Bj that points to a basic block Bk of the region is rerouted to its duplicate Bk ;
+280                                                                           C. Bruel
+
+(3) any branch from a basic block outk to Bs is rerouted to Bs . In our example, we
+would have entry = B2 , Bs = B6 , and out = B4 .
+    A global approach would follow the steps in Fig. 20.11c: First, select the region;
+second, get rid of the incoming edges using tail duplication; and finally, perform
+if-conversion of the whole region in one shot. It is worth pointing out that there is
+no phasing issue with tail duplication. To illustrate this point, consider the example
+of Fig. 20.12 where B2 cannot be if-converted. The selected region is made up of
+all other basic blocks. Using a global approach as in standard hyperblock formation,
+tail duplication would be performed prior to any if-conversion. This would result in
+the CFG on the left part of the figure. Note that a new node, B7 , has been added
+here after the tail duplication by a process called branch coalescing. Applying if-
+conversion on the two disjoint regions, whose heads are, respectively, B4 and B4 ,
+would result in the final code shown at the bottom of the figure. Our incremental
+scheme would first perform if-conversion of the region headed by B4 , resulting in
+the code depicted in the CFG on the right. Applying tail duplication to get rid of the
+side entry from B2 would result in exactly the same final code at the bottom.
+
+Fig. 20.12 The absence of phasing issue for tail duplication
+20 If-Conversion                                                                         281
+
+20.3.3 Profitability
+
+Fusing execution paths can overcommit the architectural ability to execute the multi-
+ple instructions in parallel: Data dependencies and register renaming introduce new
+register constraints. Moving operations earlier in the instruction stream increases
+live ranges. Aggressive if-conversion can easily exceed processor resources, leading
+to excessive register pressure or moving infrequently used long latency instructions
+into the critical path. The prevalent idea is that a region can be if-converted if the cost
+of the resulting if-converted basic block is smaller than the cost of each individual
+basic block of the original region weighted by their respective execution probability.
+To evaluate these costs, we consider all possible paths impacted by the if-conversion.
+    For all transformations except the conjunctive predicate merge, there are two
+such paths starting at the basic block head. For the code in Fig. 20.13, we would
+have pathp = [head, B1 , exit[ and pathp = [head, B1 , B2 , exit[ of respective
+probabilities prob(p) and prob(p). For a path Pq = [B0 , B1 , . . . , Bn [ of probability
+                                                     
+prob(q), its cost is given by P    q = prob(q) × n−1 [B     i , Bi+1 [, where [Bi , Bi+1 [
+                                                         i=0
+                                       
+represents the cost of basic block [Bi ] estimated using its schedule height plus the
+branch latency br_lat, if the edge (Bi , Bi+1 ) corresponds to a conditional branch, 0
+otherwise. Note that if Bi branches to Sq on predicate q and falls through to Sq , we
+have
+                                                         
+  Bi = prob(q) × [B    i , Sq [ + prob(q) × [B               
+                                                    i , Sq [ = [B  i ] + prob(q) × br_lat.
+
+   Let pathp = [head, B1 , . . . , Bn , exit[ and pathp = [head, B1 , . . . , Bm , exit[ be
+the two paths starting at the basic block head, where p is the branch predicate. Then,
+the overall cost before if-conversion simplifies to the following:
+
+                 p + path
+   costcontrol = path p
+                                                               
+                                                     
+                                                     n                       
+                                                                             m
+                   + prob(p) × br_lat +
+                = [head]                                   
+                                                           [Bi ] + prob(p) ×   ].
+                                                                               [B i
+                                                     i=0                        i=0
+
+Fig. 20.13 φ reduction
+282                                                                            C. Bruel
+
+Fig. 20.14 Conjunctive
+predicate merge
+
+This is to be compared to the cost after if-conversion:
+                                           
+                                                                
+                 costpredicated = head ◦ %ni=1 B i ◦ %m
+                                                      i=1 Bi ,
+
+where ◦ is the composition function that merges basic blocks together, removes
+associated branches, and creates the predicate operations.
+   The profitability of the logical conjunctive merge in Fig. 20.14 can be
+evaluated similarly. There are three paths impacted by the transformation:
+pathp∧q = [head, side, B1 [, pathp∧q = [head, side, exit[, and pathp = [head, exit[
+of respective probabilities prob(p ∧ q), prob(p ∧ q), and prob(p). The overall cost
+                                                        
+before the transformation (if branches are on p and q) path                 
+                                                            p∧q + pathp∧q + pathp
+simplifies to
+
+                      + side
+      costcontrol = head  = [head]
+                               + prob(p) × (1 + prob(q)) × br_lat,
+
+which should be compared to (if the branch on the new head block is on p ∧ q)
+
+                      
+   costpredicated = head             
+                         ◦ side = [head ◦ side] + prob(p) × prob(q) × br_lat.
+
+   Note that if prob(p) & 1, emitting a conjunctive merge might not be beneficial.
+In that case, another strategy such as path duplication from the exit block will
+be evaluated. Profitability for any conjunctive predicate merge (disjunctive or
+conjunctive; convergent or not) is evaluated similarly.
+   A speed-oriented objective function needs the target machine description to
+derive the instruction latencies, resource usage, and scheduling constraints. The
+local dependencies computed between instructions are used to compute the depen-
+dence height. The branch probability is obtained from static branch prediction
+heuristics, profile information, or user-inserted directives. Naturally, this heuristic
+can be either pessimistic, because it does not take into account new optimization
+opportunities introduced by the branch removal or explicit new dependencies, or
+optimistic because of inaccurate register pressure estimation leading to register
+spilling on the critical path, or uncertainty in the branch prediction. But since
+the SSA incremental if-conversion framework reduces the scope for the decision
+function to a localized part of the CFG, the size and complexity of the inner
+20 If-Conversion                                                                  283
+
+region under consideration make the profitability a comprehensive process. This
+cost function is fast enough to be reapplied to each region during the incremental
+processing, with the advantage that all the instructions introduced by the if-
+conversion process in the inner regions, such as new predicate merging instructions
+or new temporary pseudo-registers, can be taken into account.
+
+20.4 Concluding Remarks and Further Reading
+
+In this chapter, we presented how an if-conversion algorithm can take advantage
+of the SSA properties to efficiently assign predicates and lay out the new control
+flow in an incremental, inner–outer process. As opposed to the alternative top-down
+approach, the region selection can be reevaluated at each nested transformation,
+using local analysis. Hyperblocks [191] were proposed as the primary if-converted
+scheduling framework, excluding basic blocks that do not justify their inclusion
+in the if-converted flow of control. Region selection and if-conversion can be
+performed as a single pass, hyperblocks being created lazily, with well-known
+techniques such as tail duplication or branch coalescing used only when the benefit
+is established. Predication and speculation are often presented as two different
+alternatives for if-conversion. They can coexist in an efficient if-conversion process
+such that every model of conditional execution is accepted in the same framework,
+thanks to the conditional moves and ψ [275] transformations.

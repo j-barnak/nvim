@@ -1,0 +1,2014 @@
+MULTITHREADING
+ A knot of wool, needle lost an aeon before, the desire to be
+ unwound.
+Programs sometimes need to take multiple actions at the same
+time. For example, a GUI may need to perform a lot of heavy
+processing whenever someone clicks a button, and the user will
+have a terrible experience if the entire interface stops working
+while that processing occurs. Instead, the program can
+introduce multiple threads of execution to perform several
+tasks at once. In this chapter, you’ll learn about how Linux
+systems handle threads and extend your debugger with the
+ability to trace multiple threads in a process.
+
+Threads on Linux
+
+On Linux, processes and threads are closely related. The kernel
+implements both as tasks, which represent a single unit of
+execution for the scheduler. The key difference between a
+thread and a process is that multiple threads can share a single
+virtual address space, set of file descriptors, and set of signal
+handlers, whereas processes cannot.
+
+Because threads and processes use the same machinery in the
+kernel, threads have their own PIDs that differ from the PID of
+the process that spawned them. We often refer to these as
+thread IDs (TIDs). Threads that belong to the same process have
+the same thread group ID (TGID), which is equal to the PID of
+the original process.
+Different threads may have different states of execution: while
+one thread is running, another thread may exit, and yet another
+might stop due to a signal. Debuggers generally operate in one
+of two modes: all-stop mode, where the debugger must stop all
+threads before inspecting the program state, and non-stop
+mode, where it can stop and inspect individual threads while
+others continue running. LLDB always runs in all-stop mode.
+GDB runs in all-stop mode by default, but users can enable non-
+stop mode. We’ll implement all-stop mode because it’s generally
+easier to inspect program behavior while other threads aren’t
+running and modifying the program state.
+
+The pthreads Library
+
+Linux creates threads with the clone syscall, but because this is a
+very low-level utility, application programmers generally use
+the pthreads library instead. As an example, create a new file at
+sdb/test/targets/multi_threaded.cpp with the following program,
+which spawns multiple threads with pthreads:
+
+   #include <pthread.h>
+   #include <vector>
+   #include <iostream>
+   #include <unistd.h>
+
+   void* say_hi(void*) {
+        std::cout << "Thread " << gettid() << " repo
+        return nullptr;
+   }
+
+   int main() {
+       std::vector<pthread_t> threads(10);
+
+        for (auto& thread : threads) {
+            pthread_create(&thread, nullptr, say_hi,
+        }
+
+        for (auto& thread : threads) {
+            pthread_join(thread, nullptr);
+        }
+   }
+
+The say_hi function prints the TID of the thread in which it’s
+running. The main function creates a vector of 10 thread handles.
+It then loops through them, calling pthread_create on each one in
+turn. The first argument is a pointer to the thread handle, the
+second contains optional attributes for the new thread (such as
+the amount of memory to allocate for its stack), the third is a
+pointer to an initial function that the thread will call when it
+starts, and the fourth is an argument to pass to the initial
+function. As soon as the program calls pthread_create, it creates a
+new thread and executes the say_hi function. After creating all
+the threads, it waits until they all complete with the pthread_join
+function. This function takes the thread to wait on and an
+optional out parameter at which to store the return value of the
+thread.
+
+Add this code to sdb/test/targets/CMakeLists.txt:
+
+   --snip--
+   add_test_cpp_target(multi_threaded)
+   target_link_libraries(multi_threaded pthread)
+
+Build and run the program, and you should see something like
+(but likely not the same as) this:
+
+   $ test/targets/multi_threaded
+   Thread Thread 11774 reporting in
+   Thread 11776 reporting in
+   11775 reporting in
+   Thread 11779 reporting in
+   Thread 11780 reporting in
+   Thread 11777 reporting in
+   Thread 11778 reporting in
+   Thread 11781 reporting in
+   Thread 11782 reporting in
+   Thread 11783 reporting in
+Notice a problem: the text is out of order and, in some places,
+interrupted. This is due to race conditions, which we’ll look at
+next.
+
+Race Conditions
+
+A race condition occurs when the behavior of the program
+relies on the timing of two or more threads carrying out an
+action. The threads involved are said to race, and the output of
+such a program is nondeterministic; we can’t predict exactly
+what its behavior will be because we don’t know which thread
+will finish first. In the multi_threaded program, the order of the
+lines of output depends on the order of the threads’ execution.
+Also, the output of some threads may interrupt the output of
+other threads because threads (and processes) don’t necessarily
+execute in their entirety before exiting; they may be preempted
+by the operating system, which suspends their execution and
+resumes some other thread or process.
+
+Programmers usually avoid race conditions by introducing
+explicit synchronization into the program to make the order of
+operations deterministic or to guard threads from
+simultaneously performing actions that should be mutually
+exclusive.
+The debugger we’ve been writing over the course of this book is
+single-threaded, and it will remain so, but we still need to be
+wary of race conditions, because the order in which the
+debugger intercepts the signals sent to the inferior process may
+be nondeterministic. We’ll look at some examples of this
+behavior as we implement support for multithreading in the
+debugger.
+
+ptrace and the procfs
+
+To provide the user with an accurate picture of the threads
+running in a given process, we need to retrieve the current list
+of threads when we attach to a process and then receive
+notifications about the creation of new threads. We can do the
+former thanks to the Linux procfs and the latter thanks to ptrace.
+
+The /proc/<pid>/task directory has a subdirectory for every
+thread whose name is the TID of the thread. For example, if a
+process with the PID 42 has spawned two threads, the task
+directory might look like this:
+
+   $ ls /proc/42/task
+   42 43 44
+The thread with the TID 42 is the main thread for the process,
+and the other two are the threads that the process has spawned.
+As such, when we attach to a process, we can read the list of
+subdirectories in the task directory to find the current set of
+threads.
+
+The ptrace syscall has an option called PTRACE_O_TRACECLONE that we
+can pass to a PTRACE_SETOPTIONS request. When the option is enabled,
+the kernel will send a SIGTRAP to any thread that spans a new
+thread and send a SIGSTOP to the new thread. We can figure out
+that a SIGTRAP signifies the creation of a thread by checking the
+status returned by waitpid. If status>>8 == (SIGTRAP |
+(PTRACE_EVENT_EXEC<<8)) is true, the SIGTRAP was due to a new thread
+
+being created.
+
+We can also use ptrace to inspect and manipulate threads other
+than the main one by passing their TIDs instead of the PID of
+the process. For example, calling ptrace with the TID of a new
+thread and the PTRACE_GETREGS request would retrieve the registers
+for the new thread. Requests like PTRACE_CONT and PTRACE_SINGLESTEP
+operate on a single thread, so sending a PTRACE_CONT to the PID of
+the running process will continue only the main thread, not any
+additional threads.
+
+Tracing Threads
+With the background out the way, we can implement thread
+tracing in the debugger.
+
+Trapping New Threads
+
+We’ll start by enabling the PTRACE_O_TRACECLONE request when the
+debugger attaches to the process. We can do this in the existing
+set_ptrace_options function in sdb/src/process.cpp:
+
+   namespace {
+       void set_ptrace_options(pid_t pid) {
+           if (ptrace(PTRACE_SETOPTIONS, pid, nullpt
+                      PTRACE_O_TRACESYSGOOD | PTRACE
+               sdb::error::send_errno(
+                   "Failed to set TRACESYSGOOD and T
+           }
+       }
+   }
+
+Options for ptrace are bit flags, so we bitwise OR the
+PTRACE_O_TRACECLONE flag with the existing PTRACE_O_TRACESYSGOOD flag to get
+
+the final value to set.
+
+Identifying Thread Creation
+We need to identify stops that come from thread creation
+events, so let’s extend sdb::stop_reason to do that. We’ll add a clone
+option to the sdb::trap _type enum and then add a member
+sdb::stop_reason to track the TID of the thread that reported the
+
+stop. Make these modifications in
+sdb/include/libsdb/process.hpp:
+
+   namespace sdb {
+       enum class trap_type {
+           single_step, software_break, hardware_bre
+           syscall, clone, unknown
+       };
+
+         struct stop_reason {
+             --snip--
+             stop_reason(pid_t tid, int wait_status);
+
+               stop_reason(pid_t tid, process_state reas
+                    std::optional<trap_type> trap_reason
+                    std::optional<syscall_information> sy
+                    : reason(reason)
+                    , info(info)
+                    , trap_reason(trap_reason)
+                    , syscall_info(syscall_info)
+                    , tid(tid)
+               {}
+               --snip--
+              pid_t tid;
+         };
+   }
+
+We add the clone enumerator to trap_type, a tid member to
+stop_reason, and parameters for the TID to both of the
+
+constructors, ensuring we initialize the tid member in the
+second constructor.
+
+Modify the implementation of the first constructor in
+sdb/src/process.cpp to store the TID and set the trap reason if
+this stop occurs due to a clone event:
+
+   sdb::stop_reason::stop_reason(pid_t tid, int wait
+       : tid(tid) {
+       if ((wait_status >> 8) == (SIGTRAP | (PTRACE_
+            trap_reason = trap_type::clone;
+       }
+       --snip--
+   }
+
+We initialize the tid member with the given argument. At the
+start of the constructor body, we check if the stop was due to a
+clone and, if so, store trap_type::clone as the trap reason.
+Representing Thread States
+
+We need a data structure to represent the state of a thread. It
+should hold the thread’s TID, its registers, its most recent stop
+reason, and its current state. Let’s add it to
+sdb/include/libsdb/process.hpp, then add members to sdb::process
+that track the current set of threads and identify the thread the
+debugger is currently interacting with. Because the thread_state
+type is responsible for tracking the registers for a given thread,
+we’ll also remove the existing registers_ member from sdb::process:
+
+   namespace sdb {
+       struct thread_state {
+           pid_t tid;
+           registers regs;
+           stop_reason reason;
+           process_state state = process_state::stop
+       };
+
+        class process {
+            --snip--
+            void set_current_thread(pid_t tid) { cur
+              pid_t current_thread() const { return cu
+
+              std::unordered_map<pid_t, thread_state>&
+              thread_states() { return threads_; }
+               const std::unordered_map<pid_t, thread_st
+               thread_states() const { return threads_;
+
+         private:
+               --snip--
+               std::unordered_map<pid_t, thread_state> t
+               pid_t current_thread_ = 0;
+         };
+   }
+
+With the data types in place, we need to populate them. Add a
+function named populate_existing_threads to sdb::process and call it
+from the constructor. Also initialize current_thread to be the given
+PID and remove the initialization of the old registers_ member:
+
+   namespace sdb {
+       class process {
+           --snip--
+       private:
+           --snip--
+           process(pid_t pid, bool terminate_on_end
+                : pid_(pid)
+                , terminate_on_end_(terminate_on_end
+                , is_attached_(is_attached)
+                , current_thread_(pid) {
+                populate_existing_threads();
+               }
+
+               void populate_existing_threads();
+         };
+   }
+
+Implement populate_existing_threads in sdb/src/process.cpp. This
+function should read the contents of /proc/<pid>/task and create
+sdb::thread_state objects for each of the listed TIDs:
+
+   void sdb::process::populate_existing_threads() {
+       auto path = "/proc/" + std::to_string(pid_) +
+       for (auto& entry : std::filesystem::directory
+           auto tid = std::stoi(entry.path().filenam
+           threads_.emplace(tid, thread_state{ tid,
+       }
+   }
+
+We compute the path to the correct task directory, iterate over
+all of the subdirectories, convert their names to integers that
+represent the TIDs, and create new entries in the threads_ map
+for each one. The sdb::registers type doesn’t currently store the
+TID to which the registers belong, so let’s add a member for this
+information and initialize it in sdb/include/libsdb/registers.hpp:
+   namespace sdb {
+         class registers {
+             --snip--
+         private:
+             --snip--
+               registers(process& proc, pid_t tid) : pro
+               --snip--
+               pid_t tid_;
+         };
+   }
+
+Threads have operating system–level state information,
+including their registers and TIDs, but they also have symbol-
+level state information, such as their call stacks, which should
+live in sdb::target rather than in sdb::process. Let’s add a type called
+sdb::thread and a member to hold a collection of them to sdb::target.
+
+We should also add a function that sdb::process can call to notify
+the target that a new thread has been created or terminated. In
+a similar way to how we removed registers_ from sdb::process, we’ll
+also remove the stack_ member from sdb::target. Make these
+modifications in sdb/include/libsdb/target.hpp:
+
+   namespace sdb {
+       struct thread {
+           thread(thread_state* state, stack frames
+                   : state(state), frames(std::move(fram
+               thread_state* state;
+               stack frames;
+         };
+
+         class target {
+         public:
+             --snip--
+             std::unordered_map<pid_t, thread>& thread
+                  return threads_;
+             }
+             const std::unordered_map<pid_t, thread>&
+                  return threads_;
+             }
+
+               void notify_thread_lifecycle_event(const
+
+         private:
+             --snip--
+             std::unordered_map<pid_t, thread> threads
+         };
+   }
+
+The thread type points to a thread_state object that lives in sdb::process
+and stores the stack frames for that thread. We replace the stack_
+member with a threads_ member that stores the stack frames and
+threads functions to retrieve this map. Finally, we add a
+notify_thread_lifecycle_event function that the process can call
+
+whenever a new thread appears or one exits.
+
+Initialize the threads for the target in the constructor:
+
+   target(std::unique_ptr<process> proc, std::unique
+       : process_(std::move(proc))
+       , main_elf_(obj.get()) {
+       elves_.push(std::move(obj));
+       auto pid = process_->pid();
+       for (auto& [tid, state] : process_->thread_st
+           threads_.emplace(tid, thread(&state, stac
+       }
+   }
+
+We remove the initialization of the old stack_ member. Inside the
+constructor body, we loop over all the thread states held in
+process_ and create corresponding thread objects. The sdb::stack
+
+constructor doesn’t currently take a TID, but we’ll change that
+next.
+
+Add a member to sdb::stack to hold the TID to which the stack
+belongs:
+   namespace sdb {
+         class stack {
+         public:
+               stack(target* tgt, pid_t tid) : target_(t
+               pid_t tid() const { return tid_; }
+
+         private:
+             --snip--
+             pid_t tid_ = 0;
+         };
+   }
+
+We also add a parameter to its constructor that initializes the
+member and a member function to retrieve it.
+
+Supporting Multithreaded Processes
+
+Unfortunately, we now have a major refactor ahead of us. Many
+of the functions in sdb::process and sdb::target, like resume and step_in,
+assume that a process has only one thread. We have a few
+options for dealing with this problem:
+
+1. Move all of the functions from sdb::process to sdb::thread_state and
+  from sdb::target to sdb::thread.
+2. Add a TID parameter to all of these functions that indicates
+   the thread on which to operate.
+3. Add an optional TID parameter and, if the caller doesn’t pass
+   a TID, default to the active thread’s TID.
+
+Option 1 is the best decision from an API design standpoint, but
+it requires a lot of boring, manual work, and this isn’t a book
+about API design. Option 2 will break much of the code in the
+command line driver and our tests and make using libsdb quite
+frustrating. Option 3 is a decent midpoint; our existing client
+code will continue to work, the API should remain user-friendly,
+and we won’t have to make too many modifications to the
+library code.
+
+We’ll start with sdb::process. Add optional TID arguments to the
+resume, get_registers, write_user_area, write_fprs, write_gprs, get_pc, set_pc,
+
+get_registers, step_instruction, and get_hardware_stoppoint functions in
+
+sdb/include/libsdb/process.hpp:
+
+    namespace sdb {
+        class process {
+            void resume(std::optional<pid_t> otid = s
+
+                 registers& get_registers(
+                       std::optional<pid_t> otid = std::nu
+                 const registers& get_registers(
+           std::optional<pid_t> otid = std::nu
+
+    void write_user_area(
+        std::size_t offset, std::uint64_t dat
+        std::optional<pid_t> otid = std::null
+    void write_fprs(
+        const user_fpregs_struct& fprs,
+        std::optional<pid_t> otid = std::null
+    void write_gprs(
+        const user_regs_struct& fprs,
+        std::optional<pid_t> otid = std::null
+
+    virt_addr get_pc(
+          std::optional<pid_t> otid = std::nu
+
+    void set_pc(
+          virt_addr address,
+          std::optional<pid_t> otid = std::nu
+
+    sdb::stop_reason step_instruction(
+        std::optional<pid_t> otid = std::null
+
+    std::variant<breakpoint_site::id_type, wa
+    get_current_hardware_stoppoint(
+        std::optional<pid_t> otid = std::null
+
+    --snip--
+private:
+               void read_all_registers(pid_t tid);
+               bool should_resume_from_syscall(const sto
+               --snip--
+         };
+   }
+
+We also change the maybe_resume_from_syscall function into a function
+that returns whether the thread should resume, called
+should_resume_from_syscall. For the functions currently declared
+
+inline, we’ll move their definitions into the implementation file,
+as the header is getting rather cluttered. So, we turn them into
+declarations. We also add a nonoptional TID parameter to the
+private read_all_registers function.
+
+Unfortunately, C++ doesn’t allow us to set a default argument as
+the value of a data member, so we use a little trick: we take a
+std::optional<pid_t> as an argument and set std::nullopt as the default
+
+argument. Then, we’ll call otid.value_or(current_thread_) to get either
+the argument that the caller passed or the current thread, in
+case the caller passed no argument.
+
+One last change we need to make to the header is in wait_on_signal.
+This function should optionally take a TID to wait on, but by
+default, it will wait on all threads. The waitpid function uses -1 as
+an indicator for “wait on all threads,” so we’ll use same
+approach here:
+
+   namespace sdb {
+       class process {
+        public:
+            --snip--
+            void wait_on_signal(pid_t to_await = -1)
+            --snip--
+        };
+   }
+
+Let’s make the necessary changes to sdb/src/process.cpp, starting
+with the definitions of the functions that used to be defined
+inline in the header:
+
+   sdb::virt_addr sdb::process::get_pc(std::optional
+       return virt_addr{
+           get_registers(otid).read_by_id_as<std::ui
+       };
+   }
+
+   void sdb::process::set_pc(
+         virt_addr address, std::optional<pid_t> oti
+       get_registers(otid).write_by_id(register_id:
+   }
+   sdb::registers& sdb::process::get_registers(
+            std::optional<pid_t> otid) {
+
+         auto tid = otid.value_or(current_thread_);
+         return threads_.at(tid).regs;
+   }
+
+   const sdb::registers& sdb::process::get_registers
+         std::optional<pid_t> otid) const {
+       return const_cast<process*>(this)->get_regist
+   }
+
+In get_pc, we pass the otid argument through to get_registers. The
+rest of the function remains unchanged. In the set_pc function,
+we make the same modification, passing the argument through
+to get_registers. The non-const overload for get_registers first
+computes the TID of the thread that it should return the
+registers for and then retrieves that register set from the threads_
+member. The const overload uses the const_cast trick we’ve used
+several times before to defer the implementation to the non-
+const overload.
+
+Now we need to fix the rest of the functions whose declarations
+we changed. The write_user_area, write_fprs, and write_gprs functions
+need to compute the correct TID and pass that to ptrace:
+    void sdb::process::write_user_area(
+            std::size_t offset, std::uint64_t data, std
+          auto tid = otid.value_or(current_thread_);
+          if (ptrace(PTRACE_POKEUSER, tid, offset, data
+              error::send_errno("Could not write to use
+          }
+    }
+
+    void sdb::process::write_fprs(
+          const user_fpregs_struct& fprs, std::option
+        auto tid = otid.value_or(current_thread_);
+        if (ptrace(PTRACE_SETFPREGS, tid, nullptr, &f
+            error::send_errno("Could not write floati
+        }
+    }
+
+    void sdb::process::write_gprs(const user_regs_st
+        auto tid = otid.value_or(current_thread_);
+        if (ptrace(PTRACE_SETREGS, tid, nullptr, &gp
+            error::send_errno("Could not write genera
+        }
+    }
+
+The private read_all_registers function needs to pass the TID to
+each of its three ptrace calls and each of its three calls to
+get_registers:
+   void sdb::process::read_all_registers(pid_t tid)
+         if (ptrace(PTRACE_GETREGS, tid, nullptr, &get
+             error::send_errno("Could not read GPR reg
+         }
+         if (ptrace(PTRACE_GETFPREGS, tid, nullptr, &g
+               error::send_errno("Could not read FPR reg
+         }
+         for (int i = 0; i < 8; ++i) {
+             --snip--
+             std::int64_t data = ptrace(PTRACE_PEEKUSE
+             --snip--
+             get_registers(tid).data_.u_debugreg[i] =
+         }
+   }
+
+The resume function has to compute the TID and pass it to the
+calls to get_pc, waitpid, and ptrace. Additionally, at the end of the
+function, it should set the state of the thread on which it
+operated and of the entire process:
+
+   void sdb::process::resume(std::optional<pid_t> ot
+       auto tid = otid.value_or(current_thread_);
+       auto pc = get_pc(tid);
+       if ({~}_--snip--) {
+           --snip--
+           if (ptrace(PTRACE_SINGLESTEP, tid, nullpt
+                       error::send_errno("Failed to single s
+                }
+                --snip--
+                if (waitpid(tid, &wait_status, 0) < 0) {
+                     error::send_errno("waitpid failed");
+                }
+                --snip--
+          }
+
+          --snip--
+          if (ptrace(request, tid, nullptr, nullptr) <
+               error::send_errno("Could not resume");
+          }
+          threads_.at(tid).state = process_state::runni
+          state_ = process_state::running;
+   }
+
+The step_instruction function needs to compute the TID and pass it
+to get_pc, ptrace, and wait_on_signal:
+
+   sdb::stop_reason sdb::process::step_instruction(s
+       auto tid = otid.value_or(current_thread_);
+       --snip--
+       auto pc = get_pc(tid);
+       --snip--
+       if (ptrace(PTRACE_SINGLESTEP, tid, nullptr, n
+            error::send_errno("Could not single step
+         }
+         auto reason = wait_on_signal(tid);
+         --snip--
+   }
+
+The get_current_hardware_stoppoint function can just pass the optional
+TID through to its call to get_registers:
+
+   std::variant<sdb::breakpoint_site::id_type, sdb:
+   sdb::process::get_current_hardware_stoppoint(std
+       auto& regs = get_registers(otid);
+       --snip--
+   }
+
+We must update a few other function calls, even though we
+didn’t change their signatures. The augment_stop_reason function
+should extract the TID from the given sdb::stop_reason. It has one
+call to ptrace and one call to get_registers that need updating:
+
+   void sdb::process::augment_stop_reason(sdb::stop_
+       auto tid = reason.tid;
+       --snip--
+       if (ptrace(PTRACE_GETSIGINFO, tid, nullptr, &
+            error::send_errno("Failed to get signal i
+       }
+        if (reason.info == (SIGTRAP | 0x80)) {
+              --snip--
+              auto& regs = get_registers(tid);
+              --snip--
+        }
+        --snip--
+   }
+
+We also need to modify the maybe_resume_from_syscall function to just
+return whether to resume:
+
+   bool sdb::process::should_resume_from_syscall(
+         const stop_reason& reason) {
+       --snip--
+            if (found == end(to_catch)) {
+                return true;
+            }
+       --snip--
+       return false;
+   }
+
+We update the function signature and change the code inside
+the if statement to return true rather than restarting the thread,
+and then we return false rather than the stop reason. This
+approach also eliminates the problem I mentioned in Chapter
+10 of the stack potentially getting too large when many syscalls
+are resumed from, as the eventual recursive call we’ll make to
+wait_on_signal is easier for the compiler to optimize.
+
+The last two functions in sdb::process that we will need to update
+are set_hardware_stoppoint and clear_hardware_stoppoint. The debug
+registers for each thread are separate, so we need to set and
+clear hardware stop points on every thread. We’ll just compute
+the necessary changes for the active thread and then copy the
+same data into the other threads’ registers:
+
+   int sdb::process::set_hardware_stoppoint(
+       virt_addr address, stoppoint_mode mode, std:
+       --snip--
+       for (auto& [tid, _] : threads_) {
+            if (tid == current_thread_) continue;
+            auto& other_regs = get_registers(tid);
+            other_regs.write_by_id(
+                static_cast<register_id>(id), address
+            other_regs.write_by_id(register_id::dr7,
+       }
+
+         return free_space;
+   }
+Before returning, we loop over all threads that aren’t the active
+one and write the computed values into their registers. Next,
+we’ll do the same for clear_hardware_stoppoint:
+
+   void sdb::process::clear_hardware_stoppoint(int i
+       --snip--
+       for (auto& [tid, _] : threads_) {
+            if (tid == current_thread_) continue;
+            auto& other_regs = get_registers(tid);
+            other_regs.write_by_id(static_cast<regist
+            other_regs.write_by_id(register_id::dr7,
+       }
+   }
+
+Again, we loop over all threads other than the active one and
+write the same values into those threads’ registers as we just
+wrote into the active one’s.
+
+The sdb::register::write function currently writes only to the active
+thread, so let’s change that. Modify sdb/src/registers.cpp like this
+so that the calls to write_fprs and write_user_area also pass the TID for
+the thread to which the registers correspond:
+
+   void sdb::registers::write(
+         const register_info& info, value val, bool
+          --snip--
+          if (commit) {
+                if (info.type == register_type::fpr) {
+                    proc_->write_fprs(data_.i387, tid_);
+                }
+                else {
+                       --snip--
+                       proc_->write_user_area(aligned_offset
+                            from_bytes<std::uint64_t>(bytes +
+                }
+          }
+   }
+
+Similarly, sdb::register::flush should pass through the correct TID
+in its calls to write_fprs, write_gprs, and write_user_area:
+
+   void sdb::registers::flush() {
+       proc_->write_fprs(data_.i387, tid_);
+       proc_->write_gprs(data_.regs, tid_);
+       --snip--
+       for (auto i = 0; i < 8; ++i) {
+                --snip--
+                proc_->write_user_area(reg_offset, bytes
+          }
+   }
+With all those changes out of the way, we can now move on to
+updating wait_on_signal.
+
+Multithreaded Signal Handling
+
+We need to completely rewrite wait_on_signal, which handles
+process state changes, because handling signals when multiple
+threads are running is much more complicated than for just
+one thread. We’ll move a bunch of the existing code into a
+handle_signal function, but we’ll need to modify even that.
+
+Before we write any code, let’s think carefully about a few cases
+we should accommodate when waitpid returns inside of
+wait_on_signal:
+
+We shouldn’t report the signal or stop other threads.
+
+We may intercept a signal that we shouldn’t report to the user,
+such as those for thread creation or shared library load events.
+In those cases, we should restart the signaled thread and wait
+for another signal.
+
+We shouldn’t report the signal, and other threads have
+stopped.
+If the previously discussed case occurs, but other threads have
+also stopped (potentially for reasons that we should report), we
+can once again restart the first signaled thread and wait for
+another signal. As soon as we call waitpid again, we’ll get a signal
+from one of the other stopped threads and can decide what to
+do with it.
+
+We should report the signal, and other threads are still
+running.
+
+Recall that the debugger should operate in all-stop mode,
+meaning it must stop all threads before it can inspect or
+manipulate the program state. As such, if we intercept a signal
+that we should report to a user, we must first stop all threads.
+We can do this by sending a SIGSTOP to all threads other than the
+one that was signaled. We should use waitpid to wait for all of the
+other threads to stop after we send the SIGSTOPs before returning
+control to the user.
+
+We should report the signal, and other threads have
+stopped.
+
+This is the most complex scenario. Multiple threads may hit a
+breakpoint at the same time, or some threads may exit while
+others stop at a breakpoint. One thread may even exit after the
+debugger intercepts a SIGTRAP from another thread, but before
+the debugger sends out SIGSTOPs. We can’t even detect whether a
+thread has terminated before sending it a SIGSTOP because it
+might exit between the detection and the signal being sent.
+Even worse, if we send a SIGSTOP to a thread that is already
+stopped due to a signal, this SIGSTOP will be queued up and
+immediately sent to the thread when it resumes, so the
+debugger will report a SIGSTOP it shouldn’t be reporting.
+
+To handle this situation, when we move to stop all running
+threads, we’ll send SIGSTOPs to all threads other than the one
+originally signaled. We’ll then use waitpid to wait for them all to
+stop. We’ll inspect the status returned by waitpid to see the real
+reason each thread stopped. If the thread exited, we’ll remove it
+from the list of tracked threads. If it stopped due to a SIGSTOP,
+we’ll assume it’s the SIGSTOP we sent. If it stopped due to some
+other signal (like a SIGTRAP), we’ll record that the signal has a
+pending SIGSTOP. Then, the next time that thread gets a signal, if
+it’s a SIGSTOP, we’ll just restart the thread and carry on as if
+nothing happened.
+
+In the case that some thread stopped due to a signal we
+shouldn’t report, we’ll report it anyway, as we’re operating in
+all-stop mode and shouldn’t restart that thread.
+The main thread has exited.
+
+If the main thread (the one whose TID matches the PID of the
+process) exits, we’ll consider the whole process to have exited.
+This isn’t necessarily the case, as processes can continue so long
+as any of their threads are still running, but it will simplify our
+implementation.
+
+A non-main thread has exited.
+
+If a thread other than the main thread exits, we’ll print out a
+message saying that the thread exited, but we won’t stop the
+process or consider the whole process terminated.
+
+The user requests a single step for a thread with a pending
+SIGSTOP.
+
+This is a tricky case: the current implementation of step_instruction
+issues a PTRACE_SINGLESTEP request and then calls wait_on_signal. But if
+there’s a pending SIGSTOP, the thread will immediately stop, and
+then wait_on_signal will restart it. We could track whether a thread
+should be single-stepping and call step_instruction instead of resume
+inside of wait_on_signal if a thread is stepping and needs restarting
+due to a signal we shouldn’t report. We’ll take the simpler
+approach, however, and check for a pending SIGSTOP on the
+thread before we single-step it. If one exists, we’ll resume the
+thread and call waitpid to consume the signal before sending the
+PTRACE_SINGLESTEP request. In some cases, this approach will do the
+
+wrong thing. For example, if the thread single-steps into a
+syscall that shouldn’t be reported, it will be sent a PTRACE_CONT
+instead of a PTRACE_SINGLESTEP. However, these are quite rare cases,
+so we’ll pick the simpler implementation.
+
+Updating the Signal Handling Function
+
+Let’s start implementing wait_on_signal. This function has a fair bit
+of nuance to it, so we’ll write it piece by piece. We’ll start with
+the call to waitpid:
+
+   sdb::stop_reason sdb::process::wait_on_signal(pid
+       int wait_status;
+       int options = __WALL;
+       pid_t tid;
+       if ((tid = waitpid(to_await, &wait_status, op
+           error::send_errno("waitpid failed");
+       }
+
+We’ve made a few changes here. First, we now pass __WALL
+instead of 0 as the options argument. This argument tells waitpid
+to wait on both processes and threads. We pass to_await as the
+TID to await on, which defaults to -1, indicating that the
+function should wait until any child, not just the one with the
+given TID, has changed state. We also store the return value of
+waitpid, which is the TID of the thread whose state has changed.
+
+Next, we’ll handle the signal, which will involve potentially
+augmenting the stop reason with additional information about
+the stop, fixing the program counter for software breakpoints,
+reading registers, and unwinding the stack (all of the actions we
+used to perform inside of wait_on_signal).
+
+When we inspect the signal, we may decide that we should
+resume the stopped thread (for example, if a stop occurs on an
+internal breakpoint or a syscall that shouldn’t be caught). As
+such, we’ll make a handle_signal function that returns a
+std::optional<sdb::stop_reason>. We’ll use this function both for the
+
+original signal that wait_on_signal intercepts and for signals that
+we intercept when attempting to stop all running threads. It
+will take the initial stop reason given by waitpid and a bool
+indicating whether this is the original signal or one for a thread
+we’re attempting to forcefully stop, and then it will return
+either an augmented stop reason or an empty optional,
+indicating that we should restart the thread.
+
+We’ll call this function inside of wait_on_signal:
+          --snip--
+          stop_reason reason(tid, wait_status);
+          auto final_reason = handle_signal(reason, tru
+
+          if (!final_reason) {
+                resume(tid);
+                return wait_on_signal(to_await);
+          }
+
+We compute the initial stop reason with the status returned by
+waitpid. We then handle the signal, passing true as the second
+
+argument to indicate that this is the original stop. If handle_signal
+returns an empty optional, we resume the stopped thread and
+re-call wait_on_signal.
+
+If handle_signal returned an augmented stop reason, we should
+update the relevant sdb::thread_state object:
+
+          --snip--
+          reason = *final_reason;
+          auto& thread = threads_.at(tid);
+          thread.reason = reason;
+          thread.state = reason.reason;
+If the thread exited or terminated early, we should report this
+fact to both the target and the command line. We’ll factor this
+information into a report_thread_lifecycle_event function. If the main
+thread ended, we should report that the process itself has
+finished. Otherwise, we should wait for another signal:
+
+         --snip--
+         if (reason.reason == process_state::exited o
+              reason.reason == process_state::terminate
+              report_thread_lifecycle_event(reason);
+              if (tid == pid_) {
+                  state_ = reason.reason;
+                  return reason;
+              }
+              else {
+                  return wait_on_signal(-1);
+              }
+         }
+
+At this point, we have a signal representing a stop we should
+report back to the user, so we’ll stop all running threads, clean
+up any that exited, set the current state and active thread of the
+process, and then return:
+         stop_running_threads();
+         reason = cleanup_exited_threads(tid).value_o
+
+         state_ = reason.reason;
+         current_thread_ = tid;
+         return reason;
+   }
+
+We pass the TID of the thread whose signal we originally
+intercepted to cleanup_exited_threads so that that function can skip
+the original thread for cleanup, as we’ve already handled it.
+This function may find that the main thread exited, so it will
+return a std::optional<sdb::stop_reason>, which will store the reason to
+report to the user in the case that the main thread exited.
+
+Let’s add declarations for all of the functions we just pretended
+exist to sdb/include/libsdb/process.hpp. We’ll add another
+member to sdb::thread_state that tracks whether that thread has a
+pending SIGSTOP. We’ll also add functions to sdb::process for
+resuming every thread and swallowing pending SIGSTOPs. Finally,
+we’ll declare two private functions called send_continue and
+step_over_breakpoint, which we’ll use to implement resume_all_threads:
+
+   namespace sdb {
+       struct thread_state {
+         --snip--
+         bool pending_sigstop = false;
+    };
+
+    class process {
+    public:
+         --snip--
+
+         void stop_running_threads();
+         void resume_all_threads();
+
+         std::optional<sdb::stop_reason> cleanup_e
+             pid_t main_stop_tid);
+         void report_thread_lifecycle_event(const
+
+         std::optional<stop_reason> handle_signal
+              stop_reason reason, bool is_main_stop
+         --snip--
+
+    private:
+        --snip--
+        void swallow_pending_sigstop(pid_t tid);
+        void send_continue(pid_t tid);
+        void step_over_breakpoint(pid_t tid);
+        --snip--
+    };
+}
+Next, we’ll implement stop_running_threads and resume_all_threads.
+
+Stopping and Resuming Threads
+
+The obvious way to implement the resume_all_threads function is to
+just iterate over all the threads the process is tracking and call
+resume with their IDs. However, this is wrong for a very subtle
+
+reason: if one thread is running while another thread attempts
+to step over a breakpoint, that first thread may zoom past the
+breakpoint while it’s disabled. To address this, we’ll split up the
+existing resume function into to two halves: step_over_breakpoint and
+send_continue. Implement them in sdb/src/process.cpp and replace
+
+the existing implementation of resume:
+
+   void sdb::process::resume(std::optional<pid_t> ot
+       auto tid = otid.value_or(current_thread_);
+       step_over_breakpoint(tid);
+       send_continue(tid);
+   }
+
+   void sdb::process::step_over_breakpoint(pid_t tid
+       auto pc = get_pc(tid);
+       if (breakpoint_sites_.enabled_stoppoint_at_ad
+           --snip--
+       }
+   }
+   void sdb::process::send_continue(pid_t tid) {
+       auto request =
+         --snip--
+         state_ = process_state::running;
+   }
+
+The resume function keeps its first line, which retrieves the TID to
+operate on, then it calls the two new functions. The rest of the
+old code from resume is split between those functions: the second
+line and subsequent if statement go into the step_over_breakpoint
+function, and the rest goes in send_continue.
+
+With this split complete, we can implement resume_all_threads:
+
+   void sdb::process::resume_all_threads() {
+         for (auto& [tid, _] : threads_) {
+              step_over_breakpoint(tid);
+         }
+         for (auto& [tid, _] : threads_) {
+              send_continue(tid);
+         }
+   }
+
+Do not be tempted to merge those two for loops; if you do, you’ll
+have the same problem that the original resume function had.
+We can now resume threads, so let’s think about how to stop
+them. To stop a thread, we should send it a SIGSTOP. We would
+usually achieve this with the kill syscall, but kill sends a signal
+to the entire process rather than to a single thread, so the
+wrong thread might handle it. Instead, we can use tgkill (thread
+group kill), which takes the TGID of the thread group, the TID of
+the thread to signal, and the signal to send.
+
+Once we’ve sent the stop signal, we should wait until the thread
+has stopped, handle the signal, and record the stop reason. We
+should also record whether there is now a pending SIGSTOP, in
+case we intercepted a different signal (indicating that the
+thread had already stopped, as we intercepted the original
+signal). Implement the function in sdb/src/process.cpp:
+
+   void sdb::process::stop_running_threads() {
+       for (auto& [tid, thread] : threads_) {
+           if (thread.state == process_state::runnin
+               if (!thread.pending_sigstop) {
+                   tgkill(pid_, tid, SIGSTOP);
+               }
+
+                   int wait_status;
+                   waitpid(tid, &wait_status, 0);
+
+                   stop_reason thread_reason(tid, wait_s
+                    if (thread_reason.reason == process_s
+                        if (thread_reason.info != SIGSTOP
+                            thread.pending_sigstop = true
+                          }
+                          else if (thread.pending_sigstop)
+                              thread.pending_sigstop = fals
+                          }
+                    }
+
+                    thread_reason = handle_signal(
+                        thread_reason, false).value_or(th
+                    threads_.at(tid).reason = thread_reas
+                    threads_.at(tid).state = thread_reaso
+               }
+         }
+   }
+
+We loop over all threads. If the thread state says that the thread
+is running (which could be inaccurate if the thread has stopped
+in the meantime), and it doesn’t already have a pending SIGSTOP,
+we send it a SIGSTOP. We wait on that specific thread, passing its
+TID to waitpid, and initialize an sdb::stop _reason object with the
+resulting status.
+
+If the process was stopped due to a signal, then there are two
+possibilities we care about. If that signal wasn’t a SIGSTOP, then
+there must now be a pending SIGSTOP on this thread, so we record
+that. Conversely, if the signal was a SIGSTOP and there’s one
+recorded as pending, then we assume that this is the SIGSTOP we
+were waiting for and reset pending_sigstop.
+
+Regardless of what the signal was, we call handle_signal, passing
+false as the second argument, as this signal isn’t the original one
+
+that caused the stop. The handle_signal function should never
+mandate a thread restart for threads other than the one that
+caused the original stop, so we can safely get the value out of
+the returned std::optional without checking it. Finally, we update
+the reason that the thread stopped, along with its state.
+
+Cleaning Up Exited Threads
+
+Next, let’s clean up any threads that exited during the stopping
+and resuming process. We’ll loop over all threads other than the
+one that caused the main stop. If they exited, we’ll report this
+fact to the target and the command line and then remove them
+from the threads_ member:
+
+   std::optional<sdb::stop_reason>
+   sdb::process::cleanup_exited_threads(pid_t main_s
+       std::vector<pid_t> to_remove;
+       std::optional<stop_reason> to_report;
+        for (auto& [tid, thread] : threads_) {
+            if (tid != main_stop_tid and
+                (thread.state == process_state::exite
+                    thread.state == process_state::termi
+                   report_thread_lifecycle_event(thread
+                   to_remove.push_back(tid);
+                   if (tid == pid_) {
+                         to_report = thread.reason;
+                   }
+              }
+        }
+
+        for (auto tid : to_remove) {
+            threads_.erase(tid);
+        }
+        return to_report;
+   }
+
+Removing elements from containers while you’re looping over
+them can be a recipe for disaster, as it invalidates any iterators
+that point into the containers. There are ways of dealing with
+this problem by calling the versions of erase that take iterators,
+but I find it clearer to iterate once, recording the elements that
+need removing, and then remove them all in a separate pass. As
+such, we initialize a to_remove variable that will hold the elements
+to remove. We also initialize an optional stop reason to report
+in the case that we find that the main thread has exited. We
+loop over all threads. If the current thread wasn’t the one that
+triggered the stop and has exited or terminated, we report that
+event and push its TID into to_remove. If the main thread has
+exited, we record its stop reason. We then erase all of the
+entries in threads_ that we recorded as needing to be removed.
+Finally, we return the stop reason that the debugger should
+report, if any.
+
+Reporting Lifecycle Events
+
+If a thread is created or exits, we should notify both the target
+and the command line. The target will use this information to
+update its own data structures, and the command line will print
+a message such as “Thread 42 exited.” However, we shouldn’t
+print to the command line from libsdb; that should be the job of
+the command line driver. As such, we’ll add a callback to
+sdb::process that the command line can install to receive
+
+notifications when a thread starts or exits.
+
+Add a new data member to sdb::process in
+sdb/include/libsdb/process.hpp that stores the callback, and a
+member function to install one:
+   #include <functional>
+   namespace sdb {
+       class process {
+       public:
+               --snip--
+               void install_thread_lifecycle_callback(
+                     std::function<void(const stop_reaso
+                   thread_lifecycle_callback_ = std::mov
+               }
+
+         private:
+             --snip--
+             std::function<void(const stop_reason&)> t
+         };
+   }
+
+We store any function-like object that takes a stop reason and
+returns nothing. The install_thread_lifecycle_callback function sets
+this callback. We’ll call this function in sdb/tools/sdb.cpp when
+we get around to making the changes necessary to support
+multithreading in the driver.
+
+In the meantime, we implement report_thread_lifecycle_event in
+sdb/src/process.cpp to call both this callback and the
+sdb::target::notify_thread _lifecycle_event function we declared earlier
+
+but haven’t implemented yet:
+    void sdb::process::report_thread_lifecycle_event
+            const sdb::stop_reason& reason) {
+          if (thread_lifecycle_callback_) {
+                  thread_lifecycle_callback_(reason);
+          }
+          if (target_) {
+                  target_->notify_thread_lifecycle_event(re
+          }
+    }
+
+The last change we need to make to sdb::process is to implement
+handle _signal.
+
+Handling the Signals
+
+The handle_signal function will record any new threads the
+program spawns, handle pending SIGSTOPs, compute stop reasons,
+and handle stop points. Much of the implementation of
+handle_signal comes from the original implementation of
+
+wait_on_signal, but it’s different enough to merit going through it in
+
+its entirety, piece by piece. We begin by extracting the thread’s
+TID from the given stop reason, as we’ll use it several times in
+this function, and then check for thread creation signals:
+   std::optional<sdb::stop_reason> sdb::process::han
+             stop_reason reason, bool is_main_stop) {
+           auto tid = reason.tid;
+
+           if (reason.trap_reason and
+               *reason.trap_reason == trap_type::clone a
+               is_main_stop) {
+               return std::nullopt;
+           }
+
+If this stop is due to a clone event (because a thread was
+created) and this signal caused the original stop, we
+immediately return and restart the thread. We’ll handle thread
+creation when we intercept the SIGSTOP that is sent to new
+threads.
+
+If the debugger is attached to this process and the thread
+stopped due to a signal, we may need to take any of several
+potential actions. First, we’ll handle the case in which we
+intercepted a signal sent to a new thread:
+
+           --snip--
+           if (is_attached_ and reason.reason == process
+                if (!threads_.count(tid)) {
+                    threads_.emplace(tid, thread_state{ t
+                    report_thread_lifecycle_event(reason
+                    if (is_main_stop) {
+                          return std::nullopt;
+                    }
+              }
+
+If we intercept a signal for a thread that the process isn’t
+tracking yet, then a new thread must have been created, so we
+create a new sdb::thread_state object, add this to threads_, and then
+report the creation to the target and command line. If this
+signal caused the original stop, we don’t want to report the
+signal, so we return and restart the thread.
+
+Next, we handle the case in which we were trying to stop all
+threads and sent a SIGSTOP to a thread that was already stopped:
+
+              --snip--
+              if (threads_.at(tid).pending_sigstop and
+                   threads_.at(tid).pending_sigstop = fa
+                   return std::nullopt;
+              }
+
+              read_all_registers(tid);
+              augment_stop_reason(reason);
+If the signal we intercepted was a SIGSTOP and the thread to which
+it was sent has a pending SIGSTOP, we reset the pending_sigstop field,
+return, and restart the thread. Otherwise, we’re most likely
+reporting a stop for this signal, so we read all the registers for
+the signaled thread and augment the stop reason with
+additional information about the signal.
+
+Now we’ll handle breakpoints, watchpoints, and syscall traps.
+The code here is mostly the same as its original implementation
+in wait_on_signal, so we won’t spend too long on it:
+
+              --snip--
+              if (reason.info == SIGTRAP) {
+                   auto instr_begin = get_pc(tid) - 1;
+                   if (reason.trap_reason == trap_type:
+                       breakpoint_sites_.contains_addres
+                       breakpoint_sites_.get_by_address
+                       set_pc(instr_begin, tid);
+
+                          auto& bp = breakpoint_sites_.get_
+                          if (bp.parent_) {
+                              bool should_restart = bp.pare
+                              if (should_restart and is_mai
+                                     return std::nullopt;
+                               }
+                          }
+                    }
+                   else if (reason.trap_reason == trap_t
+                       auto id = get_current_hardware_st
+                         if (id.index() == 1) {
+                             watchpoints_.get_by_id(std::g
+                         }
+                   }
+                   else if (reason.trap_reason == trap_t
+                            is_main_stop and
+                            should_resume_from_syscall(
+                       return std::nullopt;
+                   }
+              }
+
+If the signal occurred due to a software breakpoint enabled at
+the position just above the program counter, we set the program
+counter back by one and restart the thread if the breakpoint’s
+hit handler tells us to and this signal caused the original stop. If
+the signal occurred due to a watchpoint, we update its data. If
+the signal occurred due to a syscall, this signal caused the
+original stop, and the syscall isn’t being tracked, we resume the
+thread.
+
+Finally, we notify the target of the stop so it can unwind the
+thread’s stack, then return the augmented stop reason:
+               if (target_) target_->notify_stop(reason
+         }
+         return reason;
+   }
+
+Lastly, we must swallow any pending SIGSTOPs if a thread is
+single-stepped. We need to do this when
+sdb::process::step_instruction is called and when single-stepping over
+
+breakpoints in sdb::process::resume:
+
+   void sdb::process::resume(std::optional<pid_t> ot
+       --snip--
+       if (breakpoint_sites_.enabled_stoppoint_at_ad
+            --snip--
+            swallow_pending_sigstop(tid);
+            if (ptrace(PTRACE_SINGLESTEP, tid, nullpt
+                 --snip--
+            }
+               --snip--
+         }
+         --snip--
+   }
+
+   sdb::stop_reason sdb::process::step_instruction(
+         std::optional<pid_t> otid) {
+         --snip--
+         swallow_pending_sigstop(tid);
+         if (ptrace(PTRACE_SINGLESTEP, tid, nullptr, n
+              --snip--
+         }
+   }
+
+In both cases, we call swallow_pending_sigstop just before issuing the
+PTRACE_SINGLESTEP request. The swallow_pending_sigstop implementation
+
+looks like this:
+
+   void sdb::process::swallow_pending_sigstop(pid_t
+       if (threads_.at(tid).pending_sigstop) {
+           ptrace(PTRACE_CONT, tid, nullptr, nullpt
+           waitpid(tid, nullptr, 0);
+           threads_.at(tid).pending_sigstop = false
+       }
+   }
+
+If the thread has a pending SIGSTOP, we continue it and call waitpid
+to consume the signal. We then record that the thread no longer
+has a pending SIGSTOP.
+
+This completes all of the changes needed for sdb::process. Now we
+must make a similar but smaller set of changes to sdb::target.
+Tracing Threads in the Target
+
+As in sdb::process, we must update several functions in sdb::target to
+take an optional TID as an argument, which will default to the
+current thread’s TID. For sdb::target, these functions include
+step_in, step_out, step_over, line_entry_at_pc, run_until_address,
+
+get_pc_file_address, and the two overloads of get_stack. Update them
+
+in sdb/include/libsdb/target.hpp:
+
+    namespace sdb {
+        class target {
+        public:
+            --snip--
+            stack& get_stack(std::optional<pid_t> oti
+                 auto tid = otid.value_or(process_->cu
+                 return threads_.at(tid).frames;
+            }
+            const stack& get_stack(std::optional<pid_
+                 return const_cast<target*>(this)->get
+            }
+
+                 sdb::stop_reason step_in(std::optional<pi
+                 sdb::stop_reason step_out(std::optional<p
+                 sdb::stop_reason step_over(std::optional<
+
+                 sdb::line_table::iterator line_entry_at_p
+                        std::optional<pid_t> otid = std::null
+                 sdb::stop_reason run_until_address(
+                     virt_addr address, std::optional<pid_
+
+                 file_addr get_pc_file_address(std::option
+                 --snip--
+         };
+   }
+
+Most of these changes occur entirely in the parameter list; the
+only functional changes are in the implementations of the two
+get_stack overloads. The non-const version grabs the stack from the
+
+thread with the given TID (or the current thread’s stack, if the
+caller passed no TID), and the const version defers to the non-
+const version.
+
+Let’s update the definitions of get_pc_file_address and line_entry_at_pc
+in sdb/src/target.cpp:
+
+   sdb::file_addr sdb::target::get_pc_file_address(
+         std::optional<pid_t> otid) const {
+       return process_->get_pc(otid).to_file_addr(el
+   }
+
+   sdb::line_table::iterator
+   sdb::target::line_entry_at_pc(std::optional<pid_t
+       auto pc = get_pc_file_address(otid);
+          --snip--
+   }
+
+In the former, we pass the argument through to get_pc. In the
+latter, we pass the argument through to get_pc_file_address. Next,
+we’ll update run_until_address:
+
+   sdb::stop_reason sdb::target::run_until_address(
+         virt_addr address, std::optional<pid_t> oti
+       auto tid = otid.value_or(process_->current_th
+       --snip--
+       process_->resume(tid);
+       auto reason = process_->wait_on_signal(tid);
+       if (reason.is_breakpoint()
+            and process_->get_pc(tid) == address) {
+            --snip--
+       }
+       --snip--
+       threads_.at(tid).state->reason = reason;
+       return reason;
+   }
+
+We pass the TID through the calls to resume, wait_on_signal, and get_pc,
+and we store the computed reason in the relevant thread_state
+object.
+The step_* functions need a fair number of changes, but they’re
+fairly mechanical. Let’s start with step_out:
+
+   sdb::stop_reason sdb::target::step_out(std::optio
+       auto tid = otid.value_or(process_->current_th
+         auto& stack = get_stack(tid);
+         --snip--
+         if (has_inline_frames and at_inline_frame) {
+              --snip--
+              return run_until_address(return_address,
+         }
+         --snip--
+         for (auto frames = stack_.frames().size();
+               stack_.frames().size() >= frames;) {
+              reason = run_until_address(return_address
+              --snip--
+         }
+         return reason;
+   }
+
+At the start of the function, we calculate the correct TID. We
+update the call to get_stack and both calls to run_until_address. Let’s
+move on to step_in:
+
+   sdb::stop_reason sdb::target::step_in(std::option
+       auto tid = otid.value_or(process_->current_th
+auto& stack = get_stack(tid);
+auto& thread = threads_.at(tid);
+if (stack.inline_height() > 0) {
+    --snip--
+    stop_reason reason(tid, process_state::st
+    thread.state->reason = reason;
+    return reason;
+}
+
+auto orig_line = line_entry_at_pc(tid);
+do {
+     auto reason = process_->step_instruction
+     if (!reason.is_step()) {
+         thread.state->reason = reason;
+         return reason;
+     }
+} while ((line_entry_at_pc(tid) == orig_line
+     or line_entry_at_pc(tid)->end_sequence)
+     and line_entry_at_pc(tid) != line_table:
+
+auto pc = get_pc_file_address(tid);
+--snip--
+if (pc.elf_file() != nullptr) {
+     --snip--
+     if (func and func->low_pc() == pc) {
+          auto line = line_entry_at_pc(tid);
+          --snip--
+          if (line != line_table::iterator{}) {
+                            --snip--
+                            return run_until_address(line->ad
+                      }
+                 }
+          }
+
+          stop_reason reason(
+              tid, process_state::stopped, SIGTRAP, tra
+          thread.state->reason = reason;
+          return reason;
+    }
+
+At the start of the function, we calculate the correct TID and
+grab references to the stack and thread to operate on. Before all
+of the existing return reason; statements, we store the reason in the
+thread’s state. We also pass the TID to both constructions of
+sdb::stop_reason, the four calls to line_entry_at_pc, the call to
+
+get_pc_file_address, the call to step_instruction, and the call to
+
+run_until_address.
+
+We’re almost done; let’s finish by updating step_over:
+
+    sdb::stop_reason sdb::target::step_over(std::opti
+        auto tid = otid.value_or(process_->current_th
+        auto& thread = threads_.at(tid);
+        auto& stack = get_stack(tid);
+auto orig_line = line_entry_at_pc(tid);
+--snip--
+do {
+    --snip--
+    if (has_inline_frames and at_start_of_inl
+        --snip--
+        reason = run_until_address(return_add
+        if (!reason.is_step()
+            or process_->get_pc(tid) != retu
+            thread.state->reason = reason;
+            return reason;
+        }
+    }
+    else if (auto instructions = disas.disass
+        instructions[0].text.rfind("call") ==
+        reason = run_until_address(instructio
+        if (!reason.is_step()
+            or process_->get_pc(tid) != inst
+            thread.state->reason = reason;
+            return reason;
+        }
+    }
+    else {
+        reason = process_->step_instruction(t
+        if (!reason.is_step()) {
+            thread.state->reason = reason;
+            return reason;
+        }
+              }
+          } while (line_entry_at_pc(tid) == orig_line o
+              line_entry_at_pc(tid)->end_sequence and
+              line_entry_at_pc(tid) != line_table::ite
+          thread.state->reason = reason;
+          return reason;
+   }
+
+Again, we calculate the correct TID at the start of the thread and
+grab references to the stack and thread. We also store the
+computed stop reason in the thread state before all return
+statements. We then update the calls to line_entry_at_pc, both calls
+to run_until_address, the three calls to get_pc, the call to run_until_address,
+the call to step_instruction, and the two calls to line_entry_at_pc.
+
+Lastly, we need to update notify_stop:
+
+   void sdb::target::notify_stop(const sdb::stop_rea
+       threads_.at(reason.tid).frames.unwind();
+   }
+
+We unwind the stack for the thread to which the signal
+corresponds.
+Now for something new! Implement notify_thread_lifecycle_event to
+update the threads_ structure:
+
+   void sdb::target::notify_thread_lifecycle_event(
+         const stop_reason& reason) {
+        auto tid = reason.tid;
+        if (reason.reason == process_state::stopped)
+            auto& state = process_->thread_states()[t
+            threads_.emplace(
+                tid, thread{ &state, stack{this, tid}
+        }
+        else {
+            threads_.erase(tid);
+        }
+   }
+
+If the stop reason is a signal, this is a new thread creation event,
+so we create a new sdb::thread object. Otherwise, this is a thread
+exit event, so we erase the object with the given TID.
+
+Before we can expose threads on the command line, we must
+also make a few changes to sdb::stack. In sdb/src/stack.cpp, update
+the inline_stack_at_pc function to forward the TID to which the
+stack corresponds through the call to get_pc_file_address:
+   std::vector<sdb::die>
+   sdb::stack::inline_stack_at_pc() const {
+       auto pc = target_->get_pc_file_address(tid_)
+          --snip--
+   }
+
+Also update the unwind function to pass the TID through the calls
+to get_pc, get_pc_file_address, and get_registers:
+
+   void sdb::stack::unwind() {
+       --snip--
+       auto virt_pc = target_->get_process().get_pc
+       auto file_pc = target_->get_pc_file_address(t
+       auto& proc = target_->get_process();
+       auto regs = proc.get_registers(tid_);
+       --snip--
+   }
+
+We’re done! Now we can expose this new functionality on the
+command line.
+
+Exposing Threads to the User
+Most of the code currently in sdb/tools/sdb.cpp should work as is
+because we made passing TIDs to most of the functions in
+sdb::process and sdb::target optional. Nevertheless, we must still
+
+make a few updates and add some extra functionality.
+
+First, we’ll write a thread_lifecycle_callback function and install it on
+the sdb::process to print a message whenever a thread is created
+or destroyed:
+
+   namespace {
+       void thread_lifecycle_callback(const sdb::sto
+           std::string_view action;
+           switch (reason.reason) {
+           case sdb::process_state::exited: action =
+           case sdb::process_state::terminated: acti
+           case sdb::process_state::stopped: action
+           }
+           fmt::print("Thread {} {}\n", reason.tid,
+       }
+   }
+
+We create an empty string view that we’ll fill in with the event
+type. We switch over the stop reason and populate the action
+variable with a string to print out. Finally, we print a message
+like “Thread 42 exited,” depending on the calculated action and
+the TID of the thread to which the event corresponds. Install
+this callback in the main function, before the call to main_loop:
+
+   int main(int argc, const char* argv[]) {
+       --snip--
+         try {
+              --snip--
+              target->get_process().install_thread_life
+                   thread_lifecycle_callback);
+              main_loop(target);
+         }
+         --snip--
+   }
+
+We’ll also add a new thread command to the driver. This
+command will have two subcommands: list, which will list the
+current threads and their stop reasons, and select <TID>, which
+will set the active thread. The output for the list subcommand
+should look like this:
+
+    Thread 12124: stopped with signal TRAP at 0x5555
+    multi_threaded.cpp:8 (multi_threaded`say_hi) (b
+   *Thread 12123: stopped with signal TRAP at 0x5555
+     multi_threaded.cpp:8 (multi_threaded`say_hi) (b
+     Thread 12122: stopped with signal TRAP at 0x7fff
+
+You can see the threads, information about their stop reasons,
+and the currently selected thread prefixed with an asterisk.
+
+Add a branch for this command in handle_command. While you’re in
+that function, also update the continue command to call
+resume_all_threads rather than just resume:
+
+   namespace {
+       void handle_command(
+             std::unique_ptr<sdb::target>& target, s
+           --snip--
+           if (is_prefix(command, "continue")) {
+                process->resume_all_threads();
+                auto reason = process->wait_on_signal
+                handle_stop(*target, reason);
+               }
+               --snip--
+               else if (is_prefix(command, "thread")) {
+                    handle_thread_command(*target, args)
+               }
+               --snip--
+        }
+   }
+
+The thread command hands execution off to a handle_thread_command
+function, which we’ll implement now:
+
+   namespace {
+       void handle_thread_command(
+             sdb::target& target, const std::vector<
+           if (args.size() < 2) {
+               print_help({ "help", "thread" });
+               return;
+           }
+
+              if (is_prefix(args[1], "list")) {
+                  for (auto& [tid, thread] : target.th
+                      auto prefix = tid == target.get_p
+                      fmt::print(
+                          "{}Thread {}: {}\n", prefix,
+                          get_signal_stop_reason(target
+                  }
+              }
+
+              else if (is_prefix(args[1], "select")) {
+                  if (args.size() != 3) {
+                      print_help({ "help", "thread" })
+                        return;
+                   }
+
+                   auto tid = sdb::to_integral<pid_t>(a
+                   if (!tid) {
+                       std::cerr << "Invalid thread id\n
+                         return;
+                   }
+                   target.get_process().set_current_thre
+              }
+        }
+   }
+
+If the user passes an incorrect number of arguments, we print
+out a help message and return. Otherwise, if the subcommand
+is list, we loop over all threads. We compute the prefix for the
+line, which is an asterisk if this thread is the currently selected
+one and a blank space otherwise. We then print out the
+information for that thread. If the subcommand is select, we
+parse the TID as an integer and set the current thread in the
+target’s process. If the user passes the wrong number of
+arguments, we again print a help message, and if parsing the
+TID fails, we print an error message.
+
+Add the usual help messages to the print_help function:
+   namespace {
+         void print_help(const std::vector<std::string
+             if (args.size() == 1) {
+                      std::cerr << R"(Available commands:
+         --snip--
+         thread             - Commands for operating on threa
+         --snip--
+   )";
+               }
+               --snip--
+               else if (is_prefix(args[1], "thread")) {
+                    std::cerr << R"(Available commands:
+         list
+         select <thread ID>
+   )";
+               }
+               --snip--
+         }
+   }
+
+We need to update three existing functions. The first is
+get_sigtrap_info, whose calls to get_pc and get_current_hardware_stoppoint
+
+need updating. The second is get_signal_stop_reason, whose calls to
+get_pc and line_entry_at_pc need updating:
+   namespace {
+        std::string get_sigtrap_info(
+              const sdb::process& process, sdb::stop_
+              if (reason.trap_reason == sdb::trap_type
+                  auto& site = process.breakpoint_sites
+                         process.get_pc(reason.tid));
+                   --snip--
+              }
+              if (reason.trap_reason == sdb::trap_type
+                  auto id = process.get_current_hardwa
+                  -snip--
+              }
+        }
+
+        std::string get_signal_stop_reason(
+              const sdb::target& target, sdb::stop_re
+            --snip--
+            auto pc = process.get_pc(reason.tid);
+            --snip--
+            auto line = target.line_entry_at_pc(reaso
+            --snip--
+        }
+   }
+
+The final, more functional change is in print_stop_reason, which
+should refer to the thread that stopped if the stop occurred due
+to a signal, or to the whole process in the case of an exit or a
+termination:
+
+   namespace {
+       void print_stop_reason(
+                 const sdb::target& target, sdb::stop_re
+               switch (reason.reason) {
+               case sdb::process_state::exited:
+                   fmt::print("Process {} exited with st
+                       target.get_process().pid(),
+                       static_cast<int>(reason.info));
+                   return;
+               case sdb::process_state::terminated:
+                   fmt::print("Process {} terminated wit
+                       target.get_process().pid(),
+                       sigabbrev_np(reason.info));
+                   return;
+               case sdb::process_state::stopped:
+                   fmt::print("Thread {} {}\n",
+                       reason.tid, get_signal_stop_reaso
+                   return;
+               }
+        }
+   }
+If an exit event occurred, we report that the process exited with
+the given status. If a termination occurred, we report that the
+process terminated with the signal name of the given signal. For
+regular signals, we report that the thread stopped and call
+get_signal_stop_reason to get a detailed message to print.
+
+Now that we’ve completed the implementation, let’s do some
+testing.
+
+Testing
+
+We’ll test the new functionality with the multi_threaded
+program we wrote at the start of the chapter. Recall that it
+spawns 10 threads, each of which calls the say_hi function. Let’s
+set a breakpoint on say_hi, step one of the threads that hits the
+breakpoint, step another one, and make sure that everything
+seems consistent.
+
+Here is what one possible outcome might look like. Your output
+may look different, as the number of threads that hit the
+breakpoint depends on the scheduler:
+
+   $ tools/sdb test/targets/multi_threaded
+   Launched process with PID 16478
+   sdb> break set say_hi
+sdb> c
+Thread 16479 created
+Thread 16480 created
+Thread 16481 created
+--snip--
+sdb> thread list
+ Thread 16481: stopped with signal TRAP at 0x5555
+ multi_threaded.cpp:7 (multi_threaded`say_hi) (b
+*Thread 16480: stopped with signal TRAP at 0x5555
+ multi_threaded.cpp:7 (multi_threaded`say_hi) (b
+ Thread 16479: stopped with signal TRAP at 0x5555
+ multi_threaded.cpp:7 (multi_threaded`say_hi) (b
+ Thread 16478: stopped with signal TRAP at 0x7fff
+sdb> next
+--snip--
+sdb> thread list
+ Thread 16481: stopped with signal TRAP at 0x5555
+ multi_threaded.cpp:7 (multi_threaded`say_hi) (b
+*Thread 16480: stopped with signal TRAP at 0x5555
+ multi_threaded.cpp:7 (multi_threaded`say_hi) (si
+ Thread 16479: stopped with signal TRAP at 0x5555
+ multi_threaded.cpp:7 (multi_threaded`say_hi) (b
+ Thread 16478: stopped with signal TRAP at 0x7fff
+sdb> thread select 16481
+sdb> next
+--snip--
+sdb> thread list
+*Thread 16481: stopped with signal TRAP at 0x5555
+    multi_threaded.cpp:7 (multi_threaded`say_hi) (si
+    Thread 16480: stopped with signal TRAP at 0x5555
+    multi_threaded.cpp:7 (multi_threaded`say_hi) (si
+    Thread 16479: stopped with signal TRAP at 0x5555
+    multi_threaded.cpp:7 (multi_threaded`say_hi) (b
+    Thread 16478: stopped with signal TRAP at 0x7fff
+
+We launch the program, set the breakpoint, and continue. The
+process spawns three threads, each of which hits the
+breakpoint. If we step one of the threads, its program counter
+changes and none of the other threads change state, which is
+what we’re expecting. If we then select a different thread and
+step that, that thread is the only thread that changes state, just
+as we expect.
+
+Let’s write an automated test. We’ll set a breakpoint on the say_hi
+function and keep resuming the process until all threads hit the
+breakpoint. We’ll then resume one more time, and the process
+should exit. Add this to sdb/test/tests.cpp:
+
+   #include <set>
+   TEST_CASE("Multi-threading works", "[threads]") {
+       auto dev_null = open("/dev/null", O_WRONLY);
+       auto target = target::launch("targets/multi_t
+       auto& proc = target->get_process();
+        target->create_function_breakpoint("say_hi")
+
+        std::set<pid_t> tids;
+
+        stop_reason reason;
+        do {
+            proc.resume_all_threads();
+            reason = proc.wait_on_signal();
+            for (auto& [tid, thread] : proc.thread_st
+                if (thread.reason.reason == sdb::proc
+                    tid != proc.pid()) {
+                    tids.insert(tid);
+                }
+            }
+        } while (tids.size() < 10);
+
+        REQUIRE(tids.size() == 10);
+
+        proc.resume_all_threads();
+        reason = proc.wait_on_signal();
+        REQUIRE(reason.reason == sdb::process_state:
+        close(dev_null);
+   }
+
+We launch the program and set a breakpoint on say_hi. We can’t
+just resume the program 10 times, because multiple threads
+may hit the breakpoint on a single resumption. Instead, we
+create a std::set of TIDs. Every time we resume the process, if a
+non-main thread stopped, we insert the TID into the set. Ideally,
+we’d first check if it stopped due to a SIGTRAP, but in the case that
+a thread gets sent a SIGSTOP when it’s about to execute a line with
+a breakpoint on it, our debugger misses that breakpoint. We
+keep going until all 10 threads hit the breakpoint, make sure we
+receive the expected number of TIDs, and then resume the
+process one more time and ensure that it exits.
+
+Summary
+
+In this chapter, you learned how Linux systems handle threads
+and extended your debugger with the ability to trace multiple
+threads in a process. You explored race conditions and
+addressed some of the ones that can affect the debugger. You
+also learned how ptrace and waitpid operate for multithreaded
+programs and used them to control exactly which threads the
+debugger manipulates. You then refactored the existing types in
+the debugger to support multiple threads and added tracing
+capabilities.
+
+In the next chapter, you’ll resume handling DWARF information
+and implement DWARF expression support, used for some stack
+unwinding scenarios. This debugger feature will also enable the
+tasks of the final two main chapters: manipulating variables
+and calling functions inside the inferior.
+
+Check Your Knowledge
+
+1.
+1. What is the difference between a thread and a process on
+  Linux systems?
+2.
+2. Which syscall creates a thread?
+3.
+3. Which ptrace option halts the process when it spawns a new
+  thread?
+4.
+4. Which higher-level library is usually used to manage threads
+  (as it saves the programmer from having to interact with
+  syscalls)?
+5.
+5. What is a race condition?
+6.
+6. Which procfs directory lists all threads that are part of a
+  process?

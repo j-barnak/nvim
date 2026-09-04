@@ -1,0 +1,671 @@
+Chapter 9
+Liveness
+
+Benoît Boissinot and Fabrice Rastello
+
+This chapter illustrates the use of strict SSA properties to simplify and accelerate
+liveness analysis, which determines, for all variables, the set of program points
+where these variables are live, i.e., their values are potentially used by subsequent
+operations. Liveness information is essential to solve storage assignment problems,
+eliminate redundancies, and perform code motion. For instance, optimizations like
+software pipelining, trace scheduling, register-sensitive redundancy elimination (see
+Chap. 11), if-conversion (see Chap. 20), as well as register allocation (see Chap. 22)
+heavily rely on liveness information.
+   Traditionally, liveness information is obtained by data-flow analysis: liveness sets
+are computed for all basic blocks and variables simultaneously by solving a set of
+data-flow equations. These equations are usually solved by an iterative algorithm,
+propagating information backwards through the control-flow graph (CFG) until a
+fixed point is reached and the liveness sets stabilize. The number of iterations
+depends on the control-flow structure of the considered program, and more precisely
+on the structure of its loops.
+   In this chapter, we show that, for strict SSA form programs, the live range of a
+variable has valuable properties that can be expressed in terms of the loop nesting
+forest of the CFG and its corresponding directed acyclic graph, the forward-CFG.
+
+B. Boissinot
+ENS Lyon, Lyon, France
+e-mail: benoit.boissinot@ens-lyon.org
+F. Rastello ()
+Inria, Grenoble, France
+e-mail: fabrice.rastello@inria.fr
+
+© The Author(s), under exclusive license to Springer Nature Switzerland AG 2022    107
+F. Rastello, F. Bouchez Tichadou (eds.), SSA-based Compiler Design,
+https://doi.org/10.1007/978-3-030-80515-9_9
+108                                                           B. Boissinot and F. Rastello
+
+Informally speaking, and restricted to reducible CFGs, those properties for a
+variable v are:
+• v is live at a program point q if and only if v is live at the entry h of the largest
+  loop/basic block (highest node in the loop nesting forest) that contains q but not
+  the definition of v.
+• v is live at h if and only if there is a path in the forward-CFG from h to a use of v
+  that does not contain the definition.
+   A direct consequence of this property is the possible design of a data-flow
+algorithm that computes liveness sets without the requirement of any iteration to
+reach a fixed point: at most, two passes over the CFG are necessary. The first
+pass, very similar to traditional data-flow analysis, computes partial liveness sets by
+traversing the forward-CFG backwards. The second pass refines the partial liveness
+sets and computes the final solution by propagating forwards along the loop nesting
+forest. For the sake of clarity, we first present the algorithm for reducible CFGs.
+Irreducible CFGs can be handled with a slight variation of the algorithm, with no
+need to modify the CFG itself.
+   Another approach to liveness analysis more closely follows the classical defini-
+tion of liveness: a variable is live at a program point q if q belongs to a path of
+the CFG leading from a definition of that variable to one of its uses without passing
+through another definition of the same variable. Therefore, the set of program points
+where a variable is live, in other words its live range, can be computed using a
+backward traversal starting on its uses and stopping when its definition is reached
+(unique under SSA).
+   One application of the properties of live ranges under strict SSA form is the
+design of a simple liveness check algorithm. In contrast to classical data-flow
+analyses, a liveness check does not provide the set of variables live at a block,
+but its characteristic function. A liveness check provides a query system to answer
+questions such as “Is variable v live at location q?” Its main features are:
+1. The algorithm itself consists of two parts, a pre-computation part, and an
+   online part executed at each liveness query. It is not based on setting up and
+   subsequently solving data-flow equations.
+2. The pre-computation is independent of variables, it only depends on the structure
+   of the control-flow graph; Hence, pre-computed information remains valid when
+   variables or their uses are added or removed.
+3. An actual query uses the def-use chain of the variable in question and determines
+   the answer essentially by testing membership in pre-computed sets of basic
+   blocks.
+   We will first need to repeat basic definitions relevant to our context and provide
+the theoretical foundations in the next section, before presenting multiple algorithms
+to compute liveness sets: The two-pass data-flow algorithm in Sect. 9.2 and the
+algorithms based on path exploration in Sect. 9.4. We present the liveness check
+algorithm last, in Sect. 9.3.
+9 Liveness                                                                          109
+
+9.1 Definitions
+
+Liveness is a property that relates program points to sets of variables which are
+considered to be live at these program points. Intuitively, a variable is considered
+live at a given program point when its value will be used in the future of any dynamic
+execution. Statically, liveness can be approximated by following paths backwards on
+the control-flow graph, connecting the uses of a given variable to its definitions—or,
+in the case of SSA forms, to its unique definition. The variable is said to be live at
+all program points along these paths. For a CFG node q, representing an instruction
+or a basic block, a variable v is live-in at q if there is a path, not containing the
+definition of v, from q to a node where v is used (including q itself). It is live-out
+at q if it is live-in at some direct successor of q.
+    The computation of live-in and live-out sets at the entry and the exit of basic
+blocks is usually termed liveness analysis. It is indeed sufficient to consider only
+these sets at basic block boundaries, since liveness within a basic block is trivial to
+recompute from its live-out set with a backward traversal of the block (whenever
+the definition of a variable is encountered, it is pruned from the live-out set). Live-
+ranges are closely related to liveness. Instead of associating program points with
+sets of live variables, the live range of a variable specifies the set of program points
+where that variable is live. Live ranges of programs under strict SSA form exhibit
+certain useful properties (see Chap. 2), some of which can be exploited for register
+allocation (see Chap. 22).
+    The special behaviour of φ-functions often causes confusion about where exactly
+its operands are actually used and defined. For a regular operation, variables are
+used and defined where the operation takes place. However, the semantics of φ-
+functions (and, in particular, the actual place of φ-uses) should be defined carefully,
+especially when dealing with SSA destruction. In algorithms for SSA destruction
+(see Chap. 21), a use in a φ-function is considered live somewhere inside the
+corresponding direct predecessor block, but, depending on the algorithm and, in
+particular, the way copies are inserted, it may or may not be considered as live-
+out for that predecessor block. Similarly, the definition of a φ-function is always
+considered to be at the beginning of the block, but, depending on the algorithm,
+it may or may not be marked as live-in for the block. To make the description
+of algorithms easier, we follow the same definition as the one used in Chap. 21,
+Sect. 21.2:
+Definition 9.1 (Liveness for φ-Function Operands—Multiplexing Mode) For a
+φ-function a0 = φ(a1 , . . . , an ) in block B0 , where ai comes from block Bi :
+• Its definition-operand is considered to be at the entry of B0 , in other words
+  variable a0 is live-in of B0 .
+• Its use operands are at the exit of the corresponding direct predecessor basic
+  blocks, in other words, variable ai is live-out of basic block Bi .
+110                                                             B. Boissinot and F. Rastello
+
+  This corresponds to placing a copy a0 ← ai on each edge from Bi to B0 .
+The data-flow equations given below and the algorithms presented follow the same
+semantics. They require minor modifications when other φ-semantics are desired.
+
+9.2 Data-Flow Approaches
+
+A well-known and frequently used approach to compute the live-in and live-out sets
+of basic blocks is backward data-flow analysis (see Chap. 8, Sect. 8.1). The liveness
+sets are given by a set of equations that relate upward-exposed uses and definitions
+to live-in and live-out sets. We say a use is upward-exposed in a block when there is
+no local definition preceding it, i.e., the live range “escapes” the block at the top. The
+sets of upward-exposed uses and definitions do not change during liveness analysis
+and can thus, for each block B, be pre-computed:
+
+             Defs(B) :               variables defined (φexcluded) in B
+             Uses(B) :                 variables used in B (φ excluded)
+UpwardExposed(B) : variables used in B without any preceding definition in B
+         PhiDefs(B) :             variables defined by a φ at the entry of B
+         PhiUses(B) : variables used in a φ at the entry of a direct successor of B
+
+   With these pre-computed sets, the data-flow equations can be written as:
+
+   LiveIn(B) = PhiDefs(B) ∪ UpwardExposed(B) ∪ (LiveOut(B) \ Defs(B))
+               
+  LiveOut(B) = S∈directsuccs(B) (LiveIn(S) \ PhiDefs(S)) ∪ PhiUses(B)
+
+   Informally, the live-in of block B are the variables defined in the φ-functions
+of B, those used in B (and not defined in B), and those which are just “passing
+through.” On the other hand, the live-out are those that must be live for a direct
+successor S, i.e., either live-in of S (but not defined in a φ-function of S) or used in
+a φ-function of S.
+
+9.2.1 Liveness Sets on Reducible Graphs
+
+Instead of computing a fixed point, we show that liveness information can be derived
+in two passes over the control-flow graph. The first version of the algorithm requires
+the CFG to be reducible. We then show that arbitrary control-flow graphs can be
+handled elegantly and with no additional cost, except for a cheap pre-processing
+step on the loop nesting forest.
+9 Liveness                                                                                  111
+
+Fig. 9.1 An example of a
+reducible CFG. Forward-CFG
+is represented using full
+edges; back edges are                                                               2
+thickened. Backward pass on
+forward-CFG sets v as live-in
+of node 5, but not of node 2.                                             10        3 v ← ...
+Forward pass on loop nesting
+forest then sets v as live at
+node 6 but not at node 7                                                        4       8
+
+                                                                      ... ← v
+                                                                                5       9
+
+  The key properties of live ranges under strict SSA form on a reducible CFG that
+we exploit for this purpose can be outlined as follow:
+1. Let q be a CFG node that does not contain the definition d of a variable, and h be
+   the header of the maximal loop containing q but not d. If such a maximal loop
+   does not exist, then let h = q.
+       The variable is live-in at q if and only if there exists a forward path from h to
+   a use of the variable without going through the definition d.
+2. If a variable is live-in at the header of a loop then it is live at all nodes inside the
+   loop.
+   As an example, consider the code of Fig. 9.1. For q = 6, the header of the largest
+loop containing 6 but not the definition d in 3 is h = 5. As a forward path (down
+edges) exists from 3 to 5, variable v is live-in at 5. It is thus also live in all nodes
+inside the loop, in particular, in node 6. On the other hand, for q = 7, the largest
+“loop” containing 7 but not 3 is 7 itself. As there is no forward path from 7 to any
+use (node 5), v is not live-in of 7 (note that v is not live-in of 2 either).
+   Those two properties pave the way for describing the two steps that make up our
+liveness set algorithm:
+1. A backward pass propagates partial liveness information upwards using a post-
+   order traversal of the forward-CFG;
+2. The partial liveness sets are then refined by traversing the loop nesting forest,
+   propagating liveness from loop-headers down to all basic blocks within loops.
+Algorithm 9.1 shows the necessary initialization and the high-level structure to
+compute liveness in two passes.
+112                                                                  B. Boissinot and F. Rastello
+
+ Algorithm 9.1: Two-pass liveness analysis: reducible CFG
+ 1   foreach basic block B do
+ 2       mark B as unprocessed
+ 3 DAG_DFS(r)                                                          r is the CFG root node
+ 4 foreach root node L of the loop nesting forest do
+ 5     LoopTree_DFS(L)
+
+    The post-order traversal is shown in Algorithm 9.2, which performs a simple
+depth-first search and gives partial liveness sets to every basic block of the CFG.
+The algorithm roughly corresponds to the pre-computation step of the traditional
+iterative data-flow analysis; however, back edges are not considered during the
+traversal. Recalling the definition of liveness for φ-functions, PhiUses(B) denotes
+the set of live-out variables from basic block B due to uses by φ-functions in direct
+successors of B. Similarly, PhiDefs(B) denotes the set of variables defined by a
+φ-function in B.
+
+ Algorithm 9.2: Partial liveness, with post-order traversal
+ 1 Function DAG_DFS(block B)
+ 2    foreach S ∈ directsuccs(B) such that (B, S) is not a back edge do
+ 3         if S is unprocessed then DAG_DFS(S)
+ 4       Live ← PhiUses(B)
+ 5       foreach S ∈ directsuccs(B) such that (B, S) is not a back edge do
+ 6           Live ← Live ∪ (LiveIn(S) \ PhiDefs(S))
+ 7       LiveOut(B) ← Live
+ 8       foreach program point p in B, backwards, do
+ 9           remove variables defined at p from Live
+10           add uses at p to Live
+11       LiveIn(B) ← Live ∪ PhiDefs(B)
+12       mark B as processed
+
+    The next phase, which traverses the loop nesting forest, is shown in Algo-
+rithm 9.3. The live-in and live-out sets of all basic blocks within a loop are unified
+with the liveness sets of its loop-header.
+
+ Algorithm 9.3: Propagate live variables within loop bodies
+ 1 Function LoopTree_DFS(node N of the loop nesting forest)
+ 2    if N is a loop node then
+ 3         BN ← Block(N )                                               The loop-header of N
+ 4         LiveLoop ← LiveIn(BN ) \ PhiDefs(BN )
+ 5         foreach M ∈ Children(N ) do
+ 6              BM ← Block(M)                                           Loop-header or block
+ 7              LiveIn(BM ) ← LiveIn(BM ) ∪ LiveLoop
+ 8              LiveOut(BM ) ← LiveOut(BM ) ∪ LiveLoop
+ 9              LoopTree_DFS(M)
+9 Liveness                                                                          113
+
+Fig. 9.2 Bad case for              a ← ... 1                        Lr
+iterative data-flow analysis
+
+                                   ... ← a   2                 1         L2
+
+                                             3                       2         L3
+
+                                                                          3          4
+
+                                   Control-flow graph               Loop nesting forest
+
+Example 9.1 The CFG of Fig. 9.2a is a pathological case for iterative data-flow
+analysis. The pre-computation phase does not mark variable a as live throughout
+the two loops. An iteration is required for every loop nesting level until the final
+solution is computed. In our algorithm, after the CFG traversal, the traversal of the
+loop nesting forest (Fig. 9.2b) propagates the missing liveness information from the
+loop-header of loop L2 down to all blocks within the loop’s body and all inner loops,
+i.e., blocks 3 and 4 of L3 .
+
+9.2.1.1    Correctness
+
+The first pass propagates the liveness sets using a post-order traversal of the forward-
+CFG, Gfwd , obtained by removing all back edges from the CFG G. The first two
+lemmas show that this pass correctly propagates liveness information to the loop-
+headers of the original CFG.
+Lemma 9.1 Let G be a reducible CFG, v an SSA variable, and d its definition. If L
+is a maximal loop not containing d, then v is live-in at the loop-header h of L iff
+there is a path in Gfwd (i.e., back edge free) from h to a use of v that does not go
+through d.
+Lemma 9.2 Let G be a reducible CFG, v an SSA variable, and d its definition.
+Let p be a node of G such that all loops containing p also contain d. Then v is live-
+in at p iff there is a path in Gfwd , from p to a use of v that does not go through d.
+   Pointers to formal proofs are provided in the last section of this chapter. The
+important property used in the proof is the dominance property that requires the full
+live range of a variable to be dominated by its definition d. As a consequence, any
+back edge part of the live range is dominated by d, and the associated loop cannot
+contain d.
+   Algorithm 9.2, which propagates liveness information along the DAG Gfwd , can
+only mark variables as live-in if they are indeed live-in. Furthermore, if, after this
+propagation, a variable v is missing in the live-in set of a CFG node p, Lemma 9.2
+114                                                           B. Boissinot and F. Rastello
+
+shows that p belongs to a loop that does not contain the definition of v. Let L be
+such a maximal loop. According to Lemma 9.1, v is correctly marked as live-in
+at the header of L. The next lemma shows that the second pass of the algorithm
+(Algorithm 9.3) correctly adds variables to the live-in and live-out sets where they
+are missing.
+Lemma 9.3 Let G be a reducible CFG, L a loop, and v an SSA variable. If v is
+live-in at the loop-header of L, it is live-in and live-out at every CFG node in L.
+   The intuition is straightforward: a loop is a strongly connected component, and
+because d is live-in of L, d cannot be part of L.
+
+9.2.2 Liveness Sets on Irreducible Flow Graphs
+
+The algorithms based on loops described above are only valid for reducible graphs.
+We can also derive an algorithm that works for irreducible graphs, as follows:
+transform the irreducible graph into a reducible graph, such that the liveness in both
+graphs is equivalent. First of all we would like to stress two points:
+1. We do not require the transformed graph to be semantically equivalent to the
+   original one, only isomorphism of liveness is required.
+2. We do not actually modify the graph in practice, but Algorithm 9.2 can be
+   changed to simulate the modification of some edges on the fly.
+    There are loop nesting forest representations with possibly multiple headers per
+irreducible loop. For the sake of clarity (and simplicity of implementation), we
+consider a representation where each loop has a unique entry node as header. In
+this case, the transformation simply relies on redirecting any edge s → t arriving in
+the middle of a loop to the header of the outermost loop (if it exists) that contains t
+but not s. The example of Fig. 9.3 illustrates this transformation, with the modified
+edge highlighted. Considering the associated loop nesting forest (with nodes 2, 5,
+and 8 as loop-headers), edge 9 → 6 is redirected to node 5.
+    Obviously the transformed code does not have the same semantics as the
+original one. But, because a loop is a strongly connected component, the dominance
+relationship is unchanged. As an example, the immediate dominator of node 5 is 3,
+in both the original and the transformed CFG. For this reason, any variable live-in
+of loop L5 —thus live everywhere in the loop—will be live on any path from 3 to
+the loop. Redirecting an incoming edge to another node of the loop—in particular,
+the header—does not change this behaviour.
+    To avoid building this transformed graph explicitly, an elegant alternative is to
+modify the CFG traversal in Algorithm 9.2. Whenever an entry-edge s → t is
+encountered during the traversal, instead of visiting t, we visit the header of the
+largest loop containing t and not s. This header node is nothing else than the highest
+ancestor of t in the loop nesting forest that is not an ancestor of s. We represent
+9 Liveness                                                                                            115
+
+                1                            1
+
+                2                            2
+                                                                                Lr
+                                                                    1                    10
+       10       3                   10       3
+                                                                                L2
+            4       8                    4       8          2
+                                                                        4                    L8
+                                                                                L5
+            5       9                    5       9
+                                                                                         8        9
+                                                                            5        6
+            6                            6
+
+            7                            7
+
+    Irreducible CFG                Reducible CFG                    Loop nesting forest
+
+Fig. 9.3 A reducible CFG derived from an irreducible CFG, using the loop nesting forest. The
+transformation redirects edges arriving inside a loop to the loop-header (here 9 → 6 into 9 → 5)
+
+such as node as t.OLE (s) (for “Outermost Loop Excluding”). As an example in
+Fig. 9.3, considering edge 9 → 6, the highest ancestor of 6 not an ancestor of 9 is
+9.OLE (6) = L5 . Overall, the transformation amounts to replacing all occurrences
+of S by S.OLE (B) at Lines 3 and 6 of Algorithm 9.2, which allows it to handle
+irreducible control-flow graphs.
+
+9.2.3 Computing the Outermost Excluding Loop (OLE)
+
+Our approach potentially involves many outermost excluding loop queries, espe-
+cially for the liveness check algorithm, as developed further. An efficient implemen-
+tation of OLE is required. The technique proposed here and shown in Algorithm 9.5
+is to pre-compute the set of ancestors from the loop-tree for every node. A simple set
+operation can then find the node we are looking for: the ancestors of the definition
+node are removed from the ancestors of the query point. From the remaining
+ancestors, we pick the shallowest. Using bitsets for encoding the set of ancestors
+of a given node, indexed with a topological order of the loop-tree, these operations
+are easily implemented. The removal is a bit inversion followed by a bitwise “and”
+operation, and the shallowest node is found by searching for the first set bit in the
+bitset. Since the number of loops (and thus the number loop-headers) is rather small,
+the bitsets are themselves small as well and this optimization does not result in much
+wasted space.
+116                                                                B. Boissinot and F. Rastello
+
+   Consider a topological indexing of loop-headers: n.LTindex (n being a loop-
+header) or reciprocally i.node (i being an index). For each node, we associate a
+bitset (indexed by loop-headers) of all its ancestors in the loop-tree: n.ancestors.
+This can be computed using any topological traversal of the loop-tree by a
+call of DFS_COMPUTE_ANCESTORS(Lr ). Note that some compiler intermedi-
+ate representations sometimes consider Lr as a loop-header. Considering so in
+DFS_COMPUTE_ANCESTORS will not spoil the behaviour of OLE.
+
+ Algorithm 9.4: Compute the loop nesting forest ancestors
+ 1 Function DFS_compute_ancestors(node n)
+ 2    if n = Lr then
+ 3          n.ancestors ← n.LTparent.ancestors
+ 4    else
+ 5          n.ancestors ← ∅                                                    empty bitset
+ 6     if n.isLoopHeader then
+ 7          n.ancestors.add(n.LTindex)
+ 8     foreach s in n.LTchildren do
+ 9         DFS_COMPUTE_ANCESTORS(s)
+
+   Using this information, finding the outermost excluding loop can be done by
+simple bitset operations as in Algorithm 9.5.
+
+ Algorithm 9.5: Outermost excluding loop
+ 1 Function OLE(node self, node b)
+ 2    nCA ← bitset_and(self .ancestors, bitset_not(b.ancestors))
+ 3    if nCA.isempty then
+ 4         return self
+ 5    else
+ 6         return nCA.bitset_leading_set.node
+
+Example 9.2 Consider the example of Fig. 9.3c again and suppose the loops L2 ,
+L8 , and L5 are, respectively, indexed 0, 1, and 2. Using big-endian notations for
+bitsets, Algorithm 9.4 would give binary labels 110 to node 9 and 101 to node 6. The
+outermost loop containing 6 but not 9 is given by the leading bit of 101 ∧ ¬110 =
+001, i.e., L5 .
+9 Liveness                                                                            117
+
+9.3 Liveness Check Using Loop Nesting Forest and Forward
+    Reachability
+
+In contrast to liveness sets, the liveness check does not provide the set of variables
+live at a block, but provides a query system to answer questions such as “is
+variable v live at location q?” Such a framework is well suited to tree scan based
+register allocation (see Chap. 22), SSA destruction (see Chap. 21), or Hyperblock
+scheduling (see Chap. 18). Most register-pressure aware algorithms such as code-
+motion are not designed to take advantage of a liveness check query system and
+still require sets. This query system can obviously be built on top of pre-computed
+liveness sets. Queries in O(1) are possible, at least for basic block boundaries,
+providing the use of sparsesets or bitsets to allow for efficient element-wise queries.
+If sets are only stored at basic block boundaries, to allow a query system at
+instruction granularity, it is possible to use the list of uses of variables or backward
+scans. Constant time, worst-case complexity is lost in this scenario and liveness
+sets that have to be incrementally updated at each (even minor) code transformation
+can be avoided and replaced by less memory-consuming data structures that only
+depend on the CFG.
+    In the following, we consider the live-in query of variable a at node q. To
+avoid notational overhead, let a be defined in the CFG node d = def (a) and let
+u ∈ uses(a) be a node where a is used. Suppose that q is strictly dominated by
+d (otherwise v cannot be live at q). Lemmas 9.1–9.3 given in Sect. 9.2.1.1 can be
+rephrased as follows:
+1. Let h be the header of the maximal loop containing q but not d. Let h be q if
+   such maximal loop does not exist. Then v is live-in at h if and only if there exists
+   a forward path that goes from h to u.
+2. If v is live-in at the header of a loop then it is live at any node inside the loop.
+    In other words, v is live-in at q if and only if there exists a forward path from h to
+u where h, if it exists, is the header of the maximal loop containing q but not d, and
+q itself otherwise. Given the forward control-flow graph and the loop nesting forest,
+finding out if a variable is live at some program point can be done in two steps.
+First, if there exists a loop containing the program point q and not the definition,
+pick the header of the biggest such loop instead as the query point. Then check for
+reachability from q to any use of the variable in the forward CFG. As explained
+in Sect. 9.2.2, for irreducible CFG, the modified-forward CFG that redirects any
+edge s → t to the loop-header of the outermost loop containing t but excluding s
+(t.OLE (s)), has to be used instead. Correctness is proved from the theorems used
+for liveness sets.
+    Algorithm 9.6 puts a little bit more effort into providing a query system at
+instruction granularity. If q is in the same basic block as d (lines 8–13), then v
+is live at q if and only if there is a use outside the basic block, or inside but after
+q. If h is a loop-header then v is live at q if and only if a use is forward reachable
+from h (lines 19–20). Otherwise, if the use is in the same basic block as q it must be
+118                                                            B. Boissinot and F. Rastello
+
+after q to bring the variable live at q (lines 17–18). In this pseudo-code, upper case
+is used for basic blocks while lower case is used for program points at instruction
+granularity. “def(a)” is an operand. “uses(a)” is a set of operands. “basicBlock(u)”
+returns the basic block containing the operand u. Given the semantics of the φ-
+function instruction, the basic block returned by this function for a φ-function
+operand can be different from the block where the instruction textually occurs. Also,
+“u.order” provides the corresponding (increasing) ordering in the basic block. For
+a φ-function operand, the ordering number might be greater than the maximum
+ordering of the basic block if the semantics of the φ-function places the uses
+on outgoing edges of the direct predecessor block. Q.OLE (D) corresponds to
+Algorithm 9.5 given in Sect. 9.2.3. forwardReachable(H, U ), which tells whether
+U is reachable in the modified-forward CFG, will be described later.
+
+ Algorithm 9.6: Live-in check
+ 1 Function IsLiveIn(programPoint q, var a)
+ 2    d ← def (a)
+ 3    D ← basicBlock(d)
+ 4    Q ← basicBlock(q)
+                                                       
+ 5    if not D sdom Q or (D = Q and order(d) < order(q)) then
+ 6         return false
+ 7     if Q = D then
+ 8         foreach u in uses(a) do
+ 9             U ← basicBlock(u)
+10             if U = D or order(q) ≤ order(u) then
+11                  return true
+
+12         return false
+13     H ← Q.OLE (D)
+14     foreach u in uses(a) do
+15         U ← basicBlock(u)
+16         if (not isLoopHeader(H )) and U = Q and order(u) < order(q) then
+17              continue
+18         if forward Reachable(H, U ) then
+19              return true
+
+20     return false
+
+   The live-out check algorithm, given by Algorithm 9.7, only differs from live-in
+check in lines 5, 11, and 17, which involve ordering comparisons. In line 5, if q is
+equal to d it cannot be live-in while it might be live-out; in lines 11 and 17 if q is at
+a use point it makes it live-in but not necessarily live-out.
+9 Liveness                                                                           119
+
+ Algorithm 9.7: Live-out check
+ 1 Function IsLiveOut(programPoint q, var a)
+ 2    d ← def (a)
+ 3    D ← basicBlock(d)
+ 4    Q ← basicBlock(q)
+                                                       
+ 5    if not D sdom Q or (D = Q and order(d) ≤ order(q)) then
+ 6         return false                          q must be dominated by the definition
+ 7     if Q = D then
+ 8         foreach u in uses(a) do
+ 9             U ← basicBlock(u)
+10             if U = D or order(q) < order(u) then
+11                  return true
+
+12           return false
+13     H ← Q.OLE (D)
+14     foreach u in uses(a) do
+15         U ← basicBlock(u)
+16         if (not isLoopHeader(H )) and U = Q and order(u) ≤ order(q) then
+17              continue
+18           if forwardReachable(H, U ) then
+19                return true
+
+20     return false
+
+9.3.1 Computing Modified-Forward Reachability
+
+The liveness check query system relies on pre-computations for efficient OLE and
+forwardReachable queries. The outermost excluding loop is identical to the one
+used for liveness sets. We explain how to compute modified-forward reachability
+here (i.e., forward reachability on transformed CFG to handle irreducibility). In
+practice we do not explicitly build the modified-forward graph. To efficiently
+compute modified-forward reachability we simply need to traverse the modified-
+forward graph in reverse topological order. A post-order initiated by a call to the
+recursive function DFS_Compute_forwardReachable(r) (Algorithm 9.8) will do the
+job. Bitsets can be used to efficiently implement sets of basic blocks. Once forward
+reachability has been pre-computed this way, forwardReachable(H, U ) returns true
+if and only if U ∈ H.forwardReachable.
+
+9.4 Liveness Sets Using Path Exploration
+
+Another, maybe more intuitive, way of calculating liveness sets is closely related to
+the definition of the live range of a given variable. As recalled earlier, a variable is
+live at a program point p, if p belongs to a path of the CFG leading from a definition
+120                                                                 B. Boissinot and F. Rastello
+
+ Algorithm 9.8: Computation of modified-forward reachability using a traversal
+ along a reverse topological order
+ 1 Function DFS_Compute_forwardReachable(block N )
+ 2    N.forwardReachable ← ∅
+ 3    N.forwardReachable.add(N )
+ 4    foreach S ∈ directsuccs(N ) if (N, S) is not a back edge do
+ 5         H ← S.OLE (N )
+ 6         if H.forwardReachable = ⊥ then
+ 7             DFS_Compute_forwardReachable(H )
+ 8          N.forwardReachable ← N.forwardReachable ∪ H.forwardReachable
+
+of that variable to one of its uses without passing through the definition. Therefore,
+the live range of a variable can be computed using a backward traversal starting at
+its uses and stopping when its (unique) definition is reached.
+    Actual implementation of this idea could be done in several ways. In particular,
+the order along which use operands are processed, in addition to the way liveness
+sets are represented, can substantially impact the performance. The one we choose
+to develop here allows the use of a simple stack-like set representation which avoids
+any expensive set-insertion operations and set-membership tests. The idea is to
+process use operands variable by variable. In other words, the processing of different
+variables is not intermixed, i.e., the processing of one variable is completed before
+the processing of another variable begins.
+    Depending on the particular compiler framework, a pre-processing step that
+performs a full traversal of the program (i.e., the instructions) might be required
+in order to derive the def-use chains for all variables, i.e., a list of all uses for each
+SSA variable. The traversal of the variable list and processing of its uses thanks to
+def-use chains is depicted in Algorithm 9.9.
+    Note that, in strict SSA form, in a given block, no use can appear before a
+definition. Thus, if v is live-out or used in a block B, it is live-in iff it is not
+defined in B. This leads to the code of Algorithm 9.10 for path exploration. Here,
+the liveness sets are implemented using a stack-like data structure.
+
+ Algorithm 9.9: Compute liveness sets by variable using def-use chains
+ 1 Function Compute_LiveSets_SSA_ByVar(CFG)
+ 2    foreach variable v do
+ 3         foreach block B such that v ∈ Uses(B) ∪ PhiUses(B) do
+ 4             if v ∈ PhiUses(B) then            Used in the φ of a direct successor block
+ 5                  LiveOut(B) = LiveOut(B) ∪ {v}
+ 6              Up_and_Mark_Stack(B, v)
+9 Liveness                                                                          121
+
+ Algorithm 9.10: Optimized path exploration using a stack-like data structure
+ 1 Function Up_and_Mark_Stack(B, v)
+ 2    if v ∈ Defs(B) then return                            Killed in the block, stop
+ 3    if top(LiveIn(B)) = v then return               Propagation already done, stop
+ 4    push(LiveIn(B), v)
+ 5    if v ∈ PhiDefs(B) then return                    Do not propagate φ definitions
+ 6    foreach P ∈ CFG_directpreds(B) do                         Propagate backwards
+ 7         if top(LiveOut(P )) = v then
+ 8              push(LiveOut(P ), v)
+ 9           Up_and_Mark_Stack(P , v)
+
+9.5 Further Reading
+
+Liveness information is usually computed with iterative data-flow analysis, which
+goes back to Kildall [166]. The algorithms are, however, not specialized to the
+computation of liveness sets and overhead may incur. Several strategies are possible,
+leading to different worst-case complexities and performances in practice. Round-
+robin algorithms propagate information according to a fixed block ordering derived
+from a depth-first spanning tree, and iterate until it stabilizes. The complexity of
+this scheme was analysed by Kam et al. [157]. Node listing algorithms specify, a
+priori, the overall sequence of nodes, where repetitions are allowed, along which
+data-flow equations are applied. Kennedy [162] devises for structured flow graphs,
+node listings of size 2|V |, with |V | the number of control-flow nodes, and mentions
+the existence of node listings of size O (|V | log(|V |)) for reducible flow graphs.
+Worklist algorithms focus on blocks that may need to be updated because the
+liveness sets of their successors (for backward problems) changed. Empirical results
+by Cooper et al. [85] indicate that the order in which basic blocks are processed is
+critical and directly impacts the number of iterations. They showed that, in practice,
+a mixed solution called “single stack worklist” based on a worklist initialized with
+a round-robin order is the most efficient for liveness analysis.
+    Alternative ways to solve data-flow problems belong to the family of elimination-
+based algorithms [251]. Through recursive reductions of the CFG, variables of the
+data-flow system are successively eliminated and equations are reduced until the
+CFG reduces to a single node. The best, but unpractical, worst-case complexity
+elimination algorithm has an almost-linear complexity O(|E|α(|E|)). It requires the
+CFG (resp. the reverse CFG) to be reducible for a forward (resp. backward) analysis.
+For non-reducible flow graphs, none of the existing approaches can guarantee a
+worst-case complexity better than O(|E|3 ). In practice, irreducible CFGs are rare,
+but liveness analysis is a backward data-flow problem, which frequently leads to
+irreducible reverse CFGs.
+    Gerlek et al. [126] use the so-called λ-operators to collect upward-exposed uses
+at control-flow split points. More specifically, the λ-operators are placed at the
+iterated dominance frontiers, computed on the reverse CFG, of the set of uses of
+122                                                           B. Boissinot and F. Rastello
+
+a variable. These λ-operators and the other uses of variables are chained together
+and liveness is efficiently computed on this graph representation. The technique
+of Gerlek et al. can be considered as a precursor of the live variable analysis
+based on the Static Single Information (SSI) form conjectured by Singer [261] and
+revisited by Boissinot et al. [37]. In both cases, the insertion of pseudo-instructions
+guarantees that any definition is post-dominated by a use.
+    Another approach to computing liveness was proposed by Appel [10]. Instead
+of computing the liveness information for all variables at the same time, variables
+are handled individually by exploring paths in the CFG starting from variable uses.
+Using logic programming, McAllester [197] presented an equivalent approach to
+show that liveness analysis can be performed in time proportional to the number
+of instructions and variables. However, his theoretical analysis is limited to a
+restricted input language with simple conditional branches and instructions. A more
+generalized analysis is given in Chapter 2 of the habilitation thesis of Rastello [239],
+in terms of both theoretical complexity and practical evaluation (Sect. 9.4 describes
+a path-exploration technique restricted to SSA programs).
+    The loop nesting forest considered in this chapter corresponds to the one
+obtained using Havlak’s algorithm [142]. A more generalized definition exists and
+corresponds to the minimal loop nesting forest as defined by Ramalingam [236]. The
+handling of any minimal loop nesting forest is also detailed in Chapter 2 of [239].
+    Handling of irreducible CFG can be done through CFG transformations such as
+node splitting [2, 149]. Such a transformation can lead to an exponential growth in
+the number of nodes. Ramalingam [236] proposed a transformation (different from
+the one presented here but also without any exponential growth) that only maintains
+the dominance property (not the full semantic).
+    Finding the maximal loop not containing a node s but containing a node t (OLE)
+is a problem similar to finding the least common ancestor (LCA) of the two nodes s
+and t in the rooted loop-nested forest: the loop in question is the only direct child
+of LCA(s, t), ancestor of t. As described in [23], an LCA query can be reduced to a
+Range Minimum Query (RMQ) problem that can itself be answered in O(1), with a
+pre-computation of O(n). The adaptation of LCA to provide an efficient algorithm
+for OLE queries is detailed in Chapter 2 of [239].
+    This chapter is a short version of Chapter 2 of [239] which, among other details,
+contains formal proofs and handling of different φ-function semantics. Sparsesets
+are described by Cooper and Torczon [83].

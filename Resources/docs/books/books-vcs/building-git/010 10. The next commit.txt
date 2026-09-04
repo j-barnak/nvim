@@ -1,0 +1,1317 @@
+10. The next commit
+In the last chapter, we partially implemented the status command so that it can show us what
+has changed between the index and the workspace. It shows us which index entries will be
+added or updated if we run add ., but to make incremental additions truly useful, we also need
+to see what has been updated in the index and will be part of the next commit; we need to see
+the difference between the latest commit and the current index.
+
+In order to achieve this, we’ll need to be able read the complete tree associated with the commit
+that .git/HEAD is pointing at. We’ll often refer to the latest commit as the HEAD commit, or
+simply HEAD. If we can get the blob ID for every item in the commit’s tree, we can compare
+those to the entries in the index and detect any differences.
+
+To make a start on this, here’s a script that attempts to print all the files in HEAD. Many of the
+methods I’m calling here do not yet exist; the point of writing such an example is to imagine the
+code one would like to write to achieve some task, and then add all the missing functionality
+required to make it work.
+     # show_head.rb
+
+     require "pathname"
+     require_relative "./lib/repository"
+
+     repo = Repository.new(Pathname.new(Dir.getwd).join(".git"))
+
+     head_oid = repo.refs.read_head
+     commit   = repo.database.load(head_oid)
+
+     def show_tree(repo, oid, prefix = Pathname.new(""))
+       tree = repo.database.load(oid)
+
+       tree.entries.each do |name, entry|
+         path = prefix.join(name)
+         if entry.tree?
+           show_tree(repo, entry.oid, path)
+         else
+           mode = entry.mode.to_s(8)
+           puts "#{ mode } #{ entry.oid } #{ path }"
+         end
+       end
+     end
+
+     show_tree(repo, commit.tree)
+
+If we can get this to run, then we’ll have implemented all the methods we need to complete
+the status command.
+
+10.1. Reading from the database
+The first method in our show_head.rb example script is a call to Database#load, which is given
+the object ID returned by Refs#read_head. We want it to return a Database::Commit object
+that’s reconstructed by reading the object from .git/objects.
+
+                                                          The next commit
+
+Let’s start implementing the Database#load method. The method itself will just be a public
+wrapper around two building blocks: reading an object from disk, and caching the result in a
+hash called @objects. Git objects should not be modified after being read from disk; if anything
+about them is changed then we should get a new object with a new ID. So, once an object is read
+from disk we can hold onto it in memory and avoid reading it again for the rest of the process.
+       # lib/database.rb
+
+          def load(oid)
+            @objects[oid] ||= read_object(oid)
+          end
+
+The cache will need to be set up in the constructor for Database.
+       # lib/database.rb
+
+          def initialize(pathname)
+            @pathname = pathname
+            @objects = {}
+          end
+
+The Database#read_object method is where the actual work happens. The first thing it needs
+to do is locate the object in the filesystem based on its object ID. Recall that this path is
+calculated in the write_object method:
+       # lib/database.rb
+
+          def write_object(oid, content)
+            object_path = @pathname.join(oid[0..1], oid[2..-1])
+            # ...
+          end
+
+Let’s extract this into a method so that read_object can use it.
+       # lib/database.rb
+
+          def write_object(oid, content)
+            path = object_path(oid)
+            # ...
+          end
+
+          def object_path(oid)
+            @pathname.join(oid[0..1], oid[2..-1])
+          end
+
+Now, read_object begins by reading the object from disk and using Zlib to decompress it.
+It then creates a StringScanner1 with the resulting data. StringScanner is part of Ruby’s
+standard library and is very useful for parsing data, letting us consume data by matching against
+a regular expression2, or looking for the next occurrence of an expression.
+
+All objects begin with the object’s type, then a space, then a null byte. We use StringScanner
+to scan_until we find a space, giving us the object’s type, then again until we find a null byte,
+giving us the size. Once we know the type, we look up a class in a hash called TYPES by this
+ https://docs.ruby-lang.org/en/2.3.0/StringScanner.html
+ https://en.wikipedia.org/wiki/Regular_expression
+
+                                        The next commit
+
+name, and call parse on it, handing it the StringScanner so it can process the rest of the data
+and return the resulting object. Finally, we attach the given object ID to the object and return it.
+     # lib/database.rb
+
+     require "strscan"
+
+        def read_object(oid)
+          data    = Zlib::Inflate.inflate(File.read(object_path(oid)))
+          scanner = StringScanner.new(data)
+
+          type = scanner.scan_until(/ /).strip
+          _size = scanner.scan_until(/\0/)[0..-2]
+
+          object = TYPES[type].parse(scanner)
+          object.oid = oid
+
+          object
+        end
+
+TYPES is a constant in the Database class that maps type names back to the classes that represent
+them.
+     # lib/database.rb
+
+        TYPES = {
+          "blob"   => Blob,
+          "tree"   => Tree,
+          "commit" => Commit
+        }
+
+This Database#read_object method gives us a new interface we need to implement: the Blob,
+Tree and Commit classes all need a parse method that takes a StringScanner and returns an
+object of the right type. To get our main script working we don’t actually need to read blobs
+themselves, but parsing them is trivial so we may as well deal with it now.
+
+10.1.1. Parsing blobs
+A Blob is just a wrapper around a string we got by reading a file, so it doesn’t really require
+any parsing per se other than reading all the data out of the object file. We just need to expose
+an attribute reader for the @data property so the caller can get the blob’s contents.
+     # lib/database/blob.rb
+
+          attr_reader :data
+
+          def self.parse(scanner)
+            Blob.new(scanner.rest)
+          end
+
+10.1.2. Parsing commits
+Now we can deal with something more complicated: commits. As we saw in Section 2.3.4,
+“Commits on disk”, a commit is stored as a series of line-delimited header fields, followed by
+a blank line, followed by the message. To parse it, we’ll set up a loop that uses scan_until to
+
+                                        The next commit
+
+read up to the next line break. If the line is blank, we break the loop. Otherwise, we split the
+line on its first space and assign the resulting key-value pair to a hash.
+
+Once the loop is done, we extract the parent, tree and author fields from the hash, we get the
+message from scanner.rest, and we return a new Commit with these values. We only need to
+read the tree property for now, so we’ll expose an attribute reader for that.
+     # lib/database/commit.rb
+
+         attr_reader :tree
+
+         def self.parse(scanner)
+           headers = {}
+
+            loop do
+              line = scanner.scan_until(/\n/).strip
+              break if line == ""
+
+              key, value = line.split(/ +/, 2)
+              headers[key] = value
+            end
+
+           Commit.new(
+             headers["parent"],
+             headers["tree"],
+             headers["author"],
+             scanner.rest)
+         end
+
+This implementation makes some simplifications. For example, it ignores the committer field,
+because our implementation always writes the same data to the author and committer fields.
+To parse real-world Git commits, we’ll need to add support for a distinct committer. It also
+leaves the author field as a string rather than parsing it further into an Author object, as it is
+when the commit is written to the database. Again, we don’t actually need to read structured
+author information yet, so we’ll leave that until later.
+
+Now that we can parse commits, the call to database.load(head_oid) will return a
+Database::Commit object with a tree property that we can use to get the ID of the commit’s
+tree.
+
+10.1.3. Parsing trees
+The final type of database object we need to parse is trees, the objects that record which version
+of each file was present in any given commit. In Section 2.3.3, “Trees on disk” we learned that
+a tree is composed of a series of entries, each of which contains a file’s mode and name, and
+the object ID of the blob containing the file’s contents.
+
+To parse this, we set up a loop that runs until the end of the input is reached, which we detect
+using scanner.eos?, short for end of string. In each iteration, we scan until the next space to
+get the file’s mode, and interpret the resulting string as an integer in base 8. Then we scan
+until the next null byte to get the file’s name. Finally we use scanner.peek to read the next
+20 bytes, which are the object ID, and unpack it using the pattern H40, which means a 40-digit
+hexadecimal string. Having gathered these three items, we make a new Entry out of them — not
+an Index::Entry, but a Database::Entry, a new class that represents entries read from the
+
+                                        The next commit
+
+database. This class has fewer fields than Index::Entry, since it does not contain all the stat
+information that the index contains.
+
+Once we’ve created all the entries and collected them in a hash, we return a new
+Database::Tree containing the entries.
+     # lib/database/tree.rb
+
+         def self.parse(scanner)
+           entries = {}
+
+            until scanner.eos?
+              mode = scanner.scan_until(/ /).strip.to_i(8)
+              name = scanner.scan_until(/\0/)[0..-2]
+
+              oid = scanner.peek(20).unpack("H40").first
+              scanner.pos += 20
+
+              entries[name] = Entry.new(oid, mode)
+            end
+
+           Tree.new(entries)
+         end
+
+We’ll change the Database::Tree class’s constructor so that it can take an optional set of entries
+as input, rather than taking no arguments and always starting with an empty hash as it did in
+Section 5.2.2, “Building a Merkle tree”. We’ll also expose the entries instance variable so
+that other methods can iterate over a tree’s contents.
+     # lib/database/tree.rb
+
+         attr_reader :entries
+
+         def initialize(entries = {})
+           @entries = entries
+         end
+
+The Database::Entry class is a simple structure that holds the object ID and file mode, and has
+a single method that our show_tree.rb test script relies upon. Database::Entry#tree? returns
+true if the entry points to another tree, rather than a blob, which we detect by checking if its
+mode is the 400008 mode that’s assigned to trees.
+     # lib/database/entry.rb
+
+     class Database
+       Entry = Struct.new(:oid, :mode) do
+         def tree?
+           mode == Tree::TREE_MODE
+         end
+       end
+     end
+
+Using a Struct for this data will make it easiert to compare tree entries for equality when we
+come to implement tree diffs in Section 14.1, “Telling trees apart”.
+
+It might seem odd that when we were writing trees to the database, we filled
+@entries with Index::Entry objects, but we now fill them with objects of a different
+
+                                                         The next commit
+
+type — Database::Entry. In a dynamically typed language like Ruby, the classes that objects
+belong to is not as important as which methods they respond to. For example, look at the
+Database::Tree#to_s method:
+
+       # lib/database/tree.rb
+
+              def to_s
+                entries = @entries.map do |name, entry|
+                  mode = entry.mode.to_s(8)
+                  ["#{ mode } #{ name }", entry.oid].pack(ENTRY_FORMAT)
+                end
+
+                entries.join("")
+              end
+
+What assumptions does this method make about the value of entry? The only methods it calls
+on it are mode, which should return an integer, and oid, which should return a 40-character
+hexadecimal string. The same is true of our Database::Entry class, so we can use instances of
+it where previously we might have used an Index::Entry. This ability to substitute values of
+one type for values of another is called the Liskov substitution principle3.
+
+There are other methods in Database::Tree that make additional requirements about entry
+values; Database::Tree#add_entry and Database::Tree#traverse require entries to respond
+to basename and traverse respectively. However, these methods are only used when creating
+trees to write to the database, not when reading them; trees read from the database should not
+be modified.
+
+But, there’s a more interesting distinction to be made between trees when they are written and
+when they are read. When they are created during the commit command, a Tree is a recursive
+structure made of Index::Entry and other Tree objects; each Tree contains the whole structure
+of the all the nodes inside it. But when they are read, a Tree is a flat structure containing only its
+immediate children, represented as Database::Entry objects. Many operations that read trees
+from the database will not need the entire tree to be read, so we’d like to be able to load the tree
+one node at a time, rather than having the database spend time recursively fetching an entire
+tree we might not need.
+
+This structural difference means that a Tree being created is fundamentally different from a
+Tree being read — maybe they should be different classes? When grouping data and behaviour
+into classes, it’s often useful to look at which sets of data and methods are used together,
+rather than grouping around an abstract concept like a ‘tree’ that they are all related to. In
+this case, all the previously-defined Tree methods — add_entry , traverse, mode, type and
+to_s — are used when creating trees, and entries is used when reading them. It’s a perfectly
+reasonable idea to split these two groups of methods into two classes, say, WritableTree and
+ReadableTree. However, that would separate the code that serialises a Tree from that that
+parses one, and in the other Database object classes and in Index these routines are kept together
+in the same class.
+
+There’s not a right or wrong answer here, it’s a trade-off about which data and behaviour we’d
+like to be kept together, in light of what will make the code easier to work with. For now, I’d
+ https://en.wikipedia.org/wiki/Liskov_substitution_principle
+
+                                        The next commit
+
+prefer to make Tree look like like the other database objects, and keep its reading and writing
+methods together.
+
+10.1.4. Listing the files in a commit
+With all the above machinery in place, our show_head.rb script is complete, and when run,
+will print out the mode and object ID of every blob in the commit.
+     $ ruby show_head.rb
+
+     100644 f288702d2fa16d3cdf0035b15a9fcbc552cd88e7 LICENSE.txt
+     100644 c8c218e0d599831338af0748af283a149b9ff8d2 Rakefile
+     100755 0148dff020d1ce12464239c792e23820183c0829 bin/jit
+     100644 182dce271bb629839f16a8c654a0bcba85aaabdb lib/command.rb
+     100644 5a4cc34fa29a4a46702fbe701a9410bb6fc5b5be lib/command/add.rb
+     100644 e7eade573e8be1dfc6cb5e7af949f1222db757d3 lib/command/base.rb
+     100644 b066585fc6c16bd97020e5b2dc12d6b357fdd546 lib/command/commit.rb
+     100644 846e2d1d9d5f8f67efe6cd0aa1f23fe3fc276588 lib/command/init.rb
+     100644 0b9112d352746a3f53f0a2c323d8cc4e45e06bf5 lib/command/status.rb
+     100644 a34d3a1b228173757e8eebaca9ce36a70530bd9e lib/database.rb
+     100644 974cb4219bc52d52a51c5dd603a825f98b67d838 lib/database/author.rb
+     100644 06a23b3afd65371201e3bad0c719a9f1eec62a89 lib/database/blob.rb
+     100644 bf864ea11e09a6b1826c6c85bbc1f0c281cfd952 lib/database/commit.rb
+     100644 4f7f284bee588d099cff219625752721da08d017 lib/database/tree.rb
+     100644 14899940c8aa6a748f7712071aa3af796d1ffbd2 lib/entry.rb
+     100644 b2402c884235cf458a56f5e39b81cb33772d37f0 lib/index.rb
+     100644 6bfbb89a5da1ad37f54a53e04060cc11bc81d3d6 lib/index/checksum.rb
+     100644 2090fffd61b81e0c047bdeecc86c347ea595d246 lib/index/entry.rb
+     100644 e3fcecae505cf59ac0c84ded377838e68ab316bf lib/lockfile.rb
+     100644 9a7fcc04af2d7dc6e9080964bf5135162e9518c6 lib/refs.rb
+     100644 0e511fe66af08ba50e856a3321f9a808b8cab5a0 lib/repository.rb
+     100644 b3171c6c9c95672f650da8e11f1bbe0753ebfc0b lib/workspace.rb
+     100644 8e93a73bd9f36144a1299c995e600dc7e756c847 test/command/add_test.rb
+     100644 08b71c3782e1b198fcc0e8762e1398792f68178a test/command/status_test.rb
+     100644 21f313e6188b0917d5cb7cf17f77ca9d26405d92 test/command_helper.rb
+     100644 fac3b1462e80a9bff019fb51cee9b502589addcd test/index_test.rb
+
+A final check on the project’s status will tell us what’s changed, so we know what will be
+committed when we run the add . and commit commands.
+     $ jit status
+      M lib/database.rb
+      M lib/database/blob.rb
+      M lib/database/commit.rb
+      M lib/database/tree.rb
+     ?? lib/database/entry.rb
+
+10.2. HEAD/index differences
+Now that we have the ability to read trees from the database, we can compare the index against
+the HEAD commit to see what changes will be included in the next commit. These changes appear
+in the first column of the --porcelain status format and, ignoring merge conflicts and rename
+detection for the time being, this column can display three different states. A means a file was
+added, that is, it appears in the index but not in HEAD. D means it was deleted, that is it appears
+in HEAD but not in the index. And finally, M means a file is modified; it appears in both HEAD and
+the index but with a different mode or object ID.
+
+                                         The next commit
+
+All the tests in this section will begin with a single commit in the repository, just so that HEAD
+exists and points at a commit. The index will begin in sync with HEAD and no changes will be
+made in the workspace. The starting state will be equivalent to running these commands:
+     $ mkdir -p a/b
+     $ echo "one" > 1.txt
+     $ echo "two" > a/2.txt
+     $ echo "three" > a/b/3.txt
+     $ git add .
+     $ git commit --message "first commit"
+
+Here is the same state of affairs expresses as minitest setup code, using our CommandHelper
+module.
+     # test/command/status_test.rb
+
+       describe "head/index changes" do
+         before do
+           write_file "1.txt", "one"
+           write_file "a/2.txt", "two"
+           write_file "a/b/3.txt", "three"
+
+            jit_cmd "add", "."
+            commit "first commit"
+          end
+
+10.2.1. Added files
+To check how Git represents added files, let’s try adding a couple of new files to the index.
+We’ll add one inside an already-tracked directory:
+     $ echo "four" > a/4.txt
+     $ git status --porcelain
+     ?? a/4.txt
+
+     $ git add .
+     $ git status --porcelain
+     A a/4.txt
+
+Notice Git displays the specific file as untracked at first, before listing it as added after add has
+been run. Next we’ll git reset --hard to remove any changes since the HEAD commit, add a
+file in a directory that’s not part of the HEAD tree:
+     $ mkdir -p d/e
+     $ echo "five" > d/e/5.txt
+     $ git status --porcelain
+     ?? d/
+
+     $ git add .
+     $ git status --porcelain
+     A d/e/5.txt
+
+At first, the directory d is listed as untracked — Git lists untracked directories, not all the files
+inside them. However once the file is added, the file d/e/5.txt is listed as added. So, when
+a directory is in the index but is not part of the HEAD tree, Git still lists each new file inside it
+individually, rather than listing the directory itself as added.
+
+                                        The next commit
+
+Below are two tests that reproduce the above examples.
+     # test/command/status_test.rb
+
+         it "reports a file added to a tracked directory" do
+           write_file "a/4.txt", "four"
+           jit_cmd "add", "."
+
+           assert_status <<~STATUS
+             A a/4.txt
+           STATUS
+         end
+
+         it "reports a file added to an utracked directory" do
+           write_file "d/e/5.txt", "five"
+           jit_cmd "add", "."
+
+           assert_status <<~STATUS
+             A d/e/5.txt
+           STATUS
+         end
+       end
+
+These tests currently fail because status produces no output; it currently only detects
+differences between the index and workspace, of which none exist after running add .. We
+need to build some infrastructure for detecting and reporting HEAD/index differences.
+
+Currently, the code of the Command::Status#run method looks like this:
+     # lib/command/status.rb
+
+         def run
+           # ...
+
+            repo.index.load_for_update
+
+            scan_workspace
+            detect_workspace_changes
+
+            repo.index.write_updates
+
+           # ...
+         end
+
+Let’s add a step to this recipe that loads the whole of the HEAD commit’s tree. We’ll also replace
+detect_workspace_changes with check_index_entries since we’ll need to do more when
+scanning the index than just comparing it to the workspace.
+     # lib/command/status.rb
+
+            scan_workspace
+            load_head_tree
+            check_index_entries
+
+Many commands won’t need to load an entire tree recursively, which is why we implemented
+Database#load to return a single Tree at a time. However, loading the whole tree will make
+implementing status a bit more convenient, and as we’ll see in later examples, some status
+output requires displaying the whole contents of a sub-tree even if it’s no longer in the index;
+
+                                       The next commit
+
+there is not the same opportunity to skip unindexed directories as there was when detecting
+untracked files.
+
+The load_head_tree method is split into two parts. The first reads the object ID from
+Refs#read_head, and loads the commit with that ID using Database#load. Then we enter a
+recursive procedure called read_tree, which takes the ID of a tree, loads it from the database,
+and then finds any entries that themselves refer to trees and loads them too. The results of this
+process are stored in the @head_tree hash, which maps file paths to Database::Entry objects
+that hold the mode and object ID of each file. You’ll recognise the structure of this method
+from the show_head.rb script at the beginning of this chapter.
+     # lib/command/status.rb
+
+         def load_head_tree
+           @head_tree = {}
+
+           head_oid = repo.refs.read_head
+           return unless head_oid
+
+           commit = repo.database.load(head_oid)
+           read_tree(commit.tree)
+         end
+
+         def read_tree(tree_oid, pathname = Pathname.new(""))
+           tree = repo.database.load(tree_oid)
+
+           tree.entries.each do |name, entry|
+             path = pathname.join(name)
+             if entry.tree?
+               read_tree(entry.oid, path)
+             else
+               @head_tree[path.to_s] = entry
+             end
+           end
+         end
+
+Once load_head_tree has completed, we call check_index_entries. This does the same
+thing that detect_workspace_changes was doing — iterating over the index and checking each
+entry. However now, as well as checking each entry against the workspace, we also check it
+against the HEAD tree.
+     # lib/command/status.rb
+
+         def check_index_entries
+           repo.index.each_entry do |entry|
+             check_index_against_workspace(entry)
+             check_index_against_head_tree(entry)
+           end
+         end
+
+check_index_against_workspace is just the check_index_entry method with its name altered
+to reflect its specific responsibility. check_index_against_head_tree is a new method that
+compares each index entry against the entries in @head_tree to detect differences. The first
+difference we’ve written tests for is files being added in the index that don’t appear in HEAD,
+and this is easy enough to check for.
+
+                                        The next commit
+
+     # lib/command/status.rb
+
+         def check_index_against_head_tree(entry)
+           item = @head_tree[entry.path]
+
+           unless item
+             record_change(entry.path, :index_added)
+           end
+         end
+
+Finally, we need to adjust status_for to return statuses for HEAD/index changes as well as index/
+workspace differences. Rather than returning a single string, we’ll now generate two strings,
+one for each column of the status output, and concatenate them together.
+     # lib/command/status.rb
+
+         def status_for(path)
+           changes = @changes[path]
+
+            left = " "
+            left = "A" if changes.include?(:index_added)
+
+            right = " "
+            right = "D" if changes.include?(:workspace_deleted)
+            right = "M" if changes.include?(:workspace_modified)
+
+           left + right
+         end
+
+This is where the importance of storing sets rather than single statuses in @changes becomes
+apparent. A single file could have the status AM, meaning it exists in the index but not in HEAD,
+and its copy in the workspace differs from the one in the index.
+
+10.2.2. Modified files
+To check that the M status is reported correctly, we need two test cases. In one, we’ll make a file
+executable and update the index, and we expect to see that change reflected in the output. In
+the other, we’ll change the contents of the file and update the index, changing the file’s object
+ID relative to HEAD.
+     # test/command/status_test.rb
+
+         it "reports modified modes" do
+           make_executable "1.txt"
+           jit_cmd "add", "."
+
+           assert_status <<~STATUS
+             M 1.txt
+           STATUS
+         end
+
+         it "reports modified contents" do
+           write_file "a/b/3.txt", "changed"
+           jit_cmd "add", "."
+
+            assert_status <<~STATUS
+
+                                       The next commit
+
+             M a/b/3.txt
+           STATUS
+         end
+
+Again, both these tests fail because the status command produces no output. This is easily
+remedied by extended the check_index_against_head_tree method so that, if it finds there is
+a corresponding item in @head_tree, we check the index entry’s mode and oid against it and
+record a change if there are any differences.
+     # lib/command/status.rb
+
+         def check_index_against_head_tree(entry)
+           item = @head_tree[entry.path]
+
+           if item
+             unless entry.mode == item.mode and entry.oid == item.oid
+               record_change(entry.path, :index_modified)
+             end
+           else
+             record_change(entry.path, :index_added)
+           end
+         end
+
+Then we add one more clause to status_for to generate an M for :index_modified changes.
+     # lib/command/status.rb
+
+           left = " "
+           left = "A" if changes.include?(:index_added)
+           left = "M" if changes.include?(:index_modified)
+
+Now we can see jit reporting its own status accurately again. If we run jit status once, it
+shows an M in the second column; the files are modified relative to the index. If we call add
+and check the status again, there is an M in the first column instead; the files in the index are
+now modified relative to HEAD.
+     $ jit status
+      M lib/command/status.rb
+      M test/command/status_test.rb
+
+     $ jit add .
+
+     $ jit status
+     M lib/command/status.rb
+     M test/command/status_test.rb
+
+10.2.3. Deleted files
+Our final status check for now will be reporting files that are in the HEAD tree but not in the
+index, which should be reported with a D status in the first column. One thing is worth pointing
+out here: if a whole directory is removed from the index, Git’s status command still lists all
+the files inside that directory as deleted.
+     $ git rm -rf a
+     $ git status --porcelain
+     D a/2.txt
+
+                                        The next commit
+
+     D   a/b/3.txt
+
+As was mentioned above, this means that read_tree cannot skip directories that are not tracked
+in the index, because we need the names of all the files inside that directory to print an accurate
+status.
+
+Below are two further Ruby tests, one for deleting a single file and one for deleting a directory.
+Because we don’t yet have an rm command, I’m simulating it by deleting the .git/index file
+and then adding the whole workspace to the index again, which will result in an index missing
+the deleted files.
+     # test/command/status_test.rb
+
+         it "reports deleted files" do
+           delete "1.txt"
+           delete ".git/index"
+           jit_cmd "add", "."
+
+           assert_status <<~STATUS
+             D 1.txt
+           STATUS
+         end
+
+         it "reports all deleted files inside directories" do
+           delete "a"
+           delete ".git/index"
+           jit_cmd "add", "."
+
+           assert_status <<~STATUS
+             D a/2.txt
+             D a/b/3.txt
+           STATUS
+         end
+
+To detect deleted HEAD items, we need to find any items in the HEAD tree that aren’t in the index.
+We will have missed these while calling check_index_entries, so we need to make a pass over
+@head_tree and collect any items in there that are missing from the index. Let’s add another
+step to the recipe in run to record the remaining @head_tree items:
+     # lib/command/status.rb
+
+            scan_workspace
+            load_head_tree
+            check_index_entries
+            collect_deleted_head_files
+
+The collect_deleted_head_files method simply iterates any items left in @head_tree and
+marks those paths that are untracked with the :index_deleted status.
+     # lib/command/status.rb
+
+         def collect_deleted_head_files
+           @head_tree.each_key do |path|
+             unless repo.index.tracked_file?(path)
+               record_change(path, :index_deleted)
+             end
+           end
+
+                                               The next commit
+
+              end
+
+Notice we’re not using the existing Index#tracked? method for this, because that returns true
+for tracked directories as well as files. If a file that exists in the HEAD tree is now a directory in
+the index, we would like to list it as deleted rather than ignoring. Therefore the Index interface
+requires a slight modification.
+       # lib/index.rb
+
+           def tracked_file?(path)
+             @entries.has_key?(path.to_s)
+           end
+
+           def tracked?(path)
+             tracked_file?(path) or @parents.has_key?(path.to_s)
+           end
+
+One extra clause in status_for will take care of displaying these items correctly.
+       # lib/command/status.rb
+
+                 left = " "
+                 left = "A" if changes.include?(:index_added)
+                 left = "M" if changes.include?(:index_modified)
+                 left = "D" if changes.include?(:index_deleted)
+
+That takes care of all the common statuses that Git reports. When we cover merge conflicts4
+there will be more statuses to consider, but for now this is enough to accurately report any
+state the project could be in. As we continue to build new features, I will be adding tests to the
+codebase in the test directory, but will not be mentioning them further in the text. If you want
+to see how each feature is tested, you can consult the history in the Jit repository.
+
+10.3. The long format
+The status command we’ve implemented so far emits the so-called porcelain format, which
+you get if you run git status --porcelain. This is really easy for other programs to parse,
+but not particularly intuitive to a human reader. That’s why Git’s default status format is the
+one you’re probably more familiar with:
+       $ git status
+       On branch master
+       Changes to be committed:
+         (use "git reset HEAD <file>..." to unstage)
+
+                    modified:      1.txt
+                    deleted:       a/2.txt
+                    new file:      z.txt
+
+       Changes not staged for commit:
+         (use "git add/rm <file>..." to update what will be committed)
+         (use "git checkout -- <file>..." to discard changes in working directory)
+
+                    deleted:       1.txt
+                    modified:      a/b/3.txt
+
+ Chapter 19, Conflict resolution
+
+                                        The next commit
+
+     Untracked files:
+       (use "git add <file>..." to include in what will be committed)
+
+              5.txt
+
+This is called the long format; you can get it using the --long flag but it’s the default output if
+you don’t use any other flags. It highlights the files listed in green and red, it gives you helpful
+instructions for making changes, and it clearly separates the changes that will go into the next
+commit from those that are still not in the index. While the porcelain format is easier to write
+tests for, the long format is nicer for day-to-day work.
+
+Before launching into implementing this format, let’s look at the way we’re representing the
+repository status in memory. The above status looks like this when requested in the porcelain
+format:
+     $ git status --porcelain
+     MD 1.txt
+     D a/2.txt
+      M a/b/3.txt
+     A z.txt
+     ?? 5.txt
+
+Our Command::Status class uses an internal representation that’s very close to this
+representation — this is not surprising, since it was directly motivated by the requirements of
+this format. When generating this status, the in-memory values held by the command will be:
+            @changed = SortedSet.new(["1.txt", "a/2.txt", "a/b/3.txt", "z.txt"])
+
+            @changes = {
+              "1.txt"     => Set.new([:index_modified, :workspace_deleted]),
+              "a/2.txt"   => Set.new([:index_deleted]),
+              "a/b/3.txt" => Set.new([:workspace_modified]),
+              "z.txt"     => Set.new([:index_added])
+            }
+
+            @untracked = SortedSet.new(["5.txt"])
+
+How would we generate the long format using this information? We need to generate two
+separate lists of index changes and workspace changes, rather than listing them together. To
+find index changes, we’d need to filter the @changed set for paths for which @changes contains
+any index-related changes. Then when printing each path, we’d need to find out exactly which
+index-related status to use. Ruby’s Set class makes this a little easier, but we’d need something
+like:
+            INDEX_STATUSES = [:index_added, :index_deleted, :index_modified]
+
+            index_changes = @changed.map do |path|
+              status = @changes[path].intersection(INDEX_STATUSES).first
+              [path, status]
+            end
+
+            index_changes.reject! { |_, status| status == nil }
+
+It’s not the end of the world, but it does require a lot more iteration over the structures after
+we’ve generated them — map, intersection and reject! are very convenient but they hide a
+
+                                                      The next commit
+
+lot of work. And while this code may be very pithy, it’s not particularly easy to follow — why
+are we taking the first member of the intersection of two sets here? Adding a new feature has
+got us using our existing data structures in strange ways that’s going to make the feature harder
+to maintain in future. Maybe it’s time for a little refactoring.
+
+10.3.1. Making the change easy
+There’s an oft-quoted saying by Kent Beck5, which goes:
+
+          for each desired change, make the change easy (warning: this may be hard), then
+          make the easy change
+                                                                           — Kent Beck
+
+In our current situation, the thing we want to make easy is we’d like to write a method of printing
+the status output that lists index and workspace changes separately. Take another look at the
+current structure we’re using to record changes:
+                @changes = {
+                  "1.txt"     => Set.new([:index_modified, :workspace_deleted]),
+                  "a/2.txt"   => Set.new([:index_deleted]),
+                  "a/b/3.txt" => Set.new([:workspace_modified]),
+                  "z.txt"     => Set.new([:index_added])
+                }
+
+And, look closely at this line in the above code:
+                   status = @changes[path].intersection(INDEX_STATUSES).first
+
+This has something in common with the code we’re using to generate the single-letter statuses
+for the porcelain format:
+       # lib/command/status.rb
+
+             def status_for(path)
+               changes = @changes[path]
+
+                left = " "
+                left = "A" if changes.include?(:index_added)
+
+                right = " "
+                right = "D" if changes.include?(:workspace_deleted)
+                right = "M" if changes.include?(:workspace_modified)
+
+               left + right
+             end
+
+The clue to what’s wrong with this code is the word first. There’s an assumption there that
+when you check @changes for index-related statuses, you will get a set containing a single value
+(or nothing). That assumption is also encoded in the status_for method: we select a single
+letter for each column depending on which of the :index_ or :workspace_ statuses exist for
+each path. This code reveals that each path has only one index-related and one workspace-
+related status, at most.
+ https://twitter.com/kentbeck/status/250733358307500032
+
+                                        The next commit
+
+Given this revelation, why are we using a Set for the statuses each path has? It seemed like a
+reasonable-enough choice at the time; each path can have multiple, unique statuses. However,
+a Set is an open-ended collection. That’s fine for collecting a set of paths that will differ from
+project to project, but the set of statuses each path can take is fixed: each path can be changed
+in the index and the workspace, and can be added, modified or deleted in each case. There’s
+no need for an open-ended collection to represent this, and using one actually adds complexity
+to the program!
+
+So what would be a better data representation that would reduce the amount of iteration needed?
+Here’s one idea:
+            @changes = {
+              "1.txt"     => { :index => :modified, :workspace => :deleted },
+              "a/2.txt"   => { :index => :deleted },
+              "a/b/3.txt" => { :workspace => :modified },
+              "z.txt"     => { :index => :added }
+            }
+
+This would reduce the need to iterate over the statuses for each path, but it would not remove
+the need to iterate over the paths themselves. The search for index changes would now look
+like this:
+            index_changes = @changed.map do |path|
+              [path, @changes[path][:index]]
+            end
+
+            index_changes.reject! { |_, status| status == nil }
+
+This is certainly an improvement, but we can go one better by turning the structure inside out:
+            @index_changes = {
+              "1.txt"   => :modified,
+              "a/2.txt" => :deleted,
+              "z.txt"   => :added
+            }
+
+            @workspace_changes = {
+              "1.txt"     => :deleted,
+              "a/b/3.txt" => :modified
+            }
+
+Now, finding the index and workspace changes doesn’t require any work: the data is structured
+to represent them directly. Getting the merged list for the porcelain output is still simple,
+provided we preserve the @changed set that lists the names of all changed files in tandem with
+the above structures. Getting the status for each file in the porcelain output is also simple: we
+just look up the file’s name in the above two hashes.
+
+Let’s apply this design change to the Command::Status class. The state initialised at the top of
+the run method will now look like this, where in place of the @changes hash we now have a
+hash for the index and one for the workspace.
+     # lib/command/status.rb
+
+         def run
+
+                                       The next commit
+
+            @stats             = {}
+            @changed           = SortedSet.new
+            @index_changes     = {}
+            @workspace_changes = {}
+            @untracked_files   = SortedSet.new
+
+             # ...
+           end
+
+We change each of the record_change calls in the class to restructure the arguments: rather than
+a single status name, we now pass a reference to which hash we want to insert the status into.
+              record_change(entry.path, :workspace_deleted)
+
+becomes:
+              record_change(entry.path, @workspace_changes, :deleted)
+
+The record_change method must be changed to accept the modified arguments. It still adds
+the path to the @changed set, but it now assigns the status to a hash that’s also given in the
+arguments.
+     # lib/command/status.rb
+
+           def record_change(path, set, type)
+             @changed.add(path)
+             set[path] = type
+           end
+
+Finally, the status_for method can be simplified using these new structures to dynamically
+look up the status letter for each column.
+     # lib/command/status.rb
+
+           SHORT_STATUS = {
+             :added    => "A",
+             :deleted => "D",
+             :modified => "M"
+           }
+
+           def status_for(path)
+             left = SHORT_STATUS.fetch(@index_changes[path], " ")
+             right = SHORT_STATUS.fetch(@workspace_changes[path], " ")
+
+             left + right
+           end
+
+Having made these changes, all the tests still pass so we can commit here and go on to add
+the new functionality.
+
+10.3.2. Making the easy change
+Having the data organised into the distinct collections @index_changes, @workspace_changes
+and @untracked_files should make it straightforward to write the long format
+implementation — all it has to do is list out these structures.
+
+                                       The next commit
+
+Before we make those changes though, we need to add an extra argument when we invoke
+the status commands in the tests. The long format will now be the default, and the porcelain
+format requires passing the --porcelain option.
+     # test/command/status_test.rb
+
+       def assert_status(output)
+         jit_cmd "status", "--porcelain"
+         assert_stdout(output)
+       end
+
+To make use of this option, we rename the existing print_results method to
+print_porcelain_format, and reimplement print_results to make a choice of which format
+to print, based on the input.
+     # lib/command/status.rb
+
+         def print_results
+           if @args.first == "--porcelain"
+             print_porcelain_format
+           else
+             print_long_format
+           end
+         end
+
+print_long_format defines the overall structure of the long status message. If there are any
+changes in the index, then we print those out, and ditto for workspace changes and untracked
+files. Finally we print a trailing message that summarises what is staged for the next commit.
+     # lib/command/status.rb
+
+         def print_long_format
+           print_changes("Changes to be committed", @index_changes)
+           print_changes("Changes not staged for commit", @workspace_changes)
+           print_changes("Untracked files", @untracked_files)
+
+           print_commit_status
+         end
+
+The print_changes method takes care of printing @index_changes and @workspace_changes,
+which are hashes with a similar structure; they map strings representing filenames to one of the
+symbols :added, :modified or :deleted. The method looks up the long-form status message
+for each of these states and prints it out, left-justified so that the filenames are aligned in a
+column. It also prints @untracked_files, which is an array of paths without associated status
+symbols.
+     # lib/command/status.rb
+
+         LABEL_WIDTH = 12
+
+         LONG_STATUS = {
+           :added    => "new file:",
+           :deleted => "deleted:",
+           :modified => "modified:"
+         }
+
+                                        The next commit
+
+         def print_changes(message, changeset)
+           return if changeset.empty?
+
+           puts "#{ message }:"
+           puts ""
+           changeset.each do |path, type|
+             status = type ? LONG_STATUS[type].ljust(LABEL_WIDTH, " ") : ""
+             puts "\t#{ status }#{ path }"
+           end
+           puts ""
+         end
+
+Finally, print_commit_status prints a trailing line at the end of the output. If there are changes
+to the index, then nothing is printed, otherwise a message is chosen based on the state of the
+workspace changes and untracked files.
+     # lib/command/status.rb
+
+         def print_commit_status
+           return if @index_changes.any?
+
+           if @workspace_changes.any?
+             puts "no changes added to commit"
+           elsif @untracked_files.any?
+             puts "nothing added to commit but untracked files present"
+           else
+             puts "nothing to commit, working tree clean"
+           end
+         end
+
+With these changes in place, the status command should now tell us the state of the repository,
+consistently for each format:
+     $ jit status --porcelain
+      M lib/command/status.rb
+      M test/command/status_test.rb
+
+     $ jit status
+     Changes not staged for commit:
+
+              modified:    lib/command/status.rb
+              modified:    test/command/status_test.rb
+
+     no changes added to commit
+
+If we add one of the changed files, then that file should now be listed as staged for the next
+commit.
+     $ jit add lib/command
+
+     $ jit status --porcelain
+     M lib/command/status.rb
+      M test/command/status_test.rb
+
+     $ jit status
+     Changes to be committed:
+
+              modified:    lib/command/status.rb
+
+                                         The next commit
+
+     Changes not staged for commit:
+
+              modified:     test/command/status_test.rb
+
+Everything seems to be working, so we can make another commit here. It’s worth noting that
+the commit including this change only adds new lines to the codebase; nothing is deleted. This
+often the aim with ‘making the change easy’: we first rearrange the existing code so that the
+new feature is a simple addition, rather than adding new functionality by directly changing a
+lot of existing code.
+
+10.3.3. Orderly change
+There is one small problem with the above implementation: it prints index changes in the wrong
+order sometimes. Here is a section of the output of the status commands using Git and Jit for
+the repository we looked at at the beginning of Section 10.3, “The long format”:
+     $ git status
+
+     Changes to be committed:
+
+              modified:     1.txt
+              deleted:      a/2.txt
+              new file:     z.txt
+
+     $ jit status
+
+     Changes to be committed:
+
+              modified:     1.txt
+              new file:     z.txt
+              deleted:      a/2.txt
+
+In Jit, the deleted file is listed last, even though its name should sort before the name of the file
+that’s been newly added. This is because of how the @index_changes hash is constructed. First
+we find the added and modified files while iterating over the index, and because the index entries
+are sorted, these files remain in the correct order in the hash. However, deleted files are added in
+the final step where we iterate over the remaining tree items, in collect_deleted_head_files.
+That means deleted files will always be listed last.
+
+Does that mean we need to redesign our data structures yet again? Do we need more analogs of
+the @changed set which stores a sorted list of all the changed paths, but for each of the separate
+sets of changes? Far from it — the general structure is just what we need to print the results,
+it’s just the order that’s not right. We can fix this either by sorting the keys in @index_changes
+before iterating over it, or, we can introduce a variant of a hash that keeps its keys sorted
+transparently.
+
+We’ll create a subclass of Ruby’s Hash class whose assignment method adds the given key to
+a SortedSet. The each method is then overridden to iterate the hash in the order of this set.
+     # lib/sorted_hash.rb
+
+     require "set"
+
+                                                  The next commit
+
+       class SortedHash < Hash
+         def initialize
+           super
+           @keys = SortedSet.new
+         end
+
+          def []=(key, value)
+            @keys.add(key)
+            super
+          end
+
+         def each
+           @keys.each { |key| yield [key, self[key]] }
+         end
+       end
+
+All that remains is to replace the normal hashes in which we store the changes:
+       # lib/command/status.rb
+
+                @index_changes     = {}
+                @workspace_changes = {}
+
+with instances of this SortedHash class.
+       # lib/command/status.rb
+
+                @index_changes     = SortedHash.new
+                @workspace_changes = SortedHash.new
+
+And hey presto, the index changes come out in the right order.
+       $ jit status
+       Changes to be committed:
+
+                   modified:        1.txt
+                   deleted:         a/2.txt
+                   new file:        z.txt
+
+10.4. Printing in colour
+Our status command now prints all the right information, but it’s lacking one thing: a splash of
+colour. Git lists changes in the long format with the index changes in green, and the workspace
+changes and untracked files in red. It does this by embedding escape codes6 in the text that
+it writes to standard output, and the terminal interprets these codes as instructions to change
+the formatting, rather than as literal text. For example, writing the characters \e[31m to the
+terminal will make it print the text that follows it in red. \e represents the escape character, a
+non-printing control character with byte value 1b in ASCII.
+
+Let’s add a few annotations to Command::Status to indicate which bits of output we want in
+which colours. The print_changes method handles both index and workspace changes, so it
+will need to take an argument for which colour to use.
+ https://en.wikipedia.org/wiki/ANSI_escape_code
+
+                                                        The next commit
+
+       # lib/command/status.rb
+
+             def print_long_format
+               print_changes("Changes to be committed", @index_changes, :green)
+               print_changes("Changes not staged for commit", @workspace_changes, :red)
+               print_changes("Untracked files", @untracked_files, :red)
+
+               print_commit_status
+             end
+
+Then, each call to puts will need to pass some of its input through a function to wrap it with
+colour-changing escape codes, for example:
+       # lib/command/status.rb
+
+             def print_changes(message, changeset, style)
+               # ...
+                 status = type ? LONG_STATUS[type].ljust(LABEL_WIDTH, " ") : ""
+                 puts "\t" + fmt(style, status + path)
+               # ...
+             end
+
+We’ll define the fmt method in Command::Base so that all commands can use it. All it does
+is pass the requested style and string off to a new module called Color that handles terminal
+colour formatting.
+       # lib/command/base.rb
+
+             def fmt(style, string)
+               Color.format(style, string)
+             end
+
+Color.format will take the name of a style — currently either :red or :green, look up the code
+for that style in a table7, and return the given string wrapped in escape codes that will cause the
+string to be printed in that colour. The characters \e[m appended at the end reset the terminal’s
+formatting to its default state.
+       # lib/color.rb
+
+       module Color
+         SGR_CODES = {
+           "red"    => 31,
+           "green" => 32
+         }
+
+         def self.format(style, string)
+           code = SGR_CODES.fetch(style.to_s)
+           "\e[#{ code }m#{ string }\e[m"
+         end
+       end
+
+With these simple changes made, the status command now prints the project’s state in colour.
+Notice that the final line of output is in the terminal’s default colour, because of the \e[m
+appended to the strings shown in red.
+ The abbreviation SGR stands for select graphic rendition
+
+                                        The next commit
+
+After adding one of the files to the index, it moves to the upper list, rendered in green.
+
+                                                     The next commit
+
+There’s only one slight problem with this new feature. Sometimes the user will want to pipe
+Jit’s commands into another process, for example, to write their output to a file or view it in
+a pager like less8:
+       $ jit status | less
+
+If we run this, the escape characters are shown on screen:
+       Changes to be committed:
+
+                   ESC[32mmodified:           lib/command/base.rbESC[m
+
+       Changes not staged for commit:
+
+                   ESC[31mmodified:           lib/command/status.rbESC[m
+
+With less, we can use the -R option to make it interpret escape codes rather than printing them,
+but in general, users piping a command into another process will expect escape codes to be
+stripped out.
+
+This can be accomplished by checking if the output stream we’re writing to is a TTY9, short for
+teletype. Loosely speaking, this means the stream is connected to a terminal, or something that
+acts like a terminal, rather than being connected to a file or another process. The term comes
+from historical computer systems where the terminal would literally be a typewriter hooked up
+to a remote machine, which would print output on paper as it arrived. This was later superseded
+by video screens, and the terminal program on your computer emulates this kind of output
+device — you’ll sometimes hear it referred to as a terminal emulator10.
+
+In Ruby, any I/O object can tell you if it’s a TTY using the isatty method. We can put a check
+into our fmt method to check if @stdout is a TTY, and return the string unmodified if not.
+       # lib/command/base.rb
+
+             def fmt(style, string)
+               @stdout.isatty ? Color.format(style, string) : string
+             end
+
+This modification means the status command will still print in colour when it’s writing to a
+terminal, but not when being piped into another program. That’s why the fmt method needs to
+be defined in a command class, and not as a global helper function: we need to inspect what
+the command is writing to in order to determine how to change the string.
+
+One final note on terminal formatting: these escape codes are state-changing instructions, not
+a nested markup language. The \e[m added at the end by fmt resets the formatting state, so any
+colours being used before this string was written will be forgotten.
+
+For example, the Ruby code
+                fmt(:red, "my #{ fmt :green, "first" } program")
+
+will generate the string
+ https://manpages.ubuntu.com/manpages/bionic/en/man1/less.1.html
+ https://en.wikipedia.org/wiki/TTY
+   https://en.wikipedia.org/wiki/Terminal_emulator
+
+                                      The next commit
+
+           \e[31mmy \e[32mfirst\e[m program\e[m
+
+The word program will not be printed in red, but in the terminal’s default colour, because the
+\e[m after the word first resets everything. This means these control codes cannot represent
+nested formatting instructions. That’s not a problem right now, but there are cases where you
+might want to redesign the fmt interface to allow for nested styling.
+

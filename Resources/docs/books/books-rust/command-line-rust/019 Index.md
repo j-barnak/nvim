@@ -1,0 +1,1472 @@
+# Index
+
+### Symbols
+
+- ! (exclamation point)
+  - beginning shebang lines in bash, Creating the Test Output Files
+  - ending names of macros, Getting Started with “Hello, world!”
+  - not operator, Getting Started
+- " " (quotation marks, double)
+  - enclosing CLI arguments with spaces, How echo Works
+  - enclosing raw string in regular expression, Validating the Delimiter
+  - escaping delimiters, How cut Works, Parsing Delimited Text Files
+  - file glob patterns enclosed in, How find Works
+- \#\[test\] attribute, Writing and Running Integration Tests, Using clap Derive
+- \$ (dollar sign)
+  - end of string matching in regular expressions, Defining the Arguments, Using a Regular Expression to Match an Integer with an Optional Sign
+  - ends of lines in cat -e, How tail Works, Writing the Program
+- \$? bash variable, Understanding Program Exit Values
+- % (percent sign), indicating end of fortune record, Solution
+- & operator, Opening a File or STDIN
+  - binary AND, Displaying Octal Permissions
+  - borrowing reference to a variable, Using the Result Type, Using the Test Suite
+- && (logical and) operator, Exit Values Make Programs Composable, Solution
+  - combining with \|\| (logical or operator), Solution
+- () (parentheses)
+  - capturing in regular expressions, Solution for Parsing the Position List, Solution for Parsing the Position List
+  - grouping and capturing in regular expressions, Using a Regular Expression to Match an Integer with an Optional Sign
+  - grouping find utility arguments, How find Works
+  - signifying unit type, Getting Started
+- (.)\1 pattern, finding any character repeated twice, Defining the Arguments
+- \* (asterisk)
+  - dereference operator, Validating the Delimiter, Selecting Characters from a String
+  - escaping in bash, How find Works
+  - matching zero or more occurrences in regular expressions, Defining the Arguments, Defining the Arguments
+  - matching zero or more of any characters in file globs, Defining the Arguments
+- + (plus sign)
+  - before numbers in tail utility, How tail Works
+  - beginning of file starting position in tailr, Parsing Positive and Negative Numeric Arguments
+  - matching in regular expressions, Using a Regular Expression to Match an Integer with an Optional Sign, Using a Regular Expression to Match an Integer with an Optional Sign
+- +0 starting point in tail, Parsing Positive and Negative Numeric Arguments
+- += (addition and assignment) operator, Printing Line Numbers
+- - (dash or minus sign)
+  - - for short names and ‐‐ for long names of arguments, Accessing the Command-Line Arguments
+  - before numbers in tail utility, How tail Works
+  - denoting range in character classes in regular expressions, Using a Regular Expression to Match an Integer with an Optional Sign
+  - filename argument, reading with cat, How cat Works
+  - filename argument, reading with catr, Opening a File or STDIN
+  - files argument defaulting to in headr, Getting Started
+  - input filename in commr, Validating and Opening the Input Files
+  - matching in regular expressions, Using a Regular Expression to Match an Integer with an Optional Sign
+- -\> symbol, indicating symbolic links, How find Works
+- . (dot)
+  - any one character in regular expressions, Defining the Arguments
+  - in file globs, Defining the Arguments
+  - file or directory names starting with, How ls Works, Finding the Files
+  - indicating current directory, Getting Started with “Hello, world!”, How find Works, Defining the Arguments, How grep Works, Defining the Arguments
+  - placing inside character class \[.\], Defining the Arguments
+- ..= (range) operator, Displaying Octal Permissions
+- // (slashes), comments beginning with, Solution
+- /// (slashes), to indicate documentation, Solution
+- ::\<\> (turbofish) operator, Reading Bytes from a File
+- ; (semicolon), lack of terminating ; in functions, Using the Result Type
+- \< using for left-justified text, Printing Line Numbers
+- \> (redirect) operator in bash, How echo Works, Opening a File or STDIN
+- ? (question mark)
+  - in regular expressions, Using a Regular Expression to Match an Integer with an Optional Sign
+  - operator, replacing Result::unwrap with, Using the Result Type
+- \[\] (square brackets)
+  - indicating character classes in regular expressions, Defining the Arguments, Using a Regular Expression to Match an Integer with an Optional Sign
+  - use with input_file and output_file, How uniq Works
+- \\ (backslash), escaping special characters, How find Works, Defining the Arguments
+- \1 backreference, Defining the Arguments
+- \d (digits) in regular expressions, Using a Regular Expression to Match an Integer with an Optional Sign
+- ^ (caret)
+  - beginning of string matching in regular expressions, Defining the Arguments, Using a Regular Expression to Match an Integer with an Optional Sign
+  - bit-wise exclusive OR operator, Solution
+  - for centered text, Printing Line Numbers
+- \_ (underscore)
+  - indicating partial type annotation, Reading Bytes from a File
+  - leading variable names, Parsing Command-Line Arguments Using clap
+  - various uses in Rust, Reading Bytes from a File
+  - wildcard character in matching, Opening a File or STDIN
+- {} (curly braces)
+  - enclosing body of a function, Getting Started with “Hello, world!”
+  - placeholder for printed value of literal string, Accessing the Command-Line Arguments
+  - {#:?} placeholder for printed value of literal string, Parsing Command-Line Arguments Using clap
+  - {:\>6} formatting syntax, Printing Line Numbers
+  - {:?} placeholder for printed value of literal string, Accessing the Command-Line Arguments
+- \| (pipe) symbol
+  - piping commands, Writing and Running Integration Tests
+  - piping STDOUT from first command to STDIN for second command, Opening a File or STDIN
+  - using to connect STDOUT and STDIN for commands, How cat Works
+- \|\| (pipes)
+  - arguments within, closures and, Solution for Parsing the Position List
+  - or operator, Solution
+  - or operator, combining with && operator, Solution
+  - \|\| { …​ } closure form, Solution
+
+### A
+
+- actual output versus expected output, Testing the Program Output
+- ALL_CAPS, using to name global constants, Using a Regular Expression to Match an Integer with an Optional Sign
+- ansi_term crate, Getting Started
+- ansi_term::Style, Summary
+- ansi_term::Style::reverse, Writing the Program
+- anyhow crate, Writing Integration Tests
+- anyhow::anyhow macro, Processing the Input Files, Solution for Parsing the Position List, Parsing Positive and Negative Numeric Arguments
+- anyhow::bail macro, Validating the Delimiter, Validating and Opening the Input Files, Defining and Validating the Arguments
+- anyhow::Result, Using the Result Type
+- Arg struct, Parsing Command-Line Arguments Using clap
+- Arg::long value, Defining the Arguments
+- Arg::short value, Defining the Arguments
+- ArgAction::SetFalse, Defining the Arguments
+- ArgGroup struct, Defining the Arguments
+- ArgMatches::get_flag function, Creating the Program Output, Defining the Parameters
+- ArgMatches::get_many function, Creating the Program Output
+- ArgMatches::value_of function, Defining the Arguments
+- Args struct, Accessing the Command-Line Arguments, Using clap Derive, Defining the Parameters, Getting Started
+  - defining for command-line parameters for wcr, Getting Started
+  - field names same as arguments, Defining the Arguments
+  - findr utility, Defining the Arguments, Defining the Arguments
+  - headr program, Getting Started
+  - representing arguments in uniqr, Defining the Arguments
+  - updating for clap derive in catr, Defining the Parameters
+  - writing to use derive pattern in wcr program, Getting Started
+- Args::parse function, Defining the Parameters, Getting Started
+- ArgsExtract struct, Defining the Arguments
+  - transforming into Extract enum, Solution for Parsing the Position List
+- as keyword, Reading a File Line by Line
+- ASCII, Reading Bytes Versus Characters, How wc Works
+  - range of ASCII table starting at first printable character, Solution
+- ASCII art, Fortunate Son
+  - command for randomly selecting, How fortune Works
+- AsRef trait, Writing and Testing a Function to Count File Elements
+- assert! macro, Writing and Running Integration Tests, Creating the Program Output
+- Assert::failure function, Understanding Program Exit Values
+- assert_cmd crate, Adding Project Dependencies, Writing Integration Tests
+- assert_cmd::Command, Adding Project Dependencies
+- assert_eq! macro, Writing and Running Integration Tests, Adding Project Dependencies, Testing the Program Output, Creating the Program Output, Testing the Long Format
+- -a\|--all option flag (ls), How ls Works, How ls Works
+
+### B
+
+- backreferences, Defining the Arguments
+- backtrace, displaying, Reading Bytes from a File
+- bail! macro, Validating the Delimiter, Validating and Opening the Input Files, Defining and Validating the Arguments
+- basename, Finding the Files
+- bash shell
+  - expanding file glob, Iterating Through the File Arguments, Getting Started
+  - spaces delimiting command-line arguments, How echo Works
+- basic regular expressions, Defining the Arguments
+- BCE (before common era) values, Defining and Validating the Arguments
+- beginning of file starting position in tailr, Parsing Positive and Negative Numeric Arguments
+- beginning of file, byte or line position from, How tail Works
+- benchmarking, Benchmarking the Solution
+  - comparing tail and tailr performance, Benchmarking the Solution
+- biggie program, Testing the Program with Large Input Files, Benchmarking the Solution
+- binary files, Getting Started with “Hello, world!”
+- bioinformatics, use of comm in, How comm Works
+- BitXor operator, Solution
+- bool type, Creating the Program Output, Using clap Derive
+- Boolean values, Getting Started
+  - negating, Getting Started
+- Boolean::and, Solution
+- Boolean::or, Solution
+- Box pointer type, Opening a File or STDIN, Finding the Input Sources, Solution
+- break keyword, Preserving Line Endings While Reading a File
+- BSD version
+  - cal program, How cal Works
+  - cat utility, How cat Works, Defining the Parameters
+  - comm utility, How comm Works, Processing the Files
+  - cut utility, How cut Works
+  - echo utility, How echo Works
+  - find utility, How find Works
+  - grep utility, How grep Works
+  - head program, How head Works
+  - ls utility, How ls Works
+  - tail utility, How tail Works, How tail Works
+  - uniq program, How uniq Works
+  - wc program, How wc Works
+- BufRead trait, Opening a File or STDIN, Reading Bytes Versus Characters, Finding the Matching Lines of Input, Finding the Starting Line to Print
+  - file value implementing, Writing and Testing a Function to Count File Elements
+  - indicating a trait bound like BufRead in function signatures, Finding the Matching Lines of Input
+- BufRead::lines function, Opening a File or STDIN, Preserving Line Endings While Reading a File, Counting the Elements of a File or STDIN, Extracting Characters or Bytes, Processing the Files
+- BufRead::read_line function, Preserving Line Endings While Reading a File, Counting the Elements of a File or STDIN, Counting All the Lines and Bytes in a File
+- BufRead::read_until function, Counting All the Lines and Bytes in a File
+- BufReader struct, Printing the Lines
+- builder pattern, Parsing Command-Line Arguments Using clap
+  - using headr program, Getting Started, Defining the Arguments
+  - using in catr program, Defining the Parameters, Iterating Through the File Arguments
+  - using in cutr program, Defining the Arguments
+  - using in fortuner program, Defining the Arguments
+  - using in grepr program, Defining the Arguments
+  - writing get_args function to use in uniqr, Defining the Arguments, Defining the Arguments
+  - writing get_args function to use in wcr, Getting Started
+- bytes, How wc Works, How cut Works
+  - --bytes option, running wcr with, Formatting the Output
+  - bytes argument in headr, Getting Started
+  - bytes option in tailr, Defining the Arguments, Defining the Arguments, Parsing and Validating the Command-Line Arguments
+    - negative and positive values for, Parsing Positive and Negative Numeric Arguments
+  - counting total bytes in a file in tailr, Counting the Total Lines and Bytes in a File-Finding the Starting Line to Print
+  - counting total in file using tailr, Counting All the Lines and Bytes in a File
+  - disallowing -c (bytes) flag in wcr, Getting Started
+  - ensuring the delimiter is single byte, Validating the Delimiter
+  - extracting, Extracting Characters or Bytes
+  - finding starting byte to print in tailr, Finding the Starting Byte to Print
+  - number in input file, getting with wc, How wc Works
+  - printing in tailr, Printing the Bytes
+  - reading from a file, Reading Bytes from a File-Reading Bytes from a File
+  - requesting last four bytes of a file in tail, How tail Works
+  - requesting more bytes than file contains in tail, How tail Works
+  - selecting from a string, Selecting Bytes from a String
+  - selection of, splitting multibyte characters in tail, How tail Works
+  - tail showing last 10 bytes of a file, How tail Works
+- bytes versus characters, reading, Reading Bytes Versus Characters
+- -b\|--number-nonblank flag, Defining the Parameters
+
+### C
+
+- -c, --bytes option (tailr), Defining the Arguments
+  - rejecting noninteger values, Parsing Positive and Negative Numeric Arguments
+- cal program, Rascalry-Summary
+  - how it works, How cal Works-How cal Works
+  - writing calr version
+    - defining and validating the arguments, Defining and Validating the Arguments-Writing the Program
+    - getting started, Getting Started
+    - going further, Going Further
+    - solution, Solution-Solution
+    - writing the program, Writing the Program-Writing the Program
+- calendar (see cal program)
+- cargo new catr command, Getting Started
+- cargo run command, Creating and Running a Project with Cargo
+  - --bin option, Understanding Program Exit Values
+- cargo test command, Writing and Running Integration Tests
+- cargo test dies command, Getting Started
+- Cargo tool
+  - adding a project dependency, Adding Project Dependencies
+  - creating and running Rust project with, Creating and Running a Project with Cargo-Creating and Running a Project with Cargo
+  - help with commands, Creating and Running a Project with Cargo
+- case closure, Solution
+- case-insensitive comparisons
+  - closure handling in commr, Solution
+  - in BSD version of comm, How comm Works
+- case-insensitive matching
+  - in fortune, How fortune Works
+  - in grepr, How grep Works, Defining the Arguments
+- case-insensitive regular expression, Defining the Arguments
+- case-sensitive pattern, Finding the Matching Lines of Input
+- case-sensitive searching in fortune, How fortune Works
+- casting, Reading a File Line by Line
+- cat (concatenate) command, Creating and Running a Project with Cargo, On the Catwalk-Summary
+  - -e option, How tail Works, Writing the Program
+  - -t option, How wc Works
+  - head command versus, Head Aches
+  - how it works, How cat Works-How cat Works
+  - printing contents of a file, How cat Works
+  - writing catr version
+    - defining parameters, Defining the Parameters-Defining the Parameters
+    - getting started, Getting Started
+    - going further with, Going Further
+    - iterating through file arguments, Iterating Through the File Arguments
+    - opening a file or STDIN, Opening a File or STDIN-Opening a File or STDIN
+    - printing line numbers, Printing Line Numbers
+    - reading lines in a file, Solution
+    - starting with tests, Starting with Tests-Starting with Tests
+    - using the test suite, Using the Test Suite-Using the Test Suite
+- cd (change directory) command, Organizing a Rust Project Directory
+- CE (common era) values, Defining and Validating the Arguments
+- chaining multiple operations in findr, Solution
+- char type, Parsing Command-Line Arguments Using clap
+- character classes, Using a Regular Expression to Match an Integer with an Optional Sign
+- characters, How wc Works, How cut Works
+  - breaking string into Unicode and counting characters, Counting the Elements of a File or STDIN
+  - disallowing -m (characters) flag in wcr, Getting Started
+  - extracting, Extracting Characters or Bytes
+  - getting number of with wc, How wc Works
+  - selecting from a string, Selecting Characters from a String-Selecting Bytes from a String
+- characters versus bytes, reading, Reading Bytes Versus Characters
+- chmod command, Accessing the Command-Line Arguments, How cat Works
+  - octal notation with, Displaying Octal Permissions
+  - using chmod 000 to remove all permissions, How find Works
+- chrono crate, Getting Started, Defining and Validating the Arguments, Getting Started
+- chrono::Datelike::day, Solution
+- chrono::DateTime struct, Defining and Validating the Arguments
+- chrono::DateTime::format, Formatting the Long Listing
+- chrono::Local, Defining and Validating the Arguments
+- chrono::Local::now, Defining and Validating the Arguments
+- chrono::naive::NaiveDate, Defining and Validating the Arguments
+- chrono::NaiveDate struct, Writing the Program
+- chrono::offset::Utc, Defining and Validating the Arguments
+- chrono::Utc struct, Defining and Validating the Arguments
+- clap utility
+  - adding as dependency to Cargo program, Adding clap as a Dependency-Adding clap as a Dependency
+  - constraining entry types from user for findr, Defining the Arguments
+  - handling options before or after positional arguments, Defining the Arguments
+  - updates in version 4, March 2024 Update
+  - using clap derive, Using clap Derive-Using clap Derive
+  - using to parse command-line arguments, Parsing Command-Line Arguments Using clap-Parsing Command-Line Arguments Using clap
+- clap::Arg struct, Parsing Command-Line Arguments Using clap
+- clap::ArgAction enum, Parsing Command-Line Arguments Using clap
+- clap::builder::PossibleValue, Defining the Arguments
+- clap::Command struct, Parsing Command-Line Arguments Using clap, Using clap Derive
+- clap::Parser trait, Using clap Derive, Getting Started, Defining the Arguments, Defining the Arguments
+- clap::ValueEnum trait, Defining the Arguments
+- clap::value_parser, Getting Started
+- clone versus copy action, Creating the Program Output
+- clone-on-write smart pointer, Conditionally Testing on Unix Versus Windows, Solution
+- closures, Getting Started
+  - arguments within \|\| (pipes), Solution for Parsing the Position List
+  - filtering operations for findr, Solution
+  - versus functions, Solution
+  - handling case-insensitive comparisons for iterators in commr, Solution
+  - handling printing of output for grepr, Solution
+  - Iterator methods that take as argument, Getting Started
+  - removing filenames not matching regular expression for findr, Solution
+  - using to capture a value, Solution
+- code point, ordering by, Solution
+- Column enum, Solution
+- comm (common) utility, Boston Commons-Summary
+  - how it works, How comm Works-How comm Works
+  - writing commr version
+    - defining the arguments, Defining the Arguments-Validating and Opening the Input Files
+    - getting started, Getting Started
+    - going further, Going Further
+    - processing the files, Processing the Files-Processing the Files
+    - solution, Solution-Solution
+    - validating and opening input files, Validating and Opening the Input Files-Processing the Files
+- comma (,) output delimiter, Defining the Arguments
+- comma-separated values (CSV) files, How cut Works
+- Command struct, Parsing Command-Line Arguments Using clap
+- Command type, Using clap Derive
+  - creating, Adding Project Dependencies
+  - creating to run echor in current crate, Comparing Program Output
+- command-line interface (CLI), creating test file for, Writing and Running Integration Tests
+- command-line programs, Truth or Consequences-Summary
+- Command::args method, Using the Result Type
+- Command::get_matches function, Parsing Command-Line Arguments Using clap
+- Command::output method, Testing the Program Output
+- comments, Using clap Derive, Solution
+- common era (CE) values, Defining and Validating the Arguments
+- compiling Rust programs, Organizing a Rust Project Directory, Creating and Running a Project with Cargo
+- composability, exit values making programs composable, Exit Values Make Programs Composable
+- concurrent code, Understanding Program Exit Values
+- conditional compilation, Writing and Testing a Function to Count File Elements, Conditionally Testing on Unix Versus Windows
+- const keyword, Using the Test Suite
+- constants, Using a Regular Expression to Match an Integer with an Optional Sign
+  - error using computed value for, Using a Regular Expression to Match an Integer with an Optional Sign
+- Coordinated Universal Time (UTC), Defining and Validating the Arguments
+- copy versus clone action, Creating the Program Output
+- count function, Writing and Testing a Function to Count File Elements
+  - counting elements of a file or STDIN, Counting the Elements of a File or STDIN
+- counts
+  - --count option for uniqr input and output files, Testing the Program
+  - count flag in grepr, Defining the Arguments
+  - counting in uniq, How uniq Works
+  - counting matches, Finding the Matching Lines of Input
+  - counting total lines and bytes in a file, Counting All the Lines and Bytes in a File
+  - filenames included in grep, How grep Works
+  - lines not matching in grep, How grep Works
+  - number of times match occurs in grep, How grep Works
+- count_lines_bytes function, Counting the Total Lines and Bytes in a File-Finding the Starting Line to Print
+- Cow trait, Conditionally Testing on Unix Versus Windows
+- Cow::into_owned function, Selecting Bytes from a String, Solution
+- cp command, Starting with Tests
+- crate::Column::\*, Solution
+- crates, Creating and Running a Project with Cargo
+- CSV (comma-separated values) files, How cut Works, Requirements for Parsing the Position List
+- csv crate, Getting Started, Parsing Delimited Text Files
+- csv::Reader, Final Boss
+- csv::ReaderBuilder, Parsing Delimited Text Files, Final Boss
+- csv::StringRecord, Parsing Delimited Text Files
+  - selecting fields from, Selecting Fields from a csv::StringRecord-Selecting Fields from a csv::StringRecord
+- csv::WriterBuilder, Parsing Delimited Text Files, Final Boss
+- Cursor type, Writing and Testing a Function to Count File Elements, Finding the Matching Lines of Input
+- cursor, moving to position in a stream, Finding the Starting Byte to Print
+- cut utility, Shave and a Haircut-Summary
+  - how it works, How cut Works-How cut Works
+  - writing cutr version
+    - defining the arguments, Getting Started-Defining the Arguments
+    - extracting characters or bytes, Extracting Characters or Bytes-Extracting Characters or Bytes
+    - final version, Final Boss-Final Boss
+    - getting started, Getting Started
+    - going further, Going Further
+    - parsing delimited text files, Parsing Delimited Text Files-Parsing Delimited Text Files
+    - parsing the position list, Solution for Parsing the Position List-Solution for Parsing the Position List
+    - requirements for parsing position list, Requirements for Parsing the Position List-Requirements for Parsing the Position List
+    - selecting bytes from a string, Selecting Bytes from a String
+    - selecting characters from a string, Selecting Characters from a String-Selecting Bytes from a String
+    - selecting fields from csv::StringRecord, Selecting Fields from a csv::StringRecord-Selecting Fields from a csv::StringRecord
+    - validating the delimiter, Validating the Delimiter-Requirements for Parsing the Position List
+- cyclomatic complexity, Creating the Test Output Files
+
+### D
+
+- .dat files (strfile), Finding the Input Sources
+- date command, Rascalry, Going Further
+- Date struct, Defining and Validating the Arguments
+- Datelike::month method, Defining and Validating the Arguments
+- Datelike::year method, Defining and Validating the Arguments
+- DateTime struct, Defining and Validating the Arguments, Solution
+- days, Solution
+  - iterating through chrono::Datelike::day, Solution
+- dbg! (debug) macro, Using clap Derive
+- Debug trait, Accessing the Command-Line Arguments, Using clap Derive, Defining the Parameters, Writing and Testing a Function to Count File Elements
+- delimited text files, parsing, Parsing Delimited Text Files-Parsing Delimited Text Files
+- delimiters
+  - changing tab output delimiter in commr, Solution
+  - comma output delimiter, setting with -d option, Defining the Arguments
+  - delimiter as u8 byte, Parsing Delimited Text Files
+  - escaping, How cut Works
+  - escaping in cutr utility, Final Boss
+  - tab and comma, How cut Works
+  - tab character, comm output delimiter, How comm Works
+  - tab character, commr output delimiter, Defining the Arguments
+  - validating delimiter in cutr, Validating the Delimiter
+- dependencies
+  - adding clap as dependency, Adding clap as a Dependency
+  - adding project dependency, Adding Project Dependencies
+- Deref::deref operator, Validating the Delimiter
+- dereferencing pointers, Creating the Program Output
+- derive macros, Defining the Parameters
+- derive pattern, Using clap Derive-Using clap Derive, Defining the Arguments
+  - using for findr program, Validating the Arguments
+  - using headr program, Getting Started, Defining the Arguments
+  - using in calr program, Defining and Validating the Arguments, Defining and Validating the Arguments
+  - using in catr program, Defining the Parameters, Defining the Parameters, Iterating Through the File Arguments
+  - using in commr program, Defining the Arguments, Defining the Arguments
+  - using in cutr program, Defining the Arguments, Defining the Arguments
+  - using in fortuner program, Defining the Arguments, Defining the Arguments
+  - using in grepr program, Defining the Arguments
+  - using in lsr program, Defining the Arguments, Defining the Arguments
+  - using in tailr program, Defining the Arguments, Parsing and Validating the Command-Line Arguments
+  - using in uniqr program, Defining the Arguments, Defining the Arguments
+  - using in wcr program, Getting Started
+- development dependencies, Adding Project Dependencies
+- dies (for failing tests), Writing Integration Tests
+- diff utility, How echo Works
+- difference, Boston Commons
+- directories
+  - directory name without --recursive option rejected in grepr, Finding the Files to Search
+  - directory names in grep, How grep Works
+  - metadata::is_dir function, Formatting the Long Listing
+  - nonexistent path error using find, How find Works
+  - organizing for Rust project, Organizing a Rust Project Directory
+  - sources in fortuner, Finding the Input Sources
+  - supplying as text source for fortune, How fortune Works
+  - unreadable directory error using find, How find Works
+  - viewing contents with ls command, How ls Works
+- DirEntry struct, Solution, Solution, Solution
+- DirEntry::file_name, Solution
+- DirEntry::file_type function, Solution, Solution
+- DirEntry::path, Solution
+- dirname, Finding the Files
+- dir_long utility function, Notes from the Testing Underground
+  - using in a test, Notes from the Testing Underground
+- Display trait, Accessing the Command-Line Arguments
+- doc comments, Using clap Derive, Solution
+- don’t repeat yourself (DRY) principle, Solution
+- dotfiles, How ls Works
+- dyn keyword, Opening a File or STDIN
+
+### E
+
+- -E flag for extended regular expressions, Defining the Arguments
+- -e pattern regular expressions in grep, Defining the Arguments
+- echo utility, Test for Echo-Summary
+  - accessing command-line arguments, Accessing the Command-Line Arguments-Accessing the Command-Line Arguments
+  - creating program output for echor, Creating the Program Output-Creating the Program Output
+  - how it works, How echo Works
+  - writing integration tests for echor, Writing Integration Tests-Summary
+- editions of Rust, Creating and Running a Project with Cargo
+- else keyword, Creating the Program Output
+- end of file starting position in tailr, Parsing Positive and Negative Numeric Arguments
+- ending variable, Creating the Program Output
+- entry types
+  - args.entry_types, Solution
+  - filtering for in findr, Solution
+- EntryType enum, Defining the Arguments, Defining the Arguments
+  - Dir, File, or Link, Defining the Arguments
+  - matching all variants of, Solution
+- EntryType::File, Solution
+- entry_types (in findr), Defining the Arguments
+- enum type, Defining the Arguments
+  - naming conventions in Rust, Defining the Arguments
+- \$env:Path variable (Windows), Writing and Running Integration Tests
+- environment, interacting with, Accessing the Command-Line Arguments
+- EOF (end of file), Preserving Line Endings While Reading a File
+- errors
+  - error messages for cutr utility, parse_pos function, Requirements for Parsing the Position List
+  - find utility searches, How find Works
+  - handling in finding matching input lines in grepr, Finding the Matching Lines of Input
+  - incorporating filename in input file error messages for commr, Validating and Opening the Input Files
+  - input file, in headr program, Processing the Input Files
+  - invalid file arguments printed to STDERR, Finding the Files to Search
+  - opening files in catr, Opening a File or STDIN
+  - printing to STDERR for grepr finding matching lines of input, Solution
+  - reporting for echor program, Parsing Command-Line Arguments Using clap
+  - unreadable directories in findr, Finding All the Things
+- escape sequences created by Style::reverse, Writing the Program
+- escaping special characters
+  - asterisk (\*) in bash shell, How find Works
+  - delimiters, How cut Works
+- executables, Getting Started with “Hello, world!”
+- exit values (program), Understanding Program Exit Values
+  - making programs composable, Exit Values Make Programs Composable
+- expected output versus actual output, Testing the Program Output
+- expressions versus statements, Creating the Program Output
+- extended regular expressions, Defining the Arguments
+  - indicating with -E flag, Defining the Arguments
+- Extract enum, Solution for Parsing the Position List
+- Extract::Fields, Requirements for Parsing the Position List
+- extracting bytes, characters, or fields, Requirements for Parsing the Position List, Solution for Parsing the Position List
+  - extracting characters or bytes, Extracting Characters or Bytes-Extracting Characters or Bytes
+
+### F
+
+- -f (force) option, Creating and Running a Project with Cargo
+- false command, Understanding Program Exit Values
+  - chaining to ls command, Exit Values Make Programs Composable
+- false values, Writing and Running Integration Tests
+- fd replacement for find, Going Further
+- fields, bytes, or characters, extracting, Requirements for Parsing the Position List, Solution for Parsing the Position List
+- fields, selecting from csv::StringRecord, Selecting Fields from a csv::StringRecord-Selecting Fields from a csv::StringRecord
+- FILE argument (fortuner), Defining the Arguments
+- file command, Getting Started with “Hello, world!”, Processing the Input Files
+- file glob patterns, differences in syntax from regular expressions, Defining the Arguments
+- file globs
+  - expanding, Iterating Through the File Arguments, Getting Started
+  - finding items matching file glob pattern, How find Works
+- File::create function, Processing the Input Files, Solution
+- File::open function, Opening a File or STDIN, Counting the Total Lines and Bytes in a File
+- filehandles, Opening a File or STDIN
+- FileInfo struct, Writing and Testing a Function to Count File Elements, Writing and Testing a Function to Count File Elements
+- files
+  - file types for find utility, How find Works
+  - invalid or unreadable, handling by fortune, Finding the Input Sources
+  - invalid or unreadable, handling by ls, How ls Works
+  - iterating in wcr program, Iterating the Files
+  - iterating through file arguments in catr, Iterating Through the File Arguments-Opening a File or STDIN
+  - opening a file or STDIN with catr program, Opening a File or STDIN
+  - printing file separators, Printing the File Separators
+  - reading bytes from with headr, Reading Bytes from a File, Reading Bytes from a File
+  - reading line by line, Reading a File Line by Line
+  - reading lines in with catr program, Solution
+  - supplying as text source for fortune, How fortune Works
+  - unreadable, handling by fortune, How fortune Works
+- files argument, Getting Started, Parsing and Validating the Command-Line Arguments
+  - catr program, Defining the Parameters
+  - tailr program, Defining the Arguments
+- filesystem module (standard), Comparing Program Output
+- FileType::is_dir, Solution
+- FileType::is_file, Solution
+- FileType::is_symlink, Solution
+- filter operations for findr, Solution
+  - creating closures for, Solution
+- filter, map, and filter_map operations, chaining for findr, Solution
+- find utility, Creating and Running a Project with Cargo, Finders Keepers-Summary
+  - how it works, How find Works-How find Works
+  - writing findr version
+    - conditionally testing on Unix versus Windows, Conditionally Testing on Unix Versus Windows-Going Further
+    - defining the arguments, Defining the Arguments-Validating the Arguments
+    - finding all items matching conditions, Finding All the Things-Finding All the Things
+    - getting started, Getting Started
+    - going further, Going Further
+    - solution, Solution-Solution
+    - validating the arguments, Validating the Arguments-Finding All the Things
+- finding files to search in grepr, Finding the Files to Search-Finding the Matching Lines of Input, Solution
+- finding matching lines of input in grepr, Finding the Matching Lines of Input-Finding the Matching Lines of Input, Solution
+- find_files function, Solution, Finding the Input Sources, Solution, Finding the Files, Solution
+  - integrating into run function for lsr, Finding the Files
+  - returning paths in sorted order, Finding the Input Sources
+  - testing for hidden files in lsr, Finding the Files
+  - unit tests in lsr, Finding the Files
+- find_lines function, Solution
+- fixed-width text files, How cut Works
+- flags, Accessing the Command-Line Arguments
+  - - for short names and ‐‐ for long names of, How cat Works
+- flatten and map operations, combining, Selecting Characters from a String
+- flatten command, Defining the Arguments
+- flatten function (Iterator), Selecting Characters from a String
+- fn (function declaration), Getting Started with “Hello, world!”
+- for loops, Preserving Line Endings While Reading a File
+- format! macro, Using the Test Suite, Solution
+- formatting output of wcr program, Formatting the Output-Formatting the Output
+- formatting syntax {:\>6}, Printing Line Numbers
+- format_field function, Formatting the Output
+- format_file_name function, Conditionally Testing on Unix Versus Windows
+- format_mode function, Displaying Octal Permissions, Solution
+  - unit test for in lsr, Displaying Octal Permissions
+  - use in format_output function, Solution
+- format_month function, Writing the Program, Writing the Program, Solution
+- format_output function, Formatting the Long Listing, Testing the Long Format, Solution
+  - unit test for in lsr, Testing the Long Format
+- fortune program, Fortunate Son-Summary
+  - how it works, How fortune Works-How fortune Works
+  - writing fortuner version
+    - defining the arguments, Defining the Arguments-Defining the Arguments
+    - finding input sources, Finding the Input Sources-Reading the Fortune Files
+    - getting started, Getting Started
+    - going further, Going Further
+    - printing records matching a pattern, Printing Records Matching a Pattern
+    - reading fortune files, Reading the Fortune Files-Randomly Selecting a Fortune
+    - selecting fortunes randomly, Randomly Selecting a Fortune-Randomly Selecting a Fortune
+    - solution, Solution-Solution
+- Fortune struct, Reading the Fortune Files
+- From::from function, Solution for Parsing the Position List
+- from_reader method, Parsing Delimited Text Files
+- fs module, Solution
+- fs::metadata function, Using the Test Suite, Solution, Solution
+- fs::read_dir function, Finding the Files, Solution
+- fs::read_to_string function, Comparing Program Output
+- functions
+  - closures versus, Solution
+  - defining using fn, Getting Started with “Hello, world!”
+
+### G
+
+- -G flag for basic regular expressions in grep, Defining the Arguments
+- get_args function, Getting Started, Getting Started
+  - calr program, Defining and Validating the Arguments
+    - parsing and validating arguments, Defining and Validating the Arguments
+  - catr program, Defining the Parameters, Defining the Parameters
+  - commr utility, Defining the Arguments
+  - cutr utility, Defining the Arguments, Defining the Arguments
+    - incorporating parse_pos in, Solution for Parsing the Position List
+  - defining for wcr program, Getting Started
+  - findr utility, Defining the Arguments, Validating the Arguments
+  - fortuner program, Defining the Arguments
+  - grepr utility, Defining the Arguments, Defining the Arguments
+  - lsr utility, Defining the Arguments
+  - tailr utility, Parsing and Validating the Command-Line Arguments
+  - uniqr program, Defining the Arguments
+- get_group_by_gid function, Formatting the Long Listing
+- get_start_index function, Finding the Starting Line to Print, Finding the Starting Byte to Print, Finding the Start Index
+- get_user_by_uid function, Formatting the Long Listing
+- glob pattern, handling by bash shell, Iterating Through the File Arguments
+- GNU version
+  - cal program, How cal Works
+  - cat command, How cat Works
+  - comm utility, How comm Works, Processing the Files
+  - cut utility, How cut Works
+  - echo utility, How echo Works
+  - find utility, How find Works
+  - grep utility, How grep Works
+  - head program, How head Works, Getting Started
+  - tail utility, How tail Works
+  - uniq program, How uniq Works
+  - wc program, How wc Works, Going Further
+- grep utility, Jack the Grepper-Summary
+  - how it works, How grep Works-How grep Works
+  - writing grepr version
+    - defining the arguments, Defining the Arguments-Defining the Arguments
+    - finding files to search, Finding the Files to Search-Finding the Matching Lines of Input
+    - finding matching lines of input, Finding the Matching Lines of Input-Finding the Matching Lines of Input
+    - find_files function, Solution
+    - find_lines function, Solution
+    - getting started, Getting Started
+    - going further, Going Further
+- group annotation, Defining the Arguments
+- Group enum, Solution
+- groups, Formatting the Long Listing, Solution
+
+### H
+
+- -h\|--help flag, Using clap Derive
+- -h or --help command-line flags, How echo Works
+- head program, Head Aches-Summary, How fortune Works
+  - cat versus, Head Aches
+  - how it works, How head Works-How head Works
+  - writing headr version
+    - defining the arguments, Defining the Arguments-Defining the Arguments
+    - getting started, Getting Started-Defining the Arguments
+    - going further, Going Further
+    - preserving line endings when reading a file, Preserving Line Endings While Reading a File
+    - printing file separators, Printing the File Separators
+    - processing input files, Processing the Input Files-Processing the Input Files
+    - reading a file line by line, Reading a File Line by Line
+    - reading bytes from a file, Reading Bytes from a File-Reading Bytes from a File
+    - reading bytes versus characters, Reading Bytes Versus Characters
+- heap memory, Creating the Program Output
+- --help command-line flag, How echo Works
+  - generating help output for wcr, Getting Started
+- hidden files, How ls Works, Solution, Summary
+  - including/not including in directory listings, Finding the Files
+  - testing for in lsr, Finding the Files
+- hyperfine crate, Benchmarking the Solution
+
+### I
+
+- i64 type, Parsing Positive and Negative Numeric Arguments, Using a Regular Expression to Match an Integer with an Optional Sign
+  - casting usize to, Counting All the Lines and Bytes in a File
+- i64::wrapping_neg function, Using a Regular Expression to Match an Integer with an Optional Sign
+- if expressions, Creating the Program Output
+  - without an else, Creating the Program Output
+- immutability of Rust variables, Writing and Running Integration Tests
+- impl keyword, Writing and Testing a Function to Count File Elements
+  - extending EntryType to implement required methods for ValueEnum, Defining the Arguments
+- index positions, use by parse_pos function, Requirements for Parsing the Position List
+- indexes
+  - index files for random selection of text records, How fortune Works
+  - parse_index function, Solution for Parsing the Position List
+  - in parse_pos function, zero-based index, Requirements for Parsing the Position List
+  - zero-based index position corrected to one-based, Defining and Validating the Arguments
+- inner joins, How comm Works
+- input files
+  - large, using to test tailr, Testing the Program with Large Input Files
+  - processing in commr, Processing the Files-Processing the Files
+  - processing in uniqr program, Processing the Input Files-Processing the Input Files
+  - requirement by fortuner, Defining the Arguments
+  - searching multiple in grep, How grep Works
+  - uniq program, How uniq Works
+  - uniqr program, Testing the Program
+  - validating and opening in commr, Validating and Opening the Input Files-Processing the Files
+- input sources, finding in fortuner, Finding the Input Sources-Reading the Fortune Files
+- --insensitive option, Finding the Matching Lines of Input
+  - using with regex::RegexBuilder, Defining the Arguments
+- insensitive flag, Defining the Arguments, Defining the Arguments, Defining the Arguments
+- integers
+  - types in Rust, Getting Started
+  - using regular expression to match integer with optional sign, Using a Regular Expression to Match an Integer with an Optional Sign-Using a Regular Expression to Match an Integer with an Optional Sign
+  - valid integer values for month and year, Defining and Validating the Arguments
+- integration tests
+  - writing and running, Writing and Running Integration Tests-Exit Values Make Programs Composable
+  - writing for echor, Writing Integration Tests-Summary
+    - comparing program output for echo and echor, Comparing Program Output
+    - creating test output files, Writing Integration Tests
+    - using the Result type, Using the Result Type-Summary
+- intersection, Boston Commons
+- invert argument, Finding the Matching Lines of Input
+- invert flag, Defining the Arguments
+- inverting matching, Finding the Matching Lines of Input
+- isize type, Getting Started
+- iswspace function, Going Further
+- iterables, Printing Line Numbers
+- Iterator type, methods that take a closure, Getting Started
+- Iterator::all function, Getting Started, Solution
+- Iterator::any function, Solution
+- Iterator::collect function, Creating the Program Output, Defining the Parameters, Solution, Solution for Parsing the Position List, Selecting Characters from a String
+- Iterator::count method, Counting the Elements of a File or STDIN
+- Iterator::enumerate function, Printing Line Numbers, Printing the File Separators, Printing the Bytes, Solution
+- Iterator::filter function, Solution
+- Iterator::filter_map function, Solution, Solution, Selecting Characters from a String
+- Iterator::flatten function, Selecting Characters from a String, Solution
+- Iterator::flat_map function, Selecting Characters from a String, Selecting Bytes from a String
+- Iterator::get function, Selecting Bytes from a String
+- Iterator::last function, Testing the Long Format
+- Iterator::map function, Parsing Delimited Text Files, Selecting Characters from a String
+  - turning &str values into String values, Selecting Fields from a csv::StringRecord
+- Iterator::next function, Solution
+- Iterator::take function, Reading a File Line by Line
+- iterators
+  - creating to retrieve lines from filehandles in commr, Solution-Solution
+  - using to chain multiple operations for findr, Solution
+  - zip method, Writing the Program, Solution
+- itertools crate, Getting Started
+- izip! macro, Solution
+
+### J
+
+- join operations, Boston Commons
+
+### L
+
+- last_day_in_month function, Writing the Program, Solution
+- lazily evaluated statics, Using a Regular Expression to Match an Integer with an Optional Sign
+- leap years, Writing the Program, Solution
+- let keyword, Writing and Running Integration Tests
+- lifetime specifiers for variables, Testing the Program, Selecting Fields from a csv::StringRecord
+  - &str variable, Solution
+- lines
+  - counting total bytes in a file in tailr, Counting All the Lines and Bytes in a File
+  - counting total in file using tailr, Counting the Total Lines and Bytes in a File-Finding the Starting Line to Print
+  - finding starting line to print in tailr, Finding the Starting Line to Print
+  - getting number in a file, using wc, How wc Works
+  - lines option in tailr, Defining the Arguments, Defining the Arguments, Parsing and Validating the Command-Line Arguments
+    - negative and positive values for, Parsing Positive and Negative Numeric Arguments
+  - preserving line endings while reading a file, Preserving Line Endings While Reading a File, Counting the Elements of a File or STDIN, Finding the Matching Lines of Input
+  - printing in tailr, Printing the Lines
+  - printing line numbers in catr, Defining the Parameters, Printing Line Numbers
+  - reading without preserving line endings, Processing the Files
+  - requesting more lines than file contains in tail, How tail Works
+  - in wc program, How wc Works
+- lines argument, Getting Started
+- links, Formatting the Long Listing, Solution
+- Linux
+  - find output from GNU version, How find Works
+  - GNU echo on, How echo Works
+  - .hidden file, How ls Works
+- list command (see ls utility)
+- local time zone, Defining and Validating the Arguments
+- long and short formats, Arg arguments in clap::derive pattern, Defining the Arguments
+- long format
+  - ls -l command, How ls Works
+  - testing in lsr, Testing the Long Format-Testing the Long Format
+- long listing, formatting in lsr, Formatting the Long Listing-Formatting the Long Listing
+- long option (lsr), Defining the Arguments
+- look-around assertions, Defining the Arguments
+- ls utility, Creating and Running a Project with Cargo, Writing and Running Integration Tests, Elless Island-Summary
+  - chaining to false command, Exit Values Make Programs Composable
+  - chaining to true command, Exit Values Make Programs Composable
+  - executed with no options, How ls Works
+  - how it works, How ls Works-How ls Works
+  - writing lsr version
+    - defining the arguments, Defining the Arguments-Finding the Files
+    - displaying octal permissions, Displaying Octal Permissions-Displaying Octal Permissions
+    - finding the files, Finding the Files-Finding the Files
+    - formatting the long listing, Formatting the Long Listing
+    - getting started, Getting Started
+    - going further, Going Further
+    - solution, Solution-Notes from the Testing Underground
+    - testing the long format, Testing the Long Format-Testing the Long Format
+- -l\|--long option flag (ls), How ls Works
+- -l\|--long option flag (lsr), Formatting the Long Listing-Formatting the Long Listing
+
+### M
+
+- -m month option (calr), Defining and Validating the Arguments
+- -m option (fortune), How fortune Works
+- -m option (fortuner), Defining the Arguments, Reading the Fortune Files
+- macOS
+  - find output from BSD version, How find Works
+  - .hidden file, How ls Works
+- macros, Getting Started with “Hello, world!”
+- main function, Getting Started with “Hello, world!”
+- man cat command, How cat Works
+- man echo command, How echo Works
+- map, filter, and filter_map operations, chaining for findr, Solution
+- mask method, Solution
+- masking, Displaying Octal Permissions
+  - masks needed to construct permissions string, Solution
+- match keyword, Opening a File or STDIN
+- -max_depth and -min_depth options (find), Going Further
+- mem module, Solution
+- memory
+  - reading file into with fs::read_to_string, Comparing Program Output
+  - stack and heap, Creating the Program Output
+- metadata, Finding the Files
+- metadata::gid function, Formatting the Long Listing
+- metadata::is_dir function, Formatting the Long Listing
+- metadata::len function, Formatting the Long Listing, Solution
+- metadata::mode, Formatting the Long Listing, Displaying Octal Permissions
+- metadata::modified, Formatting the Long Listing
+- metadata::nlink, Formatting the Long Listing, Solution
+- metadata::uid function, Formatting the Long Listing
+- mkdir command, Organizing a Rust Project Directory
+- mk_triple helper function, Solution
+  - unit test for in lsr, Solution
+- mod keyword, Solution
+- mod owner, Solution
+- modified value (metadata), Solution
+- modules imported to finish lsr, Solution
+- month method, Defining and Validating the Arguments
+- months
+  - in cal utility, How cal Works
+  - in calr program, Defining and Validating the Arguments
+  - case-insensitive names for, Defining and Validating the Arguments
+  - current month used with calr program with no arguments, Defining and Validating the Arguments
+  - format_month function, Solution
+  - month and year in cal utilities, How cal Works
+  - month set to none with -y\|--year flag, Defining and Validating the Arguments
+  - parse_month function in calr, Defining and Validating the Arguments
+  - provided as distinguishing starting substring, Defining and Validating the Arguments
+  - using month names to figure out the given month, Defining and Validating the Arguments
+  - valid integer values for, Defining and Validating the Arguments
+  - valid month names for parse_month, Defining and Validating the Arguments
+- more and less pagers, Going Further
+- mut (mutable) keyword, Writing and Running Integration Tests
+  - adding to line_num variable, Printing Line Numbers
+  - creating mutable print closure, Solution
+  - making ending variable mutable, Creating the Program Output
+- mv (move) command, Organizing a Rust Project Directory
+
+### N
+
+- -n, --lines option (tailr), Parsing Positive and Negative Numeric Arguments
+  - rejecting noninteger values, Parsing Positive and Negative Numeric Arguments
+- naive dates, Defining and Validating the Arguments
+- NaiveDate struct, Writing the Program
+  - constructing for start of given month, Solution
+  - representing last day of month, Writing the Program
+- NaiveDate::from_ymd_opt, Solution
+- NaiveDate::pred_opt, Solution
+- -name option (find), How find Works
+- names
+  - file and direcctory, matching with regex crate, Defining the Arguments
+  - in findr program, Defining the Arguments
+  - names option in findr program, Validating the Arguments
+- naming conventions in Rust, Defining the Arguments
+- newlines, Counting the Elements of a File or STDIN
+  - omitting using print! macro, Creating the Program Output
+  - in stored fortunes, Solution
+  - using -n flag to omit, Using the Result Type
+  - using -n flag to omit trailing newline, Accessing the Command-Line Arguments
+  - on Windows and Unix, Processing the Input Files
+- None type, Creating the Program Output, Getting Started
+  - calling Option::unwrap on, causing crash, Creating the Program Output
+
+### O
+
+- octal notation, Displaying Octal Permissions, Notes from the Testing Underground
+- octal permissions, displaying in lsr, Displaying Octal Permissions-Displaying Octal Permissions
+- Ok variant (Result enum), Using the Result Type
+- once_cell crate, Getting Started, Using a Regular Expression to Match an Integer with an Optional Sign
+- open function, Iterating the Files, Extracting Characters or Bytes, Finding the Matching Lines of Input
+  - for headr input files, Processing the Input Files
+  - modifying for input files in commr, Validating and Opening the Input Files
+- Option\<Result\>, Defining the Arguments
+- Option type, Getting Started
+  - None and Some variants for values, Creating the Program Output
+  - turning Result of Option into Option of Result, Solution for Parsing the Position List
+- Option::map function, Defining the Arguments
+- Option::transpose function, Defining the Arguments
+- Option::unwrap function, Defining the Parameters, Validating the Delimiter
+- Option::unwrap_or_default, Validating the Arguments
+- Option\<&str\>, Defining the Arguments
+- optional arguments, Accessing the Command-Line Arguments
+  - defining before or after positional arguments, Defining the Parameters
+  - files, lines, and bytes, Getting Started
+  - optional positional parameters, Defining the Arguments
+- or expressions, How find Works
+  - -name option following in find, How find Works
+- Ord::cmp function, Solution
+- OsStr type, Solution
+  - converting to String, Solution
+- OsString type, Solution
+- Other enum, Solution
+- output files
+  - uniq program, How uniq Works
+  - uniqr program, Testing the Program
+- Owner enum, Solution
+- owner::Owner enum, Solution
+
+### P
+
+- pagers, Going Further
+- Parser trait, Using clap Derive, Defining the Arguments, Defining the Arguments
+  - using in wcr program, Getting Started
+- parse_index function, use in parse_pos, Solution for Parsing the Position List
+- parse_month function, Defining and Validating the Arguments, Defining and Validating the Arguments
+- parse_num function, Parsing Positive and Negative Numeric Arguments
+  - using regex to match positive or negative integers, Using a Regular Expression to Match an Integer with an Optional Sign
+- parse_pos function, Requirements for Parsing the Position List
+  - incorporating into get_args function, Solution for Parsing the Position List
+  - incorporating into run function, Requirements for Parsing the Position List
+  - index positions, Requirements for Parsing the Position List
+- parsing and validating arguments (tailr), Parsing and Validating the Command-Line Arguments-Processing the Files
+  - parsing numeric arguments using Rust's internal parsing, Using a Regular Expression to Match an Integer with an Optional Sign
+  - parsing positive and negative numeric arguments, Parsing Positive and Negative Numeric Arguments-Parsing Positive and Negative Numeric Arguments
+- PartialEq trait, Writing and Testing a Function to Count File Elements, Writing and Testing a Function to Count File Elements, Parsing Positive and Negative Numeric Arguments
+- PascalCase, Defining the Arguments
+- \$PATH environment variable, Writing and Running Integration Tests
+- Path struct, Finding the Input Sources
+  - converting to PathBuf, Solution
+- Path::display function, Finding the Files, Formatting the Long Listing
+- Path::extension, Solution
+- Path::file_name, converting from OsStr to String, Solution
+- PathBuf struct, Finding the Input Sources, Solution, Testing the Long Format, Solution
+  - found files represented as, Finding the Files
+- PathBuf::metadata, Formatting the Long Listing
+- paths
+  - checking for file path, Notes from the Testing Underground
+  - DirEntry::path, Solution
+  - in findr program, Defining the Arguments
+  - indicating for find utility search, How find Works
+  - listing multiple search paths as positional arguments for find, How find Works
+  - in lsr program, Defining the Arguments, Finding the Files
+    - looking for files in provided paths, Finding the Files
+  - nonexistent file paths, handling by fortune, How fortune Works
+  - paths argument, findr utility, Validating the Arguments
+  - paths argument, lsr program, Defining the Arguments
+- pattern argument, Defining the Arguments, Finding the Matching Lines of Input
+- pattern matching
+  - find utility, Finders Keepers
+  - fortunes in fortuner program, Randomly Selecting a Fortune
+  - in grep, Jack the Grepper
+  - inverting the match pattern in grep, How grep Works
+  - using to unpack values from Iterator::enumerate, Printing Line Numbers
+- pattern option, Solution
+- Perl Compatible Regular Expressions (PCRE), Defining the Arguments
+- permissions, Solution
+  - checking for, Notes from the Testing Underground
+  - displaying octal permissions in lsr, Displaying Octal Permissions-Displaying Octal Permissions
+  - octal, Notes from the Testing Underground
+- pick_fortune function, Randomly Selecting a Fortune, Solution
+- PlusZero enum variant, Parsing Positive and Negative Numeric Arguments, Using a Regular Expression to Match an Integer with an Optional Sign, Using a Regular Expression to Match an Integer with an Optional Sign
+- pointers, Creating the Program Output
+  - creating to heap-allocated memory to hold filehandle, Opening a File or STDIN
+  - Path type behind, Finding the Input Sources
+- positional arguments, Accessing the Command-Line Arguments
+  - defining with min_values, Defining the Parameters
+  - files and directories in grep, How grep Works
+  - grep utility, How grep Works
+  - optional, Defining the Arguments
+  - order of declaration in grepr, Defining the Arguments
+- PositionList type alias, Requirements for Parsing the Position List, Parsing Delimited Text Files
+- POSIX (Portable Operating System Interface) standards, Understanding Program Exit Values
+- PossibleValue struct, Defining the Arguments
+- predicates, Getting Started
+- predicates crate, Writing Integration Tests, Writing Integration Tests
+- pretty-printing, Parsing Command-Line Arguments Using clap
+- pretty_assertions crate, March 2024 Update, Adding Project Dependencies, Writing Integration Tests
+- pretty_assertions::assert_eq macro, Testing the Program Output, Using the Result Type, Using the Test Suite, Testing the Long Format
+- print closure, Solution, Solution
+- print! macro, Creating the Program Output
+- println! macro, Getting Started with “Hello, world!”, Creating the Program Output, Getting Started
+  - automatically appending newline character, Getting Started
+- print_bytes function, Printing the Bytes
+- print_lines function, Printing the Lines
+- program exit values, Understanding Program Exit Values
+- pseudo random number generator (PRNG), Defining the Arguments
+  - creating and using to select fortune, Solution
+- pub keyword, using to define public functions and variables, Solution
+
+### Q
+
+- quiet flag, Defining the Arguments
+- quiet option (tailr), Defining the Arguments, Defining the Arguments, Parsing and Validating the Command-Line Arguments, Printing the Bytes
+- -q\|--quiet option, Creating and Running a Project with Cargo
+
+### R
+
+- -r (recursive) option, Creating and Running a Project with Cargo, Getting Started
+- -R (recursive, maintain symlinks) option, Getting Started
+- rand crate, Getting Started, Using the Test Suite, Finding the Files to Search, Defining the Arguments, Randomly Selecting a Fortune
+  - generating random filename that doesn't exist, Using the Test Suite
+- rand::RngCore trait, Solution
+- rand::rngs::StdRng::seed_from_u64, Randomly Selecting a Fortune
+- rand::thread_rng function, Randomly Selecting a Fortune
+- random number generators, Randomly Selecting a Fortune
+  - seeding, Defining the Arguments
+- Range structs, Preserving Line Endings While Reading a File, Requirements for Parsing the Position List
+- ranges
+  - changes in cutr utility, How cut Works
+  - in character classes in regular expressions, Using a Regular Expression to Match an Integer with an Optional Sign
+  - closed or partially defined in cut utilities, How cut Works
+  - iterating over, Selecting Characters from a String
+  - parsing and validating for byte, character, and field arguments in cutr, Requirements for Parsing the Position List
+  - parsing and validating in cutr, Solution for Parsing the Position List-Solution for Parsing the Position List
+  - partial, altering cutr to allow, Going Further
+  - position list in cutr utility, Requirements for Parsing the Position List
+  - selected text for cutting, Shave and a Haircut
+- raw strings, Validating the Delimiter, Solution for Parsing the Position List
+- read head, Finding the Starting Byte to Print
+- Read trait, Opening a File or STDIN, Parsing Delimited Text Files
+  - file argument implementing, Finding the Starting Byte to Print
+- read/write/execute mask values, Displaying Octal Permissions
+- read/write/execute permissions, Displaying Octal Permissions
+- Reader::headers method, Parsing Delimited Text Files
+- Reader::records method, Parsing Delimited Text Files
+- read_fortunes function, Reading the Fortune Files, Solution
+- real time, Benchmarking the Solution
+- --recursive option, Finding the Files to Search, Finding the Matching Lines of Input
+- recursive flag, Getting Started, Defining the Arguments
+- recursive, case-insensitive search in grep, How grep Works
+- redirect operator (\>) in bash, How echo Works
+- refactoring code, Solution
+- references, Creating the Program Output
+  - to Boolean values, Getting Started
+- regex, Defining the Arguments
+  - (see also regular expressions)
+- regex crate, Defining the Arguments, Defining the Arguments
+- Regex::as_str method, Defining the Arguments
+- Regex::captures, Solution for Parsing the Position List, Solution for Parsing the Position List, Using a Regular Expression to Match an Integer with an Optional Sign
+- regex::Regex type, Defining the Arguments, Using a Regular Expression to Match an Integer with an Optional Sign
+- regex::RegexBuilder struct, Defining the Arguments, Defining the Arguments
+- RegexBuilder::build method, Defining the Arguments, Defining the Arguments
+- RegexBuilder::case_insensitive method, Defining the Arguments, Defining the Arguments
+- RegexBuilder::new method, Defining the Arguments, Defining the Arguments
+- regular expressions, Finders Keepers
+  - about, Defining the Arguments
+  - case-insensitive, creating, Defining the Arguments
+  - creating lazily evaluated regular expression, Using a Regular Expression to Match an Integer with an Optional Sign
+  - creating to incorporate insensitive option in grepr, Defining the Arguments
+  - creating to match two integers separated by a dash, Solution for Parsing the Position List
+  - in grep, How grep Works
+  - -m option parsed as in fortuner, Defining the Arguments
+  - printing records matching a regular expression, Printing Records Matching a Pattern
+  - syntax differences from file glob patterns, Defining the Arguments
+  - syntax, options for, Defining the Arguments
+  - using to match integer with optional sign, Using a Regular Expression to Match an Integer with an Optional Sign-Using a Regular Expression to Match an Integer with an Optional Sign
+- release build, creating for tailr, Benchmarking the Solution
+- Result\<Option\>, Defining the Arguments
+- Result type, Adding Project Dependencies, Comparing Program Output, Reading the Lines in a File
+  - mapping into closure printing errors to STDERR, Solution
+  - using in integration testing of echor, Using the Result Type-Summary
+    - anyhow::Result, Using the Result Type
+- Result::expect function, Testing the Program Output
+- Result::map_err function, Defining the Arguments, Defining the Arguments
+- Result::ok function, Solution, Finding the Files
+- Result::transpose function, Solution for Parsing the Position List
+- Result::unwrap function, Adding Project Dependencies, Comparing Program Output
+- return keyword, Using the Result Type
+- ripgrep (rg) tool, Going Further
+- rm (remove) command, Organizing a Rust Project Directory
+- RNG (see random number generators)
+- RngCore trait, Solution
+- Row struct, Formatting the Long Listing, Solution
+- run function
+  - creating for wcr program, Getting Started
+  - cutr utility, Final Boss
+    - incorporating parse_pos in, Requirements for Parsing the Position List
+  - final version for tailr, Printing the Bytes
+  - final version for wcr program, Formatting the Output
+  - final version in calr program, Solution
+  - headr program, Processing the Input Files
+  - lsr program, Finding the Files, Solution
+  - uniqr program, Testing the Program
+- runs function, Writing and Running Integration Tests
+- run_count helper function, Testing the Program
+- run_long function, Notes from the Testing Underground
+- run_outfile function, Testing the Program
+- run_stdin function, Testing the Program
+- run_stdin_count function, Testing the Program
+- Rust programs, Truth or Consequences-Summary
+  - getting started with “Hello, world!”, Getting Started with “Hello, world!”-Getting Started with “Hello, world!”
+  - testing program output, Testing the Program Output
+- Rust projects
+  - adding project dependency, Adding Project Dependencies
+  - organizing project directory, Organizing a Rust Project Directory
+- rustc --explain commnd, Creating the Program Output
+- rustc command, Organizing a Rust Project Directory
+- RUST_BACKTRACE=1 environment variable, Reading Bytes from a File
+
+### S
+
+- -s option (fortuner), Defining the Arguments
+- sed utility, Solution
+  - s// substitution command, Solution
+- --seed option (fortuner), Defining the Arguments
+- seed value for random number generator, Defining the Arguments, Randomly Selecting a Fortune
+- Seek trait, Finding the Starting Byte to Print
+- Seek::seek function, Printing the Bytes
+- SeekFrom::Start, Printing the Bytes
+- semantic version numbers, Creating and Running a Project with Cargo
+- separators between input files in tail, How tail Works
+- set operations, Boston Commons
+- shadowing a variable, Printing Line Numbers
+- shebang, Creating the Test Output Files
+- show_hidden option (lsr), Defining the Arguments, Finding the Files
+- signed integers, Getting Started
+- size, checking for files, Notes from the Testing Underground
+- Sized trait, Opening a File or STDIN
+- skips_bad_file test, Using the Test Suite
+- Slice::choose function, Solution
+- slice::iter method, Getting Started
+- SliceRandom::choose function, Randomly Selecting a Fortune
+- slices, Using the Result Type, Getting Started
+  - of bytes, Selecting Bytes from a String
+- smell tests, failing, in findr program, Solution
+- Some type, Creating the Program Output, Getting Started
+- sort command, How uniq Works, Going Further
+- sorted order
+  - fortunes in, Randomly Selecting a Fortune
+  - paths in, Finding the Input Sources
+- sources, positional arguments interpreted as in fortuner, Defining the Arguments
+- spaces, delimiting bash shell CLI arguments, How echo Works
+- src (source) directory, Organizing a Rust Project Directory
+- stack memory, Creating the Program Output
+- standard (std) libraries, Writing and Running Integration Tests
+- statements versus expressions, Creating the Program Output
+- static annotation, denoting lifetime of values, Testing the Program
+- static, global, computed value, Using a Regular Expression to Match an Integer with an Optional Sign
+  - using once_cell crate to create, Getting Started
+- std::borrow::Cow, Conditionally Testing on Unix Versus Windows
+- std::cmp::Ordering::\*, Solution
+- std::env::args, Accessing the Command-Line Arguments
+- std::fmt::Display trait, Accessing the Command-Line Arguments
+- std::fs module, Comparing Program Output, Solution
+- std::fs::File, Opening a File or STDIN, Processing the Input Files, Processing the Files
+- std::fs::metadata, Finding the Files
+- std::io, Processing the Input Files, Reading Bytes Versus Characters
+- std::io::BufRead trait, Finding the Matching Lines of Input, Finding the Starting Line to Print
+- std::io::BufReader trait, Reading Bytes Versus Characters
+- std::io::Cursor, Writing and Testing a Function to Count File Elements, Finding the Matching Lines of Input
+- std::io::Read trait, Reading Bytes from a File
+- std::io::Result, Reading the Lines in a File
+  - (see also Result type)
+- std::io::stdin, Opening a File or STDIN
+- std::io::stdout, Solution
+- std::io::Write, Solution
+- std::iter::Copied, Selecting Bytes from a String
+- std::mem module, Solution
+- std::mem::take function, Solution
+- std::num::NonZeroUsize, Solution for Parsing the Position List
+- std::ops::Not, Getting Started
+- std::ops::Range structs, Preserving Line Endings While Reading a File, Requirements for Parsing the Position List
+- std::os::unix::fs::MetadataExt, Formatting the Long Listing
+- std::path::PathBuf, Finding the Input Sources, Finding the Files
+- std::process::abort function, Understanding Program Exit Values
+- std::process::exit function, Understanding Program Exit Values
+- std::time::SystemTime struct, Formatting the Long Listing
+- STDERR
+  - redirecting to file, Parsing Command-Line Arguments Using clap
+  - redirecting to file with wc, How wc Works
+- STDIN
+  - connecting to STDOUT for another command, How cat Works
+  - grep reading from, How grep Works
+  - helper function providing input via, Using the Test Suite
+  - opening with catr program, Opening a File or STDIN-Opening a File or STDIN
+  - printing lines, words, and bytes from for wcr, Getting Started
+  - reading from with uniq, How uniq Works
+  - tailr not reading by default, Defining the Arguments
+  - uniqr program reading from, Defining the Arguments
+- STDOUT
+  - connecting to STDIN for another command, How cat Works
+  - echo printing arguments to, How echo Works
+  - redirecting to file, Parsing Command-Line Arguments Using clap
+  - sending to file with bash redirect (\>) operator, How echo Works
+- str type, Creating the Program Output, Using the Result Type, Formatting the Output
+- str::as_bytes function, Reading Bytes from a File
+- str::chars method, Counting the Elements of a File or STDIN, Selecting Characters from a String
+- str::parse function, Solution for Parsing the Position List, Using a Regular Expression to Match an Integer with an Optional Sign
+- str::repeat function, Solution
+- str::split_whitespace function, Counting the Elements of a File or STDIN
+- strfile program, How fortune Works
+  - .dat files created by, Finding the Input Sources
+- strftime format options, Solution
+- strftime syntax, Formatting the Long Listing
+- String type, Creating the Program Output, Using the Test Suite, Formatting the Output
+  - converting Cow value into, Selecting Bytes from a String
+  - converting OsStr to, Solution
+  - converting selected bytes to, Printing the Bytes
+  - generating using format! macro, Using the Test Suite
+  - valid UTF-8-encoded string, Reading Bytes Versus Characters
+- String::as_bytes method, Validating the Delimiter
+- String::chars function, Going Further
+- String::clear function, Preserving Line Endings While Reading a File
+- String::from_utf8 function, Reading Bytes from a File
+- String::from_utf8_lossy function, Reading Bytes Versus Characters, Reading Bytes from a File, Reading Bytes from a File, Finding the Starting Byte to Print
+  - needing slice of bytes, Selecting Bytes from a String
+- String::new function, Preserving Line Endings While Reading a File
+- StringRecord type, Parsing Delimited Text Files
+- StringRecord::get function, Selecting Fields from a csv::StringRecord
+- strings
+  - distinguishing starting substring for months, Defining and Validating the Arguments
+  - formatting for output of wcr, Formatting the Output
+  - printing empty string when reading from STDIN, Formatting the Output
+  - raw, in regular expressions, Validating the Delimiter, Solution for Parsing the Position List
+  - searching for text records matching given string in fortune, How fortune Works
+  - selecting bytes from, Selecting Bytes from a String
+  - selecting characters from, Selecting Characters from a String-Selecting Bytes from a String
+- structs, Accessing the Command-Line Arguments
+  - definition to represent command-line arguments, Using clap Derive
+  - naming conventions in Rust, Defining the Arguments
+- Style::reverse, Writing the Program, Solution
+- suppress flag, inverting to show in Args, Defining the Arguments
+- symbolic links, Solution
+  - defined, How find Works
+  - indicated by -\> symbol, How find Works
+- sys time, Benchmarking the Solution
+- SystemTime struct, Formatting the Long Listing
+
+### T
+
+- tab character output delimiter, How comm Works, Defining the Arguments
+- tab-separated values (.tsv) files, How cut Works
+- Table struct, Formatting the Long Listing, Solution
+- tabular crate, Getting Started, Formatting the Long Listing
+- tabular::Table struct, Solution
+- tail utility, Tailor Swyfte-Summary
+  - how it works, How tail Works-How tail Works
+    - tail showing last 10 lines of a file, How tail Works
+  - writing tailr version
+    - benchmarking the solution, Benchmarking the Solution
+    - counting total lines and bytes in a file, Counting the Total Lines and Bytes in a File-Finding the Starting Line to Print, Counting All the Lines and Bytes in a File
+    - defining the arguments, Defining the Arguments-Defining the Arguments
+    - finding start index, Finding the Start Index
+    - finding starting byte to print, Finding the Starting Byte to Print
+    - finding starting line to print, Finding the Starting Line to Print
+    - getting started, Getting Started
+    - going further, Going Further
+    - parsing and validating command-line arguments, Parsing and Validating the Command-Line Arguments-Parsing and Validating the Command-Line Arguments
+    - parsing positive and negative numeric arguments, Parsing Positive and Negative Numeric Arguments-Parsing Positive and Negative Numeric Arguments
+    - printing the bytes, Printing the Bytes
+    - printing the lines, Printing the Lines
+    - processing the files, Processing the Files
+    - regular expression matching integers with optional sign, Using a Regular Expression to Match an Integer with an Optional Sign-Using a Regular Expression to Match an Integer with an Optional Sign
+    - testing program with large input files, Testing the Program with Large Input Files
+- take method (std::io::Read), Reading Bytes from a File
+- TakeNum enum variant, Using a Regular Expression to Match an Integer with an Optional Sign
+- TakeValue enum, Parsing Positive and Negative Numeric Arguments, Finding the Starting Line to Print
+- target directory, Creating and Running a Project with Cargo
+- tempfile crate, Summary
+- tempfile::NamedTempFile, Testing the Program
+- \#\[test\] attribute, Writing and Running Integration Tests
+- test-driven development (TDD), Starting with Tests, Writing and Testing a Function to Count File Elements
+- test-first development, Starting with Tests
+- testing, Writing and Running Integration Tests
+  - (see also unit tests)
+  - calr tests, Getting Started
+  - combining strict language like Rust with, Epilogue
+  - conditionally testing Unix versus Windows for findr, Conditionally Testing on Unix Versus Windows-Going Further
+  - notes from testing underground, Notes from the Testing Underground-Notes from the Testing Underground
+  - test determining if element is false, Getting Started
+  - tests for lsr, Getting Started
+  - of uniqr program, Testing the Program-Testing the Program
+  - using test suite for catr program, Using the Test Suite-Using the Test Suite
+  - writing and running integration tests, Writing and Running Integration Tests-Exit Values Make Programs Composable
+- tests directory, Writing and Running Integration Tests
+- test_all function, Formatting the Output
+- time (UTC), Defining and Validating the Arguments
+- time command, Benchmarking the Solution
+- touch command, How cat Works
+- tr (translate characters) command, Writing and Running Integration Tests
+- trait bounds, Tailor Swyfte, Finding the Starting Byte to Print
+- traits, Accessing the Command-Line Arguments
+  - indicating multiple trait bounds, Finding the Starting Byte to Print
+  - naming conventions in Rust, Defining the Arguments
+- tree command, Organizing a Rust Project Directory, Creating and Running a Project with Cargo, Going Further
+  - writing Rust version of, Going Further
+- true and false values, Writing and Running Integration Tests
+  - flags for wcr program, Getting Started
+- true command, Understanding Program Exit Values
+  - chaining to ls command, Exit Values Make Programs Composable
+- TSV (tab-separated values) files, How cut Works
+- tuples, Printing Line Numbers, Solution
+  - containing number of lines and bytes in a file, Counting All the Lines and Bytes in a File
+- turbofish operator (::\<\>), Reading Bytes from a File
+- -type option (find), How find Works
+  - combining with -name option, How find Works
+- types
+  - casting, Reading a File Line by Line
+  - inferring, Reading Bytes from a File
+  - naming conventions in Rust, Defining the Arguments
+  - string variables in Rust, Using the Result Type
+  - types option in findr, Validating the Arguments
+    - finding all the entry types, Solution
+  - values in vectors, Creating the Program Output
+
+### U
+
+- u64 type, Getting Started, Finding the Starting Line to Print
+  - -s option parsed as in fortuner, Defining the Arguments
+- Unicode, Reading Bytes Versus Characters, How wc Works, How cut Works
+  - multibyte character Ö, How tail Works
+  - multibyte character ś, How tail Works
+- unimplemented! macro, Requirements for Parsing the Position List
+- uniq program, Den of Uniquity-Summary
+  - how it works, How uniq Works-How uniq Works
+  - writing uniqr version
+    - defining the arguments, Defining the Arguments
+    - getting started, Getting Started
+    - going further, Going Further
+    - processing input files, Processing the Input Files-Processing the Input Files
+    - solution, Solution
+    - testing the program, Testing the Program-Testing the Program
+- unit tests, Writing and Running Integration Tests
+  - creating for count function, Writing and Testing a Function to Count File Elements-Writing and Testing a Function to Count File Elements
+  - creating for cutr utility, Requirements for Parsing the Position List
+  - test for extract_fields function, Parsing Delimited Text Files
+  - test_count_lines_bytes function, Counting the Total Lines and Bytes in a File
+  - test_find_files in fortuner, Finding the Input Sources
+  - test_find_files in lsr, Finding the Files
+  - test_format_mode in lsr, Displaying Octal Permissions
+  - test_format_month in calr, Writing the Program
+  - test_format_output in lsr, Testing the Long Format
+  - test_get_start_index function, Finding the Starting Line to Print
+  - test_last_day_in_month in calr, Writing the Program
+  - test_mk_triple function in lsr, Solution
+  - test_parse_month in calr, Defining and Validating the Arguments
+  - test_parse_num function, Parsing Positive and Negative Numeric Arguments
+  - test_read_fortunes in fortuner, Reading the Fortune Files, Randomly Selecting a Fortune
+- unit type, Getting Started, Using the Result Type
+  - return by if expression without else, Creating the Program Output
+- Unix
+  - conditionally testing Unix versus Windows for findr, Conditionally Testing on Unix Versus Windows-Going Further
+  - files and directories, levels of sharing and ownership, Displaying Octal Permissions
+  - ls command and ideas of files and ownership, Elless Island
+  - newlines, Processing the Input Files
+- unknown character, How tail Works
+- unreachable! macro, Solution for Parsing the Position List
+- unsigned integers, Getting Started, Parsing Positive and Negative Numeric Arguments
+- UpperCamelCase, Defining the Arguments
+- usage statement, Creating and Running a Project with Cargo
+  - calr program, Defining and Validating the Arguments
+  - commr utility, Defining the Arguments
+  - cutr utility, Defining the Arguments
+  - fortuner program, Defining the Arguments
+  - lsr program, Defining the Arguments
+  - tailr utility, Defining the Arguments
+  - uniqr program, Defining the Arguments
+- User enum, Solution
+- user time, Benchmarking the Solution
+- users, Getting Started, Solution
+- users crate, Formatting the Long Listing
+- usize type, Getting Started, Solution for Parsing the Position List, Finding the Input Sources
+  - casting to i64, Counting All the Lines and Bytes in a File
+- UTC (Coordinated Universal Time), Defining and Validating the Arguments
+- UTF-8 character encoding, Reading Bytes Versus Characters
+  - byte selection producing invalid UTF-8 string, Selecting Bytes from a String
+  - String type and, Reading Bytes from a File
+
+### V
+
+- -V and --version flags, Parsing Command-Line Arguments Using clap
+- ValueEnum trait, Defining the Arguments
+- value_error closure, Solution for Parsing the Position List
+- variables (Rust), Writing and Running Integration Tests
+  - shadowing, Printing Line Numbers
+- Vec type, Creating the Program Output, Using clap Derive, Validating the Arguments, Selecting Characters from a String
+- vec! macro, Creating the Program Output
+- Vec::chunks, Solution, Solution
+- Vec::contains, Notes from the Testing Underground
+- Vec::dedup function, Finding the Input Sources, Solution
+- Vec::extend function, Solution
+- Vec::first function, Validating the Delimiter
+- Vec::get function, Selecting Characters from a String
+- Vec::join function, Creating the Program Output
+- Vec::len method, Printing the File Separators
+- Vec::push function, Selecting Characters from a String
+- Vec::sort function, Finding the Input Sources, Solution
+- Vec::windows, Going Further
+- Vec\<&str\>, Selecting Fields from a csv::StringRecord
+- Vec\<Range\<usize\>\>, Requirements for Parsing the Position List
+- Vec\<String\>, Solution
+- vectors
+  - breaking string into vector of u8, Validating the Delimiter
+  - of byte references, Selecting Bytes from a String
+  - creating in Rust, Creating the Program Output
+  - growable nature of, Creating the Program Output
+  - manually pushing to in find_files function, Solution
+  - passing vector of arguments, Using the Result Type
+- version, exact, specifying, Adding clap as a Dependency
+- virtual environments (Python), Adding clap as a Dependency
+
+### W
+
+- walkdir crate, Getting Started, Finding All the Things
+- WalkDir type, Finding the Files to Search, Solution, Solution
+- walkdir::DirEntry, Solution
+- WalkDir::max_depth, Going Further
+- WalkDir::min_depth, Going Further
+- walkdir::WalkDir, Solution
+- wc (word count) program, Word to Your Mother-Summary
+  - how it works, How wc Works-How wc Works
+  - writing wcr version
+    - counting elements of file or STDIN, Counting the Elements of a File or STDIN
+    - formatting the output, Formatting the Output-Formatting the Output
+    - getting started, Getting Started-Getting Started
+    - going further, Going Further
+    - iterating the files, Iterating the Files
+    - writing and testing function to count file elements, Writing and Testing a Function to Count File Elements-Writing and Testing a Function to Count File Elements
+- where clause, Tailor Swyfte, Finding the Starting Byte to Print
+- Windows
+  - conditionally testing Unix versus Windows for findr, Conditionally Testing on Unix Versus Windows-Going Further
+  - determining if grepr tests are being run in, Getting Started
+  - expanding file glob with PowerShell, Iterating Through the File Arguments, Getting Started
+  - newlines, Processing the Input Files
+  - symbolic links and, How find Works
+- Windows Subsystem for Linux, How find Works, Elless Island
+- word count (see wc program)
+- words, getting number of, How wc Works
+- Write trait, Solution, Summary
+
+### Y
+
+- year method, Defining and Validating the Arguments
+- years
+  - in cal utility, How cal Works
+  - in calr program, Defining and Validating the Arguments
+  - current year used with calr program with no arguments, Defining and Validating the Arguments
+  - month and year in cal utilities, How cal Works
+  - positive and negative values for, Defining and Validating the Arguments
+  - valid integer values for, Defining and Validating the Arguments
+  - year set to current year with -y\|--year flag, Defining and Validating the Arguments
+- -y\|--year flag (cal), How cal Works
+  - no use without the month, Defining and Validating the Arguments
+- -y\|--year flag (calr), Defining and Validating the Arguments
+
+### Z
+
+- zip method, Writing the Program, Solution

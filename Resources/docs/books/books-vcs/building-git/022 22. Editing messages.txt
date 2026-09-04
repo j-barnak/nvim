@@ -1,0 +1,969 @@
+22. Editing messages
+Using the reset command we developed in the previous chapter, it’s now possible to drop a
+few commits from your current branch and redo them, or squash them into a single commit. For
+example, running reset --soft will move your current branch pointer but keep the existing
+index state, so you can use it to collapse the last few commits into a single one containing the
+most recent tree:
+     $ jit reset --soft @~3
+     $ echo "<message>" | jit commit
+
+However, this has a significant downside: although you get to keep all the tree content from
+the commit before you reset, the reset throws away the commit messages. When you run jit
+commit, you’ll need to pipe in a whole new commit message. Now, maybe you have the last
+commit message in a file, and you can pipe that in again:
+     $ cat path/to/message.txt | jit commit
+
+As we add more features for working with the history, it will become desirable to load up
+messages from old commits and edit them, before using them to annotate a new commit.
+Although reading from standard input was a good start to get us moving quickly, it’s not great
+for handling these more complex use cases. We can improve matters by launching the user’s
+text editor whenever they need to compose a message — let’s begin by adding this capability
+to the commit command.
+
+To remind ourselves what the commit command code looks like, we last saw it in Section 17.3,
+“Commits with multiple parents”. Below I’ve made a slight improvement to its output,
+displaying the current branch name (or detached HEAD if there’s no current branch), and a
+shortened commit ID.
+     # lib/command/commit.rb
+
+         def run
+           repo.index.load
+           resume_merge if pending_commit.in_progress?
+
+           parent = repo.refs.read_head
+           message = @stdin.read
+           commit = write_commit([*parent], message)
+
+           print_commit(commit)
+
+           exit 0
+         end
+
+The actual output logic has been moved into Command::WriteCommit — other commands will
+end up using this print_commit logic to display any new commits they generate.
+     # lib/command/shared/write_commit.rb
+
+         def print_commit(commit)
+           ref = repo.refs.current_ref
+           info = ref.head? ? "detached HEAD" : ref.short_name
+           oid = repo.database.short_oid(commit.oid)
+
+                                                  Editing messages
+
+                info.concat(" (root-commit)") unless commit.parent
+                info.concat(" #{ oid }")
+
+               puts "[#{ info }] #{ commit.title_line }"
+             end
+
+Now let’s see how this code can be augmented to allow the user to set the message value that
+goes into the commit.
+
+22.1. Setting the commit message
+Since introducing support for command-line options1, we can now offer an easier way to set the
+message when making a commit. Git supports the --message option, which takes the message
+from the option’s value, and --file, which specifies a file from which to read the message.
+Both the commit and merge commands support these, so we’ll add support for them to the
+Command::WriteCommit mixin, along with a read_message method that examines the options
+the user has set and returns the message string from the appropriate source.
+       # lib/command/shared/write_commit.rb
+
+             def define_write_commit_options
+               @parser.on "-m <message>", "--message=<message>" do |message|
+                 @options[:message] = message
+               end
+
+               @parser.on "-F <file>", "--file=<file>" do |file|
+                 @options[:file] = expanded_pathname(file)
+               end
+             end
+
+             def read_message
+               if @options.has_key?(:message)
+                 "#{ @options[:message] }\n"
+               elsif @options.has_key?(:file)
+                 File.read(@options[:file])
+               end
+             end
+
+We can now load these option definitions into the Command::Commit class, and call
+read_message instead of @stdin.read to get the message value.
+
+       # lib/command/commit.rb
+
+             def define_options
+               define_write_commit_options
+             end
+
+             def run
+               # ...
+
+                parent = repo.refs.read_head
+                message = read_message
+                commit = write_commit([*parent], message)
+
+ Section 15.5.1, “Parsing command-line options”
+
+                                        Editing messages
+
+            print_commit(commit)
+
+           exit 0
+         end
+
+A similar change is applied in Command::Merge#run. These options make the commit and merge
+commands a bit easier to use, and we’ve not lost the ability to write multi-line messages — we
+can compose them in a file and use the --file option. However, it would be nicer if message
+composition was better integrated into the commit workflow, particularly in the case of
+conflicted merges. While resolving any merge conflicts, we may decide we want to change the
+merge message, adding more information about how we fixed things up. In this case it would be
+nice to present the original merge message for editing, before making the final merge commit.
+
+22.2. Composing the commit message
+Let’s begin with the most common use case: when we run commit with no --message or --
+file option, or if the --edit option is set, Jit should launch our preferred text editor and ask
+us to compose a message there. We’d like to have a method that prompts the user for input via
+their editor, and returns the text they entered. We’d also like to be able to set the initial text
+they see in their editor, and add some explanatory comments that should be stripped out of the
+message before it’s used.
+
+So, if we run:
+     $ jit commit --message "hello world" --edit
+
+Then, we should see our editor pop up with the following content:
+     hello world
+
+     # Please enter the commit message for your changes. Lines starting
+     # with '#' will be ignored, and an empty message aborts the commit.
+
+When we’re done editing and we close the editor, any lines that don’t begin with # should be
+used as the commit message.
+
+We will shortly introduce a class called Editor to implement most of this functionality, but
+rather than discuss that class first, I’m going to begin with the command code that calls the
+editor. This will give some idea of what we’re aiming for and will inform the Editor class’s
+design. Designing programs from the outside in like this is a common way of discovering what
+we need.
+
+Here’s a version of the commit command, where read_message has been passed through
+compose_message to let the user edit the message. compose_message in turn calls a new method,
+edit_file, which takes the path of the file we want to edit; in order to open some text in an
+editor, we need to write that text to a file and then ask the editor to open said file. edit_file
+also yields an editor object to us, which lets us write some initial content to the file, including
+some things that should be rendered as comments. Finally, the editor.close method can be
+used to write this content to the given file, but prevent the editor from actually launching.
+     # lib/command/commit.rb
+
+                                       Editing messages
+
+         COMMIT_NOTES = <<~MSG
+           Please enter the commit message for your changes. Lines starting
+           with '#' will be ignored, and an empty message aborts the commit.
+         MSG
+
+         def run
+           # ...
+
+           parent = repo.refs.read_head
+           message = compose_message(read_message)
+           commit = write_commit([*parent], message)
+
+           # ...
+         end
+
+         def compose_message(message)
+           edit_file(commit_message_path) do |editor|
+             editor.puts(message || "")
+             editor.puts("")
+             editor.note(COMMIT_NOTES)
+
+             editor.close unless @options[:edit]
+           end
+         end
+
+commit_message_path will be needed in a few different places and so we define it in
+WriteCommit: it returns the path .git/COMMIT_EDITMSG, which is where commit messages are
+usually composed.
+     # lib/command/shared/write_commit.rb
+
+         def commit_message_path
+           repo.git_path.join("COMMIT_EDITMSG")
+         end
+
+This is an attempt at an interface that hides all the messy details of how we interact with the
+editor, while preserving the minimum amount of information: which file we want the text to
+live in, what the initial content should be, and what the final content of the file was — this
+should be the return value.
+
+edit_file will be a method many commands want to use, so let’s put it in Command::Base.
+It is essentially a thin wrapper around the Editor class, which we’ll introduce shortly, with
+a bit of behaviour determined by the current environment. We don’t want to force everyone
+to use the same editor, so we need to get the name of the user’s editor program from an
+environment variable; VISUAL and EDITOR and commonly used environment variables for this,
+while GIT_EDITOR is a Git-specific one. Also, we don’t actually want the editor to launch unless
+standard output is a TTY — the text editor is an interactive UI, so if the command is being run
+as part of another program rather than from a terminal, we shouldn’t use it.
+     # lib/command/base.rb
+
+         def edit_file(path)
+           Editor.edit(path, editor_command) do |editor|
+             yield editor
+             editor.close unless @isatty
+
+                                         Editing messages
+
+            end
+          end
+
+          def editor_command
+            @env["GIT_EDITOR"] || @env["VISUAL"] || @env["EDITOR"]
+          end
+
+22.2.1. Launching the editor
+Now we can start to flesh out the Editor class itself, whose core responsibility is to let us
+write some initial content to a file, open the user’s text editor to modify its contents, and finally
+return to us the completed content of the file. To make the edit_file method work, we need
+Editor.edit to take a pathname and a command, yield an Editor object for the caller to write
+the initial content, let the user edit the file, and then return its contents.
+     # lib/editor.rb
+
+     class Editor
+       DEFAULT_EDITOR = "vi"
+
+       def self.edit(path, command)
+         editor = Editor.new(path, command)
+         yield editor
+         editor.edit_file
+       end
+
+       def initialize(path, command)
+         @path    = path
+         @command = command || DEFAULT_EDITOR
+         @closed = false
+       end
+
+       # ...
+     end
+
+Then we can flesh out the interface of the Editor class. As we saw in the compose_message
+method above, this object needs to respond to puts, note and close. puts writes content to the
+file, note writes content prefixing each line with #, and close just flags the editor as closed.
+     # lib/editor.rb
+
+       def puts(string)
+         return if @closed
+         file.puts(string)
+       end
+
+       def note(string)
+         return if @closed
+         string.each_line { |line| file.puts("# #{ line }") }
+       end
+
+       def close
+         @closed = true
+       end
+
+       def file
+
+                                                         Editing messages
+
+            flags = File::WRONLY | File::CREAT | File::TRUNC
+            @file ||= File.open(@path, flags)
+          end
+
+Finally, the Editor needs to implement edit_file, the final call made by Editor.edit. This
+should launch the text editor, unless the @closed flag has been set, and when the editor exits, it
+should return the contents of the file with any comment lines stripped out. If no non-comment
+content is present, that is all the non-comment lines match the whitespace regular expression ^
+\s*$, then remove_notes returns nil indicating there was no message given.
+
+       # lib/editor.rb
+
+          def edit_file
+            file.close
+            editor_argv = Shellwords.shellsplit(@command) + [@path.to_s]
+
+              unless @closed or system(*editor_argv)
+                raise "There was a problem with the editor '#{ @command }'."
+              end
+
+            remove_notes(File.read(@path))
+          end
+
+          def remove_notes(string)
+            lines = string.lines.reject { |line| line.start_with?("#") }
+
+            if lines.all? { |line| /^\s*$/ =~ line }
+              nil
+            else
+              "#{ lines.join("").strip }\n"
+            end
+          end
+
+The Shellwords.shellsplit2 method parses a command string in the same way a shell would
+do, for example:
+       >> Shellwords.shellsplit("commit -m 'my message'")
+       => ["commit", "-m", "my message"]
+
+This lets us handle $EDITOR settings that might contain multiple words. For example, the Atom3
+editor must be run using the command atom --wait <file>, otherwise it returns as soon as
+the file is open rather than blocking until it’s closed. If we use the single string "atom --wait"
+with system(), the operating system will think we’re trying to run a program called atom --
+wait, rather than the atom program with --wait as an argument.
+
+The call to system4 is what runs the text editor program. This is a wrapper for the C system()5
+function, which runs another program via the shell6. Ruby’s system method has a safety
+feature: if passed multiple strings, it will run the specified program with the other strings
+as arguments, rather than executing the entire command as a single string via the shell. For
+  https://docs.ruby-lang.org/en/2.3.0/Shellwords.html#method-c-shellsplit
+  https://atom.io/
+  https://docs.ruby-lang.org/en/2.3.0/Kernel.html#method-i-system
+  https://manpages.ubuntu.com/manpages/bionic/en/man3/system.3posix.html
+  Despite its name, this should not be confused with making a system call, which means calling a function in the kernel that mediates access
+to the hardware.
+
+                                         Editing messages
+
+example, system("rm -rf #{ path }") will result in this shell command being run if path
+is "foo *":
+       rm -rf foo *
+
+Whereas, system("rm", "-rf", path) will result in this command being run as a direct child
+process, not via the shell:
+       rm -rf "foo *"
+
+That is, only the file with the literal name foo * will be deleted, rather than everything in the
+current working directory. Using system this way prevents you making mistakes due to how
+the shell breaks the command up into separate words.
+
+system   is the second method we’ve seen for launching a child process in Ruby. In
+Section 12.3.3, “Invoking the pager”, we used Process.spawn, which runs the new process in a
+non-blocking manner: the new process runs and our Ruby program keeps going without waiting
+for the child process to exit. Here, we want to wait for the editor to exit before proceeding. We
+could use Process.waitpid for that, but system does all this for us: it blocks until the child
+process exits. It also makes the child process use the same standard output/error streams as the
+Ruby process, so if you run a terminal-based editor like Vim7 or Emacs8, the editor will appear
+in your terminal and Ruby will wait until you quit it.
+
+To complete the story, we just need to define an :edit option to control whether the given
+message should be edited or not. This defaults to :auto and is set by the --message and --file
+options, unless it’s been set explicitly via the --[no-]edit option.
+       # lib/command/shared/write_commit.rb
+
+             def define_write_commit_options
+               @options[:edit] = :auto
+               @parser.on("-e", "--[no-]edit") { |value| @options[:edit] = value }
+
+                @parser.on "-m <message>", "--message=<message>" do |message|
+                  @options[:message] = message
+                  @options[:edit]    = false if @options[:edit] == :auto
+                end
+
+               @parser.on "-F <file>", "--file=<file>" do |file|
+                 @options[:file] = expanded_pathname(file)
+                 @options[:edit] = false if @options[:edit] == :auto
+               end
+             end
+
+22.2.2. Starting and resuming merges
+In Section 19.4.2, “Retaining state across commands”, we used the PendingCommit class
+to store the inputs to the merge command while it was suspended for the user to resolve
+conflicts. Its start method took the object ID of the merge target and the message passed
+on the command line. We can now use the editor to populate the message, so rather than
+have PendingCommit#start take a message as input, we’ll expose the pathname where
+ https://www.vim.org/
+ https://www.gnu.org/software/emacs/
+
+                                      Editing messages
+
+PendingCommit stores the message, allowing the merge command to edit that file. The start
+method now only writes the merged commit’s ID to disk.
+     # lib/repository/pending_commit.rb
+
+         attr_reader :message_path
+
+         def start(oid)
+           flags = File::WRONLY | File::CREAT | File::EXCL
+           File.open(@head_path, flags) { |f| f.puts(oid) }
+         end
+
+As we saw when introducing the PendingCommit class, the Command::Merge#run method
+performs the following steps when commencing a normal merge: it stores the inputs in
+pending_commit, it calls resolve_merge to apply the changes from the merged branch to the
+index and workspace, and finally commit_merge to write a merge commit of the resulting index
+state.
+     # lib/command/merge.rb
+
+         def run
+           # ...
+
+           pending_commit.start(@inputs.right_oid)
+           resolve_merge
+           commit_merge
+
+           exit 0
+         end
+
+We can update resolve_merge so that if applying the merged changes results in a conflict,
+we invoke the fail_on_conflict method. This uses Editor to write some content to the
+PendingCommit object’s message file, namely, the message given using --message or the
+default message of Merge commit '<rev>'. It then adds the list of conflicted files as comments,
+so that when we come to edit this file after fixing the conflicts, we’re reminded of where the
+problems were and we can write up how we resolved them.
+     # lib/command/merge.rb
+
+         def resolve_merge
+           repo.index.load_for_update
+
+           # ...
+
+           repo.index.write_updates
+           fail_on_conflict if repo.index.conflict?
+         end
+
+         def fail_on_conflict
+           edit_file(pending_commit.message_path) do |editor|
+             editor.puts(read_message || default_commit_message)
+             editor.puts("")
+             editor.note("Conflicts:")
+             repo.index.conflict_paths.each { |name| editor.note("\t#{ name }") }
+             editor.close
+           end
+
+                                     Editing messages
+
+           puts "Automatic merge failed; fix conflicts and then commit the result."
+           exit 1
+         end
+
+         def default_commit_message
+           "Merge commit '#{ @inputs.right_name }'"
+         end
+
+The conflict_paths method is a new addition to the Index class that returns a set of those
+paths whose entries have a non-zero stage, indicating they’re in conflict.
+     # lib/index.rb
+
+       def conflict_paths
+         paths = Set.new
+         each_entry { |entry| paths.add(entry.path) unless entry.stage == 0 }
+         paths
+       end
+
+If the merge was successful, then commit_merge is invoked. Whereas previously this
+method called pending_commit.merge_message to fetch the original message, it now invokes
+compose_message:
+
+     # lib/command/merge.rb
+
+         def commit_merge
+           parents = [@inputs.left_oid, @inputs.right_oid]
+           message = compose_message
+
+           write_commit(parents, message)
+
+           pending_commit.clear
+         end
+
+compose_message works much like the method of the same name in the Command::Commit class,
+with minor variations: it uses .git/MERGE_MSG rather than .git/COMMIT_EDITMSG to store its
+contents, and has some different instructional comments.
+     # lib/command/merge.rb
+
+         COMMIT_NOTES = <<~MSG
+           Please enter a commit message to explain why this merge is necessary,
+           especially if it merges an updated upstream into a topic branch.
+
+           Lines starting with '#' will be ignored, and an empty message aborts
+           the commit.
+         MSG
+
+         def compose_message
+           edit_file(pending_commit.message_path) do |editor|
+             editor.puts(read_message || default_commit_message)
+             editor.puts("")
+             editor.note(COMMIT_NOTES)
+
+             editor.close unless @options[:edit]
+           end
+         end
+
+                                          Editing messages
+
+Finally, we can deal with what happens when a merge is resumed; we need to retrieve the
+original merge message and let the user edit it before writing it into a commit. In this case,
+WriteCommit#resume_merge will need to call compose_merge_message rather than fetching the
+original message from pending_commit.merge_message and using it unmodified.
+     # lib/command/shared/write_commit.rb
+
+          MERGE_NOTES = <<~MSG
+
+            It looks like you may be committing a merge.
+            If this is not correct, please remove the file
+            \t.git/MERGE_HEAD
+            and try again.
+          MSG
+
+          def resume_merge
+            handle_conflicted_index
+
+            parents = [repo.refs.read_head, pending_commit.merge_oid]
+            message = compose_merge_message(MERGE_NOTES)
+            write_commit(parents, message)
+
+            pending_commit.clear
+            exit 0
+          end
+
+The compose_merge_message method does much the same as we’ve already seen in terms of
+using the Editor, and again the tweaks relate to the copy that’s first written to the file. It retrieves
+the original message from .git/MERGE_MSG and moves it to .git/COMMIT_EDITMSG for editing.
+It prints an optional set of notes, seen in the MERGE_NOTES constant above, and finally appends
+the COMMIT_NOTES from Command::Commit as a comment.
+     # lib/command/shared/write_commit.rb
+
+          def compose_merge_message(notes = nil)
+            edit_file(commit_message_path) do |editor|
+              editor.puts(pending_commit.merge_message)
+              editor.note(notes) if notes
+              editor.puts("")
+              editor.note(Commit::COMMIT_NOTES)
+            end
+          end
+
+We’ve seen a few different use cases here: authoring a commit, writing a message on successful
+merge, storing a message on a failed merge, and editing the message when the merge is
+completed. All fairly straightforward additions, with slight variations in how the data is
+managed and what copy is shown to the user. This infrastructure will set us up well for any
+further use of the editor we want to make later on.
+
+22.3. Reusing messages
+In Section 21.3, “Discarding commits from your branch”, we saw that a common motivation
+for using the reset command is to move your current branch pointer back one or more commits
+while keeping the workspace and index state unchanged. This effectively drops the latest
+
+                                       Editing messages
+
+commit(s) from your branch and lets you write new ones without losing the files currently in
+the workspace.
+
+For example, if there is a file that should have been part of the last commit, but you forgot to
+add it, you might run:
+
+     $ jit reset --soft @^
+     $ jit add <file>
+     $ jit commit --message "<message>"
+
+This workflow is common enough that it quickly becomes frustrating to need to retype the
+message from the commit you just dropped. It would be handy if we could recall the message
+from the dropped commit and use it as the message for its replacement. And indeed, Git has
+a couple of options for doing just that:
+
+• -C, --reuse-message: this option takes a revision and uses the message from the named
+  commit, rather than you needing to use the --message option
+
+• -c, --reedit-message: this does the same thing as --reuse-message, but it also opens the
+  message in the editor in case you want to change it
+
+We can declare these options in the Command::Commit class; they store the given revision in the
+:reuse option, and set the :edit flag appropriately.
+
+     # lib/command/commit.rb
+
+         def define_options
+           define_write_commit_options
+
+           @parser.on "-C <commit>", "--reuse-message=<commit>" do |commit|
+             @options[:reuse] = commit
+             @options[:edit] = false
+           end
+
+           @parser.on "-c <commit>", "--reedit-message=<commit>" do |commit|
+             @options[:reuse] = commit
+             @options[:edit] = true
+           end
+         end
+
+The run method now needs to accommodate these options. We do that by having it call
+reused_message if read_message returns nothing; that is, if neither --message nor --file was
+used. reused_message uses the :reuse option with the Revision class to look up a commit
+and return its message.
+     # lib/command/commit.rb
+
+         def run
+           # ...
+
+           parent = repo.refs.read_head
+           message = compose_message(read_message || reused_message)
+           commit = write_commit([*parent], message)
+
+           # ...
+         end
+
+                                           Editing messages
+
+           def reused_message
+             return nil unless @options.has_key?(:reuse)
+
+              revision = Revision.new(repo, @options[:reuse])
+              commit   = repo.database.load(revision.resolve)
+
+             commit.message
+           end
+
+We can now amend the tree of the latest commit while retaining its message, like so:
+      $ jit reset --soft @^
+      $ jit add <file>
+      $ jit commit --reuse-message ORIG_HEAD
+
+You will see much literature on Git talking about ‘changing’ or ‘amending’ commits or the
+history. It’s important to remember that we are not really changing any objects, since Git objects
+are immutable — they cannot be changed without changing their ID. What’s really happening
+is that we’re adding new commits and changing what the refs point to. Say we began the above
+operation with this chain of commits:
+
+Figure 22.1. Commit chain before a reset
+
+           A       B       C
+           o <---- o <---- o
+                           |
+                       [master] <== [HEAD]
+
+The reset command moves the master branch pointer so that it refers to B. Commit C is not
+deleted, it’s just no longer reachable from master. The ORIG_HEAD reference can still be used
+to access it.
+
+Figure 22.2. Commit chain after a reset
+
+           A       B       C
+           o <---- o <---- o
+                   |
+               [master] <== [HEAD]
+
+Running commit then creates a new commit, whose tree is that of C with one file added, and
+whose message is the same as that of C. Git documentation will sometimes refer to this commit
+as C', to indicate that’s a modified version of C, but really there is no structural connection
+between these commits in the graph; C' is a distinct commit in its own right.
+
+Figure 22.3. Commit graph with an ‘amended’ commit
+
+           A       B        C
+           o <---- o <---- o
+                     \
+                       \ C'
+                        o
+                        |
+                  [master] <== [HEAD]
+
+We can also use reset to ‘squash’ the last few commits into a single one, keeping one of their
+messages. For example, say we have the following commit sequence:
+
+                                               Editing messages
+
+Figure 22.4. Chain of commits to be squashed
+           A       B       C       D
+           o <---- o <---- o <---- o
+                                   |
+                               [master] <== [HEAD]
+
+We’d like the changes from commits C and D to be folded into commit B; C and D effectively
+represent content we forgot to add to B. The history we’d like to have is thus these two commits,
+where the commit labelled B+C+D has the same tree as D:
+Figure 22.5. Desired squashed history
+           A     B+C+D
+           o <---- o
+                   |
+               [master] <== [HEAD]
+
+We can achieve this by running reset --soft @~3, to point HEAD at commit A but leave the
+index containing the tree from commit D.
+Figure 22.6. HEAD reset to before the commits to be squashed
+          A       B       C       D
+          o <---- o <---- o <---- o
+          |                       |
+      [master] <== [HEAD]    [ORIG_HEAD]
+
+Now, we can use commit --reuse-message ORIG_HEAD~2, which will create a new commit
+whose parent is A, whose tree is that of D, and which has the message from B:
+Figure 22.7. Squashed history
+           A          B    C        D
+           o <---- o <---- o <---- o
+             \                      |
+               \               [ORIG_HEAD]
+                 \ B+C+D
+                  o
+                  |
+           [master] <== [HEAD]
+
+Using this technique, an arbitrary number of commits from the tip of a branch can be squashed
+together into a single commit.
+
+22.3.1. Amending the HEAD
+Although reset provides a lot of versatility, letting you point a branch at an arbitrary commit,
+and drop or squash the last few commits on a branch, the above workflow of amending just
+the latest commit is so common that it has its own command: commit --amend. Normally, the
+commit command writes the current index as a tree object, and uses the current HEAD as the
+parent for a new commit, which becomes the new HEAD.
+Figure 22.8. The commit command creates a new commit
+               A       B                                      A       B       C
+           ... o <---- o                                  ... o <---- o <---- o
+                       |                -------->                             |
+                    [HEAD]                                                 [HEAD]
+
+                                           Editing messages
+
+When used with the --amend switch, commit still writes the current index out as a tree, but
+instead of appending a new commit to the current HEAD, it builds a new commit with the same
+parents as the current HEAD, effectively replacing the latest commit.
+Figure 22.9. The commit --amend command replaces an existing commit
+              A       B                                   A       B
+          ... o <---- o                               ... o <---- o
+                      |              -------->              \
+                   [HEAD]                                    \ B'
+                                                              o
+                                                              |
+                                                          [HEAD]
+
+This command retains the author and message of the replaced commit, and lets the user edit
+the message before committing. Because it preserves all the parents of the original HEAD, it’s
+strictly more powerful than the reset/commit workflow described above; you can amend a
+merge commit and the replacement commit will itself be a merge commit, with the same parents
+as the old HEAD.
+
+Let’s declare this option and dispatch to a new method to handle it in the Command::Commit#run
+method.
+      # lib/command/commit.rb
+
+          def define_options
+            define_write_commit_options
+
+             @parser.on("--amend") { @options[:amend] = true }
+
+            # ...
+          end
+
+          def run
+            repo.index.load
+
+             handle_amend if @options[:amend]
+             resume_merge if pending_commit.in_progress?
+
+            # ...
+          end
+
+The handle_amend method looks much like the other code we’ve seen for writing commits. It
+loads the current HEAD ID and writes the current index out to a tree. Then, rather than reading
+the message from user input, it’s read from the current HEAD. This value, and the parents and
+author of the old HEAD are used with the new tree to build a commit, which is then stored and
+set as the new HEAD.
+      # lib/command/commit.rb
+
+          def handle_amend
+            old = repo.database.load(repo.refs.read_head)
+            tree = write_tree
+
+             message = compose_message(old.message)
+
+             new = Database::Commit.new(old.parents, tree.oid, old.author, message)
+
+                                        Editing messages
+
+            repo.database.store(new)
+            repo.refs.update_head(new.oid)
+
+           print_commit(new)
+           exit 0
+         end
+
+Note that, although commit --amend potentially makes the original HEAD commit unreachable,
+it does not set ORIG_HEAD. If you have no other references to the original commit, it’s effectively
+lost.
+
+22.3.2. Recording the committer
+In Section 2.3.4, “Commits on disk”, we learned that Git commits contain two similar headers
+that store a person’s name, email and a timestamp: author and committer. So far, our
+implementation has always set these to the same value. But the --amend option is one of the
+cases in which Git makes them differ: it reuses the author information from an old commit,
+but the committer field should always reflect the actual person and time at which the commit
+object was created.
+
+This serves two important purposes. First, it allows end users to find out both the original
+author of the content, and the person who created the commit graph. This becomes especially
+useful when accepting patches from other people or cherry-picking commits between branches.
+You want to be able to find out both who wrote the code, and who wrote the commit history.
+Second, we saw in Section 16.2.2, “Logging multiple branches” that the RevList class uses
+commit timestamps to order its search of the history and determine when to stop. Amending
+and reordering commits can mean the author field of one commit might show an earlier time
+than its parent, and this would confuse the history search. The committer field lets us retain an
+always-increasing timestamp on descendant commits.
+
+We need to make room for the Database::Commit class to have distinct author and committer
+fields, so let’s add another field to its constructor:
+     # lib/database/commit.rb
+
+         attr_reader :parents, :tree, :author, :committer, :message
+
+         def initialize(parents, tree, author, committer, message)
+           @parents   = parents
+           @tree      = tree
+           @author    = author
+           @committer = committer
+           @message   = message
+         end
+
+We’ll need to use the @committer variable rather than the @author when writing the commit
+out as a string:
+     # lib/database/commit.rb
+
+         def to_s
+           lines = []
+
+            lines.push("tree #{ @tree }")
+
+                                       Editing messages
+
+           lines.concat(@parents.map { |oid| "parent #{ oid }" })
+           lines.push("author #{ @author }")
+           lines.push("committer #{ @committer }")
+           lines.push("")
+           lines.push(@message)
+
+           lines.join("\n")
+         end
+
+And, when reading commits back from the database, we’ll need to use the committer header
+to populate this new property on the Commit object.
+     # lib/database/commit.rb
+
+         def self.parse(scanner)
+           headers = Hash.new { |hash, key| hash[key] = [] }
+
+           loop do
+             # ...
+           end
+
+           Commit.new(
+             headers["parent"],
+             headers["tree"].first,
+             Author.parse(headers["author"].first),
+             Author.parse(headers["committer"].first),
+             scanner.rest)
+         end
+
+Now, we can change the Commit#date method to return the committer time, so that RevList
+continues to sort commits in the right order.
+     # lib/database/commit.rb
+
+         def date
+           @committer.time
+         end
+
+Having made this change to the data model, all the places in the codebase that create new
+commits need to set the committer field. They’ll need a shared way of getting the current author
+and timestamp, so we’ll extract that into a method in WriteCommit.
+     # lib/command/shared/write_commit.rb
+
+         def current_author
+           name = @env.fetch("GIT_AUTHOR_NAME")
+           email = @env.fetch("GIT_AUTHOR_EMAIL")
+
+           Database::Author.new(name, email, Time.now)
+         end
+
+Then there are just two places we need to change: WriteCommit handles the normal commit
+command, and successful and resumed merges. Here we use the current author value for both
+the author and committer fields.
+     # lib/command/shared/write_commit.rb
+
+         def write_commit(parents, message)
+
+                                       Editing messages
+
+           # ...
+
+           tree   = write_tree
+           author = current_author
+           commit = Database::Commit.new(parents, tree.oid, author, author, message)
+
+           # ...
+         end
+
+The other place that writes commits is the Command::Commit#handle_amend method. Here, we
+reuse the author field from the old commit, and use the current author value as the committer.
+     # lib/command/commit.rb
+
+         def handle_amend
+           old = repo.database.load(repo.refs.read_head)
+           tree = write_tree
+
+           message   = amend_commit_message(old)
+           committer = current_author
+
+           new = Database::Commit.new(old.parents, tree.oid, old.author, committer, message)
+
+           # ...
+         end
+
+We now have a workflow that lets us edit commits at will, replacing commits we no longer
+want with corrected versions. Let’s take it for a spin by creating a new repository and adding
+some commits to it:
+     $ jit init ../amend
+     $ cd ../amend
+     $ for msg in one two three ; do
+     >   echo "$msg" > file.txt
+     >   jit add .
+     >   jit commit --message "$msg"
+     > done
+
+Using the log command, we can see the history up to the current HEAD, and inspect the diff of
+the latest commit:
+     $ jit log --oneline
+     3674638 (HEAD -> master) three
+     b69353c two
+     67b69bb one
+
+     $ jit log --oneline --patch @^..
+     3674638 (HEAD -> master) three
+     diff --git a/file.txt b/file.txt
+     index f719efd..2bdf67a 100644
+     --- a/file.txt
+     +++ b/file.txt
+     @@ -1,1 +1,1 @@
+     -two
+     +three
+
+Now, let’s change the contents of file.txt and add it to the index, and then amend the latest
+commit:
+
+                                      Editing messages
+
+     $ export GIT_EDITOR="atom --wait"
+
+     $ echo "four" > file.txt
+     $ jit add .
+     $ jit commit --amend
+
+As expected, our editor pops up, and we can edit the message it presents to us.
+
+Checking the logs after making this amendment confirms that the previous HEAD has been
+replaced by our amended commit.
+     $ jit log --oneline
+     dc98cd4 (HEAD -> master) Four [amended]
+     b69353c two
+     67b69bb one
+
+     $ jit log --oneline --patch @^..
+     dc98cd4 (HEAD -> master) Four [amended]
+     diff --git a/file.txt b/file.txt
+     index f719efd..8510665 100644
+     --- a/file.txt
+     +++ b/file.txt
+     @@ -1,1 +1,1 @@
+     -two
+     +four
+
+The commit --amend command is the first tool we’ve seen that lets us ‘modify’ the project
+history, by replacing one commit with another. In the next chapter we’ll investigate some more
+powerful tools for manipulating history.
+

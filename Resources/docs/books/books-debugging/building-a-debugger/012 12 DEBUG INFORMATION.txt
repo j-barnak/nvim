@@ -1,0 +1,2907 @@
+DEBUG INFORMATION
+ The mountain smoked beneath the moon; The dwarves, they
+ heard the tramp of doom. They fled their hall to dying fall
+ Beneath his feet, beneath the moon.
+
+ —J.R.R Tolkien, The Hobbit
+Now that you’ve mastered the ELF format, it’s time to turn your
+attention to the land of the DWARFs. DWARF is the main debug
+information format used on Linux. It relates a binary back to
+the source code that produced it, allowing us to match machine
+instructions to lines of source code, locate source functions and
+variables in the running process, describe the types that exist in
+the program, and more.
+
+Debuggers must be able to interpret DWARF so they can carry
+out operations that require understanding the relationship
+between source code and machine code, such as setting
+breakpoints on source files and single-stepping through lines of
+source code. In this chapter, you’ll learn about the information
+encoded in the DWARF format and how you can decode it.
+Then, you’ll write a parser that you’ll use in future chapters to
+power your debugger.
+
+An Introduction to DWARF
+
+At the time of writing, DWARF information comes in two
+different formats: 32-bit and 64-bit. You might assume that a
+debugger for a 64-bit system would need to use 64-bit DWARF,
+but 32-bit DWARF is perfectly capable of representing debug
+info for 64-bit systems, and most compilers produce 32-bit
+DWARF by default, as it has a more compact representation. So,
+I’ll focus on 32-bit DWARF in this book.
+
+The different versions of the DWARF standard aren’t backward
+compatible, meaning a parser for DWARF 5 can’t parse DWARF
+4, 3, 2, or 1. This lets the DWARF standard evolve without taking
+on representational overhead but is a trade-off that requires
+consumers to change their behavior (sometimes quite
+substantially) depending on the version of DWARF with which a
+given file is encoded. This book focuses on DWARF 4, which is
+recent enough to teach modern techniques but old enough that
+the compiler installed on your system should already support it.
+
+If you’d like to support 64-bit DWARF and other DWARF
+versions, take a look at the DWARF specification at
+https://dwarfstd.org. Sections 1.4 through 1.7 and section 7.4 of
+the DWARF 5 standard list the differences between the formats.
+It’s very possible to write a DWARF consumer that supports
+multiple formats, but doing so makes parsing and data
+representation more complex. This chapter focuses instead on
+how debug information is encoded.
+
+DWARF Sections
+
+By design, DWARF works well with ELF files, but nothing stops
+a compiler from encoding DWARF information in a different
+object file format. The object file need only provide a way to
+store data in a set of sections with predefined names and cross-
+reference between them. DWARF 4 specifies the following set of
+sections:
+  .debug_info     The core DWARF data containing DWARF
+  information entries (DIEs)
+  .debug_abbrev     Abbreviations used to simplify the .debug_info
+  section
+  .debug_aranges    A lookup table to speed up locating debug
+  information relevant to an address range
+  .debug_frame     Information about how to unwind the stack;
+  usually empty, as the SYSV ABI specifies the use of the .eh_frame
+  section instead
+  .debug_line     Mappings from machine instructions to source-
+  level instructions
+  .debug_loc     Descriptions of where variables live
+  .debug_macinfo    Macro descriptions
+  .debug_ranges     Address ranges referenced by DIEs
+  .debug_str     A string table used by .debug_info; uses the same
+  format as ELF string tables
+  .debug_types     Type descriptions; may instead live in the
+  .debug_info section
+
+  .debug_pubnames    A lookup table for global objects and functions;
+  legacy, essentially unused
+  .debug_pubtypes    A lookup table for global types; legacy,
+  essentially unused
+
+This chapter focuses on the .debug_info, .debug_abbrev, and .debug_ranges
+sections. Parsing .debug_info will enable us to carry out operations
+such as setting a breakpoint on a function name and looking up
+which function we’re currently in. The symbol tables we parsed
+in the previous chapter could get us most of the way there for
+these operations, but they wouldn’t support important tasks
+like function inlining. Some elements of the .debug_info section
+rely on information stored in the .debug_abbrev or .debug_ranges
+section, so we’ll parse those as well to get the necessary data.
+
+Let’s begin with an explanation of the .debug_info section, as it’s
+the main repository of knowledge about your program’s source-
+level entities and how they map to the machine code. For
+example, if you’d like to know what source files were used to
+compile an executable, where the variable had_existential_crisis is
+stored, or where to find the code for the pet_cat function, you
+should check the .debug_info section.
+
+This section divides information into categories for each
+compile unit involved in the program. In C++, a compile unit is
+an implementation file (usually ending in the .cpp suffix) along
+with the header files included in that implementation file. For
+each compile unit, .debug_info represents the relevant debugging
+information for all source-level entities as a graph of DWARF
+information entries (DIEs). Each DIE represents a single
+program entity, such as a namespace, a variable, a function, or
+a parameter. You can see a textual representation of their
+format using the dwarfdump command. Here’s an example:
+
+   $ dwarfdump test/targets/hello_sdb
+   < 0><0x0000000b> DW_TAG_compile_unit
+                           DW_AT_producer                    GNU C+
+                                                             -g -gd
+                                                             -fstac
+                                                             -fcf-p
+                            DW_AT_language                   DW_LAN
+                            DW_AT_name                       ../../
+                            DW_AT_comp_dir                   /home/
+                            DW_AT_low_pc                     0x0000
+                            DW_AT_high_pc                    <offse
+                            DW_AT_stmt_list                  0x0000
+   < 1><0x0000002d>         DW_TAG_namespace
+                              DW_AT_name                       std
+                              DW_AT_decl_file                  0x00
+
+                               DW_AT_decl_line                 0x00
+                               DW_AT_decl_column               0x00
+                               DW_AT_sibling                   <0x0
+   < 2><0x0000003a>            DW_TAG_namespace
+                                 DW_AT_name                      __
+                                 DW_AT_decl_file                 0x
+
+                                 DW_AT_decl_line                 0x
+                                 DW_AT_decl_column               0x
+                                      DW_AT_export_symbols                  ye
+   < 2><0x00000043>                 DW_TAG_imported_module
+                                       DW_AT_decl_file                      0x
+
+                                       DW_AT_decl_line                      0x
+                                       DW_AT_decl_column                    0x
+                                       DW_AT_import                         <0
+
+DWARF organizes DIEs in a tree structure; the more deeply
+nested DIEs are logical children of the preceding DIE with a
+shallower nesting. You can identify the start of each DIE by the
+numbers in angle brackets in the leftmost column. The first
+number is the nesting level, and the second is the DIE’s byte
+offset from the start of the .debug_info section. Each DIE has a tag,
+such as DW_TAG_compile_unit or DW_TAG_namespace, that identifies the type
+of source program entity that the DIE represents. The DIE stores
+its information as a list of attributes. An attribute’s type
+specifies the kind of information being expressed, such as
+DW_AT_name or DW_AT_language, and is followed by a value.
+
+Using this information, we can understand details about the
+compiled program. For example, from the compile unit DIE and
+its DW_AT_name attribute, we can see that the compilation involved a
+file that lives at ../../../test/targets/hello_sdb.cpp. Further, the
+DW_AT_language attribute tells us that this file was written in C++.
+In the nested DIEs, we learn that the program has a nested
+namespace called std::__cxx11 containing a DW_TAG_imported_module
+entity (usually a using namespace statement) that imports the
+module represented by the DIE at an offset of 0x0000003a.
+Curiously, these last two DIEs refer to the exact same source
+location, as the DW_AT_decl_file, DW_AT_decl_line, and DW_AT_decl_column
+attributes are all the same. This suggests that the programmer
+used the C++11 inline namespace feature to declare a namespace
+and make its contents visible to the containing namespace. If
+we look at the file specified in the DIE, we can see that our
+deduction is correct:
+
+   namespace std
+   {
+       inline namespace __cxx11 __attribute__((__abi
+   }
+
+Consider a few more details about this textual representation:
+the DW_AT _low_pc, DW_AT_high_pc, and DW_AT_sibling attributes. The
+DW_AT_low_pc and DW_AT_high_pc attributes indicate the range of
+
+addresses containing the code for the compilation unit, while
+DW_AT_sibling provides a DWARF parser with a quick way to locate
+
+the sibling of a given DIE without having to parse its children.
+In this case, the sibling is the DIE at offset 0x00000125.
+You should now understand how you might use the contents of
+the .debug_info section to reconstruct information about the
+source program. Next, we’ll consider how the compiler encodes
+DIEs.
+
+DIE Binary Encoding
+
+If you were designing a binary encoding system for the textual
+representation you just saw, you might opt to store an integer
+representing the tag, followed by a list of pairs: an integer
+representing the attribute type and the attribute value. The
+actual DIE encoding is more complicated than that, for a few
+good reasons.
+
+The first reason is that the compiler can encode the same
+attribute type in different ways. For example, it can encode a
+DW_AT_high_pc type as a constant address or as an offset from the
+
+DW_AT_low_pc attribute of the same DIE. Furthermore, it could
+
+encode that offset as a 1-, 2-, 4-, 8-, or multibyte integer. If an
+address range is very small, the compiler could choose to use 8
+bytes for the low PC, then a single byte for the high PC. Doing so
+shaves off just a few bytes, but if thousands of DIEs take
+advantage of this optimization, you’ve suddenly gained a few
+thousand bytes of savings.
+Because the compiler can encode attributes in multiple ways,
+each attribute value also has an associated form that specifies
+its encoding. You can see the form associated with each
+attribute value by passing dwarfdump the -M flag in addition to the
+usual -a flag. Here is a subset of the examples from earlier with
+form annotations (and the leftmost column removed to save
+space):
+
+   DW_TAG_namespace
+     DW_AT_name                             std <form DW_FORM_s
+     DW_AT_decl_file                        0x00000003 /usr/inc
+                                                       11/bits/
+     DW_AT_decl_line                        0x00000116 <form DW
+     DW_AT_decl_column                      0x0000000b <form DW
+     DW_AT_sibling                          <0x00000125> <form
+   DW_TAG_namespace
+     DW_AT_name                             __cxx11 <form DW_FO
+     DW_AT_decl_file                        0x00000003 /usr/inc
+                                                       11/bits/
+      DW_AT_decl_line                       0x0000012e <form DW
+      DW_AT_decl_column                     0x00000041 <form DW
+      DW_AT_export_symbols                  yes(1) <form DW_FOR
+
+Most of the integers in this example are small, so the compiler
+has chosen to use 1- and 2-byte integers to represent them
+(DW_FORM_data1 and DW_FORM _data2). Interestingly, it has chosen to
+represent the string of std directly in the DIE (DW_FORM_string) ➊ but
+encoded __cxx11 as a string table reference (DW_FORM_strp) ➋. This is
+because std, when encoded as a null-terminated string, takes up
+4 bytes (one for each character, plus the null terminator),
+whereas __cxx11 would take up 8. The compiler has decided to
+use a 4-byte string table offset for __cxx11 to save 4 bytes of
+storage in the .debug_info section, at the cost of requiring
+consumers to have to reference the string table. DWARF is full
+of trade-offs like these.
+
+So, instead of merely storing each attribute type and attribute
+value as a pair, we must add an integer to represent the form,
+right? Well, that would be one approach, but that’s not what
+DWARF does. To understand why, take a look at this example:
+
+   DW_TAG_imported_declaration
+     DW_AT_decl_file                           0x00000002 /usr/inc
+     DW_AT_decl_line                           0x00000062 <form DW
+     DW_AT_decl_column                         0x0000000b <form DW
+     DW_AT_import                              <0x000003d6> <form
+   DW_TAG_imported_declaration
+     DW_AT_decl_file                           0x00000002 /usr/inc
+     DW_AT_decl_line                           0x00000063 <form DW
+     DW_AT_decl_column                         0x0000000b <form DW
+     DW_AT_import                              <0x0000043d> <form
+   DW_TAG_imported_declaration
+     DW_AT_decl_file                       0x00000002 /usr/inc
+     DW_AT_decl_line                       0x00000065 <form DW
+      DW_AT_decl_column                    0x0000000b <form DW
+      DW_AT_import                         <0x00000477> <form
+
+Notice that these three DIEs all have the same tag, attribute
+types, and forms; only their attribute values differ. This is a very
+common pattern, and in a large .debug_info section it would lead
+to a huge amount of unnecessary repetition. A ridiculous
+quantity of unnecessary repetition. Boatloads more repetition
+than is necessary.
+
+To address this issue, DWARF uses abbreviation tables. Each
+entry of an abbreviation table contains a tag, a bit that encodes
+whether the DIE has children, a list of attribute types, and the
+form used to encode each attribute. The DIEs then store only an
+index into the abbreviation table and the attribute values for
+the DIE. DWARF places abbreviation tables in the .debug_abbrev
+section, and we’ll see their encodings in more detail very soon.
+
+Now that you understand DWARF at a high level, we can begin
+writing the parser by solving the issue of integer constants.
+
+Fetching a Constants File
+Because DWARF has a myriad of DIE tags, attribute types, and
+forms, it needs a compact way to represent these elements in
+binary. The obvious solution is to assign each one an integral
+value using enums. Unfortunately, DWARF requires hundreds
+of these constants, and if I asked you to enter hundreds of
+integral constants into your text editor without error, you’d be
+quite justified in closing this book forever.
+
+Unlike for ELF, the operating system doesn’t provide a handy
+dwarf.h file. Fortunately, I’ve written one for you. Fetch the file
+at https://github.com/TartanLlama/sdb/blob/chapter-
+12/include/libsdb/detail/dwarf.h and place it at the matching
+location in your codebase.
+
+You can now begin building the base of the debugger’s DWARF
+parser. Create a new file at sdb/include/libsdb/dwarf.hpp with
+these contents:
+
+      #ifndef SDB_DWARF_HPP
+      #define SDB_DWARF_HPP
+
+   ➊ #include <libsdb/detail/dwarf.h>
+
+       namespace sdb {
+       ➋ class elf;
+          class dwarf {
+            public:
+                dwarf(const elf& parent);
+                  const elf* elf_file() const { return el
+
+            private:
+                  const elf* elf_;
+            };
+      }
+
+      #endif
+
+Include the dwarf.h file you just prepared ➊. You’ll need
+references or pointers to the parent sdb::elf object only, so
+instead of including the libsdb/elf.hpp header, forward-declare
+sdb::elf to avoid giving more work to the compiler ➋. Finally,
+
+create a simple dwarf type that stores a pointer to its object file
+and provides a way to retrieve it. The constructor must do a bit
+of work, so we’ll define it later.
+
+Now that we’ve performed this setup, we can move on to
+parsing. Because the parsing of DIEs relies on the abbreviation
+tables, we’ll start with the .debug_abbrev section.
+
+Parsing Abbreviation Tables
+The .debug_abbrev section contains several abbreviation tables.
+Each compile unit in the .debug_info section uses exactly one
+abbreviation table, but different compile units may share the
+same table.
+
+DWARF identifies each abbreviation table by its byte offset from
+the start of the .debug_abbrev section and gives each table entry an
+abbreviation code: an integer that starts at 1 and increases for
+each subsequent entry in the abbreviation table. As such, we
+can store the .debug_abbrev section as a nested map, represented by
+the following type:
+
+   std::unordered_map<std::size_t,
+                      std::unordered_map<std::uint64
+
+This type maps offsets to another map, of integers to
+abbreviation entries. We’ll discuss the contents of the abbrev type
+soon. While other types might store this data in a more cache-
+friendly manner, we use std::unordered _map for simplicity.
+
+The .debug_abbrev section can be large, so we shouldn’t parse it in
+its entirety when we create the sdb::dwarf object. Instead, we’ll
+parse each abbreviation table when it’s first requested and then
+cache it for future lookups. Declare the interface for retrieving
+an abbreviation table in sdb/include/libsdb/dwarf.hpp:
+
+   #include <unordered_map>
+
+   namespace sdb {
+       class dwarf {
+       public:
+           --snip--
+           const std::unordered_map<std::uint64_t, a
+                std::size_t offset);
+       private:
+           --snip--
+           std::unordered_map<std::size_t,
+                std::unordered_map<std::uint64_t, abb
+       };
+   }
+
+We add a new member called abbrev_tables_ that will store the
+parsed tables, then add a member function that will parse the
+table or return one that has already been parsed. The
+get_abbrev_table function will offload most of the work to a helper
+
+parse_abbrev_table function. Create a new sdb/src/dwarf.cpp file and
+
+implement get_abbrev_table:
+   #include <libsdb/dwarf.hpp>
+
+   const std::unordered_map<std::uint64_t, sdb::abb
+   sdb::dwarf::get_abbrev_table(std::size_t offset)
+       if (!abbrev_tables_.count(offset)) {
+              abbrev_tables_.emplace(offset, parse_abb
+        }
+        return abbrev_tables_.at(offset);
+   }
+
+If we haven’t yet parsed the abbreviation table at the requested
+offset, we do so using the currently nonexistent parse_abbrev_table
+function and store the result in abbrev_tables_. If we’ve already
+called get_abbrev_table with this offset, we return the previously
+parsed table. Add the dwarf.cpp file to sdb/src/CMakeLists.txt:
+
+   add_library(libsdb ... dwarf.cpp)
+
+Now, before you can understand exactly what abbreviation
+entries store and how they encode this data, you first need to
+understand a somewhat strange encoding scheme that DWARF
+uses for some integers: Little Endian Base 128 (LEB128).
+
+Integer Encoding
+Because DWARF takes memory consumption very seriously, it
+aims to encode the debug information as efficiently as is
+reasonable. One common source of difficulty is that most of the
+integers it must store are small, but some are larger.
+
+Take, for example, DWARF DIE tags such as DW_TAG_compile_unit. The
+DWARF standard specifies 0x43 as the highest value for encoding
+tags, but it reserves the numbers 0x4080 to 0xffff for compiler
+implementers to use for their own purposes. So, tags usually fit
+in a single byte, but once in a while, they might need 2 bytes.
+Does this mean we should always encode tags with 2 bytes? Not
+according to DWARF. Instead, the format uses LEB128, a variable-
+length encoding scheme for integers that attempts to minimize
+the storage required for small integers while allowing the
+encoding of larger integers.
+
+For unsigned integers (ULEB128), the scheme splits the bit
+representation into groups of 7 bits and adds a 1 bit to the front
+of each group, except for the most significant group, to which it
+adds a 0 bit. As such, an LEB128-encoded integer requires an
+overhead of 1 bit for every 7 bits required to encode the integer
+normally. As an example, let’s encode the integer 624,485 in
+LEB128. Here are the steps:
+
+1. Encode the integer in binary: 10011000011101100101
+2. Pad the value to a multiple of 7 bits: 010011000011101100101
+3. Split the value into groups of seven: 0100110 0001110
+4. Prefix the groups with 0 or 1: 00100110 10001110 11100101
+
+Encoding signed integers (SLEB128) is a bit more complicated and
+requires familiarity with two’s complement encoding, discussed
+in Chapter 5. The scheme begins by encoding the integer using
+two’s complement at a bit width that is exactly divisible by
+seven. Then, it follows the same splitting and prefixing
+procedure as for unsigned integers. For example, here is how
+we’d encode the number –123,456:
+
+1. Encode 123,456 in binary: 11110001001000000
+2. Pad the value to a multiple of 7 bits: 000011110001001000000
+3. Flip all bits: 111100001110110111111
+4. Add 1 to the value: 111100001110111000000
+5. Split the value into groups of seven: 1111000 0111011
+6. Prefix the groups with 0 or 1: 01111000 10111011 11000000
+
+You’ll find LEB128 used across the DWARF standard, so it pays to
+spend some time getting used to it.
+
+Entry Structure
+Each abbreviation entry starts with the abbreviation code used
+to reference the table, encoded as a ULEB128 integer. Directly
+following the abbreviation code is another ULEB128 that encodes
+the entry’s tag. You can find the mappings between tags and
+integer values in the DWARF standard and in the dwarf.h file
+you prepared earlier. (For example, DW_TAG_compile_unit maps to
+0x11.) After the tag comes a single bit that states whether the DIE
+
+has child DIEs. This bit facilitates the representation of the DIE
+tree structure.
+
+Last are the attribute specifications. Each specification is a
+ULEB128 that encodes the attribute type, followed by a ULEB128 for
+
+the form. Again, you can find these mappings in dwarf.h. The
+list of attribute specifications terminates with an entry whose
+type and form are both 0.
+
+Attributes use the form DW_FORM_indirect in cases where many DIEs
+have mostly the same sets of attributes and forms but have one
+or two that differ. For example, say most of the attribute values
+fit in a single-byte integer, but some require 2 bytes. The
+DW_FORM_indirect form lets the compiler keep a single abbreviation
+
+entry for these DIEs and requires the DIE itself to supply the
+form for any outlier attribute as a ULEB128-encoded prefix.
+
+The DWARF Cursor
+We’ll begin the parser by writing a type to help us parse forms
+from various locations. This cursor type will point to a location in
+the DWARF information, allowing us to easily access
+information from that location. As a result, if we wanted to
+parse a ULEB128, a 64-bit integer, and then a string, we could do
+something like the following:
+
+   auto the_uleb = cur.uleb128();
+   auto the_int = cur.u64();
+   auto the_string = cur.string();
+
+The cursor will handle the parsing of the data and advance the
+location being pointed to. Only the DWARF parser’s code will
+use this cursor type, so we’ll implement it in sdb/src/dwarf.cpp.
+Begin its implementation like this:
+
+   #include <libsdb/types.hpp>
+
+   namespace {
+       class cursor {
+       public:
+        ➊ explicit cursor(sdb::span<const std::byte
+               : data_(data), pos_(data.begin()) {}
+
+          ➋ cursor& operator++() { ++pos_; return *th
+             cursor& operator+=(std::size_t size) { po
+          ➌ const std::byte* position() const { retur
+
+          ➍ bool finished() const {
+                 return pos_ >= data_.end();
+              }
+
+         private:
+             sdb::span<const std::byte> data_;
+             const std::byte* pos_;
+         };
+   }
+
+The cursor stores an sdb::span representing the data range it’s
+looking at and a pointer to a std::byte representing the cursor’s
+current position. We initialize these values in the constructor ➊,
+setting the initial position to the start of the span.
+
+We’ll want to be able to manually walk the cursor forward to
+skip over bytes, so we add some helpers to achieve this ➋. The
+operator++ and operator+= helpers will enable us to write code such
+
+as ++cur and cur += n to move the cursor forward. We also add a
+way to get the cursor’s current position ➌ and a way to check
+whether the cursor has read all of the data (meaning the
+current position is at or past the end of the span) ➍.
+Now we can add some member functions to perform the
+parsing. Let’s start with the parsing of fixed-width integers:
+
+   #include <libsdb/bit.hpp>
+
+   namespace {
+       class cursor {
+       public:
+           --snip--
+           template <class T>
+           T fixed_int() {
+                auto t = sdb::from_bytes<T>(pos_);
+                pos_ += sizeof(T);
+                return t;
+           }
+           --snip--
+       };
+   }
+
+We write a function template that can parse any fixed-width
+integer. We use sdb::from_bytes to parse the data, advance the
+current position by the byte size of the integer we’re parsing,
+and then return the result.
+
+Let’s add a bunch of convenience functions that call this
+function template for specific types:
+   namespace {
+        class cursor {
+        public:
+             --snip--
+             std::uint8_t u8() { return fixed_int<std
+             std::uint16_t u16() { return fixed_int<st
+             std::uint32_t u32() { return fixed_int<st
+             std::uint64_t u64() { return fixed_int<st
+             std::int8_t s8() { return fixed_int<std:
+             std::int16_t s16() { return fixed_int<std
+             std::int32_t s32() { return fixed_int<std
+             std::int64_t s64() { return fixed_int<std
+             --snip--
+        };
+   }
+
+This will keep the usage of the cursor type concise.
+
+Only slightly more complex is the parsing of strings:
+
+   #include <string_view>
+   #include <algorithm>
+
+   namespace {
+       class cursor {
+       public:
+               --snip--
+               std::string_view string() {
+                    auto null_terminator = std::find(pos_
+                    std::string_view ret(reinterpret_cast
+                                         null_terminator
+                    pos_ = null_terminator + 1;
+                    return ret;
+               }
+               --snip--
+          };
+   }
+
+We find the first 0 byte (the null terminator) between the
+current position and the end of the data. We then construct a
+std::string_view that starts at the current position and whose size is
+
+the distance to the null terminator. We set the new cursor
+position to one byte past the null terminator, then return the
+result.
+
+Now we get to the harder types, starting with ULEB128. Recall that
+encoding these values requires splitting the integer into groups
+of 7 bits, then adding a bit to the front of each group. To reverse
+this process, we read the value one byte at a time, remove the
+first bit of the byte, then shift the remaining 7 bits into their
+correct place. We stop when we get to a byte that starts with a 0.
+In C++, we can perform these steps like so:
+
+   namespace {
+       class cursor {
+        public:
+            --snip--
+            std::uint64_t uleb128() {
+                 std::uint64_t res = 0;
+                 int shift = 0;
+                 std::uint8_t byte = 0;
+                 do {
+                      byte = u8();
+                      auto masked = static_cast<uint64_
+                      res |= masked << shift;
+                      shift += 7;
+                 } while ((byte & 0x80) != 0);
+                 return res;
+            }
+            --snip--
+        };
+   }
+
+The res variable holds the result we’re computing, shift holds the
+amount by which to shift the next byte to the left, and byte holds
+the current byte we’re looking at. We loop, reading a byte,
+masking off the first bit, and then shifting the masked byte into
+the right position and bitwise ORing it with res to set the bits.
+Before continuing the loop, we add 7 to shift to shift the next 7
+bits into position. We terminate the loop when the topmost bit
+of the read byte is 0.
+
+The algorithm for SLEB128 integers is similar, but if we haven’t
+filled the entire result integer with bits and the number is
+negative, we must perform a sign extension by filling the
+remaining bits with 1s:
+
+   namespace {
+       class cursor {
+       public:
+           --snip--
+           std::int64_t sleb128() {
+                std::uint64_t res = 0;
+                int shift = 0;
+                std::uint8_t byte = 0;
+                do {
+                     byte = u8();
+                     auto masked = static_cast<uint64_
+                     res |= masked << shift;
+                        shift += 7;
+                    } while ((byte & 0x80) != 0);
+
+               ➊ if ((shift < sizeof(res) * 8) and (by
+                       ➋ res |= (~static_cast<std::uint64_
+                   }
+
+                   return res;
+              }
+              --snip--
+        };
+   }
+
+You’ll find the difference between the functions in the last if
+block ➊. We check whether we filled the result integer by
+comparing shift to the size of the result storage, and we
+determine whether the number should be negative by checking
+whether the last byte read has a 1 in its second-highest position.
+If so, we fill the remaining high bits of the result by bit-flipping
+0 to obtain an integer with all bits set and then left-shifting the
+unnecessary ones off the end ➋.
+
+Be careful about the types in this code. The res and byte variables
+are unsigned rather than signed integers. It’s good practice to
+always use unsigned integers when doing bitwise operations,
+because doing them on signed integers may yield unexpected
+behavior. For example, in C++17, shifting a negative signed
+integer left is undefined behavior.
+Extraction
+
+Let’s create an sdb::abbrev type to store the values held in an
+abbreviation table entry: an abbreviation code, a tag, a flag
+indicating whether the DIE has children, and a list of attribute
+specifications. Add the following to
+sdb/include/libsdb/dwarf.hpp:
+
+   #include <vector>
+   #include <cstdint>
+
+   namespace sdb {
+        struct attr_spec {
+              std::uint64_t attr;
+              std::uint64_t form;
+        };
+        struct abbrev {
+              std::uint64_t code;
+              std::uint64_t tag;
+              bool has_children;
+              std::vector<attr_spec> attr_specs;
+        };
+        --snip--
+   }
+These structures give us an easy way to collect all of the
+necessary data. Now we’ll implement parse_abbrev_table. Let’s build
+the function’s main structure in sdb/src/dwarf.cpp:
+
+   #include <libsdb/elf.hpp>
+
+   namespace {
+       std::unordered_map<std::uint64_t, sdb::abbrev
+       parse_abbrev_table(const sdb::elf& obj, std:
+           cursor cur(obj.get_section_contents(".deb
+           cur += offset;
+
+              std::unordered_map<std::uint64_t, sdb::ab
+              std::uint64_t code = 0;
+              do {
+                   // Parse one entry.
+              } while (code != 0);
+
+              return table;
+         }
+   }
+
+When we call parse_abbrev_table, we pass it the offset of the table to
+parse. We create a cursor from the contents of that section and
+then move that cursor forward the required number of bytes.
+Afterward, we declare an unordered map to use as the return
+value and a code variable that will store the parsed abbreviation
+code for use in our loop termination condition. We then loop,
+parsing entries, until we reach an entry whose code is 0. Finally,
+we return the parsed table.
+
+With the main structure out of the way, we can do the parsing:
+
+   std::unordered_map<std::uint64_t, sdb::abbrev>
+   parse_abbrev_table(const sdb::elf& obj, std::size
+       --snip--
+       do {
+            code = cur.uleb128();
+            auto tag = cur.uleb128();
+            auto has_children = static_cast<bool>(cu
+
+             std::vector<sdb::attr_spec> attr_specs;
+             std::uint64_t attr = 0;
+             do {
+                  attr = cur.uleb128();
+                  auto form = cur.uleb128();
+                  if (attr != 0) {
+                      attr_specs.push_back(sdb::attr_sp
+                  }
+             } while (attr != 0);
+
+             if (code != 0) {
+                 table.emplace(code,
+                         sdb::abbrev{ code, tag, has_child
+              }
+         } while (code != 0);
+         --snip--
+   }
+
+Because it makes use of the cursor type we wrote, the parsing
+code reads like a straight description of the structure we’re
+parsing. We extract the ULEB128 for the code, the ULEB128 for the tag,
+the 1-byte unsigned integer for the children flag (which will be
+either 1 or 0), and the list of ULEB128 pairs of attribute types and
+forms, terminated by a pair of 0s.
+
+Now that we’ve handled the abbreviation tables, we can parse
+the .debug _info section, beginning with the compile unit headers.
+
+Parsing Compile Unit Headers
+
+As we’ve discussed, the .debug_info section is split into
+information for each compile unit involved in the compilation
+of the program. Every compile unit begins with a compile unit
+header, which describes four important characteristics of that
+unit:
+  A 4-byte unsigned integer representing the byte size of the
+  information for this compile unit (excluding this field itself,
+  but including the rest of the header)
+  A 2-byte unsigned integer representing the DWARF version
+  for this compile unit information (4, in our case)
+  A 4-byte unsigned integer representing the offset into the
+  .debug _abbrev section at which the abbreviation table for this
+
+  compile unit begins (we’ll pass this value to
+  sdb::dwarf::get_abbrev_table)
+
+  A 1-byte unsigned integer representing the byte size of an
+  address on the system (8, in our case)
+
+Let’s make a type to store this information. Add the following to
+sdb/include/libsdb/dwarf.hpp:
+
+   #include <libsdb/types.hpp>
+
+   namespace sdb {
+    ➊ class dwarf;
+       class compile_unit {
+       public:
+        ➋ compile_unit(dwarf& parent,
+                        span<const std::byte> data,
+                        std::size_t abbrev_offset)
+               : parent_(&parent)
+               , data_(data)
+                   , abbrev_offset_(abbrev_offset) {}
+
+           ➌ const dwarf* dwarf_info() const { return
+              span<const std::byte> data() const { retu
+
+           ➍ const std::unordered_map<std::uint64_t, s
+              abbrev_table() const;
+
+          private:
+           ➎ dwarf* parent_;
+               span<const std::byte> data_;
+               std::size_t abbrev_offset_;
+          };
+          --snip--
+   }
+
+We start by forward-declaring sdb::dwarf ➊ so we can store a
+pointer to one inside of the compile unit. The constructor takes
+a reference to the parent sdb::dwarf, a span representing its data
+inside the .debug_info section, and the offset to the abbreviation
+table for that compile unit ➋. It has data members to store these
+➎ and member functions to retrieve the parent and the data
+range ➌. Instead of exposing a member function to retrieve the
+abbreviation table offset, we declare a convenience function
+that directly retrieves the abbreviation table for this compile
+unit ➍.
+Implement abbrev_table in sdb/src/dwarf.cpp:
+
+   const std::unordered_map<std::uint64_t, sdb::abb
+   sdb::compile_unit::abbrev_table() const {
+       return parent_->get_abbrev_table(abbrev_offse
+   }
+
+This function simply calls get_abbrev_table on the parent with the
+stored offset. Now we can add some members to sdb:dwarf to
+manage compile units. Make the following changes to
+sdb/include/libsdb/dwarf.hpp:
+
+   #include <memory>
+
+   namespace sdb {
+       class dwarf {
+       public:
+           --snip--
+           const std::vector<std::unique_ptr<compile
+           compile_units() const { return compile_un
+
+        private:
+            --snip--
+              std::vector<std::unique_ptr<compile_unit>
+         };
+   }
+
+Add a data member storing a vector of sdb::compile_units and a
+member function to retrieve them. We’ll carry out the actual
+parsing in the constructor of sdb::dwarf. Implement it in
+sdb/src/dwarf.cpp:
+
+   sdb::dwarf::dwarf(const sdb::elf& parent) : elf_
+       compile_units_ = parse_compile_units(*this, p
+   }
+
+The constructor stores a pointer to the supplied parent and then
+calls a parse_compile_units function, which we’ll write next. This
+function should keep trying to parse compile units until it hits
+the end of the .debug_info section:
+
+   namespace {
+       std::vector<std::unique_ptr<sdb::compile_unit
+             sdb::dwarf& dwarf, const sdb::elf& obj
+           auto debug_info = obj.get_section_content
+           cursor cur(debug_info);
+
+              std::vector<std::unique_ptr<sdb::compile_
+              while (!cur.finished()) {
+                    auto unit = parse_compile_unit(dwarf
+                    cur += unit->data().size();
+                    units.push_back(std::move(unit));
+              }
+
+              return units;
+         }
+   }
+
+We start by obtaining a cursor for the .debug_info section. Until we
+hit the end of that section, we call a parse_compile_unit function that
+we’ll write next to do the actual parsing, move the cursor
+forward by the size of that compile unit, and store the parsed
+unit. When we’re done, we return a vector of all the compile
+units we parsed.
+
+The parse_compile_unit function will use the cursor type to read the
+fields of the compile unit header and check for DWARF formats
+we don’t support:
+
+   #include <libsdb/error.hpp>
+
+   namespace {
+       std::unique_ptr<sdb::compile_unit> parse_comp
+             sdb::dwarf& dwarf, const sdb::elf& obj
+           auto start = cur.position();
+              auto size = cur.u32();
+              auto version = cur.u16();
+              auto abbrev = cur.u32();
+              auto address_size = cur.u8();
+
+              if (size == 0xffffffff) {
+                    sdb::error::send("Only DWARF32 is sup
+              }
+              if (version != 4) {
+                  sdb::error::send("Only DWARF version
+              }
+              if (address_size != 8) {
+                  sdb::error::send("Invalid address siz
+              }
+
+              size += sizeof(std::uint32_t);
+
+              sdb::span<const std::byte> data = { start
+              return std::make_unique<sdb::compile_unit
+         }
+   }
+
+We start by saving the current cursor position, as we’ll use it
+again later, then parse all the fields of the compile unit header
+one by one. If the first 4 bytes of the size field are 0xffffffff, we’re
+looking at a DWARF64 compile unit and should throw an error,
+as we don’t support DWARF64. Likewise, we throw an error if
+the address size isn’t 8 bytes and if the DWARF version is
+anything other than 4. Before returning the compile unit
+information, we add the size of a std::uint32_t to the compile unit
+size, because the reported size in the compile unit header
+doesn’t include the size field itself.
+
+We’ve now completed the parsing of compile unit headers and
+can move on to the most important part: parsing DIEs
+themselves.
+
+Parsing DIEs
+
+Recall that DWARF encodes DIEs in a tree structure. The root
+node of each compile unit is the DIE representing the compile
+unit itself. If a DIE has children, the abbreviation entry for that
+DIE has its children bit set to 1 (denoted by the enumerator
+DW_CHLIDREN_yes); otherwise, the bit is set to 0 (DW_CHILDREN_no). If a DIE
+
+doesn’t have children, the DIE immediately following it in the
+.debug_info section is its sibling. If a DIE does have children, the
+
+DIE immediately following it is its first child, and additional
+children are siblings of the first child. To terminate a chain of
+sibling entries, DWARF uses a null entry, which consists solely
+of the abbreviation code 0. See Figure 12-1 for a simplified
+example of a tree’s encoding.
+Figure 12-1: A simplified visualization of the DIE tree’s encoding
+
+The root node, or the DIE representing the compile unit,
+consists of the abbreviation code 1, which points to the first
+entry of the .debug_abbrev section, and an attribute value that
+corresponds to the DW_AT_name attribute in the abbreviation entry.
+Because its abbreviation entry stores DW_CHILDREN_yes, the DIE has
+children, and the following DIE is its first child.
+
+The second DIE points to the second abbreviation entry and
+represents the std namespace. It, too, has children. Its first child
+also points to the second abbreviation entry, as its structure is
+the same, and it represents the __cxx11 namespace. This DIE’s
+only child is the DW_TAG_imported_module DIE for the c++config.h
+header. The list of children for the __cxx11 namespace DIE
+terminates with a DIE consisting solely of the abbreviation code
+0.
+
+Following the termination of the __cxx11 DIE’s children list is a
+DIE representing the size_t typedef. Because a 0 entry hasn’t yet
+terminated the children list for the std DIE, the size_t DIE is a
+child of that DIE. Finally, two 0 entries terminate the children
+lists of the std DIE and the compile unit DIE, respectively.
+
+Because the DIE trees for a program begin at the root nodes for
+each compile unit, we should expose the DIEs to users from the
+sdb::compile_unit type. Add a function to this class in
+
+sdb/include/libsdb/dwarf.hpp to obtain the root DIE for that
+compile unit:
+   namespace sdb {
+         class die;
+         class compile_unit {
+         public:
+              die root() const;
+              --snip--
+         };
+   }
+
+You’ll likely notice that we immediately find ourselves in need
+of an sdb::die type. Let’s write the start of one. For now, let’s
+forget about exposing attribute values and children to users
+and focus on what data the type needs to store:
+
+  A pointer to the compile unit to which it belongs
+  A pointer to its abbreviation table entry
+  A pointer to the DIE immediately after this one (whether it be
+  a child or a sibling)
+
+We must store one more piece of data. We don’t want to have to
+compute the location of the DIE’s attributes every time one is
+requested, so we’ll compute those locations once and store
+them in sdb::die. Define this type in sdb/include/libsdb/dwarf.hpp,
+below the definition for sdb::compile_unit:
+   namespace sdb {
+        class die {
+        public:
+            explicit die(const std::byte* next) : nex
+             die(const std::byte* pos, const compile_u
+                   std::vector<const std::byte*> attr_lo
+                   pos_(pos), cu_(cu), abbrev_(abbrev),
+                   attr_locs_(std::move(attr_locs)), nex
+
+             const compile_unit* cu() const { return c
+             const abbrev* abbrev_entry() const { retu
+             const std::byte* position() const { retu
+             const std::byte* next() const { return ne
+
+        private:
+            const std::byte* pos_ = nullptr;
+            const compile_unit* cu_ = nullptr;
+            const abbrev* abbrev_ = nullptr;
+            const std::byte* next_ = nullptr;
+            std::vector<const std::byte*> attr_locs_
+        };
+   }
+
+We create two constructors: one for null DIEs that points next_ to
+the next DIE in the section and one for non-null DIEs that stores
+the DIE’s information in the object. As usual, we then create
+member functions to retrieve the information and data
+members to store it. Note that we don’t expose the attribute
+locations to users; we’ll merely use this optimization when we
+add support for retrieving attribute values to sdb::die.
+
+Now we can implement the sdb::compile_unit::root function. We’ll
+hand off much of the work to a parse_die function, which we’ll
+reuse in several places. Implement root in sdb/src/dwarf.cpp:
+
+   sdb::die sdb::compile_unit::root() const {
+       std::size_t header_size = 11;
+       cursor cur({ data_.begin() + header_size, dat
+       return parse_die(*this, cur);
+   }
+
+The size of a compile unit header is 11 bytes, so the DIE for the
+compile unit is 11 bytes past the beginning of its data_ member.
+We create a cursor for the range spanning the start of the
+compile unit DIE up until the end of the data for this compile
+unit, then call parse_die with a reference to this compile unit and
+the cursor we just created.
+
+Now comes what you’ve all been waiting for: the function to
+actually parse a DIE. Recall that DWARF encodes a DIE as a
+ULEB128 representing its abbreviation code, followed by a list of
+attribute values. In sdb/src/dwarf.cpp, begin the implementation
+by finding the abbreviation code and dealing with null DIEs:
+
+   namespace {
+       sdb::die parse_die(const sdb::compile_unit& c
+           auto pos = cur.position();
+               auto abbrev_code = cur.uleb128();
+
+               if (abbrev_code == 0) {
+                   auto next = cur.position();
+                   return sdb::die{ next };
+               }
+
+We save the current position of the cursor so that we can store
+it in the resulting sdb::die. We then read a ULEB128. If it’s 0, the DIE
+is a null DIE. The next DIE will be at the position currently
+pointed to by the cursor, so we save this value and return a DIE
+with this pointer stored. If the DIE isn’t null, we’ll need to grab
+its abbreviation entry:
+
+               --snip--
+               auto& abbrev_table = cu.abbrev_table();
+               auto& abbrev = abbrev_table.at(abbrev_cod
+We get the abbreviation table for the compile unit containing
+this DIE by calling cu.abbrev_table. We then look up the nested
+table using the abbreviation code we just parsed to find the
+entry for the DIE.
+
+The next portion of the function is a bit more complicated. We
+need to find the location of the next DIE, and we also want to
+precompute the locations for each attribute of this DIE. To do
+this, we need to know the size of each of its attributes. We can
+reference the attribute specifications held in the abbreviation
+entry we just found to get the forms used for each attribute
+value, but we need a way to get the size of a given form so we
+can skip over it.
+
+We’ll add a skip_form function to cursor that will advance the cursor
+by the required number of bytes. For now, let’s pretend that this
+function already exists; we’ll implement it when we’re finished
+with parse_die. With this new function in our imaginations, we
+can write code to skip over each attribute in the DIE, saving
+their locations:
+
+              --snip--
+              std::vector<const std::byte*> attr_locs;
+              attr_locs.reserve(abbrev.attr_specs.size
+              for (auto& attr : abbrev.attr_specs) {
+                   attr_locs.push_back(cur.position());
+                   cur.skip_form(attr.form);
+              }
+
+We first declare a std::vector to hold the locations. Because we
+know it’s the same size as the attribution specification vector
+inside the abbreviation entry, we call .reserve to reserve the
+memory ahead of time, avoiding some unnecessary dynamic
+allocations. We then loop over each attribute specification,
+saving the current position of the cursor to the attribute
+locations vector and skipping over the current attribute using
+its form information.
+
+Now all that remains is to return an sdb::die object with the
+values we just computed:
+
+              --snip--
+              auto next = cur.position();
+              return sdb::die(pos, &cu, &abbrev, std::m
+        }
+   }
+
+Because we skipped over all of the attributes in this DIE, the
+cursor should point to the next DIE, if there is one. We bundle
+all of the data we need into an sdb::die and return it. Now we can
+implement cursor::skip_form.
+
+Implementing Form Skipping
+
+There’s no getting around it: skipping over attribute values
+requires handling every possible DWARF form in a big switch
+statement. While writing this code is inconvenient, I promise it
+will be worth the pain. It will also help you learn more about
+the available DWARF forms.
+
+First, we’ll write the function’s main structure in
+sdb/src/dwarf.cpp:
+
+   namespace {
+       class cursor {
+       public:
+           --snip--
+           void skip_form(std::uint64_t form) {
+                switch (form) {
+                // Many things go here.
+                default: sdb::error::send("Unrecogniz
+                }
+           }
+       };
+   }
+We can roughly group DWARF forms based on their encodings,
+so we’ll tackle them in these batches. Fixed-width forms are the
+simplest; they’re always the same size, no matter their contents.
+This group includes the following:
+
+  Flags (DW_FORM_flag and DW_FORM_flag_present)
+  Indicate the presence or absence of an attribute. The former
+  flag is encoded as a single byte, where 1 means the attribute
+  is present and 0 means it’s not, while the latter flag always
+  indicates presence, so its value requires no bytes of storage.
+  Fixed-width constants (DW_FORM_data1,2,4,8)
+  An integer of the specified byte width. For example,
+  DW_FORM_data8 is 8 bytes wide.
+
+  Addresses (DW_FORM_addr)
+  An integer of the byte width for addresses on the system (8
+  for x64).
+  Section offsets (DW_FORM_sec_offset)
+  A 4-byte offset into a section other than .debug_info or .debug_str.
+  Fixed-width, unit-local references (DW_FORM_ref1,2,4)
+  A 1-, 2-, or 4-byte offset from the start of the current compile
+  unit header.
+  Global references (DW_FORM_ref_addr)
+  A 4-byte integer offset to anywhere in the .debug_info section.
+  String references (DW_FORM_strp)
+  A 4-byte integer offset into the .debug_str section.
+This code can handle all of these forms:
+
+   --snip--
+   case DW_FORM_flag_present:
+        break;
+
+   case DW_FORM_data1:
+   case DW_FORM_ref1:
+   case DW_FORM_flag:
+        pos_ += 1; break;
+
+   case DW_FORM_data2:
+   case DW_FORM_ref2:
+        pos_ += 2; break;
+
+   case DW_FORM_data4:
+   case DW_FORM_ref4:
+   case DW_FORM_ref_addr:
+   case DW_FORM_sec_offset:
+   case DW_FORM_strp:
+        pos_ += 4; break;
+
+   case DW_FORM_data8:
+   case DW_FORM_addr:
+        pos_ += 8; break;
+   --snip--
+As you can see, nothing particularly interesting is happening
+here. We merely map each form to movements of the current
+cursor position. Let’s move on to the next group.
+
+DWARF encodes LEB128 forms with either ULEB128 or SLEB128 integers.
+This group covers the LEB128 constants DW_FORM_udata and DW_FORM_sdata,
+which are integers encoded in ULEB128 and SLEB128, respectively,
+and the variable-width, unit-local references (DW_FORM_ref_udata),
+which are ULEB128 offsets from the start of the current compile
+unit header. We can handle these with the following code:
+
+   --snip--
+   case DW_FORM_sdata:
+         sleb128(); break;
+   case DW_FORM_udata:
+   case DW_FORM_ref_udata:
+         uleb128(); break;
+   --snip--
+
+We parse either an SLEB128 or a ULEB128 and throw away the result.
+Next, we tackle explicitly sized forms, whose size is encoded in
+the attribute value itself. This group covers data block forms
+(DW_FORM_block and DW_FORM_block{1,2,4}), which are blocks of data
+whose the size is encoded as a ULEB128 or fixed-sized integer,
+respectively, and DWARF expressions (DW_FORM_exprloc) for
+computing the locations of variables, prefixed with the size of
+the expression as a ULEB128. To skip over these forms, we must
+parse the relevant integer and advance the current position by
+that number of bytes:
+
+   --snip--
+   case DW_FORM_block1:
+        pos_ += u8();
+        break;
+   case DW_FORM_block2:
+        pos_ += u16();
+        break;
+   case DW_FORM_block4:
+        pos_ += u32();
+        break;
+   case DW_FORM_block:
+   case DW_FORM_exprloc:
+        pos_ += uleb128();
+        break;
+   --snip--
+
+The final group covers the as yet unaddressed forms, namely
+strings (DW_FORM_string), or sequences of contiguous non-null bytes
+followed by one null byte, and indirect forms (DW_FORM_indirect), a
+value encoded as a ULEB128 that gives its actual form, followed by
+an attribute encoded in that form. For strings, we simply keep
+reading bytes until we get one that is 0:
+
+   case DW_FORM_string:
+       while (!finished() && *pos_ != std::byte(0))
+              ++pos_;
+          }
+          ++pos_;
+          break;
+
+Ensure that you remember to include the second ++pos_ to
+advance past the null terminator. Lastly, indirect forms might
+sound complicated to handle, but we can actually just read the
+form from the cursor and call skip_form recursively with the
+result:
+
+   case DW_FORM_indirect:
+          skip_form(uleb128());
+          break;
+
+All done! Now we can move on to a somewhat more interesting
+engineering problem: traversing the tree of DIEs.
+
+Traversing the DIE Tree
+Users of the DWARF parser can now retrieve the root DIEs for
+each compile unit. However, this isn’t very useful on its own; we
+need to be able to visit the children of those nodes, and those
+children’s children, and so forth. In the sdb::stoppoint_collection
+class, we solved this problem by writing a for_each function
+template. You could do this here too, but due to the deeply
+nested structure of DIEs, this code would become very ugly very
+fast. Instead, we’ll write a small range type that we can use to
+iterate over the children of DIEs.
+
+Add a nested class declaration and member function to sdb::die
+to facilitate this in sdb/include/libsdb/dwarf.hpp:
+
+   namespace sdb {
+       class die {
+         public:
+               --snip--
+               class children_range;
+               children_range children() const;
+               --snip--
+         };
+   }
+
+We won’t worry about making the range type conform to the
+expectations of C++20 ranges and will instead err on the side of
+simplicity. The sdb::die::children_range type will wrap a DIE and
+provide begin and end member functions that we can call to
+retrieve iterators to the children. This will allow us to write
+code like the following:
+
+   for (auto child : my_die.children()) {
+         do_something(child);
+   }
+
+Here is the implementation, omitting the code for the iterator
+type for now:
+
+   namespace sdb {
+       class die::children_range {
+       public:
+           children_range(die die) : die_(std::move
+           class iterator {
+                    // Blank for now
+              };
+              iterator begin() const {
+                  if (die_.abbrev_->has_children) {
+                      return iterator{ die_ };
+                  }
+                  return end();
+              }
+              iterator end() const { return iterator{}
+         private:
+             die die_;
+         };
+   }
+
+The constructor takes an sdb::die and stores it. The begin function
+returns an iterator constructed with the stored DIE, so long as
+that DIE has children. Otherwise, it returns the end iterator. The
+end function returns an empty iterator that marks the end of the
+
+range.
+
+In order to return child DIEs, we’ll need to parse them at some
+point. We could parse the entire tree ahead of time and store
+our own representation in memory. However, these trees can
+get very large. We’ll be much better off parsing them on
+demand whenever the iterator type of a children _range is
+incremented.
+
+The implementation of the iterator type should support these
+operations: default construction, leaving the iterator empty
+(generally expected of iterators in C++); construction with an
+sdb::die; copy construction and assignment, so we can easily copy
+
+iterators; operator* and operator->, to access the wrapped DIE;
+operator++, for advancing to the next DIE; and operator== and
+
+operator!=, for determining when we’ve finished iterating.
+The tricky behaviors to get right are the increment and equality
+operators; the rest are pretty straightforward. Here is the
+declaration:
+
+   #include <optional>
+
+   namespace sdb {
+       class die::children_range {
+       public:
+           --snip--
+           class iterator {
+           public:
+            ➊ using value_type = die;
+                using reference = const die&;
+                using pointer = const die*;
+                using difference_type = std::ptrdiff_
+                using iterator_category = std::forwa
+
+               ➋ iterator() = default;
+                  iterator(const iterator&) = default;
+                  iterator& operator=(const iterator&)
+
+               ➌ explicit iterator(const die& die);
+
+               ➍ const die& operator*() const { return
+                  const die* operator->() const { retu
+                 ➎ iterator& operator++();
+                    iterator operator++(int);
+
+                 ➏ bool operator==(const iterator& rhs)
+                 ➐ bool operator!=(const iterator& rhs)
+                           return !(*this == rhs);
+                      }
+
+               private:
+                ➑ std::optional<die> die_;
+               };
+               --snip--
+         };
+   }
+
+To use iterator types with algorithms from the <algorithm> or
+<numeric> headers, the types must expose a few pieces of
+
+information about themselves. We achieve this by adding five
+type aliases ➊ to the iterator type: value_type is the type being
+iterated over, reference is the type returned by operator*, pointer is
+the type returned by operator->, difference_type is the type returned
+by subtracting two iterators, and iterator_category is the iterator’s
+category. The category can be one of the following:
+
+  std::output_iterator_tag Iterators that can be written to (such as
+
+  std::ostream_iterator)
+  std::input_iterator_tag One-pass iterators
+
+  std::forward_iterator_tag Multipass iterators
+
+  std::bidirectional_iterator_tag Iterators that can be both
+
+  incremented and decremented
+  std::random_access_iterator_tag Iterators that let you move to an
+
+  arbitrary element in constant time
+
+In our case, we default to setting difference_type to the difference
+between pointers (std::ptrdiff_t) because we won’t support
+subtracting iterators. The iterator category is
+std::forward_iterator_tag because the iterators can move forward
+
+only, but you can pass over the range multiple times by saving
+an iterator before incrementing it.
+
+We use the default and copy constructors and assignment
+operators ➋, because those operations will work as they are.
+The constructor that takes an sdb::die needs a bit more work, so
+we just declare it for now ➌, being sure to mark it as explicit to
+avoid sneaky implicit conversions. The indirection operators
+return a reference or pointer to the stored die ➍. The increment
+operators ➎ and equality operator ➏ also require more work, so
+we just declare them for now.
+
+In case you’re not familiar with the operator++(int) function, note
+that the int parameter isn’t a real parameter; it’s just a way to
+distinguish the pre-increment (++value) and post-increment
+(value++) operators. The post-increment operator takes a dummy
+int parameter. We implement the inequality operator ➐ in terms
+
+of the equality operator. Finally, we store the sdb::die wrapped in
+a std::optional to support default construction ➑.
+
+We’ve declared three other functions that we need to
+implement, so let’s do so now, starting with the default
+constructor, which should parse the first child DIE of the one
+that is given. Implement it in sdb/src/dwarf.cpp:
+
+   sdb::die::children_range::iterator::iterator(cons
+       cursor next_cur({ d.next_, d.cu_->data().end
+       die_ = parse_die(*d.cu_, next_cur);
+   }
+
+We create a cursor that starts at the first child of the DIE and
+can go up to the end of the compile unit that owns it. We then
+call parse_die to retrieve an sdb::die representing the contents.
+
+We’ll write the equality operator next, as it’s simpler than the
+increment one. This operator should test whether two iterators
+are either pointing to the same DIE or both null:
+   bool sdb::die::children_range::iterator::operato
+           const iterator& rhs) const {
+         auto lhs_null = !die_.has_value() or !die_->a
+         auto rhs_null = !rhs.die_.has_value() or !rhs
+         if (lhs_null and rhs_null) return true;
+         if (lhs_null or rhs_null) return false;
+
+         return die_->abbrev_ == rhs->abbrev_ and die_
+   }
+
+An iterator is null if it doesn’t have a DIE stored or the stored
+DIE has an abbreviation code of 0. As such, we first check if both
+iterators are null. If so, they’re equal. If only one of them is null,
+they’re not equal. If both are valid, we return whether their
+abbreviation codes and next DIE pointers match.
+
+Let’s move on to the increment operator. This one is a bit
+trickier. If the DIE we’re looking at has no children, the next
+sibling is just the next DIE, so we parse the DIE at next_.
+Otherwise, we’ll need to skip over all the children of this DIE to
+find the sibling. We can do so using a nested iterator. Here’s the
+code:
+
+   sdb::die::children_range::iterator&
+   sdb::die::children_range::iterator::operator++()
+       ➊ if (!die_.has_value() or !die_->abbrev_) retu
+
+       ➋ if (!die_->abbrev_->has_children) {
+              cursor next_cur({ die_->next_, die_->cu_
+              die_ = parse_die(*die_->cu_, next_cur);
+         }
+
+         else {
+           ➌ iterator sub_children(*die_);
+           ➍ while (sub_children->abbrev_) ++sub_child
+              cursor next_cur({ sub_children->next_, di
+           ➎ die_ = parse_die(*die_->cu_, next_cur);
+         }
+         return *this;
+   }
+
+If the iterator is null, we exit early ➊. If the DIE is valid and
+doesn’t have children, we build a cursor from next_ to the end of
+the compile unit and parse the DIE there ➋. If the DIE does have
+children, we build an iterator to iterate over them ➌ and
+advance it until we hit a null entry ➍. The next DIE after the
+null entry is the sibling we’re looking for, so we parse that ➎.
+
+We implement the post-increment operator in terms of the pre-
+increment operator:
+    sdb::die::children_range::iterator
+    sdb::die::children_range::iterator::operator++(in
+        auto tmp = *this;
+          ++(*this);
+          return tmp;
+    }
+
+We’ve followed a common C++ pattern: implementing a pre-
+increment function and then writing the post-increment
+equivalent by copying the current iterator, calling pre-
+increment on *this, and returning the unmodified copy. With all
+of this work done, we can duct tape it together by implementing
+sdb::die::children:
+
+    sdb::die::children_range sdb::die::children() con
+        return children_range(*this);
+    }
+
+Note that DWARF provides a quick way for compilers to get the
+sibling of a DIE: they can encode a reference to the sibling using
+a DW_AT_sibling attribute. However, this requires us to be able to
+get the values of attributes, which we can’t do yet. Let’s add
+support for attributes and then come back to our iterator type.
+Reading Attributes
+
+Every DIE has a set of attributes, each with a type, a form, and a
+value. Importantly, a DIE can’t have multiple attributes of the
+same type defined; it can’t have two different names, two
+different locations, two different siblings, and so on. This means
+we can create a very simple interface for our DIEs’ attributes:
+one function to check whether an attribute exists and one
+function to retrieve its value.
+
+We’ll add a contains function for the former and an operator[] for
+the latter, so that users can write something like my_die[DW_AT_name]
+to get the name of the DIE. We’ll also need a type representing
+the value of an attribute, which we’ll call attr. Add these
+declarations to sdb/include/libsdb/dwarf.hpp:
+
+   namespace sdb {
+       class die {
+       public:
+           --snip--
+           bool contains(std::uint64_t attribute) co
+              attr operator[](std::uint64_t attribute)
+              --snip--
+         };
+   }
+Both of these functions take an attribute identifier, like
+DW_AT_sibling. The contains function returns whether the DIE has an
+
+attribute of that type, whereas operator[] retrieves the value.
+Implement them in sdb/src/dwarf.cpp, starting with contains. This
+function should look through the attribute specifications in this
+DIE’s abbreviation entry and check for one matching the given
+attribute type:
+
+   bool sdb::die::contains(std::uint64_t attribute)
+       auto& specs = abbrev_->attr_specs;
+       return std::find_if(begin(specs), end(specs)
+           [=](auto spec) { return spec.attr == att
+   }
+
+We grab the attribute specifications from the abbreviation
+entry and then use std::find_if to find a matching specification. If
+one exists, std:: find_if will return an iterator that points to it;
+otherwise, it will return the end iterator. So to check whether
+this DIE contains a matching attribute, we return whether
+std::find_if returned an iterator not matching the end iterator.
+
+Let’s move on to operator[]. Here, the attr type will need the
+following information to interpret the bytes of the attribute
+value correctly:
+  A pointer to the compilation unit it belongs to, as some forms
+  encode offsets from the start of the current compilation unit
+  The attribute’s type
+  The attribute’s form
+  Where the bytes for the attribute’s value begin
+
+Let’s write the code:
+
+   sdb::attr sdb::die::operator[](std::uint64_t att
+       auto& specs = abbrev_->attr_specs;
+       for (std::size_t i = 0; i < specs.size(); ++i
+
+             if (specs[i].attr == attribute) {
+                 return { cu_, specs[i].attr, specs[i
+             }
+        }
+
+        error::send("Attribute not found");
+   }
+
+We loop through the attribute specifications, looking for one
+that matches the attribute we’re looking for. If we find one, we
+return an sdb:: attr constructed from the compile unit, the
+attribute type and form, and the location of the start of the
+relevant attribute we precomputed earlier. Because we order
+the attr_locs_ list the as the attr_specs list, we use the same index to
+access the matching elements from each. If no attribute of the
+requested type exists, we throw an exception.
+
+Now the sdb::attr type should store all of the data that we passed
+to the constructor in operator[] and expose functions for
+retrieving the attribute value depending on what the form is.
+For now, we’ll support getting the value as an address, a block
+of data, an integer, a string, or a reference to a DIE. We’ll need
+to add more options in the future, when we implement DWARF
+expressions and range lists, but these options will do for now.
+Define the type in sdb/include/libsdb/dwarf.hpp, right at the top
+of the sdb namespace:
+
+   #include <string_view>
+
+   namespace sdb {
+    ➊ class compile_unit;
+       class die;
+         class attr {
+         public:
+          ➋ attr(const compile_unit* cu, std::uint64_
+                  std::uint64_t form, const std::byte*
+                 cu_(cu), type_(type), form_(form), lo
+
+          ➌ std::uint64_t name() const { return type_
+              std::uint64_t form() const { return form_
+
+          ➍ file_addr as_address() const;
+             std::uint32_t as_section_offset() const;
+             span<const std::byte> as_block() const;
+              std::uint64_t as_int() const;
+              std::string_view as_string() const;
+              die as_reference() const;
+
+        private:
+         ➎ const compile_unit* cu_;
+             std::uint64_t type_;
+             std::uint64_t form_;
+             const std::byte* location_;
+        };
+        --snip--
+   }
+
+We forward-declare sdb::compile_unit ➊ and sdb::die so we can refer
+to them. In the implementation of sdb::attr, we write a
+constructor ➋ that simply takes all of the data we passed in
+sdb::die::operator[] and stores it in data members we define next
+
+➎. We expose the attribute name and form ➌ but not the
+compile unit or attribute location, which are for internal use
+only. We then declare all of those value-reading functions I
+mentioned ➍. Let’s implement them now.
+We’ll start with as_address. Because we’re limiting ourselves to
+x64, we can just read a single 64-bit integer from the start of the
+attribute bytes and return it. Add the following in
+sdb/src/dwarf.cpp:
+
+   sdb::file_addr sdb::attr::as_address() const {
+       cursor cur({ location_, cu_->data().end() })
+       if (form_ != DW_FORM_addr) error::send("Inval
+       auto elf = cu_->dwarf_info()->elf_file();
+       return file_addr{ *elf, cur.u64() };
+   }
+
+We create a cursor for the data range and read a std::uint64_t
+with it. If the form isn’t DW_FORM_addr, we throw an exception,
+because addresses are always of this form. This address is a file
+address in the ELF file to which this DWARF information
+belongs, so we return an sdb::file_addr with the relevant sdb::elf
+object.
+
+The as_section_offset function is similar, except that section offsets
+are 32 bits in 32-bit DWARF and use the form DW_FORM_sec_offset:
+
+   std::uint32_t sdb::attr::as_section_offset() cons
+       cursor cur({ location_, cu_->data().end() })
+       if (form_ != DW_FORM_sec_offset) error::send
+        return cur.u32();
+   }
+
+The other functions are slightly more complicated because we
+must vary their behavior depending on what form the attribute
+is encoded with. Let’s do as_int next. This function should check
+the form for the size of integer to parse:
+
+   std::uint64_t sdb::attr::as_int() const {
+       cursor cur({ location_, cu_->data().end() })
+       switch (form_) {
+       case DW_FORM_data1:
+           return cur.u8();
+       case DW_FORM_data2:
+           return cur.u16();
+       case DW_FORM_data4:
+           return cur.u32();
+       case DW_FORM_data8:
+           return cur.u64();
+       case DW_FORM_udata:
+            return cur.uleb128();
+        default:
+            error::send("Invalid integer type");
+        }
+   }
+Again, we create a cursor for the data range. We then switch on
+the form of the attribute and parse the relevant integer type. If
+the form isn’t one we expect, we throw an exception.
+
+Next, we’ll handle blocks, which DWARF encodes as a size
+followed by data. The size can be an integer of 1, 2, or 4 bytes,
+or a ULEB128. As such, we can read the size and then return a span
+that begins immediately after the integer we just read:
+
+   sdb::span<const std::byte> sdb::attr::as_block()
+       std::size_t size;
+       cursor cur({ location_, cu_->data().end() })
+       switch (form_) {
+       case DW_FORM_block1:
+           size = cur.u8();
+           break;
+       case DW_FORM_block2:
+           size = cur.u16();
+           break;
+       case DW_FORM_block4:
+           size = cur.u32();
+           break;
+       case DW_FORM_block:
+           size = cur.uleb128();
+            break;
+        default:
+            error::send("Invalid block type");
+        }
+        return { cur.position(), size };
+   }
+
+This is a pretty similar process to the one for integers: get a
+cursor, parse the values we want, throw an exception on
+surprises, and return the requested data.
+
+The code for DIE references will also look similar. We’ll parse an
+offset of the correct size for the attribute’s form, then parse the
+DIE that exists at that offset from the start of the compile unit
+and return it. Parsing DW_FORM_ref_addr is a bit more complicated, so
+I’ve left that out for now:
+
+   sdb::die sdb::attr::as_reference() const {
+       cursor cur({ location_, cu_->data().end() })
+       std::size_t offset;
+       switch (form_) {
+       case DW_FORM_ref1:
+           offset = cur.u8(); break;
+       case DW_FORM_ref2:
+           offset = cur.u16(); break;
+       case DW_FORM_ref4:
+           offset = cur.u32(); break;
+       case DW_FORM_ref8:
+           offset = cur.u64(); break;
+         case DW_FORM_ref_udata:
+             offset = cur.uleb128(); break;
+         case DW_FORM_ref_addr: {
+             // Something complicated
+         }
+         default:
+               error::send("Invalid reference type");
+         }
+
+         cursor ref_cur({ cu_->data().begin() + offset
+         return parse_die(*cu_, ref_cur);
+   }
+
+At the end of the function, we make a new cursor based on the
+offset we just read and parse the DIE at that position. All of
+these forms’ offsets are based on the start of the current DIE’s
+compile unit, so we add that offset to cu_->data().begin() to
+calculate the position of the referenced DIE. The DW_FORM_ref_addr
+form, on the other hand, can reference data in other compile
+units, so its offset is relative to the start of the .debug_info section.
+I’ll show you the code to calculate this, then walk through it:
+
+         case DW_FORM_ref_addr: {
+             offset = cur.u32();
+             auto section = cu_->dwarf_info()->elf_fil
+             auto die_pos = section.begin() + offset;
+              auto& cus = cu_->dwarf_info()->compile_un
+              auto cu_finder = [=](auto& cu) {
+                    return cu->data().begin() <= die_pos
+              };
+
+              auto cu_for_offset = std::find_if(begin(c
+              cursor ref_cur({ die_pos, cu_for_offset->
+              return parse_die(**cu_for_offset, ref_cu
+         }
+
+First, we read the offset from the start of the .debug_info section
+and ask the parent ELF file for the contents of that section.
+Given these contents, we add the offset to the beginning of the
+section to the parsed offset to calculate the position of the
+referenced DIE.
+
+The difficult part is that, to parse a DIE, we need to know to
+which compile unit it belongs, but all we have is an offset. As
+such, we look through all of the compile units contained in the
+debug information for a compile unit whose data range
+contains the DIE we’re looking for. We do this by grabbing the
+list of compile units from the debug information; defining a
+lambda that, given a compile unit, returns whether die_pos is in
+the data range of that compile unit; and then using std::find_if to
+locate the correct compile unit. With the correct unit found, we
+create a cursor for the referenced DIE position and parse the
+DIE there.
+
+That was a bit tough, but we can put references aside for now
+and move on to strings, which are easier. DWARF encodes
+strings either as DW_FORM _string, a null-terminated string directly
+embedded in the DIE, or as DW_FORM _strp, a 4-byte offset into the
+.debug_str section that indicates where the string lives. Here is the
+
+code to retrieve a string attribute as a std::string_view:
+
+   std::string_view sdb::attr::as_string() const {
+       cursor cur({ location_, cu_->data().end() })
+       switch (form_) {
+       case DW_FORM_string:
+           return cur.string(); ➊
+       case DW_FORM_strp: {
+           auto offset = cur.u32();
+           auto stab = cu_->dwarf_info()->elf_file(
+           cursor stab_cur({ stab.begin() + offset,
+           return stab_cur.string(); ➋
+       }
+       default:
+           error::send("Invalid string type");
+       }
+   }
+We create a cursor. If we’re looking at a string embedded in the
+DIE, we just parse it and return it ➊. If instead we’re looking at
+a string reference, we parse the offset into the .debug_str section,
+get the contents of that section, and then parse the string from
+there ➋. As usual, if we get a form we didn’t expect, we throw
+an error.
+
+Hooray! We can now read attributes from DIEs. This means we
+can go back to the child iterator and add support for the
+DW_AT_sibling attribute, which will speed up iteration significantly
+
+for large DIE trees. We’ll also add some other extensions based
+on this new ability we’ve added to the parser.
+
+Augmenting DIEs with Attribute Support
+
+In this section, we’ll round out the facilities provided by sdb::die.
+We’ll optimize the child iterator type and add helper functions
+to retrieve the DIE’s address range. These features will enable
+us to locate the compile unit to which an address belongs,
+which will be useful for finding the function we’re in when the
+inferior halts.
+
+Optimizing Child Iterators
+Let’s add support for DW_AT_sibling to the
+sdb::die::children_range::iterator type. (Yes, it’s quite a mouthful.)
+
+Because we already added reference support to the cursor,
+supporting this type is actually rather straightforward. When
+we increment an iterator on a DIE that has children, we should
+first check whether the DIE has a DW_AT_sibling attribute. If so, we
+should retrieve the referenced DIE rather than creating a
+nested iterator and skipping over every child and nested child
+individually. Edit the implementation of operator++ in
+sdb/src/dwarf.cpp:
+
+   sdb::die::children_range::iterator&
+   sdb::die::children_range::iterator::operator++()
+       if (!die_.has_value() or !die_->abbrev_) retu
+
+        if (!die_->abbrev_->has_children) {
+            --snip--
+        }
+     ➊ else if (die_->contains(DW_AT_sibling)) {
+            die_ = die_.value()[DW_AT_sibling].as_ref
+        }
+        else {
+               --snip--
+         }
+         return *this;
+   }
+
+Between the existing branches, we add a new else if branch ➊
+that checks whether the DIE contains a sibling attribute. If so,
+we set die_ to the result of interpreting that attribute value as a
+DIE reference. This can be a huge optimization, potentially
+saving us from parsing hundreds of nested DIEs and allowing
+us to skip directly to the sibling.
+
+The last thing we need to add before testing the parser is
+support for retrieving the address ranges of an sdb::die.
+
+Extracting DIE Address Ranges
+
+DWARF can encode address ranges in two ways. To express
+contiguous address ranges, it uses a pair of DW_AT_low_pc and
+DW_AT_high_pc attributes (where PC stands for program counter).
+
+For noncontiguous address ranges, it uses a DW_AT_ranges attribute,
+which references a range list entry in the .debug_ranges section.
+We’ll handle contiguous ranges first.
+
+Contiguous
+The DW_AT_high_pc attribute is a bit tricky, because DWARF can
+express it either as a DW_FORM_addr, in which case it’s a direct virtual
+address, or as any of the integer forms, in which case it’s an
+offset from the the DW_AT_low_pc attribute, which is always encoded
+as a DW_FORM_addr. In sdb/include/libsdb/dwarf.hpp, let’s add a couple
+of member functions to sdb::die for handling these attributes:
+
+   namespace sdb {
+         class die {
+         public:
+              --snip--
+              file_addr low_pc() const;
+              file_addr high_pc() const;
+              --snip--
+         };
+   }
+
+As usual, implement the functions in sdb/src/dwarf.cpp:
+
+   sdb::file_addr sdb::die::low_pc() const {
+       return (*this)[DW_AT_low_pc].as_address();
+   }
+
+   sdb::file_addr sdb::die::high_pc() const {
+       auto attr = (*this)[DW_AT_high_pc];
+       std::uint64_t addr;
+         if (attr.form() == DW_FORM_addr) {
+             addr = attr.as_address();
+         }
+         else {
+             addr = low_pc() + attr.as_int();
+         }
+         return file_addr{
+             *cu_->dwarf_info()->elf_file(),
+             addr
+         };
+    }
+
+The low program counter value is always a file address, so we
+just grab the relevant sdb::attr and call the as_address function on
+it. We return an sdb::file_addr that points to the ELF file that
+contains this DWARF information.
+
+For the high program counter value, we check the form. If the
+form is an address, we extract it. Otherwise, the form must be
+an offset from the low program counter, so we extract the low
+program counter and then offset it with the high program
+counter attribute as an integer. Now we can move on to range
+lists.
+
+Noncontiguous
+Range lists are more complicated than simple high/low pairs,
+and we’ll need to add a new sdb::range_list type to make them
+easily usable. First, let’s look at the encoding of the .debug_range
+section.
+
+The section consists of a series of entries of three possible kinds:
+regular range list entries; base address selectors, which change
+how we should interpret regular entries; and end-of-list
+indicators. All range list entries consist of two integers with a
+byte size identical to the address size of the machine (8 bytes,
+on x64). For base address selectors, these integers are the
+following, respectively:
+
+1. An integer with all bits set, which indicates that this entry is
+  a base address selector
+2. An integer that sets the base address from which all future
+  range list entries should be considered an offset (until the
+  base address is changed again or the list ends)
+
+Regular entries instead use the following integers:
+
+1. A beginning address offset relative to the current base
+  address
+2. An ending address offset relative to the current base address
+Each pair of offsets, along with the base address, gives a range
+of addresses covered by this DIE. These ranges can’t overlap.
+
+If no base address selector entry precedes the current one, the
+base address gets encoded as the DW_AT_low_pc attribute in the DIE
+that is referencing the range list. Such a DIE will have a
+DW_AT_low_pc attribute but not a matching DW_AT_high_pc attribute.
+
+An end-of-list indicator has both integers set to 0.
+
+Let’s parse this information with an sdb::range_list type. As with
+DIE trees, range lists can become very large, so we’ll parse them
+lazily. We should be able to construct the range list type with an
+sdb::span from the start of the range list and up to the end of the
+
+.debug_range section (because we don’t know how long a range list
+
+will be). It should optionally take the base address stored in the
+DIE’s DW_AT_low_pc attribute, if there is one. Also, it should have a
+way to check whether any range in the list contains a given
+address, as well as a way to iterate over the list. As we did for
+DIE children, we’ll write a small iterator type to achieve all of
+this. Define the type in sdb/include/libsdb/dwarf.hpp, above
+sdb::attr:
+
+    namespace sdb {
+        class compile_unit;
+class range_list {
+public:
+ ➊ range_list(
+    const compile_unit* cu, span<const std::b
+    file_addr base_address)
+         : cu_(cu), data_(data), base_address_
+
+ ➋ struct entry {
+        file_addr low;
+        file_addr high;
+
+         bool contains(file_addr addr) const {
+             return low <= addr and addr < hig
+         }
+    };
+
+ ➌ class iterator;
+    iterator begin() const;
+    iterator end() const;
+
+ ➍ bool contains(file_addr address) const;
+
+private:
+ ➎ const compile_unit* cu_;
+    span<const std::byte> data_;
+    file_addr base_address_;
+         };
+     }
+
+We write a constructor ➊ that fills in the data members we
+supply at the bottom of the class ➎. For range list entries, we
+define a small nested type ➋ that wraps a low and a high
+address and supplies a member function to check whether a
+given address is within that range. We merely declare the
+iterator type for now ➌, alongside begin and end functions; we’ll
+implement these next. We also declare a function that will
+check whether a given address is in any entry of the range list
+➍.
+
+Next is the iterator type, which should present a view of the
+logical list of range entries, with base address entries resolved
+internally to the iterator and not exposed to users. We’ll
+implement almost all of this work in operator++. Here is the type
+definition:
+
+     namespace sdb {
+         class range_list::iterator {
+         public:
+          ➊ using value_type = entry;
+             using reference = const entry&;
+             using pointer = const entry*;
+   using difference_type = std::ptrdiff_t;
+   using iterator_category = std::forward_it
+
+ ➋ iterator(
+        const compile_unit* cu,
+        span<const std::byte> data,
+        file_addr base_address);
+
+ ➌ iterator() = default;
+    iterator(const iterator&) = default;
+    iterator& operator=(const iterator&) = de
+
+ ➍ const entry& operator*() const { return c
+    const entry* operator->() const { return
+
+ ➎ bool operator==(iterator rhs) const { ret
+    bool operator!=(iterator rhs) const { ret
+
+ ➏ iterator& operator++();
+    iterator operator++(int);
+
+private:
+ ➐ const compile_unit* cu_ = nullptr;
+    span<const std::byte> data_{ nullptr,null
+    file_addr base_address_;
+    const std::byte* pos_ = nullptr;
+    entry current_;
+         };
+   }
+
+Like we did for the child iterators, we expose type aliases that
+enable us to use the iterator type with standard algorithms ➊.
+Also, like child iterators, range list iterators are multipass,
+meaning we’ll use std::forward_iterator_tag as the iterator category.
+The constructor ➋ takes the same data and base address as the
+range_list itself. Iterators should be default-constructible and
+
+copyable, and the default versions will work fine, so we default
+them ➎. The iterator holds the entry currently being pointed to,
+so the operator* and operator-> functions simply return it ➍. We
+determine equality using the pos_ member, which we set as
+nullptr for the end-of-range iterator ➎. We then declare the
+
+increment operators ➏ and all of the member data ➐, making
+sure to give the members default values so that the default
+constructor works.
+
+Now let’s implement the member functions, starting with the
+constructor. This function should initialize the data members
+and call operator++ to prime the first element of the range.
+Implement it in sdb/src/dwarf.cpp:
+   sdb::range_list::iterator::iterator(
+              const compile_unit* cu,
+              sdb::span<const std::byte> data,
+              file_addr base_address)
+         : cu_(cu), data_(data)
+         , base_address_(base_address)
+         , pos_(data.begin()) {
+         ++(*this);
+   }
+
+We initialize the members and then call operator++ using ++(*this).
+
+The operator++ function is where the actual parsing work
+happens. Recall that each entry consists of two 64-bit integers,
+and we have three types of entries to handle: regular entries,
+base address entries (whose first integer is the integer with all
+bits set to 1), and end-of-list indicators (where both integers are
+0). Here’s the code:
+
+   sdb::range_list::iterator&
+   sdb::range_list::iterator::operator++() {
+       auto elf = cu_->dwarf_info()->elf_file();
+       constexpr auto base_address_flag = ~static_ca
+
+       ➊ cursor cur({ pos_, data_.end() });
+          while (true) {
+              current_.low = file_addr{ *elf, cur.u64(
+              current_.high = file_addr { *elf, cur.u64
+
+            ➋ if (current_.low.addr() == base_address_f
+                   base_address_ = current_.high;
+              }
+            ➌ else if (current_.low.addr() == 0 and cur
+                   pos_ = nullptr;
+                   break;
+               }
+            ➍ else {
+                   pos_ = cur.position();
+                   current_.low += base_address_.addr()
+                   current_.high += base_address_.addr(
+                   break;
+               }
+        }
+
+        return *this;
+   }
+
+We begin by grabbing a pointer to the ELF file for this range list
+and computing the flag used to indicate base address entries.
+This flag is a 64-bit integer with all bits set to 1, which we can
+produce by taking an integer with all bits set to 0 and using the
+complement (~) operator. We then initialize a cursor with which
+to read the integers ➊.
+
+After the setup code, we parse the list in a loop, where we
+continue to read pairs of integers. If the first of the pair is the
+base address entry flag we computed earlier ➋, we set the base
+address to the value of the second integer. If both integers are 0,
+we have an end-of-list indicator ➌, so we set pos_ to nullptr to
+indicate that the iteration is complete and break out of the loop.
+Otherwise, the entry is regular ➍, so we save the current
+position of the cursor, increment the current addresses by the
+base address to calculate the correct values for this entry, and
+break out of the loop.
+
+Now we can implement the post-increment operator in terms of
+the pre-increment operator:
+
+   sdb::range_list::iterator
+   sdb::range_list::iterator::operator++(int) {
+         auto tmp = *this;
+         ++(*this);
+         return tmp;
+   }
+This operator is similar to the one we wrote for the child
+iterators, except it uses a different iterator type.
+
+With the parser written, we can implement sdb::attr::as_range_list
+to parse an attribute as an sdb::range_list. First, declare it in
+sdb/include/libsdb/dwarf.hpp:
+
+   namespace sdb {
+         class attr {
+         public:
+               --snip--
+               range_list as_range_list() const;
+               --snip--
+         };
+   }
+
+Then, define it in sdb/src/dwarf.cpp:
+
+   sdb::range_list sdb::attr::as_range_list() const
+    ➊ auto section = cu_->dwarf_info()->elf_file()-
+       ".debug_ranges");
+    ➋ auto offset = as_section_offset();
+    ➌ span<const std::byte> data(section.begin() +
+
+          auto root = cu_->root();
+       ➍ file_addr base_address = root.contains(DW_AT_
+                ? root[DW_AT_low_pc].as_address()
+                : file_addr{};
+
+            return { cu_, data, base_address };
+    }
+
+DWARF encodes range list attributes as offsets into the
+.debug_ranges section. We grab the contents of that section from the
+
+ELF file ➊ and then parse the offset stored at the current
+attribute position ➋. With these two elements, we compute the
+potential data range for the range list ➌, which might run up to
+the end of the .debug_ranges section.
+
+The last piece of information that sdb::range_list needs is the
+initial base address, if there is one. Recall that we can find this
+value in the DW_AT_low_pc attribute, if present. As such, if the
+DW_AT_low_pc attribute exists in the root compile unit DIE, we use it;
+
+otherwise, we use an empty address ➍. Finally, we return an
+sdb::range_list constructed with the data we just calculated.
+
+To finish sdb::range_list, we need to implement begin, end, and
+contains:
+
+    sdb::range_list::iterator
+    sdb::range_list::begin() const {
+         return { cu_, data_, base_address_ };
+   }
+
+   sdb::range_list::iterator
+   sdb::range_list::end() const {
+         return {};
+   }
+
+   bool sdb::range_list::contains(file_addr address
+       return std::any_of(begin(), end(),
+           [=](auto& e) { return e.contains(address
+   }
+
+The begin function constructs the iterator with the stored data
+range and base address, whereas end constructs an empty
+iterator. The contains function uses the std::any_of algorithm to
+check whether any of the entries in the list contain the given
+address.
+
+Now that we support range lists, we can add a helper function
+to sdb::die to check contained file addresses and then extend
+sdb::die::low_pc() and sdb::die::high_pc() to also handle range lists.
+
+Checking Offsets and Supporting Range Lists
+We’ll add a member function to sdb::die, contains_address, to check
+whether the given file address lies within the ranges for the
+given DIE. This feature will allow us to find the function
+containing a given program counter value. We’ll also add
+support for range lists to low_pc and high_pc, which will be
+especially useful for setting function breakpoints and dealing
+with certain compiler optimizations.
+
+Declare contains_address in sdb/include/libsdb/dwarf.hpp:
+
+   namespace sdb {
+       class die {
+       public:
+           --snip--
+           bool contains_address(file_addr address)
+           --snip--
+       };
+   }
+
+Implement the function in sdb/src/dwarf.cpp:
+
+   bool sdb::die::contains_address(file_addr address
+       if (address.elf_file() != this->cu_->dwarf_in
+           return false;
+       }
+        if (contains(DW_AT_ranges)) {
+              return (*this)[DW_AT_ranges].as_range_lis
+        }
+        else if (contains(DW_AT_low_pc)) {
+              return low_pc() <= address and high_pc()
+        }
+        return false;
+   }
+
+First, we ensure that the ELF file for the given address is the
+same as the ELF file to which this DIE belongs. We then check
+whether the DIE contains a DW_AT_ranges attribute. If so, we return
+an indication of whether the range list contains the given
+address. If, instead, the DIE contains a DW_AT_low_pc attribute, we
+return an indication of whether the given address lies between
+that attribute and the high PC attribute.
+
+Following a similar pattern, extend low_pc like so:
+
+   sdb::file_addr sdb::die::low_pc() const {
+       if (contains(DW_AT_ranges)) {
+           auto first_entry = (*this)[DW_AT_ranges]
+           return first_entry->low;
+       }
+       else if (contains(DW_AT_low_pc)) {
+              return (*this)[DW_AT_low_pc].as_address(
+        }
+        error::send("DIE does not have low PC");
+   }
+
+If the DIE contains a DW_AT_ranges attribute, we return the low
+address of the first range, because address ranges are always in
+ascending order of address. If it has a DW_AT_low_pc attribute, we
+continue to interpret the value as an address. Otherwise, we
+throw an exception. Make similar changes to high_pc:
+
+   sdb::file_addr sdb::die::high_pc() const {
+       if (contains(DW_AT_ranges)) {
+           auto ranges = (*this)[DW_AT_ranges].as_ra
+           auto it = ranges.begin();
+           while (std::next(it) != ranges.end()) ++i
+           return it->high;
+       }
+       else if (contains(DW_AT_high_pc)) {
+           auto attr = (*this)[DW_AT_high_pc];
+           file_addr addr;
+           if (attr.form() == DW_FORM_addr) {
+                   return attr.as_address();
+              }
+              else {
+                  return low_pc() + attr.as_int();
+              }
+         }
+         error::send("DIE does not have high PC");
+   }
+
+If we encounter a DW_AT_ranges attribute, we get the high address of
+the highest pair of addresses. To do this, we get an iterator to
+the first range, increment it until it points to the element before
+the end iterator (that is, the last element of the list), and return
+the high range of that pair. If we encounter a DW_AT_high_pc
+attribute, we do the same as we used to, interpreting the
+attribute as either an address or an offset from the low program
+counter. Otherwise, we throw an exception.
+
+The sdb::die type now has a host of utilities to make interacting
+with its information faster and easier. Let’s also add lookup
+utilities to the main dwarf type.
+
+Augmenting the dwarf Type
+
+Some debugger actions will require querying all available
+DWARF information at once. For example, to set a breakpoint
+on a function name or find the function DIE corresponding to
+the code currently being executed, the debugger may need to
+examine all function DIEs it has access to. When the amount of
+debug information available is large, these operations become
+prohibitively expensive; the debugger might need to parse
+every single DIE to find what it wants.
+
+To make these operations feasible, we’ll add a function index to
+sdb::dwarf and some query functions to interact with it. This index
+
+will record the file addresses of all function DIEs in the dwarf
+object and map function names to them. Add the following
+functions to sdb/include/libsdb/dwarf.hpp:
+
+   namespace sdb {
+       class dwarf {
+       public:
+           --snip--
+           const compile_unit* compile_unit_containi
+                file_addr address) const;
+           std::optional<die> function_containing_ad
+                file_addr address) const;
+
+              std::vector<die> find_functions(std::stri
+              --snip--
+        }
+   }
+
+We add three functions: two for retrieving the compile unit or
+function to which a given file address belongs and one for
+retrieving the function DIEs for functions that match the given
+name. Next, we’ll add private members for indexing behavior:
+
+   #include <string>
+
+   namespace sdb {
+       class dwarf {
+           --snip--
+
+        private:
+            --snip--
+            void index() const;
+            void index_die(const die& current) const
+            --snip--
+            struct index_entry {
+                 const compile_unit* cu;
+                 const std::byte* pos;
+            };
+            mutable std::unordered_multimap<std::stri
+            function_index_;
+        };
+   }
+
+We add two private member functions: one for indexing the
+entire set of DIEs in the dwarf object and one for indexing a single
+DIE. Index entries consist of a pointer to the compile unit to
+which the function belongs (because we’ll require this
+information to parse the DIE later) and a pointer to the
+beginning of the DIE. The function_index_ member maps function
+names to index entries. Because multiple functions can share
+the same name, we make this member a multimap rather than
+a one-to-one map. We also mark it as mutable so that const
+member functions can modify it. The mutable keyword in C++
+allows us to do exactly this: implement caches that don’t affect
+the logical state of the type, but speed up certain operations.
+
+Let’s implement these two functions in sdb/src/dwarf.cpp,
+starting with compile_unit_containing_address:
+
+   const sdb::compile_unit*
+   sdb::dwarf::compile_unit_containing_address(file_
+       for (auto& cu : compile_units_) {
+           if (cu->root().contains_address(address)
+               return cu.get();
+           }
+       }
+       return nullptr;
+   }
+
+We loop over the compile units for this sdb::dwarf object. If we
+find one whose root DIE contains the given address, we return a
+pointer to it. If we don’t find one, we return a null pointer. Make
+sure to declare the loop variable as a reference so that return
+cu.get(); doesn’t return a dangling pointer. Next, we’ll implement
+
+function_containing_address:
+
+    std::optional<sdb::die>
+    sdb::dwarf::function_containing_address(file_add
+        index();
+        for (auto& [name, entry] : function_index_) {
+            cursor cur({ entry.pos, entry.cu->data()
+            auto d = parse_die(*entry.cu, cur);
+            if (d.contains_address(address) and
+                 d.abbrev_entry()->tag == DW_TAG_subp
+                 return d;
+            }
+        }
+        return std::nullopt;
+    }
+
+We begin by indexing the DWARF information to ensure that
+we populate function_index_. (We’ll index the DWARF information
+exactly once in the implementation of index.) We then loop over
+all entries in the function index, parsing the DIE at the relevant
+position and determining whether that DIE contains the given
+address and is a regular function. If the DIE does contain the
+address, we return the DIE. If we find no relevant entry in the
+index, we return std::nullopt. This may occur, for example, if the
+code at that address belongs to some other shared library.
+
+We can now implement the final user-facing function,
+find_functions:
+
+    std::vector<sdb::die> sdb::dwarf::find_functions
+        index();
+
+          std::vector<die> found;
+          auto [begin, end] = function_index_.equal_ran
+          std::transform(begin, end, std::back_inserte
+              auto [name, entry] = pair;
+              cursor cur({ entry.pos, entry.cu->data()
+              return parse_die(*entry.cu, cur);
+          });
+          return found;
+    }
+
+Once again, we begin by indexing the DWARF information.
+We’ll return a vector of the DIEs that matched the given name,
+so we declare an empty vector to begin with. The interface for
+multimaps in C++ is a bit different from the one for one-to-one
+maps: instead of using .at or operator[], we use .equal_range to
+retrieve a pair of iterators corresponding to the range of entries
+matching the given key. We then use std::transform to call a
+lambda on every element of this range, pushing the results into
+the found vector. The iterators returned by std::unordered_multimap
+dereference to key-value pairs, so the lambda starts by
+extracting the function name and index entry from this pair. It
+then constructs a cursor from the data in the index entry and
+returns a parsed DIE. Finally, we return the vector of DIEs we
+just parsed.
+
+With the public members implemented, we can tackle the top-
+level index function:
+
+   void sdb::dwarf::index() const {
+       if (!function_index_.empty()) return;
+         for (auto& cu : compile_units_) {
+             index_die(cu->root());
+         }
+   }
+
+Here, we guard the indexing behavior by checking whether the
+index has already been populated. If it has, we immediately
+return. This check ensures that we index the DWARF
+information only once. We then loop through all of the compile
+units and index their root DIEs. The index_die function will
+recursively index all children of this DIE.
+
+Indexing a DIE will require retrieving the name of that DIE,
+however, which can be a little more complicated than just
+reading the DW_AT_name attribute. Let’s write a function to handle
+the complexity.
+
+Retrieving DIE Names
+
+Most function DIEs encode the name of the function as a
+DW_AT_name attribute, but two special types of function encode the
+
+name indirectly. DIEs that represent out-of-line definitions
+(which occur, for example, when we declare a member function
+in a header file and define it in a source file) contain a
+DW_AT_specification attribute that points to the DIE representing the
+
+original declaration. Also, inlined functions (those whose body
+the compiler has copy-pasted into the body of another function)
+contain a DW_AT_abstract_origin attribute that points to the DIE
+representing the copied function.
+
+We can handle these cases easily with the existing support
+we’ve added to the sdb::die type. Declare an sdb::die::name function
+in sdb/include/libsdb/dwarf.hpp:
+   namespace sdb {
+        class die {
+        public:
+             --snip--
+             std::optional<std::string_view> name() co
+             --snip--
+        };
+   }
+
+This function returns the name of the DIE, if there is one.
+Implement it in sdb/src/dwarf.cpp:
+
+   std::optional<std::string_view> sdb::die::name()
+       if (contains(DW_AT_name)) {
+           return (*this)[DW_AT_name].as_string();
+       }
+       if (contains(DW_AT_specification)) {
+             return (*this)[DW_AT_specification].as_re
+        }
+        if (contains(DW_AT_abstract_origin)) {
+            return (*this)[DW_AT_abstract_origin].as_
+        }
+        return std::nullopt;
+   }
+If the DIE has a DW_AT_name attribute, we return that attribute as a
+string. If it has a DW_AT_specification or a DW_AT_abstract_origin attribute,
+we resolve that attribute as a reference to another DIE and then
+call .name on it. We call .name rather than just grabbing the DW_AT_name
+attribute on the result to account for chains of references (for
+example, out-of-line definitions that were inlined). If none of
+these attributes exist, we return std::nullopt. We can now
+implement DIE indexing.
+
+Indexing DIEs
+
+The sdb::dwarf::index_die function should add the given DIE to the
+function index so long as it has address range data, then
+recursively index all of that DIE’s children. Let’s implement it in
+sdb/src/dwarf.cpp:
+
+   void sdb::dwarf::index_die(const die& current) co
+       bool has_range = current.contains(DW_AT_low_p
+       bool is_function = current.abbrev_entry()->ta
+           current.abbrev_entry()->tag == DW_TAG_inl
+       if (has_range and is_function) {
+                if (auto name = current.name(); name) {
+                    index_entry entry{ current.cu(), cur
+                    function_index_.emplace(*name, entry
+                }
+          }
+         for (auto child : current.children()) {
+             index_die(child);
+         }
+   }
+
+A DIE has an address range if it contains a DW_AT_low_pc or a
+DW_AT_ranges attribute. DWARF specifies functions with the
+
+DW_TAG_subprogram tag or, if the DIE represents a function whose
+
+body the compiler has copied from elsewhere, the
+DW_TAG_inlined_subroutine tag. If a DIE has an address range and
+
+represents a function, we try to get its name. If it has a name,
+we create an index entry for this DIE and add it to the index.
+Regardless of whether this DIE was a function or has address
+information, we recursively index its children.
+
+We’ve completed our implementation of DIE parsing. While it
+took a significant amount of work, you should have learned
+quite a bit about how the DWARF format represents programs.
+Before we test this new debugger feature, let’s hook the parser
+into sdb::elf. Add an sdb::dwarf member in
+sdb/include/libsdb/elf.hpp:
+
+   namespace sdb {
+       class dwarf;
+       class elf {
+        public:
+            --snip--
+              dwarf& get_dwarf() { return *dwarf_; }
+              const dwarf& get_dwarf() const { return *
+
+        private:
+              --snip--
+              std::unique_ptr<dwarf> dwarf_;
+        };
+   }
+
+The new member holds a unique pointer to a dwarf object. We
+also add member functions to retrieve it. Initialize this member
+at the end of the constructor in sdb/src/elf.cpp:
+
+   #include <libsdb/dwarf.hpp>
+
+   sdb::elf::elf(const std::filesystem::path& path)
+       --snip--
+       dwarf_ = std::make_unique<dwarf>(*this);
+   }
+
+Now let’s test the DWARF parser.
+
+Testing the Parser
+Exhaustively testing the DWARF parser is a big task, and not
+one we’ll aim to achieve in this section. Instead, we’ll focus on
+writing a small set of tests that should give you a sense of safety
+as you make changes to your codebase.
+
+Before we begin writing the tests, we must ensure that our
+compiler outputs DWARF 4 information. To do this, add -gdwarf-4
+to the compiler flags for the C++ test targets in
+sdb/test/targets/CMakeLists.txt:
+
+   function(add_test_cpp_target name)
+       --snip--
+       target_compile_options(${name} PRIVATE -g -O0
+       --snip--
+   endfunction()
+
+Now we’ll start with a simple test to ensure that we can iterate
+over compile units and read their metadata. Let’s parse the
+hello_sdb test program’s DWARF and ensure that the compile
+unit information we read says that it was written in C++. Add
+the following to sdb/test/tests.cpp:
+
+   #include <libsdb/dwarf.hpp>
+
+   TEST_CASE("Correct DWARF language", "[dwarf]") {
+        auto path = "targets/hello_sdb";
+        sdb::elf elf(path);
+        auto& compile_units = elf.get_dwarf().compile
+        REQUIRE(compile_units.size() == 1);
+
+        auto& cu = compile_units[0];
+        auto lang = cu->root()[DW_AT_language].as_int
+        REQUIRE(lang == DW_LANG_C_plus_plus);
+   }
+
+We create an sdb::elf object for the program and an sdb::dwarf
+object for the ELF file. There should be only one compile unit,
+so we require that this be the case. We then interpret the
+DW_AT_language attribute of the root compile unit DIE as an integer
+
+and ensure that the value corresponds to C++.
+
+Next, we’ll make sure that iterating over DIEs produces DIEs
+whose abbreviation entries have nonzero codes. This test
+covers both the DIE parsing code and the abbreviation parsing
+code:
+
+   TEST_CASE("Iterate DWARF", "[dwarf]") {
+       auto path = "targets/hello_sdb";
+       sdb::elf elf(path);
+       auto& compile_units = elf.get_dwarf().compile
+       REQUIRE(compile_units.size() == 1);
+         auto& cu = compile_units[0];
+         std::size_t count = 0;
+         for (auto& d : cu->root().children()) {
+             auto a = d.abbrev_entry();
+              REQUIRE(a->code != 0);
+              ++count;
+         }
+         REQUIRE(count > 0);
+   }
+
+We should also test programs that have more than one compile
+unit. Let’s write a simple program with two compile units and
+check whether our parser can find the DIE for the main function.
+Create an sdb/test/targets/multi_cu_main.cpp file with these
+contents:
+
+   void do_something();
+
+   int main() {
+         do_something();
+   }
+
+Also create an sdb/test/targets/multi_cu_other.cpp file that
+defines the do_something function:
+   void do_something() {
+       // Surprise! It's nothing.
+   }
+
+Modify the sdb/test/targets/CMakeLists.txt file to build this
+target. The add_test_cpp_target function doesn’t support multiple
+source files, so we’ll specify the compile options manually:
+
+   --snip--
+   add_executable(multi_cu multi_cu_main.cpp multi_c
+   target_compile_options(multi_cu PRIVATE -g -O0 -p
+   add_dependencies(tests multi_cu)
+
+Now, in sdb/test/tests.cpp, write a test to find the main function
+DIE of this program:
+
+   TEST_CASE("Find main", "[dwarf]") {
+       auto path = "targets/multi_cu";
+       sdb::elf elf(path);
+       sdb::dwarf dwarf(elf);
+
+        bool found = false;
+        for (auto& cu : dwarf.compile_units()) {
+            for (auto& die : cu->root().children()) {
+                if (die.abbrev_entry()->tag == DW_TAG
+                           and die.contains(DW_AT_name)) {
+                          auto name = die[DW_AT_name].as_st
+                          if (name == "main") {
+                              found = true;
+                          }
+                    }
+              }
+         }
+
+         REQUIRE(found);
+   }
+
+We parse the DWARF information for the program, then loop
+through the compile units and the children of the root compile
+unit DIEs. If we find a DIE that represents a function
+(DW_TAG_subprogram) and has a DW_AT_name attribute whose content is
+main, we’ve found what we’re looking for. At the end of the test,
+
+we add a REQUIRES statement to ensure that we found the correct
+DIE.
+
+Let’s also test range lists. We’ll manually create some range list
+data and ensure that the interpreter correctly deciphers it. We’ll
+begin by parsing DWARF information so that we have a compile
+unit to pass to the range list constructor. We won’t actually use
+this compile unit, but sdb::range_list requires it:
+   TEST_CASE("Range list", "[dwarf]") {
+       auto path = "targets/hello_sdb";
+          sdb::elf elf(path);
+          sdb::dwarf dwarf(elf);
+          auto& cu = dwarf.compile_units()[0];
+
+Create a range list that consists of a regular entry, a base
+address selector, another regular entry, and an end-of-list
+indicator:
+
+          --snip--
+          std::vector<std::uint64_t> range_data {
+                0x12341234, 0x12341236,
+                ~0ULL, 0x32,
+                0x12341234, 0x12341236,
+                0x0, 0x0
+          };
+
+Cast a pointer to this list’s data to a std::byte*, and create an
+sdb::range _list with it:
+
+          --snip--
+          auto bytes = reinterpret_cast<std::byte*>(ran
+         sdb::range_list list(cu.get(),
+             { bytes, bytes + range_data.size() }, fil
+
+The first entry should have the low address 0x12341234 and the
+high address 0x12341236. This means it should contain 0x12341234 and
+0x12341235, but not 0x12341236. Let’s test all of these conditions:
+
+         --snip--
+         auto it = list.begin();
+         auto e1 = *it;
+         REQUIRE(e1.low.addr() == 0x12341234);
+         REQUIRE(e1.high.addr() == 0x12341236);
+         REQUIRE(e1.contains(file_addr{ elf, 0x1234123
+         REQUIRE(e1.contains(file_addr{ elf, 0x1234123
+         REQUIRE(!e1.contains(file_addr{ elf, 0x123412
+
+Let’s do the same with the second regular entry. The values in
+this entry are the same as those in the first, but because of the
+base address selector of 0x32, they should be offset by 0x32:
+
+         --snip--
+         ++it;
+         auto e2 = *it;
+         REQUIRE(e2.low.addr() == 0x12341266);
+         REQUIRE(e2.high.addr() == 0x12341268);
+         REQUIRE(e2.contains(file_addr{ elf, 0x1234126
+         REQUIRE(e2.contains(file_addr{ elf, 0x1234126
+         REQUIRE(!e2.contains(file_addr{ elf, 0x123412
+
+Finally, we can ensure that advancing the iterator again reaches
+the end of the list and that the range_list::contains function works:
+
+         --snip--
+         ++it;
+         REQUIRE(it == list.end());
+
+         REQUIRE(list.contains(file_addr{ elf, 0x1234
+         REQUIRE(list.contains(file_addr{ elf, 0x1234
+         REQUIRE(!list.contains(file_addr{ elf, 0x1234
+         REQUIRE(list.contains(file_addr{ elf, 0x1234
+         REQUIRE(list.contains(file_addr{ elf, 0x1234
+         REQUIRE(!list.contains(file_addr{ elf, 0x1234
+   }
+
+We’ve written a small, yet good enough, set of minimal tests.
+Feel free to expand it yourself if you desire, but in the
+meantime, ensure that all of these tests pass.
+
+Summary
+In this chapter, you learned about the information that the
+DWARF format encodes and how to decode it. You then wrote a
+parser for compile unit headers, abbreviation entries, DIEs, and
+range lists. In the next chapter, you’ll learn about the DWARF
+line table format and implement a parser for it.
+
+Check Your Knowledge
+
+1.
+1. What does DIE stand for?
+2.
+2. Are new versions of the DWARF format backward compatible
+  with older versions?
+3.
+3. In which ELF section does the main bulk of the DWARF
+  information live?
+4.
+4. What is the purpose of abbreviation entries?
+5.
+5. What is the purpose of the LEB128 format?
+6.
+6. What three kinds of entries can be found within a range list?

@@ -1,0 +1,2792 @@
+SOURCE – LEVEL BREAK POINTS
+AND STEPPING
+ A higher plane, above the world where we live and dance in
+ pure thought.
+In this chapter, the time you spent writing a DWARF parser will
+finally pay off, as you’re ready to add source-level breakpoints
+and stepping support to the debugger. These features will use
+almost all of the functionality you’ve implemented up to this
+point and are perhaps the most-used features of a debugger.
+The debugger already supports these operations for machine
+instructions, but it’s much more useful for users of the
+debugger to operate at the level of the source code, as it’s much
+easier to see how the execution relates to the code you wrote
+rather than what the compiler generated.
+
+You’ll use the DWARF parser to support three source-level
+stepping algorithms and three kinds of source-level
+breakpoints. You’ll also learn how function inlining complicates
+these facilities and how debuggers hide inlining from the user
+to present a consistent debugging environment. We’ll start by
+discussing inlining, because it affects both stepping and
+breakpoints.
+
+Function Inlining
+
+Function inlining is a compiler optimization that replaces a call
+to a function with the body of that function. In other words,
+instead of pointing to the code to jump to, the compiler copies
+the body of the function to the call site.
+
+Inlining increases the code size, but as a tradeoff, it avoids the
+overhead of a function call, which requires the compiler to
+generate a function prologue or epilogue (the parts that
+perform necessary setup and cleanup). Removing the function
+call also enables the compiler to aggressively optimize the code
+for the callee in the context of the enclosing function. Lastly,
+inlining can interact with cache performance.
+
+Even in debug builds, which usually aren’t optimized,
+compilers inline some functions (for instance, ones marked
+always_inline), as well as certain function template specializations.
+
+For a concrete example of what inlining does, consider the
+following code:
+
+   #include <cstdio>
+
+   void call_puts() {
+        std::puts("Hello");
+   }
+
+   int main() {
+        call_puts();
+   }
+
+This simple program defines a call_puts function that prints a
+message and then calls this function inside main. After we
+compile this code, the resulting assembly should look
+something like this:
+   call_puts:
+         endbr64                              ;start of prologue
+         push    %rbp
+         mov        %rsp,%rbp                 ;end of prologue
+         lea        0xeac(%rip),%rax
+         mov        %rax,%rdi
+         call       1050 <puts@plt>
+         nop
+         pop        %rbp                      ;epilogue
+         ret
+
+   main:
+       endbr64
+       push    %rbp
+       mov     %rsp,%rbp
+       call    1149 <call_puts>
+       mov     $0x0,%eax
+       pop     %rbp
+       ret
+
+The important things to note here are that the call_puts function
+has four instructions that are part of the prologue or epilogue,
+and that inside main is a call to the call_puts function. To enforce
+inlining, mark call_puts as always_inline, like so:
+   --snip--
+   __attribute__((always_inline))
+   void call_puts() {
+         std::puts("Hello");
+   }
+   --snip--
+
+The code should then generate something similar to this
+assembly:
+
+   main:
+       endbr64
+         push     %rbp
+         mov       %rsp,%rbp
+   ➊    lea       0xe92(%rip),%rax
+         mov      %rax,%rdi
+         call     1050 <puts@plt>
+         nop
+         mov      $0x0,%eax
+         pop      %rbp
+         ret
+
+Notice that the call_puts prologue and epilogue have disappeared
+and that the rest of the instructions in that function have
+moved directly into main, replacing the call to call_puts.
+Inlining creates problems for debuggers because it blurs the
+lines between functions. Imagine that the program counter
+points to the call to the first line of the inlined call_puts function
+➊. Should we report to the user that we’re inside main or inside
+call_puts? Logically, that machine code instruction belongs to
+
+both functions.
+
+Here is the model we’ll follow: when the program halts on an
+instruction at the top of an inlined function, the debugger
+should maintain the illusion that a real function call instruction
+exists there. It should display the source code for the caller and
+then, if the user steps into function call, display the source code
+for the callee. To illustrate this rule, let’s consider an example
+with multiple levels of inlining:
+
+   #include <cstdio>
+
+   __attribute__((always_inline))
+   void a() {
+         std::puts("Hello");
+   }
+
+   __attribute__((always_inline))
+   void b() {
+         a();
+   }
+   __attribute__((always_inline))
+   void c() {
+          b();
+   }
+
+   int main() {
+       c();
+   }
+
+In this example, we have a chain of calls: main calls c, which calls
+b, which calls a, which calls puts, and a, b, and c are all marked as
+
+always_inline. If the user sets a breakpoint on main and continues,
+
+the debugger should report that the program is halted inside
+main, like this:
+
+   sdb> break set main
+   sdb> c
+   Process 937 stopped with signal TRAP at 0x5555555
+   force_inline.cpp:4 (main) (breakpoint 1)
+     15 }
+     17 int main() {
+   > 18     c();
+     19 }
+Because the compiler has inlined the a, b, and c functions, the
+first instruction after the main function’s prologue technically
+also belongs to all of those functions. However, the debugger
+should pretend that execution is inside main alone. If the user
+then performs a source-level step inside the function call, the
+debugger should pretend that the program state was changed
+and that execution is now inside c, even though it needs to
+execute zero instructions to get there:
+
+   sdb> step
+   Process 937 stopped with signal TRAP at 0x5555555
+   force_inline.cpp:4 (main) (single step)
+     12 __attribute__((always_inline))
+     13 void c() {
+   > 14      b();
+     15 }
+     17 int main() {
+     18      c();
+
+Note that the program counter (0x5555555551a2) hasn’t changed, but
+that the debugger now shows that execution is inside c. If the
+user steps again, execution should be inside b:
+   sdb> step
+   Process 937 stopped with signal TRAP at 0x5555555
+   force_inline.cpp:4 (main) (single step)
+        7 __attribute__((always_inline))
+        8 void b() {
+   >    9     a();
+       10 }
+       12 __attribute__((always_inline))
+       13 void c() {
+
+Again, the program counter hasn’t changed. The debugger has
+created the illusion of regular calls where there are none.
+
+Inlining affects other operations as well, such as stepping out of
+functions or placing breakpoints on function entry, so it’s
+important that we build facilities to recognize inlined functions
+and track their state as the debugger tries to maintain the
+facade of normality.
+
+To implement all of this, you must understand how DWARF
+represents inlining. DWARF does so using DIEs with the
+DW_TAG_inlined_subroutine tag. For instance, the DWARF for the call_puts
+
+example looks like this:
+
+   DW_TAG_subprogram
+     DW_AT_external (true)
+     DW_AT_name      ("main")
+      DW_AT_decl_file ("test/targets/force_inline.cpp
+      DW_AT_decl_line (8)
+      DW_AT_decl_column        (0x05)
+      DW_AT_type       (0x0000017d "int")
+      DW_AT_low_pc     (0x0000000000001163)
+      DW_AT_high_pc    (0x0000000000001182)
+      DW_AT_frame_base         (DW_OP_call_frame_cfa)
+      DW_AT_GNU_all_tail_call_sites    (true)
+      DW_AT_sibling    (0x00000744)
+
+      DW_TAG_inlined_subroutine
+        DW_AT_abstract_origin (0x00000744 "call_puts
+        DW_AT_low_pc (0x000000000000116b)
+        DW_AT_high_pc (0x000000000000117b)
+        DW_AT_call_file       ("test/targets/force_in
+        DW_AT_call_line       (9)
+        DW_AT_call_column     (0x0e)
+
+The DIE for the main function has a child that represents the
+inlined function. This DIE has a DW_AT_abstract_origin attribute,
+which is a reference to the DW_TAG_subprogram DIE for the function
+that was inlined. The DW_AT_low_pc and DW_AT_high_pc values tell us the
+program counter ranges for the inlined code.
+
+Retrieving Inlined Function Stacks
+
+We need a way to retrieve the inlined function stack for a given
+program counter value. For example, if we’re at an offset of
+0x116b, we should be able to work out that we’re inside the
+
+call_puts function inlined into main. To account for deeper chains
+
+of inlining, the debugger must be able to represent an
+arbitrarily deep inline stack.
+
+Tracking Inlining
+
+Let’s add inline stack tracking to sdb::target. Whenever the
+process stops, the target object should recompute the current
+inline stack. Enabling this will require adding a way for
+sdb::process to notify the target of stops. Let’s implement this now.
+
+Add a target* member to sdb::process and a member function for
+setting it in sdb/include/libsdb/process.hpp:
+
+   namespace sdb {
+       class target;
+       class process {
+        public:
+            --snip--
+            void set_target(target* tgt) { target_ =
+
+        private:
+            --snip--
+             target* target_ = nullptr;
+        };
+   }
+
+We forward-declare target so we can form pointers to a target
+without introducing a circular dependency by including its
+header. We then add a new member variable that points to the
+parent target and a member function that modifies it.
+
+We now need to notify the target when a stop occurs. Add a new
+member function for this purpose to sdb::target in
+sdb/include/libsdb/target.hpp:
+
+   namespace sdb {
+       class target {
+       public:
+           --snip--
+           void notify_stop(const sdb::stop_reason&
+           --snip--
+          };
+   }
+
+When we call sdb::target::launch, we should initialize the target*
+inside the child process. Modify sdb::target::launch in
+sdb/src/target.cpp:
+
+   std::unique_ptr<sdb::target>
+   sdb::target::launch(
+        std::filesystem::path path, std::optional<int
+        --snip--
+     ➊ auto tgt = std::unique_ptr<target>(
+             new target(std::move(proc), std::move(obj
+        tgt->get_process().set_target(tgt.get());
+        return tgt;
+   }
+
+Rather than immediately returning the std::unique_ptr we create,
+we store it in a variable ➊. Then we call set_target on the stored
+process before returning the created target. We should do the same
+
+in sdb::target::attach:
+
+   std::unique_ptr<sdb::target>
+   sdb::target::attach(pid_t pid) {
+       --snip--
+         auto tgt = std::unique_ptr<target>(
+             new target(std::move(proc), std::move(obj
+         tgt->get_process().set_target(tgt.get());
+         return tgt;
+   }
+
+We need to call sdb::target::notify_stop when the process is stopped.
+Do this inside sdb::process::wait_on_signal, in sdb/src/process.cpp:
+
+   #include <libsdb/target.hpp>
+
+   sdb::stop_reason sdb::process::wait_on_signal() {
+       --snip--
+
+         if (is_attached_ and state_ == process_state
+             --snip--
+
+               if (reason.info == SIGTRAP) {
+                   --snip--
+               }
+               if (target_) target_->notify_stop(reason
+         }
+
+         return reason;
+   }
+We include the header for sdb::target. Inside the branch in which
+the process stops due to a signal, we call notify_stop on the target, if
+one is set.
+
+Now that the target gets notified of stops, we can calculate the
+inline stack. In sdb/include/libsdb/dwarf.hpp, let’s add a function
+to sdb::dwarf that calculates the inline stack at a given file address:
+
+   namespace sdb {
+       class dwarf {
+       public:
+           --snip--
+           std::vector<die> inline_stack_at_address
+           --snip--
+       };
+   }
+
+This function takes a file address and returns a list of DIEs
+representing the inline function stack at that address. The first
+element is the outer, non-inlined function. Subsequent elements
+represent functions inlined into the preceding function that
+contain the given address. Implement this function in
+sdb/src/dwarf.cpp:
+   std::vector<sdb::die> sdb::dwarf::inline_stack_at
+        auto func = function_containing_address(addre
+        std::vector<sdb::die> stack;
+        if (func) {
+            stack.push_back(*func); ➊
+             while (true) {
+                  const auto& children = stack.back().c
+                  auto found = std::find_if(children.be
+                      [=](auto& child) {
+                          return child.abbrev_entry()->
+                              child.contains_address(ad
+                      });
+                  if (found == children.end()) { ➋
+                      break;
+                  }
+                  else { ➌
+                      stack.push_back(*found);
+                  }
+             }
+        }
+        return stack;
+   }
+
+We start by looking for a non-inlined function containing the
+given address. If we find one, we begin the stack with this
+function ➊. Then we loop, looking for child DIEs that represent
+inlined functions and contain the given address. If we don’t find
+any ➋, we stop looking. If we do find one ➌, we push it to the
+end of the stack and search that DIE’s children.
+
+Finding the Current Stack
+
+Now that we can track the inline stack, we can add functionality
+to sdb:: target to indicate which frame of the inline stack the
+debugger should present to the user as the current one. For this
+purpose, we’ll make an sdb::stack type. We’ll augment this type in
+Chapter 16, when we implement full stack unwinding.
+
+The type should contain an inline_height_ member that represents
+the location at which we’ll consider the process to have
+stopped. Specifically, it should indicate a number of frames
+above the deepest inlined function. Whenever the process halts
+and execution is at the top of one or more inlined functions, we
+should reset this height to point to the outermost of those
+functions. Define this in a new file at
+sdb/include/libsdb/stack.hpp:
+
+   #ifndef SDB_STACK_HPP
+   #define SDB_STACK_HPP
+
+   #include <vector>
+   #include <libsdb/dwarf.hpp>
+
+   namespace sdb {
+       class target;
+       class stack {
+        public:
+              stack(target* tgt) : target_(tgt) {}
+              void reset_inline_height();
+              std::vector<sdb::die> inline_stack_at_pc
+              std::uint32_t inline_height() const { ret
+              const target& get_target() const { return
+
+        private:
+            target* target_ = nullptr;
+            std::uint32_t inline_height_ = 0;
+        };
+   }
+
+   #endif
+
+The sdb::stack type’s constructor takes the target to which this
+stack belongs. We declare a reset_inline_height function that we’ll
+call whenever the process halts. We also declare some helper
+functions to retrieve the inline stack at the current program
+counter value, the current inline height, and the frame of the
+inline stack we’re examining. Finally, we define two data
+members to hold a pointer to the target and the current inline
+height.
+
+We’ll implement these members in a new file at
+sdb/src/stack.cpp, starting with inline_stack_at_pc. To calculate the
+inline stack at the current program counter, we’ll need to
+convert the program counter from a virtual address to a file
+address. As we’ll perform this operation multiple times in this
+chapter, let’s add a function to sdb::target that implements it.
+Declare this function in sdb/include/libsdb/target.hpp:
+
+   namespace sdb {
+       class target {
+       public:
+           --snip--
+           file_addr get_pc_file_address() const;
+           --snip--
+       };
+   }
+
+Implement the function in sdb/src/target.cpp:
+
+   sdb::file_addr sdb::target::get_pc_file_address(
+       return process_->get_pc().to_file_addr(*elf_
+   }
+
+This function grabs the program counter virtual address from
+the process and converts it to a file address. Now we can
+implement inline_stack _at_pc in sdb/src/stack.cpp:
+
+   #include <libsdb/stack.hpp>
+   #include <libsdb/target.hpp>
+
+   std::vector<sdb::die>
+   sdb::stack::inline_stack_at_pc() const {
+       auto pc = target_->get_pc_file_address();
+       if (!pc.elf_file()) return {};
+       return pc.elf_file()->get_dwarf().inline_stac
+   }
+
+We grab the program counter as a file address, make sure we
+received a valid address, and then compute the inline stack at
+that address. Add this new file to the add_library call in
+sdb/src/CMakeLists.txt:
+
+   add_library(libsdb ... stack.cpp)
+Let’s move on to the reset_inline_height function. This function
+should walk backward over every inline stack frame for which
+execution is at the beginning, incrementing the current inline
+height each time:
+
+   void sdb::stack::reset_inline_height() {
+       auto stack = inline_stack_at_pc();
+
+         inline_height_ = 0;
+         auto pc = target_->get_pc_file_address();
+
+         for (auto it = stack.rbegin();
+             it != stack.rend() and it->low_pc() == pc
+             ++it) {
+             ++inline_height_;
+         }
+   }
+
+First, we calculate the inline stack at the current program
+counter. We initialize inline_height_ to 0, pointing to the deepest
+inline function. We then get the file address of the program
+counter so we can check it against the start address of each
+frame. Using reverse iterators (rbegin and rend), we iterate
+backward through the frames, starting at the deepest one, until
+we hit either the beginning or a frame of which execution isn’t
+at the start. On each iteration, we increment the current inline
+height.
+
+Let’s hook this code into the rest of the system. Add a sdb::stack
+member to sdb::target:
+
+   #include <libsdb/stack.hpp>
+
+   namespace sdb {
+       class target {
+       public:
+           --snip--
+           stack& get_stack() { return stack_; }
+           const stack& get_stack() const { return s
+
+          private:
+              target(std::unique_ptr<process> proc, std
+                   : process_(std::move(proc)), elf_(std
+                     stack_(this)
+              {}
+              --snip--
+               stack stack_;
+          };
+   }
+We include stack.hpp, add the data member to the bottom of the
+type definition, initialize this member in the constructor, and
+add members to retrieve the stack. Lastly, we implement
+sdb::notify_stop to call stack_.reset _inline_height when the process
+
+stops:
+
+   void sdb::target::notify_stop(const sdb::stop_rea
+       stack_.reset_inline_height();
+   }
+
+Now, every time the process halts, we’ll recalculate the inline
+height.
+
+Source-Level Stepping
+
+Source-level stepping operations walk through statements at
+the level of the original source code, rather than at the level of
+the machine code. Debuggers provide several kinds of steps.
+We’ll support the following three:
+
+  Step in    Steps to the next line of source code and into
+  function calls
+  Step over      Steps to the next line of source code, skipping
+  over function calls
+  Step out     Steps out of the current function call and back to
+  the caller
+
+I’ll introduce the algorithms for these three step types as we
+implement them. Begin by declaring functions for them in
+sdb::target. Add the following to sdb/include/libsdb/target.hpp:
+
+   namespace sdb {
+        class target {
+        public:
+               --snip--
+               sdb::stop_reason step_in();
+               sdb::stop_reason step_out();
+               sdb::stop_reason step_over();
+               --snip--
+        };
+   }
+
+Each of these functions will carry out the requested step and
+return an explanation of why the process halted. Stops can
+occur for reasons other than single-step requests; for example,
+if the user sets a breakpoint on a line of code inside a function
+whose execution the user steps over, the debugger should still
+hit that breakpoint and report it back to the user. Let’s start by
+implementing step in.
+Step In
+
+The basic idea behind the step in operation is to step through
+single machine instructions until the program counter lands on
+an instruction that belongs to a different line of source code
+from the one at which it began. When the program counter
+arrives at a new source line, it might have entered a new
+function. In that case, we also skip over the prologue of that
+function, which sets up the stack. If we don’t, other debugger
+features (like the version of step out we’ll write shortly) might
+not operate properly, as they assume that the stack is correctly
+set up for the current function.
+
+We also need to handle the situation in which execution is at
+the beginning of an inlined function. In that case, we pretend to
+step into the function by decrementing the current inline height
+and returning. Let’s add a function to sdb::stack that supports this
+behavior:
+
+   namespace sdb {
+        class stack {
+        public:
+              --snip--
+              void simulate_inlined_step_in() {
+                   --inline_height_;
+              }
+        };
+   }
+
+The step_in algorithm has a few parts to it, so we’ll implement it
+in pieces. Add the following to sdb/src/target.cpp:
+
+   #include <csignal>
+
+   sdb::stop_reason sdb::target::step_in() {
+       auto& stack = get_stack();
+       if (stack.inline_height() > 0) {
+           stack.simulate_inlined_step_in();
+           return stop_reason(process_state::stopped
+       }
+
+We begin by getting a reference to the target’s stack. Doing so
+might seem unnecessary, as we could just name stack_ directly,
+but it will save us some refactoring when we add support for
+multiple threads in Chapter 18. If the current inline height is
+greater than 0, the debugger is representing the program state
+as stopped in a caller. To maintain the illusion of no inlining, we
+decrement the height. As a result, the debugger should tell the
+user that the program is now in the callee. We then return a
+stop_reason that indicates that the process stopped due to a single
+step. The stop_reason type doesn’t currently support such manual
+construction, but we’ll add this support soon.
+
+Next, we handle the process of stepping to a new line of source
+code:
+
+       --snip--
+    ➊ auto orig_line = line_entry_at_pc();
+       do {
+        ➋ auto reason = process_->step_instruction(
+        ➌ if (reason.reason != process_state::stopp
+                or reason.info != SIGTRAP
+                or reason.trap_reason != trap_type::s
+                return reason;
+            }
+       } while ((line_entry_at_pc() == orig_line
+            or line_entry_at_pc()->end_sequence)
+            and line_entry_at_pc() != line_table::ite
+
+To work out when we’re finished stepping, we need to know the
+execution’s line entry location when the operation began. We’ll
+find this location with a line_entry_at_pc function we’ll write
+shortly. For now, we assume this function returns the line entry
+to which the program counter is currently pointing ➊.
+Once we’ve received the line entry, we loop. On each iteration,
+we step over a single instruction and store the reason why
+execution stopped ➋. If the reason is something other than a
+single step ➌, the program may have stopped at a breakpoint or
+terminated completely. In this case, we stop trying to step and
+return the reason to the user.
+
+Otherwise, we continue looping. The loop terminates when the
+line entry corresponding to the current program counter differs
+from the one we stored at the start of the operation. If this line
+entry is a special end-of-sequence marker, however, we keep
+stepping, as the marker doesn’t correspond to an actual line of
+source code; it just terminates a sequence of line entries. We
+also terminate the loop if there’s no line table entry for the new
+program counter value. (Note that if there’s no line table entry
+for the program counter value at which step_in began, we still
+step over a single instruction.)
+
+After this loop terminates, execution will have reached a new
+line of source code. However, we may still need to step over the
+function prologue if we’ve entered a new function:
+
+        --snip--
+        auto pc = get_pc_file_address();
+        if (pc.elf_file() != nullptr) {
+              auto& dwarf = pc.elf_file()->get_dwarf()
+              auto func = dwarf.function_containing_add
+              if (func and func->low_pc() == pc) {
+                  auto line = line_entry_at_pc();
+                  if (line != line_table::iterator{}) {
+                        ++line;
+                        return run_until_address(line->ad
+                   }
+              }
+        }
+
+To check whether we’re within the prologue of a function, we
+get the program counter value as a file address and find the
+function containing the program counter offset. If the program
+counter is at the start of that function’s range, we know we’ve
+entered the prologue of a function.
+
+DWARF supports marking line entries to indicate the end of the
+function prologue, but GCC doesn’t output this information.
+Instead, the first line table entry for a function marks the start
+of the prologue, and the second entry marks the start of the
+function body. As such, we get the current line table entry (the
+entry for the prologue) and increment it by one to retrieve the
+entry marking the start of the function body. The program
+should then run until it reaches the address given by that
+second line table entry, for which we defer to a run_until_address
+function we’ll write shortly. If we can’t find the ELF file for the
+program counter value, the function information, or a line table
+entry, we bail out of prologue skipping.
+
+The last step is to return a stop reason explaining that we
+stopped due to a single step:
+
+        --snip--
+        return stop_reason(
+             process_state::stopped, SIGTRAP, trap_typ
+   }
+
+The sdb::stop_reason type doesn’t currently support manual
+construction, so let’s add a constructor to it in
+sdb/include/libsdb/process.hpp. While we’re at it, let’s also add a
+default constructor and functions to easily check whether a stop
+occurred due to a single step or a breakpoint at a given address,
+as a way to clean up some of the code we just wrote and make
+the rest of the step algorithms easier to implement:
+
+   #include <csignal>
+
+   namespace sdb {
+       struct stop_reason {
+         --snip--
+         stop_reason() = default;
+         stop_reason(process_state reason, std::ui
+             std::optional<trap_type> trap_reason
+             std::optional<syscall_information> sy
+              : reason(reason)
+              , info(info)
+              , trap_reason(trap_reason)
+              , syscall_info(syscall_info)
+         {}
+
+         bool is_step() const {
+              return reason == process_state::stopp
+                  and info == SIGTRAP
+                  and trap_reason == trap_type::sin
+         }
+         bool is_breakpoint() const {
+              return reason == process_state::stopp
+                  and info == SIGTRAP
+                  and (trap_reason == trap_type::so
+                      or trap_reason == trap_type:
+         }
+         --snip--
+    };
+}
+The constructor accepts the various pieces of data that a
+stop_reason holds and stores them in the data members. The is_step
+
+and is_breakpoint functions check that the fields are set as
+expected. Now we can replace that check from earlier, changing
+
+   if (reason.reason != process_state::stopped
+               or reason.info != SIGTRAP
+               or reason.trap_reason != trap_type::s
+       return reason;
+   }
+
+into this:
+
+   if (!reason.is_step()) return reason;
+
+Next, we’ll implement the line_entry_at_pc and run_until_address
+helper functions. Declare them both in
+sdb/include/libsdb/target.hpp:
+
+   #include <libsdb/dwarf.hpp>
+
+   namespace sdb {
+       class target {
+       public:
+           --snip--
+                    sdb::line_table::iterator line_entry_at_p
+                    sdb::stop_reason run_until_address(virt_a
+                    --snip--
+          };
+    }
+
+Write the functions in sdb/src/target.cpp, starting with
+line_entry_at_pc:
+
+    sdb::line_table::iterator
+    sdb::target::line_entry_at_pc() const {
+        auto pc = get_pc_file_address();
+        if (!pc.elf_file()) return line_table::iterat
+        auto cu = pc.elf_file()->get_dwarf().compile_
+        if (!cu) return line_table::iterator();
+        return cu->lines().get_entry_by_address(pc);
+    }
+
+We grab the current program counter as a file address. We
+might get an empty file address (for example, if the function
+currently being executed belongs to a shared library), so we
+check it and return an empty iterator if it’s invalid. We then
+locate the compile unit for this address. Again, if we get a null
+pointer, we return an empty iterator. Otherwise, we return the
+entry corresponding to the current program counter in the
+correct compile unit.
+
+Next, we’ll implement run_until_address. This function will set a
+temporary breakpoint on the given address, continue until it
+reaches the breakpoint, and then remove the breakpoint. Add it
+to sdb/src/target.cpp:
+
+   sdb::stop_reason sdb::target::run_until_address(v
+       breakpoint_site* breakpoint_to_remove = nullp
+    ➊ if (!process_->breakpoint_sites().contains_ad
+           breakpoint_to_remove = &process_->create_
+               address, false, true);
+           breakpoint_to_remove->enable();
+       }
+
+    ➋ process_->resume();
+       auto reason = process_->wait_on_signal();
+       if (reason.is_breakpoint()
+           and process_->get_pc() == address) {
+              reason.trap_reason = trap_type::single_st
+        }
+
+    ➌ if (breakpoint_to_remove) {
+           process_->breakpoint_sites().remove_by_ad
+                   breakpoint_to_remove->address());
+        }
+         return reason;
+   }
+
+There may already be a breakpoint set on the given address,
+and we can’t set a new breakpoint there if that is the case. To
+deal with this situation, we track a pointer to the breakpoint
+that we’ll remove after continuing, but allow it to be null if a
+breakpoint already exists there. If no breakpoint exists at the
+given address ➊, we create a new one, mark it as internal, store
+a pointer to it, and enable it. We then resume the process ➋ and
+wait until it halts.
+
+Note that execution may halt for a reason other than hitting the
+breakpoint at the desired address: the process may terminate,
+or it may hit some other breakpoint before execution reaches
+the one we expect. As such, we check the reason for the halt. If
+it’s due to the breakpoint we expect, we set the trap reason to
+single step, which the debugger will report to the user.
+Otherwise, we return the same reason given by wait_on_signal.
+Before returning the stop reason, we remove any temporary
+breakpoint we may have set ➌.
+
+Now that we’ve implemented step in, we can move on to step
+over.
+Step Over
+
+Step over is a bit more complicated than step in. The step types
+share the same basic idea: they keep stepping over instructions
+until execution reaches a different line table entry than the one
+at which it began. However, if execution reaches a function call,
+we must step over the call, which we’ll achieve by placing a
+breakpoint on the instruction immediately succeeding the call
+and continuing the process. Furthermore, if we’re currently
+above an inlined function, we should step over that entire
+block. Again, we’ll implement this function step by step. Add the
+following in sdb/src/target.cpp:
+
+   #include <optional>
+   #include <libsdb/disassembler.hpp>
+
+   sdb::stop_reason sdb::target::step_over() {
+       auto orig_line = line_entry_at_pc();
+       disassembler disas(*process_);
+       sdb::stop_reason reason;
+       auto& stack = get_stack();
+       do {
+            // Blank for now
+       } while ((line_entry_at_pc() == orig_line
+            or line_entry_at_pc()->end_sequence)
+            and line_entry_at_pc() != line_table::ite
+        return reason;
+   }
+
+As with step in, we start by saving the line entry to which the
+program counter currently points. Next, we create a
+disassembler for the process, which we’ll use to determine
+whether the next instruction to be executed is a function call.
+We take a reference to the stack and loop until execution
+reaches a new line table entry that isn’t an end sequence
+marker, as we did for step in.
+
+Now we’ll tackle the loop body. If we’re at the start of an inlined
+function, we jump over it. If we’re at a call instruction, we jump
+to the instruction directly succeeding it. Otherwise, we step
+over a single instruction:
+
+   sdb::stop_reason sdb::target::step_over() {
+       --snip--
+       do {
+            auto inline_stack = stack.inline_stack_at
+            auto at_start_of_inline_frame = stack.inl
+            if (at_start_of_inline_frame) {
+                auto frame_to_skip = inline_stack[inl
+                auto return_address = frame_to_skip.h
+                   reason = run_until_address(return_add
+                  if (!reason.is_step() ➌
+                      or process_->get_pc() != return_a
+                      return reason;
+                  }
+             }
+             else if (auto instructions = disas.disass
+                  instructions[0].text.rfind("call") ==
+                  reason = run_until_address(instructio
+                  if (!reason.is_step()
+                      or process_->get_pc() != instruct
+                      return reason;
+                  }
+             }
+             else { ➎
+                 reason = process_->step_instruction(
+                 if (!reason.is_step()) return reason
+             }
+        } while (line_entry_at_pc() == orig_line or
+                  line_entry_at_pc()->end_sequence);
+        --snip--
+   }
+
+We compute the inline stack ➊ and work out whether it
+contains any inline frames and, if so, whether we’re at the start
+of one of them. In that case, we jump over the inlined frame
+directly below the one that the debugger is tracking as the
+current frame. We figure out which frame to skip ➋, calculate
+the end of the inlined code, and run up to that address. If the
+process stops for some other reason ➌, such as a breakpoint
+being set inside the inlined function, we report this.
+
+This implementation of skipping inline frames will work in
+most cases with unoptimized code, but it’s not necessarily the
+case that control flow will hit the instruction directly after the
+inlined block after completing its execution. Production
+debuggers will look for any branch instructions in the inlined
+block and, if they find any, will step through the inlined block
+by putting breakpoints at each branch instruction until the
+program makes it out of the program counter ranges for the
+inlined function. This approach is significantly more complex,
+so I’ve opted for the simpler solution here.
+
+If we’re not at the start of an inline frame, we check whether
+we instead need to step over a call instruction ➍. We
+disassemble two instructions at the current program counter.
+We need two instructions because we need to know two things:
+whether the current instruction is a function call and the
+address of the subsequent instruction, so we can set a
+breakpoint on it.
+
+If the first instruction starts with “call,” we run up until the
+subsequent instruction’s address. Again, if the process halted
+for some other reason, we immediately stop stepping and
+return that reason. If the first instruction doesn’t start with
+“call” and we’re not at an inlined frame ➎, we step over a single
+instruction. At this point, we’ve completed step over and can
+move on to step out.
+
+Step Out
+
+Step out is a bit different from the other two step algorithms.
+Instead of continually stepping, it should make the process run
+up until the return address of the currently executing function.
+How do we calculate the return address? Well, that’s a bit tricky.
+
+Recall the simplified x64 stack we discussed in Chapter 2, in
+which each stack frame contains the return address of the
+current function. However, while the program is running, it’s
+not clear how to locate exactly where on the stack the return
+address is. We can figure this out in two main ways.
+
+The more robust way of determining this location is to parse
+the DWARF information for details about the call frame. While
+parsing the DWARF is the robust way to solve this problem, it’s
+also quite complex. We’ll do this in Chapter 16, when we
+implement full stack unwinding.
+In this section, I’ll teach you the easy way, which relies on using
+specific compiler options when building the program to debug.
+If you compile the debugger program with -fno-omit-frame-pointer,
+the frame base of the currently executing function gets stored
+in the rbp register, and the frame base for the caller function gets
+stored on the stack, just after the return address and just before
+the local variables. The frame base for a stack frame is the
+memory address directly after the stored return address. Figure
+14-1 shows a simplified x64 stack for a function when compiled
+with -fno-omit-frame -pointer.
+Figure 14-1: A simplified x64 stack with base pointers
+
+The rbp register points to the memory location directly following
+the return address for the currently executing function, so to
+figure out where to set a breakpoint to step out, we just need to
+read the memory 8 bytes above the current value of rbp. If we’re
+inside an inlined function, we instead find the end address of
+the inlined block. With this knowledge, we can now implement
+step_out:
+   #include <libsdb/bit.hpp>
+
+   sdb::stop_reason sdb::target::step_out() {
+       auto& stack = get_stack();
+        auto inline_stack = stack.inline_stack_at_pc
+        auto has_inline_frames = inline_stack.size()
+        auto at_inline_frame = stack.inline_height()
+
+        if (has_inline_frames and at_inline_frame) {
+            auto current_frame = inline_stack[inline_
+            auto return_address = current_frame.high_
+            return run_until_address(return_address)
+        }
+
+        auto frame_pointer = process_->get_registers
+            .read_by_id_as<std::uint64_t>(register_id
+
+        auto return_address = process_->read_memory_a
+            virt_addr{ frame_pointer + 8 });
+
+        return run_until_address(virt_addr{ return_ad
+   }
+
+We begin by retrieving the current inline stack. If we find more
+than one frame and the current inline height isn’t pointing to
+the outermost frame, we’re looking at an inline frame and
+should step to the end of it. To do this, we retrieve the current
+frame, calculate the end of its range as a virtual address, and
+then run up until that address, returning the stop reason. Note
+that the same caveats apply here as to skipping over inlined
+functions in our step_out implementation: the approach doesn’t
+work in cases where control flow doesn’t hit the instruction
+directly after an inlined block.
+
+If we’re not at an inline frame, we instead read the return
+address from the stack. We read the current value of the rbp
+register, read the memory that is 8 bytes above it, and convert
+the result to an integer. This integer gives us the return address
+of the current function, which we then pass to run_until_address to
+complete the step out operation.
+
+One place where this algorithm fails to work properly is if the
+program is halted inside a recursive function at least one level
+deep. In that case, trying to step out may actually step into
+another function call, because the return address can be hit by
+a recursive call. We’ll address this case in Chapter 16, where
+we’ll implement stack unwinding.
+
+Exposing Stepping to the User
+With all three step operations complete, we can add
+corresponding commands to the debugger’s user interface.
+We’ll support the following stepping commands: next, for
+performing a step over; finish, for performing a step out; step, for
+performing a step in; and stepi, for instruction-level stepping.
+
+Modify the existing step command and add the new ones to
+sdb/tools/sdb.cpp:
+
+   namespace {
+       void handle_command(std::unique_ptr<sdb::targ
+             std::string_view line) {
+           --snip--
+           else if (is_prefix(command, "next")) {
+                auto reason = target->step_over();
+                handle_stop(*target, reason);
+           }
+           else if (is_prefix(command, "finish")) {
+                auto reason = target->step_out();
+                handle_stop(*target, reason);
+              }
+              else if (is_prefix(command, "step")) {
+                  auto reason = target->step_in();
+                  handle_stop(*target, reason);
+              }
+              else if (is_prefix(command, "stepi")) {
+                  auto reason = process->step_instructi
+                   handle_stop(*target, reason);
+              }
+              --snip--
+   }
+
+These commands call the relevant function on the target or
+process and then call handle_stop to report the stop to the user.
+Let’s also update the help information to document these
+commands:
+
+   namespace {
+       void print_help(const std::vector<std::string
+           if (args.size() == 1) {
+                std::cerr << R"(Available commands:
+       breakpoint - Commands for operating on break
+       catchpoint - Commands for operating on catch
+       continue     - Resume the process
+       disassemble - Disassemble machine code to ass
+         finish          - Step-out
+         memory          - Commands for operating on memo
+         next            - Step-over
+         register        - Commands for operating on regis
+         step            - Step-in
+         stepi           - Single instruction step
+         watchpoint      - Commands for operating on watch
+   )";
+               }
+               --snip--
+        }
+   }
+
+We’ve finished implementing stepping, so let’s move on to
+breakpoints.
+
+Source-Level Breakpoints
+
+Setting source-level breakpoints generally requires us to do two
+things: resolve the source-level request into a set of memory
+addresses and set breakpoint sites on all of those addresses.
+
+For example, if the user requests a breakpoint on the function
+pet_cat, we must first find the addresses for the start of each
+
+pet_cat function in the current program and then set breakpoint
+
+sites on each of those addresses. If, on the other hand, the user
+requests a breakpoint on cat_petting.cpp line 42, we should find
+the memory address that corresponds to that line and create a
+breakpoint site for it.
+
+Let’s create a new sdb::breakpoint type to represent breakpoints
+and then use inheritance to create types for the different
+possible kinds of breakpoints:
+  sdb::function_breakpoint   A breakpoint set on a function name
+  sdb::line_breakpoint   A breakpoint set on a line of a source file
+  sdb::address_breakpoint    A breakpoint set on a virtual memory
+  address
+
+That last type essentially corresponds to an sdb::breakpoint_site, but
+having a unified interface for dealing with breakpoints will
+make our lives easier. Begin by implementing sdb::breakpoint in
+sdb/include/libsdb/breakpoint.hpp:
+
+   #ifndef SDB_BREAKPOINT_HPP
+   #define SDB_BREAKPOINT_HPP
+
+   #include <cstdint>
+   #include <cstddef>
+   #include <string>
+   #include <libsdb/stoppoint_collection.hpp>
+   #include <libsdb/breakpoint_site.hpp>
+   #include <libsdb/types.hpp>
+
+   namespace sdb {
+       class target;
+       class breakpoint {
+       public:
+          ➊ virtual ~breakpoint() = default;
+
+          ➋ breakpoint() = delete;
+   breakpoint(const breakpoint&) = delete;
+   breakpoint& operator=(const breakpoint&)
+
+ ➌ using id_type = std::int32_t;
+    id_type id() const { return id_; }
+
+   void enable();
+   void disable();
+
+   bool is_enabled() const { return is_enabl
+   bool is_hardware() const { return is_hard
+   bool is_internal() const { return is_inte
+
+ ➍ virtual void resolve() = 0;
+
+ ➎ /*?*/ breakpoint_sites() { return breakpo
+
+protected:
+    friend target;
+ ➏ breakpoint(
+        target& tgt, bool is_hardware = false
+
+   id_type id_;
+   target* target_;
+   bool is_enabled_ = false;
+   bool is_hardware_ = false;
+   bool is_internal_ = false;
+   /*?*/ breakpoint_sites_;
+              breakpoint_site::id_type next_site_id_ =
+         };
+   }
+   #endif
+
+Because sdb::breakpoint is designed for inheritance, we declare a
+virtual destructor for it ➊. Now, any time a derived type gets
+deleted through a pointer to an sdb::breakpoint, it will call the
+derived destructor as well.
+
+Like breakpoint sites, breakpoints should be unique and
+constructible only through their managing type (in this case,
+sdb::target). As such, we delete the default constructor and copy
+
+operations ➋. As with breakpoint sites, we define an ID type ➌,
+a function to retrieve the breakpoint ID, functions for enabling
+and disabling the breakpoint, and queries for whether the
+breakpoint is enabled and whether it’s a hardware breakpoint
+or an internal breakpoint.
+
+To customize the sdb::breakpoint subtypes, we use the resolve
+function ➍, which creates breakpoint sites based on the
+breakpoint type and the arguments passed to it. We declare it as
+a virtual function using the virtual keyword and add = 0 at the
+end of the declaration so the subtypes are forced to override it.
+We’ll also need a function called breakpoint_sites to return the set
+of breakpoint sites resolved by a breakpoint, but we need to put
+more thought into what type to return, so we leave it as a
+question mark for now ➎.
+
+The IDs for breakpoint sites should be relative to each
+breakpoint. That is, if a breakpoint has three sites, they’ll have
+the IDs 1, 2, and 3, regardless of how many other breakpoint
+sites there are. To achieve this design, we store a next_site_id_
+member that determines the ID of the next breakpoint site
+resolved for this breakpoint.
+
+We declare a protected constructor (not a private one, because
+we want derived types to be able to access all members) ➏ and
+declare sdb::target as a friend so that it can construct new
+sdb::breakpoint objects. Finally, we define all of the members we’ll
+
+need.
+
+Expanding Breakpoint Sites
+
+Breakpoint sites can now belong to breakpoints, so they should
+track their parent and allow the parent to supply them with IDs.
+In sdb/include/libsdb/breakpoint_site.hpp, add a parent_ member
+and a new constructor that takes a parent breakpoint and an ID
+for the site:
+   namespace sdb {
+        class breakpoint;
+        class breakpoint_site {
+            --snip--
+        private:
+             --snip--
+             breakpoint_site(
+                  breakpoint* parent, id_type id,
+                  process& proc, virt_addr address,
+                  bool is_hardware = false, bool is_int
+             --snip--
+             breakpoint* parent_ = nullptr;
+        };
+   }
+
+Implement the constructor in sdb/src/breakpoint_site.cpp:
+
+   sdb::breakpoint_site::breakpoint_site(
+       breakpoint* parent, id_type id,
+       process& proc, virt_addr address,
+       bool is_hardware, bool is_internal)
+       : parent_{ parent }, id_(id),
+         process_{ &proc }, address_{ address },
+         is_enabled_{ false }, saved_data_{},
+            is_hardware_{ is_hardware }, is_internal_{
+   }
+
+Also add a new overload for sdb::process::create_breakpoint_site to
+sdb/include/libsdb/process.hpp:
+
+   namespace sdb {
+       class process {
+       public:
+           --snip--
+           breakpoint_site& create_breakpoint_site(
+                breakpoint* parent, breakpoint_site:
+                virt_addr address,
+                bool hardware = false, bool internal
+           --snip--
+       };
+   }
+
+Implement this overload in sdb/src/process.cpp:
+
+   sdb::breakpoint_site&
+   sdb::process::create_breakpoint_site(
+         breakpoint* parent, breakpoint_site::id_typ
+         bool hardware, bool internal) {
+       if (breakpoint_sites_.contains_address(addres
+                   error::send("Breakpoint site already crea
+                       std::to_string(address.addr()));
+          }
+          return breakpoint_sites_.push(
+              std::unique_ptr<breakpoint_site>(
+                       new breakpoint_site(
+                           parent, id, *this, address, hardw
+    }
+
+This function ensures that no breakpoint site already exists at
+that address and then creates a new one, forwards on all the
+parameters, and pushes it into the breakpoint_sites_ collection.
+Next, we’ll decide what type to use for breakpoint_sites_ inside
+sdb::breakpoint.
+
+Determining the Breakpoint Site Type
+
+To store the breakpoint sites resolved by a breakpoint, you
+might initially want to use the sdb::stoppoint_collection type you
+wrote in Chapter 9. However, doing so causes an issue:
+sdb::stoppoint_collection owns the stop points that it stores, holding
+
+them as std::unique_ptr objects. We want to instead hold non-
+owning pointers to existing sdb::breakpoint_site objects stored
+inside the sdb::process object. This will allow us to centrally
+manage all breakpoint sites and make sure that we don’t, for
+example, try to create two breakpoints that refer to the same
+breakpoint site, which would be a recipe for data corruption.
+
+We don’t need to write an entirely new type to accomplish this;
+we can extend sdb::stoppoint_collection to support both owning and
+non-owning policies. We’ll add another template parameter to
+sdb::stoppoint_collection that indicates whether it should own its
+
+stop points or simply refer to stop points stored elsewhere. Edit
+the sdb/include/libsdb/stoppoint_collection.hpp file:
+
+   namespace sdb {
+       template <class Stoppoint, bool Owning = true
+       class stoppoint_collection {
+           --snip--
+       };
+   }
+
+We add a template parameter called Owning, which defaults to true.
+Now we need to make some changes to the stored type and to
+the type that the push function accepts:
+
+   #include <type_traits>
+
+   namespace sdb {
+       template <class Stoppoint, bool Owning = true
+         class stoppoint_collection {
+         public:
+           ➊ using pointer_type = std::conditional_t<O
+                  std::unique_ptr<Stoppoint>,
+                  Stoppoint*>;
+
+           ➋ Stoppoint& push(pointer_type bs);
+              --snip--
+
+         private:
+          ➌ using points_t = std::vector<pointer_type
+             --snip--
+         };
+   }
+
+We start by introducing a member type called pointer_type. This
+type uses std::conditional_t, which is basically an if statement that
+runs at compile time ➊. If the first argument (Owning) is true, then
+pointer_type is an alias for std::unique_ptr<Stoppoint>. Otherwise, it’s an
+
+alias for Stoppoint*. We update the push function to take an
+argument with the correct pointer type ➋ and update points_t to
+store a vector of this pointer type ➌.
+
+The member function implementations will work with no
+additional changes thanks to the power of templates, but we do
+need to update their signatures. For example, contains_id used to
+have the following signature:
+
+   template <class Stoppoint>
+   bool stoppoint_collection<Stoppoint>::contains_id
+            typename Stoppoint::id_type id) const {
+          --snip--
+   }
+
+Because we added a new template parameter, we need to
+update the template parameters to this:
+
+   template <class Stoppoint, bool Owning>
+   bool stoppoint_collection<Stoppoint,Owning>::cont
+         typename Stoppoint::id_type id) const {
+       --snip--
+   }
+
+Add a bool Owning template parameter and supply Owning as a
+template argument to stoppoint_collection. You’ll need to make the
+same adjustment for every member function. It’s a bit tedious,
+but it can be handled quickly by running a search and replace
+in your editor. For example, replace <class Stoppoint> and
+stoppoint_collection<Stoppoint> with <class Stoppoint, bool Owning> and
+stoppoint_collection<Stoppoint,Owning> across the whole file. Also be
+
+sure to change the push parameter type in its definition, like so:
+
+    template <class Stoppoint, bool Owning>
+    Stoppoint&
+    stoppoint_collection<Stoppoint,Owning>::push(
+            ➊ pointer_type bs) {
+          --snip--
+    }
+
+We update the parameter ➊ to be pointer_type instead of
+std::unique_ptr <Stoppoint>. The sdb::stoppoint_collection type is now
+
+ready for use inside sdb::breakpoint.
+
+Update the breakpoint_sites member function and breakpoint_sites_
+member data in sdb/include/libsdb/breakpoint.hpp. Also add
+versions of the at_address and in_range member functions used by
+stoppoint_collection so that users can store a
+
+stoppoint_collection<breakpoint>. Finally, add a const overload for
+
+breakpoint_sites:
+
+    namespace sdb {
+        class breakpoint {
+        public:
+            --snip--
+            stoppoint_collection<breakpoint_site, fal
+                breakpoint_sites() { return breakpoint_si
+                const stoppoint_collection<breakpoint_sit
+                breakpoint_sites() const { return breakpo
+
+                bool at_address(virt_addr addr) const {
+                      return breakpoint_sites_.contains_add
+                }
+                bool in_range(virt_addr low, virt_addr hi
+                    return !breakpoint_sites_.get_in_regi
+                }
+
+         protected:
+             --snip--
+             stoppoint_collection<breakpoint_site, fal
+         };
+   }
+
+We use stoppoint_collection<breakpoint_site, false> as the breakpoint _sites_
+type, passing false to make the collection non-owning. No other
+uses of sdb::stoppoint_collection in the codebase need modification,
+because we defaulted the second argument to true. The
+implementations of at_address and in_range check whether at least
+one of the breakpoint sites resolved by this breakpoint is at the
+requested address or in the requested range.
+
+Implementing Breakpoint Functions
+Now we can implement the sdb::breakpoint member functions.
+These should handle constructing, enabling, disabling, and
+resolving breakpoints. Create a new file, sdb/src/breakpoint.cpp,
+with the following contents:
+
+   #include <libsdb/breakpoint.hpp>
+   #include <libsdb/target.hpp>
+
+   namespace {
+     ➊ auto get_next_id() {
+            static sdb::breakpoint::id_type id = 0;
+            return ++id;
+        }
+   }
+
+   sdb::breakpoint::breakpoint(
+        target& tgt, bool is_hardware, bool is_intern
+        : target_{ &tgt }, is_hardware_{ is_hardware
+        is_internal_{ is_internal } {
+     ➋ id_ = is_internal ? -1 : get_next_id();
+   }
+
+   void sdb::breakpoint::enable() {
+        is_enabled_ = true;
+        breakpoint_sites_.for_each([](auto& site) { s
+   }
+   void sdb::breakpoint::disable() {
+       is_enabled_ = false;
+        breakpoint_sites_.for_each([](auto& site) { s
+   }
+
+We handle the ID in the same way as in sdb::breakpoint_site, by
+writing a get_next_id function ➊ with a local static ID that
+increments on every call and then calling this function in the
+constructor so long as the breakpoint isn’t internal ➋. The enable
+and disable functions resemble each other: they both set the
+is_enabled_ member to the relevant value and then call either
+
+.enable or .disable on each breakpoint site in the stored collection.
+
+Add this file to sdb/src/CMakeLists.txt:
+
+   add_library(libsdb ... breakpoint.cpp)
+
+The base breakpoint type is complete. The complexity lies in the
+subtypes.
+
+Creating Breakpoint Subtypes
+
+Recall that we’ll support three types of breakpoints, for
+functions, lines, and addresses. Let’s create types for each of
+these, beginning with function _breakpoint. Define all three types in
+sdb/include/libsdb/breakpoint.hpp:
+
+   namespace sdb {
+       class function_breakpoint : public breakpoint
+         public:
+             void resolve() override;
+             std::string_view function_name() const {
+
+         private:
+             friend target;
+             function_breakpoint(
+                  target& tgt, std::string function_nam
+                  bool is_hardware = false, bool is_int
+                  : breakpoint(tgt, is_hardware, is_int
+                  , function_name_(std::move(function_n
+                  resolve();
+             }
+             std::string function_name_;
+         };
+   }
+
+We declare sdb::function_breakpoint as a derived type of breakpoint
+using the : public breakpoint syntax. We need to implement a
+custom resolve function, so we declare it and mark it as override.
+Marking it as override isn’t entirely necessary, but doing so helps
+the compiler diagnose any mistakes that we make more easily
+and signals our intent.
+
+The function_breakpoint type stores the function name given to it on
+construction, so we write a member function to retrieve the
+name and a member to store it. Because sdb::target will always be
+responsible for constructing this type, we declare the
+constructor as private and make target a friend. The constructor
+calls the base class constructor for breakpoint with the given
+target, stores the function name, and then calls resolve to
+initialize the breakpoint sites for the breakpoint.
+
+Before we implement resolve, let’s define the other two
+breakpoint types. They’re very similar, except they provide
+different members depending on the data they need to store:
+
+   #include <filesystem>
+
+   namespace sdb {
+       class line_breakpoint : public breakpoint {
+       public:
+           void resolve() override;
+           const std::filesystem::path file() const
+           std::size_t line() const { return line_;
+
+        private:
+     friend target;
+     line_breakpoint(target& tgt,
+         std::filesystem::path file,
+         std::size_t line,
+         bool is_hardware = false,
+         bool is_internal = false)
+         : breakpoint(tgt, is_hardware, is_int
+         resolve();
+     }
+     std::filesystem::path file_;
+     std::size_t line_;
+};
+
+class address_breakpoint : public breakpoint
+public:
+    void resolve() override;
+    virt_addr address() const { return addres
+private:
+    friend target;
+    address_breakpoint(
+         target& tgt, virt_addr address,
+         bool is_hardware = false, bool is_int
+         : breakpoint(tgt, is_hardware, is_int
+         resolve();
+    }
+    virt_addr address_;
+        };
+   }
+
+The line_breakpoint type stores a path to the file on which it should
+be set, as well as the desired line number. The address_breakpoint
+type stores an address instead.
+
+Now we’ll tackle the resolve functions, which create the
+breakpoint sites for a breakpoint. The address_breakpoint version is
+the easiest, so let’s start with that. Implement it in
+sdb/src/breakpoint.cpp:
+
+   void sdb::address_breakpoint::resolve() {
+       if (breakpoint_sites_.empty()) {
+           auto& new_site = target_->get_process()
+               .create_breakpoint_site(
+                   this, next_site_id_++, address_,
+              breakpoint_sites_.push(&new_site);
+              if (is_enabled_) new_site.enable();
+        }
+   }
+
+If we haven’t already resolved the breakpoint, we create a new
+breakpoint site at the given address and store a pointer to it in
+the breakpoint_sites_ member. We also increment the next_site_id_
+member so that subsequent breakpoint sites will receive higher
+IDs. Currently, we resolve breakpoints only once, upon
+construction, but in Chapter 17, we’ll implement shared library
+tracking, which will require us to resolve breakpoints
+whenever a new shared library is loaded. As such, if this
+breakpoint is already marked as enabled, we enable the new
+breakpoint site.
+
+Let’s move on to function_breakpoint, which is more complex. We
+need to find the DIEs for the functions we’re interested in and
+then create breakpoint sites following those functions’
+prologues. If the DWARF information for the ELF file isn’t
+sufficient, we’ll fall back to the ELF symbol table to resolve the
+breakpoint. Let’s add a find_functions function to sdb::target that
+implements this behavior. Declare the function in
+sdb/include/libsdb/target.hpp:
+
+   namespace sdb {
+       class target {
+       public:
+           --snip--
+           struct find_functions_result {
+                std::vector<die> dwarf_functions;
+                std::vector<std::pair<const elf*, con
+           };
+              find_functions_result find_functions(std
+              --snip--
+        };
+   }
+
+This function returns a struct that wraps the DWARF DIEs and
+ELF symbols found for the given name. For now, we fill in only
+one of these options on each call, but in Chapter 17, we’ll
+support shared libraries, where some ELF files may have
+DWARF information and others may not. For that reason, we
+make this value a struct rather than a union or a std::variant.
+Implement the function in sdb/src/target.cpp:
+
+   sdb::target::find_functions_result
+   sdb::target::find_functions(std::string name) con
+       find_functions_result result;
+
+        auto dwarf_found = elf_->get_dwarf().find_fun
+        if (dwarf_found.empty()) {
+            auto elf_found = elf_->get_symbols_by_nam
+            for (auto sym : elf_found) {
+                result.elf_functions.push_back(std::p
+            }
+        }
+        else {
+            result.dwarf_functions.insert(
+                result.dwarf_functions.end(),
+                    dwarf_found.begin(), dwarf_found.end
+          }
+
+          return result;
+   }
+
+We initialize an instance of find_functions_result to hold the DWARF
+data we retrieve. Within that information, we then try to locate
+functions, inserting them into the result object. If we don’t find
+any functions, we look them up in the ELF symbol table instead
+and then push them into the result object. Finally, we return the
+result.
+
+With this function written, we can implement the
+sdb::function_breakpoint ::resolve function in sdb/src/breakpoint.cpp.
+
+We’ll start by implementing resolution for DIEs and then handle
+ELF symbols:
+
+   void sdb::function_breakpoint::resolve() {
+       auto found_functions = target_->find_function
+       for (auto die : found_functions.dwarf_functio
+           if (die.contains(DW_AT_low_pc) or die.con
+               file_addr addr;
+               if (die.abbrev_entry()->tag == DW_TAG
+                   addr = die.low_pc();
+               }
+                   else { ➋
+                       auto function_line = die.cu()->li
+                             .get_entry_by_address(die.low
+                         ++function_line;
+                         addr = function_line->address;
+                   }
+                   auto load_address = addr.to_virt_add
+                   if (!breakpoint_sites_.contains_addre
+                       auto& new_site = target_->get_pro
+                           .create_breakpoint_site(
+                               this, next_site_id_++, lo
+
+                         breakpoint_sites_.push(&new_site
+                         if (is_enabled_) new_site.enable
+                   }
+              }
+        }
+
+We loop over all of the DIEs that match the given name. If we
+can retrieve the function’s start address, we try to resolve the
+first instruction after the prologue. If the function was inlined
+➊, it has no prologue, so we set a breakpoint at the start of the
+function. Otherwise, we find the corresponding line entry for
+the start of the function and then advance the resulting iterator
+to find the entry pointing to the first instruction after the
+prologue ➋. Because the address we just worked out is a file
+address rather than a virtual address, we calculate where the
+instruction was loaded ➌ and then create a breakpoint site if
+one doesn’t already exist.
+
+Now we can implement resolution for ELF symbols, which is
+simpler:
+
+        --snip--
+        for (auto sym : found_functions.elf_functions
+             auto file_address = file_addr{ *sym.first
+             auto load_address = file_address.to_virt_
+             if (!breakpoint_sites_.contains_address(l
+                 auto& new_site = target_->get_process
+                     this, next_site_id_++, load_addre
+                 breakpoint_sites_.push(&new_site);
+                 if (is_enabled_) new_site.enable();
+             }
+        }
+   }
+
+We loop over the functions found in the ELF symbol table,
+retrieving their file addresses and converting them to load
+addresses. If no breakpoint exists there yet, we create a new
+one, push it into the tracked breakpoint sites for this
+breakpoint, and enable it, if the breakpoint is enabled.
+Finally, let’s implement line breakpoint resolution. This
+function should find the memory address of the instruction
+corresponding to the given line, potentially skip over a function
+prologue, and then create a breakpoint site at the correct load
+address:
+
+   void sdb::line_breakpoint::resolve() {
+       auto& dwarf = target_->get_elf().get_dwarf()
+       for (auto& cu : dwarf.compile_units()) {
+           auto entries = cu->lines().get_entries_by
+
+             for (auto entry : entries) {
+                 auto& dwarf = entry->address.elf_file
+                 auto stack = dwarf.inline_stack_at_ad
+
+                  auto no_inline_stack = stack.size() =
+                  auto should_skip_prologue = no_inline
+                      (stack[0].contains(DW_AT_ranges)
+                      stack[0].low_pc() == entry->addre
+                  if (should_skip_prologue) {
+                      ++entry; ➍
+                  }
+                  auto load_address = entry->address.to
+                  if (!breakpoint_sites_.contains_addre
+                  auto& new_site = target_->get_process
+                      .create_breakpoint_site(
+                          this, next_site_id_++, load_a
+                        breakpoint_sites_.push(&new_site
+                        if (is_enabled_) new_site.enable
+                   }
+              }
+        }
+   }
+
+The line we’re looking for could be in any compile unit, so we
+loop over the compile units to which we have access. Multiple
+entries could be associated with a single line of code (if the
+function is inlined somewhere, for example), so we resolve
+breakpoint sites for all entries. Note that we grab the DWARF
+file from the line table entry rather than using the one we got
+from the target ➊; this is to support shared libraries in Chapter
+17. If the given line exists inside a non-inlined function ➋, we
+may need to skip over the prologue. We do so as long as we find
+no inline stack, the function DIE has address range information,
+and the address for the line table entry we found is at the start
+of the function ➌. As for function name breakpoints, we skip
+the prologue by selecting the line table entry after the one for
+the start of the function ➍. Once we’ve found the correct line
+table entry, we compute the load address for the relevant file
+address and create a new breakpoint site if one doesn’t already
+exist.
+
+Creating Breakpoints
+
+Now that all of our breakpoint types can resolve addresses, we
+need the ability to create them through an sdb::target. In the
+same way that sdb::process manages breakpoint sites, sdb::target
+should manage source-level breakpoints. Add a collection of
+breakpoints to sdb::target, along with functions to create each
+type of breakpoint, to sdb/include/libsdb/target.hpp:
+
+   #include <libsdb/breakpoint.hpp>
+
+   namespace sdb {
+       class target {
+       public:
+           --snip--
+           breakpoint& create_address_breakpoint(
+                virt_addr address,
+                bool hardware = false, bool internal
+           breakpoint& create_function_breakpoint(
+                std::string function_name,
+                  bool hardware = false, bool internal
+              breakpoint& create_line_breakpoint(
+                  std::filesystem::path file, std::size
+                  bool hardware = false, bool internal
+              stoppoint_collection<breakpoint>&
+              breakpoints() { return breakpoints_; }
+              const stoppoint_collection<breakpoint>&
+              breakpoints() const { return breakpoints_
+
+         private:
+             --snip--
+             stoppoint_collection<breakpoint> breakpoi
+         };
+   }
+
+We include the header for sdb::breakpoint. The create_*_breakpoint
+functions will create a breakpoint of the requested type and
+add it to the set of managed breakpoints for this target. We also
+add member functions for retrieving the breakpoint collection.
+Implement the breakpoint creation functions in
+sdb/src/target.cpp:
+
+   sdb::breakpoint&
+   sdb::target::create_address_breakpoint(
+         virt_addr address, bool hardware, bool inte
+       return breakpoints_.push(
+           std::unique_ptr<address_breakpoint>(
+               new address_breakpoint(
+                    *this, address, hardware, interna
+   }
+
+   sdb::breakpoint&
+   sdb::target::create_function_breakpoint(
+
+           std::string function_name, bool hardware, b
+        return breakpoints_.push(
+            std::unique_ptr<function_breakpoint>(
+                new function_breakpoint(
+                    *this, function_name, hardware, i
+   }
+
+   sdb::breakpoint&
+   sdb::target::create_line_breakpoint(
+         std::filesystem::path file, std::size_t lin
+         bool hardware, bool internal) {
+       return breakpoints_.push(
+           std::unique_ptr<line_breakpoint>(
+               new line_breakpoint(
+                    *this, file, line, hardware, inte
+   }
+
+You shouldn’t see anything surprising in these functions; they
+just create the requested breakpoint types wrapped in a
+std::unique_ptr and push them into the stored breakpoint
+
+collection. We’ve fully supported breakpoints! Let’s expose
+these to the user.
+Exposing Breakpoints to the User
+
+We’ve already written commands that debugger users can run
+to interact with breakpoints, but so far, these commands have
+operated on breakpoint sites. We must change them so they
+operate on breakpoints instead so that the user can create
+source-level breakpoints.
+
+In sdb/tools/sdb.cpp, modify handle_command so it passes the target
+rather than the process to handle_breakpoint:
+
+   namespace {
+       void handle_command(std::unique_ptr<sdb::targ
+           std::string_view line) {
+           --snip--
+           else if (is_prefix(command, "breakpoint"
+                handle_breakpoint_command(*target, a
+           }
+           --snip--
+       }
+   }
+
+Modify the handle_breakpoint_command signature to take an sdb::target&:
+
+   void handle_breakpoint_command(sdb::target& targe
+         const std::vector<std::string>& args) {
+         --snip--
+   }
+
+Now we’ll update the list command so that it produces output
+like the following:
+
+   sdb> break set 0x5555555551ac
+   sdb> break set main
+   sdb> break set force_inline.cpp:15
+   sdb> break list
+   Current breakpoints:
+   1: address = 0x5555555551ac, enabled:
+       .1: address = 0x5555555551ac, enabled
+   2: function = main, enabled:
+       .2: address = 0x5555555551a2, enabled
+   3: file = force_inline.cpp, line = 15, enabled:
+       .3: address = 0x555555555197, enabled
+       .4: address = 0x5555555551b3, enabled
+
+The list command should print each breakpoint, as well as the
+list of breakpoint sites resolved for that breakpoint.
+
+The code we must write is longer than ideal for placing inside
+the existing handle_breakpoint_command function, so we’ll implement it
+inside a new one, handle_breakpoint_list_command:
+namespace {
+    void handle_breakpoint_list_command(sdb::targ
+        if (target.breakpoints().empty()) { ➊
+              fmt::print("No breakpoints set\n");
+        }
+        else {
+              fmt::print("Current breakpoints:\n")
+              target.breakpoints().for_each([](auto
+                  if (bp.is_internal()) return;
+                  fmt::print("{}: ", bp.id());
+                  if (auto func_bp = dynamic_cast<s
+                      fmt::print("function = {}", f
+                  }
+                  else if (auto line_bp = dynamic_c
+                      fmt::print("file = {}, line =
+                          line_bp->file().string()
+                  }
+                  else if (auto addr_bp = dynamic_c
+                      fmt::print("address = {:#x}"
+                  }
+                  fmt::print(", {}:\n", bp.is_enabl
+                  bp.breakpoint_sites().for_each([&
+                      fmt::print("    .{}: address
+                      site.id(), site.address().add
+                      site.is_enabled() ? "enabled
+                      });
+                  });
+        }
+         }
+   }
+
+If no breakpoints are set ➊, we print a message to inform the
+user of this fact. Otherwise, we print details about each non-
+internal breakpoint ➋, starting with its ID. We then use
+dynamic_cast to work out the breakpoint’s dynamic type. When we
+
+dynamically cast a pointer to an sdb::breakpoint* into a derived
+type, it should return either a pointer to the derived type or
+nullptr, if the dynamic type isn’t the one we requested.
+
+If the breakpoint is a function breakpoint ➌, we print the
+function name. If it’s a line breakpoint ➍, we print the file and
+the line. If it’s an address breakpoint ➎, we print the address in
+hexadecimal. After handling the derived breakpoint type, we
+print an indication of whether the breakpoint is enabled.
+Finally, for each breakpoint site resolved by that breakpoint ➏,
+we print its ID, address, and whether it’s enabled or disabled.
+We prefix the ID with a dot; users will be able to use this value
+to refer to individual breakpoint sites when using the enable,
+disable, and delete commands.
+
+Next is the set command. We should support three forms for this
+command: break set <function name>, break set <file>:<line>, and break set
+0x<address>. Implement the code inside a new
+
+handle_breakpoint_set_command function:
+
+   namespace {
+       void handle_breakpoint_set_command(
+                 sdb::target& target, const std::vector<
+               bool hardware = false;
+               if (args.size() == 4) {
+                   if (args[3] == "-h") hardware = true
+                   else sdb::error::send("Invalid breakp
+               }
+
+           ➊ if (args[2].find("0x") == 0) {
+                  auto address = to_integral<std::uint6
+
+                      if (!address) {
+                          fmt::print(stderr,
+                              "Breakpoint command expects a
+                              "hexadecimal, prefixed with
+                          return;
+                      }
+
+                      target.create_address_breakpoint(
+                          sdb::virt_addr{ *address }, hardw
+               }
+
+           ➋ else if (args[2].find(':') != std::string
+                  auto data = split(args[2], ':');
+                   auto path = data[0];
+                   auto line = to_integral<std::uint64_t
+                   if (!line) {
+                       fmt::print(stderr,
+                           "Line number should be an int
+                        return;
+                   }
+                   target.create_line_breakpoint(path, *
+               }
+            ➌ else {
+                   target.create_function_breakpoint(arg
+               }
+        }
+   }
+
+We start by recording whether the user specified the -h flag to
+set a hardware breakpoint. If the subcommand argument’s first
+two characters are 0x ➊, this must be an address breakpoint. We
+attempt to convert this hexadecimal string to an integer. If the
+conversion fails, we print an error. Otherwise, we create an
+address breakpoint and enable it.
+
+If the argument doesn’t start with 0x, but it does contain a colon
+(:), it must be a line number breakpoint ➋. We split the
+argument on the colon, convert the line number to an integer,
+and then create the breakpoint and enable it. If the line number
+conversion fails, we report it to the user. You could also check if
+that file actually exists, but I omitted this check for simplicity.
+
+If the breakpoint isn’t an address or line breakpoint, it must be
+a function breakpoint ➌, so we pass the argument to
+create_function_breakpoint. Again, you might want to check whether
+
+this function actually exists.
+
+Update the existing list and set subcommand branches to call
+the new functions we just wrote:
+
+              --snip--
+              if (is_prefix(command, "list")) {
+                   handle_breakpoint_list_command(target
+                   return;
+              }
+              --snip--
+              if (is_prefix(command, "set")) {
+                   handle_breakpoint_set_command(target
+                   return;
+              }
+              --snip--
+
+Replace the current contents of those branches with calls to the
+relevant functions.
+Now we’ll tackle the enable, disable, and delete commands. We’d like
+the enable and disable commands to apply to both breakpoints and
+breakpoint sites, allowing users to disable specific breakpoint
+sites as well as entire breakpoints. For example, a user could
+enter break enable 1 to enable all the breakpoint sites for the
+breakpoint with an ID of 1, or they could enter break enable 1.2 to
+enable only the breakpoint site with an ID of 2 inside the
+breakpoint with an ID of 1. We won’t support delete for
+breakpoint sites, however, because this would require notifying
+the parent breakpoint and performing additional bookkeeping
+for breakpoints that get resolved multiple times (which will
+happen when we implement shared library support in Chapter
+17).
+
+We’ll introduce a new function that deals with these
+commands, as they involve a fair amount of code. Replace the
+rest of the existing code in handle _breakpoint_command with a call to a
+function named handle_breakpoint_toggle, which we’ll implement
+next:
+
+               --snip--
+               handle_breakpoint_toggle(target, args);
+
+Implement handle_breakpoint_toggle in the same file:
+namespace {
+    void handle_breakpoint_toggle(
+          sdb::target& target,
+          const std::vector<std::string>& args) {
+        auto command = args[1];
+
+        auto dot_pos = args[2].find('.');
+        auto id_str = args[2].substr(0, dot_pos)
+        auto id = to_integral<sdb::breakpoint::id
+        if (!id) {
+            std::cerr << "Command expects breakpo
+            return;
+        }
+        auto& bp = target.breakpoints().get_by_id
+
+        if (dot_pos != std::string::npos) {
+            auto site_id_str = args[2].substr(dot
+            auto site_id = to_integral<sdb::break
+            if (!site_id) {
+                std::cerr << "Command expects bre
+                return;
+            }
+            if (is_prefix(command, "enable")) {
+                bp.breakpoint_sites().get_by_id(*
+            }
+            else if (is_prefix(command, "disable
+                bp.breakpoint_sites().get_by_id(*
+            }
+              }
+              else if (is_prefix(command, "enable")) {
+                   bp.enable();
+              }
+              else if (is_prefix(command, "disable")) {
+                   bp.disable();
+              }
+              else if (is_prefix(command, "delete")) {
+                  bp.breakpoint_sites().for_each([&](au
+                      target.get_process().breakpoint_s
+                  });
+                  target.breakpoints().remove_by_id(*id
+              }
+        }
+   }
+
+First, we grab the breakpoint subcommand from the supplied
+arguments. We look for a dot character in the given ID, extract
+the breakpoint ID from it, print an error if this failed, and then
+find the corresponding breakpoint. If the dot position is not
+std::string::npos, the supplied ID must be for a breakpoint site. We
+
+extract the breakpoint site ID (the part after the dot) and print
+an error if this fails. If the command was enable, we enable the
+breakpoint site. If the command was disable, we disable the site.
+If there was no dot character, we should operate on the
+breakpoint itself. Depending on what the supplied command
+was, we either enable, disable, or delete the breakpoint. When
+we delete breakpoints, we also remove all their breakpoint sites
+from the sdb::process.
+
+Users of the debugger can now interact with source-level
+breakpoints! Before we test breakpoints and stepping, let’s
+augment the debugger’s user interface so it can print out the
+source code currently being executed.
+
+Printing Currently Executing Source Code
+
+Printing the disassembly for the current code is fine, but it’s
+much easier for users to debug their code if they can see the
+source code that corresponds to the instructions being
+executed. Fortunately, with the line table and inlining support
+we’ve implemented, we can easily achieve this.
+
+At the moment, handle_stop calls print_disassembly after it prints the
+stop reason. We’ll add a print_source function and call it instead of
+print _disassembly to print the source code if we have enough
+
+information to do so. This information will come from one of
+two places. If the debugger is currently simulating regular
+function calls based on an inline stack, we’ll query the inline
+stack for the relevant file and line. Otherwise, we’ll look up the
+line table entry corresponding to the current program counter
+value. In src/tools/sdb.cpp, modify handle_stop like so:
+
+   namespace {
+       void handle_stop(sdb::target& target, sdb::st
+              print_stop_reason(target, reason);
+              if (reason.reason == sdb::process_state:
+                  if (target.get_stack().inline_height
+                      auto stack = target.get_stack().i
+                      auto frame = stack[stack.size()
+                      print_source(frame.file().path, f
+                  }
+                  else if (auto entry = target.line_ent
+                      entry != sdb::line_table::iterato
+                      print_source(entry->file_entry->p
+                  }
+                  else { ➌
+                      print_disassembly(
+                          target.get_process(), target
+                  }
+              }
+         }
+   }
+
+As before, we first print information about the stop reason we
+received. If the process stopped due to a signal, we print the
+current execution location. If the inline height is greater than 0,
+we’re currently simulating regular function calls ➊, so we print
+the source information for the current frame. We retrieve the
+current inline stack and then locate the frame below the
+current one. This frame’s file and line information will point to
+the exact source location at which the function was inlined. We
+then print the source code around that location. The third
+argument to print_source is the number of lines of context to print.
+I chose three, as it gives the user a reasonable amount of
+context without flooding their console space.
+
+If we’re not currently simulating non-inline function calls ➋, we
+get the line entry corresponding to the current program counter
+value. If we don’t receive the end iterator, this entry is valid, so
+we print the source code around that location. Otherwise ➌, we
+don’t have enough information to print source code, so we print
+disassembly instead.
+
+Now we can implement print_source. The function is fairly long, so
+we’ll implement it step by step. Begin it in sdb/tools/sdb.cpp:
+
+   #include <fstream>
+   #include <filesystem>
+   #include <cmath>
+   namespace {
+       void print_source(
+                const std::filesystem::path& path, std
+              std::uint64_t n_lines_context) {
+              std::ifstream file{ path.string() };
+              auto start_line = line <= n_lines_context
+              auto end_line = line + n_lines_context +
+
+We start by creating a std::ifstream from the given path, which
+opens the file and readies it for reading. We then calculate the
+start and end line numbers to print based on the given line and
+amount of context requested. We assign source code lines
+numbers starting at 1. The start line should never be smaller
+than 1, so if the line at which to start is less than or equal to the
+number of lines of context to give, we simply set the start line to
+1. For the end line, we’ll use the line one after the current line,
+plus the requested lines of context. Later, we’ll deal with the
+possibility that the end line falls outside of the file’s range.
+
+After determining the start and end lines, we discard any
+source code that comes before the starting line we’re looking
+for:
+
+              --snip--
+              char c{};
+             auto current_line = 1u;
+             while (current_line != start_line && file
+                   if (c == '\n') {
+                       ++current_line;
+                   }
+             }
+
+We loop, continually reading characters. Every time we get a
+newline character, we increment the current line. When the
+current line is equal to the desired start line, we terminate the
+loop because we’re ready to print the source.
+
+We’d like to print the line number before each line of source
+code, as well as a small arrow (>) at the beginning of the
+currently executing line. We’ll need to repeat this process in a
+couple of places, so we factor the code to do so into a lambda
+function:
+
+             --snip--
+             auto print_line_start = [&](auto current_
+                  auto fill_width = static_cast<int>(
+                      std::floor(std::log10(end_line))
+                  auto arrow = current_line == line ?
+                  fmt::print("{} {:>{}} ", arrow, curre
+             };
+The calculations here are a bit nuanced. The line numbers
+should all be the same width so they don’t misalign the source
+code. For example, the output should look like this:
+
+     8   pet_cat();
+     9   put_cat_to_bed();
+   10    contemplate_life();
+
+We’d like to avoid the following, which improperly indents the
+code:
+
+   8     pet_cat();
+   9     put_cat_to_bed();
+   10    contemplate_life();
+
+We shouldn’t set the width of the line numbers arbitrarily,
+however. If we end up printing a source file that is 10,000 lines
+long and align the numbers to a width of four characters, the
+code will end up misaligned. On the other hand, if we decide to
+align the numbers to a width of six characters but only print
+source files of up to 100 lines, we’ve wasted a lot of space.
+
+So, we calculate a fill width by figuring out the length in
+characters of the end line when formatted as a string. The
+std::floor(std::log10(end_line)) + 1 expression calculates this. If you’re
+not familiar with logarithms used this way, you can think of it
+as “How many times can you divide this number by 10?”
+
+If the current line in the source code is equal to the current line
+supplied to print_source, we should output an arrow; otherwise,
+we output a blank space. Next, we use a nested format specifier
+to generate the text. In "{} {:>{}} ", an arrow or blank space will
+replace the first pair of braces, the fill width will replace the
+inner set of the second pair, and the current line number will
+replace the outer set of the second pair, along with the
+necessary whitespace. This specifier should correctly format the
+line number, padded to a sensible width.
+
+With this helper function defined, we can print out the source:
+
+              --snip--
+              print_line_start(current_line);
+              while (current_line <= end_line && file.g
+                   std::cout << c;
+                   if (c == '\n') {
+                       ++current_line;
+                       print_line_start(current_line);
+                   }
+              }
+
+              std::cout << std::endl;
+         }
+   }
+
+We print the line start information for the current line. Then,
+we continue reading characters until either we reach the end
+line we computed earlier or nothing remains in the file. We
+output each character we read. If we read a newline character,
+we increment the current line and output the line start
+information for the new line. Finally, we output another
+newline character and flush the stream with std::endl so it’s
+immediately output to the console.
+
+Lastly, we print the filename, line number, and source code
+function inside print_stop_reason. The message should look
+something like this:
+
+   Process 2544 stopped with signal TRAP at 0x555555
+   force_inline.cpp:4 (main) (breakpoint 1)
+
+Let’s add a function_name_at_address function to sdb::target that
+retrieves the function name for a given program counter value.
+Declare it in sdb/include/libsdb/target.hpp:
+   namespace sdb {
+         class target {
+         public:
+              --snip--
+              std::string function_name_at_address(
+                      virt_addr address) const;
+              --snip--
+         };
+   }
+
+We return a std::string instead of a std::string_view because in
+Chapter 17, we’ll additionally qualify the function name with
+the ELF file in which it’s defined, so we can’t just return a view
+of an existing string. Implement the function in
+sdb/src/target.cpp:
+
+   #include <cxxabi.h>
+
+   std::string sdb::target::function_name_at_address
+         virt_addr address) const {
+       auto file_address = address.to_file_addr(*elf
+         auto obj = file_address.elf_file();
+         if (!obj) return "";
+
+         auto func = obj->get_dwarf().function_contain
+         if (func and func->name()) {
+              return std::string{*func->name()};
+          }
+          else if (auto elf_func = obj->get_symbol_cont
+              elf_func and ELF64_ST_TYPE(elf_func.value
+              auto elf_name = std::string{ obj->get_st
+              return abi::__cxa_demangle(elf_name.c_st
+          }
+          return "";
+   }
+
+We attempt to find the function DIE containing the program
+counter as a file address. If that DIE exists and has a name
+attribute, we return the name. Otherwise, we follow the same
+process we use in get_signal_stop_reason; we look for the ELF symbol
+containing the current program counter as an offset, and if we
+find one that is a function symbol, we demangle it and return it.
+If we don’t find a relevant ELF symbol, we don’t have enough
+information to get the function name, so we return an empty
+string.
+
+Now we can use this function in get_signal_stop_reason. Modify the
+existing code in sdb/tools/sdb.cpp:
+
+   namespace {
+       std::string get_signal_stop_reason(
+                const sdb::target& target, sdb::stop_re
+              auto& process = target.get_process();
+              auto pc = process.get_pc();
+              std::string message = fmt::format("stoppe
+                  sigabbrev_np(reason.info), pc.addr()
+
+              auto line = target.line_entry_at_pc();
+              if (line != sdb::line_table::iterator())
+                  auto file = line->file_entry->path.fi
+                  message += fmt::format(", {}:{}", fil
+              }
+
+              auto func_name = target.function_name_at_
+              if (func_name != "") {
+                  message += fmt::format(" ({})", func_
+              }
+
+              if (reason.info == SIGTRAP) {
+                  message += get_sigtrap_info(process,
+              }
+
+              return message;
+        }
+   }
+
+We add a pc variable that will enable us to call get_pc only once.
+The “stopped with signal . . .” message remains the same. After
+computing this message, we find the line table entry at the
+current program counter value. If we don’t get an empty
+iterator, we append the file and line number from that entry to
+the message.
+
+Next, we call the function_name_at_address function we just wrote to
+retrieve the function name. We add the function name to the
+message, so long as we received one. Finally, we append the
+SIGTRAP information to the message, as we used to, and then
+
+break. Stopping at a breakpoint should now print out source
+information, like this:
+
+   sdb> break set main
+   sdb> c
+   Process 2897 stopped with signal TRAP at 0x555555
+   force_inline.cpp:4 (main) (breakpoint 1)
+     15 }
+     17 int main() {
+   > 18      c();
+     19 }
+   sdb>
+
+Our tool is starting to behave like a real source-level debugger!
+Before moving on to stack unwinding, let’s test the code.
+Testing
+
+We’ll test the code in the opposite order of that in which we
+wrote the features. This is because function breakpoints will
+make it easier to test the stepping routines.
+
+Breakpoints
+
+To test source-level breakpoints, let’s write a short program
+involving overloaded functions. Create a new file at
+sdb/test/targets/overloaded.cpp with these contents:
+
+   #include <string>
+   #include <iostream>
+
+   void print_type(int) {
+        std::cout << "int";
+   }
+
+   void print_type(double) {
+        std::cout << "double";
+   }
+
+   void print_type(std::string) {
+        std::cout << "string";
+   }
+   int main() {
+         print_type(0);
+         print_type(1.4);
+         print_type("hello");
+   }
+
+We write three overloads of print_type that print the type of the
+argument with which they were called. Add a target for this
+program to sdb/test/targets/CMakeLists.txt:
+
+   add_test_cpp_target(overloaded)
+
+Let’s run some manual tests first and then automate them.
+Launch overloaded with sdb, set a breakpoint on line 17 of
+overloaded.cpp, and continue. The process should stop on the
+specified line:
+
+   sdb> break set overloaded.cpp:17
+   sdb> c
+   Process 438 stopped with signal TRAP at 0x5555555
+   overloaded.cpp:17 (main) (breakpoint 1)
+     14 }
+     16 int main() {
+   > 17      print_type(0);
+       18         print_type(1.4);
+      19       print_type("hello");
+      20 }
+
+Set a breakpoint on print_type, list the breakpoints, and disable
+the breakpoint site for the overload with the lowest address
+(likely the int overload). You should have created three
+breakpoint sites, and the disabling should work:
+
+   sdb> break set print_type
+   sdb> break list
+   Current breakpoints:
+   1: file = overloaded.cpp, line = 17, enabled:
+        .1: address = 0x5555555564a9, enabled
+   2: function = print_type, enabled:
+        .1: address = 0x555555556418, enabled
+        .2: address = 0x555555556445, enabled
+        .3: address = 0x555555556471, enabled
+   sdb> break disable 2.1
+   sdb> break list
+   Current breakpoints:
+   1: file = overloaded.cpp, line = 17, enabled:
+        .1: address = 0x5555555564a9, enabled
+   2: function = print_type, enabled:
+        .1: address = 0x555555556418, disabled
+        .2: address = 0x555555556445, enabled
+        .3: address = 0x555555556471, enabled
+
+Continue the process three times. The program should halt at
+two different overloads of print_type and then terminate:
+
+   sdb> c
+   Process 438 stopped with signal TRAP at 0x5555555
+   overloaded.cpp:9 (print_type) (breakpoint 3)
+      6 }
+      8 void print_type(double) {
+   > 9      std::cout << "double";
+     10 }
+     12 void print_type(std::string) {
+     13     std::cout << "string";
+   sdb> c
+   Process 438 stopped with signal TRAP at 0x5555555
+   overloaded.cpp:13 (print_type) (breakpoint 4)
+     10 }
+     12 void print_type(std::string) {
+   > 13     std::cout << "string";
+     14 }
+      16 int main() {
+      17     print_type(0);
+   sdb> c
+   intdoublestringProcess 438 exited with status 0
+
+Now let’s automate this test. Create a new test case in
+sdb/test/tests.cpp:
+
+   #include <libsdb/target.hpp>
+
+   TEST_CASE("Source-level breakpoints", "[breakpoin
+       auto dev_null = open("/dev/null", O_WRONLY);
+       auto target = target::launch("targets/overloa
+       auto& proc = target->get_process();
+
+         target->create_line_breakpoint("overloaded.cp
+
+         proc.resume();
+         proc.wait_on_signal();
+
+         auto entry = target->line_entry_at_pc();
+         REQUIRE(entry->file_entry->path.filename() ==
+         REQUIRE(entry->line == 17);
+
+         auto& bkpt = target->create_function_breakpoi
+         bkpt.enable();
+    sdb::breakpoint_site* lowest_bkpt = nullptr;
+    bkpt.breakpoint_sites().for_each([&lowest_bkp
+        if (lowest_bkpt == nullptr or site.addres
+            lowest_bkpt = &site;
+        }
+    });
+    lowest_bkpt->disable();
+
+    proc.resume();
+    proc.wait_on_signal();
+
+    REQUIRE(target->line_entry_at_pc()->line == 9
+
+    proc.resume();
+    proc.wait_on_signal();
+
+    REQUIRE(target->line_entry_at_pc()->line ==
+
+    proc.resume();
+    auto reason = proc.wait_on_signal();
+
+    REQUIRE(reason.reason == sdb::process_state:
+    close(dev_null);
+}
+We launch the target with stdout redirected to /dev/null and
+create a breakpoint on line 17 of overloaded.cpp. After resuming
+the process and waiting for it to halt, we ensure that we stopped
+at the expected location. We then create a breakpoint on the
+overloaded print_type function and disable the breakpoint site
+with the lowest address, which will most likely be the overload
+for int, as it comes first in the source code. To achieve this, we
+initialize a pointer to a breakpoint site and then loop over all
+breakpoint sites that belong to the breakpoint, finding the one
+with the lowest address and storing it in the pointer. Once the
+loop terminates, we disable the found breakpoint site. We then
+resume the process three times, ensuring that we stop at lines 9
+and 13 and that the process then exits. Finally, we close the file
+handle for /dev/null. This test should pass. That will do for
+breakpoints. Let’s move on to stepping.
+
+Stepping
+
+We’d like to test all three of our stepping functions for both
+inlined functions and non-inlined functions. To do so, we’ll
+write a program whose call chain is a few functions deep and
+that includes inlining. Create a new file at
+sdb/test/targets/step.cpp with these contents:
+   #include <cstdio>
+
+   __attribute__((always_inline))
+   inline void scratch_ears() {
+        std::puts("Scratching ears");
+   }
+
+   __attribute__((always_inline))
+   inline void pet_cat() {
+       scratch_ears();
+        std::puts("Done petting cat");
+   }
+
+   void find_happiness() {
+        pet_cat();
+        std::puts("Found happiness");
+   }
+
+   int main() {
+       find_happiness();
+        find_happiness();
+   }
+
+Add a target for the file to sdb/test/targets/CMakeLists.txt:
+
+   add_test_cpp_target(step)
+Once again, we’ll run some manual tests and then automate
+them. Launch the program with sdb, set a breakpoint on main,
+and continue. The debugger should hit the breakpoint:
+
+   Launched process with PID 1437
+   sdb> break set main
+   sdb> c
+   Process 1437 stopped with signal TRAP at 0x555555
+   step.cpp:20 (main) (breakpoint 1)
+     17 }
+     19 int main() {
+   > 20      find_happiness();
+     21      find_happiness();
+     22 }
+
+Step over the first function call and into the second one.
+Execution should halt on the first call inside find_happiness:
+
+   sdb> next
+   Scratching ears
+   Done petting cat
+   Found happiness
+   Process 1437 stopped with signal TRAP at 0x555555
+   step.cpp:21 (main) (single step)
+     19 int main() {
+     20     find_happiness();
+   > 21      find_happiness();
+     22 }
+   sdb> step
+   Process 1437 stopped with signal TRAP at 0x555555
+   step.cpp:5 (find_happiness) (single step)
+     12 }
+     14 void find_happiness() {
+   > 15     pet_cat();
+     16     std::puts("Found happiness");
+     17 }
+     19 int main() {
+
+Step into pet_cat. Because this call was inlined, the program
+counter shouldn’t change, but the source location should:
+
+   sdb> step
+   Process 1437 stopped with signal TRAP at 0x555555
+   step.cpp:5 (find_happiness) (single step)
+      8 __attribute__((always_inline))
+      9 void pet_cat() {
+   > 10      scratch_ears();
+      11        std::puts("Done petting cat");
+      12 }
+      14 void find_happiness() {
+
+Step over the inlined scratch_ears call, out of the pet_cat function,
+and out of the find_happiness function. Execution should stop at the
+end of main:
+
+   sdb> next
+   Scratching ears
+   Process 1437 stopped with signal TRAP at 0x555555
+   step.cpp:11 (find_happiness) (single step)
+      8 __attribute__((always_inline))
+      9 void pet_cat() {
+     10      scratch_ears();
+   > 11      std::puts("Done petting cat");
+     12 }
+     14 void find_happiness() {
+     15      pet_cat();
+   sdb> finish
+   Done petting cat
+   Process 1437 stopped with signal TRAP at 0x555555
+   step.cpp:16 (find_happiness) (single step)
+      14 void find_happiness() {
+     15         pet_cat();
+   > 16         std::puts("Found happiness");
+     17 }
+     19 int main() {
+     20      find_happiness();
+   sdb> finish
+   Found happiness
+   Process 1437 stopped with signal TRAP at 0x555555
+   step.cpp:22 (main) (single step)
+     19 int main() {
+     20      find_happiness();
+     21      find_happiness();
+   > 22 }
+
+If the tests worked as expected, you’ve successfully
+implemented source-level stepping, and you can convert this
+manual test into an automated one. Add a new test case to
+sdb/test/tests.cpp:
+
+   TEST_CASE("Source-level stepping", "[target]") {
+       auto dev_null = open("/dev/null", O_WRONLY);
+       auto target = target::launch("targets/step",
+auto& proc = target->get_process();
+
+target->create_function_breakpoint("main").en
+proc.resume();
+proc.wait_on_signal();
+
+auto pc = proc.get_pc();
+REQUIRE(target->function_name_at_address(pc)
+
+target->step_over();
+
+auto new_pc = proc.get_pc();
+REQUIRE(new_pc != pc);
+REQUIRE(target->function_name_at_address(pc)
+
+target->step_in();
+
+pc = proc.get_pc();
+REQUIRE(target->function_name_at_address(pc)
+REQUIRE(target->get_stack().inline_height() =
+
+target->step_in();
+
+new_pc = proc.get_pc();
+REQUIRE(new_pc == pc);
+REQUIRE(target->get_stack().inline_height() =
+
+target->step_out();
+         new_pc = proc.get_pc();
+         REQUIRE(new_pc != pc);
+         REQUIRE(target->function_name_at_address(pc)
+
+         target->step_out();
+
+         pc = proc.get_pc();
+         REQUIRE(target->function_name_at_address(pc)
+         close(dev_null);
+   }
+
+This code essentially walks through the manual test we ran
+previously. We launch the target, set a breakpoint on main, and
+resume the process. When the process halts, we ensure that
+we’re inside the main function. We step over the first call to
+find_happiness and ensure that the program counter has changed
+
+but that we’re still inside main. We then step into find_happiness,
+make sure the debugger reports the correct function, and
+ensure the inline height is 2 (because we’re also at the top of the
+inlined pet_cat and scratch _head functions).
+
+Next, we step into the inlined pet_cat function and ensure that
+the program counter hasn’t changed but that the inline height
+has gone down. Checking the function name at that offset
+wouldn’t return pet_cat because sdb::dwarf reports the outermost
+non-inlined function for offset queries where there are inlined
+frames, so we don’t bother checking it. We step out of pet_cat,
+ensure that the program counter has changed and that we’re
+still inside find_happiness, and then step into main. This test should
+pass.
+
+Summary
+
+In this chapter, you learned how function inlining complicates
+debugging and then devised a way to create the illusion that
+there is no inlining. You implemented routines to step into, over,
+and out of function calls and to set breakpoints at the level of
+source code rather than in the machine code. You also added
+the ability to print out the currently executing source code line.
+
+In the next chapter, you’ll begin implementing a full stack
+unwinder and augment your debugger with the ability to
+produce backtraces and restore registers to their values from
+before the current function was called.
+
+Check Your Knowledge
+
+1.
+1. What is function inlining?
+2.
+2. Which DWARF tag is used to represent an inlined call?
+3.
+3. Which register sometimes stores the stack frame base for the
+  current function? Why can’t we always rely on this register?

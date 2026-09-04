@@ -1,0 +1,1958 @@
+VARIABLES AND TYPES
+ Change comes whether we will it or not.
+One of the most common operations programmers carry out
+when debugging their programs is printing out the values of
+variables, which can reveal how the data in a program mutates
+over the course of its execution. Now that the debugger
+supports DWARF expressions, you can implement variable
+printing in this chapter.
+
+Currently, the debugger can print only global variables that are
+64-bit unsigned integers. You’ll extend this support to both
+global and local variables of almost any type by parsing the
+type information stored in DWARF. You’ll support the
+visualization of complex types and add support for visualizing
+subobjects and array elements, like cats[1].name.
+
+I won’t walk through the steps required to implement writing
+values to variables. The process is very similar to the one for
+reading variables, except reversed, but implementing it would
+add many more pages of code. I also won’t walk through
+reading from thread-local storage, but I’ll outline roughly how
+thread-local storage works in Chapter 22.
+
+Type DIEs
+
+DWARF information expresses types as DIEs, and different DIE
+tags apply to different categories of types:
+  DW_TAG_base_type    Used for types built into the language, like int,
+  float, and char
+
+  DW_TAG_unspecified_type     Defined very vaguely in the DWARF
+  specification but used in C++ for types like auto, decltype(auto),
+  and decltype (nullptr) that do not name concrete types
+  DW_TAG_const_type     A const-qualified type
+  DW_TAG_pointer_type     A pointer type
+  DW_TAG_ptr_to_member_type    A C++ pointer-to-member type,
+  explained in more detail later in this section
+  DW_TAG_reference_type     An lvalue reference type (T&)
+  DW_TAG_rvalue_reference_type   An rvalue reference type (T&&)
+  DW_TAG_volatile_type    A volatile-qualified type
+  DW_TAG_typedef     A typedef or type alias (for example, using T = int;)
+  DW_TAG_array_type     A potentially multidimensional array type
+  DW_TAG_class_type     A class defined with the class keyword
+  DW_TAG_structure_type     A class defined with the struct keyword
+  DW_TAG_union_type     A union type
+
+DWARF uses several other tags for specific languages, but these
+aren’t relevant to C++.
+
+Type DIEs typically refer to one another through their DW_AT_type
+attributes. For example, DWARF information could represent
+the C++ declaration const int* const i; with the following set of
+DIEs:
+   <0x0000002e>          DW_TAG_variable
+                             DW_AT_name                                i
+                             DW_AT_type                                <
+   <0x00000042>          DW_TAG_const_type
+                               DW_AT_type                              <
+   <0x00000047>          DW_TAG_pointer_type
+                             DW_AT_byte_size                           0
+                             DW_AT_type                                <
+   <0x0000004d>          DW_TAG_const_type
+                             DW_AT_type                                <
+   <0x00000053>          DW_TAG_base_type
+                             DW_AT_byte_size                           0
+                             DW_AT_encoding                            D
+                             DW_AT_name                                i
+
+The DIE for the i variable points to the DIE at 0x42, which is the
+first DW_TAG_const_type DIE. This in turn references the DIE for the
+pointer type, which references the second DW_TAG_const_type DIE,
+which finally references the int base type DIE.
+
+Base Types
+
+Base types have a name, a size (encoded as either a DW_AT_byte_size
+or a DW_AT_bit_size attribute), and an encoding. These DIES use
+several types of encodings:
+  DW_ATE_boolean A Boolean type
+
+  DW_ATE_float A floating-point type (including double and long float)
+
+  DW_ATE_signed A signed integer type
+
+  DW_ATE_signed_char A signed character type; on x64, includes both
+
+  char and signed char, although they’re distinct types
+
+  DW_ATE_unsigned An unsigned integer type
+
+  DW_ATE_unsigned_char An unsigned character type
+
+  DW_ATE_UTF A Unicode character type; in C++17, used for the
+
+  char16_t and char32_t types
+
+For a concrete example, take a look at the DIE describing the int
+type in the previously shown DWARF information. As with DIE
+tags, DWARF has several other base type encodings that aren’t
+used in C++.
+
+Array Types
+
+Array DIEs have a DW_AT_type attribute that gives the type of the
+array’s elements and child DIEs of type DW_TAG_subrange_type that
+specify the bounds of each dimension of the array. The first
+child specifies the bounds of the first dimension, the second
+child specifies those for the second dimension, and so on. These
+children have DW_AT_upper_bound attributes that give the highest
+valid index of the dimension (in other words, one less than the
+size of the dimension). For example, the declaration int my_ints[3]
+[5]; would result in a DIE subtree that looks like this:
+
+   DW_TAG_array_type
+       DW_AT_type               (0x0000004b "int")
+
+         DW_TAG_subrange_type
+             DW_AT_type    (0x00000044 "long unsigned
+             DW_AT_upper_bound     (0x02)
+
+         DW_TAG_subrange_type
+             DW_AT_type    (0x00000044 "long unsigned
+             DW_AT_upper_bound     (0x04)
+
+The element type is int, so the array type’s DW_AT_type attribute
+points to the DIE for the int base type. The DIE has two children
+that give the upper bounds of the two dimensions of the array.
+Array indices in C++ are of type std::size_t, which for x64 is long
+unsigned int, so the subrange DIEs have DW_AT_type attributes that
+
+point to the DIE for the long unsigned int type.
+
+Class and Union Types
+
+DWARF describes members of class and union types with
+DW_TAG_member child DIEs. These DIEs usually have a DW_AT_name
+attribute that holds the member’s name, a DW_AT_type attribute
+that references the type DIE for the member, and a
+DW_AT_data_member_location attribute that gives the byte offset into the
+
+enclosing object at which the member lives. For example,
+consider the following type definition:
+
+   struct cat {
+         const char* name;
+         int age;
+   };
+
+The type DIE for this type looks like this:
+
+   DW_TAG_structure_type
+       DW_AT_name      ("cat")
+       DW_AT_byte_size (0x10)
+
+         DW_TAG_member
+             DW_AT_name    ("name")
+             DW_AT_type    (0x00000072 "const char *"
+             DW_AT_data_member_location    (0x00)
+         DW_TAG_member
+             DW_AT_name    ("age")
+             DW_AT_type    (0x00000043 "int")
+             DW_AT_data_member_location    (0x08)
+The name member is the first member of the object and as such
+lives at a byte offset of 0. The name member has a size of 8 bytes;
+therefore, the age member starts at an offset of 8. The
+DW_AT_data_member_location attribute takes into account any padding
+
+within the object, so it’s always more accurate to reference this
+attribute rather than simply adding up the sizes of previous
+members.
+
+Bitfields are a bit more complicated due to some historical
+issues. A bitfield is a C++ feature that allows integral types to
+take up a number of bits not aligned on a byte boundary.
+They’re typically used to pack data very tightly to improve
+cache performance, or to interface with hardware that requires
+packing data together. Consider the following modifications to
+the previously shown type:
+
+   #include <cstdint>
+
+   struct cat {
+        const char* name;
+        std::uint8_t age : 5;
+        std::uint8_t color : 3;
+   };
+Here, the age and color members take up 5 and 3 bits,
+respectively. There are two ways in which DWARF information
+could encode this fact, one of which is deprecated in DWARF 4,
+even though compilers still sometimes output it.
+
+The deprecated way to store this information is with the
+DW_AT_bit_offset attribute. Here is a stripped-down example:
+
+   DW_TAG_structure_type
+     DW_AT_name                            cat
+      DW_AT_byte_size                      0x00000010
+      DW_TAG_member
+        DW_AT_name                            name
+        DW_AT_data_member_location            0
+      DW_TAG_member
+        DW_AT_name                            age
+        DW_AT_byte_size                       0x00000001
+        DW_AT_bit_size                        0x00000005
+        DW_AT_bit_offset                      0x00000003
+        DW_AT_data_member_location            8
+      DW_TAG_member
+        DW_AT_name                            color
+        DW_AT_byte_size                       0x00000001
+        DW_AT_bit_size                        0x00000003
+        DW_AT_bit_offset                      0x00000000
+        DW_AT_data_member_location            8
+The DW_AT_bit_offset attribute stores the distance in bits between
+the most significant bit of the aligned storage (whose size is
+given by the DW_AT_byte_size attribute) for the member and the
+most significant bit of the real data. This is awkward for little-
+endian machines because the attribute expresses the distance
+from the end of the storage to the end of the data, and you’ll
+need to perform additional calculations to find the start of the
+data.
+
+The preferred method of describing bitfields is with the
+DW_AT_data_bit _offset member:
+
+   DW_TAG_structure_type
+        DW_AT_name                          cat
+        DW_AT_byte_size                     0x00000010
+        DW_TAG_member
+         DW_AT_name                           name
+         DW_AT_data_member_location           0
+        DW_TAG_member
+          DW_AT_name                          age
+         DW_AT_bit_size                       0x00000005
+         DW_AT_data_bit_offset                64
+        DW_TAG_member
+         DW_AT_name                           color
+         DW_AT_bit_size                         0x00000003
+         DW_AT_data_bit_offset                  69
+
+The DW_AT_data_bit_offset attribute stores the distance in bits from
+the start of the enclosing type to the start of the data. We’ll need
+to handle both of these methods of encoding bitfields.
+
+Member Pointer Types
+
+An infrequently used feature of C++, member pointers let you
+refer indirectly to the member data or member functions of a
+type. To demonstrate how they work (and so we have a
+program to use for testing later), create a file at
+sdb/test/targets/member_pointer.cpp with the following contents:
+
+   #include <iostream>
+
+   struct cat {
+       const char* name;
+       void meow() const { std::cout << "meow\n"; }
+   };
+   int main() {
+       const char* (cat::*data_ptr) = &cat::name;
+       void (cat::*func_ptr)() const = &cat::meow;
+
+         cat marshmallow{ "Marshmallow" };
+         auto name = marshmallow.*data_ptr;
+         (marshmallow.*func_ptr)();
+   }
+
+We define a cat type that has a name data member and a meow
+member function. At the start of main, we define a member
+pointer called data_ptr that can point to any data member of cat
+whose type is const char* and initialize it to point to cat::name. (Yes,
+the syntax is very strange.) We similarly define a member
+function pointer called func_ptr that can point to any member
+function of cat so long as it takes no arguments and returns void.
+We initialize the pointer to cat::meow.
+
+Importantly, member pointers don’t point to members of a
+specific instance of the class; they must be applied to a class
+instance in order to extract the instance’s relevant member. To
+demonstrate this, we create a cat called Marshmallow, retrieve
+its name using the data_ptr member pointer, then call meow using
+the func_ptr member function pointer.
+
+The utility of these member pointers may not be immediately
+obvious, but they can be very handy when dealing with higher-
+order functions. For example, C++20 ranges enable you to
+retrieve a range representing the names of all the cats in a cats
+range by writing std::views::transform(cats, &cat::name).
+
+Add member_pointer to sdb/test/targets/CMakeLists.txt:
+
+   --snip--
+   add_test_cpp_target(member_pointer)
+   --snip--
+
+Now we can design a type to store information about the target
+program’s types.
+
+Storing Type Information
+
+Let’s create an sdb::type class that we’ll interact with to visualize
+type data and retrieve information about types in the target
+program. Put this code in a new file called
+sdb/include/libsdb/type.hpp:
+
+   #ifndef SDB_TYPE_HPP
+   #define SDB_TYPE_HPP
+
+   #include <string_view>
+   #include <optional>
+   #include <libsdb/dwarf.hpp>
+   namespace sdb {
+       class type {
+         public:
+             type(die die)
+                 : die_(std::move(die)) {}
+
+              die get_die() const { return die_; }
+              std::size_t byte_size() const;
+              bool is_char_type() const;
+
+         private:
+             std::size_t compute_byte_size() const;
+
+              die die_;
+              mutable std::optional<std::size_t> byte_s
+         };
+   }
+
+   #endif
+
+We write a constructor that takes the DIE for the type and stores
+it in a die_ member. We also write a function to retrieve this DIE
+and declare a function for retrieving the byte size of the type.
+Computing this value may require a fair bit of work, so we
+factor the real calculation into a compute_byte _size private member
+function, which we’ll call the first time we call byte_size, to
+populate the byte_size_ member. We declare this member as mutable
+because it’s a cache variable that const member functions can
+modify. Finally, we declare a helper function for figuring out
+whether a type is a characterlike type, is_char_type, that will make
+our lives easier later on.
+
+We’ll mostly retrieve types from DW_AT_type attributes, so let’s add
+an as_type member function to sdb::attr. Declare it in
+sdb/include/libsdb/dwarf.hpp:
+
+   namespace sdb {
+        class type;
+        class attr {
+        public:
+              --snip--
+              type as_type() const;
+              --snip--
+        };
+   }
+
+We forward-declare sdb::type and then add an as_type member
+function that returns an instance of this type. Implement this
+function in sdb/src/dwarf.cpp:
+
+   #include <libsdb/type.hpp>
+   sdb::type sdb::attr::as_type() const {
+        return sdb::type{ as_reference() };
+   }
+
+DWARF encodes attributes of type DW_AT_type as references to the
+relevant type DIE, so we call as_reference to retrieve this DIE and
+then pass that to the constructor for sdb::type.
+
+Now we can start implementing the sdb::type class’s member
+functions, starting with byte_size. Create a new file at
+sdb/src/type.cpp with these contents:
+
+   #include <libsdb/type.hpp>
+
+   std::size_t sdb::type::byte_size() const {
+        if (!byte_size_.has_value())
+            byte_size_ = compute_byte_size();
+        return *byte_size_;
+   }
+
+We check whether we’ve already computed the byte size for
+this type. If we haven’t, we compute it and cache the result.
+Finally, we return the cached result. Add this new file to
+sdb/src/CMakeLists.txt:
+   add_library(libsdb ... type.cpp)
+
+Next, let’s implement compute_byte_size, back in sdb/src/type.cpp:
+
+   std::size_t sdb::type::compute_byte_size() const
+       auto tag = die_.abbrev_entry()->tag;
+
+         if (tag == DW_TAG_pointer_type) { ➊
+             return 8;
+         }
+         if (tag == DW_TAG_ptr_to_member_type) { ➋
+             auto member_type = die_[DW_AT_type].as_ty
+             if (member_type.get_die().abbrev_entry()
+                 return 16;
+             }
+             return 8;
+         }
+         if (tag == DW_TAG_array_type) { ➌
+             auto value_size = die_[DW_AT_type].as_typ
+              for (auto& child : die_.children()) {
+                  if (child.abbrev_entry()->tag == DW_T
+                      value_size *= child[DW_AT_upper_b
+                  }
+              }
+              return value_size;
+         }
+         if (die_.contains(DW_AT_byte_size)) { ➍
+              return die_[DW_AT_byte_size].as_int();
+        }
+        if (die_.contains(DW_AT_type)) { ➎
+            return die_[DW_AT_type].as_type().byte_si
+        }
+
+        return 0;
+   }
+
+First, we extract the tag from the type’s abbreviation entry. If
+the type is a pointer type ➊, we return 8.
+
+If the type is a pointer to a member ➋, the size depends on what
+type it points to. On Linux systems, pointers to member
+functions are actually twice as large as pointers to member data
+because they store an additional 8 bytes used to support
+multiple inheritance. You’ll find this fact specified in the
+Itanium C++ ABI, which was originally designed for the
+discontinued Intel Itanium processors but is used for essentially
+all C++ implementations on Linux. As such, we check the type to
+which the member pointer points and return 16 if that type is a
+subroutine (function) type or 8 otherwise.
+
+If the type is an array type ➌, the computation is more involved.
+Recall that array DIEs have children of type DW_TAG_subrange_type
+that specify the bounds of each dimension of the array as well
+as a DW_AT_type attribute that specifies the element type of the
+array. As such, we compute the byte size of an array type by
+first computing the byte size of the type DIE’s DW_AT_type attribute
+and then multiplying this size by the size of each dimension
+(which is 1 plus the value of the DW_AT_upper_bound attribute).
+
+If the DIE is neither a pointer nor an array, we examine its
+other attributes. If the DIE has a DW_AT_byte_size attribute ➍, we use
+that. If it instead has a DW_AT_type attribute, we defer to the size of
+the type pointed to by that attribute ➎. Otherwise, we don’t
+know the size of the type, so we return 0.
+
+Before we implement is_char_type, we’ll create a useful function
+template helper to use in a few places in this chapter and the
+next: strip<Tags>, for stripping layers of qualifiers, pointers, or
+reference types off of a type. For instance, we can use
+strip<DW_TAG_const_type, DW_TAG_volatile_type> for stripping away layers
+
+of const and volatile. This approach uses a couple of handy C++
+features for minimizing code duplication: variadic templates
+and fold expressions. Define the helper inside sdb::type, in
+sdb/include/libsdb/type.hpp:
+
+   namespace sdb {
+       class type {
+        public:
+            --snip--
+             ➊ template<int... Tags>
+                type strip() const {
+                    auto ret = *this;
+                   auto tag = ret.get_die().abbrev_entry
+                ➋ while (((tag == Tags) or ...)) {
+                       ret = ret.get_die()[DW_AT_type].a
+                       tag = ret.get_die().abbrev_entry
+                   }
+                   return ret;
+               }
+               --snip--
+        };
+   }
+
+This template parameter list ➊ indicates that the strip function
+template takes any number of integer template arguments. It
+stores the arguments in Tags, which we call a parameter pack. In
+the definition, we initialize ret to be the current type and
+retrieve its DIE’s tag. We then loop, stripping away one DIE at a
+time by replacing ret with the DIE referred to by the DW_AT_type
+attribute.
+
+The code inside the while condition ➋ is a fold expression, which
+runs some expression across every element in a parameter
+pack and collects the result using a binary operator. Note that
+the extra set of parentheses is required, as that’s part of the
+syntax for fold expressions. In this case, we check each tag in
+the Tags parameter pack against the tag of the current DIE and
+combine the results with the or operator. The outcome will
+indicate whether any tag in the given set of template arguments
+matches the tag we’re currently examining.
+
+Using this function template, we can define the additional
+helper functions strip_cv_typedef for stripping just qualifiers and
+typedefs from type, strip_cvref_typedef for also stripping reference
+types, and strip_all for additionally stripping references and
+pointer types:
+
+   namespace sdb {
+       class type {
+       public:
+           --snip--
+           type strip_cv_typedef() const {
+                return strip<DW_TAG_const_type,
+                             DW_TAG_volatile_type,
+                             DW_TAG_typedef>();
+              }
+              type strip_cvref_typedef() const {
+                  return strip<DW_TAG_const_type,
+                               DW_TAG_volatile_type,
+                                     DW_TAG_typedef,
+                                     DW_TAG_reference_type,
+                                     DW_TAG_rvalue_reference_
+              }
+              type strip_all() const {
+                   return strip<DW_TAG_const_type,
+                                     DW_TAG_volatile_type,
+                                     DW_TAG_typedef,
+                                     DW_TAG_reference_type,
+                                     DW_TAG_rvalue_reference_
+                                     DW_TAG_pointer_type>();
+              }
+              --snip--
+        };
+   }
+
+Next, let’s implement is_char_type in sdb/src/type.cpp:
+
+   bool sdb::type::is_char_type() const {
+       auto stripped = strip_cv_typedef().get_die()
+       if (!stripped.contains(DW_AT_encoding)) retu
+       auto encoding = stripped[DW_AT_encoding].as_i
+       return stripped.abbrev_entry()->tag == DW_TAG
+              encoding == DW_ATE_signed_char or
+              encoding == DW_ATE_unsigned_char;
+   }
+The is_char_type function first strips the type of qualifiers and
+ensures that the type has a DW_AT_encoding attribute. If it’s a base
+type and the encoding is either DW_ATE_signed_char or
+DW_ATE_unsigned_char, we return true.
+
+This code completes the implementation of sdb::type.
+
+Visualizing Typed Data
+
+To visualize variables, we’ll need to operate on values in
+addition to their types. For this purpose, we’ll implement a type
+called sdb::typed_data that combines an sdb::type with a sequence of
+bytes and supports the operations we’ll need. Define it in
+sdb/include/libsdb/type.hpp:
+
+   #include <vector>
+
+   namespace sdb {
+       class process;
+       class typed_data{
+         public:
+             typed_data(std::vector<std::byte> data, t
+                        std::optional<virt_addr> addre
+                 : data_(std::move(data)), type_(value
+
+               const std::vector<std::byte>& data() cons
+              const std::byte* data_ptr() const { retu
+              const type& value_type() const { return t
+              std::optional<virt_addr> address() const
+
+              typed_data fixup_bitfield(
+                    const sdb::process& proc, const sdb:
+              std::string visualize(const sdb::process&
+
+         private:
+             std::vector<std::byte> data_;
+             type type_;
+             std::optional<virt_addr> address_;
+         };
+   }
+
+We declare a visualize member function that returns a string
+representing the contents of an object of this type. The function
+takes a reference to an sdb::process (because it may need to read
+memory), a span representing the data for the object, and a
+visualization depth for visualizing nested objects such as
+classes. We declare members to hold the data and its type, and
+an optional member for storing the address of the data. The
+address will be useful for implementing expression evaluation,
+but not all data will have a virtual memory address, such as
+data that lives in a register.
+We also define member functions for retrieving the members
+and a convenience function for retrieving a const std::byte* to the
+start of the data, which will simplify some of the visualization
+code. We initialize the member data in the constructor. We also
+declare a fixup_bitfield function, which we’ll use to preprocess
+bitfield members before visualizing them.
+
+Let’s begin writing the type visualizer. We’ll factor out most of
+this function into functions for dealing with different kinds of
+types:
+
+   std::string sdb::typed_data::visualize(
+         const sdb::process& proc, int depth) const
+       auto die = type_.get_die();
+       switch (die.abbrev_entry()->tag) {
+       case DW_TAG_base_type:
+           return visualize_base_type(*this);
+       case DW_TAG_pointer_type:
+           return visualize_pointer_type(proc, *this
+       case DW_TAG_ptr_to_member_type:
+           return visualize_member_pointer_type(*thi
+       case DW_TAG_array_type:
+           return visualize_array_type(proc, *this)
+         case DW_TAG_class_type:
+         case DW_TAG_structure_type:
+         case DW_TAG_union_type:
+             return visualize_class_type(proc, *this,
+         case DW_TAG_enumeration_type:
+         case DW_TAG_typedef:
+         case DW_TAG_const_type:
+         case DW_TAG_volatile_type:
+             return sdb::typed_data{ data_, die[DW_AT_
+                    .visualize(proc);
+         default: sdb::error::send("Unsupported type"
+         }
+   }
+
+We switch on the tag of the type DIE and dispatch to a relevant
+handler function. We handle the class, structure, and union tags
+with a single visualizer, then handle the enumeration, typedef,
+const, and volatile tags by retrieving their DW_AT_type attribute and
+visualizing the underlying type.
+
+Before we implement the specific visualizers, we’ll perform a
+bunch of string formatting, so let’s link libsdb against fmtlib, a
+library introduced in Chapter 6 that can help with this task. Edit
+the target_link_libraries command in sdb/src/CMakeLists.txt like so:
+
+   target_link_libraries(libsdb PRIVATE Zydis::Zydis
+
+Now we can dive into the specific visualizers, starting with the
+easy ones and leaving the more difficult for the end.
+Member Pointers
+
+We’ll start with the visualizer for member pointers. Add this
+code to sdb/src/type.cpp:
+
+   #include <fmt/format.h>
+
+   namespace {
+       std::string visualize_member_pointer_type(con
+           return fmt::format("0x{:x}",
+               sdb::from_bytes<std::uintptr_t>(data
+       }
+   }
+
+For both member data pointers and member function pointers,
+we read the first 64 bits of the data and visualize them as a
+pointer. We ignore the extra data that member function
+pointers store for supporting multiple inheritance.
+
+Pointers
+
+Next, let’s write the slightly more complex handler for regular
+pointer types. The additional complexity is that we should print
+out a string if the pointer is to a character type:
+   #include <libsdb/process.hpp>
+
+   namespace {
+         std::string visualize_pointer_type(
+               const sdb::process& proc, const sdb::ty
+               auto ptr = sdb::from_bytes<std::uint64_t>
+               if (ptr == 0) return "0x0";
+               if (data.value_type().get_die()[DW_AT_typ
+                   return fmt::format("\"{}\"", proc.rea
+               }
+               return fmt::format("0x{:x}", ptr);
+         }
+   }
+
+First, we interpret the data as a 64-bit integer. If the pointer
+value is 0, we return 0x0. We then check whether the type to
+which this pointer points is a character type. If so, we read the
+string from the process using a function, sdb::process::read_string,
+that we’ll implement next, and return it surrounded in quotes.
+If the pointer doesn’t point to a character type, we just return a
+hexadecimal representation of the pointer.
+
+The visualize_pointer_type function depends on sdb::process::read_string.
+Declare this function in sdb/include/libsdb/process.hpp:
+   namespace sdb {
+        class process {
+        public:
+             --snip--
+             std::string read_string(virt_addr address
+             --snip--
+        };
+   }
+
+The function takes a virtual address to read from and returns
+the null-terminated string that resides at that address.
+Implement it in sdb/src/process.cpp:
+
+   std::string sdb::process::read_string(virt_addr a
+       std::string ret;
+       while (true) {
+           auto data = read_memory(address, 1024);
+           for (auto c : data) {
+               if (c == std::byte{ 0 }) return ret;
+               ret.push_back(static_cast<char>(c));
+           }
+        }
+   }
+We read 1KiB of data at a time: an amount not too wasteful for
+smaller strings but not so small that reading large strings
+requires thousands of syscalls. Each time we read a new chunk
+of data, we loop over the characters, pushing them into the
+string until we reach a null byte. We don’t push the null byte
+into the returned string because std::string handles the null
+terminator for us.
+
+Classes
+
+Next, let’s handle class types. We want to produce a nested
+visualization of the object’s members. For example, consider the
+following type and variable declarations:
+
+   struct cat {
+        const char* name;
+        int age;
+   };
+
+   struct person {
+        const char* name;
+        int age;
+        cat pet;
+   };
+   cat marshmallow { "Marshmallow", 4 };
+   person sy { "Sy", 33, marshmallow };
+
+We create types to represent cats, with names and ages, and
+people, with names, ages, and pets. We then create a cat called
+Marshmallow who is 4 years old and a person called Sy who is
+33 years old and has Marshmallow as a pet.
+
+The visualization for sy should look like this:
+
+   {
+        name: "Sy"
+        age: 33
+        pet: {
+              name: "Marshmallow"
+              age: 4
+        }
+   }
+
+Nested class members are indented and enclosed in curly
+brackets. Implement the visualize_class_type function in
+sdb/src/type.cpp:
+
+   namespace {
+       std::string visualize_class_type(
+           const sdb::process& proc, const sdb::ty
+        std::string ret = "{\n";
+        for (auto& child : data.value_type().get_d
+            if (child.abbrev_entry()->tag == DW_TA
+                child.contains(DW_AT_data_member_l
+                child.contains(DW_AT_data_bit_offs
+                auto indent = std::string(depth +
+                auto byte_offset = child.contains
+                    child[DW_AT_data_member_locati
+                    child[DW_AT_data_bit_offset].a
+                auto pos = data.data_ptr() + byte_
+                auto subtype = child[DW_AT_type].a
+                std::vector<std::byte> member_data
+                    pos, pos + subtype.byte_size(
+                auto data = sdb::typed_data{ membe
+                    .fixup_bitfield(proc, child);
+                auto member_str = data.visualize(p
+                auto name = child.name().value_or
+                ret += fmt::format("{}{}: {}\n", i
+            }
+        }
+        auto indent = std::string(depth, '\t');
+        ret += indent + "}";
+        return ret;
+    }
+}
+We start the visualization with an open brace on a new line. We
+then loop over all children of the type’s DIE that are members
+of the class (indicated by the DW_TAG_member tag) and aren’t declared
+static (indicated by the presence of a DW_AT_data_member_location or
+
+DW_AT_data_bit_offset attribute).
+
+We compute an indentation string for this member, which is a
+number of tab characters (\t) equal to the current nesting depth
+plus one. We also compute the byte offset of the data for this
+member, found in either the DW_AT_data_member_location attribute or
+the DW_AT_data_bit_offset attribute (which we divide by eight to
+retrieve the offset in bytes). To compute the start of the
+member’s data, we add this offset to the start of the enclosing
+object’s data. We also retrieve the member’s type from its
+DW_AT_type attribute.
+
+Using the data start location and member type information, we
+compute a vector that contains the data for the member. If this
+member is a bitfield, we may need to shift the data and mask it
+into the correct position before visualization, which we do with
+the fixup_bitfield function we’ll write shortly. We then visualize
+that data with the visualize function. We pass depth + 1 as the depth
+parameter to increase the nesting level. Members don’t
+necessarily have names (for example, anonymous union
+members), so we try to extract the name of the member and use
+<unnamed> as a default if the member doesn’t have a name. We
+
+then append the new member information to the current
+visualization data. Finally, we add an indented close brace and
+return the computed visualization.
+
+In this function, you could also choose to visualize base classes.
+To do so, you would loop over the non-static members of the
+type pointed to by this class’s children of type DW_TAG_inheritance.
+
+Let’s move on to the fixup_bitfield function. To support its
+implementation, we’ll add a get_bitfield_information member
+function to sdb::die. This member function will handle extracting
+the information we’ll need to fix the data from the DIE. Declare
+it in sdb/include/libsdb/dwarf.hpp:
+
+   namespace sdb {
+       class die {
+       public:
+           --snip--
+           struct bitfield_information {
+                    std::uint64_t bit_size;
+                    std::uint64_t storage_byte_size;
+                    std::uint8_t bit_offset;
+              };
+              std::optional<bitfield_information> get_b
+                  std::uint64_t class_byte_size) const
+              --snip--
+         };
+   }
+
+We define a bitfield_information type to store the bit size of the data,
+the byte size of the enclosing storage, and the bit offset into that
+storage at which the data we need lives. The get_bitfield_information
+function takes the byte size of the class to which this field
+belongs (which we’ll use as the storage byte size in some
+circumstances) and returns the bitfield information for this DIE,
+so long as it exists. Define the function in sdb/src/dwarf.cpp:
+
+   std::optional<sdb::die::bitfield_information> sdb
+         std::uint64_t class_byte_size) const {
+       if (!contains(DW_AT_bit_offset) and !contains
+           return std::nullopt;
+       }
+       auto bit_size = (*this)[DW_AT_bit_size].as_in
+       auto storage_byte_size = contains(DW_AT_byte_
+           (*this)[DW_AT_byte_size].as_int() :
+           class_byte_size;
+       auto storage_bit_size = storage_byte_size * 8
+       std::uint8_t bit_offset = 0;
+         if (contains(DW_AT_bit_offset)) {
+             auto offset_field = (*this)[DW_AT_bit_off
+             bit_offset = storage_bit_size - offset_fi
+         }
+         if (contains(DW_AT_data_bit_offset)) {
+               bit_offset = (*this)[DW_AT_data_bit_offse
+         }
+         return bitfield_information{ bit_size, storag
+   }
+
+If the DIE doesn’t contain a DW_AT_bit_offset or DW_AT_data_bit_offset
+field, it doesn’t represent a bitfield, so we return std::nullopt.
+Bitfields always have a DW_AT_bit_size field, so we retrieve the bit
+size of the data from there. The DIE may have a DW_AT_byte_size
+member giving the size of the aligned storage, but it also might
+not, in which case we use the size of the enclosing class.
+
+Recall that the bit offset is encoded with either a DW_AT_bit_offset or
+a DW_AT_data_bit_offset attribute. In the case of the former, the value
+is the distance between the end of the aligned storage and the
+end of the data. We calculate the offset to the start of the data by
+subtracting the sum of the bit size and the distance to the end of
+the data from the storage’s bit size.
+
+If the offset is instead encoded with a DW_AT_data_bit_offset
+attribute, which gives the offset from the start of the enclosing
+object to the start of the data, the computation is simpler.
+Because we calculated the start byte of the data inside of
+visualize_class_type before calling this function and passed a data
+
+span starting there to visualize_member, we need only take the
+DW_AT_data_bit_offset modulo 8 to get the bit offset from the start of
+
+the data parameter. Finally, we return the data we computed.
+
+With this support written, we can implement fixup_bitfield. This
+function should extract the data for the bitfield and return an
+sdb::typed_data object that stores it as if it were a regular integral
+
+type. We can use the memcpy _bits function that we wrote in the
+last chapter for this:
+
+   sdb::typed_data sdb::typed_data::fixup_bitfield(
+         const sdb::process& proc,
+         const sdb::die& member_die) const {
+       auto stripped = type_.strip_cv_typedef();
+       auto bitfield_info = member_die.get_bitfield_
+       if (bitfield_info) {
+           auto [bit_size, storage_byte_size, bit_of
+
+               std::vector<std::byte> fixed_data;
+               fixed_data.resize(storage_byte_size);
+
+               auto dest = reinterpret_cast<std::uint8_t
+               auto src = reinterpret_cast<const std::ui
+               memcpy_bits(dest, 0, src, bit_offset, bit
+
+               return { fixed_data, type_ };
+         }
+         return *this;
+   }
+
+We strip any qualifiers and typedefs from the member’s type
+and then attempt to extract its bitfield information. If we get
+bitfield information, we perform the fixup by creating a vector
+to hold the extracted data and copying only the bits for the
+bitfield member into the start of that vector; then we return the
+fixed data. If the member isn’t a bitfield, we just return a copy
+of the existing data and type.
+
+Arrays
+
+Let’s move on to visualizing array types. We’ll implement most
+of this work in a recursive visualize_subrange function, which we’ll
+call from visualize _array_type:
+
+   namespace {
+       std::string visualize_array_type(
+             const sdb::process& proc, const sdb::ty
+           std::vector<std::size_t> dimensions;
+           for (auto& child : data.value_type().get_
+               if (child.abbrev_entry()->tag == DW_T
+                   dimensions.push_back(child[DW_AT_
+                     }
+               }
+               std::reverse(dimensions.begin(), dimensio
+               auto value_type = data.value_type().get_d
+               return visualize_subrange(proc, value_typ
+         }
+   }
+
+First, we collect a vector of the sizes of each dimension. Recall
+that the size of a dimension represented by a DW_TAG_subrange_type
+DIE is one higher than the DIE’s DW_AT_upper_bound attribute value.
+We want to recursively process the dimensions of the array in
+the order in which they’re defined. We’ll do this in
+visualize_subrange by treating the back of the dimensions vector as the
+
+current dimension to process and popping that dimension from
+the back of the vector before recursing. As such, we reverse the
+dimensions vector before passing it to visualize_subrange so that the
+
+first dimension is at the back of the vector.
+
+Let’s implement visualize_subrange now. This recursive function
+should visualize the dimension currently at the back of the
+dimensions vector. If the vector is empty, it should visualize an
+
+element of the array:
+#include <numeric>
+
+namespace {
+    std::string visualize_subrange(
+          const sdb::process& proc, const sdb::ty
+          sdb::span<const std::byte> data, std::v
+        if (dimensions.empty()) { ➊
+            std::vector<std::byte> data_vec { dat
+            return sdb::typed_data{ std::move(dat
+        }
+
+        std::string ret = "[";
+        auto size = dimensions.back();
+        dimensions.pop_back();
+        auto sub_size = std::accumulate(
+            dimensions.begin(), dimensions.end()
+            value_type.byte_size(), std::multipli
+        for (std::size_t i = 0; i < size; ++i) {
+            sdb::span<const std::byte> subdata{ d
+            ret += visualize_subrange(proc, value
+
+            if (i != size - 1) { ➌
+                ret += ", ";
+            }
+        }
+        return ret + "]";
+        }
+   }
+
+First, we handle the base case for when dimensions is empty ➊. In
+this case, we visualize the array element that is stored in the data
+parameter. Otherwise, we handle the recursive case, which
+visualizes one dimension of the array. We begin the
+visualization with a left square bracket. We then remove the
+back element of the dimensions vector, storing the current value
+aside. We loop over each element of the dimension, visualizing
+the element ➋.
+
+If the array being visualized is multidimensional, the elements
+of this dimension could themselves be arrays, so we need to
+calculate the byte size of the element by multiplying together all
+of the remaining dimension sizes and then multiplying that by
+value_size. We use std::accumulate for this. We then compute a span
+
+that covers the data for the element. This span will start at an
+offset from the start of the dimension’s data given by
+multiplying the current element index by the size of an
+element.
+
+We use data.end() to mark the end of the data; we’ll likely be
+passing a larger span than necessary, but the visualizer will
+take only the data it needs. We then recursively call
+visualize_subrange with the subdata span and append its result to the
+
+current visualization data. If this isn’t the last element ➌, we
+append a comma and space to the visualization data. Finally,
+outside of the loop, we append a right square bracket character
+and return the result.
+
+Base Types
+
+Let’s move on to the final visualizer: the one for base types.
+Because we already handled bitfields when we implemented
+visualize_member, this function is reasonably straightforward. One
+
+restriction is that we won’t implement support for the DW_ATE_UTF
+encoding, as this would add significant complexity and text
+encoding isn’t the focus of this book:
+
+   namespace {
+         std::string visualize_base_type(const sdb::ty
+             auto& type = data.value_type();
+             auto die = type.get_die();
+             auto ptr = data.data_ptr();
+
+              switch (die[DW_AT_encoding].as_int()) {
+              case DW_ATE_boolean:
+                  return sdb::from_bytes<bool>(ptr) ?
+              case DW_ATE_float:
+    if (die.name() == "float")
+        return fmt::format("{}", sdb::fro
+    if (die.name() == "double")
+        return fmt::format("{}", sdb::fro
+    if (die.name() == "long double")
+        return fmt::format("{}", sdb::fro
+    sdb::error::send("Unsupported floatin
+case DW_ATE_signed:
+    switch (type.byte_size()) {
+    case 1: return fmt::format("{}", sdb
+    case 2: return fmt::format("{}", sdb
+    case 4: return fmt::format("{}", sdb
+    case 8: return fmt::format("{}", sdb
+    default: sdb::error::send("Unsupporte
+    }
+case DW_ATE_unsigned:
+    switch (type.byte_size()) {
+    case 1: return fmt::format("{}", sdb
+    case 2: return fmt::format("{}", sdb
+    case 4: return fmt::format("{}", sdb
+    case 8: return fmt::format("{}", sdb
+    default: sdb::error::send("Unsupporte
+    }
+case DW_ATE_signed_char:
+    return fmt::format("{}", sdb::from_by
+case DW_ATE_unsigned_char:
+    return fmt::format("{}", sdb::from_by
+case DW_ATE_UTF:
+                   sdb::error::send("DW_ATE_UTF is not i
+               default:
+                   sdb::error::send("Unsupported encodin
+               }
+         }
+   }
+
+We begin by retrieving the type for the data, the type’s DIE, and
+a pointer to the start of the object’s data. We then switch over
+the type’s encoding. For Boolean types, we print true if the value
+is true and false otherwise. For floating-point types, we check the
+name of the type and visualize the relevant type. For signed and
+unsigned integers, we switch over the byte size of the type and
+visualize the relevant type. For signed and unsigned char types,
+we visualize the matching type. Finally, we throw an exception
+for UTF code point types.
+
+Finding Local Variables
+
+Let’s add the ability to find local variables to libsdb. DWARF
+expresses the debug information for local variables with DIEs
+of type DW_TAG_variable and DW_TAG_formal_parameter. (The second type
+applies to function parameters.) Additional scopes inside of
+functions (for example, a scope delimited by the braces of an if
+statement) use DIEs of type DW_TAG_lexical_block. To see these DIES
+in action, create a file at sdb/test/targets/blocks.cpp with the
+following contents:
+
+   #include <iostream>
+
+   int main(int argc, const char** argv) {
+         int i = 1;
+         std::cout << i;
+         {
+               int i = 2;
+               std::cout << i;
+               {
+                     int i = 3;
+                     std::cout << i;
+               }
+         }
+   }
+
+This code declares two nested lexical scopes that redefine the
+variable i. Add it to test/targets/CMakeLists.txt, as we’ll use this
+file for testing later:
+
+   --snip--
+   add_test_cpp_target(blocks)
+Here is an example of abbreviated DWARF information for the
+code we just wrote:
+
+   DW_TAG_subprogram
+     DW_AT_name                             main
+     DW_AT_low_pc                           0x00001129
+      DW_AT_high_pc                         <offset-from-lowpc>
+      DW_TAG_formal_parameter
+        DW_AT_name                             argc
+      DW_TAG_formal_parameter
+        DW_AT_name                             argv
+      DW_TAG_variable
+        DW_AT_name                             i
+      DW_TAG_lexical_block
+        DW_AT_low_pc                           0x00001146
+        DW_AT_high_pc                          <offset-from-lowp
+        DW_TAG_variable
+          DW_AT_name                               i
+        DW_TAG_lexical_block
+          DW_AT_low_pc                             0x0000114d
+          DW_AT_high_pc                            <offset-from-lo
+          DW_TAG_variable
+            DW_AT_name                                 i
+
+The DW_TAG_subprogram DIE for the main function contains DIEs that
+represent parameters and local variables. Local variables
+declared in deeper scopes are children of the DW_TAG_lexical_block
+DIE that represents the scope in which they are declared.
+
+As such, to locate a local variable with a given name, we can
+find the deepest scope that corresponds to the current program
+counter value and then walk outward to the main DW_TAG_subprogram
+DIE, checking all variables declared in those scopes until we
+find one that matches.
+
+Let’s add a function to sdb::dwarf called scopes_at_address that will
+return a vector of all the DW_TAG_lexical_block DIEs to which the
+given program counter value belongs, followed by the
+DW_TAG_subprogram DIE to which these scopes belong. We’ll also add a
+
+member function called find_local_variable for finding local
+variables. Because the variables found will differ depending on
+the current execution location, this function should take a
+program counter value at which to perform the lookup. Make
+these changes in sdb/include/libsdb/dwarf.hpp:
+
+   namespace sdb {
+       class dwarf {
+       public:
+           --snip--
+           std::optional<die> find_local_variable(st
+           std::vector<die> scopes_at_address(file_a
+           --snip--
+         };
+   }
+
+Implement scopes_at_address in sdb/src/dwarf.cpp. We’ll have it call
+a recursive scopes_at_address_in_die function, which we’ll write next:
+
+   std::vector<sdb::die> sdb::dwarf::scopes_at_addre
+       auto func = function_containing_address(addre
+       if (!func) return {};
+
+         std::vector<sdb::die> scopes;
+         scopes_at_address_in_die(*func, address, scop
+         scopes.push_back(*func);
+         return scopes;
+   }
+
+First, we try to locate the function that contains the given
+address. If we don’t find one, we return an empty vector. We
+then define a vector to hold any scopes we find and call
+scopes_at_address_in_die, which will fill this vector with DIEs of type
+
+DW_TAG_lexical_block. Finally, we push the DIE representing the
+
+function to the scopes and return them.
+
+Let’s implement scopes_at_address_in_die:
+   namespace {
+         void scopes_at_address_in_die(
+               const sdb::die& die, sdb::file_addr add
+               std::vector<sdb::die>& scopes) {
+              for (auto& c : die.children()) {
+                    if (c.contains_address(address)) {
+                        scopes_at_address_in_die(c, addre
+                        scopes.push_back(c);
+                    }
+              }
+         }
+   }
+
+We loop over the children of the given DIE. If the child DIE
+contains the given address, we recursively call
+scopes_at_address_in_die and then push the child to the back of the
+
+vector. This way, the front of the vector will be the most deeply
+nested scope containing the given address.
+
+Let’s implement the find_local_variable member function:
+
+   std::optional<sdb::die> sdb::dwarf::find_local_va
+         std::string name, file_addr pc) const {
+       auto scopes = scopes_at_address(pc);
+       for (auto& scope : scopes) {
+           for (auto& child : scope.children()) {
+                      auto tag = child.abbrev_entry()->tag
+                      if ((tag == DW_TAG_variable or
+                            tag == DW_TAG_formal_parameter) a
+                            child.name() == name) {
+                            return child;
+                      }
+                }
+         }
+         return std::nullopt;
+   }
+
+We first compute the list of scopes to which the program
+counter belongs. We then loop through the child DIEs of each
+scope, and if we find one that declares a variable matching the
+given name, we return it. If we don’t find a matching local
+variable, we return an empty optional.
+
+Before we expose all of this new functionality to users on the
+command line, we need one last piece of support in libsdb: the
+ability to resolve member variable names and array elements.
+
+Resolving Indirect Names
+
+Users should be able to read variables like marshmallow.age,
+cat_pointer->name, or my_cats[0].friend_cat->cuteness. To support this
+
+feature, we’ll add a member function to sdb::target that resolves
+indirect names like these, as well as a function called find_variable
+that finds a local variable in the current scope, if one exists, and
+otherwise tries to find a global variable with the given name.
+Declare these functions in sdb/include/libsdb/target.hpp:
+
+   namespace sdb {
+       class typed_data;
+       class target {
+       public:
+           --snip--
+           typed_data resolve_indirect_name(std::st
+           std::optional<die> find_variable(std::st
+           --snip--
+       };
+   }
+
+The resolve_indirect_name function takes the full name of the data to
+read and the program counter value at which to resolve the
+name, and it returns the relevant type and value. In Chapter 21,
+we’ll extend this function to handle member function names as
+well. Implement find_variable in sdb/src/target.cpp:
+
+   std::optional<sdb::die> sdb::target::find_variabl
+         std::string name, sdb::file_addr pc) const
+       auto& dwarf = pc.elf_file()->get_dwarf();
+        auto local = dwarf.find_local_variable(name,
+        if (local) return local;
+
+        std::optional<die> global = std::nullopt;
+        elves_.for_each([&](auto& elf) {
+              auto& dwarf = elf.get_dwarf();
+              auto found = dwarf.find_global_variable(n
+              if (found) {
+                  global = *found;
+              }
+        });
+        return global;
+   }
+
+We look for local variables in the DWARF for the ELF file that
+contains the current program counter value. If we find a local
+variable with the given name there, we return it. Otherwise, we
+look for global variables. These could be in any of the ELF files
+we’ve loaded, so we loop over all of them, searching for global
+variables with the given name. If we find one, we return it.
+Otherwise, we return std::nullopt.
+
+Next, we’ll implement resolve_indirect_name in the same file. This
+function should support ., ->, and [] operators for accessing
+members and array elements (we won’t support the * or &
+operators for dereferencing and taking addresses because
+sticking to just postfix operators simplifies the parsing
+significantly; users can always use [0] in place of the * operator,
+and we’ll add a variable location command that they can use
+instead of the & operator):
+
+   #include <libsdb/type.hpp>
+   #include <libsdb/parse.hpp>
+
+   sdb::typed_data sdb::target::resolve_indirect_nam
+         std::string name, sdb::file_addr pc) const
+       auto op_pos = name.find_first_of(".-[");
+
+        auto var_name = name.substr(0, op_pos);
+        auto& dwarf = pc.elf_file()->get_dwarf();
+
+        auto data = get_initial_variable_data(*this,
+
+        while (op_pos != std::string::npos) {
+         ➊ if (name[op_pos] == '-') {
+                if (name[op_pos + 1] != '>') {
+                    sdb::error::send("Invalid operato
+                }
+                data = data.deref_pointer(get_process
+                   op_pos++;
+             }
+          ➋ if (name[op_pos] == '.' or name[op_pos] =
+                 auto member_name_start = op_pos + 1;
+                   op_pos = name.find_first_of(".-[", me
+                   auto member_name = name.substr(
+                       member_name_start, op_pos - membe
+                   data = data.read_member(get_process(
+                   name = name.substr(member_name_start
+              }
+            ➌ else if (name[op_pos] == '[') {
+                   auto int_end = name.find(']', op_pos
+                   auto index_str = name.substr(op_pos +
+                   auto index = to_integral<std::size_t>
+                   if (!index) {
+                       sdb::error::send("Invalid index"
+                   }
+                   data = data.index(get_process(), *ind
+                   name = name.substr(int_end + 1);
+               }
+               op_pos = name.find_first_of(".-[");
+        }
+
+        return data;
+   }
+
+We begin by finding the first ., -, or [ character in the string (or
+if there is none, std::string::npos), which marks the end of the
+name of the initial variable to read. Based on this index, we
+compute the name of this initial variable by taking a substring
+from the start of the string to the operator position. For
+example, in the name marshmallow.age, we’d retrieve marshmallow. Next,
+we get the DWARF file corresponding to the given program
+counter value and retrieve the initial variable name with a
+get_initial_variable_data function that we’ll write soon.
+
+After this initialization process, we loop, handling the different
+components of the name. If the operator we found starts with -,
+this must be a -> operator ➊. We throw an exception if not and
+otherwise dereference the pointer value using an
+sdb::typed_data::deref_pointer function that we’ll write shortly. The
+
+process for reading the named member of the dereferenced
+value is the same process we’ll follow for the . operator, so we’ll
+do that in a common branch. For now, we just increment op_pos
+so that the character directly to the right of name[op_pos] is the one
+that begins the name of the member variable.
+
+If the operator is . or -> ➋, we now need to read the named
+member variable. The start of this name is at the index directly
+after op_pos, so we create a member_name_start variable to hold it. We
+then reset op_pos to be the index of the next ., -, or [ character in
+the string by providing member_name_start as the starting index to
+find_first_of. The member name is the substring between
+
+member_name_start and the index we just computed. For example, in
+
+marshmallow.friend_cat->age, the name will be friend_cat on the first
+
+iteration and age on the second. We read the member using an
+sdb::typed_data::read _member function, which we’ll write shortly, and
+
+then set name to be the substring starting at the member name we
+just read, to prepare for the next iteration of the loop.
+
+The last operator we support is the [] operator ➌. If the first
+character we found was a left square bracket, we find the
+corresponding closing bracket. Between these two characters is
+the index to be read. We parse this index to an integer and
+throw an exception if the parsing fails. If the conversion was
+successful, we index the previous value using an sdb::typed_data::
+index function, which we’ll write soon, and set name to begin after
+
+the closing square bracket character.
+
+Before starting the next iteration of the loop, we set op_pos to be
+the start of the next operator (or std::string::npos if there is no
+subsequent operator). Finally, we return the data of the most
+recent value we read.
+
+Let’s implement get_initial_variable_data. This will locate the data
+for the first part of the indirect name. For example, it will
+return the data for marshmallow in the name marshmallow.friend_cat->age:
+
+   namespace {
+       sdb::typed_data get_initial_variable_data(
+             const sdb::target& target, std::string
+           auto var = target.find_variable(name, pc
+               if (!var) {
+                   sdb::error::send("Variable not found
+               }
+               auto var_type = var.value()[DW_AT_type].a
+
+               auto loc = var.value()[DW_AT_location].as
+                   target.get_process(), target.get_stac
+               auto data_vec = target.read_location_data
+
+               std::optional<sdb::virt_addr> address;
+               if (auto single_loc = std::get_if<sdb::dw
+                   if (auto addr_res =
+                         std::get_if<sdb::dwarf_expressi
+                       address = addr_res->address;
+                   }
+               }
+               return { std::move(data_vec), var_type, a
+         }
+   }
+
+We find the DIE for the computed initial variable and retrieve
+its type. We then evaluate its location, retrieve its value, and
+retrieve its address, so long as lives at a single address. Finally,
+we return the data we just computed.
+
+We call three functions in resolve_indirect_name that we need to add
+to sdb::typed_data. These are deref_pointer, read_member, and index. Declare
+them in sdb/include/libsdb/type.hpp:
+
+   namespace sdb {
+        class typed_data {
+        public:
+              --snip--
+              typed_data deref_pointer(
+                   const sdb::process& proc) const;
+              typed_data read_member(
+                   const sdb::process& proc,
+                   std::string_view member_name) const;
+              typed_data index(
+                   const sdb::process& proc,
+                   std::size_t index) const;
+              --snip--
+        };
+   }
+
+Implement the functions in sdb/src/type.cpp, starting with
+deref_pointer. It should interpret the given data as a pointer and
+
+read the memory at the address given by the pointer:
+
+   sdb::typed_data sdb::typed_data::deref_pointer(
+         const sdb::process& proc) const {
+       auto stripped_type_die = type_.strip_cv_typed
+       auto tag = stripped_type_die.abbrev_entry()->
+         if (tag != DW_TAG_pointer_type) {
+             sdb::error::send("Not a pointer type");
+         }
+         sdb::virt_addr address{ sdb::from_bytes<std:
+         auto value_type = stripped_type_die[DW_AT_typ
+         auto data_vec = proc.read_memory(
+             address, value_type.byte_size());
+         return { std::move(data_vec), value_type, add
+   }
+
+The pointer type may be qualified with const or volatile qualifiers
+or have levels of typedefs, so we strip these before inspecting
+the type’s tag. If it’s not a pointer, we throw an exception.
+Otherwise, we convert the data to a virtual address, retrieve the
+type that the pointer points to, and read the memory at the
+relevant address. We read the number of bytes given by the
+value type’s DIE and then return the data we read alongside the
+data’s type and its address.
+
+Let’s move on to read_member. This function should find the DIE
+corresponding to the member with the given name and read
+the data at its location:
+
+   sdb::typed_data sdb::typed_data::read_member(
+         const sdb::process& proc, std::string_view
+        auto die = type_.get_die();
+        auto children = die.children();
+        auto it = std::find_if(children.begin(), chil
+            [&](auto& child) { return child.name().va
+        if (it == children.end()) {
+             sdb::error::send("No such member");
+        }
+        auto var = *it;
+        auto value_type = var[DW_AT_type].as_type();
+
+        auto byte_offset = var.contains(DW_AT_data_me
+            var[DW_AT_data_member_location].as_int()
+            var[DW_AT_data_bit_offset].as_int() / 8;
+        auto data_start = data_.begin() + byte_offset
+        std::vector<std::byte> member_data{ data_sta
+
+        auto data = address_ ?
+            typed_data{ std::move(member_data), value
+            typed_data{ std::move(member_data), value
+        return data.fixup_bitfield(proc, var);
+   }
+
+We retrieve the DIE for the type, and that DIE’s children. We
+attempt to find a child DIE that has a name that matches the
+given member. If we don’t find one, we throw an exception.
+Otherwise, this DIE represents a member of the type, so we
+extract this member’s type and compute its byte offset.
+The DIE could express the byte offset as a DW_AT_data_member_location
+attribute or use a DW_AT_data_bit_offset attribute to give the bit
+offset, which we divide by eight to retrieve the byte offset. We
+compute the start of the data by adding the byte offset to the
+beginning of the data range for the enclosing object.
+
+Based on this start position and the member’s byte size, we copy
+the member’s data into a vector. We then create an sdb::typed_data
+object that represents this member. If the enclosing object has
+address information, we store updated address information in
+the resulting object; otherwise, we store no address
+information. Finally, we fix the data if the member is a bitfield.
+
+The last member function we need to implement is index, which
+should support both pointer types and array types:
+
+   sdb::typed_data sdb::typed_data::index(
+           const sdb::process& proc, std::size_t index
+         auto parent_type = type_.strip_cv_typedef().g
+         auto tag = parent_type.abbrev_entry()->tag;
+         if (tag != DW_TAG_array_type and tag != DW_TA
+             sdb::error::send("Not an array or pointe
+         }
+         auto value_type = parent_type[DW_AT_type].as_
+         auto element_size = value_type.byte_size();
+         auto offset = index * element_size;
+        if (tag == DW_TAG_pointer_type) {
+            sdb::virt_addr address{ sdb::from_bytes<s
+              address += offset;
+              auto data_vec = proc.read_memory(
+                  address, element_size);
+              return { std::move(data_vec), value_type
+        }
+        else {
+            std::vector<std::byte> data_vec{
+                data_.begin() + offset,
+                data_.begin() + offset + element_size
+            if (address_) {
+                return { std::move(data_vec), value_t
+            }
+            return { std::move(data_vec), value_type
+        }
+   }
+
+As in deref_pointer, we first strip any qualifiers and typedefs from
+the type. If the type isn’t a pointer or an array type, we throw
+an exception. Next, we calculate the size of the values that are
+pointed to or stored in the array. We compute the offset of the
+desired value by multiplying this size by the given index. If the
+type is a pointer, we interpret the given data as a virtual
+address, add the computed offset to it, read the memory at that
+address, and return it. Otherwise, the type must be an array, so
+we copy the relevant bytes from the given data into a new
+vector. If this data has an address, we offset it and store it in the
+return value; otherwise, we just return the computed data and
+type.
+
+We’ve finished adding support for variable visualization to
+libsdb. Now we can add support for it in the command line
+
+driver.
+
+Exposing Variables to the User
+
+The command line driver currently has a variable read command
+that supports only global integer variables. We’ll extend it to
+support visualizing variables of any type that are either local or
+global. We’ll also add a variable locals command that prints all
+local variables in the current scope and a variable location
+command that prints the location of the given variable. We’ll
+implement these in separate helper functions:
+
+   namespace {
+       void handle_variable_command(
+             sdb::target& target, const std::vector<
+           if (args.size() < 2) {
+               print_help({ "help", "variable" });
+               return;
+           }
+               if (is_prefix(args[1], "locals")) {
+                     handle_variable_locals_command(target
+                     return;
+               }
+
+               if (args.size() < 3) {
+                   print_help({ "help", "variable" });
+                   return;
+               }
+
+               if (is_prefix(args[1], "read")) {
+                   handle_variable_read_command(target,
+               }
+               else if (is_prefix(args[1], "location"))
+                   handle_variable_location_command(targ
+               }
+         }
+   }
+
+We check the number of arguments passed and print an error
+message if the user passes the wrong number. Depending on the
+subcommand, we dispatch to the relevant handle_variable_*_command
+function.
+
+Let’s implement handle_variable_locals_command first:
+#include <libsdb/type.hpp>
+#include <unordered_set>
+
+namespace {
+    void handle_variable_locals_command(sdb::targ
+        auto pc = target.get_pc_file_address();
+        auto scopes = pc.elf_file()->get_dwarf()
+        std::unordered_set<std::string> seen;
+        for (auto& scope : scopes) {
+            for (auto& var : scope.children()) {
+                std::string name(var.name().value
+                auto tag = var.abbrev_entry()->ta
+                if (tag == DW_TAG_variable or tag
+                    !name.empty() and !seen.count
+                    auto loc = var[DW_AT_location
+                        target.get_process(), ta
+                    auto type = var[DW_AT_type].a
+                    auto value = target.read_loca
+                    auto str = sdb::typed_data{ s
+                        .visualize(target.get_pro
+                    fmt::print("{}: {}\n", name,
+                    seen.insert(name);
+                }
+            }
+        }
+    }
+}
+We retrieve the current program counter and the list of scopes
+that contain that address. If any variables in nested scopes
+shadow variables in outer scopes, we should print out only the
+most nested variable. For this reason, we keep a std::unordered_set
+of the names of variables we’ve already seen. We then walk
+over all of the scopes that contain the program counter value,
+from the deepest nested to the outermost function DIE.
+
+For each child DIE in that scope, we retrieve the DIE’s name and
+tag. If the DIE represents a variable that has a name and that
+we haven’t already seen, we compute its location, read the data
+at that location, retrieve a visualization of the data, and print
+out that visualization. Finally, we insert the name of the
+variable into the seen set so that we don’t print out the values of
+any shadowed variables.
+
+Next, let’s write handle_variable_read_command:
+
+   namespace {
+       void handle_variable_read_command(
+             sdb::target& target, const std::vector<
+           auto name = args[2];
+           auto pc = target.get_pc_file_address();
+           auto data = target.resolve_indirect_name
+           auto str = data.visualize(target.get_proc
+           fmt::print("Value: {}\n", str);
+          }
+    }
+
+We retrieve the name of the variable to read, get the current
+program counter value for the current thread, resolve the
+indirect name, retrieve a visualization of the resulting value,
+and then print out this visualization.
+
+To finish the implementation, let’s write
+handle_variable_location_command:
+
+    namespace {
+        void handle_variable_location_command(
+              sdb::target& target, const std::vector<
+            auto name = args[2];
+            auto pc = target.get_pc_file_address();
+            auto var = target.find_variable(name, pc
+            if (!var) {
+                std::cerr << "Variable not found\n";
+                return;
+            }
+
+                auto loc = var.value()[DW_AT_location].as
+                    target.get_process(), target.get_stac
+
+                auto print_simple_location = [](auto* loc
+                  if (auto reg_loc = std::get_if<sdb::d
+                      auto name = sdb::register_info_by
+                       fmt::print("Register: {}\n", name
+                  }
+                  else if (auto addr_res = std::get_if<
+                       fmt::print("Address: {:#x}\n", ad
+                  }
+                  else {
+                      fmt::print("None");
+                  }
+             };
+
+             if (auto simple_loc = std::get_if<sdb::dw
+                 print_simple_location(simple_loc);
+             }
+             else if (auto pieces_res = std::get_if<sd
+                 for (auto& piece : pieces_res->pieces
+                     fmt::print("Piece: offset = {}, b
+                         piece.offset, piece.bit_size
+                     print_simple_location(&piece.loca
+                 }
+             }
+        }
+   }
+
+We grab the name of the variable to search for and the current
+program counter then attempt to find the variable. If we don’t
+find one, we print an error message and return. If we find one,
+we evaluate its location. We define a lambda function that
+prints a single location. If the variable resides in a register or at
+a memory address, we print information for the relevant
+register or address; otherwise, we print None. If the variable we
+found has a single location, we use the lambda we wrote to
+print information for it. If the variable instead consists of
+several pieces, we print information about each piece,
+alongside the usual information printed by the print_single_location
+lambda.
+
+We’re now done with the variable and type support. Before
+finishing the chapter, let’s write a few tests.
+
+Testing
+
+First, we’ll test global variables, arrays, pointers, and bitfields.
+Modify the existing sdb/test/targets/global_variable.cpp file like
+this:
+
+   #include <cstdint>
+
+   std::uint64_t g_int = 0;
+
+   int main() {
+        g_int = 1;
+        g_int = 42;
+   }
+
+   struct cat {
+        const char* name;
+        int age : 5;
+        int color : 3;
+   };
+
+   struct person {
+       const char* name;
+       int age;
+       cat* pets;
+       int num_pets;
+   };
+
+   cat marshmallow { "Marshmallow", 4, 1 };
+   cat lexical_cat { "Lexical Cat", 8, 2 };
+   cat milkshake { "Milkshake", 4, 3 };
+   cat cats[] = { marshmallow, lexical_cat, milkshak
+   person sy { "Sy", 33, cats, 3 };
+
+After the main function, we’ve added several new types and
+global variables. The cat type has a C string member and two
+bitfield members. The person type has a string member, two int
+members, and a pointer member. We then define several global
+variables using these types, including an array.
+
+You should now be able to build and launch this program, set a
+breakpoint on the main function, hit the breakpoint, and examine
+the values of the variables. Here is an example:
+
+   $ tools/sdb test/targets/global_variable
+   Launched process with PID 2759
+   sdb> break set main
+   sdb> c
+   Thread 3596 stopped with signal TRAP at 0x5555555
+   (global_variable`main) (breakpoint 1)
+     2 std::uint64_t g_int = 0;
+     4 int main() {
+   > 5      g_int = 1;
+     6      g_int = 42;
+     7 }
+     9 struct cat {
+   sdb> var read sy.pets[0].name
+   Value: "Marshmallow"
+   sdb> var read cats
+   Value: [{
+            name: "Marshmallow"
+              age: 4
+              color: 1
+   }, {
+              name: "Lexical Cat"
+              age: 8
+              color: 2
+   }, {
+              name: "Milkshake"
+              age: 4
+              color: 3
+   }]
+
+Note that the variable values display as expected. Feel free to
+play around, printing the values of other variables to ensure
+that they work.
+
+Let’s write a short automated test for this program. Add a test
+case to sdb/test/tests.cpp:
+
+   #include <libsdb/type.hpp>
+
+   TEST_CASE("Global variables", "[variable]") {
+       auto target = target::launch("targets/global_
+       auto& proc = target->get_process();
+
+         target->create_function_breakpoint("main").en
+         proc.resume();
+         proc.wait_on_signal();
+
+         auto name = target->resolve_indirect_name(
+             "sy.pets[0].name", target->get_pc_file_ad
+         auto name_vis = name.visualize(target->get_p
+         REQUIRE(name_vis == "\"Marshmallow\"");
+
+         auto cats = target->resolve_indirect_name(
+             "cats[1].age", target->get_pc_file_addres
+         auto cats_vis = cats.visualize(target->get_p
+         REQUIRE(cats_vis == "8");
+   }
+
+We launch the global_variable program, set a breakpoint on the
+main function, and continue until it’s hit. We then visualize
+
+sy.pets[0].name and cats[1].age and ensure that the values are as
+
+expected. This test should pass.
+
+Let’s also add tests for the blocks and member_pointer programs
+we implemented earlier, starting with the former:
+
+   TEST_CASE("Local variables", "[variable]") {
+       auto dev_null = open("/dev/null", O_WRONLY);
+       auto target = target::launch("targets/blocks
+       auto& proc = target->get_process();
+        target->create_function_breakpoint("main").en
+        proc.resume();
+        proc.wait_on_signal();
+        target->step_over();
+
+        auto var_data = target->resolve_indirect_name
+        REQUIRE(from_bytes<std::uint32_t>(var_data.da
+
+        target->step_over();
+        target->step_over();
+
+        var_data = target->resolve_indirect_name("i"
+        REQUIRE(from_bytes<std::uint32_t>(var_data.da
+
+        target->step_over();
+        target->step_over();
+
+        var_data = target->resolve_indirect_name("i"
+        REQUIRE(from_bytes<std::uint32_t>(var_data.da
+        close(dev_null);
+   }
+
+We launch the blocks program, set a breakpoint on main, hit it,
+and step over one line to reach the first std::cout statement. At
+this point, the value of i should be 1. We step over two more
+times to reach the second output statement and ensure that i is
+now 2. Finally, we step over two more times to reach the final
+output statement and ensure the value is 3. At each of these
+steps, the resolve_indirect_name function will find one of the three
+different DIEs that correspond to the three i variables, picking
+the correct one based on the current program counter value.
+This test should pass.
+
+All that is left is to write a short test for the member_pointer
+program:
+
+   TEST_CASE("Member pointers", "[variable]") {
+       auto target = target::launch("targets/member_
+       auto& proc = target->get_process();
+       target->create_line_breakpoint("member_pointe
+       proc.resume();
+       proc.wait_on_signal();
+
+         auto data_ptr = target->resolve_indirect_name
+             "data_ptr", target->get_pc_file_address(
+         auto data_vis = data_ptr.visualize(proc);
+         REQUIRE(data_vis == "0x0");
+
+         auto func_ptr = target->resolve_indirect_name
+             "func_ptr", target->get_pc_file_address(
+         auto func_vis = func_ptr.visualize(proc);
+         REQUIRE(func_vis != "0x0");
+   }
+
+We launch the member_pointer program, set a breakpoint on
+line 10 of member_pointer.cpp (the definition of the marshmallow
+variable), and hit it. We then visualize the data_ptr and func_ptr
+variables. The data_ptr variable should be 0x0, because it should
+point to the first member of the cat type, which is at offset 0. The
+func_ptr variable should point to the cat::meow function. We don’t
+
+have an easy way to look up the address of this function yet
+(we’ll handle this task in the next chapter), so we just ensure
+that we don’t receive a null pointer value.
+
+That concludes the testing for the chapter. As always, feel free to
+test more rigorously if you like.
+
+Summary
+
+In this chapter, you extended the existing support for
+visualizing variables from 64-bit global integers to almost any
+kind of variable, global or local. In the next chapter, you’ll
+implement a minimal expression evaluator that will allow users
+to call functions inside of the running program from the
+debugger.
+Check Your Knowledge
+
+1.
+1. What is the difference between DW_AT_bit_offset and DW_AT_data
+  _bit_offset?
+
+2.
+2. How are the bounds of array types encoded?
+3.
+3. Why are member function pointers larger in size than
+  regular function pointers?

@@ -1,0 +1,1127 @@
+27. The network protocol
+So far, our picture of the fetch command is still quite vague. We know that it grabs a list of the
+refs and their values from the remote repository, uses refspecs to decide which ones it wants
+to download, and then somehow determines which objects need to be copied from the remote
+to the local repository to complete the history of those refs. But we’ve not yet seen how these
+data transfers actually happen — how the fetch command connects to a remote computer and
+communicates with the remote repository.
+
+Git actually supports multiple transports for its network protocol, including SSH1, HTTP2 and
+Git’s own custom transport. The protocol differs somewhat based on the transport being used,
+but we will only look at one transport here: SSH. The HTTP and Git transports require custom
+services running on the remote computer for Git to receive and handle requests, whereas SSH
+is a generic protocol that’s running on many internet-connected computers out of the box.
+SSH is a great choice for bootstrapping a network protocol as it provides an encrypted and
+authenticated connection to a remote machine and allows arbitrary programs to be invoked
+over that connection. Git’s SSH transport is full-featured and will allow us to do everything the
+fetch and push commands need.
+
+27.1. Programs as ad-hoc servers
+You may be familiar with the concept of a server from using the web. Your browser sends
+a request to a server identified by a URL, which sends back a response, and your browser
+displays that response as a web page. The web uses HTTP to perform this request-response
+cycle, and that requires having a long-running process on the host machine that’s listening
+for TCP3 connections on port 80 or TLS4 connections on port 443. Apache5 and NGINX6 are
+popular HTTP servers7.
+
+SSH works in a similar way: there is a long-running process on the remote machine that accepts
+incoming connections, but instead of responding to HTTP requests it allows the client to submit
+commands which the remote machine will then run. We will take advantage of this existing
+infrastructure to build our Git protocol.
+
+Now, it is not only long-running processes accepting network connections that can act as
+servers. Any short-lived program can perform a similar task using its standard input and
+output streams. For example, here’s a little program that loops, reading lines from stdin using
+IO#gets . If the line reads exit, the program quits. Otherwise, it reads two numbers from the
+line, adds them together, and prints the result to stdout.
+       # adder.rb
+
+       $stdin.sync = $stdout.sync = true
+
+  https://en.wikipedia.org/wiki/Secure_Shell
+  https://en.wikipedia.org/wiki/Hypertext_Transfer_Protocol
+  https://en.wikipedia.org/wiki/Transmission_Control_Protocol
+  https://en.wikipedia.org/wiki/Transport_Layer_Security
+  https://httpd.apache.org/
+  https://www.nginx.com/
+  You will hear the word server used to refer both to these long-running processes that handle incoming requests, and to the computers these
+processes run on. I will try to stick to the former meaning and use the term computer, machine or host for the latter.
+  https://docs.ruby-lang.org/en/2.3.0/IO.html#method-i-gets
+
+                                                  The network protocol
+
+       loop do
+         query = $stdin.gets.strip
+         exit if query == "exit"
+
+          x, y = query.scan(/\d+/).map(&:to_i)
+
+         $stdout.puts(x + y)
+       end
+
+We can use this program by starting up an instance of it and then interacting with via its standard
+I/O. Below is a program that does this by running ruby adder.rb as a child process, using
+Ruby’s Open39 module. This wraps a convenient interface around the low-level system calls
+necessary to start that child process and expose its input and output streams. It also returns a
+thread that you can wait on if you want to wait for the process to exit. Our client program feeds
+three queries into adder.rb by writing to its input stream, and reads the results from its output
+stream. When it’s done, it writes exit, causing the child process to exit.
+       # client.rb
+
+       require "open3"
+
+       queries = [ [5, 2], [8, 3], [6, 7] ]
+
+       input, output, thread = Open3.popen2("ruby adder.rb")
+       input.sync = output.sync = true
+
+       queries.each do |x, y|
+         input.puts([x, y].join(","))
+         result = output.gets
+
+         puts "#{ x } + #{ y } = #{ result }"
+       end
+
+       input.puts("exit")
+
+When we run this program, we see the results computed by adder.rb:
+       5 + 2 = 7
+       8 + 3 = 11
+       6 + 7 = 13
+
+This demonstrates how one process is able to launch another and then communicate with it,
+much like any other client would talk to a server. What makes SSH so useful is that we can
+use it to invoke a program on another machine, and communicate with it in exactly the same
+way. I am currently using Vagrant10 to run a development environment in a virtual machine
+on my laptop. I can make the adder.rb program available inside that machine and then invoke
+it over SSH by running:
+       $ ssh 127.0.0.1 -p 2222 -l ubuntu "ruby /vagrant/adder.rb"
+
+This uses the ssh11 program to connect to the virtual machine as the user ubuntu on port 2222,
+and then runs ruby /vagrant/adder.rb inside that machine. The ssh process’s standard I/O
+ https://docs.ruby-lang.org/en/2.3.0/Open3.html
+   https://www.vagrantup.com/
+   https://manpages.ubuntu.com/manpages/bionic/en/man1/ssh.1.html
+
+                                     The network protocol
+
+is connected to the process running on the remote machine, so we can interact with this ssh
+process and it looks just like we’re talking to the adder.rb process. All we need to do is replace
+the code for launching adder.rb from the client program:
+     command = "ssh 127.0.0.1 -p 2222 -l ubuntu 'ruby /vagrant/adder.rb'"
+     input, output, thread = Open3.popen2(command)
+
+If we run client.rb now it prints exactly the same results. The beauty of this is that we can use
+the same protocol to talk to a program running locally as we do to talk to a remote program over
+SSH. All we have to change is the initial command we run, and then everything else proceeds
+exactly as before.
+
+27.2. Remote agents
+In Section 26.3, “Refspecs”, we introduced the first step of the fetch process, which is to
+retrieve a list of the remote repository’s refs and the commits they point at. Now that we’ve
+seen how we can use standard I/O to communicate with a process on a remote machine, we can
+take a closer look at how that information is transferred.
+
+In principle, an SSH connection would allow fetch to read and write arbitrary files in the remote
+repository, and thus use a history search to determine which objects to download. However, this
+has two problems. First, it would be very slow. Enumerating a RevList requires a potentially
+large number of sequential disk reads, and if each of these reads has to make a round trip over
+the network the search will take a long time. Second, it’s a security risk. Somebody providing
+Git hosting probably does not want third parties to be able to run arbitrary commands on their
+machines. Luckily, the SSH server config lets the administrator lock things down so that a user
+connected via SSH is only allowed to run programs from an approved list. The administrator
+can also prevent SSH connections from gaining access to the shell.
+
+Therefore, rather than using low-level read/write commands on the remote machine, fetch runs
+a program on the remote that can perform all the relevant searches locally, and it communicates
+with this program over standard I/O as we’ve just seen. This program is called git-upload-
+pack, and it works as an agent on behalf of the fetch command, providing information about
+the repository and sending all the objects the fetch command wants. Note that git-upload-
+pack is the name of a standalone program, not a subcommand of git — this means the server
+owner can allow SSH connections to run the git-upload-pack program but not the rest of the
+git commands.
+
+To see this in action, we can run git-upload-pack against a remote repository using ssh. Let’s
+try Git’s own repository hosted on GitHub:
+     $ ssh git@github.com "git-upload-pack '/git/git.git'"
+
+     01005d826e972970a784bd7a7bdf587512510097b8c7 HEADmulti_ack thin-pack \
+         side-band side-band-64k ofs-delta shallow deepen-since deepen-not \
+         deepen-relative no-progress include-tag multi_ack_detailed
+     003e98cdfbb84ad2ed6a2eb43dafa357a70a4b0a0fad refs/heads/maint
+     003f5d826e972970a784bd7a7bdf587512510097b8c7 refs/heads/master
+     003db2cc3488ba006e3ba171e85dffbe6f332f84bf9a refs/heads/todo
+
+This output contains more than just the ref names and commit IDs, and we’ll see what those
+extra details mean in the next section. The important point here is that fetch can communicate
+
+                                                   The network protocol
+
+with the remote repo simply by running the above command. It can read from the output of
+git-upload-pack to retrieve information and download objects, and it can also write to the
+input of this process to request the commits it would like to receive. While it’s running, git-
+upload-pack acts as a server that the client, the fetch command, can talk to.
+
+27.3. The packet-line protocol
+In order to communicate with the remote repository via the git-upload-pack program, we need
+a means of formatting messages sent between the two processes. In our adder.rb example, we
+used puts to write a message with a line feed (\n) at the end, and gets to read until the next
+line feed. This splits the input and output streams up into distinct messages.
+
+Above we saw that the git-upload-pack program sends the following data when it’s first run
+(a backslash represents a continuation of the current line):
+        01005d826e972970a784bd7a7bdf587512510097b8c7 HEADmulti_ack thin-pack \
+            side-band side-band-64k ofs-delta shallow deepen-since deepen-not \
+            deepen-relative no-progress include-tag multi_ack_detailed
+        003e98cdfbb84ad2ed6a2eb43dafa357a70a4b0a0fad refs/heads/maint
+        003f5d826e972970a784bd7a7bdf587512510097b8c7 refs/heads/master
+        003db2cc3488ba006e3ba171e85dffbe6f332f84bf9a refs/heads/todo
+
+This represents the series of messages we saw earlier in the chapter:
+        5d826e972970a784bd7a7bdf587512510097b8c7 HEAD
+        98cdfbb84ad2ed6a2eb43dafa357a70a4b0a0fad refs/heads/maint
+        5d826e972970a784bd7a7bdf587512510097b8c7 refs/heads/master
+        b2cc3488ba006e3ba171e85dffbe6f332f84bf9a refs/heads/todo
+
+Our adder.rb example used line feeds to delimit messages; each process reads from the input
+stream until it sees \n. Another common way to split a stream into messages is to prefix every
+message with its length, so the recipient parses the stream by reading a length header, then
+reading the given number of bytes. Git’s protocol12 works this way; every message is terminated
+with \n and is then prefixed with a four-digit hexadecimal number giving the length of the
+message and this header. For example, if you look at the line for refs/heads/maint above,
+you’ll see it’s prefixed with 003e:
+        >> msg = "98cdfbb84ad2ed6a2eb43dafa357a70a4b0a0fad refs/heads/maint\n"
+
+        >> (msg.bytesize + 4).to_s(16).rjust(4, "0")
+        => "003e"
+
+If a message begins with 0000, that represents an empty message and is known as a flush packet.
+
+The first line — the HEAD reference — has some extra data appearing after the ref name.
+Immediately after the word HEAD, we see multi_ack thin-pack side-band…. These words
+denote capabilities13, optional aspects of the protocol that the peer supports. The first message
+sent by each party must be suffixed with a null byte followed by a space-separated list of
+its capabilities. The remote agent (git-upload-pack) always sends the first message in the
+conversation, and the client (fetch) should only send capabilities that the remote agent has
+  https://git-scm.com/docs/protocol-common
+  https://git-scm.com/docs/protocol-capabilities
+
+                                      The network protocol
+
+sent; the remote agent will send some capabilities purely to advertise that it recognises them.
+For now we won’t worry about what the various capabilities mean, but we’ll make space for
+them in our protocol implementation.
+
+To implement this messaging scheme, we need a class that represents the communication
+channel between the client and the remote agent. It will take the name of the command that’s
+calling it, an input and output stream, and an optional list of capabilities as input. It needs the
+name of the calling command as this affects the serialisation of capabilities slightly. It sets
+the sync flag on both streams, which makes Ruby flush data to and from the underlying file
+descriptors immediately without buffering anything. The remote agent will instantiate this class
+with its standard input and output streams, while the client will use the streams it got by calling
+Open3.popen2 to launch the agent.
+
+     # lib/remotes/protocol.rb
+
+     class Remotes
+       class Protocol
+
+         attr_reader :input, :output
+
+         def initialize(command, input, output, capabilities = [])
+           @command = command
+           @input   = input
+           @output = output
+
+             @input.sync = @output.sync = true
+
+           @caps_local = capabilities
+           @caps_remote = nil
+           @caps_sent   = false
+         end
+
+         # ...
+
+       end
+     end
+
+To send a message, we want to write to the output stream. If the given input is nil, this denotes
+a flush packet and we write 0000 and nothing more. Otherwise, we call append_caps which
+appends the local capabilities to the message if they’ve not been sent, then calculate the size,
+which is the byte length of the message, plus 5 — 4 bytes for the length header and 1 for the
+\n at the end. Then we write all the data to the output.
+
+     # lib/remotes/protocol.rb
+
+         def send_packet(line)
+           return @output.write("0000") if line == nil
+
+             line = append_caps(line)
+             size = line.bytesize + 5
+
+           @output.write(size.to_s(16).rjust(4, "0"))
+           @output.write(line)
+           @output.write("\n")
+         end
+
+                                      The network protocol
+
+append_caps takes a message and, if the capabilities have not already been sent, appends them
+to the message. Most commands use a null byte to separate the capabilities from the message,
+but fetch uses a space. If @caps_remote is set that means we’ve received capabilities from the
+other peer and should limit the ones we send to capabilities that appear in that list; a & b finds
+the common elements of arrays a and b.
+     # lib/remotes/protocol.rb
+
+         def append_caps(line)
+           return line if @caps_sent
+           @caps_sent = true
+
+            sep   = (@command == "fetch") ? " " : "\0"
+            caps = @caps_local
+            caps &= @caps_remote if @caps_remote
+
+           line + sep + caps.join(" ")
+         end
+
+To read a message, we read the next four bytes from the input stream. If this string is not a four-
+digit hexadecimal number, then we’ll just return it; it will denote the start of a different kind
+of message and the caller will know what to do with it. Otherwise, we interpret this string as
+a length and read that many bytes from the input.
+     # lib/remotes/protocol.rb
+
+         def recv_packet
+           head = @input.read(4)
+           return head unless /[0-9a-f]{4}/ =~ head
+
+            size = head.to_i(16)
+            return nil if size == 0
+
+           line = @input.read(size - 4).sub(/\n$/, "")
+           detect_caps(line)
+         end
+
+The detect_caps method deals with the first message received, which might contain a
+capability list at the end. The first message fetch sends will be of the form want <ID>
+<capabilities>, so the upload-pack command needs to split this on the second space. All
+other commands should split the message on the first null byte to find the capability list. This
+method returns the rest of the line that preceded the delimiter, after storing the capabilities in
+@caps_remote.
+
+     # lib/remotes/protocol.rb
+
+         def detect_caps(line)
+           return line if @caps_remote
+
+            if @command == "upload-pack"
+              sep, n = " ", 3
+            else
+              sep, n = "\0", 2
+            end
+
+            parts = line.split(sep, n)
+
+                                      The network protocol
+
+            caps   = (parts.size == n) ? parts.pop : ""
+
+           @caps_remote = caps.split(/ +/)
+           parts.join(" ")
+         end
+
+When implementing the protocol, we’ll need to be able to check what capabilities the other
+peer supports; the Protocol#capable? method returns true if the remote peer’s capabilities
+include the given name.
+     # lib/remotes/protocol.rb
+
+         def capable?(ability)
+           @caps_remote&.include?(ability)
+         end
+
+Finally, it will be useful to read messages in a loop until we receive a particular message that
+indicates the end of a list. Protocol#recv_until takes a string and reads messages from the
+input until a message matches that string. Every message until that point is yielded to the caller.
+     # lib/remotes/protocol.rb
+
+         def recv_until(terminator)
+           loop do
+             line = recv_packet
+             break if line == terminator
+             yield line
+           end
+         end
+
+That completes the protocol for sending messages between the client and the remote agent.
+Here’s another version of our adder.rb program that uses Remotes::Protocol as a wrapper
+around its I/O streams. It accepts an arbitrary number of inputs from the client, followed by a
+flush-packet, then sends the sum of all the numbers it’s received.
+     # adder.rb
+
+     require_relative "./lib/remotes/protocol"
+
+     conn = Remotes::Protocol.new($stdin, $stdout)
+
+     numbers = []
+     conn.recv_until(nil) { |n| numbers << n.to_i }
+     sum = numbers.reduce(0) { |a, b| a + b }
+     conn.send_packet(sum.to_s)
+
+A client can invoke this program via Open3 and then use Remotes::Protocol to send its inputs
+and receive the result.
+     # client.rb
+
+     require "open3"
+     require_relative "./lib/remotes/protocol"
+
+     input, output, thread = Open3.popen2("ruby adder.rb")
+     conn = Remotes::Protocol.new(output, input)
+
+     (1..10).each { |n| conn.send_packet(n.to_s) }
+
+                                                        The network protocol
+
+        conn.send_packet(nil)
+
+        result = conn.recv_packet.to_i
+
+        puts result # => 55
+
+Next we need to examine the pack format, and then we’ll have everything we need to send
+objects between repositories.
+
+27.4. The pack format
+To complete the communication protocol between fetch and git-upload-pack, we need a
+format for sending all the objects that fetch requests over the network. The wire protocol
+we saw in the last chapter is designed for sending short messages; the largest message size it
+can support is FFFF16, or 65,53510, which is 64 kilobytes14. For sending object data, which
+is typically much larger, the protocol switches to a different format: the pack format15. This
+provides a way to send a stream of objects over the wire, making the total payload as small as
+possible to reduce transfer time.
+
+In order to transfer a set of objects from the remote to the local repository, git-upload-pack
+bundles them up into what Git calls a pack. fetch then needs to parse this pack, and then either
+keep it as the primary storage for those objects, or extract it into a single file per object as we
+currently store them. To begin with, we will not implement delta compression in our packs.
+That can be added later without changing the commands that use this format.
+
+At a high level, the pack format is fairly simple. Like the index16, it begins with a 4-byte
+signature (PACK rather than DIRC), a 4-byte version number (2 or 3), and a 4-byte number
+indicating how many objects the pack contains. This is followed by the given number of object
+records, and finally the SHA-1 hash of all the preceding content.
+
+An object record consists of a header declaring the object’s type and size, followed by its data
+in compressed form. So conceptually it’s similar to a file in .git/objects; the difference is
+that the type and size are not part of the compressed data and are represented differently. The
+object ID is not contained in the pack since it can be computed from the object’s content.
+
+The object’s type is represented numerically rather than as a string. Commits have type 1,
+trees type 2, and blobs are type 3. The size is represented as a little-endian variable-length
+number, similar to a variable-length quantity17. Let’s say a blob has a size of 217,27710 bytes.
+To represent this size in an object header, imagine representing this number in binary. Just as
+in decimal, the rightmost digit has the lowest place value.
+        decimal                                            217277
+        binary                                 110101000010111101
+
+Now, we’ll take this binary number and split it into sections, starting with the least-significant
+(rightmost) bits. The first group consists of four bits while all subsequent groups contain up to
+seven bits. This produces three smaller binary numbers.
+                                   1101010             0001011                  1101
+
+   I will by using the binary definition of kilobyte as 1,024 bytes. This is also known as a kibibyte, abbreviated as KiB.
+   https://git-scm.com/docs/pack-format
+   See Section 6.2, “Inspecting .git/index”
+   https://en.wikipedia.org/wiki/Variable-length_quantity
+
+                                       The network protocol
+
+Next, we swap the order of these numbers; the encoding being little-endian means the first byte
+encodes the least-significant bits.
+                            1101      0001011       1101010
+
+Then we pad each one to eight bits, setting the most-significant bit to 0 if this number is the
+last one, and 1 otherwise. This leading 1 allows the format to extend to an arbitrary size; the
+reader keeps parsing until it sees a byte less than 8016.
+                       10001101      10001011      01101010
+
+Finally, we store the type of the blob (310, or 112) in the second, third and fourth most-significant
+bits of the first number. That is, 10001101 becomes 10111101.
+     binary            10111101      10001011      01101010
+     decimal                189           139           106
+     hexadecimal             bd            8b            6a
+
+Putting all this together we see that this object’s header can be encoded as the three bytes bd
+8b 6a.
+
+Computers don’t typically provide access to the physical bits within a byte; a byte is the smallest
+unit of memory and we cannot speak of what order the bits are physically ordered within them.
+However, when performing bitwise operations, numbers work as though the bits are ordered
+with the most-significant on the left and the least-significant on the right.
+
+So, we can select the least-significant four bits of a number by computing the bitwise-and n &
+0xf; F16 is 11112. We can select the next seven bits by right-shifting the number four places
+and then using a bitwise-and against 7F16, which is 11111112. That is, (n >> 4) & 0x7f. To
+set the three type bits in the leading byte, we left-shift the type four places and bitwise-or it into
+the byte, i.e. byte |= type << 4. Further information on bitwise arithmetic can be found in
+Appendix B, Bitwise arithmetic.
+
+27.4.1. Writing packs
+We’ll start with the code to generate a pack, which git-upload-pack will use to send data. To
+begin, with, we’ll need a few constants that define the pack header format and the numeric type
+values for commits, trees and blobs.
+     # lib/pack.rb
+
+     module Pack
+       HEADER_SIZE   = 12
+       HEADER_FORMAT = "a4N2"
+       SIGNATURE     = "PACK"
+       VERSION       = 2
+
+       COMMIT = 1
+       TREE   = 2
+       BLOB   = 3
+     end
+
+Now let’s build a class whose job it is to convert a set of objects into a pack to send over the
+network. Our Pack::Writer class will be created with an output IO object, a Database, and
+some options. It needs access to the database because we’re only going to be giving it object
+
+                                      The network protocol
+
+references from a RevList object search, and it will need to retrieve the full data for each object.
+When we create this object we’ll also create a Digest::SHA1 value, and everything we write to
+the output stream will also be added to this digest so we can append the SHA-1 hash at the very
+end. Finally, Git allows the compression level of packs to be configured, so we’ll add support
+for that as an option.
+     # lib/pack/writer.rb
+
+     module Pack
+       class Writer
+
+          def initialize(output, database, options = {})
+            @output   = output
+            @digest   = Digest::SHA1.new
+            @database = database
+
+            @compression = options.fetch(:compression, Zlib::DEFAULT_COMPRESSION)
+          end
+
+          private
+
+          def write(data)
+            @output.write(data)
+            @digest.update(data)
+          end
+
+          # ...
+
+       end
+     end
+
+The main method in this class will be write_objects. This takes a RevList and goes through
+several stages to generate the pack data. First, we prepare the pack list, which is the set of
+objects we want to send. Having found all the objects, we can then write the header with the
+object count, and then write all the object records. Finally, we append the SHA-1 digest of all
+the above content.
+     # lib/pack/writer.rb
+
+          def write_objects(rev_list)
+            prepare_pack_list(rev_list)
+            write_header
+            write_entries
+            @output.write(@digest.digest)
+          end
+
+The prepare_pack_list method must build a list of all the records we want to send by
+enumerating the RevList it’s given. Recall from Section 26.4, “Finding objects” that this class
+yields Database::Commit and Database::Entry objects to the caller. All we will do with this
+information for now is convert each of these into our own Entry type that retains the object’s
+ID and its numeric type.
+     # lib/pack/writer.rb
+
+          Entry = Struct.new(:oid, :type)
+
+                                      The network protocol
+
+          def prepare_pack_list(rev_list)
+            @pack_list = []
+            rev_list.each { |object| add_to_pack_list(object) }
+          end
+
+          def add_to_pack_list(object)
+            case object
+            when Database::Commit
+              @pack_list.push(Entry.new(object.oid, COMMIT))
+            when Database::Entry
+              type = object.tree? ? TREE : BLOB
+              @pack_list.push(Entry.new(object.oid, type))
+            end
+          end
+
+Note that Pack::Writer is not concerned with how the objects to send are selected. It’s the job
+of the caller to create a RevList with the right parameters to generate the objects it wants. The
+RevList class will however make sure that no object is emitted more than once.
+
+Once all the entries are loaded, we can write out the header, which requires using
+HEADER_FORMAT to pack the signature, version and object count into the first 12 bytes.
+
+     # lib/pack/writer.rb
+
+          def write_header
+            header = [SIGNATURE, VERSION, @pack_list.size].pack(HEADER_FORMAT)
+            write(header)
+          end
+
+Finally, we can write out all the object entries. The format merely concatenates every record
+end-to-end, compressing each object’s content and prefixing it with the type and size header.
+This method relies on a couple of new interfaces; Database#load_raw loads an object without
+parsing its content, while Numbers::VarIntLE takes care of encoding the size as a variable-
+length integer; this array of bytes is then turned into a string by pack("C*"). We’ll take a look
+at those methods below.
+     # lib/pack/writer.rb
+
+          def write_entries
+            @pack_list.each { |entry| write_entry(entry) }
+          end
+
+          def write_entry(entry)
+            object = @database.load_raw(entry.oid)
+
+            header = Numbers::VarIntLE.write(object.size)
+            header[0] |= entry.type << 4
+
+            write(header.pack("C*"))
+            write(Zlib::Deflate.deflate(object.data, @compression))
+          end
+
+The Database#load_raw method is like Database#load, except it skips the work of parsing
+the object into a Commit, Tree or Blob. That’s because Pack::Writer just wants to write the
+serialised object directly to the output stream and doesn’t actually care about its type or internal
+structure — it’s just a blob of data. So it would be pointless to parse the object only to re-
+
+                                              The network protocol
+
+serialise it. This method will read the object’s header and then return a Raw value containing
+the type, size, and unparsed data.
+       # lib/database.rb
+
+          Raw = Struct.new(:type, :size, :data)
+
+          def load_raw(oid)
+            type, size, scanner = read_object_header(oid)
+            Raw.new(type, size, scanner.rest)
+          end
+
+read_object_header is a method extracted from the existing read_object method         , which
+currently looks like this:
+       # lib/database.rb
+
+          def read_object(oid)
+            data    = Zlib::Inflate.inflate(File.read(object_path(oid)))
+            scanner = StringScanner.new(data)
+
+             type = scanner.scan_until(/ /).strip
+             _size = scanner.scan_until(/\0/)[0..-2]
+
+             object = TYPES[type].parse(scanner)
+             object.oid = oid
+
+            object
+          end
+
+We can split this method into two pieces: read_object_header inflates the object read from
+disk, and parses the type and size from the beginning of it, returning those two values and
+the StringScanner. read_object then calls this and further processes the object’s content by
+parsing it with the appropriate type.
+       # lib/database.rb
+
+          def read_object(oid)
+            type, _, scanner = read_object_header(oid)
+
+             object = TYPES[type].parse(scanner)
+             object.oid = oid
+
+            object
+          end
+
+          def read_object_header(oid, read_bytes = nil)
+            path    = object_path(oid)
+            data    = Zlib::Inflate.new.inflate(File.read(path, read_bytes))
+            scanner = StringScanner.new(data)
+
+             type = scanner.scan_until(/ /).strip
+             size = scanner.scan_until(/\0/)[0..-2].to_i
+
+            [type, size, scanner]
+          end
+
+  Section 10.1, “Reading from the database”
+
+                                                The network protocol
+
+The final ingredient in writing out a pack is the Numbers::VarIntLE module that’s called from
+Writer#write_entry. Short for variable-length integer, little-endian, it takes care of encoding
+an object’s size value as a series of bytes. The first byte contains the least-significant four bits
+of the value, the next byte the next seven bits, and so on. Each byte other than the final one
+has the most-significant bit set, which is accomplished by a bitwise-or with 8016 (100000002).
+We return the bytes as an array rather than packing them into a string immediately because the
+caller will need to add the type value into the first byte.
+       # lib/pack/numbers.rb
+
+       module Pack
+         module Numbers
+
+              module VarIntLE
+                def self.write(value)
+                  bytes = []
+                  mask = 0xf
+                  shift = 4
+
+                    until value <= mask
+                      bytes << (0x80 | value & mask)
+                      value >>= shift
+
+                      mask, shift = 0x7f, 7
+                    end
+
+                  bytes + [value]
+                end
+              end
+
+         end
+       end
+
+The initial value of mask, F16, selects the least-significant four bits of the value, after which we
+right-shift it four places. The subsequent mask value of 7F16 selects the least-significant seven
+bits. We repeat this process until the value is less than or equal to the mask, meaning it will
+fit into a single byte.
+
+27.4.2. Reading from packs
+On the other end of the connection, fetch will be receiving the pack sent by git-upload-pack
+and will need to parse it, extracting each object and saving it into the .git/objects database. To
+achieve this, let’s create a Pack::Reader class that takes an input stream. The input argument
+will be some kind of Ruby IO19, some object that responds to read, readbyte, seek and so on.
+       # lib/pack/reader.rb
+
+       module Pack
+         class Reader
+
+              def initialize(input)
+                @input = input
+              end
+
+  https://docs.ruby-lang.org/en/2.3.0/IO.html
+
+                                       The network protocol
+
+           # ...
+
+        end
+      end
+
+The caller will instantiate Pack::Reader with an input stream, and then call read_header to
+find out how many objects are in the pack. Depending on how many there are, it will either want
+to extract the objects into individual files, or keep the pack on disk and generate an index for it20.
+      # lib/pack/reader.rb
+
+           InvalidPack = Class.new(StandardError)
+
+           attr_reader :count
+
+           def read_header
+             data = @input.read(HEADER_SIZE)
+             signature, version, @count = data.unpack(HEADER_FORMAT)
+
+                unless signature == SIGNATURE
+                  raise InvalidPack, "bad pack signature: #{ signature }"
+                end
+
+             unless version == VERSION
+               raise InvalidPack, "unsupported pack version: #{ version }"
+             end
+           end
+
+read_header uses String#unpack to parse the first 12 bytes from the input, and it checks that
+the signature and version are what it’s expecting.
+
+After reading the header, the caller will want to read each object from the pack. This requires
+first reading its type/size header, which we can do by calling Numbers::VarIntLE.read, defined
+below. This returns the first byte of the encoding, and the size value, and we extract the type
+from the first byte. For now, we won’t need the size value.
+      # lib/pack/reader.rb
+
+          def read_record
+             type, _ = read_record_header
+             Record.new(TYPE_CODES.key(type), read_zlib_stream)
+           end
+
+           def read_record_header
+             byte, size = Numbers::VarIntLE.read(@input)
+             type = (byte >> 4) & 0x7
+
+             [type, size]
+           end
+
+To get the object’s data we need to read the zlib-compressed content following the header,
+but unfortunately the size header represents the record’s size before it was compressed, not
+the length of the data stored in the pack. So we can’t just read size bytes from the input and
+  <db_packs>>
+
+                                                     The network protocol
+
+then inflate it. Instead we need to read until zlib tells us the stream is finished. This presents
+a challenge: we don’t know how long the zlib stream is, and unless we reimplement the zlib
+parser we’ve no way of detecting where it ends. We need to let zlib tell us where the object
+ends so we begin reading the next object from the correct position.
+
+The simplest thing to do here would be to read a single byte at a time from @input, feed it into
+a Zlib::Inflate stream, and check whether the stream is finished. But drip-feeding data into
+zlib in a loop is extremely slow, and it would be better to pass bigger chunks of input, letting
+zlib’s C code do more work for each iteration of our loop. Inspecting .git/objects tells us
+most of our objects are a few hundred bytes when compressed, so let’s say we’ll read input
+in 256-byte chunks.
+
+This makes a substantial performance difference but presents two new challenges. The first is
+over-fetching: the last block we read for each zlib stream will contain the end of the stream
+and the beginning of the next object. To make sure we read the next object correctly, we need
+to reposition the read cursor. We can find out how much data zlib actually consumed from
+                           21                              22
+Zlib::Inflate#total_in , and then we can use IO#seek to move the read cursor by the
+amount we’ve over-fetched.
+
+The second problem is that if we’re reading near the end of the pack, there may be fewer than
+256 bytes left to read. The peer that’s sending the pack may not explicitly close its output
+stream at the end of the pack — it just stops sending data but leaves the stream open. The
+IO#read method blocks until the requested number of bytes are available, so if there are fewer
+than 256 bytes left in the pack, calling read will just hang indefinitely. Instead we can use
+IO#read_nonblock , which may return fewer bytes than requested and raises an exception
+rather than blocking if there is no data available.
+
+Putting all this together, we can use IO#read_nonblock in a loop, feeding the data into
+Zlib::Inflate. We don’t mind if it gives us less data than we asked for, as we don’t actually
+know how long the zlib block is; we just want to read it in chunks rather than a byte at a time.
+Once Zlib::Inflate#finished? is true, we IO#seek backwards by the amount we’ve over-
+fetched, ready to read the next object.
+       # lib/pack/reader.rb
+
+              def read_zlib_stream
+                stream = Zlib::Inflate.new
+                string = ""
+                total = 0
+
+                 until stream.finished?
+                   data   = @input.read_nonblock(256)
+                   total += data.bytesize
+
+                   string.concat(stream.inflate(data))
+                 end
+                 @input.seek(stream.total_in - total, IO::SEEK_CUR)
+
+                 string
+
+   https://docs.ruby-lang.org/en/2.3.0/Zlib/ZStream.html#method-i-total_in
+   https://docs.ruby-lang.org/en/2.3.0/IO.html#method-i-seek
+   https://docs.ruby-lang.org/en/2.3.0/IO.html#method-i-read
+   https://docs.ruby-lang.org/en/2.3.0/IO.html#method-i-read_nonblock
+
+                                      The network protocol
+
+         end
+
+Record and TYPE_CODES exist to convert the pack record and its numeric type into an object we
+can save to the database. In Section 3.2, “The commit command”, we give the Blob, Tree and
+Commit classes the methods type and to_s, and Database#store would then use these methods
+to write the object to disk. Record plays the same role here; it exposes a type and to_s that
+allow the object to be sent to Database#store and get written to .git/objects. Again, Reader
+does not parse these objects as it doesn’t care about their internal structure; it just yields them
+as blob-like values back to the caller, which can process the object further if it likes.
+     # lib/pack.rb
+
+       TYPE_CODES = {
+         "commit" => COMMIT,
+         "tree"   => TREE,
+         "blob"   => BLOB
+       }
+
+       Record = Struct.new(:type, :data) do
+         attr_accessor :oid
+
+         def to_s
+           data
+         end
+       end
+
+Finally, we need Numbers::VarIntLE.read to parse the size from the input stream. From the
+first byte, we bitwise-and with F16 to select the lowest four bits. On the next byte, we mask
+off seven bits using 7F16 and shift the result left by four bits before combining it with the
+accumulating value. The left-shift amount increases by 7 bits for each extra byte we read, so
+the bytes are contributing increasingly significant bits to the result. We return the value with
+the first byte, so we can read the type from it.
+     # lib/pack/numbers.rb
+
+         module VarIntLE
+           def self.read(input)
+             first = input.readbyte
+             value = first & 0xf
+             shift = 4
+
+               byte = first
+
+               until byte < 0x80
+                 byte   = input.readbyte
+                 value |= (byte & 0x7f) << shift
+                 shift += 7
+               end
+
+             [first, value]
+           end
+         end
+
+For example, let’s take the example size header we generated earlier:
+     hexadecimal              bd           8b           6a
+
+                                                        The network protocol
+
+       decimal                        189                139            106
+       binary                    10111101           10001011       01101010
+
+From the first byte we select the lowest four bits; 101111012 & F16 = 11012.
+
+The most-significant bit of this byte is 1, so we continue and read the next byte. A bitwise-
+and with 7F16 selects the bits 00010112, and we left-shift this four places and bitwise-or it with
+our result:
+                                                        0001011         1101
+
+Again, this byte has its most-significant bit set, so we move onto the next. This yields the bits
+11010102, and the left-shift is now eleven places:
+                                   1101010              0001011         1101
+
+This gives us the bits 1101010000101111012, which is 217,27710. The third byte is less than
+8016 so we can stop parsing here.
+
+27.4.3. Reading from a stream
+The Pack::Reader class will initially be used to read from the stream sent by the remote
+process — the upload-pack command that’s generating the pack. But later we’ll also use it to
+read from files on disk. In Unix-like systems, everything you can read data from is presented as
+a file25, which really means you use the same set of functions to interact with any data source.
+In Ruby, this set of functions is the IO interface.
+
+When we read a pack from a file, we’ll be wanting to read specific objects from arbitrary
+locations, rather than read the entire pack contents sequentially. When we’re reading all the
+objects sequentially during a fetch command, we’ll want to perform some additional activities
+as the data is read: we’ll need to calculate the SHA-1 hash of all the pack data so we can verify
+it at the end, and we’d like to track the amount of data we’ve read so we can index the position
+of each object and feed it into a progress meter26. These additional services aren’t needed when
+reading from a file, so in that case we can pass in a File27 returned by File.open and that will
+work fine: read pulls data from the current position, and seek moves the read position. But
+when reading from an upload-pack output stream, we can wrap the IO stream in our own class.
+
+A basic class that replicates the read and readbyte methods while keeping a SHA-1 hash and
+offset up-to-date might look like this. It takes some IO object as input, and wraps its read
+method so that when something calls Stream#read, it receives the data from the underlying IO
+and the Stream updates its state transparently.
+       # lib/pack/stream.rb
+
+       module Pack
+         class Stream
+
+   https://en.wikipedia.org/wiki/Everything_is_a_file
+   Section 29.3, “Progress meters”
+   https://docs.ruby-lang.org/en/2.3.0/File.html
+
+                                                  The network protocol
+
+             attr_reader :digest, :offset
+
+             def initialize(input)
+               @input = input
+               @digest = Digest::SHA1.new
+               @offset = 0
+             end
+
+             def read(size)
+               data = @input.read(size)
+               update_state(data)
+               data
+             end
+
+             def readbyte
+               read(1).bytes.first
+             end
+
+             private
+
+             def update_state(data)
+               @digest.update(data)
+               @offset += data.bytesize
+             end
+
+         end
+       end
+
+This is an example of the decorator pattern28, wherein one object is wrapped by another that
+has the same interface, but supplies additional behaviour. We can pass in a Pack::Stream to any
+method that expects an IO to read from and it will work just the same. This pattern is an example
+of polymorphism29: multiple classes implement the same interface so they can all interoperate
+with something that relies on said interface.
+
+We can extend the Stream interface with other operations we need. To check the SHA-1 hash
+at the end of the pack, we need to read directly from the underlying IO, rather than calling the
+Stream#read method as that will update the computed SHA-1 hash.
+
+       # lib/pack/stream.rb
+
+             def verify_checksum
+               unless @input.read(20) == @digest.digest
+                 raise InvalidPack, "Checksum does not match value read from pack"
+               end
+             end
+
+Our Stream class can accept calls to read and readbyte, but not the methods used in
+Reader#read_zlib_stream: read_nonblock and seek. If we want to use Stream with Reader,
+it needs to implement all the methods Reader depends on. These methods present a problem:
+when reading from a file, all the data is sitting around motionless on disk, and IO#seek can
+jump to arbitrary locations in the file so we can read the file in any order we like. When reading
+from a stream, like a process’s standard output, IO#seek doesn’t work. The IO class and the
+underlying kernel infrastructure don’t keep hold of data you’ve already read — once you fetch
+  https://en.wikipedia.org/wiki/Decorator_pattern
+  https://en.wikipedia.org/wiki/Polymorphism_(computer_science)
+
+                                      The network protocol
+
+it with read it’s gone, and you can’t move the cursor back to an earlier point in the stream. If
+you want that behaviour, you need to implement it yourself.
+
+Now, we also don’t want to keep the entire stream contents in memory, as this could be very
+large. But as we’ll see when we come to store packs on disk, we will need to parse out the
+chunk of the stream that corresponds to a single record. Implementing that will also let us retain
+data we’ve read recently, so that we can put it back in the queue when we detect we’ve read
+past the end of an object.
+
+To support this requirement, we’ll add two new pieces of state to Pack::Stream. @buffer will
+store data that’s already been fetched from the underlying IO but was not part of the current
+object, so has been stored for future reads. @capture will store data that’s read during the current
+record, so we can retrieve the excess and add it to @buffer when the end of the object is detected.
+Encoding::ASCII_8BIT is Ruby’s way of denoting that a string contains binary data rather than
+text.
+     # lib/pack/stream.rb
+
+          def initialize(input)
+            @input   = input
+            @digest = Digest::SHA1.new
+            @offset = 0
+            @buffer = new_byte_string
+            @capture = nil
+          end
+
+          def new_byte_string
+            String.new("", :encoding => Encoding::ASCII_8BIT)
+          end
+
+We need to implement a method of capturing all the data that was read while parsing an object,
+trimming off any data we over-fetched. Ideally we’d like to do this without reaching inside the
+Reader class and adding lots of instrumentation that makes it incompatible with other IO types.
+A common way of doing this in Ruby is to use blocks to cause something to monitor activity
+while another piece of code runs. For example, an interface for fetching a Pack::Record and
+the underlying byte data could look like this:
+          stream = Pack::Stream.new(io)
+          reader = Pack::Reader.new(stream)
+
+          reader.read_header
+
+          record, data = stream.capture { reader.read_record }
+
+Since Reader will be calling methods on Stream, Stream can monitor any reads that occur while
+Reader#read_record is running, and retain the data that contributes to that object, returning
+it along with the record itself. To make this work, we instantiate @capture to a new string,
+then yield to execute the block, placing the result and the @capture buffer in the return value
+together. After yielding, we update the SHA-1 hash with the captured buffer, and delete the
+reference to it, before returning the results.
+     # lib/pack/stream.rb
+
+          def capture
+
+                                     The network protocol
+
+           @capture = new_byte_string
+           result   = [yield, @capture]
+
+           @digest.update(@capture)
+           @capture = nil
+
+           result
+         end
+
+Now, when we call update_state after reading from the IO, we don’t necessarily want to
+update the SHA-1 hash immediately. If we over-fetch, we might end up reading the checksum
+at the end of the file, and feeding that into @digest would give us the wrong result. So if we’re
+currently capturing reads, we hold off on updating @digest and leave that for the capture
+method to handle. If @capture exists, then we append the fetched data to it.
+     # lib/pack/stream.rb
+
+         def update_state(data)
+           @digest.update(data) unless @capture
+           @offset += data.bytesize
+           @capture&.concat(data)
+         end
+
+We now have enough information to make seek work. At the end of each record,
+Reader#read_zlib_stream will call seek to tell the IO object to move the cursor backwards by
+some amount. We can handle that by slicing off the given amount at the end of @capture, and
+storing it in @buffer. @capture will then contain exactly the data that backs the current object
+and nothing more. We also amend @offset in line with the adjustment.
+     # lib/pack/stream.rb
+
+         def seek(amount, whence = IO::SEEK_SET)
+           return unless amount < 0
+
+           data = @capture.slice!(amount .. -1)
+           @buffer.prepend(data)
+           @offset += amount
+         end
+
+Next, Stream needs to pull data from @buffer before attempting to fetch more data from @input.
+A new method called read_buffered will wrap this operation, slicing as much as it can off
+the front of the @buffer string before fetching any remaining bytes from @input. If we want a
+blocking read for a fixed number of bytes, we call read, otherwise we call read_nonblock. This
+could throw an error if there’s no data available (EWOULDBLOCK) or the stream has been closed
+(EOFError), and in those cases we’ll just return what we managed to read from the buffer.
+     # lib/pack/stream.rb
+
+         def read_buffered(size, block = true)
+           from_buf = @buffer.slice!(0, size)
+           needed   = size - from_buf.bytesize
+           from_io = block ? @input.read(needed) : @input.read_nonblock(needed)
+
+           from_buf.concat(from_io.to_s)
+
+         rescue EOFError, Errno::EWOULDBLOCK
+
+                                   The network protocol
+
+           from_buf
+         end
+
+Stream#read and Stream#read_nonblock can both be implemented on top of read_buffered,
+and now we have the complete IO interface needed to support the Reader class.
+     # lib/pack/stream.rb
+
+         def read(size)
+           data = read_buffered(size)
+           update_state(data)
+           data
+         end
+
+         def read_nonblock(size)
+           data = read_buffered(size, false)
+           update_state(data)
+           data
+         end
+
+This design separates concerns: Reader relies only on the IO interface and can use any source
+of data as input. Stream doesn’t know anything about the format being parsed, and can provide
+these state-tracking services to anything that uses the IO interface.
+
+For now, this pack format is sufficient to support sending commits, trees and blobs. We will
+later extend this to support delta compression and make the resulting packs much smaller, but
+first let’s use this format to get a working fetch command up and running.
+

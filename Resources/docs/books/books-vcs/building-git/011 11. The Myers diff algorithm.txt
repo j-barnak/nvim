@@ -1,0 +1,1084 @@
+11. The Myers diff algorithm
+With the status, add and commit commands, we have a nice set of tools for working on the
+codebase and building up a version history. But we’re still missing a lot of things that make Git
+truly useful: we can’t see exactly which lines we’ve changed from the last commit, we can’t
+see a log of what changed in past commits, and we can’t create branches and merge them back
+together.
+
+Before we can make progress with any of these things, we need to take a digression into studying
+diff algorithms. Remember that Git stores snapshots of our content, not sets of changes, as its
+primary data structure. In order to have a diff command, it needs to be able to calculate what’s
+changed between versions of a file on the fly so it can display those changes to us. And diffs
+are not only useful for displaying changes to the user; they are also an important building block
+inside the merge command1, whose internal workings are based on calculating changes done
+to a file on parallel development branches.
+
+In this chapter, we’ll walk through the default diff algorithm used by Git. It was developed by
+Eugene W. Myers, and the original paper is available online2. While the paper is quite short,
+it is also mathematically dense and is focussed on proving properties of the algorithm. The
+explanations here will be less rigorous, but will hopefully be more intuitive, giving a detailed
+example of what the algorithm actually does and how it works.
+
+11.1. What’s in a diff?
+Before we launch into investigating the algorithm, it’s worth spending some time thinking about
+what a diff is and why we care about how they are generated. This will illuminate some of the
+properties that diff algorithms are designed to exhibit.
+
+Say we want to calculate the difference between two strings of letters:
+
+• a = ABCABBA
+
+• b = CBABAC
+
+By difference, we mean a sequence of edits that will convert string a into string b. One possible
+such sequence is to simply delete each character in a, and then insert each character in b, or
+to use common diff notation:
+       - A
+       - B
+       - C
+       - A
+       - B
+       - B
+       - A
+       + C
+       + B
+
+ Chapter 20, Merging inside files
+ http://www.xmailserver.org/diff2.pdf
+
+                                      The Myers diff algorithm
+
+      + A
+      + B
+      + A
+      + C
+
+However, we wouldn’t consider this a good-quality diff since it doesn’t tell us anything
+interesting. Changes to source code typically leave much of a file unmodified and we really
+want to see specific sections of code that were inserted or deleted. A diff that shows the entire
+file being removed and replaced with the new version isn’t much use to us. A diff that doesn’t
+attempt to isolate which regions of a file were changed will also lead to more merge conflicts.
+
+A better diff of these two strings would be:
+      - A
+      - B
+        C
+      + B
+        A
+        B
+      - B
+        A
+      + C
+
+This makes the smallest possible number of changes to a in order to produce b, so it’s a better
+visualisation of what changed. It’s not the only possible solution, for example these are also
+valid edit scripts:
+
+Figure 11.1. Three equivalent diffs
+
+      1.    - A          2.   - A     3.   + C
+            - B               + C          - A
+              C                 B            B
+            - A               - C          - C
+              B                 A            A
+            + A                 B            B
+              B               - B          - B
+              A                 A            A
+            + C               + C          + C
+
+However, the property they have in common is that they are all minimal: they make the smallest
+number of edits possible, which in this case is five. In general, trying to minimise the number
+of edits displayed when comparing code will result in diffs that make more sense to a human
+reader, and will also tend to make conflicts less likely when the diff algorithm is used to merge
+files.
+
+What’s interesting about these examples is that they differ in which sections they consider to
+be the same between the strings, and in which order they perform edits. From looking at diffs,
+you probably have an intuitive idea that diffs only show the things that changed, but these
+examples show that there are many possible interpretations of the difference between two files,
+particularly when the files contain many lines with the same content.
+
+So, the purpose of a diff algorithm is to provide a strategy for generating diffs that have
+certain desirable properties. We usually want diffs to be as small as possible, but there are
+
+                                           The Myers diff algorithm
+
+other considerations. For example, when you change something, you’re probably used to seeing
+deletions followed by insertions, not the other way round. That is, you’d rather see solution
+2 than solution 3 above. And, when you change a whole block of code, you’d like to see the
+whole chunk being deleted followed by the new code being inserted, rather than many deletions
+and insertions interleaved with each other.
+
+Figure 11.2. Interleaving deletions and insertions
+
+      Good:       - one            Bad:       - one
+                  - two                       + four
+                  - three                     - two
+                  + four                      + five
+                  + five                      + six
+                  + six                       - three
+
+You also probably want to see deleted or inserted code that aligns with your idea of the code’s
+structure. For example, if you insert a method, you’d like that method’s end to be considered
+new, rather than the end of the preceding method:
+
+Figure 11.3. Aligning diff changes with logical code blocks
+
+      Good:       class Foo                          Bad:       class Foo
+                    def initialize(name)                          def initialize(name)
+                      @name = name                                  @name = name
+                    end                                       +   end
+              +                                               +
+              +     def inspect                               +   def inspect
+              +       @name                                   +     @name
+              +     end                                           end
+                  end                                           end
+
+Myers’ algorithm is just one such strategy, but it’s fast and it produces diffs that tend to be of
+good quality most of the time. It does this by being greedy, that is trying to consume as many
+lines that are the same before making a change (thereby avoiding the ‘wrong end’ problem), and
+also by preferring deletions over insertions when given a choice, so that deletions appear first.
+
+11.2. Time for some graph theory
+Now that we’ve thought about what a diff algorithm is designed to achieve, we can begin to
+look specifically at the Myers algorithm. It is based on the idea that finding the shortest edit
+script (SES) can be modelled as a graph search. Let’s take our two strings, a = ABCABBA and b
+= CBABAC, and build a graph of all the ways we can get from a to b.
+
+The (x, y) co-ordinates in the grid shown below correspond to steps in the editing process; at
+(0,0) we have string a, that is, we have not started editing. Moving rightward (increasing x)
+corresponds to deleting a character from a, for example moving to (1,0) means we’ve deleted the
+first A from a, so our edited string is now BCABBA. Moving downward (increasing y) corresponds
+to inserting a character from b, for example if we now move from (1,0) down to (1,1), we insert
+the first C from b, and our edited string is thus CBCABBA. At position (4,3), we have converted
+ABCA into CBA, but we still need to convert the trailing BBA of a into BAC. The bottom-right
+position (7,6) corresponds to having converted string a fully into string b.
+
+                                                 The Myers diff algorithm
+
+As well as moving rightward and downward, in some positions we can also move diagonally.
+This occurs when the two strings have the same character at the position’s indexes, for example
+the third character in a and the first character in b are both C, and so position (2,0) has a diagonal
+leading to (3,1). This corresponds to consuming an equal character from both strings, neither
+deleting nor inserting anything.
+
+Figure 11.4. Edit graph for converting ABCABBA into CBABAC
+
+                  A        B        C        A          B       B       A
+
+             o-----o-----o-----o-----o-----o-----o-----o                        0
+             |     |     | \   |     |     |     |     |
+       C     |     |     | \ |       |     |     |     |
+             |     |     |   \ |     |     |     |     |
+             o-----o-----o-----o-----o-----o-----o-----o                        1
+             |     | \   |     |     | \   | \   |     |
+       B     |     | \ |       |     | \ | \ |         |
+             |     |   \ |     |     |   \ |   \ |     |
+             o-----o-----o-----o-----o-----o-----o-----o                        2
+             | \   |     |     | \   |     |     | \   |
+       A     | \ |       |     | \ |       |     | \ |
+             |   \ |     |     |   \ |     |     |   \ |
+             o-----o-----o-----o-----o-----o-----o-----o                        3
+             |     | \   |     |     | \   | \   |     |
+       B     |     | \ |       |     | \ | \ |         |
+             |     |   \ |     |     |   \ |   \ |     |
+             o-----o-----o-----o-----o-----o-----o-----o                        4
+             | \   |     |     | \   |     |     | \   |
+       A     | \ |       |     | \ |       |     | \ |
+             |   \ |     |     |   \ |     |     |   \ |
+             o-----o-----o-----o-----o-----o-----o-----o                        5
+             |     |     | \   |     |     |     |     |
+       C     |     |     | \ |       |     |     |     |
+             |     |     |   \ |     |     |     |     |
+             o-----o-----o-----o-----o-----o-----o-----o                        6
+
+             0        1        2        3        4          5       6       7
+
+The idea behind the Myers algorithm is quite simple: we want to get from (0,0) to (7,6) (the
+bottom-right) in as few moves as possible. There is a general-purpose method for finding
+the shortest path between two points in any graph: Dijkstra’s algorithm3. However, certain
+structural properties of these edit graphs mean that the shortest path can be found using a method
+that takes less time and space than Dijkstra’s general-purpose method. A modification to the
+base algorithm allows it to also consume a linear (rather than quadratic) amount of memory
+as it runs.
+
+In Myers’ method, a move is a single step rightward (a deletion from a) or downward (an
+insertion from b). The most number of moves we could take to get from a to b is 13: the total
+length of the two strings. This can be done by moving rightwards all the way to (7,0) and then
+downwards to (7,6).
+
+However, diagonal paths correspond to consuming a matching character from both strings
+without performing any edits, and so walking them is free. We want to maximise the number of
+ https://en.wikipedia.org/wiki/Dijkstra%27s_algorithm
+
+                                              The Myers diff algorithm
+
+diagonal steps we take and minimise the number of rightward/downward moves. Another way
+of putting this is that we want to find the longest common subsequence4 (LCS) of a and b, that
+is the longest sequence of characters that appear in both strings and in the same order. As the
+Myers paper mentions, finding the SES and the LCS are equivalent problems. The examples
+above show that we can actually get from a to b making only five edits, and Myers provides
+a strategy for finding that pathway.
+
+11.2.1. Walking the graph
+To develop an intuition for how the algorithm works, let’s start exploring the graph. To try to
+find the shortest path to the bottom-right position, we’ll explore every possible path from (0,0)
+in tandem until we find a path that reaches the end. I recommend keeping the above grid handy
+while you follow this.
+
+Let’s start by recording our initial position at (0,0).
+
+Figure 11.5. Initial graph exploration state
+
+       0,0
+
+We have two options from this position: we can move downward and reach (0,1) or move
+rightward and reach (1,0). We’ll record this pictorially using lines to represent the moves we’ve
+taken and which direction they were in. The numbers at each point represent the grid position
+we reach after taking the moves that led to it.
+
+Figure 11.6. Exploration state after a single move
+
+       0,0 --- 1,0
+        |
+        |
+       0,1
+
+Now let’s consider (0,1). If we move downward from here we reach (0,2), but there is a diagonal
+from there to (1,3), and from (1,3) to (2,4), and since diagonal moves are free we can say that
+moving downward from (0,1) gets us to (2,4) at the cost of only one move. Therefore we’ll
+mark the move from (0,1) to (2,4) as a single step in our walk.
+
+Moving rightward from (0,1) takes us to (1,1) and again there is a diagonal from there to (2,2).
+Let’s mark both these moves on our walk.
+
+Figure 11.7. Partial exploration state for two moves
+
+       0,0 --- 1,0
+        |
+        |
+       0,1 --- 2,2
+        |
+        |
+       2,4
+
+ https://en.wikipedia.org/wiki/Longest_common_subsequence_problem
+
+                                           The Myers diff algorithm
+
+Now let’s consider the other branch we took from (0,0), moving rightward to (1,0). Moving
+downward from (1,0) takes us to (1,1), which as we just found out gets us to (2,2). Moving
+rightward from (1,0) takes us to (2,0), which has a diagonal to (3,1). Again, we’ll record both
+these steps.
+
+I’m recording (2,2) as being visited via (1,0) rather than (0,1) for reasons that will become clear
+a little later. For intuition, consider that making a rightward move first means performing a
+deletion first, and we generally want deletions to appear before insertions.
+
+Figure 11.8. Complete exploration state after two moves
+
+      0,0 --- 1,0 --- 3,1
+       |       |
+       |       |
+      0,1     2,2
+       |
+       |
+      2,4
+
+We’ve now fully explored the graph to two moves deep and we can begin our third move.
+Moving downward from (2,4) gets us to (2,5), and from there is a diagonal to (3,6). Moving
+rightward from (2,4) takes us to (3,4), where again a diagonal takes us to (4,5).
+
+Figure 11.9. First explorations for the third move
+
+      0,0 --- 1,0 --- 3,1
+       |       |
+       |       |
+      0,1     2,2
+       |
+       |
+      2,4 --- 4,5
+       |
+       |
+      3,6
+
+Next, we consider (2,2). Moving rightward from there is as we’ve seen before: we move to (3,2),
+and follow the diagonals from there to (5,4). Moving downward introduces a new situation,
+however: this move gets us to (2,3) and there is no diagonal from there. Now, if we were doing
+a general-purpose graph search, we’d want to record both the result of moving rightward from
+(2,4) and the result of moving downward from (2,2), that is:
+
+Figure 11.10. Second explorations for the third move
+
+      0,0 --- 1,0 --- 3,1
+       |          |
+       |          |
+      0,1       2,2 --- 5,4
+       |            \
+       |              \
+      2,4 -             2,3
+       |    \
+       |      4,5
+      3,6
+
+                                            The Myers diff algorithm
+
+However, the structure of the particular graphs we’re examining means that it’s sufficient to
+just store the best position you can reach after a certain set of edits. The above record shows us
+that making two insertions then a deletion (down twice, and then right) gets us to (4,5), whereas
+making the deletion first, and then the two insertions, gets us to (2,3). So, we’ll just keep the
+(4,5) result and throw the (2,3) away, indicating (4,5) is the best position reachable after one
+deletion and two insertions in any order.
+
+Figure 11.11. Discarding the worse result
+
+      0,0 --- 1,0 --- 3,1
+       |       |
+       |       |
+      0,1     2,2 --- 5,4
+       |
+       |
+      2,4 --- 4,5
+       |
+       |
+      3,6
+
+Finally in our depth-2 scan, we visit (3,1). Moving downward from there goes to (3,2), which
+leads diagonally to (5,4), and so we’ll again record this as a move downward from (3,1) rather
+than rightward from (2,2). Moving rightward from (3,1) gives (4,1), which has a diagonal to
+(5,2).
+
+Here’s the completed record after three moves:
+
+Figure 11.12. Complete exploration state after three moves
+
+      0,0 --- 1,0 --- 3,1 --- 5,2
+       |       |       |
+       |       |       |
+      0,1     2,2     5,4
+       |
+       |
+      2,4 --- 4,5
+       |
+       |
+      3,6
+
+You’re probably getting the hang of this by now so let’s rattle through the remaining moves.
+We can’t move downward from (3,6), and moving rightward from there gives (4,6), which is
+also reachable downward from (4,5), so we’ll mark it as such. Rightward of (4,5) is (5,5).
+
+Figure 11.13. First explorations for the fourth move
+
+      0,0 --- 1,0 --- 3,1 --- 5,2
+       |       |       |
+       |       |       |
+      0,1     2,2     5,4
+       |
+       |
+      2,4 --- 4,5 --- 5,5
+       |       |
+       |       |
+      3,6     4,6
+
+                                           The Myers diff algorithm
+
+(5,5) is also downward of (5,4) so we’ll mark that, and moving rightward from (5,4) gives (6,4),
+with a diagonal leading to (7,5).
+
+Figure 11.14. Second explorations for the fourth move
+
+      0,0 --- 1,0 --- 3,1 --- 5,2
+       |       |       |
+       |       |       |
+      0,1     2,2     5,4 --- 7,5
+       |               |
+       |               |
+      2,4 --- 4,5     5,5
+       |       |
+       |       |
+      3,6     4,6
+
+Downward from (5,2) also leads to (7,5), and moving rightward from (5,2) leads to (7,3), thus
+completing the fourth row of the scan.
+
+Figure 11.15. Complete exploration state after four moves
+
+      0,0 --- 1,0 --- 3,1 --- 5,2 --- 7,3
+       |       |       |
+       |       |       |
+      0,1     2,2     5,4 --- 7,5
+       |               |
+       |               |
+      2,4 --- 4,5     5,5
+       |       |
+       |       |
+      3,6     4,6
+
+Now we begin the fifth row. Since we know there are diffs from a to b requiring only five edits,
+we expect this row of the scan to find the bottom-right position, (7,6).
+
+There is nothing downward from (4,6), and rightward of that is (5,6), which is also downward
+from (5,5). Rightward of (5,5) is (6,5).
+
+Figure 11.16. Partial exploration state for five moves
+
+      0,0 --- 1,0 --- 3,1 --- 5,2 --- 7,3
+       |       |       |
+       |       |       |
+      0,1     2,2     5,4 --- 7,5
+       |               |
+       |               |
+      2,4 --- 4,5     5,5 --- 6,5
+       |       |       |
+       |       |       |
+      3,6     4,6     5,6
+
+Finally, moving downward from (7,5) gives (7,6) — the final position! This is certainly better
+than (6,5), which we reached by going right, right, down, down, right, and so we replace it in
+our trace of the moves.
+
+                                          The Myers diff algorithm
+
+Figure 11.17. Reaching the bottom-right of the graph
+
+      0,0 --- 1,0 --- 3,1 --- 5,2 --- 7,3
+       |       |       |
+       |       |       |
+      0,1     2,2     5,4 --- 7,5
+       |               |       |
+       |               |       |
+      2,4 --- 4,5     5,5     7,6
+       |       |       |
+       |       |       |
+      3,6     4,6     5,6
+
+So that’s the basic idea the algorithm is based on: given two strings, find the shortest path
+through a graph that represents the edit space between the two. We explore every possible route
+through the graph breadth-first, and stop as soon as we reach the final position. To turn this
+into working code, we first need to look at a space-saving trick the algorithm uses to store the
+above search in memory.
+
+11.2.2. A change of perspective
+Having seen how the graph search works, we’re going to change the representation slightly to
+get us toward how the Myers algorithm actually works. Imagine that we take the above graph
+walk and render it rotated by 45 degrees. The number along the horizontal axis, d, is the depth
+we’ve reached in the graph, i.e. how many moves we’ve made so far, remembering that diagonal
+moves are free. The number along the vertical axis we call k, and notice that for every move
+in the graph, k = x – y for each move on that row.
+
+Figure 11.18. Exploration state in d-k space
+
+          |      0     1     2     3     4     5
+      ----+----------------------------------------
+          |
+       4 |                              7,3
+          |                           /
+       3 |                        5,2
+          |                     /
+       2 |                  3,1         7,5
+          |               /     \     /     \
+       1 |            1,0         5,4         7,6
+          |         /     \           \
+       0 |      0,0         2,2         5,5
+          |         \                       \
+      -1 |            0,1         4,5         5,6
+          |               \     /     \
+      -2 |                  2,4         4,6
+          |                     \
+      -3 |                        3,6
+
+Moving rightward increases x, and so increases k by 1. Moving downward increases y and so
+decreases k by 1. Moving diagonally increases both x and y, and so it keeps k the same. So,
+each time we make a rightward or downward move followed by a chain of diagonals, we either
+increment or decrement k by 1. What we are recording is the furthest through the edit graph we
+can reach for each value of k, at each step.
+
+                                         The Myers diff algorithm
+
+Here’s how the algorithm proceeds. For each d beginning with 0, we fill in each move for k
+from –d to +d in steps of 2. Our aim at each (d, k) position is to determine the best move we can
+make from the previous position. The best move is the one that gives us the highest x value;
+maximising x rather than y means we prioritise deletion over insertion.
+
+To discover the best move, we need to decide whether we should pick a downward move from
+(d – 1, k + 1), or a rightward move from (d – 1, k – 1). If k is –d then the move must be downward,
+likewise if k is +d then we must move rightward. For all other values of k, we pick the position
+with the highest x from the two adjacent k slots in the previous column, and determine where
+that move leads us.
+
+For example, consider the move at (d, k) = (2,0). We can either move rightward from (d, k) =
+(1,–1) where (x, y) = (0,1), or downward from (d, k) = (1,1) where (x, y) = (1,0).
+
+Figure 11.19. Picking a move from the higher x value
+
+          |      0     1     2
+      ----+----------------------
+          |
+       1 |            1,0
+          |         /     \
+       0 |      0,0       ( 2,2 )
+          |         \
+      -1 |            0,1
+
+(1,0) has a higher x value than (0,1), so we pick a move downward from (1,0) to (1,1), which
+leads us to (2,2) diagonally. Therefore we record (x, y) = (2,2) for (d, k) = (2,0). This explains
+why we recorded the move via this path when (2,0) is also reachable by going rightward from
+(0,1); picking the previous position with the highest x value means we try to maximise the
+number of deletions we make before trying insertions.
+
+In some situations, the two previous positions will have the same x value. For example, consider
+the move at (d, k) = (3,–1), where we can move downward from (x, y) = (2,2) or rightward
+from (x, y) = (2,4). Moving rightward will increase x, so we move from (2,4) to (3,4) and then
+diagonally to (4,5).
+
+Figure 11.20. Picking a rightward move when both predecessors have equal x
+
+          |      0     1     2     3
+      ----+----------------------------
+          |
+       2 |                  3,1
+          |               /
+       1 |            1,0
+          |         /     \
+       0 |      0,0         2,2
+          |         \
+      -1 |            0,1       ( 4,5 )
+          |               \     /
+      -2 |                  2,4
+
+There are a few final simplifications that get us to the algorithm as presented in the paper. The
+first is that, since we’re storing each (x, y) position indexed against k, and k = x – y, we don’t
+
+                                            The Myers diff algorithm
+
+need to store y since it can be calculated from the values of k and x. The second is that we don’t
+need to store the direction of the move taken at each step, we just store the best x value we
+can achieve at each point. The path will be derived after we’ve completed this process to find
+the smallest d that gets us to the bottom-right position; once we know where the final position
+shows up we can backtrack to find which single path out of the many we’ve explored will lead
+us there.
+
+Removing those details leaves us with this information:
+
+Figure 11.21. Exploration state with redundant data removed
+
+          |      0     1     2     3     4     5
+      ----+----------------------------------------
+          |
+       4 |                               7
+          |
+       3 |                         5
+          |
+       2 |                   3           7
+          |
+       1 |             1           5           7
+          |
+       0 |       0           2           5
+          |
+      -1 |             0           4           5
+          |
+      -2 |                   2           4
+          |
+      -3 |                         3
+
+The final simplification is that the x values in round d depend only on those in round d – 1,
+and because each round alternately modifies either the odd or the even k positions, each round
+does not modify the values it depends on from the previous round. Therefore the x values can
+be stored in a single flat array, indexed by k. In our example, this array would evolve as follows
+with each value of d:
+
+Figure 11.22. State array after each move
+
+            k |   -3    -2    -1     0     1     2     3     4
+      --------+--------------------------------------------------
+              |
+        d = 0 |                      0
+              |
+        d = 1 |                0     0     1
+              |
+        d = 2 |          2     0     2     1     3
+              |
+        d = 3 |    3     2     4     2     5     3     5
+              |
+        d = 4 |    3     4     4     5     5     7     5     7
+              |
+        d = 5 |    3     4     5     5     7     7     5     7
+
+The iteration stops when we discover we can reach (x, y) = (7,6) at (d, k) = (5,1).
+
+                                  The Myers diff algorithm
+
+We’ve now arrived at the representation of the problem used in the algorithm, and we can
+translate this into working code.
+
+11.2.3. Implementing the shortest-edit search
+We’ll create a method called Diff.diff(a, b) that takes two lists of strings, a and b. We
+usually want to compare files line-by-line, so we’ll include a convenience method for coercing
+values into arrays, which splits the input into lines if it’s a single string.
+     # lib/diff.rb
+
+     module Diff
+       def self.lines(document)
+         document.is_a?(String) ? document.lines : document
+       end
+
+       def self.diff(a, b)
+         Myers.diff(Diff.lines(a), Diff.lines(b))
+       end
+     end
+
+Now we’ll begin writing the Myers class that will implement the algorithm discussed above.
+To start with, we’ll just make some boilerplate for storing the two lists as instance variables
+on an object that implements the diff method, which we’ll define later once all the building
+blocks are in place.
+     # lib/diff/myers.rb
+
+     module Diff
+       class Myers
+
+         def self.diff(a, b)
+           Myers.new(a, b).diff
+         end
+
+         def initialize(a, b)
+           @a, @b = a, b
+         end
+
+         def diff
+           # ...
+         end
+
+       end
+     end
+
+To return a diff, we need to find the shortest edit script. We begin by storing n as the size of
+@a and m as the size of @b, and max as the sum of those; that’s the most number of moves we
+might need to make. Here’s the beginning of the Diff::Myers#shortest_edit method, which
+will continue in the snippets below.
+     # lib/diff/myers.rb
+
+         def shortest_edit
+           n, m = @a.size, @b.size
+
+                                    The Myers diff algorithm
+
+            max     = n + m
+
+            # ...
+          end
+
+Then we set up an array to store the latest value of x for each k. k can take values from -max
+to max, and in Ruby a negative array index is interpreted as reading from the end of the array.
+The actual order of the elements doesn’t matter, we just need the array to be big enough so that
+there’s space for the positive and negative k values.
+
+We set v[1] = 0 so that the iteration for d = 0 picks x = 0. We need to treat the d = 0
+iteration just the same as the later iterations since we might be allowed to move diagonally
+immediately. Setting v[1] = 0 makes the algorithm behave as though it begins with a virtual
+move downwards from (x, y) = (0,–1).
+     # lib/diff/myers.rb
+
+            v    = Array.new(2 * max + 1)
+            v[1] = 0
+
+Next, we begin a nested loop: we iterate d from 0 to max in the outer loop, and k from -d to
+d in steps of 2 in the inner loop.
+
+     # lib/diff/myers.rb
+
+            (0 .. max).step do |d|
+              (-d .. d).step(2) do |k|
+
+Within the loop, we begin by choosing whether to move downward or rightward from the
+previous round. If k equals -d, or if it’s not equal to d and the k+1 x-value is greater than the k-1
+x-value, then we move downward, i.e. we take the x value as being equal to the k+1 x-value in
+the previous round. Otherwise we move rightward and take x as one greater than the previous
+k-1 x-value. We calculate y from this chosen x value and the current k.
+
+     # lib/diff/myers.rb
+
+                  if k == -d or (k != d and v[k - 1] < v[k + 1])
+                    x = v[k + 1]
+                  else
+                    x = v[k - 1] + 1
+                  end
+
+                  y = x - k
+
+Having taken a single step rightward or downward, we see if we can take any diagonal steps.
+As long as we’ve not deleted the entire @a string or added the entire @b string, and the elements
+of each string at the current position are the same, we can increment both x and y. Once we
+finish moving, we store off the value of x we reached for the current k.
+     # lib/diff/myers.rb
+
+                  while x < n and y < m and @a[x] == @b[y]
+                    x, y = x + 1, y + 1
+                  end
+
+                                       The Myers diff algorithm
+
+                  v[k] = x
+
+Finally, we return the current value of d if we’ve reached the bottom-right position, telling the
+caller the minimum number of edits required to convert from a to b.
+      # lib/diff/myers.rb
+
+                  return d if x >= n and y >= m
+
+This minimal version of the algorithm calculates the smallest number of edits we need to make,
+but not what those edits are. To do that, we need to backtrack through the history of x values
+generated by the algorithm.
+
+11.3. Retracing our steps
+The graph search encoded in the shortest_edit method lets us explore all possible edit paths
+until we find the shortest path necessary to reach the end. Once we’ve got there, we can look
+at the data we’ve recorded in reverse to figure out which single path led to the result.
+
+Let’s look at our example again. Recall that the shortest_edit method records the best value
+of x we can reach at each (d, k) position:
+
+Figure 11.23. Completed exploration state for diff(ABCABBA, CBABAC)
+
+          |      0     1     2     3     4     5
+      ----+----------------------------------------
+          |
+       4 |                               7
+          |
+       3 |                         5
+          |
+       2 |                   3           7
+          |
+       1 |             1           5           7
+          |
+       0 |       0           2           5
+          |
+      -1 |             0           4           5
+          |
+      -2 |                   2           4
+          |
+      -3 |                         3
+
+We know the final position is at (x, y) = (7,6), so k = 1, and we found it after d = 5 steps. From
+(d, k) = (5,1), we can track backward to either (4,0) or (4,2):
+
+                                          The Myers diff algorithm
+
+Figure 11.24. Backtracking choices for (d, k) = (5,1)
+
+          |      0     1     2     3     4     5
+      ----+----------------------------------------
+          |
+       4 |                               7
+          |
+       3 |                         5
+          |
+       2 |                   3         ( 7 )
+          |
+       1 |             1           5         [ 7 ]
+          |
+       0 |       0           2         ( 5 )
+          |
+      -1 |             0           4           5
+          |
+      -2 |                   2           4
+          |
+      -3 |                         3
+
+We see that (4,2) contains the higher x value, and so according to the logic of shortest_edit we
+must have reached (5,1) via a downward move from there. This tells us that the (x, y) position
+before (7,6) was (7,5).
+
+Figure 11.25. Choosing the previous highest x value
+
+          |      0     1     2     3     4     5
+      ----+----------------------------------------
+          |
+       4 |                               7
+          |
+       3 |                         5
+          |
+       2 |                   3           7
+          |                                 \
+       1 |             1           5           7
+          |
+       0 |       0           2           5
+          |
+      -1 |             0           4           5
+          |
+      -2 |                   2           4
+          |
+      -3 |                         3
+
+Via a similar argument, to move back from (d, k) = (4,2) we must have come from (3,1) or
+(3,3). These positions have an equal x value, so we would have chosen to move rightward from
+(3,1), or from (x, y) = (5,4) to (7,5).
+
+                                          The Myers diff algorithm
+
+Figure 11.26. Backtracking from (d, k) = (4,2)
+
+          |      0     1     2     3     4     5
+      ----+----------------------------------------
+          |
+       4 |                               7
+          |
+       3 |                         5
+          |
+       2 |                   3           7
+          |                           /     \
+       1 |             1           5           7
+          |
+       0 |       0           2           5
+          |
+      -1 |             0           4           5
+          |
+      -2 |                   2           4
+          |
+      -3 |                         3
+
+Before that, we have a choice between (d, k) = (2,0) and (2,2), and (2,2) has the higher x value.
+
+Figure 11.27. Backtracking from (d, k) = (3,1)
+
+          |      0     1     2     3     4     5
+      ----+----------------------------------------
+          |
+       4 |                               7
+          |
+       3 |                         5
+          |
+       2 |                   3           7
+          |                     \     /     \
+       1 |             1           5           7
+          |
+       0 |       0           2           5
+          |
+      -1 |             0           4           5
+          |
+      -2 |                   2           4
+          |
+      -3 |                         3
+
+After this, we’re on the edge of the grid and we can only have made rightward moves.
+
+                                           The Myers diff algorithm
+
+Figure 11.28. Backtracking to the starting position (0,0)
+
+          |      0     1     2     3     4     5
+      ----+----------------------------------------
+          |
+       4 |                               7
+          |
+       3 |                         5
+          |
+       2 |                   3           7
+          |               /     \     /     \
+       1 |             1           5           7
+          |         /
+       0 |       0           2           5
+          |
+      -1 |             0           4           5
+          |
+      -2 |                   2           4
+          |
+      -3 |                         3
+
+We’ve walked all the way back to the start, and now we know that the (x, y) positions of each
+move are as follows; remember that y = x – k.
+      (0,0) -> (1,0) -> (3,1) -> (5,4) -> (7,5) -> (7,6)
+
+These positions are enough to figure out the diagonal moves between each position: we
+decrement both x and y until one of them is equal to the values in the previous position, and
+then we end up a single downward or rightward move away from that position. For example,
+to get from (5,4) back to (3,1), we observe that 5 > 3 and 4 > 1, and so we can step diagonally
+back one step to (4,3). This still has neither co-ordinate equal to (3,1) so we take another step
+back to (3,2). Now, we’ve reached the same x value as (3,1), so we must make an upward step
+from (3,2) to (3,1) to complete the move.
+
+11.3.1. Recording the search
+To perform this backtracking, we need to make a small adjustment to shortest_edit. Rather
+than just recording the latest x value for each k, we need to keep a trace of the array before
+each turn of the outer loop.
+
+We add the variable trace to store these snapshots of v, and push a copy of v into it on each loop.
+Rather than just returning the number of moves required, we now return this trace to the caller.
+      # lib/diff/myers.rb
+
+              v     = Array.new(2 * max + 1)
+              v[1] = 0
+              trace = []
+
+              (0 .. max).step do |d|
+                trace.push(v.clone)
+
+                 (-d .. d).step(2) do |k|
+                   # calculate the next move as before
+
+                   return trace if x >= n and y >= m
+
+                                    The Myers diff algorithm
+
+              end
+            end
+
+At the end of the method, trace will contain enough information to let us reconstruct the path
+that leads to the final position. It essentially contains the best x value that we found at each (d,
+k), as we saw earlier. Each copy of v that we stored corresponds to a column from our search
+history.
+
+11.3.2. And you may ask yourself, how did I get here?
+Now we can implement the backtracking in code. We can write a method that takes a trace
+produced by the shortest_edit method, and the target final (x, y) position, and works out the
+backtrace. For each move, it yields the x and y values before and after the move.
+
+The method iterates over the trace in reverse order. each_with_index generates a list that pairs
+each copy of v in the trace up with its corresponding d value, and then reverse_each iterates
+over that list backwards.
+     # lib/diff/myers.rb
+
+          def backtrack
+            x, y = @a.size, @b.size
+
+            shortest_edit.each_with_index.reverse_each do |v, d|
+              # ...
+            end
+          end
+
+At each step of the trace, we calculate the k value, and then determine what the previous k
+would have been, using the same logic as in the shortest_edit method:
+     # lib/diff/myers.rb
+
+              k = x - y
+
+              if k == -d or (k != d and v[k - 1] < v[k + 1])
+                prev_k = k + 1
+              else
+                prev_k = k - 1
+              end
+
+From that previous k value, we can retrieve the previous value of x from the trace, and use these
+k and x values to calculate the previous y.
+
+     # lib/diff/myers.rb
+
+              prev_x = v[prev_k]
+              prev_y = prev_x - prev_k
+
+Then we begin yielding moves back to the caller. If the current x and y values are both greater
+than the previous ones, we know we can make a diagonal move, so we yield a move from x-1,
+y-1 to x, y and then decrement x and y as long as this condition holds.
+
+     # lib/diff/myers.rb
+
+              while x > prev_x and y > prev_y
+
+                                    The Myers diff algorithm
+
+                yield x - 1, y - 1, x, y
+                x, y = x - 1, y - 1
+              end
+
+Finally, we yield a move from the previous x and y from the trace, to the position we reached
+after following diagonals. This should be a single downward or rightward step. If d is zero,
+there is no previous position to move back to, so we skip this step in that case. After yielding
+this move, we set x and y to their values in the previous round, and continue the loop.
+     # lib/diff/myers.rb
+
+              yield prev_x, prev_y, x, y if d > 0
+
+              x, y = prev_x, prev_y
+
+Running this on our example inputs, this method yields the following pairs of positions, which
+you should verify correspond to the full path through the edit graph, in reverse:
+     (7, 5) -> (7, 6)
+     (6, 4) -> (7, 5)
+     (5, 4) -> (6, 4)
+     (4, 3) -> (5, 4)
+     (3, 2) -> (4, 3)
+     (3, 1) -> (3, 2)
+     (2, 0) -> (3, 1)
+     (1, 0) -> (2, 0)
+     (0, 0) -> (1, 0)
+
+To glue everything together, we need a method that takes two texts to diff, calls shortest_edit
+to get a trace, and then runs that trace through backtrack to generate a diff: a sequence of lines
+marked as either deletions, insertions, or equal lines.
+
+We’ll need a structure to represent lines of a diff, which we’ll call edits. Let’s include a
+convenient method for turning an edit into a string, which puts the right symbol at the start of
+the line of text for when it’s printed as part of a patch.
+     # lib/diff.rb
+
+       SYMBOLS = {
+         :eql => " ",
+         :ins => "+",
+         :del => "-"
+       }
+
+       Edit = Struct.new(:type, :text) do
+         def to_s
+           SYMBOLS.fetch(type) + text
+         end
+       end
+
+As backtrack yields each pair of positions in reverse, this method pushes a diff edit onto an
+array. If the x values are the same between positions, we know it’s a downward move, or an
+insertion; if the y values are the same then it’s a deletion, otherwise the lines are equal. To build
+the diff, we select lines from each file as appropriate: a line from a for deletions, from b for
+insertions, and (arbitrarily) from a for equal lines. We return the reversed array at the end to
+give the edits in the right order.
+
+                                   The Myers diff algorithm
+
+     # lib/diff/myers.rb
+
+          def diff
+            diff = []
+
+           backtrack do |prev_x, prev_y, x, y|
+             a_line, b_line = @a[prev_x], @b[prev_y]
+
+             if x == prev_x
+               diff.push(Edit.new(:ins, b_line))
+             elsif y == prev_y
+               diff.push(Edit.new(:del, a_line))
+             else
+               diff.push(Edit.new(:eql, a_line))
+             end
+           end
+
+            diff.reverse
+          end
+
+This completes the algorithm; we can now take our example inputs, pass them to Diff.diff,
+and get a list of edits that we can print:
+     require "./lib/diff"
+
+     a = "ABCABBA".chars
+     b = "CBABAC".chars
+
+     edits = Diff.diff(a, b)
+     edits.each { |edit| puts edit }
+
+Running this program prints:
+     -A
+     -B
+      C
+     +B
+      A
+      B
+     -B
+      A
+     +C
+
+Just as we expected. We can use this new Diff module to build the patch output for the diff
+command (and other commands that can be made to display patches, like log), and it will also
+be an important ingredient when we come to implement the merge command.
+
+Although this is certainly one of the more theory-intensive elements of building a version
+control system, the code that results from it is actually pretty short and simple — around 50
+lines of Ruby if you ignore class and method definition boilerplate. As we’ll see as we progress,
+this one bit of dense maths-heavy code buys us a lot of power in displaying and manipulating
+code changes.
+

@@ -1,0 +1,1302 @@
+28. Fetching content
+We have now defined all the networking machinery we need to transfer messages and objects
+from one repository to another: the Remotes::Protocol class wraps around a process’s standard
+I/O and lets us exchange messages, while the Pack module sends objects from the sender
+(git-upload-pack) to the receiver (the fetch command). In this chapter, we’ll walk through
+a minimal implementation of the fetch and upload-pack commands that are just enough to
+work together and to interoperate with the Git software.
+
+Remember throughout that the purpose of the fetch command is to form a copy of the remote
+repository’s objects in our own local database, by downloading any objects we don’t yet have
+and copying the remote’s refs/heads pointers into our refs/remotes directory. We can then
+use these remote refs to merge our branches.
+
+28.1. Pack negotiation
+At the core of the logic of fetch and upload-pack is a conversation that should produce the
+smallest possible pack to send over the network. We would rather not send the entire history
+of the repository over the network each time, as this would be wasteful and become slower
+as the repository grows. We’d like to restrict the objects we send to those the receiver does
+not already have, and fetch and upload-pack need to have a conversation to negotiate which
+objects those are.
+
+As an example, let’s imagine that Alice has a repository containing three commits, where her
+refs/heads/master points at the last one in the chain.
+
+Figure 28.1. Alice’s initial repository
+
+            A       B       C
+            o <---- o <---- o
+                            |
+                    [refs/heads/master]
+
+Bob has a copy of all of Alice’s objects from a previous fetch. As Bob begins with an empty
+repository, let’s assume this works by literally copying Alice’s .git/objects directory into
+Bob’s repository, so he has an exact copy of the same history. He has a remote ref, refs/
+remotes/alice/master, that mirrors Alice’s master branch.
+
+Figure 28.2. Bob’s copy of Alice’s repository
+
+            A       B       C
+            o <---- o <---- o
+                            |
+                [refs/remotes/alice/master]
+
+Next, suppose Alice makes a few more commits on top of her master branch.
+Figure 28.3. Alice extends the master branch
+
+            A       B       C       D       E
+            o <---- o <---- o <---- o <---- o
+                                            |
+                                    [refs/heads/master]
+
+                                              Fetching content
+
+Bob wants to fetch from Alice again. Ideally, we would like to send only commits D and E
+over the network, as Bob already has C and all its ancestors. Here’s how fetch and upload-
+pack talk to each other to achieve this.
+
+Suppose Bob has the remote.alice.fetch variable for Alice’s repository set to +refs/heads/
+*:refs/remotes/alice/*, so he wants to copy all Alice’s refs/heads references into refs/
+remotes/alice. When Bob runs fetch, that invokes upload-pack on Alice’s repository. The
+first thing upload-pack does is send back a list of all Alice’s refs and what they point at.
+           upload-pack:
+
+           <ID of commit E> refs/heads/master
+
+Bob now knows Alice has a ref called refs/heads/master, and this matches his refspec with
+source refs/heads/*. He looks at the ID associated with this ref and sees that he does not have
+it, so he sends a message to Alice saying he wants it. After sending all the commit IDs he wants,
+he sends a flush-packet.
+           fetch:
+
+           want <ID of commit E>
+           (flush)
+
+Bob cannot see the whole history leading to E, he just knows he doesn’t have that commit
+and so wants to receive everything it points at that he does not already have. Now, if all Alice
+knows is that Bob wants E, she could send the entire history reachable from E, but that would be
+wasteful. In order to generate a minimal pack, she’d like to know which commits Bob already
+has. Therefore, Bob also sends a list of the commits his refs point at. His refs/remotes/alice/
+master ref points at C, so he sends that, followed by the message done.
+
+           fetch:
+
+           have <ID of commit C>
+           done
+
+Now, Alice can use RevList to enumerate the range C..E, including their tree and blob objects,
+and she puts all those objects into a pack and sends them to Bob. Bob now has the complete
+history:
+
+Figure 28.4. Bob’s updated database
+
+           A       B       C       D       E
+           o <---- o <---- o <---- o <---- o
+                           |
+               [refs/remotes/alice/master]
+
+Finally, he updates his remote ref. Since C is an ancestor of the requested commit E, this update
+is a fast-forward.
+
+Figure 28.5. Bob’s updates his remote reference
+
+           A       B       C       D       E
+           o <---- o <---- o <---- o <---- o
+                                           |
+                               [refs/remotes/alice/master]
+
+                                          Fetching content
+
+Bob’s repository once again reflects the state of Alice’s, and he can merge her commits with
+his own using the merge or cherry-pick commands.
+
+This process works because of the consistency of object IDs across repositories. Since each
+object’s ID is a function of its content, the same content will have the same ID in every
+repository on any machine, and so Bob can say he has the ID of commit C and Alice knows what
+content that refers to. The parties only need to exchange commit IDs to understand which parts
+of the graph they each have. We also assume that if a peer says they have a certain commit, then
+they have everything that commit points to — its tree, its parents, and all their history back to the
+root commit. For a single repository, this should be true as each commit is based on another one
+that’s already present in the database. To maintain this assumption with distributed repositories,
+the protocol must always transfer all the commits necessary to complete the requested range,
+such that after fetch is finished, the receiver has the commits it sent as want requests, including
+all their content and history.
+
+28.1.1. Non-fast-forward updates
+In the above example, Alice added new commits based on a commit Bob already had. But what
+happens if she discards some of her history and starts developing off an older commit? Let’s
+say she drops commit C and begins a new history for her master branch based on B.
+
+Figure 28.6. Alice’s rewritten history
+
+            A       B          C
+            o <---- o <---- o
+                      \
+                        \
+                          \ F      G
+                           o <---- o
+                                   |
+                           [refs/heads/master]
+
+This time upload-pack will send the following:
+            upload-pack:
+
+            <ID of commit G> refs/heads/master
+
+Assuming Bob has commit C and its history from a previous fetch, he will send the same want
+and have sets; he doesn’t know how G is related to C, he just knows he doesn’t have it.
+            fetch:
+
+            want <ID of commit G>
+            (flush)
+            have <ID of commit C>
+            done
+
+If Alice still has commit C in her database, this is enough to minimise the pack: the range C..G
+gives commits G and F. Ordinarily, a repository will not manipulate its remote refs and they
+should always reflect a commit that was received from the remote. But it’s possible that C no
+longer exists in Alice’s repository, either because she ran a garbage-collection task to delete
+
+                                             Fetching content
+
+unreachable objects, or she deleted her repository and re-cloned it using a method that only
+fetches reachable objects.
+
+Figure 28.7. Alice’s database with unreachable commits removed
+
+           A       B
+           o <---- o
+                      \
+                       \
+                           \ F      G
+                            o <---- o
+
+In this case, Bob sending a message saying he has commit C is useless, because Alice no longer
+knows what that is. The range C..G, ignoring missing objects, will yield G, F and all their
+ancestors.
+
+To try to prevent this happening, Bob could instead send a list of all the reachable commits he
+has; not just C but all the ancestors of C:
+           fetch:
+
+           want <ID of commit G>
+           (flush)
+           have <ID of commit C>
+           have <ID of commit B>
+           have <ID of commit A>
+           done
+
+This may be inefficient, since Alice still has B and so sending ancestors of B is redundant.
+But, Bob sending a list of commit IDs will require much less data transfer than Alice sending
+the same commits as complete objects, including their trees and blobs. It will usually be more
+efficient for Bob to send all his commit IDs as have messages than for Alice to send the entire
+project history because she could not find a common ancestor between the want and have
+commits.
+
+Alice can now run a RevList query with the want commits as included inputs, and the have
+commits as excluded inputs, that is, G, ^C, ^B, ^A, which yields commits G and F to be sent
+in the pack.
+
+To further mitigate the cost of sending the have list, upload-pack supports a capability called
+multi_ack. If this is enabled, it means Bob can send a few have messages and then a flush-
+packet, and the remote agent will respond to say whether it recognises any of that batch of
+commits. If not, it sends the message NAK. If it recognises a commit, but requires more input to
+find a common ancestor for all the want commits, it sends ACK <ID> continue. And if it has
+all the commits it needs, it sends ACK <ID> for every further commit the client sends.
+
+So in our example, Bob could send the first couple of his commits, and then a flush-packet:
+           fetch:
+
+           want <ID of commit G>
+           (flush)
+           have <ID of commit C>
+           have <ID of commit B>
+
+                                                  Fetching content
+
+              (flush)
+
+Since Alice has B and it’s an ancestor of the requested commit G, she sends an ACK. Bob
+now knows he does not need to send any further commits, and can immediately send the done
+message and wait for the pack Alice will send.
+              fetch:                              upload-pack:
+
+                                                  ACK <ID of commit B>
+              done
+
+Git implements this feature by sending have commits in blocks of 32, but to get to a working
+implementation as soon as possible, we will not be implementing this optimisation. Further
+information about the protocol capabilities1 and the pack protocol as a whole2 is available in
+Git’s documentation.
+
+28.2. The fetch and upload-pack commands
+We’ll begin the fetch command by defining some options. The --force option is used in
+conjunction with refspecs; if we fetch using a refspec with no leading + sign, this option makes
+fetch treat the refspec as forced anyway. The --upload-pack option sets the name of the remote
+agent program to run. So that we can interoperate with Git, this will default to git-upload-
+pack, but if we want to test our own remote agent implementation, we can pass --upload-
+pack="jit upload-pack".
+
+       # lib/command/fetch.rb
+
+       module Command
+         class Fetch < Base
+
+              def define_options
+                @parser.on("-f", "--force") { @options[:force] = true }
+
+                @parser.on "--upload-pack=<upload-pack>" do |uploader|
+                  @options[:uploader] = uploader
+                end
+              end
+
+              # ...
+
+         end
+       end
+
+The Command::Fetch#run method outlines the overall operation of the fetch command. Some
+of the methods it calls are imported from the modules FastForward, RemoteClient and
+ReceiveObjects, which we’ll define as we meet them. These methods will also be needed
+by the push and receive-pack commands, so I’m implementing them in shared modules
+here. The command begins by configuring itself — processing any command-line options and
+configurations to determine the location of the remote repository and which refspecs we want
+to fetch. Then it starts the remote agent, the git-upload-pack process, using the name of the
+current command, the agent program name it has detected, and the URL.
+ https://git-scm.com/docs/protocol-capabilities
+ https://git-scm.com/docs/pack-protocol
+
+                                       Fetching content
+
+Once the connection is made, we go through a number of steps. First, we receive the references
+from the remote — every remote agent invocation begins by listing all the references in the
+remote repository and their commit IDs. As we do this, we’ll compare this list to our refspecs
+and determine which refs we want to download.
+
+Once we’ve done that, we send a list of the commit IDs we want, and a list of the commit IDs
+we already have. From these lists, the remote agent will determine which commits it needs to
+send to complete our view of the history, and generate a pack containing those commits. We’ll
+receive this pack, and then update our refs/remotes references to reflect the new content we’ve
+downloaded. Don’t worry if this still feels vague --- we’ll dig into each step of this process
+throughout this chapter.
+     # lib/command/fetch.rb
+
+         include FastForward
+         include ReceiveObjects
+         include RemoteClient
+
+         def run
+           configure
+           start_agent("fetch", @uploader, @fetch_url)
+
+           recv_references
+           send_want_list
+           send_have_list
+           recv_objects
+           update_remote_refs
+
+           exit (@errors.empty? ? 0 : 1)
+         end
+
+The upload-pack command mirrors the sequence of steps in fetch. It accepts the client’s
+connection, passing in its own name that will be passed to Remotes::Protocol. It sends the
+state of its references, and then receives the want and have lists from the client. It ends by
+generating and sending a pack of all the objects the client needs.
+     # lib/command/upload_pack.rb
+
+     module Command
+       class UploadPack < Base
+
+         include RemoteAgent
+         include SendObjects
+
+         def run
+           accept_client("upload-pack")
+
+           send_references
+           recv_want_list
+           recv_have_list
+           send_objects
+
+           exit 0
+         end
+
+         # ...
+
+                                                       Fetching content
+
+         end
+       end
+
+accept_client is defined in the RemoteAgent module, and creates a Remotes::Protocol
+wrapper around the upload-pack process’s standard input and output streams.
+       # lib/command/shared/remote_agent.rb
+
+       module Command
+         module RemoteAgent
+
+              def accept_client(name, capabilities = [])
+                @conn = Remotes::Protocol.new(name, @stdin, @stdout, capabilities)
+              end
+
+              # ...
+
+         end
+       end
+
+Throughout the rest of this section we’ll walk through each step of this conversation between
+the two commands. fetch begins by calling its configure method, which determines the URL
+of the remote repository and the list of refspecs we want to use. The first argument to fetch can
+either be a literal URL, or the name of a remote in .git/config. The refspecs are given either
+by the rest of the arguments, or by the remote.<name>.fetch config variable. If no arguments
+are given, we assume the default remote name, origin.
+       # lib/command/fetch.rb
+
+              UPLOAD_PACK = "git-upload-pack"
+
+              def configure
+                name   = @args.fetch(0, Remotes::DEFAULT_REMOTE)
+                remote = repo.remotes.get(name)
+
+                @fetch_url   = remote&.fetch_url || @args[0]
+                @uploader    = @options[:uploader] || remote&.uploader || UPLOAD_PACK
+                @fetch_specs = (@args.size > 1) ? @args.drop(1) : remote&.fetch_specs
+              end
+
+28.2.1. Connecting to the remote
+After configure has run, we initiate a connection with the remote repository by calling
+start_agent, defined in the RemoteClient module. For now, we’ll only make this work with
+repositories on the same machine, with URLs like file:///home/username/path/to/repo.
+This builds a command string like "git-upload-pack /home/username/path/to/repo" and
+runs this command using Open3. We use the Shellwords3 module to make sure any arguments
+containing spaces and other special characters are properly quoted for the shell.
+       # lib/command/shared/remote_client.rb
+
+       module Command
+         module RemoteClient
+
+ https://docs.ruby-lang.org/en/2.3.0/Shellwords.html
+
+                                       Fetching content
+
+         def start_agent(name, program, url, capabilities = [])
+           argv = build_agent_command(program, url)
+           input, output, _ = Open3.popen2(Shellwords.shelljoin(argv))
+           @conn = Remotes::Protocol.new(name, output, input, capabilities)
+         end
+
+         def build_agent_command(program, url)
+           uri = URI.parse(url)
+           Shellwords.shellsplit(program) + [uri.path]
+         end
+
+         # ...
+
+       end
+     end
+
+We wrap a Remotes::Protocol object around the I/O streams for this child process, and we’re
+now ready to communicate with the remote repository.
+
+28.2.2. Transferring references
+Once the connection is established, the first part of the conversation consists of the
+remote agent sending its references to the client. The upload-pack command uses
+RemoteAgent#send_references to do this. This method gets a list of all the repository’s
+refs from Refs#list_all_refs. Sorting them by their path, it sends the commit ID and path
+of each ref, if the ref points at a commit. If no refs were sent, we send the line 0000000…
+capabilities^{}, which just exists as a first line of output to which to attach the repository’s
+capability list. The client should ignore any refs with an all-zero commit ID. Once all the
+references have been sent, we send a flush-packet.
+     # lib/command/shared/remote_agent.rb
+
+         ZERO_OID = "0" * 40
+
+         def send_references
+           refs = repo.refs.list_all_refs
+           sent = false
+
+             refs.sort_by(&:path).each do |symref|
+               next unless oid = symref.read_oid
+               @conn.send_packet("#{ oid.downcase } #{ symref.path }")
+               sent = true
+             end
+
+           @conn.send_packet("#{ ZERO_OID } capabilities^{}") unless sent
+           @conn.send_packet(nil)
+         end
+
+The above code uses the method repo to access the current Repository object. All the
+commands we’ve seen so far infer the path to the repository from the current working directory,
+and the Command::Base#repo method locates the repository on this assumption. However,
+remote agent commands like upload-pack do not have to be invoked with the repository as
+the current working directory. Instead, they are given the path to the repo as a command-line
+argument, and they need to infer the repository directory from that.
+
+                                       Fetching content
+
+This argument might specify the .git directory itself, or the parent directory that contains both
+.git and the workspace. Git also supports bare repositories, which are just a .git directory with
+no workspace attached, and this repository can be named anything. So to infer the repository
+location from the argument, we check the given path and all its parent directories until we find
+one that contains something like looks like a Git repo — a file named HEAD and directories called
+objects and refs — or, contains a .git directory containing these files.
+
+     # lib/command/shared/remote_agent.rb
+
+         def repo
+           @repo ||= Repository.new(detect_git_dir)
+         end
+
+         def detect_git_dir
+           pathname = expanded_pathname(@args[0])
+           dirs = pathname.ascend.flat_map { |dir| [dir, dir.join(".git")] }
+           dirs.find { |dir| git_repository?(dir) }
+         end
+
+         def git_repository?(dirname)
+           File.file?(dirname.join("HEAD")) and
+           File.directory?(dirname.join("objects")) and
+           File.directory?(dirname.join("refs"))
+         end
+
+For example, if we’re given the path /home/jcoglan/jit, we’d check that directory, and the
+paths /home/jcoglan/jit/.git, /home/jcoglan, /home/jcoglan/.git, /home, /home/.git,
+/ and /.git until we find a directory containing HEAD, objects and refs.
+
+On the client side, the fetch command uses RemoteClient#recv_references to read the refs
+sent by the remote agent, storing them in a hash mapping ref names to commit IDs. The zero
+ID is ignored if present.
+     # lib/command/shared/remote_client.rb
+
+         REF_LINE = /^([0-9a-f]+) (.*)$/
+         ZERO_OID = "0" * 40
+
+         def recv_references
+           @remote_refs = {}
+
+           @conn.recv_until(nil) do |line|
+             oid, ref = REF_LINE.match(line).captures
+             @remote_refs[ref] = oid.downcase unless oid == ZERO_OID
+           end
+         end
+
+28.2.3. Negotiating the pack
+The fetch command now needs to send information to upload-pack to indicate which objects
+it wants to receive, and what it already has. send_want_list deals with the first step. Supposing
+we have the following refspecs and refs received from the remote:
+           @fetch_specs = ["+refs/heads/*:refs/remotes/origin/*"]
+
+           @remote_refs = {
+
+                                       Fetching content
+
+               "HEAD"              => "5d826e972970a784bd7a7bdf587512510097b8c7",
+               "refs/heads/maint" => "98cdfbb84ad2ed6a2eb43dafa357a70a4b0a0fad",
+               "refs/heads/master" => "5d826e972970a784bd7a7bdf587512510097b8c7",
+               "refs/heads/todo"   => "b2cc3488ba006e3ba171e85dffbe6f332f84bf9a"
+           }
+
+We need to build a list of the refs we’d like to download. Matching the refspecs against the
+names of the refs we’ve received will give us this data structure, which lists each ref that we’d
+like to update, along with its corresponding ref in the remote repo, and whether this update is
+forced.
+           @targets = {
+             "refs/remotes/origin/maint" => ["refs/heads/maint", true],
+             "refs/remotes/origin/master" => ["refs/heads/master", true],
+             "refs/remotes/origin/todo"   => ["refs/heads/todo",   true]
+           }
+
+In send_want_list, we build a Set of the object IDs we want by iterating over this structure,
+checking the remote’s ID for each ref against our cached ID from the corresponding refs/
+remotes ref. Any commit IDs that differ from our own refs are added to the wanted set. Having
+constructed this set, we send each of its IDs to the remote, followed by a flush packet. If no
+want lines were sent, we exit immediately as there is nothing we need to download.
+
+     # lib/command/fetch.rb
+
+         def send_want_list
+           @targets = Remotes::Refspec.expand(@fetch_specs, @remote_refs.keys)
+           wanted   = Set.new
+
+           @local_refs = {}
+
+           @targets.each do |target, (source, _)|
+             local_oid = repo.refs.read_ref(target)
+             remote_oid = @remote_refs[source]
+
+               next if local_oid == remote_oid
+
+             @local_refs[target] = local_oid
+             wanted.add(remote_oid)
+           end
+
+           wanted.each { |oid| @conn.send_packet("want #{ oid }") }
+           @conn.send_packet(nil)
+
+           exit 0 if wanted.empty?
+         end
+
+On the remote side in upload-pack, we read these want lines from the client. We read until we
+get a flush-packet, and match each line against the pattern /^want ([0-9a-f]+)$/ to extract
+the commit ID. If we did not receive any wanted commits, we can immediately exit as there’s
+nothing to send to the client.
+     # lib/command/upload_pack.rb
+
+         def recv_want_list
+           @wanted = recv_oids("want", nil)
+           exit 0 if @wanted.empty?
+
+                                         Fetching content
+
+          end
+
+          def recv_oids(prefix, terminator)
+            pattern = /^#{ prefix } ([0-9a-f]+)$/
+            result = Set.new
+
+            @conn.recv_until(terminator) do |line|
+              result.add(pattern.match(line)[1])
+            end
+            result
+          end
+
+Having sent its want list, the fetch command must now send its list of the commits it already
+has, and we can use the RevList class to do this. In Section 26.4, “Finding objects”, we
+added the :all option to make RevList search the history beginning with all the refs in the
+current repository. After sending all the commits and the done message, we’ll just skip over
+any messages the remote agent sends until we see the message PACK, indicating the start of the
+object data.
+     # lib/command/fetch.rb
+
+          def send_have_list
+            options = { :all => true, :missing => true }
+            rev_list = ::RevList.new(repo, [], options)
+
+            rev_list.each { |commit| @conn.send_packet("have #{ commit.oid }") }
+            @conn.send_packet("done")
+
+            @conn.recv_until(Pack::SIGNATURE) {}
+          end
+
+Note that we’re not implementing the multi_ack optimisation here. We could interrupt sending
+the have list as soon as we detect an ACK message from the remote. However, this requires
+reading messages from the remote in a non-blocking manner while sending the have list, which
+is more complexity than I’d rather get into here. Do have a go at implementing this optimisation
+yourself, as it becomes more valuable as the repository gets larger.
+
+To receive the have commit IDs, the upload-pack command can use the recv_oids method we
+defined above, just using the prefix "have" and the terminating message "done". Since we’re
+not implementing any optimisation of the have negotiation, we’ll just send a NAK message rather
+than check for graph intersections so we can send ACK responses.
+     # lib/command/upload_pack.rb
+
+          def recv_have_list
+            @remote_has = recv_oids("have", "done")
+            @conn.send_packet("NAK")
+          end
+
+This may seem like an oversight, but the ACK functionality is strictly an optimisation. If the client
+sends its entire history, we’ll still generate an optimal pack, we’ll just send more data than is
+strictly necessary during the negotiation phase. However, that data is small relative to the size of
+full objects, and is fairly quick to compute on the client site. This unoptimised implementation
+gets us to a working integration quicker, and as our repositories grow we can revisit the value
+of providing acknowledgement of have messages.
+
+                                         Fetching content
+
+28.2.4. Sending object packs
+Now upload-pack has all the information it needs to build a minimal set of objects and send
+them to the client. To calculate the set of commits the client wants, we can use its want IDs as
+the inputs to a RevList, along with the IDs from its have messages as excluded inputs, prefixed
+with ^. This will generate the set of commits that are reachable from the want commits but not
+from the have commits, that is the set the client does not have yet.
+       # lib/command/upload_pack.rb
+
+             def send_objects
+               revs = @wanted + @remote_has.map { |oid| "^#{ oid }" }
+               send_packed_objects(revs)
+             end
+
+send_packed_objects is a method in the shared SendObjects module. It takes a list of revisions
+and generates a pack containing all the commits identified by the revisions, including their
+trees and blobs that are not part of excluded commits. To set the compression level, it uses
+the pack.compression or core.compression setting, if present. The Pack::Writer class4 is
+given @conn.output as its output stream, so it will send data over the same channel that
+Remotes::Protocol was using.
+
+       # lib/command/shared/send_objects.rb
+
+       module Command
+         module SendObjects
+
+             def send_packed_objects(revs)
+               rev_opts = { :objects => true, :missing => true }
+               rev_list = ::RevList.new(repo, revs, rev_opts)
+
+                pack_compression = repo.config.get(["pack", "compression"]) ||
+                                   repo.config.get(["core", "compression"])
+
+                write_opts = { :compression => pack_compression }
+                writer     = Pack::Writer.new(@conn.output, repo.database, write_opts)
+
+               writer.write_objects(rev_list)
+             end
+
+         end
+       end
+
+On the receiver side, the fetch command calls recv_objects to read the incoming pack and
+decode it into files in its local database. It passes Pack::SIGNATURE because we already read
+the bytes PACK from the input stream during send_have_list, and that needs to be routed to
+the pack reader so it can read the pack header correctly and include these bytes in its SHA-1
+calculation to verify the received data.
+       # lib/command/fetch.rb
+
+             def recv_objects
+               recv_packed_objects(Pack::SIGNATURE)
+
+ Section 27.4.1, “Writing packs”
+
+                                           Fetching content
+
+             end
+
+recv_packed_objects is defined in the shared module ReceiveObjects, and uses the
+            5                 6
+Pack::Reader and Pack::Stream classes. For each object read, we save the object to our
+local database using Database#store.
+       # lib/command/shared/receive_objects.rb
+
+       module Command
+         module ReceiveObjects
+
+             def recv_packed_objects(prefix = "")
+               stream = Pack::Stream.new(@conn.input, prefix)
+               reader = Pack::Reader.new(stream)
+
+                reader.read_header
+
+               reader.count.times do
+                 record, _ = stream.capture { reader.read_record }
+                 repo.database.store(record)
+               end
+               stream.verify_checksum
+             end
+
+         end
+       end
+
+The prefix argument is passed into Pack::Stream, which adds the given string to its
+initial buffered data so that this will be read before we start fetching more bytes from the
+Remotes::Protocol connection.
+
+       # lib/pack/stream.rb
+
+             def initialize(input, buffer = "")
+               @input   = input
+               @digest = Digest::SHA1.new
+               @offset = 0
+               @buffer = new_byte_string.concat(buffer)
+               @capture = nil
+             end
+
+Recall from the previous chapter that Pack::Reader#read_record returns Pack::Record
+objects, not Blob, Tree or Commit objects from the Database namespace. These Record objects
+just expose type and to_s methods that return the right data to be written to disk correctly,
+without parsing their internal structure.
+
+28.2.5. Updating remote refs
+After saving all the packed objects to its local database, the fetch command’s final task is
+to update the remote refs in its refs/remotes directory to reflect the refs that upload-pack
+initially sent. We stored those refs in @remote_refs, and a list of our own refs we want to
+update, with their current local values, in @local_refs. @targets contains a mapping from our
+ Section 27.4.2, “Reading from packs”
+ Section 27.4.3, “Reading from a stream”
+
+                                        Fetching content
+
+refs/remotes refs to their remote refs/heads counterparts, along with a flag saying whether
+each mapping is subject to forced updates.
+
+For example, let’s use the @remote_refs and @targets values we saw above. Now imagine
+that the fetching repository already had an up-to-date copy of refs/remotes/origin/maint, so
+that ref does not appear in @local_refs. However, its copy of refs/remotes/origin/master
+is out of date and we decided to fetch 5d826e9… as a result, and it did not yet have the refs/
+remotes/origin/todo ref at all. @local_refs lists the refs we’re updating, with our current
+values for those refs.
+            @remote_refs = {
+              "HEAD"              => "5d826e972970a784bd7a7bdf587512510097b8c7",
+              "refs/heads/maint" => "98cdfbb84ad2ed6a2eb43dafa357a70a4b0a0fad",
+              "refs/heads/master" => "5d826e972970a784bd7a7bdf587512510097b8c7",
+              "refs/heads/todo"   => "b2cc3488ba006e3ba171e85dffbe6f332f84bf9a"
+            }
+
+            @targets = {
+              "refs/remotes/origin/maint" => ["refs/heads/maint", true],
+              "refs/remotes/origin/master" => ["refs/heads/master", true],
+              "refs/remotes/origin/todo"   => ["refs/heads/todo",   true]
+            }
+
+            @local_refs = {
+              "refs/remotes/origin/master" => "a3d959a5424171631aeeca59f29a7793fe9025b2",
+              "refs/remotes/origin/todo"   => nil
+            }
+
+To update our refs/remotes refs, update_remote_refs iterates over the fetched refs in
+@local_refs and calls attempt_ref_update with each one.
+
+     # lib/command/fetch.rb
+
+         def update_remote_refs
+           @stderr.puts "From #{ @fetch_url }"
+
+           @errors = {}
+           @local_refs.each { |target, oid| attempt_ref_update(target, oid) }
+         end
+
+attempt_ref_update, shown below, tries to update a refs/remotes ref, given the information
+it has about the current value of that ref and the value we want to replace it with. Let’s say it’s
+called with the values "refs/remotes/origin/master" and "a3d959a…", reflecting the current
+state of our copy of that ref. It will then consult the @targets mapping to discover this ref
+should reflect the value of refs/heads/master in the remote repo, and its update should be
+forced. Looking in @remote_refs will give the remote’s value of the refs/heads/master ref,
+which is 5d826e9….
+
+Having  discovered these parameters, we call fast_forward_error("a3d959a…",
+"5d826e9…"), which returns some error if it cannot prove the old ID is an ancestor of the
+new one, and nil otherwise. If there is no error, or @targets says the ref is forced, or the
+--force option was used, then we update the refs/remotes/origin/master ref in our repo
+to 5d826e9…. Otherwise, we store the fast-forward error that was detected; adding to the
+@errors structure will make fetch exit with a non-zero status. Finally we call through to
+
+                                                    Fetching content
+
+report_ref_update, passing the names ["refs/heads/master", "refs/remotes/origin/
+master"], the fast-forward error, the old and new IDs a3d959a… and 5d826e9…, and a boolean
+that’s true if there was no error detected.
+       # lib/command/fetch.rb
+
+             def attempt_ref_update(target, old_oid)
+               source, forced = @targets[target]
+
+                new_oid   = @remote_refs[source]
+                ref_names = [source, target]
+                ff_error = fast_forward_error(old_oid, new_oid)
+
+                if @options[:force] or forced or ff_error == nil
+                  repo.refs.update_ref(target, new_oid)
+                else
+                  error = @errors[target] = ff_error
+                end
+
+               report_ref_update(ref_names, error, old_oid, new_oid, ff_error == nil)
+             end
+
+The above procedure relies on a few methods in the shared module FastForward. These include
+some functionality that won’t be relevant yet, but will be used by the push command when we
+come to implement it. fast_forward_error returns nil if old_oid is an ancestor of new_oid,
+or an error message if it cannot prove this is the case. If either ID is nil this is fine — it means
+we’re either creating or deleting a ref. However if our database does not have old_oid, then we
+can’t check its ancestry — this happens during a push if we don’t have a local copy of the remote
+repository’s head before we attempt to update it. We return an error if fast_forward? returns
+false, otherwise we implicitly return nil. fast_forward? uses Merge::CommonAncestors to
+determine whether one commit is an ancestor of the other.
+       # lib/command/shared/fast_forward.rb
+
+       module Command
+         module FastForward
+
+             def fast_forward_error(old_oid, new_oid)
+               return nil unless old_oid and new_oid
+               return "fetch first" unless repo.database.has?(old_oid)
+               return "non-fast-forward" unless fast_forward?(old_oid, new_oid)
+             end
+
+             def fast_forward?(old_oid, new_oid)
+               common = ::Merge::CommonAncestors.new(repo.database, old_oid, [new_oid])
+               common.find
+               common.marked?(old_oid, :parent2)
+             end
+
+         end
+       end
+
+The Database#has? method tells us whether we have a copy of a certain object, which it does
+by seeing if the file that would contain that object exists in the .git/objects directory.
+ Section 17.2, “Finding the best common ancestor”
+
+                                        Fetching content
+
+     # lib/database.rb
+
+       def has?(oid)
+         File.file?(object_path(oid))
+       end
+
+The final step in updating the refs/remotes refs is to display the updates we’ve made to the
+user. You may have seen Git print a message like this when pulling from a remote repository:
+     From: file:///home/username/path/to/repo
+        a3d959a..5d826e9 master -> origin/master
+
+It shows the URL it’s fetching from, and then a line for each ref it’s updated, showing the
+revision range covered by the update, and the short names of the source and target refs. There
+are several possible formats for this message, and they include the following.
+
+If the update is a fast-forward, then the revision range uses two dots, as above. If it’s not a
+fast-forward, the range has three dots, a preceding + sign, and the message forced update
+following it.
+      + a3d959a...5d826e9 master -> origin/master (forced update)
+
+If the target ref did not previously exist, then the message * [new branch] is shown in place
+of a revision range.
+      * [new branch] master -> origin/master
+
+If the source ref no longer exists and the target is therefore being deleted, the label - [deleted]
+is used.
+      - [deleted] master -> origin/master
+
+And finally, if there was an error updating the ref, the message begins with ! [rejected] and
+is followed by the error message.
+      ! [rejected] master -> origin/master (non-fast-forward)
+
+report_ref_update in the RemoteClient module takes care of these situations by using
+the information gathered about the update by the attempt_ref_update method above. All
+arguments after the first two are optional, and the method encodes the decision procedure above.
+If there was an error, then we display the rejected notice with the error. If both IDs are equal,
+then there was no update and we exit without taking any action. If the old ID is nil, that means
+a new ref has been created, whereas if the new ID is nil it’s being deleted. Otherwise, it’s a
+revision range update, which is handled by a separate method.
+     # lib/command/shared/remote_client.rb
+
+         def report_ref_update(ref_names, error, old_oid = nil, new_oid = nil, is_ff = false)
+           return show_ref_update("!", "[rejected]", ref_names, error) if error
+           return if old_oid == new_oid
+
+            if old_oid == nil
+              show_ref_update("*", "[new branch]", ref_names)
+            elsif new_oid == nil
+              show_ref_update("-", "[deleted]", ref_names)
+            else
+
+                                        Fetching content
+
+             report_range_update(ref_names, old_oid, new_oid, is_ff)
+           end
+         end
+
+report_range_update handles the two revision range styles of update notice, based on whether
+the update is a fast-forward or not. If the update is forced, but is still a fast-forward, then it
+should be displayed as a fast-forward. Any non-fast-forward update should be assumed to be
+forced.
+     # lib/command/shared/remote_client.rb
+
+         def report_range_update(ref_names, old_oid, new_oid, is_ff)
+           old_oid = repo.database.short_oid(old_oid)
+           new_oid = repo.database.short_oid(new_oid)
+
+           if is_ff
+             revisions = "#{ old_oid }..#{ new_oid }"
+             show_ref_update(" ", revisions, ref_names)
+           else
+             revisions = "#{ old_oid }...#{ new_oid }"
+             show_ref_update("+", revisions, ref_names, "forced update")
+           end
+         end
+
+show_ref_update underlies all the above logic, and takes the various fragments of text
+generated by report_ref_update and report_range_update and formats them into a single
+message. It converts the ref names to their short form and links them with ->, and joins all the
+other parts of the message together before printing it.
+     # lib/command/shared/remote_client.rb
+
+         def show_ref_update(flag, summary, ref_names, reason = nil)
+           names = ref_names.compact.map { |name| repo.refs.short_name(name) }
+
+            message = " #{ flag } #{ summary } #{ names.join(" -> ") }"
+            message.concat(" (#{ reason })") if reason
+
+           @stderr.puts message
+         end
+
+The fetch and upload-pack commands are now functionality complete and can transfer data
+between two repositories on the same filesystem. One further change and we’ll be able to fetch
+content over the network.
+
+28.2.6. Connecting to remote repositories
+In Section 27.1, “Programs as ad-hoc servers” we learned that two processes communicating via
+their standard I/O streams can communicate over a network, by tunneling their communication
+through an SSH connection. By running a program on a remote machine via SSH, we can
+interact with its I/O just as we did when it was on the same machine. The only thing we changed
+was that instead of running a local command like
+     ruby adder.rb
+
+We ran the program on a remote machine using this command:
+
+                                                     Fetching content
+
+       ssh 127.0.0.1 -p 2222 -l ubuntu "ruby /vagrant/adder.rb"
+
+After that, everything else proceeded as before. We can add support for ssh: URLs to our
+RemoteClient module by expanding the build_agent_command method. When given a file:
+URL it constructs an array like ["git-upload-pack", "<path>"], which is then run as a
+command. To support ssh: URLs, for example ssh://git@github.com/jcoglan/jit.git8,
+we need to make it generate the array representing an ssh command, such as:
+          ["ssh", "github.com", "-l", "git", "git-upload-pack /jcoglan/jit.git"]
+
+The code below accomplishes just that.
+       # lib/command/shared/remote_client.rb
+
+             def build_agent_command(program, url)
+               uri = URI.parse(url)
+               argv = Shellwords.shellsplit(program) + [uri.path]
+
+               case uri.scheme
+               when "file" then argv
+               when "ssh" then ssh_command(uri, argv)
+               end
+             end
+
+             def ssh_command(uri, argv)
+               ssh = ["ssh", uri.host]
+               ssh += ["-p", uri.port.to_s] if uri.port
+               ssh += ["-l", uri.user] if uri.user
+
+               ssh + [Shellwords.shelljoin(argv)]
+             end
+
+With this change, Jit is now able to fetch a repository from another machine, if it uses --
+upload-pack="jit upload-pack". Git’s upload-pack command will apply delta compression
+to the objects it sends, and we cannot yet handle that. But for now, this is a good working
+implementation and we can move on to adding the push command.
+
+28.3. Clone and pull
+The fetch command underlies two other commonly used commands. clone is used to set up a
+new repository that’s a copy of an existing one, and this can be accomplished using the init,
+remote, fetch and reset commands.
+
+       $ jit init fetch-test
+       $ cd fetch-test
+       $ jit remote add origin ssh://git@github.com/jcoglan/jit.git
+       $ jit fetch origin
+       $ jit reset --hard origin/master
+
+This creates a new repository and adds an origin remote to it, with the given URL. The fetch
+command retrieves all the objects from that repository and generates refs in refs/remotes to
+mirror the refs/heads references in the remote repo. Finally, reset --hard is used to point our
+ Git also supports writing this URL as git@github.com:jcoglan/jit.git, but to keep things simple I am only supporting URLs with an
+explicit file: or ssh: scheme.
+
+                                                Fetching content
+
+current branch, refs/heads/master, at the same commit as refs/remotes/origin/master,
+and update the index and workspace to reflect its content. Our master branch now mirrors that
+in the remote repository.
+
+As we continue to work on the project, we’ll want to fetch further updates from the remote
+repository and merge them into our own history. You may be familiar with the pull command,
+which is equivalent to running fetch and then merge. For example, if we’re currently on the
+master branch and want to incorporate changes to master from the remote repo, we can run:
+
+      $ jit fetch origin
+      $ jit merge origin/master
+
+This will fetch all the updated refs from the origin remote, and then merge its master branch
+into our own. If we’ve not made any commits ourselves on master since we last fetched, then
+this will be a fast-forward and will simply move our heads/master pointer. If there are no new
+commits on the remote branch, then the merge command has no effect. If we’ve made some of
+our own commits on master then things become more complicated.
+
+Consider the example that we began the chapter with, in which Bob has fetched a history from
+Alice. His own master branch and his copy of Alice’s master branch both point at the same
+commit. For brevity I have left the prefix refs/ out of all the ref annotations in the following
+diagrams.
+
+Figure 28.8. Bob’s repository after fetching from Alice
+
+           A       B        C
+           o <---- o <---- o
+                            |
+                     [heads/master]
+                [remotes/alice/master]
+
+If Alice adds two further commits, D and E, to her master branch, and then Bob fetches again,
+his repository will move its remotes/alice/master pointer to include these new commits.
+
+Figure 28.9. Bob fetches new commits from Alice
+
+           A       B        C       D       E
+           o <---- o <---- o <---- o <---- o
+                            |               |
+                     [heads/master]         |
+                                            |
+                                 [remotes/alice/master]
+
+Because Bob has not made any of his own commits on top of C, running merge alice/master
+just fast-forwards his own master branch so that it agrees with Alice’s.
+
+Figure 28.10. Bob performs a fast-forward merge
+
+           A       B       C       D        E
+           o <---- o <---- o <---- o <---- o
+                                            |
+                                     [heads/master]
+                                [remotes/alice/master]
+
+                                              Fetching content
+
+Now consider the case where, after Bob has fetched C from Alice, Alice adds commits D and
+E on top of C, while Bob adds F and G on top of C. If Bob now fetches from Alice, his own
+master branch and his copy of Alice’s master branch will point at divergent histories.
+
+Figure 28.11. Bob fetches divergent history
+
+           A       B       C          D       E
+           o <---- o <---- o <---- o <---- o
+                             \                |
+                               \ [remotes/alice/master]
+                                \
+                                  \ F      G
+                                   o <---- o
+                                           |
+                                    [heads/master]
+
+Bob can incorporate Alice’s history into his own by merging alice/master. Since this is no
+longer a fast-forward, we must perform a true merge and generate a commit for it.
+
+Figure 28.12. Bob merges Alice’s changes into his master branch
+
+           A       B       C           D       E
+           o <---- o <---- o <---- o <---- o [remotes/alice/master]
+                             \                   \
+                               \                  \
+                                 \                 \
+                                   \ F      G        \ M
+                                    o <---- o <---- o
+                                                      |
+                                             [heads/master]
+
+Although their histories have diverged, this merge allows Alice and Bob to reach consensus on
+the state of the project. Consider the situation from Alice’s point of view, at the point where
+she has just written commit E. She has not yet seen any data from Bob’s repository.
+
+Figure 28.13. Alice’s history
+
+           A       B       C       D        E
+           o <---- o <---- o <---- o <---- o
+                                            |
+                                     [heads/master]
+
+Now, Bob performs the above steps, fetching E from Alice and merging it with his own changes
+to form the merge commit M. If Alice now fetches from Bob, she’ll receive that portion of the
+graph she does not have, that is, the range E..M.
+
+Figure 28.14. Alice fetches from Bob
+
+           A       B       C          D       E
+           o <---- o <---- o <---- o <---- o [heads/master]
+                             \                  \
+                               \                 \
+                                 \ F      G       \ M
+                                  o <---- o <---- o
+                                                   |
+                                        [remotes/bob/master]
+
+                                                      Fetching content
+
+If Alice now runs merge bob/master, this causes a fast-forward and her own master branch
+moves to reflect Bob’s view of the branch.
+
+Figure 28.15. Alice fast-forwards to Bob’s merge commit
+
+             A       B       C          D        E
+             o <---- o <---- o <---- o <---- o
+                               \                   \
+                                 \                  \
+                                   \ F      G        \ M
+                                    o <---- o <---- o
+                                                      |
+                                              [heads/master]
+                                          [remotes/bob/master]
+
+If Alice has made further commits on top of E since Bob fetched from her, then running merge
+bob/master will produce a further merge commit incorporating both their changes. Bob can
+then fetch commit N from Alice, and the cycle continues.
+
+Figure 28.16. Alice merges Bob’s changes with her own
+
+             A       B       C          D       E       H           N
+             o <---- o <---- o <---- o <---- o <---- o <---- o [heads/master]
+                               \                  \               /
+                                 \                 \            /
+                                   \ F      G       \ M       /
+                                    o <---- o <---- o <-----'
+                                                     |
+                                          [remotes/bob/master]
+
+This process illustrates the role that merging plays in achieving consensus: when two parties
+have diverging histories, one of them can fetch the other’s changes and merge them with their
+own. That merge can then be shared with the rest of the team, who collectively achieve eventual
+consistency9 over the state of the project.
+
+28.3.1. Pulling and rebasing
+If team members are frequently fetching from one another while making their own changes,
+this can result in the history being littered with merge commits. Picture the diagram above
+extending to the right, forming a chain of merges going back and forth as Alice and Bob fetch
+from each other.
+
+If those merge commits are making the history hard to understand, and they don’t add any
+particularly useful information, it may be beneficial to avoid creating them. Git lets us do this
+using the pull --rebase command, which runs rebase instead of merge after fetching the
+remote’s updates. As we saw in Section 24.2, “Rebase”, we can replicate this behaviour using
+the cherry-pick command.
+
+For example, picture the situation we saw above where Alice and Bob have divergent histories
+on their master branches, beginning with commit C. Bob creates commits F and G, and fetches
+from Alice to receive D and E.
+ https://en.wikipedia.org/wiki/Eventual_consistency
+
+                                                Fetching content
+
+Figure 28.17. Bob’s repository after fetching from Alice
+
+           A       B       C            D      E
+           o <---- o <---- o <---- o <---- o
+                             \                 |
+                               \ [remotes/alice/master]
+                                \
+                                  \
+                                    \ F      G
+                                     o <---- o
+                                             |
+                                      [heads/master]
+
+At this point, instead of running merge alice/master which would create a merge commit,
+Bob can create a flattened history by first running reset --hard alice/master to move his
+master branch to point at Alice’s latest commit. This leaves the ORIG_HEAD ref pointing at G.
+
+Figure 28.18. Bob resets his master branch to Alice’s latest commit
+
+           A       B       C            D        E
+           o <---- o <---- o <---- o <---- o
+                             \                   |
+                               \ [remotes/alice/master]
+                                \         [heads/master]
+                                  \
+                                    \ F        G
+                                     o <---- o
+                                               |
+                                          [ORIG_HEAD]
+
+He can then run cherry-pick ..ORIG_HEAD, which will pick commits F and G on top of E,
+creating new commits F' and G'.
+
+Figure 28.19. Bob rebases his branch
+
+           A       B       C            D      E    F'      G'
+           o <---- o <---- o <---- o <---- o <---- o <---- o
+                             \                 |            |
+                               \ [remotes/alice/master]     |
+                                \                           |
+                                  \                  [heads/master]
+                                    \ F      G
+                                     o <---- o
+
+If Alice now fetches from Bob, she’ll receive commits F' and G':
+
+Figure 28.20. Alice’s repository after fetching Bob’s rebased commits
+
+           A       B       C       D        E       F'      G'
+           o <---- o <---- o <---- o <---- o <---- o <---- o
+                                            |               |
+                                     [heads/master]         |
+                                                            |
+                                                  [remotes/bob/master]
+
+And after fast-forwarding her master branch, the two once more agree on the state of the
+repository.
+
+                                                Fetching content
+
+Figure 28.21. Alice fast-forwards her master branch
+
+           A       B       C       D       E       F'      G'
+           o <---- o <---- o <---- o <---- o <---- o <---- o
+                                                           |
+                                                           |
+                                                           |
+                                                    [heads/master]
+                                                 [remotes/bob/master]
+
+28.3.2. Historic disagreement
+Although rebasing certainly helps with keeping the history tidy, it causes problems if one author
+discards commits that have already been shared and built upon by others. For example, let’s
+examine the situation where Alice has authored commit E, and Bob fetches this from her.
+
+Figure 28.22. Bob’s repository after fetching from Alice
+
+           A       B       C       D        E
+           o <---- o <---- o <---- o <---- o
+                                            |
+                                     [heads/master]
+                                [remotes/alice/master]
+
+Now suppose that Alice discards commits D and E and begins a new history from commit C,
+creating commits F and G. Bob fetches these, and before he merges or rebases, his repository
+looks like this:
+
+Figure 28.23. Bob fetches Alice’s rewritten history
+
+           A       B       C           D        E
+           o <---- o <---- o <---- o <---- o
+                             \                  |
+                               \         [heads/master]
+                                 \
+                                   \ F       G
+                                    o <---- o
+                                             |
+                               [remotes/alice/master]
+
+If Bob now merges Alice’s branch with his own, the result is a merge commit that incorporates
+commits D and E. This happens because the commit graph doesn’t record any notion of some
+commits being replacements for others, or of which commits came from whose repository. The
+graph simply says that Bob’s head E and Alice’s head G have a common ancestor C, and can
+be merged to produce M.
+
+Figure 28.24. Bob merges Alice’s old and new histories
+
+           A       B       C          D       E         M
+           o <---- o <---- o <---- o <---- o <---- o [heads/master]
+                             \                        /
+                               \                     /
+                                 \ F      G         /
+                                  o <---- o <-----'
+                                          |
+                             [remotes/alice/master]
+
+                                                Fetching content
+
+If Alice now fetches from Bob, the state of the project will include content she wanted to get rid
+of — the changes in commits D and E. Because commit E had already been shared with Bob,
+it cannot easily be gotten rid of without telling Bob that’s what was intended. If Alice wants
+to remove content in commits that have already been distributed, it would be safer to apply
+commits on top of E that revert E and D, and then have Bob fetch those.
+
+Figure 28.25. Bob’s repository after fetching Alice’s revert commits
+
+           A       B       C       D        E      -E      -D
+           o <---- o <---- o <---- o <---- o <---- o <---- o
+                                            |               |
+                                     [heads/master]         |
+                                                            |
+                                                 [remotes/alice/master]
+
+If Bob merges alice/master now, he will end up with a state in which the content from D and
+E has been removed.
+
+Alice could have instead told Bob about what she’d done, and asked him to abandon commits
+D and E by performing a hard reset to commit G, and then re-applying any of his own changes
+on top of that. However, this requires more co-ordination and only gets harder as the team
+gains members. In general, it is safer to assume commits that have been incorporated into
+other people’s histories cannot be removed, and should instead be undone by using the revert
+command.
+

@@ -1,0 +1,2567 @@
+EXPRESSION EVALUATION
+ Calling out, willing a reply from the other side of the world
+ with hands clasped, softly.
+In this final coding chapter of the book, you’ll implement one of
+the most powerful and complex features of debuggers:
+expression evaluation. Expression evaluation allows users to
+enter an expression in the programming language in which the
+debugged program was written and have it run in the process’s
+current execution context.
+For example, the user could enter expr marshmallow.have_birthday() to
+call the have_birthday member function on the marshmallow variable in
+the current scope, potentially modifying its state. If the variable
+had an age member, for example, this function would probably
+increase its value. In this chapter, you’ll add support to your
+debugger for evaluating single function call expressions inside
+of the running process.
+
+Supporting Expression Evaluation
+
+Expression evaluation presents us with a problem: what kinds
+of expressions should we support? Production debuggers like
+GDB and LLDB try to support essentially every kind of C and
+C++ expression that we could write. Unfortunately, to do so,
+they have to implement a just-in-time C++ compiler. This isn’t a
+book about compilers, so we’ll limit ourselves to a very small
+subset of C++ expressions.
+
+The most interesting part of expression evaluation is how the
+debugger can execute a function inside of the running process
+and extract the result, so we’ll focus on this task. Here are some
+examples of expressions we’ll support:
+
+  Passing arguments to single functions, as in feed(marshmallow)
+  Calling member functions, as in marshmallow.have_birthday()
+  Passing string arguments, integers, floats, and Booleans, as in
+  get_cat("Marshmallow")
+
+We won’t support implicit conversions of arguments. In other
+words, the argument types should match the parameter types
+exactly. We also won’t support default arguments. We will,
+however, support calling overloaded functions. Here are other
+examples of expressions we won’t support:
+
+  Assignment, such as my_cat = marshmallow
+  Arithmetic or Boolean expressions, such as 42 + 1 == 43
+  Nested function calls, such as feed(get_cat("Marshmallow"))
+  Chained function calls, such as get_cat("Marshmallow").have_birthday()
+
+By restricting the set of expressions the debugger can support,
+we can make it much more feasible to add expression
+evaluation support. Here are the main steps our expression
+evaluator needs to perform:
+
+1. Parse the function name and arguments.
+2. Locate the function to be called (potentially performing
+  overload resolution).
+3. Set up the stack and registers with the program arguments,
+  as specified in the SYSV and Itanium ABIs.
+4. Push the return address onto the stack (we’ll discuss exactly
+  where the function call should return to shortly).
+5. Set a breakpoint on the return address.
+6. Set the program counter to the start of the function that we
+  want to call.
+7. Continue the process until the return address breakpoint is
+  hit.
+8. Read the result of the function from the stack or registers, as
+  specified in the SYSV and Itanium ABIs.
+
+To parse the function name and arguments, we’ll extend the
+function sdb::target::resolve_indirect_name that we wrote in the last
+chapter to also support function names. We’ll locate the
+function to call and perform overload resolution using DWARF
+information.
+
+The locations of arguments and return values specified in the
+ABI documents are part of the calling conventions, which are
+sets of rules that compilers must follow so that the code for
+function calls and the code for the callee can work together.
+These rules allow us to, say, compile a shared library with one
+compiler on one computer, compile an executable with a
+different compiler on a different computer, and have function
+calls across them work properly. The SYSV ABI specifies most of
+these rules, and you’ll find some C++-specific details, like the
+rules for passing references, in the Itanium ABI.
+
+Finding the return address requires a bit of thought, as we need
+to set a breakpoint on it to be notified when the function call
+terminates. You may consider using the current location of the
+program counter, but in the general case, this is problematic if
+the user calls the currently executing function by evaluating an
+expression, which might hit the internal breakpoint. We
+generally can’t use the stack because it’s often not marked as
+executable in the memory maps, so this would result in a
+segmentation violation. Another option is to call mmap inside the
+running process to allocate some memory that is definitely
+marked as executable and not used for anything else, but this
+punts the problem forward, as we need a return address to set a
+breakpoint on in order to call mmap.
+
+Instead, we’ll rely on the fact that, by the time the user is trying
+to evaluate an expression, the debugger should have already hit
+the internal entry point breakpoint we use for scanning shared
+libraries, and won’t enter the entry point again. As such, we can
+use the address of the entry point as the return address and
+reuse the entry point breakpoint we’ve already set to be
+notified when the function call ends.
+Extending Name Lookup
+
+Currently, the debugger can look up the names of variables
+only, but we can modify the sdb::target::resolve_indirect_name function
+to support functions, too. First, we’ll change the return type so it
+can return the data for a variable, the DIEs for matching
+functions, or both, in the case of member functions:
+
+   #include <libsdb/type.hpp>
+
+   namespace sdb {
+       class target {
+       public:
+           --snip--
+           struct resolve_indirect_name_result {
+                std::optional<typed_data> variable;
+                std::vector<die> funcs;
+           };
+           resolve_indirect_name_result resolve_indi
+                std::string name, sdb::file_addr pc)
+           --snip--
+       };
+   }
+
+We introduce a new type to store all of the data that needs
+returning and update the return type of resolve_indirect_name to use
+it. Next, we’ll make the following changes to the
+implementation in sdb/src/target.cpp:
+
+   sdb::target::resolve_indirect_name_result
+   sdb::target::resolve_indirect_name(std::string na
+        auto op_pos = name.find_first_of(".-[("); ➊
+
+        if (name[op_pos] == '(') { ➋
+             auto func_name = name.substr(0, op_pos);
+             auto funcs = find_functions(func_name);
+             return { std::nullopt, std::move(funcs.dw
+        }
+        --snip--
+        while (op_pos != std::string::npos) {
+             --snip--
+             if (name[op_pos] == '.' or name[op_pos] =
+                  auto member_name_start = op_pos + 1;
+                  op_pos = name.find_first_of(".-[(,",
+                  auto member_name = name.substr(membe
+                  if (name[op_pos] == '(') { ➍
+                      std::vector<die> funcs;
+                      auto stripped_value_type = data.v
+                      for (auto& child : stripped_value
+                          if (child.abbrev_entry()->tag
+                                  child.contains(DW_AT_obje
+                                  child.name() == member_na
+                                  funcs.push_back(child);
+                             }
+                         }
+                         if (funcs.empty()) {
+                               sdb::error::send("No such mem
+                         }
+                         return { std::move(data), std::mo
+                    }
+                    --snip--
+              }
+              else if (name[op_pos] == '[') {
+                  --snip--
+              }
+              op_pos = name.find_first_of(".-[(,"); ➎
+         }
+         return { std::move(data), {} }; ➏
+   }
+
+We update the return type to match the declaration and add a (
+option to the calls to find_first_of ➊➌➎ and a , option to the last
+two. Then, we add a branch after the op_pos declaration that
+handles the case where the given name belongs to a non-
+member function ➋. This branch uses the existing
+sdb::target::find_functions function to locate any relevant DIEs and
+
+then returns them, using std::nullopt as the found variable, since
+there isn’t one.
+We also add a branch after the declaration of member_name that
+handles the case where the given name belongs to a member
+function ➍. This branch loops through the children of the DIE
+for the variable of which the function is a member and collects
+any DIEs that correspond to non-static member functions with
+the correct name. We locate non-static member functions using
+the DW_AT_object_pointer attribute, which identifies the parameter
+DIE corresponding to the this pointer. If we find no functions, we
+throw an exception. Otherwise, we return both the variable of
+which the function is a member and the list of functions we
+found with the correct name.
+
+Finally, we update the final return statement for the case where
+the given name belongs to a variable and not to any function ➏.
+
+Let’s also add support for passing the results of previously
+evaluated expressions as arguments to other functions. For
+example, we should support uses like these:
+
+   sdb> expr get_cat("Marshmallow")
+   $0: {
+              name: "Marshmallow"
+              age: 4
+   }
+   sdb> expr get_age($0)
+   $1: 4
+   sdb> expr $0.give_command("get off the table")
+   Marshmallow, get off the table
+
+We’ll number the subsequent results of evaluated expressions
+and allow the user to pass these results, both as regular
+function arguments and as the object for a member function
+invocation. Later in this chapter, we’ll add a get_expression_result
+function to sdb::target that will return an sdb::typed_data object
+representing the result of an expression with the given index.
+For now, we’ll assume it exists and call it from the existing
+get_initial_variable_data. Update this function in sdb/src/target.cpp:
+
+   namespace {
+       sdb::typed_data get_initial_variable_data(
+             const sdb::target& target, std::string
+           if (name[0] == '$') {
+               auto index = sdb::to_integral<std::si
+               if (!index) {
+                   sdb::error::send("Invalid express
+               }
+               return target.get_expression_result(*
+           }
+
+               --snip--
+         }
+   }
+
+We introduce a new if block for when the name starts with a $
+character. If the name starts with a $, we parse the integer
+following this character, throw an exception if this parsing fails,
+and then return the expression result with the given index.
+
+Because we altered the interface for resolve_indirect_name, we need
+to update its use in handle_variable_command in sdb/tools/sdb.cpp:
+
+   namespace {
+       void handle_variable_read_command(
+             sdb::target& target, const std::vector<
+           --snip--
+           auto str = data.variable->visualize(targe
+           --snip--
+       }
+   }
+
+We change data->visualize to data.variable->visualize.
+
+Parsing Arguments
+We can now move on to parsing arguments into sdb::typed_data
+instances. We’ll support the following types of arguments:
+strings, enclosed in " characters; characters, enclosed in '
+characters; Booleans (true or false); integers; floating-point
+numbers; variables (which can potentially be indirect, like
+sy.pet); and results of previously evaluated expressions, for
+
+which we added support in the previous section.
+
+While turning the argument data into a vector of bytes is fairly
+straightforward, producing an sdb::type that represents the data’s
+type is more complex, as sdb::type uses DIEs as the main source of
+information. We could search for a DIE that has the correct
+type; for example, if the user passes an integer, we could look
+for the DIE representing the int type and store this DIE as the
+data’s type. But because we’re not implementing implicit
+conversions like integral promotions, users would be able to
+pass these integers only to functions that take exactly the type
+int, not long, unsigned int, and so on. The story would be the same
+
+for float and double. As such, we’ll extend sdb::type to represent
+some built-in types and handle those in a special way in the rest
+of the code.
+
+Representing Built-in Types
+Extend the definition of sdb::type in sdb/include/libsdb/type.hpp to
+represent built-in types:
+
+   #include <variant>
+
+   namespace sdb {
+       enum class builtin_type {
+           string, character, integer, boolean, floa
+       };
+       class process;
+       class type {
+       public:
+           type(die die)
+                : info_(std::move(die))
+           --snip--
+           type (builtin_type type)
+                : info_(type) {}
+
+              die get_die() const {
+                  if (!std::holds_alternative<die>(info
+                      sdb::error::send("Type is not fro
+                  }
+                  return std::get<die>(info_);
+              }
+
+              builtin_type get_builtin_type() const {
+                  if (!std::holds_alternative<builtin_t
+                      sdb::error::send("Type is not a b
+                     }
+                     return std::get<builtin_type>(info_)
+               }
+
+               bool is_from_dwarf() const { return std:
+
+         private:
+             --snip--
+             std::variant<die, builtin_type> info_;
+         };
+   }
+
+Add a builtin_type enum to represent the various literal types
+we’ll support. Remove the die_ field and introduce an info_ field
+that is a std::variant of an sdb::die or a builtin_type. Update the
+existing constructor to fill in the info_ field and then add a new
+constructor that takes a builtin_type and stores it in the variant
+member. The existing constructor for DIEs will continue to
+work as is, so we don’t need to modify it. Change the
+implementation of get_die to throw an exception if the variant
+doesn’t currently hold an sdb::die, and return it otherwise. Also
+add an equivalent function for retrieving the built-in type.
+Finally, add a member function that returns whether this type
+was created from a DIE.
+Let’s add support for built-in types to sdb::type::compute_byte_size in
+sdb/src/type.cpp. Make the following changes to the top of the
+function:
+
+   std::size_t sdb::type::compute_byte_size() const
+       if (!is_from_dwarf()) {
+           switch (get_builtin_type()) {
+           case builtin_type::boolean: return 1;
+           case builtin_type::character: return 1;
+           case builtin_type::integer: return 8;
+           case builtin_type::floating_point: return
+           case builtin_type::string: return 8;
+           }
+       }
+
+         auto& die_ = std::get<sdb::die>(info_);
+         --snip--
+   }
+
+If the type doesn’t come from the DWARF information, it’s a
+built-in type. We return 1 for Booleans and characters and 8 for
+integer types (meaning we default to long and double for integer
+and floating-point types, respectively). If the type does come
+from the DWARF information, we grab a reference to the DIE. I
+named it die_ with an underscore at the end so I wouldn’t have
+to change the rest of the function’s code, but you can give it a
+name without an underscore and perform the relevant search
+and replace if you like.
+
+Let’s also write to_byte_vec and to_byte_span functions, which will
+come in handy throughout this chapter for converting an object
+into a vector or span of its byte representation. Implement the
+functions in sdb/include/bit.hpp:
+
+   namespace sdb {
+       template <class From>
+       sdb::span<const std::byte> to_byte_span(const
+           return { as_bytes(from), sizeof(From) };
+       }
+
+         template <class From>
+         std::vector<std::byte> to_byte_vec(const From
+             std::vector<std::byte> ret(sizeof(From))
+             std::memcpy(ret.data(), as_bytes(from), s
+             return ret;
+         }
+   }
+
+The to_byte_span function returns a span of bytes from the start of
+the object to the end of the object. The to_byte_vec function copies
+the byte representation into a vector.
+Parsing a Single Argument
+
+With this support written, we can implement a parse_argument
+function that turns a string argument into an sdb::typed_data
+object. Implement it in sdb/src/target.cpp. It’s rather long, so
+we’ll implement it piece by piece:
+
+   namespace {
+       sdb::typed_data parse_argument(
+           sdb::target& target, pid_t tid, std::stri
+           if (arg.empty()) {
+               sdb::error::send("Empty argument");
+           }
+           if (arg.size() > 2 and arg[0] == '"' and
+               auto ptr = target.inferior_malloc(arg
+               std::string arg_str{ arg.substr(1, a
+               auto data_ptr = reinterpret_cast<cons
+               sdb::span<const std::byte> data = {
+                   data_ptr, arg_str.size() + 1 };
+               target.get_process().write_memory(pt
+               return { sdb::to_byte_vec(ptr), sdb:
+              }
+
+If the argument is empty, we throw an exception. Otherwise, if
+the argument is enclosed in " characters, it’s a string argument,
+and we need to copy this string into the memory of the running
+process. Before we perform this copy, we need to allocate
+enough memory in the running process to store the data. To do
+so, we’ll write an sdb::target::inferior_malloc function later in this
+chapter that will call malloc inside of the running process and
+return the result. For now, we assume this function exists and
+call it with the size of the string. This is the size of the given
+argument minus one, because we don’t include either quote
+character, but we do include the null terminator. After
+performing the allocation, we copy the data into the allocated
+memory and return an sdb::typed_data object with the resulting
+pointer value.
+
+We then handle the other types:
+
+               else if (arg == "true" or arg == "false"
+                   auto value = arg == "true";
+                   return { sdb::to_byte_vec(value), sdb
+               }
+               else if (arg[0] == '\'') {
+                     if (arg.size() != 3 or arg[2] != '\'
+                         sdb::error::send("Invalid charact
+                     }
+                     return { sdb::to_byte_vec(arg[1]), sd
+               }
+               else if (arg[0] == '-' or std::isdigit(a
+                   if (arg.find(".") != std::string::npo
+                        auto value = sdb::to_float<double
+                        if (!value) {
+                              sdb::error::send("Invalid flo
+                        }
+                        return { sdb::to_byte_vec(*value
+                   }
+                   else {
+                       auto value = sdb::to_integral<std
+                       if (!value) {
+                           sdb::error::send("Invalid int
+                       }
+                       return { sdb::to_byte_vec(*value
+                   }
+              }
+              else {
+                  auto pc = target.get_pc_file_address
+                  auto res = target.resolve_indirect_na
+                  if (!res.funcs.empty()) {
+                      sdb::error::send("Nested function
+                  }
+                  return *res.variable;
+              }
+        }
+   }
+
+The other cases are simpler, as we don’t have to allocate
+anything. If the argument is true or false, we return the value as a
+builtin_type::boolean. For character literals, we extract the middle
+
+character from between the quotes and return it with the
+builtin_type::character type, throwing an exception if the literal is
+
+invalid. If the argument begins with a - character or a digit, it’s
+either a floating-point or an integer literal. If it contains a
+period, we attempt to parse it as a floating-point number.
+Otherwise, we interpret it as a signed integer. Finally, if it’s none
+of these, it should name a variable, so we call resolve_indirect_name
+to find the variable, throw an exception if we get any function
+DIEs, and then return the found variable.
+
+Collecting All Arguments
+
+Now that we can parse a single argument, we can write a
+function to parse all arguments. This parsing should produce a
+std::vector<sdb::typed_data> holding all of the arguments to pass to
+
+the function. It also needs to deal with the implicit object
+argument (the this pointer) in cases where the user is trying to
+call a member function. According to the Itanium ABI, the
+implicit object argument gets passed by adding a pointer to the
+object to the front of the function’s parameter list. Implement
+collect_arguments in sdb/src/target.cpp:
+
+   namespace {
+       std::vector<sdb::typed_data> collect_argument
+  sdb::target& target, pid_t tid, std::st
+  const std::vector<sdb::die>& funcs,
+  std::optional<sdb::typed_data> object)
+std::vector<sdb::typed_data> args;
+auto& proc = target.get_process();
+
+if (object) {
+    std::vector<std::byte> data;
+    if (object->address()) { ➊
+        data = sdb::to_byte_vec(*object->
+    }
+    else { ➋
+        auto& regs = proc.get_registers(t
+        auto rsp = regs.read_by_id_as<std
+        rsp -= object->value_type().byte_
+        proc.write_memory(sdb::virt_addr{
+        regs.write_by_id(sdb::register_id
+        data = sdb::to_byte_vec(rsp);
+    }
+    auto obj_ptr_die = funcs[0][DW_AT_obj
+    auto this_type = obj_ptr_die[DW_AT_ty
+    args.push_back({ std::move(data), thi
+}
+
+auto args_start = 1; ➍
+auto args_end = arg_string.find(')');
+
+while (args_start < args_end) {
+                   auto comma_pos = arg_string.find(','
+                   if (comma_pos == std::string::npos) {
+                         comma_pos = args_end;
+                   }
+                   auto arg_expr = arg_string.substr(arg
+                   args.push_back(parse_argument(target
+                   args_start = comma_pos + 1;
+              }
+              return args;
+        }
+   }
+
+We initialize the return data and grab a reference to the current
+process. If there is an implicit object argument to pass to a
+member function, we handle it. If we have an address for this
+variable ➊, our lives are easy; we store that pointer as the data
+for the argument. Otherwise, we spill the object to the stack ➋.
+To do this, we read the current stack pointer value and subtract
+the size of the object. (We subtract rather than add because the
+stack grows downward toward zero on x64.) We write the
+object’s data into the new stack pointer position, update the
+stack pointer in the thread’s registers, and store the new value
+of the stack pointer as the argument data. With the data for the
+argument computed, we retrieve the DIE referenced by the
+function’s DW_AT_object_pointer attribute ➌. This DIE should have the
+tag DW_TAG_formal_parameter with a DW_AT_type attribute that references
+the type of the this pointer. We can then create a new typed_data
+object to represent the this pointer and push it into the empty
+args vector.
+
+After dealing with the implicit object argument, we handle all
+the other arguments. We expect arg_string to be a string
+containing all of the function arguments, including the opening
+and closing parentheses. So, the string index of the start of the
+first argument is 1, and the end position is the location of the
+closing parenthesis. We store these ➍ and then loop while there
+is still data to process. For each argument, we find the comma
+marking the end of the argument. If we can’t locate one, we use
+the closing parenthesis index as the marker for the end of the
+argument instead. We extract the substring containing the next
+argument, pass that to the parse_argument function we wrote
+previously, and push the result into the args vector. Before the
+next loop iteration, we update args_start to be the first character
+after the comma. Finally, we return the computed arguments.
+
+Overload Resolution
+
+Now that we can find the set of functions the program might
+call and parse their arguments, we can move on to overload
+resolution. Overload resolution is the process of checking the
+arguments passed to a function against the parameters of many
+potential overloads and selecting the overload whose
+parameters match the arguments. Resolving overloads in
+exactly the same way as a C++ compiler is horrendously
+complicated; we’ll implement a heavily simplified version that,
+while inaccurate and incomplete, will do the job in many cases.
+
+To support the overload resolution, let’s add a parameter_types
+function to sdb::die to make it easier to retrieve a list of a
+function DIE’s parameter types. Declare it in
+sdb/include/libsdb/dwarf.hpp:
+
+   namespace sdb {
+       class die {
+       public:
+           --snip--
+           std::vector<type> parameter_types() const
+       };
+   }
+
+Define the function in sdb/src/dwarf.cpp:
+
+   std::vector<sdb::type> sdb::die::parameter_types
+       std::vector<type> ret;
+       if (!abbrev_->tag == DW_TAG_subprogram) retu
+         for (auto& c : children()) {
+             if (c.abbrev_entry()->tag == DW_TAG_forma
+                    ret.push_back(c[DW_AT_type].as_type(
+              }
+         }
+         return ret;
+   }
+
+If the DIE is not a subprogram, we return an empty vector.
+Otherwise, we loop over all of the children of the DIE and push
+back the types of any DW_TAG_formal_parameter DIEs we find. Finally,
+we return the computed vector.
+
+Now we can implement resolve_overload in sdb/src/target.cpp to
+perform the heavily simplified overload resolution:
+
+   namespace {
+       sdb::die resolve_overload(
+             const std::vector<sdb::die>& funcs,
+             const std::vector<sdb::typed_data>& arg
+           std::optional<sdb::die> matching_func;
+           for (auto& func : funcs) {
+               bool matches = true;
+               auto arg_it = args.begin();
+               auto params = func.parameter_types()
+                  if (args.size() == params.size()) {
+                      for (auto param_it = params.begin
+                            arg_it != args.end();
+                            ++param_it, ++arg_it) {
+                            if (*param_it != arg_it->valu
+                                 matches = false;
+                                 break;
+                            }
+                       }
+                  }
+                  else {
+                      matches = false;
+                  }
+
+              ➊ if (matches) {
+                     if (matching_func) sdb::error::se
+                     matching_func = func;
+                 }
+             }
+             if (!matching_func) sdb::error::send("No
+             return *matching_func;
+        }
+   }
+
+We loop over the given candidates, looking for matches. If the
+number of arguments matches the number of parameters and
+each parameter type is equal to the value type of the
+corresponding argument, we consider it a match. If we find a
+match ➊, we store it as the matched function. If we’ve already
+found a matching function, we instead consider the function
+call to be ambiguous and throw an exception. After examining
+all candidates, we throw an exception if we found no matching
+function. Otherwise, we return the match.
+
+Our overload resolution implementation relies on equality
+checking for sdb::type. Let’s implement that now. In
+sdb/include/libsdb/type.hpp, add a declaration for operator== and
+implement operator!= in terms of it:
+
+   namespace sdb {
+       class type {
+       public:
+           --snip--
+           bool operator==(const type& rhs) const;
+           bool operator!=(const type& rhs) const {
+                return !(*this == rhs);
+           }
+              --snip--
+        }
+   }
+The operator!= implementation negates the result of operator==.
+Implement operator== in sdb/src/type.cpp. Because we’re following
+a simplified approach, the result will be inaccurate in many
+cases. For instance, we won’t take into account constness, so we
+won’t be able to call functions that are overloaded on constness.
+We’ll implement this function in pieces. First, we’ll handle the
+case where both types are built in:
+
+   bool sdb::type::operator==(const type& rhs) const
+       if (!is_from_dwarf() and !rhs.is_from_dwarf(
+           return get_builtin_type() == rhs.get_buil
+       }
+
+In this case, we compare the built-in types of each type for
+equality. Next, we’ll handle the case where one type is built in
+and the other is not. We want to support both a_builtin_type ==
+a_dwarf_type and a_dwarf_type == a_builtin_type, but we don’t want to
+
+repeat a bunch of code for checking each side, so we’ll first try
+to grab pointers to each type:
+
+         const sdb::type* from_dwarf = nullptr;
+         const sdb::type* builtin = nullptr;
+         if (!is_from_dwarf()) {
+               from_dwarf = &rhs;
+               builtin = this;
+         }
+         else if (!rhs.is_from_dwarf()) {
+              from_dwarf = this;
+              builtin = &rhs;
+         }
+
+We assign the from_dwarf and builtin pointers to the left-hand side
+and right-hand side arguments, depending on which is which.
+
+Next, we handle the type comparisons. For base DWARF types,
+we check the encoding against the built-in type. For pointer
+types, the only built-in type we support is a string, so we ensure
+that the DWARF pointer type points to a character type and that
+the built-in type is a string:
+
+         if (from_dwarf and builtin) {
+             auto die = from_dwarf->strip_cvref_typede
+             auto tag = die.abbrev_entry()->tag;
+             if (tag == DW_TAG_base_type) {
+                 switch (die[DW_AT_encoding].as_int()
+                 case DW_ATE_boolean:
+                     return builtin->get_builtin_type
+                 case DW_ATE_float:
+                     return builtin->get_builtin_type
+                 case DW_ATE_signed:
+                 case DW_ATE_unsigned:
+                       return builtin->get_builtin_type
+                   case DW_ATE_signed_char:
+                   case DW_ATE_unsigned_char:
+                       return builtin->get_builtin_type
+                   default:
+                        return false;
+                   }
+             }
+             if (tag == DW_TAG_pointer_type) {
+                 return die[DW_AT_type].as_type().is_c
+                     builtin->get_builtin_type() == bu
+             }
+             return false;
+         }
+
+Finally, we handle the case where both types come from
+DWARF. In this case, we’ll remove qualifiers, references,
+typedefs, and pointers from both types and compare their
+names. If they’re equal, we’ll return true. Otherwise, we’ll return
+false:
+
+         auto lhs_stripped = strip_all();
+         auto rhs_stripped = rhs.strip_all();
+
+         auto lhs_name = lhs_stripped.get_die().name(
+         auto rhs_name = rhs_stripped.get_die().name(
+        if (lhs_name and rhs_name and *lhs_name == *
+            return true;
+
+        return false;
+   }
+
+This will do for our needs. You can always augment this
+implementation yourself if you want to support more
+expression evaluation scenarios.
+
+Calling Conventions
+
+The functions we call expect any passed arguments to be in the
+positions specified by the calling conventions of the SYSV and
+Itanium ABIs. These rules are fairly complex because we need
+to be able to pass objects of any type, and, for performance
+reasons, we should use registers rather than RAM when
+possible. Before we can write code to evaluate expressions,
+we’ll review these calling conventions.
+
+Classifying Parameters
+
+The SYSV ABI defines several parameter classes that indicate
+where to locate different arguments:
+  INTEGER    Types passed and returned in general-purpose
+  registers (GPRs)
+  SSE     Types passed and returned in the lower 8 bytes of the xmm
+  registers
+  SSEUP     Types passed and returned in the upper bytes of the xmm
+  registers
+  X87     Types returned in the lower 8 bytes of the st registers
+  X87UP     Types returned in the upper 2 bytes of the st registers
+  COMPLEX_X87   Types returned in two st registers
+  NO_CLASS    Used as a default class for padding, empty structures,
+  and unions
+  MEMORY     Types passed and returned on the stack
+
+To locate both arguments and return values, we must sort types
+according to these classes. We classify all arguments in groups
+of 8 bytes, which the SYSV ABI imaginatively calls eightbytes.
+Here are the rules for classifying the basic types (all types other
+than class or array types):
+
+  We assign pointers, as well as integer types that fit in an
+  eightbyte, to the INTEGER class.
+  We assign floating-point types that fit in an eightbyte, as well
+  as __m64 (a type used with some MMX funtions), to the SSE class.
+  We split __m128 (a type used with some XMM functions) and
+  floating-point types that fit in 2 eightbytes into two halves,
+  and assign the least significant half the SSE class and the most
+  significant half the SSEUP class.
+  We split __m256 (a type used with some AVX functions) into 4
+  eight-bytes and assign the least significant one to the SSE class
+  and the others to the SSEUP class.
+  We split long double into 2 eightbytes, assign the least significant
+  64 bits to the X87 class, and assign the most significant 16 bits
+  (plus 6 bytes of padding) to the X87UP class.
+  We treat __int128 as if it were composed of two 64-bit integers,
+  with one exception: we must align arguments of type __int128
+  that are stored in memory to 16 bytes rather than 8 bytes.
+  We treat std::complex<T> in C++ or complex T in C99 as if it were
+  composed of two objects of type T.
+  We assign complex long double to the COMPLEX_X87 class.
+
+Some of these types, like complex long double, occur very rarely, and
+even GDB doesn’t support them. For simplicity and parity with
+our existing register support, we won’t support __m64, __m128, __m256,
+__int128, or complex types. We’ll support everything else.
+
+The classification of class and union types is significantly more
+complex and consists of multiple stages. We can’t pass certain
+kinds of C++ types in registers because copying or destroying
+them requires additional steps. We refer to such types with the
+rather lengthy term non-trivial for the purposes of calls
+(NTFPOC). As defined in the Itanium ABI, a type is NTFPOC if it
+has a non-trivial copy constructor, move constructor, or
+destructor, or if all of its copy and move constructors have been
+deleted.
+
+A type has a non-trivial copy or move constructor or destructor
+in a few cases: if it’s defined by the user rather than defined
+implicitly or defaulted on first declaration, if the type has any
+virtual members or virtual base classes, or if any members or
+base classes have a non-trivial copy or move constructor or
+destructor. Types that are non-trivial for the purposes of calls
+are passed by invisible reference: they are replaced in the
+argument list with a pointer to the object, which is given the
+class INTEGER.
+
+NTFPOC is very close to the C++ concept of trivial copyability,
+but it isn’t quite the same: trivial copyability also has
+constraints on assignment operators. We won’t support passing
+NTFPOC types by value because this requires manually calling
+the copy constructor for each NTFPOC argument to a function
+and potentially manually calling the destructor as well. This is
+certainly possible to implement with the support that we’ll
+write in this chapter, but it complicates the implementation
+even further, and this chapter is long and complex enough as it
+is.
+If the type is larger than 8 eightbytes or contains fields that are
+not aligned to their expected boundaries, it is given the MEMORY
+class. Each eightbyte of the class is classified separately. Each
+field that belongs to a given eightbyte is classified and merged
+into a single class for that eightbyte with the following rules,
+which are run top to bottom (that is, as soon as one of these
+rules matches, that is the result of the merge):
+
+  If both classes are the same, the result is this class.
+  If one of the classes is NO_CLASS, the result is the other class.
+  If one of the classes is MEMORY, the result is MEMORY.
+  If one of the classes is INTEGER, the result is INTEGER.
+  If one of the classes is X87, X87UP, or COMPLEX_X87, the result is MEMORY.
+  Otherwise, the result is SSE.
+
+After all of the eightbytes of the type are classified, there is a
+post-merger cleanup step that follows these rules, again run top
+to bottom:
+
+  If one of the classes is MEMORY, we set all classes to MEMORY.
+  If an X87UP class is not preceded by an X87 class, we set all
+  classes to MEMORY.
+  If the type is larger than 2 eightbytes and the first class is not
+  SSE or any other class is not SSEUP, we set all classes to MEMORY.
+
+  This is to support passing types with large vector members
+  like __m256 in registers. Note that since we’re not supporting
+  passing vector types, we can consider all class types larger
+  than 2 eightbytes as being passed in memory.
+  If SSEUP is not preceded by SSE or SSEUP, it is changed to SSE.
+
+Passing Arguments
+
+To pass arguments to a function, we first classify all arguments
+from left to right using the algorithm you just read. Depending
+on the classes of each argument, that argument may be placed
+in memory or copied into registers. Each eightbyte of each
+argument is considered separately. The allocation algorithm is
+as follows:
+
+  If the class is MEMORY, the eightbyte is allocated to the stack.
+  Furthermore, if any eightbyte of an argument should be
+  allocated to a register but no more are available, the entire
+  argument is allocated to the stack.
+  If the class is INTEGER, the eightbyte is allocated to the next
+  available register of rdi, rsi, rdx, rcx, r8, and r9.
+  If the class is SSE, the eightbyte is allocated to the next
+  available register of the xmm registers, starting with xmm0 and
+  proceeding through xmm7.
+  If the class is SSEUP, the eightbyte is allocated to the next
+  available eightbyte in the previously allocated xmm register.
+  If the class is X87, X87UP, or X87_COMPLEX, the eightbyte is allocated to
+  the stack; X87 objects are allocated to registers only when they
+  are returned from a function.
+
+Arguments that are allocated to the stack are pushed in reverse
+order: right to left. That is, the leftmost argument ends up at the
+top of the stack after all arguments are pushed. This is to
+simplify the implementation of varargs functions. If the
+function called is a varargs function, the al register must store
+the number of vector (SSE) registers allocated.
+
+Returning Values
+
+To determine the location of a function’s return value, we
+classify the return type using the algorithm described earlier
+and consider each eightbyte of the type separately. Then, we
+execute the following algorithm:
+
+  If the class is MEMORY, the caller must allocate storage for the
+  return value and pass the address of this storage as if it were
+  the first argument to the function (in the rdi register). This is
+  usually done by allocating space on the caller’s stack. On
+  return, the rax register will store the address that was passed.
+  If the class is INTEGER, the eightbyte is allocated to the next
+  available register of rax and rdx.
+  If the class is SSE, the eightbyte is allocated to the next
+  available register of xmm0 and xmm1.
+  If the class is SSEUP, the eightbyte is allocated to the next
+  available eightbyte in the previously allocated xmm register.
+  If the class is X87, the eightbyte is allocated to the st0 register.
+  If the class is X87UP, the eightbyte is allocated to the higher-
+  order bits of the st0 register.
+  If the class is COMPLEX_X87, the eightbyte representing the real
+  part of the number is allocated to st0 and the eightbyte
+  representing the imaginary part of the number is allocated to
+  st1.
+
+Calling Functions in the Debugger
+
+With the theory out of the way, we can start implementing the
+necessary support for calling functions in the debugger. We’ll
+begin by creating a function that handles the low-level details of
+calling a function in the inferior process.
+
+Performing Low-Level Inferior Calls
+
+The first function we’ll write won’t deal with arguments or
+return values; it will merely set up the return address, jump to
+some address that marks the start of a function, and restore the
+old set of registers after the function completes. We’ll call this
+function sdb::process::inferior_call. Declare it in
+sdb/include/libsdb/process.hpp:
+
+   namespace sdb {
+       class process {
+       public:
+               --snip--
+               sdb::registers inferior_call(
+                    sdb::virt_addr func_addr, sdb::virt_a
+                    const sdb::registers& regs_to_restore
+                    std::optional<pid_t> otid = std::null
+               --snip--
+         };
+   }
+
+The inferior_call function takes the address of a function to call, a
+return address (on which the caller should have set a
+breakpoint), a set of registers to restore when the function call
+completes, and an optional thread to run the function in. It
+returns the state of the registers after the function call
+completes, before they’re restored to their old values.
+
+Implement inferior_call in sdb/src/process.cpp:
+sdb::registers sdb::process::inferior_call(
+      sdb::virt_addr func_addr, sdb::virt_addr re
+      const sdb::registers& regs_to_restore, std
+    auto tid = otid.value_or(current_thread_);
+    auto& regs = get_registers(tid);
+
+    regs.write_by_id(sdb::register_id::rip, func_
+
+    auto rsp = regs.read_by_id_as<std::uint64_t>
+
+    rsp -= 8;
+    write_memory(
+        sdb::virt_addr{ rsp }, sdb::to_byte_span
+    regs.write_by_id(sdb::register_id::rsp, rsp,
+
+    resume(tid);
+    auto reason = wait_on_signal(tid);
+    if (reason.reason != sdb::process_state::stop
+        sdb::error::send("Function call failed")
+    }
+
+    auto new_regs = regs;
+    regs = regs_to_restore;
+    regs.flush();
+    if (target_) target_->notify_stop(reason);
+         return new_regs;
+   }
+
+We begin with the usual pattern: getting the thread ID to
+operate on, depending on what the user passed as an argument.
+For convenience, we also grab a reference to the registers for
+that thread. We set the program counter to point to the function
+we want to call. The return address should go right at the top of
+the stack, so we allocate 8 bytes on the stack, copy the return
+address into the allocated space, and update the stack pointer in
+the inferior. This function assumes that the return address
+already has a breakpoint set on it, as handled by the caller, so
+we resume the thread, wait until it stops, and throw an
+exception if it exited. Finally, we restore the registers to their
+original values and notify the target that a stop occurred so that
+it can update its data structures. Note that regs is a reference, so
+assigning regs_to_restore to it performs the update to the registers
+for the current thread. Finally, we return the register state from
+after the call.
+
+Allocating Memory for Arguments
+
+Armed with inferior_call, we can now implement sdb::inferior_malloc,
+which we used when parsing string arguments. It takes a
+number of bytes to allocate and returns a virtual address that
+marks the beginning of the allocated region. We could also
+define an inferior_free function, but the areas we’ll allocate
+should live for the lifetime of the program, so we won’t bother
+freeing them. Declare inferior_malloc in
+sdb/include/libsdb/target.hpp:
+
+   namespace sdb {
+       class target {
+       public:
+           --snip--
+           virt_addr inferior_malloc(std::size_t siz
+           --snip--
+       };
+   }
+
+Define inferior_malloc in sdb/src/target.cpp:
+
+   sdb::virt_addr sdb::target::inferior_malloc(std:
+       auto saved_regs = process_->get_registers();
+
+         auto malloc_funcs = find_functions("malloc")
+         auto malloc_func = std::find_if(
+             malloc_funcs.begin(), malloc_funcs.end()
+                 return sym.second->st_value != 0;
+             });
+         if (malloc_func == malloc_funcs.end()) {
+             error::send("malloc not found");
+         }
+
+         file_addr malloc_addr{
+             *malloc_func->first, malloc_func->second
+         auto call_addr = malloc_addr.to_virt_addr();
+
+         auto entry_point = virt_addr{ process_->get_a
+         breakpoints_.get_by_address(entry_point).inst
+             return false;
+         });
+
+         process_->get_registers().write_by_id(registe
+
+         auto new_regs = process_->inferior_call(
+             call_addr, entry_point, saved_regs);
+         auto result = new_regs.read_by_id_as<std::uin
+
+         return virt_addr{ result };
+   }
+
+First, we save the current state of the registers so that
+inferior_call can restore them. We then find the definition of
+
+malloc, which lives inside the libc implementation. We’ll assume
+
+the user is not using a debug build of libc, so
+sdb::target::find_functions will find it in the ELF symbol table rather
+than in the DWARF information. You can check both if you’d
+like to support debug builds of libc.
+
+There are likely several symbols that match malloc, some of
+which will be undefined, so we look for the first that has a
+symbol value, which will correspond to the file address of malloc
+inside the libc shared library. If we don’t find malloc, we throw an
+error; otherwise, we create a file_addr from the located symbol
+and convert it to a virtual address.
+
+Recall from the start of the chapter that we’ll use the entry
+point as the return address for calls. We locate the entry point
+breakpoint and replace its hit handler with one that returns
+false and therefore doesn’t cause the process to immediately
+
+resume when the breakpoint is hit. We set up the argument for
+malloc by writing the number of bytes to allocate into rdi,
+
+following the calling conventions. We then call inferior_call and
+save the registers that resulted from the call to malloc. Recall that
+pointer return values usually get stored in the rax register. As
+such, we read rax from the returned registers and return it as a
+virtual address.
+
+Classifying Parameters
+Now that we’ve supported calling functions at a low level, we
+can think about the next level up: setting up arguments. To do
+this, we need to implement the algorithms for classifying
+arguments you learned about earlier in this chapter.
+
+We’ll create an enum for representing the argument classes,
+extend sdb::type with functions to get the parameter classes for
+the type, check whether it has unaligned fields, compute its
+expected alignment, and check whether the argument is
+NTFPOC. Make these changes in sdb/include/libsdb/type.hpp:
+
+   namespace sdb {
+       enum class parameter_class {
+           integer, sse, sseup, x87, x87up, complex_
+           memory, no_class
+       };
+
+        class type {
+        public:
+             --snip--
+             std::size_t alignment() const;
+             bool has_unaligned_fields() const;
+             bool is_non_trivial_for_calls() const;
+             std::array<parameter_class, 2> get_parame
+             --snip--
+         };
+   }
+
+The sdb::parameter_class enum corresponds to the set of classes
+you’ve already learned about. Because we won’t support
+passing vector types like __m256, we only ever need to consider 2
+eightbytes for any given type, so get_parameter_classes returns an
+array of two parameter classes, one for each eightbyte.
+
+Getting Parameter Classes
+
+Next, let’s get the parameter class for the type. Implement
+get_parameter _classes in sdb/src/type.cpp:
+
+   std::array<sdb::parameter_class, 2> sdb::type::ge
+       std::array<parameter_class, 2> classes = { ➊
+           parameter_class::no_class, parameter_clas
+
+         if (!is_from_dwarf()) { ➋
+             switch (get_builtin_type()) {
+             case builtin_type::boolean: classes[0] =
+             case builtin_type::character: classes[0]
+             case builtin_type::integer: classes[0] =
+             case builtin_type::floating_point: classe
+             case builtin_type::string: classes[0] = p
+             }
+    return classes;
+}
+
+auto stripped = strip_cv_typedef();
+auto die = stripped.get_die();
+auto tag = die.abbrev_entry()->tag;
+if (tag == DW_TAG_base_type and stripped.byte
+    switch (die[DW_AT_encoding].as_int()) {
+    case DW_ATE_boolean: classes[0] = paramet
+    case DW_ATE_float: classes[0] = paramete
+    case DW_ATE_signed: classes[0] = paramete
+    case DW_ATE_signed_char: classes[0] = pa
+    case DW_ATE_unsigned: classes[0] = parame
+    case DW_ATE_unsigned_char: classes[0] = p
+    default: sdb::error::send("Unimplemented
+    }
+}
+else if (tag == DW_TAG_pointer_type or ➍
+    tag == DW_TAG_reference_type or
+    tag == DW_TAG_rvalue_reference_type) {
+    classes[0] = parameter_class::integer;
+}
+else if (tag == DW_TAG_base_type and ➎
+    die[DW_AT_encoding].as_int() == DW_ATE_fl
+    stripped.byte_size() == 16) {
+    classes[0] = parameter_class::x87;
+    classes[1] = parameter_class::x87up;
+}
+          else if (tag == DW_TAG_class_type or ➏
+              tag == DW_TAG_structure_type or
+              tag == DW_TAG_union_type or
+                 tag == DW_TAG_array_type) {
+                 classes = classify_class_type(*this);
+          }
+          return classes;
+   }
+
+We initialize the classes to no_class ➊. We first handle built-in
+types, which include literal arguments that the user passes on
+the command line ➋. We give all of these types the class INTEGER,
+apart from floating-point numbers, which we give the class SSE.
+We give string arguments the class INTEGER because we’ll pass a
+pointer to the start of the string, and we assign pointers the
+class INTEGER.
+
+We then handle arguments that come from the program itself
+(that is, named variables), starting with base types that fit in a
+single eightbyte ➌. We assign these the classes specified by the
+classification algorithm.
+
+Next, we handle pointer and reference types ➍. The Itanium
+ABI says that we should pass C++ references (both lvalue
+references and rvalue references) as pointers to the referenced
+object, so we assign them the class INTEGER, the same as pointers.
+We also handle base types that are larger than a single
+eightbyte ➎. Because of the simplifications we’re making in our
+implementation, these include only long double.
+
+Finally, we handle class and array types by calling a
+classify_class_type function which we’ll write next, and then
+
+returning ➏. Note that in C and C++, array function parameters
+are actually pointer parameters. That is, the two following
+function declarations are equivalent:
+
+   void takes_pointer(int p[]);
+   void takes_pointer(int* p);
+
+The DWARF information reflects this; it will have a formal
+parameter DIE pointing to a DW_TAG_pointer_type DIE in both cases.
+We still need to handle array types in cases where the caller
+passes a class type with an array member, however. In those
+situations, we should treat the array as if it were a class with a
+member for each element of the array. We can pass it in
+registers if it’s small enough and we can pass the stored types in
+registers.
+
+Classifying Class and Array Types
+To classify classes and arrays, let’s implement classify_class_type
+next:
+
+   namespace {
+       std::array<sdb::parameter_class, 2> classify_
+                const sdb::type& type) {
+              if (type.is_non_trivial_for_calls()) { ➊
+                  sdb::error::send("NTFPOC types are no
+              }
+
+              if (type.byte_size() > 16 or ➋
+                  type.has_unaligned_fields()) {
+                  return {
+                      sdb::parameter_class::memory,
+                      sdb::parameter_class::memory
+                  };
+              }
+
+              std::array<sdb::parameter_class, 2> class
+                  sdb::parameter_class::no_class,
+                  sdb::parameter_class::no_class
+              };
+
+              if (type.get_die().abbrev_entry()->tag ==
+                    auto value_type = type.get_die()[DW_A
+                    classes = value_type.get_parameter_cl
+                    if (type.byte_size() > 8 and classes
+                        classes[1] = classes[0];
+                  }
+             }
+             else { ➎
+                 for (auto child : type.get_die().chil
+                     if (child.abbrev_entry()->tag ==
+                             child.contains(DW_AT_data_mem
+                             child.contains(DW_AT_data_bit
+                             classify_class_field(type, ch
+                       }
+                  }
+             }
+
+             if (classes[0] == sdb::parameter_class::m
+                 classes[1] == sdb::parameter_class::m
+                 classes[0] = classes[1] = sdb::parame
+             }
+             else if (classes[1] == sdb::parameter_cla
+                 classes[0] != sdb::parameter_class::x
+                 classes[0] = classes[1] = sdb::parame
+             }
+
+             return classes;
+        }
+   }
+
+If the type is NTFPOC, we throw an exception, as we won’t
+support passing such types by value ➊. If the type is larger than
+2 eightbytes or contains unaligned fields, we pass it in memory
+➋.
+
+Next, we handle the case where the type can be passed in
+registers, depending on what its members are. We initialize the
+classes to NO_CLASS ➌. If the type is an array ➍, we classify its
+value type and use this as the class for the array. If the array is
+larger than an eightbyte but its elements fit in a single
+eightbyte, we copy the parameter class of the first eightbyte into
+the second so they’re handled in the same way. If the type is a
+class or union type ➎, we loop over all non-static data members
+and classify them using a classify_class_field function we’ll write
+shortly. The final argument to this function is the field’s bit
+offset, which we’ll use to support the passing of nested types in
+registers.
+
+Now comes the post-merger cleanup pass ➏, which we’ll only
+partly implement, as we’re not supporting several types. If
+either eightbyte is passed in memory or X87UP isn’t preceded by
+X87, we pass the whole type in memory. Finally, we return the
+
+computed classes.
+
+Classifying Class Fields
+Before we classify class fields, we’ll add a couple of helpers to
+sdb::type for recognizing class and reference types. Declare them
+
+in sdb/include/libsdb/type.hpp:
+
+   namespace sdb {
+        class type {
+        public:
+              --snip--
+              bool is_class_type() const;
+              bool is_reference_type() const;
+              --snip--
+        };
+   }
+
+Define them in sdb/src/type.cpp:
+
+   bool sdb::type::is_class_type() const {
+       if (!is_from_dwarf()) return false;
+       auto stripped = strip_cv_typedef().get_die()
+       auto tag = stripped.abbrev_entry()->tag;
+       return tag == DW_TAG_class_type or
+           tag == DW_TAG_structure_type or
+           tag == DW_TAG_union_type;
+   }
+
+   bool sdb::type::is_reference_type() const {
+       if (!is_from_dwarf()) return false;
+         auto stripped = strip_cv_typedef().get_die()
+         auto tag = stripped.abbrev_entry()->tag;
+         return tag == DW_TAG_reference_type or
+             tag == DW_TAG_rvalue_reference_type;
+   }
+
+These helpers strip qualifiers from the type and check whether
+the tag is one of the expected ones. Now we can implement
+classify_class_field, which should recursively classify the field of a
+
+type and merge together the classes for each eightbyte:
+
+   namespace {
+       void classify_class_field(
+             const sdb::type& type,
+             const sdb::die& field,
+             std::array<sdb::parameter_class, 2>& cl
+             int bit_offset) {
+           auto bitfield_info = field.get_bitfield_i
+           auto field_type = field[DW_AT_type].as_ty
+
+              auto bit_size = bitfield_info ?
+                  bitfield_info->bit_size :
+                  field_type.byte_size() * 8;
+              auto current_bit_offset = bitfield_info
+                  bitfield_info->bit_offset + bit_offse
+                    field[DW_AT_data_member_location].as_
+               auto eightbyte_index = current_bit_offset
+
+               if (field_type.is_class_type()) { ➊
+                   for (auto child : field_type.get_die
+                       if (child.abbrev_entry()->tag ==
+                              child.contains(DW_AT_data_mem
+                              child.contains(DW_AT_data_bit
+                              classify_class_field(type, ch
+                        }
+                   }
+               }
+               else { ➋
+                   auto field_classes = field_type.get_p
+                   classes[eightbyte_index] = merge_para
+                       classes[eightbyte_index], field_c
+                   if (eightbyte_index == 0) { ➍
+                       classes[1] = merge_parameter_clas
+                   }
+               }
+        }
+   }
+
+Because the field could be a bitfield, we attempt to get bitfield
+information for it. We also extract the type of the field for
+convenience.
+The field’s bit size might be stored in the bitfield info; if not, we
+can calculate it by multiplying the field’s byte size by eight.
+Similarly, the current bit offset into the argument we’re
+classifying is the result of adding the bit_offset argument to
+either the bitfield’s offset or the byte offset of the field
+multiplied by eight. The index of the eightbyte to which this
+field belongs (either 0 or 1) is then the result of dividing the
+current bit offset by the size of an eightbyte (64 bits).
+
+If the field is itself a class type ➊, we classify its fields
+recursively. We loop over the non-static data members of the
+class, calling classify_class_field with the members and the current
+bit offset of the enclosing class inside of the argument being
+passed.
+
+If the field isn’t a class type ➋, we classify it, merging its
+parameter classes with the ones we’ve currently computed
+using a merge_parameter_classes function we’ll write next. We always
+merge the field’s first parameter class with the current
+parameter class in the eightbyte to which the field belongs ➌.
+The field may span 2 eightbytes, however, so we also merge the
+second parameter classes if this field belongs to the first
+eightbyte ➍.
+Before we move on to implementing the other member
+functions we’ve already declared, let’s implement
+merge_parameter_classes. This function performs the merge algorithm
+
+described in “Classifying Parameters” on page 644:
+
+   namespace {
+       sdb::parameter_class merge_parameter_classes
+             sdb::parameter_class lhs, sdb::paramete
+           using namespace sdb;
+           if (lhs == rhs) return lhs;
+
+              if (lhs == parameter_class::no_class) ret
+              if (rhs == parameter_class::no_class) ret
+
+              if (lhs == parameter_class::memory or
+                  rhs == parameter_class::memory) {
+                  return parameter_class::memory;
+              }
+
+              if (lhs == parameter_class::integer or
+                  rhs == parameter_class::integer) {
+                  return parameter_class::integer;
+              }
+
+              if (lhs == parameter_class::x87 or
+                  rhs == parameter_class::x87 or
+                  lhs == parameter_class::x87up or
+                   rhs == parameter_class::x87up or
+                   lhs == parameter_class::complex_x87 o
+                   rhs == parameter_class::complex_x87)
+                   return parameter_class::memory;
+             }
+
+             return parameter_class::sse;
+        }
+   }
+
+This function applies a pretty direct translation of the textual
+algorithm we discussed earlier.
+
+Checking Call Triviality
+
+We can now move on to the is_non_trivial_for_calls function we
+declared earlier. This function returns whether the type is
+NTFPOC:
+
+   bool sdb::type::is_non_trivial_for_calls() const
+       auto stripped = strip_cv_typedef().get_die()
+       auto tag = stripped.abbrev_entry()->tag;
+       if (tag == DW_TAG_class_type or
+           tag == DW_TAG_structure_type or
+           tag == DW_TAG_union_type) {
+           for (auto& child : stripped.children()) {
+if (child.abbrev_entry()->tag == DW_T
+    child.contains(DW_AT_data_member_
+    child.contains(DW_AT_data_bit_off
+    if (child[DW_AT_type].as_type().i
+        return true;
+    }
+}
+if (child.abbrev_entry()->tag == DW_T
+    if (child[DW_AT_type].as_type().i
+        return true;
+    }
+}
+if (child.contains(DW_AT_virtuality)
+    child[DW_AT_virtuality].as_int()
+    return true;
+}
+if (child.abbrev_entry()->tag == DW_T
+    if (is_copy_or_move_constructor(*
+        if (!child.contains(DW_AT_def
+            !child[DW_AT_defaulted].a
+            return true;
+        }
+    }
+    else if (is_destructor(child)) {
+        if (!child.contains(DW_AT_def
+            !child[DW_AT_defaulted].a
+            return true;
+        }
+                           }
+                     }
+               }
+         }
+         if (tag == DW_TAG_array_type) { ➎
+               return stripped[DW_AT_type].as_type().is_
+         }
+         return false;
+   }
+
+For class and union types, we loop through all child DIEs. If any
+non-static data members ➊ or base classes ➋ are NTFPOC, we
+return true. If the type has any virtual data members or virtual
+base classes, represented by a DW_AT_virtuality member with a
+value of either DW_VIRTUALITY_virtual or DW_VIRTUALITY_pure_virtual, we
+return true ➌. If the type has a copy/move constructor or
+destructor child that isn’t defaulted, we also return true ➍. Note
+that while DW_AT_defaulted is part of the DWARF 5 specification, GCC
+still omits it in DWARF 4 mode. We’ll write the
+is_copy_or_move_constructor and is_destructor functions next.
+
+For array types ➎, we return whether the value type of the
+array is NTFPOC.
+
+Identifiying Constructors and Destructors
+Let’s implement is_copy_or_move_constructor and is_destructor, which
+identify functions that are either copy or move constructors or
+destructors. We’ll start with the latter, as it’s much simpler:
+
+   namespace {
+       bool is_destructor(const sdb::die& func) {
+           auto name = func.name();
+           return name and
+               name.value().size() > 1 and
+               name.value()[0] == '~';
+       }
+   }
+
+We return whether the function has a name that begins with a
+tilde, which only destructors do.
+
+Next, we’ll consider copy and move constructors. There’s no
+quick and easy way to identify these. We’ll consider a function
+to be a copy or move constructor if it has the same name as the
+type and two parameters: a pointer to the type and an lvalue or
+rvalue reference to the type. The implementation is as follows:
+
+   namespace {
+       bool is_copy_or_move_constructor(
+             const sdb::type& class_type, const sdb
+auto class_name = class_type.get_die().na
+if (class_name != func.name()) return fal
+
+int i = 0;
+for (auto child : func.children()) {
+    if (child.abbrev_entry()->tag == DW_T
+        if (i == 0) {
+            auto type = child[DW_AT_type
+            if (type.get_die().abbrev_ent
+                return false;
+            if (type.get_die()[DW_AT_type
+                return false;
+        }
+        else if (i == 1) {
+            auto type = child[DW_AT_type
+            auto tag = type.get_die().abb
+            if (tag != DW_TAG_reference_t
+                tag != DW_TAG_rvalue_refe
+                return false;
+            auto ref = type.get_die()[DW_
+            if (ref != class_type)
+                return false;
+        }
+        else {
+            return false;
+        }
+    }
+    ++i;
+              }
+              return i == 2;
+        }
+    }
+
+We first ensure that the class and function have the same name.
+We then loop over the children of the function DIE, which gives
+us access to its parameters. If the first parameter isn’t a pointer
+to the class type, we return false. If the second parameter isn’t a
+reference to the class type, we return false. If there are more
+than two parameters, we also return false. Otherwise, we return
+true.
+
+Checking for Unaligned Fields
+
+The final functions we need to implement are alignment and
+has_unaligned _fields, which check whether a type’s fields are
+
+properly aligned.
+
+The SYSV ABI specifies a type’s expected alignment. Class types
+should be aligned to the same boundary as their most strictly
+aligned member (that is, the member with the largest alignment
+boundary expectation). Arrays should be aligned to the same
+boundary as their element type. Other types should be aligned
+to the same boundary as their byte size. The alignas specifier can
+strengthen the alignment requirements of a type, but for
+simplicity, we’ll ignore that possibility. Let’s implement alignment
+to reflect this:
+
+   std::size_t sdb::type::alignment() const {
+       if (!is_from_dwarf()) {
+           return byte_size();
+       }
+       if (is_class_type()) {
+           std::size_t max_alignment = 0;
+           for (auto child : get_die().children()) {
+               if (child.abbrev_entry()->tag == DW_T
+                   child.contains(DW_AT_data_member_
+                   child.contains(DW_AT_data_bit_off
+                   auto member_type = child[DW_AT_ty
+                   if (member_type.alignment() > max
+                       max_alignment = member_type.a
+                   }
+               }
+           }
+           return max_alignment;
+       }
+       if (get_die().abbrev_entry()->tag == DW_TAG_a
+           return get_die()[DW_AT_type].as_type().al
+       }
+         return byte_size();
+   }
+
+If the type is a built in one, we return the type’s byte size. If it’s a
+class type, we loop through the non-static members of the type,
+find the one that has the largest expected alignment, and return
+that alignment. If the type is an array, we return the alignment
+of its element type. Otherwise, we return the size of the type in
+bytes.
+
+The has_unaligned_fields function should check whether any
+members of the class don’t have their expected alignment. This
+could occur if, for instance, a user defines a class with #pragma pack
+to avoid padding between fields. Here is the implementation:
+
+   bool sdb::type::has_unaligned_fields() const {
+       if (!is_from_dwarf()) {
+           return false;
+       }
+       if (is_class_type()) {
+              for (auto child : get_die().children()) {
+                  if (child.abbrev_entry()->tag == DW_T
+                      child.contains(DW_AT_data_member_
+                      auto member_type = child[DW_AT_ty
+                      if (child[DW_AT_data_member_locat
+                          member_type.alignment() != 0
+                                 return true;
+                          }
+                          if (member_type.has_unaligned_fie
+                              return true;
+                          }
+                    }
+               }
+         }
+         return false;
+   }
+
+If the type is built-in, we return false. If it’s a class type, we loop
+through the non-static members. If the member’s byte offset
+isn’t aligned to the expected boundary or if the member itself
+has unaligned fields, we return true. This completes our support
+for classifying types.
+
+Implementing Argument Passing
+
+Now we can implement the algorithm for passing a function’s
+arguments. We’ll do so in a function called setup_arguments, in
+sdb/src/target.cpp. The function is rather long and complex, so
+we’ll write it piece by piece.
+
+The function takes the target in which the function is running, a
+DIE representing the function we’re trying to call, the
+arguments to call it with, the current set of registers in the
+machine, and an optional virtual address that points to the
+location where the return value should be stored. We’ll start by
+defining the sequence of registers used for integer and SSE
+arguments, according to the calling conventions:
+
+   namespace {
+       void setup_arguments(
+              sdb::target& target, sdb::die func,
+              std::vector<sdb::typed_data> args,
+              sdb::registers& regs,
+              std::optional<sdb::virt_addr> return_sl
+           std::array<sdb::register_id, 6> int_regs
+                sdb::register_id::rdi,
+                sdb::register_id::rsi,
+                sdb::register_id::rdx,
+                sdb::register_id::rcx,
+                sdb::register_id::r8,
+                sdb::register_id::r9
+           };
+
+              std::array<sdb::register_id, 8> sse_regs
+                  sdb::register_id::xmm0,
+                  sdb::register_id::xmm1,
+                  sdb::register_id::xmm2,
+                  sdb::register_id::xmm3,
+                  sdb::register_id::xmm4,
+                   sdb::register_id::xmm5,
+                   sdb::register_id::xmm6,
+                   sdb::register_id::xmm7
+             };
+
+Next, we’ll initialize some variables we’ll need for executing the
+allocation algorithm: the index of the next free integer and SSE
+register, a list of arguments we’ve allocated to the stack, and the
+current stack pointer value. We’ll also define a lambda function
+that rounds up a given size to the size of an eightbyte:
+
+             auto current_int_reg = 0;
+             auto current_sse_reg = 0;
+             struct stack_arg {
+                 sdb::typed_data data;
+                 std::size_t size;
+             };
+             auto stack_args = std::vector<stack_arg>{
+             auto rsp = regs.read_by_id_as<std::uint64
+
+             auto round_up_to_eightbyte = [](std::size
+                 return (size + 7) & ~7;
+             };
+We track both the typed data and a size for stack arguments
+because their size gets rounded up to the nearest eightbyte, so
+the size allocated on the stack isn’t necessarily the same as the
+size of the argument data.
+
+Recall that if the function has a return value with the
+parameter class MEMORY, the caller allocates memory to store the
+return value and passes a pointer to this memory as the first
+argument to the function. We handle this fact by incrementing
+current_int_reg to record that the first integer register is no longer
+
+free and then writing the address of the return slot into that
+register. We’ll ensure that return_slot always has a valid address
+when the return type should be stored in memory when we call
+setup_arguments, so we don’t need to check whether return_slot is
+
+empty here:
+
+              if (func.contains(DW_AT_type)) {
+                    auto ret_type = func[DW_AT_type].as_t
+                    auto ret_class = ret_type.get_paramet
+                    if (ret_class == sdb::parameter_class
+                        current_int_reg++;
+                        regs.write_by_id(int_regs[0], ret
+                    }
+              }
+With the return value handled, we can move on to the
+arguments. Before allocating arguments, we’ll do a pass over
+them to replace arguments that we should pass by reference
+with a pointer to their data. If the argument we’re passing lives
+in memory already, we pass a pointer to where it lives.
+Otherwise, we copy it onto the stack and pass a pointer to the
+copy:
+
+             auto params = func.parameter_types();
+             for (auto i = 0; i < params.size(); ++i)
+                 auto& param = params[i];
+                 auto param_classes = param.get_parame
+
+                  if (param.is_reference_type()) {
+                      if (args[i].address()) {
+                          args[i] = sdb::typed_data{
+                              sdb::to_byte_vec(*args[i
+                              sdb::builtin_type::intege
+                      }
+                        else {
+                            rsp -= args[i].value_type().b
+                         ➊ rsp &= ~(args[i].value_type()
+                            target.get_process().write_me
+                                sdb::virt_addr{ rsp }, a
+                            args[i] = sdb::typed_data{
+                                sdb::to_byte_vec(rsp),
+                                  sdb::builtin_type::intege
+                          }
+                      }
+             }
+
+Before copying the value onto the stack, we align the stack
+pointer to the alignment requirement of the type we’re passing
+➊.
+
+Now we can start allocating the arguments. We’ll loop through
+the arguments, allocating them to either the stack or their
+relevant registers:
+
+             for (auto i = 0; i < params.size(); ++i)
+                 auto& arg = args[i];
+                 auto& param = params[i];
+                 auto param_classes = params[i].get_pa
+                 auto param_size = param.byte_size();
+
+                      auto required_int_regs = std::count(
+                          param_classes.begin(), param_clas
+                          sdb::parameter_class::integer);
+                      auto required_sse_regs = std::count(
+                          param_classes.begin(), param_clas
+                          sdb::parameter_class::sse);
+
+                 ➊ if (current_int_reg + required_int_re
+      current_sse_reg + required_sse_re
+      (required_int_regs == 0 and requi
+      auto size = round_up_to_eightbyte
+      stack_args.push_back({ args[i], s
+  }
+➋ else {
+      for (auto i = 0; i < param_size;
+          sdb::register_id reg;
+          switch (param_classes[i / 8]
+          case sdb::parameter_class::in
+              reg = int_regs[current_in
+              break;
+          case sdb::parameter_class::ss
+              reg = sse_regs[current_ss
+              break;
+          case sdb::parameter_class::no
+              break;
+          default:
+              sdb::error::send("Unsuppo
+          }
+
+           sdb::byte64 data;
+           std::copy(
+               arg.data().begin() + i,
+               arg.data().begin() + i +
+               data.begin());
+           regs.write_by_id(reg, data, t
+      }
+                   }
+              }
+
+We start by making a few convenience variables and then
+compute how many integer and SSE registers the argument
+requires. We must allocate the argument on the stack if it
+requires no registers or if it requires registers but too few
+registers are available ➊. In this case, we push the argument
+into the stack_args vector, along with the size of the parameter
+type rounded up to the nearest eightbyte. If we can pass the
+argument in registers ➋, we loop over the eightbytes in the
+argument, allocate them a register of the correct type, and then
+copy the argument’s data into the allocated register.
+
+Next, we’ll handle the arguments that we should pass on the
+stack. The SYSV ABI requires that the address at the end of the
+stack arguments be aligned to a 16-byte boundary. Also recall
+that stack arguments get pushed in reverse order, from right to
+left. As such, we’ll subtract the number of bytes of storage we
+require from the stack pointer, align it to a 16-byte boundary,
+and then copy the arguments such that the leftmost argument is
+at the top of the stack:
+              for (auto& [_,size] : stack_args) {
+                  rsp -= size;
+              }
+            ➊ rsp &= ~0xf;
+
+              auto start_pos = rsp;
+              for (auto& [arg,size] : stack_args) {
+                  target.get_process().write_memory(
+                      sdb::virt_addr{ start_pos }, arg
+                  start_pos += size;
+              }
+
+Bitwise ANDing the stack pointer with the complement of 0xf
+aligns it to a 16-byte boundary ➊. Finally, we write the number
+of SSE registers we used to rax, as expected by varargs functions:
+
+              regs.write_by_id(sdb::register_id::rax, c
+              regs.write_by_id(sdb::register_id::rsp,
+        }
+   }
+
+We also update the stack pointer.
+
+Reading Return Values
+Once we’ve called a function that has a return value, we may
+need to extract the return value from registers. Let’s write a
+function called read_return_value that carries out this task.
+
+Recall that we want the user to be able to reference return
+values with numbered variables, like $0 and $1, after they’ve
+evaluated an expression. This means the memory for return
+values must stick around for the rest of the debugging session.
+Recall also that when the return value gets classified with the
+MEMORY class, the caller allocates memory to store the return
+
+value.
+
+To support all of this, our expression evaluator will dynamically
+allocate storage for the return value, regardless of whether the
+return value has the MEMORY class. If the return value does have
+the MEMORY class, the evaluator will pass a pointer to the allocated
+storage it should use as the return storage. Otherwise, the
+return value is stored in registers, and it’s the job of
+read_return_value to copy the data into the allocated storage so users
+
+can access it later.
+
+The read_return_value function will take the target being executed,
+the DIE of the function we called, a virtual address to the
+storage allocated for the return value, and the state of the
+registers after the function call. Implement the function in
+sdb/src/target.cpp:
+
+   namespace {
+       sdb::typed_data read_return_value(
+                sdb::target& target, sdb::die func,
+                sdb::virt_addr return_slot, sdb::regist
+              auto ret_type = func[DW_AT_type].as_type
+              auto ret_classes = ret_type.get_paramete
+
+              bool used_int = false;
+              bool used_sse = false;
+
+              if (ret_classes[0] == sdb::parameter_clas
+                  auto value = target.get_process().rea
+                      return_slot, ret_type.byte_size(
+                  return { sdb::typed_data{
+                      std::move(value), func[DW_AT_type
+              }
+
+              if (ret_classes[0] == sdb::parameter_clas
+                  auto data = regs.read_by_id_as<long d
+                  auto value = sdb::to_byte_vec(data);
+                  target.get_process().write_memory(ret
+                      return { sdb::typed_data{
+                          std::move(value), func[DW_AT_type
+              }
+        std::vector<std::byte> value;
+        for (auto ret_class : ret_classes) {
+            if (ret_class == sdb::parameter_class
+                auto reg = used_int ? sdb::regist
+                used_int = true;
+                auto data = regs.read_by_id_as<st
+                auto new_value = sdb::to_byte_vec
+                value.insert(value.end(), new_val
+            }
+            else if (ret_class == sdb::parameter_
+                auto reg = used_sse ? sdb::regist
+                used_sse = true;
+                auto data = regs.read_by_id_as<sd
+                value = { data.begin(), data.end
+                target.get_process().write_memory
+            }
+            else if (ret_class != sdb::parameter_
+                sdb::error::send("Unsupported ret
+            }
+        }
+        target.get_process().write_memory(return_
+        return { sdb::typed_data{
+            std::move(value), func[DW_AT_type].as
+    }
+}
+We start by grabbing the return type and the classes for the
+return type, for convenience. We initialize Booleans to track
+whether we’ve used an integer or SSE register yet so we can
+return structures stored across two integer or SSE registers.
+
+If the first class is MEMORY, the return value is already stored in the
+return slot, so we read the value and return it. If the first class is
+X87, the value must be a long double stored in the st0 register. We
+
+read this register, write the result to the return slot, and return.
+
+Otherwise, we’ll find the return value in the integer or SSE
+registers, or potentially in both. We initialize an empty vector of
+bytes to store the return value. We then loop over the classes. If
+the current class is INTEGER, the register is rdx if we’ve already read
+an integer return value and rax otherwise. We set used_int to true
+to make sure we use the correct register if the function returns
+another integer. We then read the data from the relevant
+register and insert its value into the overall return value vector.
+
+We perform the same process for the SSE class, except we read
+from either xmm1 or xmm0, and we read an sdb::byte128 out of the
+register instead of an integer. If the class is something else (and
+not NO_CLASS), we throw an exception. Finally, we write the value
+we read into the return slot and return all of the data we
+computed.
+Indexing Member Functions
+
+We’re getting close to being able to call functions from the
+debugger. The next missing piece is to tie together the low-level
+machinery we’ve created to the DWARF information, as well as
+to our argument allocator. However, our ability to do so
+depends on one operation that is difficult to carry out with our
+existing DWARF support: finding the definition of a member
+function based on its declaration. Let’s add better support for
+this.
+
+Add a get_member_function_definition function to sdb::dwarf, along with a
+new index variable that we’ll use to map declarations to their
+definitions. Make these changes in sdb/include/libsdb/dwarf.hpp:
+
+   namespace sdb {
+       class dwarf {
+       public:
+           --snip--
+           std::optional<die> get_member_function_de
+                const sdb::die& declaration) const;
+           --snip--
+
+         private:
+             --snip--
+             mutable std::unordered_map<const std::byt
+              member_function_index_;
+              --snip--
+         };
+   }
+
+The get_member_function_definition function returns a DIE
+representing the definition that corresponds to the given
+declaration, if it finds one. The member_function_index_ variable maps
+from the byte position of a member function declaration DIE to
+an index entry representing the definition’s DIE.
+
+Member function definitions point to their declarations in a few
+ways. The simplest cases have a single DIE representing the
+declaration and a single DIE representing the definition that
+references the declaration in its DW_AT_specification attribute. In
+some cases, however, a compiler will spread the information for
+a definition across two DIEs to support representing inlining
+information, as shown in Figure 21-1.
+Figure 21-1: A chain of member function DIEs
+
+In these cases, the DWARF information stores some of the
+details about the definition in a DIE that points to the
+declaration with a DW_AT_specification attribute, and it stores the
+rest of the information in a DIE that uses a DW_AT _abstract_origin
+attribute to point to the first piece of information.
+
+Fill in the member function index by modifying the
+sdb::dwarf::index_die function in sdb/src/dwarf.cpp to add index
+
+entries for any function it finds with a DW_AT_specification or
+DW_AT_abstract_origin attribute:
+
+    void sdb::dwarf::index_die(const die& current, bo
+        --snip--
+        if (has_range and is_function) {
+             --snip--
+        }
+
+          if (is_function) {
+              if (current.contains(DW_AT_specification
+                  index_entry entry{ current.cu(), cur
+                  member_function_index_.insert(std::ma
+                      current[DW_AT_specification].as_
+                 }
+                 else if (current.contains(DW_AT_abstract_
+                     index_entry entry{ current.cu(), cur
+                     member_function_index_.insert(std::ma
+                         current[DW_AT_abstract_origin].as
+               }
+         }
+         --snip--
+   }
+
+If the current DIE represents a function, we create an index
+entry so long as it has a DW_AT_specification or DW_AT_abstract_origin
+attribute. This entry maps the byte position of the DIE pointed
+to by that attribute to an index entry that corresponds to the
+definition DIE.
+
+Implement get_member_function_definition in the same file:
+
+   std::optional<sdb::die>
+   sdb::dwarf::get_member_function_definition(
+         const sdb::die& declaration) const {
+       index();
+       auto it = member_function_index_.find(declara
+       if (it != member_function_index_.end()) {
+           cursor cur({ it->second.pos, it->second.c
+           auto die = parse_die(*it->second.cu, cur
+               if (die.contains(DW_AT_low_pc) or die.con
+                   return die;
+               }
+               return get_member_function_definition(die
+         }
+         return std::nullopt;
+   }
+
+First, we call index to ensure that the DWARF information has
+been indexed. We then look for the byte position of the
+declaration DIE in the member function index and parse a DIE
+at the resulting location if we find one. If that DIE has address
+information, we’ve found the final definition. If not, we could
+be looking at a chain of definitions, as in the case described
+earlier, with the DW_AT_abstract_origin attribute. In this situation, we
+recursively call get_member_function_definition to find the concrete
+definition. If we don’t find a definition with address
+information, we return std::nullopt.
+
+Performing High-Level Inferior Calls
+
+Now we can tie all of this functionality together in a higher-
+level inferior call function, which we’ll name
+inferior_call_from_dwarf. It should take the target being debugged,
+
+the DIE for the function it should call, the arguments to call it
+with, the return address to jump back to, and the thread on
+which to perform the call. After performing the function call, it
+should return the function’s return value if there is one.
+
+We’ll implement this function piece by piece. Add it to
+sdb/src/target.cpp:
+
+   namespace {
+       std::optional<sdb::typed_data> inferior_call_
+             sdb::target& target, sdb::die func,
+             const std::vector<sdb::typed_data>& arg
+             sdb::virt_addr return_addr, pid_t tid)
+           auto& regs = target.get_process().get_reg
+           auto saved_regs = regs;
+
+              sdb::virt_addr call_addr;
+              if (func.contains(DW_AT_low_pc) or func.c
+                  call_addr = func.low_pc().to_virt_add
+              }
+              else {
+                  auto def = func.cu()->dwarf_info()->g
+                  if (!def) {
+                          sdb::error::send("No function def
+                      }
+                      call_addr = def->low_pc().to_virt_add
+              }
+
+              std::optional<sdb::virt_addr> return_slot
+             if (func.contains(DW_AT_type)) {
+                 auto ret_type = func[DW_AT_type].as_t
+                   return_slot = target.inferior_malloc
+             }
+
+             setup_arguments(target, func, args, regs
+             auto new_regs = target.get_process().infe
+                 call_addr, return_addr, saved_regs, t
+
+             if (func.contains(DW_AT_type)) {
+                 return read_return_value(
+                     target, func, *return_slot, new_
+             }
+             return std::nullopt;
+        }
+   }
+
+We save the current set of registers and then find the address of
+the function we should call. If the DIE we’re given has address
+range information, we use that. Otherwise, it probably
+represents a member function declaration, so we look up the
+definition for the member function and use that. If that fails, we
+throw an exception.
+
+If the function has a return value, we allocate space for it. We
+want the user to be able to access these return values later
+through numbered variables like $0, so we dynamically allocate
+the storage for the return value rather than allocating it on the
+stack, where it will be reclaimed after the current function
+exits.
+
+Finally, we set up the arguments for the function call and
+perform the call. If the function has a return value, we read it
+and return the result; otherwise, we return std::nullopt.
+
+Evaluating Expressions
+
+We’ve implemented quite a lot of support code and are now
+ready to tie it all together. The main entry point to our
+expression evaluation engine will be sdb::target::evaluate_expression.
+We’ll also add a data member for tracking the history of return
+values from evaluated expressions and a member function for
+retrieving a result given an index. Add these to
+sdb/include/libsdb/target.hpp:
+
+   namespace sdb {
+       class target {
+       public:
+           --snip--
+           struct evaluate_expression_result {
+                typed_data return_value;
+                std::uint64_t id;
+              };
+              std::optional<evaluate_expression_result>
+                    std::string_view expr,
+                    std::optional<pid_t> otid = std::null
+
+              const typed_data& get_expression_result(s
+
+         private:
+             --snip--
+             mutable std::vector<typed_data> expressio
+         }
+   }
+
+The evaluate_expression function takes an expression to evaluate
+and, optionally, a thread on which to evaluate it. If the function
+called has a return value, evaluate_expression returns this value
+along with the integer index assigned to the result, which users
+will be able to access through variables like $1. The
+get_expression_result function takes this identifier and returns a
+
+reference to the relevant result. We mark expression_results_ as
+mutable because the get_expression_result function may need to reread
+
+the data in one of the result slots in cases when that variable is
+passed by reference to a function as part of another expression
+evaluation.
+Implement the two member functions in sdb/src/target.cpp,
+starting with evaluate_expression:
+
+   std::optional<sdb::target::evaluate_expression_re
+   sdb::target::evaluate_expression(
+           std::string_view expr, std::optional<pid_t>
+         auto tid = otid.value_or(process_->current_th
+         auto pc = get_pc_file_address(tid);
+
+         auto paren_pos = expr.find('(');
+         if (paren_pos == std::string::npos) {
+             sdb::error::send("Invalid expression");
+         }
+
+         std::string name{ expr.substr(0, paren_pos +
+         auto [variable, funcs] = resolve_indirect_nam
+         if (funcs.empty()) {
+             sdb::error::send("Invalid expression");
+         }
+
+         auto entry_point = virt_addr{ process_->get_a
+         breakpoints_.get_by_address(entry_point).inst
+             return false;
+         });
+
+         auto arg_string = expr.substr(paren_pos);
+         auto args = collect_arguments(
+             *this, tid, arg_string, funcs, variable)
+        auto func = resolve_overload(funcs, args);
+        auto ret = inferior_call_from_dwarf(
+            *this, func, args, entry_point, tid);
+        if (ret) {
+            expression_results_.push_back(*ret);
+             return evaluate_expression_result{
+                  std::move(*ret), expression_results_
+             };
+        }
+        return std::nullopt;
+   }
+
+First, we compute the correct thread on which to run and
+retrieve the program counter as a file address. We locate the
+first open parenthesis in the instruction, throwing an exception
+if we don’t find one. The name of the function to call (which
+may be indirect, in the case of a member function) is the
+substring of the expression, starting from the beginning of the
+expression and going up to the parenthesis position. Note that
+we add one to the parenthesis position when passing it to substr
+because it expects a size rather than the end index. We resolve
+the name of the function and, if we didn’t find one, throw an
+exception.
+As we did in inferior_malloc, we replace the hit handler of the
+entry point breakpoint so we can use the entry point as the
+return address for the function call.
+
+We find the function’s arguments in the substring of the
+expression starting from the first open parenthesis and going
+up to the end of the expression. We pass this substring to
+collect_arguments to retrieve values and types for all the arguments.
+
+Based on these details, we resolve the overload for the function
+we should call. We then call the function and store any return
+value, which we push to the back of expression_results_ and return
+along with its result index. Otherwise, we return std::nullopt.
+Next, let’s implement get_expression_result:
+
+   const sdb::typed_data& sdb::target::get_expressio
+         std::size_t i) const {
+       auto& res = expression_results_[i];
+       auto new_data = process_->read_memory(
+           *res.address(), res.value_type().byte_siz
+       res = typed_data{
+           std::move(new_data), res.value_type(), re
+       return res;
+   }
+We grab a reference to the requested expression result. The
+value in memory may have changed since the expression was
+executed because a user may pass the result as a reference to a
+function call that modifies it. As such, before we return the
+data, we reread the value from memory.
+
+Exposing Expression Evaluation to the
+User
+
+All that’s left to do is expose this new functionality to users and
+test it out. In sdb/tools/sdb.cpp, add a branch to handle_command that
+supports a new expression <expression> command:
+
+   namespace {
+       void handle_command(std::unique_ptr<sdb::targ
+             std::string_view line) {
+           --snip--
+           else if (is_prefix(command, "expression"
+                auto expr = line.substr(line.find('
+                auto ret = target->evaluate_expressio
+                if (ret) {
+                    auto str = ret->return_value.visu
+                    fmt::print("${}: {}\n", ret->id,
+                }
+           }
+           --snip--
+        }
+   }
+
+The expression to execute is the substring of the typed line,
+starting after the space character following the expression
+command name. We evaluate this expression and, if it has a
+return value, visualize it.
+
+Testing the Evaluator
+
+This was the most code-heavy chapter in the whole book, but
+you’re about to reap the benefits of all your work. Because this
+is the final programming chapter, I won’t walk through adding
+automated tests, as you’ll have no more opportunities to break
+the code unless you expand the project yourself. Instead, I’ll
+walk through several manual testing scenarios. However, there
+are a few modifications that we need to make to the existing
+tests to make them build.
+
+In sdb/test/tests.cpp, modify all the code that uses
+resolve_indirect_name to grab the variable member before doing
+
+anything else:
+   TEST_CASE("Global variables", "[variable]") {
+        --snip--
+        auto name_vis = name.variable->visualize(proc
+        --snip--
+        auto cats_vis = cats.variable->visualize(proc
+        --snip--
+   }
+
+   TEST_CASE("Local variables", "[variable]") {
+       --snip--
+       REQUIRE(from_bytes<std::uint32_t>(var_data.va
+       --snip--
+       REQUIRE(from_bytes<std::uint32_t>(var_data.va
+       --snip--
+       REQUIRE(from_bytes<std::uint32_t>(var_data.va
+   }
+
+   TEST_CASE("Member pointers", "[variable]") {
+       --snip--
+       auto data_vis = data_ptr.variable->visualize
+       --snip--
+       auto func_vis = func_ptr.variable->visualize
+       --snip--
+   }
+
+All tests should now build and pass.
+Create a new file at sdb/test/targets/expr.cpp. We’ll add a handful
+of types and functions to this file. First, define a cat type with
+some member functions and then create a few global cat
+instances and a get_cat function to find a cat by name:
+
+   #include <iostream>
+   #include <cstring>
+   #include <cstdint>
+   #include <stdexcept>
+
+   struct cat {
+       const char* name;
+       int age;
+       void give_command(const char* command);
+       void increase_age();
+   };
+   void cat::give_command(const char* command) {
+       std::cout << name << ", " << command << std:
+   }
+   void cat::increase_age() {
+       age++;
+   }
+
+   cat marshmallow{ "Marshmallow", 4 };
+   cat milkshake{ "Milkshake", 4 };
+   cat lexa{ "Lexa", 8 };
+   cat get_cat(const char* name) {
+       for (auto c : { marshmallow, milkshake, lexa
+             if (strcmp(c.name, name) == 0) {
+                 return c;
+             }
+        }
+        throw std::runtime_error("No cat with that na
+   }
+
+The give_command member function outputs a message, while the
+increase _age function just increments the age member. We define
+
+these out of line to force the compiler to generate definitions for
+them even if they’re not used. The get_cat function compares the
+given name to the names for my cats and returns the correct
+one.
+
+Next, define several overloaded functions that take arguments
+of different types, print them out, and return them:
+
+   int print_type(int i) {
+        std::cout << "int " << i << '\n';
+        return i;
+   }
+
+   double print_type(double d) {
+        std::cout << "double " << d << '\n';
+         return d;
+   }
+
+   const char* print_type(const char* s) {
+         std::cout << "string " << s << '\n';
+         return s;
+   }
+
+   char print_type(char c) {
+         std::cout << "char " << c << '\n';
+         return c;
+   }
+
+We use int, double, const char*, and char, as we support all of these
+builtin types. Now define some classes of different sizes and
+additional overloads of print_type for them:
+
+   struct small {
+       int i, j;
+   };
+
+   struct two_eightbyte {
+         std::uint64_t i, j;
+   };
+
+   struct big {
+       std::uint64_t i, j, k;
+   };
+
+   small print_type(small s) {
+       std::cout << "small " << s.i << ' ' << s.j <<
+       return s;
+   }
+
+   two_eightbyte print_type(two_eightbyte t) {
+       std::cout << "two_eightbyte " << t.i << ' ' <
+       return t;
+   }
+
+   big print_type(big b) {
+       std::cout << "big " << b.i << ' ' << b.j <<
+       return b;
+   }
+
+   small s = { 1, 2 };
+   two_eightbyte t = { 3, 4 };
+   big b = { 5, 6, 7 };
+
+   int main() {
+
+   }
+
+We should pass the small type in a single register, split the
+two_eightbyte type across two registers, and pass the big type in
+memory. We also define an empty main function.
+
+Build and launch this program. Hit a breakpoint inside of the
+main function and then try evaluating expressions that use these
+
+different functions. Here’s a conversation I had with my
+debugger that demonstrates how the expression evaluation
+should look:
+
+   $ tools/sdb test/targets/expr
+   Launched process with PID 13122
+   sdb> break set main
+   sdb> c
+   Thread 13122 stopped with signal TRAP at 0x555555
+   (expr`main) (breakpoint 1)
+     82 int main() {
+   > 84 }
+   sdb> expr get_cat("Marshmallow")
+   $0: {
+               name: "Marshmallow"
+               age: 4
+   }
+   sdb> expr $0.give_command("have a nap")
+   Marshmallow, have a nap
+   sdb> expr $0.increase_age()
+   sdb> var read $0
+Value: {
+         name: "Marshmallow"
+         age: 5
+}
+sdb> expr print_type(42)
+int 42
+$1: 42
+sdb> expr print_type(42.42)
+double 42.42
+$2: 42.42
+sdb> expr print_type('e')
+char e
+$3: 101
+sdb> expr print_type(s)
+small 1 2
+$4: {
+         i: 1
+         j: 2
+}
+sdb> expr print_type(t)
+two_eightbyte 3 4
+$5: {
+         i: 3
+         j: 4
+}
+sdb> expr print_type(b)
+bigg 5 6 7
+$6: {
+              i: 5
+              j: 6
+              k: 7
+   }
+
+Calling get_cat returns the correct cat. I can then call member
+functions on the result using the $0 syntax. Calling give_command
+prints out the expected message, proving that passing string
+literals works, and calling increase_age correctly increments the
+age, which we check by rereading the $0 result variable. All of
+the print_type calls work, printing and returning the expected
+values, proving that we can both pass and return those types.
+
+Summary
+
+In this chapter, you learned about the calling conventions for
+the SYSV and Itanium ABIs. You then implemented an
+expression evaluator that targets these calling conventions and
+allows the user to execute simple function calls inside the
+running process.
+
+You now have a fairly complete x64 native debugger. In the next
+chapter, you’ll learn about some advanced topics that you can
+research and implement if you’re looking for more features to
+add to the project.
+Check Your Knowledge
+
+1.
+1. In which two documents are the calling conventions for C++
+  programs on Linux specified?
+2.
+2. In which register is the first integer argument to a function
+  passed?
+3.
+3. What special calling convention rule comes into effect for
+  varargs functions?
+4.
+4. When are types with the parameter classification X87 placed in
+  registers during a function call sequence?
+5.
+5. What does the term non-trivial for the purposes of calls refer
+  to?
+6.
+6. In what order are arguments pushed to the stack before a
+  function call?
+7.
+7. What is the stack alignment restriction for function calls?

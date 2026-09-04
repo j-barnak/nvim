@@ -1,0 +1,1333 @@
+HARDWARE BREAKPOINTS AND
+WATCHPOINTS
+    Looking out from the lighthouse I see water crash on the
+    rocks and breathe the salt air as time stops.
+In Chapter 7, you learned about software breakpoints, which
+we create by replacing instructions in the currently executing
+code with traps. Software breakpoints have a cousin that lives
+even closer to your CPU: hardware breakpoints, which we set
+by writing values directly into registers. In this chapter, you’ll
+learn how x64 manages hardware breakpoints and add support
+for them to your debugger.
+
+We can repurpose the same registers used for creating
+hardware breakpoints to create watchpoints, which are like
+breakpoints but get triggered when a specific address is read
+from or written to rather than executed. This chapter also
+walks you through adding support for watchpoints to your
+debugger.
+
+Debug Registers
+
+On x64, setting and tracing hardware breakpoints requires
+interfacing with the debug registers, which are named DR0
+through DR15:
+
+  DR0   Breakpoint address #0
+  DR1   Breakpoint address #1
+  DR2   Breakpoint address #2
+  DR3   Breakpoint address #3
+  DR4   Obsolete alias for DR6
+  DR5   Obsolete alias for DR7
+  DR6   Debug status register
+  DR7   Debug control register
+  DR8–15   Reserved for processor use
+We can set only four hardware breakpoints at a time, and we
+must write the addresses at which to break to the DR0 through DR3
+registers. The least significant 4 bits of the status register (DR6)
+correspond to each of these registers in turn. If code triggers a
+hardware breakpoint for one of those addresses, the relevant
+bit in DR6 will be set to 1. For example, triggering the breakpoint
+for the address held in DR2 would set the third bit in DR6.
+
+Let’s next consider the bit layout of DR7, the control register,
+starting with the least-significant bit:
+
+  0   Local DR0 breakpoint enabled
+  1   Global DR0 breakpoint enabled
+  2   Local DR1 breakpoint enabled
+  3   Global DR1 breakpoint enabled
+  4   Local DR2 breakpoint enabled
+  5   Global DR2 breakpoint enabled
+  6   Local DR3 breakpoint enabled
+  7   Global DR3 breakpoint enabled
+  8–15    Reserved/not relevant to us
+  16–17    Conditions for DR0
+  18–19    Byte size of DR0 breakpoint
+  20–21    Conditions for DR1
+  22–23    Byte size of DR1 breakpoint
+  24–25    Conditions for DR2
+  26–27    Byte size of DR2 breakpoint
+  28–29    Conditions for DR3
+  30–31    Byte size of DR3 breakpoint
+
+Those “local” and “global” breakpoint bits differ in their
+behavior across task switches. Your operating system is
+constantly switching between different processes to create the
+illusion that all the processes on your system are running at the
+same time. The local hardware breakpoints are supposed to
+affect only the currently running process, whereas global
+hardware breakpoints should apply to all processes. On Linux,
+however, the local and global breakpoints actually do the same
+thing and work in “local” mode. This choice makes sense when
+you consider that setting a global hardware breakpoint when
+debugging, say, your cat-petting tool could cause your word
+processor to hang (undesirable behavior).
+
+The condition bits enable us to halt the process when a program
+reads from or writes to an address as well as when the address
+is executed. We’ll use just the instruction execution option for
+setting breakpoints, but we’ll use write and read breakpoints to
+implement watchpoints. Here are the meanings of the condition
+bits:
+
+  00b   Instruction execution only
+  01b   Data writes only
+  10b   I/O reads and writes (generally unsupported)
+  11b   Data reads and writes
+
+Finally, the size field allows us to define how much data to
+watch in a watchpoint. For instruction execution breakpoints,
+we must set this field to 1 byte in size (00b). Here are the possible
+values:
+
+  00b   1 byte
+  01b   2 bytes
+  10b   8 bytes
+  11b   4 bytes
+
+With the theory out of the way, we can start to implement
+hardware breakpoints.
+
+Implementing Hardware Breakpoints
+
+We need to support both setting and clearing hardware
+breakpoints. These operations will require reading and writing
+values from and to the debug registers. First, however, we need
+to augment the sdb::breakpoint_site type to track hardware
+breakpoints.
+
+Tracking
+Under the hood, we need a way to track whether a given
+breakpoint site should use hardware or software breakpoints.
+Let’s add a field that does this to sdb::breakpoint_site. While we’re at
+it, we’ll also add a field for tracking whether a breakpoint is for
+internal usage, as the debugger will use breakpoints itself to
+implement functionality like source-level stepping and shared
+library tracing. Add these to
+sdb/include/libsdb/breakpoint_site.hpp:
+
+   namespace sdb {
+       class breakpoint_site {
+       public:
+           --snip--
+           bool is_hardware() const { return is_hard
+           bool is_internal() const { return is_inte
+
+         private:
+             breakpoint_site(
+                  process& proc, virt_addr address,
+                  bool is_hardware = false, bool is_int
+
+             --snip--
+             bool is_hardware_;
+             bool is_internal_;
+          ➊ int hardware_register_index_ = -1;
+         };
+   }
+
+We add data members to track whether we should set a
+breakpoint site using hardware breakpoints and if the
+breakpoint is for internal use. We also add member functions
+for retrieving these members and add parameters (both
+defaulted to false) for them to the constructor. Finally, we add a
+hardware_register_index member that will track the index of the
+
+debug register a hardware breakpoint is using ➊.
+
+In sdb/src/breakpoint_site.cpp, update the constructor call to
+initialize these new fields:
+
+   sdb::breakpoint_site::breakpoint_site(
+       process& proc, virt_addr address, bool is_ha
+       : process_{ &proc }, address_{ address }, is_
+       saved_data_{}, is_hardware_{ is_hardware },
+       is_internal_{ is_internal } {
+       id_ = is_internal_ ? -1 : get_next_id();
+   }
+
+We initialize is_hardware_ and is_internal_. We also set the site ID
+depending on whether is_internal_ is true. Internal breakpoints get
+the ID -1.
+
+The sdb::process::read_memory_without_traps function should ignore
+hardware breakpoints. Modify the function like this:
+
+   std::vector<std::byte>
+   sdb::process::read_memory_without_traps(
+         virt_addr address, std::size_t amount) cons
+       --snip--
+       for (auto site : sites) {
+            if (!site->is_enabled() or site->is_hardw
+            --snip--
+       }
+       --snip--
+   }
+
+We add a condition to the existing if statement so that
+hardware breakpoints are ignored as well as disabled ones.
+
+Next, we’ll modify the breakpoint_site::enable and disable functions so
+they can handle hardware breakpoints. We’ll implement the
+details in functions we’ll add to sdb::process later in the chapter,
+but for now, we’ll imagine that sdb::process has these
+set_hardware_breakpoint and clear_hardware _stoppoint functions. The
+
+set_hardware_breakpoint function will return the index of the debug
+register at which we set the breakpoint, and clear_hardware
+_stoppoint will take this index and clear the breakpoint at that
+
+register. Modify sdb/src/breakpoint_site.cpp like this:
+
+   void sdb::breakpoint_site::enable() {
+       if (is_enabled_) return;
+
+        if (is_hardware_) {
+             hardware_register_index_ =
+                  process_->set_hardware_breakpoint(id_
+        }
+        else {
+          ➊ --snip--
+        }
+
+        is_enabled_ = true;
+   }
+
+   void sdb::breakpoint_site::disable() {
+       if (!is_enabled_) return;
+
+        if (is_hardware_) {
+             process_->clear_hardware_stoppoint(hardwa
+             hardware_register_index_ = -1;
+        }
+        else {
+          ➋ --snip--
+         }
+
+         is_enabled_ = false;
+   }
+
+After the check to is_enabled_ in enable, we add an if...else block
+that checks is_hardware_. If this breakpoint site represents a
+hardware breakpoint, we call set_hardware_breakpoint with the
+breakpoint site ID and breakpoint address and save the
+returned register index. We move the rest of the code currently
+in the function, apart from the is_enabled_ = true; statement, into
+the else block ➊.
+
+In disable, we make a similar change, adding an if...else block
+after the check to is_enabled_ that checks whether this site
+represents a hardware breakpoint. If so, we pass the saved
+register index to clear_hardware_stoppoint and reset
+hardware_register_index_. Again, we move the rest of the code except
+
+for the last store to is_enabled_ into the else block ➋.
+
+In sdb/include/libsdb/process.hpp, create_breakpoint_site should also
+take an argument for whether a hardware or software
+breakpoint should be created:
+          --snip--
+          breakpoint_site& create_breakpoint_site(
+              virt_addr address,
+                bool hardware = false,
+                bool internal = false);
+          --snip--
+
+The implementation in sdb/src/process.cpp should forward this
+parameter to the breakpoint_site constructor:
+
+   sdb::breakpoint_site& sdb::process::create_breakp
+         virt_addr address, bool hardware, bool inte
+       --snip--
+       return breakpoint_sites_.push(
+            std::unique_ptr<breakpoint_site>(
+                new breakpoint_site(*this, address, h
+   }
+
+Then, handle_breakpoint_command in sdb/tools/sdb.cpp should optionally
+take a new -h argument, which specifies that the function
+should set a hardware breakpoint. Modify the call to
+create_breakpoint_site like so:
+
+                if (is_prefix(command, "set")) {
+                    --snip--
+                  bool hardware = false;
+                  if (args.size() == 4) {
+                      if (args[3] == "-h") hardware = t
+                        else sdb::error::send("Invalid b
+                  }
+                  process.create_breakpoint_site(
+                        sdb::virt_addr{ *address }, hardw
+                  --snip--
+             }
+
+You can also update the help info with explanations of the new
+features:
+
+             --snip--
+             else if (is_prefix(args[1], "breakpoint"
+                  std::cerr << R"(Available commands:
+         list
+         delete <id>
+         disable <id>
+         enable <id>
+         set <address>
+         set <address> -h
+   )";
+             }
+             --snip--
+Finally, if the breakpoint site is internal, we shouldn’t include it
+in the breakpoint list command, so add a check to
+handle_breakpoint_command:
+
+    namespace {
+        void handle_breakpoint_command(sdb::process&
+            --snip--
+            if (is_prefix(command, "list")) {
+                 if (process.breakpoint_sites().empty
+                     --snip--
+                 }
+                 else {
+                     fmt::print("Current breakpoints:\
+                     process.breakpoint_sites().for_ea
+                      ➊ if (site.is_internal()) retur
+                          --snip--
+                     });
+                 }
+                 return;
+            }
+        }
+    }
+
+At the start of the lambda that we pass to the for_each function,
+we return early if the breakpoint site is marked as internal ➊.
+Now the debugger is keeping track of a new property for
+breakpoints, from the command line to the data model. It still
+doesn’t do anything, though. Let’s implement the functions we
+referenced earlier, starting with set_hardware _breakpoint.
+
+Setting
+
+To set a hardware stop point, we need to do the following:
+
+1. Find a free space among the DR registers for the new stop
+  point by locating one that isn’t yet enabled.
+2. Write the desired address to the correct DR register.
+3. Encode the stop point mode and size into the form expected
+  by the control register.
+4. Clear the enable bit, mode bits, and size bits in the control
+  register corresponding to the chosen DR register.
+5. Mask in the new bits.
+6. Write the new contents of the control register back to the
+  system.
+
+To facilitate this process, we’ll write a private set_hardware_stoppoint
+function, which we’ll reuse for both hardware breakpoints and
+watchpoints. Add the following to
+sdb/include/libsdb/process.hpp:
+   namespace sdb {
+        class process {
+        public:
+             --snip--
+             int set_hardware_breakpoint(
+                   breakpoint_site::id_type id, virt_add
+
+        private:
+            --snip--
+            int set_hardware_stoppoint(
+                 virt_addr address, /*?*/ mode, std::s
+        };
+   }
+
+The mode parameter should express whether to trigger the stop
+point on writing, on both reading and writing, or on the
+execution of the given address. Let’s make an enum for this
+parameter in sdb/include/libsdb/types.hpp:
+
+   namespace sdb{
+        --snip--
+        enum class stoppoint_mode {
+             write, read_write, execute
+        };
+   }
+The x64 architecture doesn’t support stopping only on reads.
+We could simulate this behavior by keeping track of the value at
+the address, setting a read/write stop point, and then
+swallowing any traps at which the value at the address has
+changed. However, this is a very niche use case, so I won’t
+bother implementing it here. Plug the enum into the
+set_hardware_stoppoint function signature:
+
+               int set_hardware_stoppoint(
+                   virt_addr address, stoppoint_mode mod
+
+The implementation of set_hardware_breakpoint in sdb/src/process.cpp
+should simply forward to set_hardware_stoppoint. Recall that the size
+for execution-only hardware breakpoints must be 1:
+
+   int sdb::process::set_hardware_breakpoint(
+          breakpoint_site::id_type id, virt_addr addre
+         return set_hardware_stoppoint(address, stoppo
+   }
+
+Now that we’ve done the bookkeeping and data transfer, the fun
+can begin. Let’s write the set_hardware_stoppoint function. First, read
+the control register (DR7) and find a free spot:
+   int sdb::process::set_hardware_stoppoint(
+           virt_addr address, stoppoint_mode mode, std
+         auto& regs = get_registers();
+         auto control = regs.read_by_id_as<std::uint64
+             register_id::dr7);
+
+    ➊ int free_space = find_free_stoppoint_register
+
+We read the control register, then use the find_free_stoppoint_register
+function, which we’ll write later ➊. The function will return 0, 1,
+2, or 3, depending on which register is free, or throw an
+
+exception if there is no free space.
+
+Next, write the given address to the DR register corresponding to
+the free space you found:
+
+         --snip--
+         auto id = static_cast<int>(register_id::dr0)
+         regs.write_by_id(static_cast<register_id>(id
+
+The debug registers’ IDs all fall one after another; the ID of DR1 is
+the one directly following DR0, and so on. So, we can calculate the
+correct ID by casting the ID of DR0 to an integer, adding the index
+we were given by find_free_stoppoint_register, then casting it back to
+a register_id.
+
+We’ll call a couple more helper functions to encode the bits for
+the mode and size:
+
+          --snip--
+          auto mode_flag = encode_hardware_stoppoint_mo
+          auto size_flag = encode_hardware_stoppoint_si
+
+Now, to set the correct bits, we must perform some serious bit
+twiddling. Take a look at the DR7 encoding in “Debug Registers”
+on page 186 to remind yourself of what calculations you’ll need
+to perform. To set the correct bits, we’ll calculate the following
+bit locations:
+
+   Enable bit location: free_space * 2
+   Mode bits location: free_space * 4 + 16
+   Size bits location: free_space * 4 + 18
+
+To set these bits with the correct content, we’ll reset the
+relevant bits in the control register to 0, shift the new bits we’d
+like to write into the correct place, and bitwise OR everything
+together. For example, say we want to set a read/write stop
+point of size 8 on debug register 2. This means we’d want to set
+the enable flag to 1, the mode flag to 11, and the size flag to 10.
+
+Let’s expand these values to 32 bits to make the operations
+easier to visualize:
+
+   Enable flag:          00000000 00000000 00000000 0000000
+   Mode flag:            00000000 00000000 00000000 000000
+   Size flag:            00000000 00000000 00000000 000000
+
+Now let’s shift the enable flag left by 2 * 2 (4), the mode flag by 2
+* 4 + 16 (24), and the size flag by 2 * 4 + 18 (26):
+
+   Enable flag:          00000000 00000000 00000000 0100000
+   Mode flag:            00000011 00000000 00000000 0000000
+   Size flag:            00001000 00000000 00000000 0000000
+
+If we bitwise OR these values together, we get the following:
+
+   Result:               00001011 00000000 00000000 0100000
+
+We want to bitwise OR this result with the control register, but
+first we need to zero out the relevant bits to leave no old data
+behind. We can do this by generating a binary sequence that
+imagines that the enable, mode, and size bits were all set to 1,
+flipping all the bits in this sequence, and then bitwise ANDing
+this result with the control register. Here’s an example, with
+completely random contents for the control register:
+
+    Bitmask:               00001111 00000000 00000000 0100000
+    Flipped:               11110000 11111111 11111111 101111
+
+    Control:               10001110 10111110 01011110 101011
+
+    Reset control: 10000000 10111110 01011110 001011
+
+Finally, we bitwise OR the two results together:
+
+    Desired bits:          00001011 00000000 00000000 0100000
+    Control:               10000000 10111110 01011110 001011
+    Result:                10001011 10111110 01011110 011011
+
+The following listing translates this process into code in
+set_hardware _stoppoint:
+
+          --snip--
+          auto enable_bit = (1 << (free_space * 2));
+          auto mode_bits = (mode_flag << (free_space *
+          auto size_bits = (size_flag << (free_space *
+
+          auto clear_mask = (0b11 << (free_space * 2))
+                          | (0b1111 << (free_space * 4
+          auto masked = control & ~clear_mask;
+
+          masked |= enable_bit | mode_bits | size_bits
+
+Finally, we write the new contents of the control register and
+return:
+
+          --snip--
+          regs.write_by_id(register_id::dr7, masked);
+
+          return free_space;
+   }
+
+To encode the mode and size, we use a couple of switch
+statements:
+
+   namespace {
+       std::uint64_t encode_hardware_stoppoint_mode
+             sdb::stoppoint_mode mode) {
+           switch (mode) {
+              case sdb::stoppoint_mode::write: return 0
+              case sdb::stoppoint_mode::read_write: ret
+              case sdb::stoppoint_mode::execute: return
+              default: sdb::error::send("Invalid stoppo
+              }
+        }
+
+        std::uint64_t encode_hardware_stoppoint_size
+              std::size_t size) {
+            switch (size) {
+            case 1: return 0b00;
+            case 2: return 0b01;
+            case 4: return 0b11;
+            case 8: return 0b10;
+            default: sdb::error::send("Invalid stoppo
+            }
+        }
+   }
+
+These functions translate between sdb::stoppoint_mode or size values
+and the bit patterns that you saw in “Debug Registers” on page
+187. To find the first free DR register, we’ll check the two enable
+bits in the control register that correspond to each DR register
+until we find one that has no bits set:
+   namespace {
+        int find_free_stoppoint_register(
+              std::uint64_t control_register) {
+             for (auto i = 0; i < 4; ++i) {
+                 if ((control_register & (0b11 << (i *
+                       return i;
+                  }
+             }
+             sdb::error::send("No remaining hardware d
+        }
+   }
+
+We’ve covered everything we need to do to set the stop point.
+Now we’ll implement hardware breakpoint clearing.
+
+Clearing
+
+The function to clear a breakpoint is much simpler, and we can
+reuse some of the calculations we just made. Declare it in
+sdb/include/libsdb/process.hpp:
+
+   namespace sdb {
+       class process {
+       public:
+           --snip--
+           void clear_hardware_stoppoint(int index)
+        };
+   }
+
+Define this function in sdb/src/process.cpp:
+
+   void sdb::process::clear_hardware_stoppoint(int i
+       auto id = static_cast<int>(register_id::dr0)
+       get_registers().write_by_id(static_cast<regis
+
+        auto control = get_registers().
+             read_by_id_as<std::uint64_t>(register_id
+
+        auto clear_mask = (0b11 << (index * 2))
+                        | (0b1111 << (index * 4 + 16
+        auto masked = control & ~clear_mask;
+
+        get_registers().write_by_id(register_id::dr7
+   }
+
+We write 0 to the DR register at the given index, calculate a
+clearing mask for the control register (the same one we used in
+the previous section), bitwise AND the control register with the
+complement of the clear mask, and write the value back the
+control register.
+The debugger now supports hardware breakpoints! To test
+them, let’s go on a little detour into the world of reverse
+engineering and malware.
+
+Testing Hardware Breakpoints
+
+Reverse engineering contexts make heavy use of hardware
+breakpoints. Many malware specimens modify their own code
+while running, rendering software breakpoints useless because
+the malware can just scribble over the 0xcc byte that the
+debugger puts in memory to trigger the break. Other kinds of
+malware detect whether they’re being traced by a debugger and
+change their activities to hide their evil deeds.
+
+Let’s write some simulated malware. While the program won’t
+do anything truly bad, it will try to detect whether it’s being
+debugged with software breakpoints and, if so, act as if it’s a
+regular, well-behaved program. Create a file called
+sdb/test/targets/anti_debugger.cpp containing a function called
+an_innocent_function. Despite the function’s name, we’ll have it do
+
+something evil:
+
+   #include <cstdio>
+
+   void an_innocent_function() {
+         std::puts("Putting pineapple on pizza...");
+   }
+
+If you like putting pineapple on pizza, that’s fine; this book is a
+judgment-free zone. Feel free to replace the function’s
+“malicious” behavior with something else. The main function will
+loop forever, calling an_innocent_function every second. However, if
+it detects a software breakpoint, it will put pepperoni on the
+pizza instead of pineapple.
+
+The question is, how do we detect a software breakpoint? We
+could scan the code of an_innocent_function for 0xcc, but 0xcc could be
+part of data written to a register or something else not
+involving the int3 instruction, so that solution is imperfect. We
+could also disassemble the function and look for int3
+instructions, but I’ll choose a simpler option: writing a basic
+checksum function, running it on the function at startup, and
+then recalculating the checksum every time we call
+an_innocent_function. If the checksum has changed, we know the
+
+code has been modified. This is a simplified version of section
+hashing, the process of hashing the entire contents of the .text
+section of the binary (where the code lives) and embedding the
+result in the binary to check against at runtime.
+We’ll put an empty function right under an_innocent_function and
+use a pointer to it to work out the size of the code for
+an_innocent_function:
+
+    #include <cstdio>
+
+    void an_innocent_function() {
+        std::puts("Putting pineapple on pizza...");
+    }
+
+    void an_innocent_function_end() {}
+
+The checksum function then just sums up all the bytes of an_innocent
+_function into a single integer:
+
+    #include <numeric>
+
+    int checksum() {
+        auto start = reinterpret_cast<volatile const
+            &an_innocent_function);
+        auto end = reinterpret_cast<volatile const ch
+            &an_innocent_function_end);
+        return std::accumulate(start, end, 0);
+    }
+We cast the pointers to the an_innocent_function and an_innocent_function
+_end functions to volatile const char*s and then sum up all the bytes.
+
+We use volatile to tell the compiler that these bytes could change
+at any time, so it can’t optimize the code by removing any loads
+from the memory. Finally, we write the main function:
+
+   #include <unistd.h>
+
+   int main() {
+       auto safe = checksum();
+
+         while (true) {
+             sleep(1);
+             if (checksum() == safe) {
+                 an_innocent_function();
+             }
+             else {
+                 puts("Putting pepperoni on pizza..."
+             }
+         }
+   }
+
+The function first calculates the checksum of an_innocent_function
+and saves this as the “safe” checksum value, representing
+situations where no breakpoint is set. It loops infinitely,
+sleeping for a second and then recalculating the checksum. If
+nothing has changed, we can keep putting pineapple on the
+pizza. Otherwise, someone has probably set a breakpoint, so the
+program acts natural and puts pepperoni on the pizza instead.
+Add this test target to sdb/test/targets/CMakeLists.txt:
+
+   --snip--
+   add_test_cpp_target(anti_debugger)
+   --snip--
+
+We’ve written a program that puts pineapple on pizza, but only
+if nobody is watching. It’s best to test this program with two
+terminals (though you can make do with one terminal and CTRL-
+Z). Launch the program in one terminal, and you’ll see it
+endlessly putting pineapple on pizza:
+
+   $ test/targets/anti_debugger
+   Putting pineapple on pizza...
+   Putting pineapple on pizza...
+   Putting pineapple on pizza...
+   Putting pineapple on pizza...
+
+In another terminal, get the PID of this process using top or ps:
+
+   $ ps ax | grep anti_debugger
+   4327 pts/0      S+       0:00 test/targets/anti_debug
+   4335 pts/2            S+        0:00 grep --color=auto anti_
+
+The PID is 4327 in my case. Now you’ll work out the load
+address of an_innocent_function using the same algorithm we did
+when setting software breakpoints in Chapter 7. First, get the
+offset of the code:
+
+   $ objdump -D test/targets/anti_debugger | grep an_innocent
+   0000000000001169 <_Z20an_innocent_functionv>:
+   0000000000001183 <_Z24an_innocent_function_endv>
+       119a:          48 8d 05 c8 ff ff ff         lea     -0
+       11a5:          48 8d 05 d7 ff ff ff         lea     -0
+       11f7:          e8 6d ff ff ff               call    1
+
+Here, the offset is 0x1169. Then, find the load address:
+
+   $ cat /proc/4327/maps | grep anti_debugger | grep r-xp
+   55b0ce514000-55b0ce515000 r-xp 00001000 08:10 139
+
+In my case, the offset is 55b0ce514000 - 1000 + 1169, or 55b0ce514169.
+Attach to the process and try setting a software breakpoint:
+   $ tools/sdb -p 4327
+   sdb> break set 0x55b0ce514169
+   sdb> c
+
+In your other terminal, you should see that the program has
+detected the debugger and changed its behavior:
+
+   Putting pineapple on pizza...
+   Putting pineapple on pizza...
+   Putting pepperoni on pizza...
+   Putting pepperoni on pizza...
+   Putting pepperoni on pizza...
+
+If you press CTRL-Z in the terminal with anti_debugger running, it
+should trap back into the debugger. You can then delete that
+breakpoint and reset it as a hardware breakpoint:
+
+   Process 4327 stopped with signal TSTP at 0x7f5678
+   0x00007f5678fca7fa: mov %rax, %rbp
+   0x00007f5678fca7fd: mov %ebp, %r15d
+   0x00007f5678fca800: cmp $-0x16, %ebp
+   0x00007f5678fca803: jnz 0x00007F5678FCA809
+   0x00007f5678fca805: test %bl, %bl
+   sdb> break delete 1
+   sdb> break set 0x55b0ce514169 -h
+
+Now, if you continue, you should successfully stop inside of the
+devious function:
+
+   sdb> c
+   Process 4327 stopped with signal TRAP at 0x55b0ce
+   0x000055b0ce514169: endbr64
+   0x000055b0ce51416d: push %rbp
+   0x000055b0ce51416e: mov %rsp, %rbp
+   0x000055b0ce514171: lea 0x000055b0ce515004, %rax
+   0x000055b0ce514178: mov %rax, %rdi
+
+We’d like to add this process to the automated tests, so let’s
+make it more easily testable. Back in
+sdb/test/targets/anti_debugger.cpp, we’ll write the address of
+an_innocent_function at the start of main and then raise a SIGTRAP after
+
+each message instead of sleeping. Modify the main function like
+this:
+
+   #include <signal.h>
+
+   int main() {
+       auto safe = checksum();
+        auto ptr = reinterpret_cast<void*>(&an_innoce
+        write(STDOUT_FILENO, &ptr, sizeof(void*));
+        fflush(stdout);
+
+        raise(SIGTRAP);
+
+        while (true) {
+            if (checksum() == safe) {
+                an_innocent_function();
+            }
+            else {
+                puts("Putting pepperoni on pizza..."
+            }
+
+             fflush(stdout);
+             raise(SIGTRAP);
+        }
+   }
+
+In the test, we’ll essentially automate the same steps we just
+performed. We’ll launch the process, read the address of the
+function on which to set a breakpoint, set the software
+breakpoint, and then resume and notice that the program put
+pepperoni on the pizza. Next, we’ll delete the software
+breakpoint, create a hardware breakpoint at the same address,
+and continue, noting that we hit the breakpoint. We’ll then
+continue again, noting that we caught the program putting
+pineapple on the pizza:
+
+   TEST_CASE("Hardware breakpoint evades memory chec
+             "[breakpoint]") {
+       bool close_on_exec = false;
+       sdb::pipe channel(close_on_exec);
+       auto proc = process::launch(
+           "targets/anti_debugger", true, channel.ge
+       channel.close_write();
+
+        proc->resume();
+        proc->wait_on_signal();
+
+        auto func = virt_addr(
+            from_bytes<std::uint64_t>(channel.read()
+
+        auto& soft = proc->create_breakpoint_site(fun
+        soft.enable();
+
+        proc->resume();
+        proc->wait_on_signal();
+
+        REQUIRE(to_string_view(channel.read()) ==
+                "Putting pepperoni on pizza...\n");
+        proc->breakpoint_sites().remove_by_id(soft.id
+        auto& hard = proc->create_breakpoint_site(fun
+        hard.enable();
+
+        proc->resume();
+        proc->wait_on_signal();
+
+        REQUIRE(proc->get_pc() == func);
+
+        proc->resume();
+        proc->wait_on_signal();
+
+        REQUIRE(to_string_view(channel.read()) ==
+                "Putting pineapple on pizza...\n");
+   }
+
+Run the test, and ensure that the debugger catches the program
+in its illicit act. Now we can move on to watchpoints.
+
+Watchpoints
+
+Watchpoints use the same mechanisms as hardware
+breakpoints but can make a process stop when reading from
+and writing to an address as well as when executing it. This can
+be useful in a host of scenarios, such as advanced reverse
+engineering, tracking down memory corruption issues, and
+getting used to an existing codebase.
+
+Start by creating an sdb/include/libsdb/watchpoint.hpp file that
+defines an sdb::watchpoint type. This type is fairly similar to
+sdb::breakpoint_site, but it doesn’t need to track any saved data,
+
+though it must track a stop mode and watchpoint size. As in
+sdb::breakpoint_site, we should create these values only through an
+
+sdb::process object to track them correctly:
+
+   #ifndef SDB_WATCHPOINT_HPP
+   #define SDB_WATCHPOINT_HPP
+
+   #include <cstdint>
+   #include <cstddef>
+   #include <libsdb/types.hpp>
+
+   namespace sdb {
+       class process;
+
+         class watchpoint {
+         public:
+             watchpoint() = delete;
+             watchpoint(const watchpoint&) = delete;
+              watchpoint& operator=(const watchpoint&)
+
+              using id_type = std::int32_t;
+    id_type id() const { return id_; }
+
+    void enable();
+    void disable();
+
+    bool is_enabled() const { return is_enabl
+    virt_addr address() const { return addres
+    stoppoint_mode mode() const { return mode
+    std::size_t size() const { return size_;
+
+    bool at_address(virt_addr addr) const {
+        return address_ == addr;
+    }
+    bool in_range(virt_addr low, virt_addr hi
+        return low <= address_ and high > add
+    }
+
+private:
+    friend process;
+    watchpoint(
+         process& proc, virt_addr address,
+         stoppoint_mode mode, std::size_t size
+
+    id_type id_;
+    process* process_;
+    virt_addr address_;
+    stoppoint_mode mode_;
+    std::size_t size_;
+              bool is_enabled_;
+              int hardware_register_index_ = -1;
+         };
+   }
+
+   #endif
+
+Like for sdb::breakpoint_site, we delete the default constructor and
+copy behaviors so the watchpoints are unique and can be
+created only through an sdb::process object. We also use the same
+members for tracking the ID, the address to which the
+watchpoint applies, whether the watchpoint is enabled, and the
+assigned hardware register index, and the same functions for
+checking whether the watchpoint is at a given address or
+within an address range. (We’ll use these last two functions
+when we add support for source-level breakpoints.) In addition
+to these members, we create members for the stop point mode
+and the size of the watchpoint. The implementation defers most
+of the work to sdb::process. Write it in a new
+sdb/src/watchpoint.cpp file:
+
+   #include <libsdb/watchpoint.hpp>
+   #include <libsdb/process.hpp>
+   #include <libsdb/error.hpp>
+namespace {
+    auto get_next_id() {
+        static sdb::watchpoint::id_type id = 0;
+        return ++id;
+    }
+}
+
+sdb::watchpoint::watchpoint(
+    process& proc, virt_addr address, stoppoint_m
+    : process_{ &proc }, address_{ address }, is_
+    mode_{ mode }, size_{ size } {
+    id_ = get_next_id();
+}
+
+void sdb::watchpoint::enable() {
+    if (is_enabled_) return;
+
+    hardware_register_index_ = process_->set_watc
+    is_enabled_ = true;
+}
+
+void sdb::watchpoint::disable() {
+    if (!is_enabled_) return;
+
+    process_->clear_hardware_stoppoint(hardware_
+    is_enabled_ = false;
+}
+The get_next_id function is the same as the one for breakpoint
+sites. The constructor stores its parameters in the relevant
+members and calculates the ID for this watchpoint. The enable
+function calls an sdb::process::set _watchpoint function we’ll write
+shortly, and disable calls the clear_hardware _stoppoint function we
+wrote earlier in this chapter. Add this new file to
+sdb/src/CMakeLists.txt:
+
+   add_library(libsdb ... watchpoint.cpp)
+
+One common error case we can check for is that watchpoints
+on x64 must be aligned to their size: 8-byte watchpoints must
+fall on an 8-byte boundary, 4-byte watchpoints on a 4-byte
+boundary, and so on. We can check for this requirement with a
+handy little bitwise trick in the constructor. Edit it like so:
+
+   sdb::watchpoint::watchpoint(
+       process& proc, virt_addr address,
+       stoppoint_mode mode, std::size_t size)
+       : process_{ &proc }, address_{ address },
+       is_enabled_{ false }, mode_{ mode },
+         size_{ size } {
+
+         if ((address.addr() & (size - 1)) != 0) {
+               error::send("Watchpoint must be aligned t
+         }
+
+         id_ = get_next_id();
+   }
+
+If the size of the breakpoint is 8, the least significant 4 bits of the
+address must be 0 for the address to be aligned. Because address &
+(8 - 1) is address & 0b1111, we ensure that this calculation results in
+
+0. Similarly, if the size is 4, the least significant 3 bits of the
+address should be 0, and address & (4 - 1) will be address & 0b111. The
+same approach works for 2-byte and 1-byte watchpoints.
+
+Let’s add the set_watchpoint function used in sdb::watchpoint::enable to
+sdb::process. In sdb/include/libsdb/process.hpp, write the following:
+
+   #include <libsdb/watchpoint.hpp>
+
+   namespace sdb {
+       class process {
+       public:
+           --snip--
+           int set_watchpoint(
+                watchpoint::id_type id, virt_addr add
+                    stoppoint_mode mode, std::size_t size
+               --snip--
+         };
+   }
+
+Then, implement the function in sdb/src/process.cpp, using the
+set_hardware _stoppoint function we already wrote:
+
+   int sdb::process::set_watchpoint(
+         watchpoint::id_type id, virt_addr address,
+         stoppoint_mode mode, std::size_t size) {
+       return set_hardware_stoppoint(address, mode,
+   }
+
+Now we need a way to create watchpoints from an sdb::process.
+Because we did the hard work of making sdb::stoppoint_collection a
+template that can support any kind of stop point, this should be
+fairly easy; we can simply store an
+sdb::stoppoint_collection<watchpoint>. In sdb/include/libsdb/process.hpp,
+
+create types and functions for managing watchpoints that
+mirror the existing breakpoint site functionality:
+
+   namespace sdb {
+       class process {
+       public:
+           --snip--
+                 watchpoint& create_watchpoint(
+                     virt_addr address, stoppoint_mode mod
+                 stoppoint_collection<watchpoint>& watchpo
+                          return watchpoints_;
+                 }
+                 const stoppoint_collection<watchpoint>& w
+                          return watchpoints_;
+                 }
+                 --snip--
+
+          private:
+              --snip--
+              stoppoint_collection<breakpoint_site> bre
+              stoppoint_collection<watchpoint> watchpoi
+          };
+    }
+
+We declare a function for creating watchpoints, add a
+stoppoint_collection <watchpoint> member for tracking watchpoints,
+
+and add members for retrieving this collection. Implement
+create_watchpoint in sdb/src/process.cpp, much in the same way as
+
+create_breakpoint_site:
+
+    sdb::watchpoint&
+    sdb::process::create_watchpoint(virt_addr address
+        if (watchpoints_.contains_address(address)) {
+               error::send("Watchpoint already created a
+                   std::to_string(address.addr()));
+         }
+         return watchpoints_.push(
+               std::unique_ptr<watchpoint>(new watchpoin
+   }
+
+Since we’re using debug registers rather than modifying the
+running code, we technically could support multiple
+watchpoints with the same address, but it’s not particularly
+worthwhile to do so. So, we throw an error if a watchpoint with
+the given address already exists. Otherwise, we create a new
+watchpoint and add it to the watchpoint collection.
+
+Exposing Watchpoints to the User
+
+The debugger will support the following watchpoint
+subcommands: watchpoint list to display all watchpoints, watchpoint
+set <address> <mode> <size> to set a new watchpoint, watchpoint enable <id>
+
+for enabling, watchpoint disable <id> for disabling, and watchpoint delete
+<id> for deletion. To expose the watch-point feature, add a new
+
+command to sdb/tools/sdb.cpp in handle_command:
+
+               --snip--
+               else if (is_prefix(command, "watchpoint"
+                    handle_watchpoint_command(*process, a
+              }
+              --snip--
+
+To implement most of the subcommands, you can steal the code
+from handle_breakpoint_command, although set and list require more
+thought due to the different stop point modes that we support.
+As such, we’ll split those into separate functions:
+
+   namespace {
+       void handle_watchpoint_command(sdb::process&
+             const std::vector<std::string>& args) {
+           if (args.size() < 2) {
+               print_help({ "help", "watchpoint" })
+               return;
+           }
+
+              auto command = args[1];
+
+              if (is_prefix(command, "list")) {
+                    handle_watchpoint_list(process, args
+                    return;
+              }
+
+              if (is_prefix(command, "set")) {
+                  handle_watchpoint_set(process, args)
+            return;
+        }
+
+        if (args.size() < 3) {
+            print_help({ "help", "watchpoint" })
+            return;
+        }
+
+        auto id = sdb::to_integral<sdb::watchpoin
+        if (!id) {
+            std::cerr << "Command expects watchpo
+            return;
+        }
+
+        if (is_prefix(command, "enable")) {
+            process.watchpoints().get_by_id(*id)
+        }
+
+        else if (is_prefix(command, "disable")) {
+            process.watchpoints().get_by_id(*id)
+        }
+        else if (is_prefix(command, "delete")) {
+            process.watchpoints().remove_by_id(*i
+        }
+    }
+}
+In handle_watchpoint_list, we’ll output the watchpoint’s ID, address,
+mode, size, and whether it’s enabled:
+
+   namespace {
+       void handle_watchpoint_list(sdb::process& pro
+             const std::vector<std::string>& args) {
+          ➊ auto stoppoint_mode_to_string = [](auto m
+                 switch (mode) {
+                 case sdb::stoppoint_mode::execute: re
+                 case sdb::stoppoint_mode::write: retu
+                 case sdb::stoppoint_mode::read_write
+                 default: sdb::error::send("Invalid st
+                 }
+             };
+
+              if (process.watchpoints().empty()) {
+                  fmt::print("No watchpoints set\n");
+              }
+              else {
+                  fmt::print("Current watchpoints:\n")
+                  process.watchpoints().for_each([&](au
+                      fmt::print("{}: address = {:#x},
+                      point.id(), point.address().addr
+                      stoppoint_mode_to_string(point.mo
+                      point.is_enabled() ? "enabled" :
+                  });
+              }
+          }
+   }
+
+We write a lambda to get a string representation of a stop point
+mode ➊. If there are no watchpoints, we print a message to
+inform the user of this. Otherwise, we loop over all the
+watchpoints, printing their details for the user.
+
+For handle_watchpoint_set, we’ll expect the mode to be either write, rw,
+or execute:
+
+   namespace {
+       void handle_watchpoint_set(sdb::process& proc
+             const std::vector<std::string>& args) {
+
+               if (args.size() != 5) {
+                   print_help({ "help", "watchpoint" })
+                   return;
+               }
+               auto address = sdb::to_integral<std::uint
+               auto mode_text = args[3];
+               auto size = sdb::to_integral<std::size_t>
+
+               if (!address or !size or
+                    !(mode_text == "write" or
+                     mode_text == "rw" or
+                     mode_text == "execute")) {
+                   print_help({ "help", "watchpoint" })
+                   return;
+             }
+
+             sdb::stoppoint_mode mode;
+             if (mode_text == "write") mode = sdb::sto
+             else if (mode_text == "rw") mode = sdb::s
+             else if (mode_text == "execute") mode = s
+
+             process.create_watchpoint(
+                 sdb::virt_addr{ *address }, mode, *si
+        }
+   }
+
+If the user supplies an incorrect number of arguments, we
+throw an error. Otherwise, we parse the address as a
+hexadecimal integer, grab the string of the stop point mode
+argument, and parse the size as a decimal integer. If parsing
+either of those integers fails, or if the user passes an unexpected
+mode, we throw an error. Otherwise, we translate the stop point
+mode string into the relevant enumerator value, create a
+watchpoint with all of this data, and enable it.
+As always, add a help message. We’ve implemented a sizeable
+number of commands at this point, so the help feature should
+be starting to pay off:
+
+              if (args.size() == 1) {
+                  std::cerr << R"(Available commands:
+         breakpoint - Commands for operating on break
+         continue     - Resume the process
+         disassemble - Disassemble machine code to ass
+         memory       - Commands for operating on memo
+         register     - Commands for operating on regis
+         step         - Step over a single instruction
+         watchpoint - Commands for operating on watch
+   )";
+              }
+              --snip--
+              else if (is_prefix(args[1], "watchpoint"
+                   std::cerr << R"(Available commands:
+         list
+         delete <id>
+         disable <id>
+         enable <id>
+         set <address> <write|rw|execute> <size>
+   )";
+              }
+              --snip--
+Now we can move on to testing.
+
+Testing Watchpoints
+
+We’ll reuse the anti_debugger example from the hardware
+breakpoint test to check whether we can use watchpoints to
+detect the checksum function’s reading of the program’s code.
+Then, we’ll set a software breakpoint right after the read to
+evade the protection mechanism. First, launch the program
+with the usual pipe to read its output:
+
+   TEST_CASE("Watchpoint detects read", "[watchpoint
+       bool close_on_exec = false;
+       sdb::pipe channel(close_on_exec);
+       auto proc = process::launch(
+           "targets/anti_debugger", true, channel.ge
+       channel.close_write();
+
+Continue it until you reach the first trap, then read the pointer
+that the program prints to stdout (where we want to eventually
+set a breakpoint):
+
+        --snip--
+        proc->resume();
+        proc->wait_on_signal();
+        auto func = virt_addr(
+             from_bytes<std::uint64_t>(channel.read()
+
+Set a watchpoint on that address so the program will halt when
+the checksum function tries to read the code of the function on
+which we’ll set a breakpoint:
+
+        --snip--
+        auto& watch = proc->create_watchpoint(func, s
+        watch.enable();
+
+Resume the process until the watchpoint is hit. Step over a
+single instruction so that the anti-debugger reads the function’s
+original code, then sneakily set a software breakpoint:
+
+        --snip--
+        proc->resume();
+        proc->wait_on_signal();
+
+        proc->step_instruction();
+        auto& soft = proc->create_breakpoint_site(fun
+        soft.enable();
+Resume the process. At this point, the software breakpoint
+should have been hit, so require that the process stop due to a
+SIGTRAP, then resume once more:
+
+        --snip--
+        proc->resume();
+        auto reason = proc->wait_on_signal();
+
+        REQUIRE(reason.info == SIGTRAP);
+
+        proc->resume();
+        proc->wait_on_signal();
+
+        REQUIRE(to_string_view(channel.read()) == "Pu
+   }
+
+The program should print Putting pineapple on pizza..., indicating
+that we successfully used watchpoints to evade the protection.
+If all of the tests have passed, the processes should consider
+themselves well and truly watched.
+
+Summary
+
+In this chapter, you learned how to use the x64 debug registers
+to set hardware breakpoints and watchpoints. You added
+support to your debugger for setting both of these and wrote
+automated tests to ensure that these features work. In the next
+chapter, you’ll improve the signal handling of your debugger
+and add the ability to trace syscalls.
+
+Check Your Knowledge
+
+1.
+1. How many hardware breakpoints can you set at the same
+  time on x64?
+2.
+2. Which register is the debug control register?
+3.
+3. How could you simulate read-only watchpoints?
+4.
+4. In which situations should users use hardware breakpoints
+  rather than software breakpoints?

@@ -1,0 +1,1340 @@
+9. Status report
+Over the course of the last few chapters, we’ve focussed on the add command that builds .git/
+index, a cache of blobs added to the database that is used to build the next commit. Although
+we’ve written automated tests that use the Index interface to inspect the data stored on disk,
+the jit user interface doesn’t yet offer any way to do this. Without any way to see how our
+work differs from the latest commit, we can’t use the add command to its full potential and
+selectively add files to the next commit. add is reduced to being an extra step we’re obliged to
+do just before each commit, rather than something we can use regularly during our workflow.
+       $ jit add .
+       $ echo "commit message" | jit commit
+
+To give us visibility into the state of the repository, Git has the status command. It shows a
+summary of the differences between the tree of the HEAD commit, the entries in the index, and
+the contents of the workspace, as well as listing conflicting files during a merge. It can display
+these changes in multiple formats; the default is a human-readable format with differences
+highlighted in red and green, but there’s also a machine-readable format that’s activated by the
+--porcelain option. This format is designed to be nicer for automated scripts to consume, and
+that’s what we’ll be implementing first since it will make it easier to write tests.
+
+We’ll be using test-driven development1 (TDD) to implement this feature. The add and commit
+commands, while having a few special-case behaviours, are fairly straightforward tools whose
+code we execute frequently while developing the codebase. We wrote tests for the edge cases
+but by-and-large if these commands were not working we would quickly notice. In contrast, a
+command like status needs to deal with lots of possible combinations of states, not all of which
+we’ll just bump into in the normal course of our work. That means it’s much more important
+to drive the requirements by writing tests for each different scenario we expect it to handle, so
+we can always be sure we’ve not broken some rarely-encountered state.
+
+One element of practicing TDD is that one only writes as much code as is needed to pass the
+currently-failing test(s), never any more. If you find yourself anticipating a situation that should
+be handled, you stop and write a test for it first. In the early stages this often leads to code
+that seems obviously wrong, but the incremental progress it offers can be valuable in situations
+where fitting every permutation of a problem in one’s head at once is too difficult. It provides
+focus by targeting one case at a time while providing reassurance by building up a set of tests
+to make sure you don’t break existing code.
+
+9.1. Untracked files
+Let’s begin by adding support for listing untracked files, that is, files that are not listed in the
+index. In an empty Git repository, creating a couple of files and then checking the status shows
+those two files in name order with the status ??, which means they are untracked.
+       $ touch file.txt another.txt
+
+       $ git status --porcelain
+       ?? another.txt
+       ?? file.txt
+
+ https://en.wikipedia.org/wiki/Test-driven_development
+
+                                        Status report
+
+We can simulate this using an automated test. In a new test suite, test/command/
+status_test.rb, we’ll add a single test case that writes two files and then checks the status
+is as above.
+     # test/command/status_test.rb
+
+     require "minitest/autorun"
+     require "command_helper"
+
+     describe Command::Status do
+       include CommandHelper
+
+       def assert_status(output)
+         jit_cmd "status"
+         assert_stdout(output)
+       end
+
+       it "lists untracked files in name order" do
+         write_file "file.txt", ""
+         write_file "another.txt", ""
+
+         assert_status <<~STATUS
+           ?? another.txt
+           ?? file.txt
+         STATUS
+       end
+     end
+
+This initially fails because there is no command named status. So, we’ll create one and add
+it to the list in the Command module:
+     # lib/command.rb
+
+       COMMANDS = {
+         "init"   => Init,
+         "add"    => Add,
+         "commit" => Commit,
+         "status" => Status
+       }
+
+The Command::Status class will at first do very little. Remember, we’re approaching the
+code test-first, and we should focus only on making the currently failing test pass, not on
+implementing a complete solution all at once. The simplest thing that could make the current
+test pass is simply to list the contents of the workspace with ?? in front of each name.
+     # lib/command/status.rb
+
+     require_relative "./base"
+
+     module Command
+       class Status < Base
+
+         def run
+           repo.workspace.list_files.sort.each do |path|
+             puts "?? #{ path }"
+           end
+
+           exit 0
+
+                                          Status report
+
+         end
+
+       end
+     end
+
+That makes the test suite pass, but it’s obviously wrong. If we run jit status on the project
+right now, it lists everything as untracked! It also sorts the files slightly incorrectly, because
+Workspace#list_files returns Pathname objects, which sort the . and / characters differently
+from regular strings.
+     $ jit status
+     ?? LICENSE.txt
+     ?? Rakefile
+     ?? bin/jit
+     ?? lib/command/add.rb
+     ?? lib/command/base.rb
+     ?? lib/command/commit.rb
+     ?? lib/command/init.rb
+     ?? lib/command/status.rb
+     ?? lib/command.rb
+     ?? lib/database/author.rb
+     ?? lib/database/blob.rb
+     ?? lib/database/commit.rb
+     ?? lib/database/tree.rb
+     ?? lib/database.rb
+     ?? lib/entry.rb
+     ?? lib/index/checksum.rb
+     ?? lib/index/entry.rb
+     ?? lib/index.rb
+     ?? lib/lockfile.rb
+     ?? lib/refs.rb
+     ?? lib/repository.rb
+     ?? lib/workspace.rb
+     ?? test/command/add_test.rb
+     ?? test/command/status_test.rb
+     ?? test/command_helper.rb
+     ?? test/index_test.rb
+
+This might be wrong, but it’s still a step forward from not having a status command at
+all. That’s the essence of TDD: to introduce new requirements one-by-one to guide the
+implementation towards a complete solution in small steps. Some steps will require very little
+work, as above, but they might help us realise what the next test we need is. In this case, we can
+see we should write a test for untracked files in a repository that has some files in the index.
+
+9.1.1. Untracked files not in the index
+A minimal test that will force us to keep indexed files out of the status output appears below.
+We write a single file called committed.txt, add it to the index, and then commit. We make a
+commit here rather just adding the file to the index, because when we’ve finished the status
+implementation, any difference between the index and the last commit will cause additional
+output, so we want the index and HEAD to be the same.
+
+Then, we add one more untracked file and check what status prints.
+     # test/command/status_test.rb
+
+                                            Status report
+
+       it "lists files as untracked if they are not in the index" do
+         write_file "committed.txt", ""
+         jit_cmd "add", "."
+         commit "commit message"
+
+          write_file "file.txt", ""
+
+         assert_status <<~STATUS
+           ?? file.txt
+         STATUS
+       end
+
+The commit helper function is a new addition to CommandHelper. It requires some extra methods
+for setting environment variables and preparing some content in @stdin. The jit_cmd method
+must also be modified to use the @env and @stdin variables that may have been set up by these
+new methods, providing some default values if not.
+     # test/command_helper.rb
+
+       def set_env(key, value)
+         @env ||= {}
+         @env[key] = value
+       end
+
+       def set_stdin(string)
+         @stdin = StringIO.new(string)
+       end
+
+       def jit_cmd(*argv)
+         @env    ||= {}
+         @stdin ||= StringIO.new
+         @stdout   = StringIO.new
+         @stderr   = StringIO.new
+
+         @cmd = Command.execute(repo_path.to_s, @env, argv, @stdin, @stdout, @stderr)
+       end
+
+       def commit(message)
+         set_env("GIT_AUTHOR_NAME", "A. U. Thor")
+         set_env("GIT_AUTHOR_EMAIL", "author@example.com")
+         set_stdin(message)
+         jit_cmd("commit")
+       end
+
+Now, this test fails with the following output. The diffs in minitest tend to be a little difficult to
+read, but this tells us that instead of a single line of output ?? file, we’re seeing two lines: ??
+committed.txt and ?? file.txt. The file committed.txt must be excluded from the output.
+
+        1) Failure:
+     Command::Status#test_0001_lists files as untracked if they are not in the index
+     --- expected
+     +++ actual
+     @@ -1,2 +1,3 @@
+     -"?? file.txt
+     +"?? committed.txt
+     +?? file.txt
+      "
+
+                                           Status report
+
+A minor amendment to Command::Status will fix this. To find the untracked files, we list all
+the files in Workspace and filter them based on whether the path is tracked in the index. We
+must load the index from disk before doing this, and because we’re not going to modify the
+index, we call Index#load rather than Index#load_for_update.
+     # lib/command/status.rb
+
+          def run
+            repo.index.load
+
+            untracked = repo.workspace.list_files.reject do |path|
+              repo.index.tracked?(path)
+            end
+
+            untracked.sort.each do |path|
+              puts "?? #{ path }"
+            end
+
+            exit 0
+          end
+
+The Index#tracked? method returns true if and only if the index contains an entry by the
+given name, that is if @entries contains the given pathname as a key.
+     # lib/index.rb
+
+       def tracked?(path)
+         @entries.has_key?(path.to_s)
+       end
+
+This simple check keeps committed.txt out of the status output, and the test passes.
+
+9.1.2. Untracked directories
+The functionality for listing untracked files is almost complete, there’s just one optimisation
+that Git makes here. If a directory does not contain any files that appear in the index, then that
+directory is itself listed as untracked, rather than its contents. We can see this in the following
+example:
+     $ mkdir dir
+     $ touch file.txt dir/another.txt
+
+     $ git status --porcelain
+     ?? dir/
+     ?? file.txt
+
+Let’s reproduce this example as a test; the write_file helper takes care of creating any
+necessary directories for us. In order to exclude the obvious naive implementation of simply
+not listing anything inside directories, we also include a test to check that untracked files
+inside directories are listed, if that directory contains other tracked files, possibly inside other
+subdirectories. The second test below reproduces the following situation:
+     $ mkdir -p a/b
+     $ touch a/b/inner.txt
+     $ git add .
+     $ git commit --message "commit message"
+
+                                         Status report
+
+     $ mkdir a/b/c
+     $ touch a/outer.txt a/b/c/file.txt
+     $ tree
+     .
+     └── a
+         ├── b
+         │   ├── c
+         │   │   └── file.txt
+         │   └── inner.txt
+         └── outer.txt
+
+     $ git status --porcelain
+     ?? a/b/c/
+     ?? a/outer.txt
+
+The file a/outer.txt is listed as untracked, even though directory a does not itself directly
+contain any tracked files. The file a/b/inner.txt is tracked, and that means that directories a
+and b are considered tracked too. Directory c remains untracked because it does not, directly
+or indirectly, contain any tracked files.
+
+Here are the above examples expressed as tests in Ruby.
+     # test/command/status_test.rb
+
+       it "lists untracked directories, not their contents" do
+         write_file "file.txt", ""
+         write_file "dir/another.txt", ""
+
+         assert_status <<~STATUS
+           ?? dir/
+           ?? file.txt
+         STATUS
+       end
+
+       it "lists untracked files inside tracked directories" do
+         write_file "a/b/inner.txt", ""
+         jit_cmd "add", "."
+         commit "commit message"
+
+         write_file "a/outer.txt", ""
+         write_file "a/b/c/file.txt", ""
+
+         assert_status <<~STATUS
+           ?? a/b/c/
+           ?? a/outer.txt
+         STATUS
+       end
+
+At the moment, they both fail. We must come up with a solution for the simple case of a top-
+level untracked directory without causing status to ignore tracked nested directories.
+       1) Failure:
+     Command::Status#test_0003_lists untracked directories, not their contents
+     --- expected
+     +++ actual
+     @@ -1,3 +1,3 @@
+     -"?? dir/
+
+                                          Status report
+
+     +"?? dir/another.txt
+      ?? file.txt
+      "
+
+        2) Failure:
+     Command::Status#test_0004_lists untracked files inside tracked directories
+     --- expected
+     +++ actual
+     @@ -1,3 +1,3 @@
+     -"?? a/b/c/
+     +"?? a/b/c/file.txt
+      ?? a/outer.txt
+      "
+
+This is going to require a little more work than our previous change, but some data structures
+we added to Index previously will help. First, we’ll rewrite the Command::Status#run method.
+We’ll still load the index, but the workflow after that is less direct. We create a SortedSet to
+hold the list of untracked files we find, then call a new method called scan_workspace, then
+we list out any untracked files that were added in the process.
+     # lib/command/status.rb
+
+         def run
+           repo.index.load
+
+            @untracked = SortedSet.new
+
+            scan_workspace
+
+            @untracked.each { |path| puts "?? #{ path }" }
+
+           exit 0
+         end
+
+The Command::Status#scan_workspace method is a recursive procedure. Rather than calling
+Workspace#list_files to recursively list everything in the project in a single call, we need to
+take control of the recursion ourselves. If we find a directory that is not tracked, then we can
+just add it to the @untracked set and not bother exploring it any further.
+
+We’ll do this by calling a new method Workdspace#list_dir, which as we’ll see shortly will
+return the contents of a single directory, without recursing, as a set of filenames and associated
+File::Stat objects that describe each file. For each item in this set, if the path is tracked in
+the index then we call scan_workspace recursively, if the item is a directory. If the path is not
+tracked, then we add it to the @untracked set.
+     # lib/command/status.rb
+
+         def scan_workspace(prefix = nil)
+           repo.workspace.list_dir(prefix).each do |path, stat|
+             if repo.index.tracked?(path)
+               scan_workspace(path) if stat.directory?
+             else
+               path += File::SEPARATOR if stat.directory?
+               @untracked.add(path)
+             end
+           end
+
+                                           Status report
+
+          end
+
+Our new method Workspace#list_dir works as follows. Given some directory name that’s
+relative to the root of the project, we resolve it and list out its entries. For each entry we find,
+we calculate its relative path from the root of the project and call File.stat on it. We return
+the results of doing this as a hash.
+     # lib/workspace.rb
+
+       def list_dir(dirname)
+         path    = @pathname.join(dirname || "")
+         entries = Dir.entries(path) - IGNORE
+         stats   = {}
+
+          entries.each do |name|
+            relative = path.join(name).relative_path_from(@pathname)
+            stats[relative.to_s] = File.stat(path.join(name))
+          end
+
+         stats
+       end
+
+For example, if we call it with lib then we get the following description of the contents of that
+directory, which will not be in any particular order.
+     >> workspace = Workspace.new(Pathname.new(Dir.getwd))
+
+     >> workspace.list_dir("lib")
+     => {
+          "lib/database"      => File::Stat(...),
+          "lib/workspace.rb" => File::Stat(...),
+          "lib/repository.rb" => File::Stat(...),
+          "lib/entry.rb"      => File::Stat(...),
+          "lib/refs.rb"       => File::Stat(...),
+          "lib/database.rb"   => File::Stat(...),
+          "lib/index"         => File::Stat(...),
+          "lib/command"       => File::Stat(...),
+          "lib/command.rb"    => File::Stat(...),
+          "lib/lockfile.rb"   => File::Stat(...),
+          "lib/index.rb"      => File::Stat(...)
+        }
+
+The File::Stat objects returned by this call let us tell whether each item is a directory, what its
+mode and file size are, when it was last modified, and other useful information. It might seem
+expensive to call stat() on every file in the tree, but it cannot really be avoided. To recursively
+enumerate a directory, we need to check if each file is a directory, and that requires calling
+stat(). We may as well return the result of that stat() to the caller so they can make further
+use of it. In fact, the index allows us to do just that, as we’ll see shortly. Even for untracked
+items, we need to know if it’s a directory because we need to add a trailing slash to its name
+in the status output. At least skipping over untracked directories means we can skip calling
+stat() for all its children.
+
+Finally, we need to adjust the Index#tracked? method so that it works with directories rather
+than just files. Fortunately, in Section 7.3.3, “Replacing a directory with a file”, we added a
+structure called @parents to the Index class that contains the name of every directory that
+
+                                          Status report
+
+contains an indexed file, whether directly or indirectly. So, amending the tracked? method
+merely requires checking whether the name appears as a key in either the @entries hash or
+in @parents.
+     # lib/index.rb
+
+       def tracked?(path)
+         @entries.has_key?(path.to_s) or @parents.has_key?(path.to_s)
+       end
+
+With this change in place, all our tests are once again passing.
+
+9.1.3. Empty untracked directories
+There is one more edge case in how untracked directories are listed that unfortunately means
+it’s not enough to simply skip any directory that’s not in the index. To appear in the status
+output, a directory must contain, either directly or indirectly, a file that would be added to the
+index if you passed the directory to add. In the absence of support for .gitignore or .git/
+info/exclude, this just means the directory has to contain at least one file.
+
+Here’s an example to show this effect in action:
+     $ mkdir outer
+     $ git status --porcelain
+
+     $ mkdir outer/inner
+     $ git status --porcelain
+
+     $ touch outer/inner/file.txt
+     $ git status --porcelain
+     ?? outer/
+
+Note that it’s outer/, not outer/inner/ that’s listed, so it’s still the outermost untracked
+directory that should be printed. Let’s reproduce these examples as tests:
+     # test/command/status_test.rb
+
+       it "does not list empty untracked directories" do
+         mkdir "outer"
+
+         assert_status ""
+       end
+
+       it "lists untracked directories that indirectly contain files" do
+         write_file "outer/inner/file.txt", ""
+
+         assert_status <<~STATUS
+           ?? outer/
+         STATUS
+       end
+
+So far we’ve been using our write_file helper to create a file and implicitly create all its
+containing directories. We now need a helper to create directories themselves:
+     # test/command_helper.rb
+
+       def mkdir(name)
+
+                                                         Status report
+
+            FileUtils.mkdir_p(repo_path.join(name))
+          end
+
+To make these test pass we can add an extra condition in Command::Status#scan_workspace,
+that uses a new method called trackable_file? to decide whether to add the untracked object
+to the results.
+       # lib/command/status.rb
+
+             def scan_workspace(prefix = nil)
+               repo.workspace.list_dir(prefix).each do |path, stat|
+                 if repo.index.tracked?(path)
+                   scan_workspace(path) if stat.directory?
+                 elsif trackable_file?(path, stat)
+                   path += File::SEPARATOR if stat.directory?
+                   @untracked.add(path)
+                 end
+               end
+             end
+
+The trackable_file? method takes a file path and a File::Stat object, and returns true if
+the input represents either an untracked file, or a directory containing untracked files. If the
+input is a file, then we immediately return with the result of asking the Index if the file is not
+tracked. Otherwise, we use Workspace#list_dir to get the directory contents, and split them
+into two lists: one list of files and one of directories. We then check each of these lists to see
+if any of them contains a tracked file, using a recursive call to trackable_file?. Processing
+the files first means we can stop as soon as we find any untracked files in the tree, without
+recursing into its sibling directories any further.
+       # lib/command/status.rb
+
+             def trackable_file?(path, stat)
+               return false unless stat
+
+                return !repo.index.tracked?(path) if stat.file?
+                return false unless stat.directory?
+
+                items = repo.workspace.list_dir(path)
+                files = items.select { |_, item_stat| item_stat.file? }
+                dirs = items.select { |_, item_stat| item_stat.directory? }
+
+               [files, dirs].any? do |list|
+                 list.any? { |item_path, item_stat| trackable_file?(item_path, item_stat) }
+               end
+             end
+
+This incurs a little extra inspection of the contents of untracked directories, but it still stops
+scanning the tree as soon as it finds any files, so we’re still saving work by skipping nested
+untracked directories that won’t add anything to the output.
+
+It is worth noting that this routine will do a depth-first search2: the tree under each item in
+dirs will be fully explored before moving onto the next. However, Ruby’s Enumerable#any?
+
+ https://en.wikipedia.org/wiki/Depth-first_search
+ https://docs.ruby-lang.org/en/2.3.0/Enumerable.html#method-i-any-3F
+
+                                                      Status report
+
+returns true as soon as it finds a single element of the array for which the block returns true,
+so one directory containing a file will block its sibling directories from being explored. For
+tracked directories, every directory and file must be visited, so whether we do this depth- or
+breadth-first4 doesn’t make much of a difference. But for a routine that stops as soon as it finds
+a particular thing, the search order can make a big difference. I’ve used depth-first here simply
+because it requires less code to implement.
+
+9.2. Index/workspace differences
+The next step is to implement what you might be used to seeing as the list of ‘red’ files when
+you run git status: paths where the workspace content differs from what’s in the index. These
+are changes you have made since the last commit, but which have not been staged using the
+add command.
+
+All the tests in this section will need to have something in the index to begin with, and that index
+will need to have been committed so that these tests don’t produce any differences between
+HEAD and the index later. The starting point for all these tests will be equivalent to the state after
+running the following commands:
+       $ mkdir -p a/b
+       $ echo "one" > 1.txt
+       $ echo "two" > a/2.txt
+       $ echo "three" > a/b/3.txt
+       $ git add .
+       $ git commit --message "commit message"
+
+       $ tree
+       .
+       ├── 1.txt
+       └── a
+           ├── 2.txt
+           └── b
+               └── 3.txt
+
+       $ git status
+       On branch master
+       nothing to commit, working directory clean
+
+In minitest, describe blocks can be nested. Each test inside a describe block runs the before
+blocks from all its containing describe blocks, from the outermost to the innermost. This
+provides both a way of organising a suite into sections, and incrementally building up a shared
+starting point that all the tests in a section share. To kick off this set of tests, we’ll start a new
+describe block for index/workspace changes and reproduce the above sequence of commands
+in its before block. All the tests in this section will begin with this state set up.
+       # test/command/status_test.rb
+
+           describe "index/workspace changes" do
+             before do
+               write_file "1.txt", "one"
+               write_file "a/2.txt", "two"
+               write_file "a/b/3.txt", "three"
+
+ https://en.wikipedia.org/wiki/Breadth-first_search
+
+                                          Status report
+
+           jit_cmd "add", "."
+           commit "commit message"
+         end
+
+9.2.1. Changed contents
+The most common kind of change we want to detect is that a file that’s in the index has its
+contents changed in the workspace. Let’s add a couple of tests, one that asserts that running
+status in a clean state produces no output, and one that changes two of the files and then checks
+they are listed with the status M in the output, reproducing the following example:
+     $ echo "changed" > 1.txt
+     $ echo "modified" > a/2.txt
+
+     $ git status --porcelain
+      M 1.txt
+      M a/2.txt
+
+Notice that there’s a leading space before the M in this example. The porcelain status output
+begins each row with two characters; the first indicates differences between HEAD and the index,
+the second between the index and the workspace. All the examples in this section will therefore
+have leading spaces, and in order to encode this in a <<~ heredoc, the leading space must be
+escaped lest Ruby should mistake it for removable indentation. This actually serves to highlight
+the space, which could otherwise be overlooked by the reader.
+
+Here are the two tests we’ll start off with:
+     # test/command/status_test.rb
+
+         it "prints nothing when no files are changed" do
+           assert_status ""
+         end
+
+         it "reports files with modified contents" do
+           write_file "1.txt", "changed"
+           write_file "a/2.txt", "modified"
+
+           assert_status <<~STATUS
+             \ M 1.txt
+             \ M a/2.txt
+           STATUS
+         end
+
+The first test passes, but the second fails; we’ve not yet written any code that would produce
+such output.
+        1) Failure:
+     Command::Status::index/workspace changes#test_0002_reports files with modified contents
+     --- expected
+     +++ actual
+     @@ -1,3 +1,2 @@
+     -" M 1.txt
+     - M a/2.txt
+     -"
+     +# encoding: ASCII-8BIT
+
+                                         Status report
+
+     +""
+
+To make this work, we’re going to need a couple of extra pieces of state. @stats will store a
+cache of File::Stat values for each file in the workspace, because we’ll need them to compare
+files against the index. @changed is another SortedSet like @untracked that will store the names
+of files that differ from the index.
+
+After calling the existing scan_workspace method, we’ll call detect_workspace_changes,
+which will iterate over the index and compare its contents to data gathered during the
+scan_workspace phase. Once we’ve found all the changes, we print them out, using the prefix
+M for changed files and ?? for untracked ones as before.
+
+     # lib/command/status.rb
+
+           def run
+             repo.index.load
+
+            @stats     = {}
+            @changed   = SortedSet.new
+            @untracked = SortedSet.new
+
+            scan_workspace
+            detect_workspace_changes
+
+            @changed.each   { |path| puts " M #{ path }" }
+            @untracked.each { |path| puts "?? #{ path }" }
+
+             exit 0
+           end
+
+The scan_workspace method needs a minor alteration: for files that are tracked, we add their
+File::Stat value to the @stats cache. This saves us calling stat() repeatedly on the same
+file; since the status command requires a complete comparison of the HEAD commit, index and
+workspace, we’d like to take every opportunity to reduce the number of system calls, especially
+those that read from disk. Accessing disk is slow compared to reading data out of memory, and
+it will improve our program’s performance if we avoid doing so unnecessarily.
+     # lib/command/status.rb
+
+           def scan_workspace(prefix = nil)
+             repo.workspace.list_dir(prefix).each do |path, stat|
+               if repo.index.tracked?(path)
+                 @stats[path] = stat if stat.file?
+                 scan_workspace(path) if stat.directory?
+               else
+                 path += File::SEPARATOR if stat.directory?
+                 @untracked.add(path)
+               end
+             end
+           end
+
+Command::Status#detect_workspace_changes simply iterates over all the entries in the index
+and calls check_index_entry with each one. check_index_entry in turn compares the entry
+in the index to the File::Stat value from the workspace for the corresponding path. Recall
+that we’re trying to detect files whose contents have changed. One cheap way of detecting that
+
+                                         Status report
+
+is, if the index entry and the current file on disk have different sizes, the file contents must
+have changed.
+     # lib/command/status.rb
+
+         def detect_workspace_changes
+           repo.index.each_entry { |entry| check_index_entry(entry) }
+         end
+
+         def check_index_entry(entry)
+           stat = @stats[entry.path]
+           @changed.add(entry.path) unless entry.stat_match?(stat)
+         end
+
+     # lib/index/entry.rb
+
+         def stat_match?(stat)
+           size == 0 or size == stat.size
+         end
+
+This is not a complete check for whether a file has changed, but we will flesh it out as we
+add more tests. This example shows one advantage of caching stat information in the index:
+it allows us to check whether files have changed without incurring the expense of reading all
+their contents.
+
+With these additions in place, our tests pass, and jit can now faithfully show us its own status.
+     $ jit status
+      M lib/command/status.rb
+      M lib/index/entry.rb
+      M test/command/status_test.rb
+
+Running the add command over all the changed files syncs up the index with the workspace,
+and afterword status does not print any differences.
+     $ jit add lib test
+
+     $ jit status
+
+9.2.2. Changed mode
+What other kinds of changes should Git care about? Well, in its database the only information it
+stores about each file is its contents, which we’ve partially dealt with above, and its mode. The
+mode is another value that’s captured by the stat() call, and so adding a check for it should
+be straightforward.
+
+Here’s a test that changes the mode of one of the indexed files, making it executable. The status
+command should report such files as modified.
+     # test/command/status_test.rb
+
+         it "reports files with changed modes" do
+           make_executable "a/2.txt"
+
+           assert_status <<~STATUS
+             \ M a/2.txt
+
+                                          Status report
+
+           STATUS
+         end
+
+As expected, this test fails because status produces no output — this change is not currently
+detected.
+        1) Failure:
+     Command::Status::index/workspace changes#test_0003_reports files with changed modes
+     --- expected
+     +++ actual
+     @@ -1,2 +1,2 @@
+     -" M a/2.txt
+     -"
+     +# encoding: ASCII-8BIT
+     +""
+
+A small change to Index::Entry#stat_match? should suffice, comparing the indexed and
+stored modes as well as the file sizes. This requires a little extra complexity though: Git doesn’t
+store arbitrary file modes, it only stores 1006448 and 1007558. So, rather than compare the
+indexed mode to the literal one read from disk, we need to calculate what mode the file would
+have if it were added to the index.
+     # lib/index/entry.rb
+
+         def stat_match?(stat)
+           mode == Entry.mode_for_stat(stat) and (size == 0 or size == stat.size)
+         end
+
+To implement the mode check, we’ll need to extract some logic currently contained in the
+Index::Entry.create method. This method takes a File::Stat and uses it to pick which mode
+to store for the file.
+     # lib/index/entry.rb
+
+     class Index
+       REGULAR_MODE    = 0100644
+       EXECUTABLE_MODE = 0100755
+
+       Entry = Struct.new(*entry_fields) do
+         def self.create(pathname, oid, stat)
+           mode = stat.executable? ? EXECUTABLE_MODE : REGULAR_MODE
+           # ...
+         end
+       end
+     end
+
+We’ll extract this decision into Index::Entry.mode_for_stat:
+     # lib/index/entry.rb
+
+     class Index
+       REGULAR_MODE    = 0100644
+       EXECUTABLE_MODE = 0100755
+
+       Entry = Struct.new(*entry_fields) do
+         def self.create(pathname, oid, stat)
+           mode = Entry.mode_for_stat(stat)
+
+                                            Status report
+
+            # ...
+          end
+
+         def self.mode_for_stat(stat)
+           stat.executable? ? EXECUTABLE_MODE : REGULAR_MODE
+         end
+       end
+     end
+
+This small addition to Index::Entry#stat_match? has again got the tests passing, so we’ll
+commit our work so far and move on to some more complicated cases.
+
+9.2.3. Size-preserving changes
+In Section 9.2.1, “Changed contents” we implemented a simple check to detect a file’s contents
+changing: if its size has changed, it must be different. But it’s possible to change a file’s contents
+without changing its size, and our code currently will not detect that. Here’s a test to force us
+to act:
+     # test/command/status_test.rb
+
+          it "reports modified files with unchanged size" do
+            write_file "a/b/3.txt", "hello"
+
+            assert_status <<~STATUS
+              \ M a/b/3.txt
+            STATUS
+          end
+
+As expected, the test fails as status does not report the change — it only reports files as changed
+if their size or mode has changed.
+        1) Failure:
+     Command::Status::index/workspace changes#test_0003_reports modified files with unchanged size
+     --- expected
+     +++ actual
+     @@ -1,2 +1,2 @@
+     -" M a/b/3.txt
+     -"
+     +# encoding: ASCII-8BIT
+     +""
+
+It seems as though we can’t rely on the stat() results alone to tell us whether a file has changed.
+They’re a useful shortcut, but in some cases we’re just going to have to look at the file contents
+and compare them to what’s in the index.
+
+Let’s make some further changes to check_index_entry. If the size or mode differs, we’ll
+record the change and return. Otherwise, we fall through to a routine that reads the file,
+constructs a Database::Blob from it, and asks the database to hash the blob by calling a new
+method Database#hash_object. If this hash differs from the object ID recorded in the index,
+then the file has changed.
+     # lib/command/status.rb
+
+          def check_index_entry(entry)
+
+                                           Status report
+
+            stat = @stats[entry.path]
+            return @changed.add(entry.path) unless entry.stat_match?(stat)
+
+            data = repo.workspace.read_file(entry.path)
+            blob = Database::Blob.new(data)
+            oid = repo.database.hash_object(blob)
+
+            @changed.add(entry.path) unless entry.oid == oid
+          end
+
+The   Database#hash_object       method is a piece of functionality extracted from the
+Database#store method. As a reminder, store takes a Blob, Tree or Commit object, serialises
+it, computes the hash of the result, and then stores the object in .git/objects in a file name
+derived from the hash.
+      # lib/database.rb
+
+       def store(object)
+         string = object.to_s.force_encoding(Encoding::ASCII_8BIT)
+         content = "#{ object.type } #{ string.bytesize }\0#{ string }"
+
+         object.oid = Digest::SHA1.hexdigest(content)
+         write_object(object.oid, content)
+       end
+
+For the purposes of checking the status, we’d like to be able to hash a blob as though it were
+going to be written to the database, so we can compare it to the object ID stored in the index.
+However, we don’t actually want to write this object to disk — it would waste time creating
+objects that are often not going to end up being part of a commit. And remember, we’re doing
+this for every file whose stat() information is unchanged from what’s in the index; every
+opportunity to save time is worth considering, and writing to disk is expensive.
+
+We can break up the functionality of Database#store into a few separate methods. Hashing the
+object and storing it on disk both require the object to be serialised, so we’ll break that out as a
+distinct method. Then, the hash_object and store methods can build on this in different ways;
+hash_object just returns the result of hashing the serialised object, while store calculates the
+hash, assigns it to the object’s oid property, and uses the hash to write the serialised object
+to a file.
+      # lib/database.rb
+
+       def store(object)
+         content    = serialize_object(object)
+         object.oid = hash_content(content)
+
+         write_object(object.oid, content)
+       end
+
+       def hash_object(object)
+         hash_content(serialize_object(object))
+       end
+
+       private
+
+       def serialize_object(object)
+         string = object.to_s.force_encoding(Encoding::ASCII_8BIT)
+
+                                                        Status report
+
+            "#{ object.type } #{ string.bytesize }\0#{ string }"
+          end
+
+          def hash_content(string)
+            Digest::SHA1.hexdigest(string)
+          end
+
+This direct check of the file contents makes the test pass, and jit once again accurately reports
+its own status.
+       $ jit status
+        M lib/command/status.rb
+        M lib/database.rb
+        M test/command/status_test.rb
+
+However, the command is now really expensive to run. For all entries where the size and mode
+are unchanged (i.e. most files most of the time), we read the file and hash it. This is just as
+bad as the commit command was before we introduced the index, and it will take an awful long
+time to run on large codebases.
+
+We can observe what this process is doing by using a tool that’s installed on most Linux
+systems called strace5, which logs all the system calls a process makes. We’ll run jit status
+under strace, filtered to look for open() calls, and pipe the results into the file ~/status.log.
+Looking at that file afterward, we can see every file in the project being opened:
+       $ strace -e open jit status 2> ~/status.log
+       $ cat ~/status.log
+
+       # ...
+       open("/home/ubuntu/jit/LICENSE.txt", O_RDONLY|O_CLOEXEC) = 8
+       open("/home/ubuntu/jit/Rakefile", O_RDONLY|O_CLOEXEC) = 8
+       open("/home/ubuntu/jit/bin/jit", O_RDONLY|O_CLOEXEC) = 8
+       open("/home/ubuntu/jit/lib/command.rb", O_RDONLY|O_CLOEXEC) = 8
+       open("/home/ubuntu/jit/lib/command/add.rb", O_RDONLY|O_CLOEXEC) = 8
+       open("/home/ubuntu/jit/lib/command/base.rb", O_RDONLY|O_CLOEXEC) = 8
+       open("/home/ubuntu/jit/lib/command/commit.rb", O_RDONLY|O_CLOEXEC) = 8
+       open("/home/ubuntu/jit/lib/command/init.rb", O_RDONLY|O_CLOEXEC) = 8
+       open("/home/ubuntu/jit/lib/command/status.rb", O_RDONLY|O_CLOEXEC) = 8
+       open("/home/ubuntu/jit/lib/database.rb", O_RDONLY|O_CLOEXEC) = 8
+       open("/home/ubuntu/jit/lib/database/author.rb", O_RDONLY|O_CLOEXEC) = 8
+       open("/home/ubuntu/jit/lib/database/blob.rb", O_RDONLY|O_CLOEXEC) = 8
+       open("/home/ubuntu/jit/lib/database/commit.rb", O_RDONLY|O_CLOEXEC) = 8
+       open("/home/ubuntu/jit/lib/database/tree.rb", O_RDONLY|O_CLOEXEC) = 8
+       open("/home/ubuntu/jit/lib/entry.rb", O_RDONLY|O_CLOEXEC) = 8
+       open("/home/ubuntu/jit/lib/index.rb", O_RDONLY|O_CLOEXEC) = 8
+       open("/home/ubuntu/jit/lib/index/checksum.rb", O_RDONLY|O_CLOEXEC) = 8
+       open("/home/ubuntu/jit/lib/index/entry.rb", O_RDONLY|O_CLOEXEC) = 8
+       open("/home/ubuntu/jit/lib/lockfile.rb", O_RDONLY|O_CLOEXEC) = 8
+       open("/home/ubuntu/jit/lib/refs.rb", O_RDONLY|O_CLOEXEC) = 8
+       open("/home/ubuntu/jit/lib/repository.rb", O_RDONLY|O_CLOEXEC) = 8
+       open("/home/ubuntu/jit/lib/workspace.rb", O_RDONLY|O_CLOEXEC) = 8
+       open("/home/ubuntu/jit/test/command/add_test.rb", O_RDONLY|O_CLOEXEC) = 8
+       open("/home/ubuntu/jit/test/command/status_test.rb", O_RDONLY|O_CLOEXEC) = 8
+       open("/home/ubuntu/jit/test/command_helper.rb", O_RDONLY|O_CLOEXEC) = 8
+       open("/home/ubuntu/jit/test/index_test.rb", O_RDONLY|O_CLOEXEC) = 8
+
+ https://manpages.ubuntu.com/manpages/bionic/en/man1/strace.1.html
+
+                                                        Status report
+
+Each one of these open() calls represents the operating system reading the named file from disk,
+and Jit will then calculate the SHA-1 hash of its contents. Such computations are expensive,
+and it would be ideal if we could make status do its job without needing to read the entire
+contents of the workspace — that’s where the timestamps stored in the index come in. After the
+following optimisation, we should see fewer calls to open() in this trace, meaning our program
+is spending less time waiting for the operating system to interact with the disk hardware.
+
+9.2.4. Timestamp optimisation
+We saw in Section 6.2, “Inspecting .git/index” that two of the values the index records for
+each file are its ctime and mtime, accurate to the nanosecond. A file’s ctime, or change time, is
+the most recent time at which its attributes — its owner, group, permissions, and so on — were
+changed. Its mtime, or modify time, is the last time at which its contents where changed. If
+these times are the same in the workspace and the index, then it’s a very good bet that the file
+has not been changed.
+
+Let’s add a test that does nothing but change a file’s mtime using the touch6 command, which
+is available in Ruby as FileUtils.touch7. This won’t change the behaviour of the existing
+code, but it will trigger it into executing an optimisation code path we’re about to add.
+       # test/command/status_test.rb
+
+             it "prints nothing if a file is touched" do
+               touch "1.txt"
+
+               assert_status ""
+             end
+
+The touch helper is another addition to the CommandHelper module.
+       # test/command_helper.rb
+
+          def touch(name)
+            FileUtils.touch(repo_path.join(name))
+          end
+
+The optimisation we want to make is to avoid reading and hashing a file if its timestamps
+match those stored in the index. We’ll change the Command::Status#check_index_entry
+method to add a check that returns if entry.times_match?(stat) is true. If we call
+through to reading the file and find that it has not in fact changed, then we call
+repo.index.update_entry_stat(entry, stat) to update the index so its timestamps match
+those on disk. This deals with the common pattern of changing a file, saving it, and then undoing
+your changes — the file’s timestamps will have changed but not its contents, so putting those
+new timestamps in the index will stop us reading the file again next time.
+       # lib/command/status.rb
+
+             def check_index_entry(entry)
+               stat = @stats[entry.path]
+
+                return @changed.add(entry.path) unless entry.stat_match?(stat)
+
+ https://manpages.ubuntu.com/manpages/bionic/en/man1/touch.1posix.html
+ https://docs.ruby-lang.org/en/2.3.0/FileUtils.html#method-c-touch
+
+                                        Status report
+
+           return if entry.times_match?(stat)
+
+           data = repo.workspace.read_file(entry.path)
+           blob = Database::Blob.new(data)
+           oid = repo.database.hash_object(blob)
+
+           if entry.oid == oid
+             repo.index.update_entry_stat(entry, stat)
+           else
+             @changed.add(entry.path)
+           end
+         end
+
+We’ve introduced a couple of new methods here. Index::Entry#times_match? takes a
+File::Stat and checks whether the times in the index entry are equal to the times read from
+the filesystem.
+     # lib/index/entry.rb
+
+         def times_match?(stat)
+           ctime == stat.ctime.to_i and ctime_nsec == stat.ctime.nsec and
+           mtime == stat.mtime.to_i and mtime_nsec == stat.mtime.nsec
+         end
+
+Index#update_entry_stat takes an Index::Entry and a File::Stat and delegates the call to
+Index::Entry#update_stat. The reason this method goes through Index is so we can set the
+@changed flag that signals that the updated index should be written to disk.
+
+     # lib/index.rb
+
+       def update_entry_stat(entry, stat)
+         entry.update_stat(stat)
+         @changed = true
+       end
+
+Index::Entry#update_stat takes the File::Stat and updates all its properties from the
+filesystem information, as though the file had been passed to Index#add.
+     # lib/index/entry.rb
+
+         def update_stat(stat)
+           self.ctime      = stat.ctime.to_i
+           self.ctime_nsec = stat.ctime.nsec
+           self.mtime      = stat.mtime.to_i
+           self.mtime_nsec = stat.mtime.nsec
+           self.dev        = stat.dev
+           self.ino        = stat.ino
+           self.mode       = Entry.mode_for_stat(stat)
+           self.uid        = stat.uid
+           self.gid        = stat.gid
+           self.size       = stat.size
+         end
+
+Finally, since we’re now updating the index, we need to load the index with
+Index#load_for_update and save it with Index#write_updates, and these calls should book-
+end the method calls that go and gather all the status information.
+
+                                                 Status report
+
+       # lib/command/status.rb
+
+             def run
+               @stats     = {}
+               @changed   = SortedSet.new
+               @untracked = SortedSet.new
+
+                repo.index.load_for_update
+
+                scan_workspace
+                detect_workspace_changes
+
+                repo.index.write_updates
+
+                @changed.each   { |path| puts " M #{ path }" }
+                @untracked.each { |path| puts "?? #{ path }" }
+
+               exit 0
+             end
+
+If you run jit status under strace again and look at the logs, you may see that unchanged files
+inside the project are still being opened, because the index doesn’t have up-to-date timestamps
+for those entries. On running it a second time, however, all these open() calls should be gone.
+If you check the index using hexdump before and after running status each time, you’ll also
+notice that the first call changes it — check the SHA-1 hash at the very end of the file.
+
+9.2.5. Deleted files
+In the absence of merge conflicts8, the other status that can be reported for files in the workspace
+is D, which means the file is in the index but does not exist in the workspace. This status is not
+particularly useful yet because we don’t have any command for removing files from the index9,
+but in the interests of completeness we’ll add support for this status.
+
+Here are a couple of simple examples: when a file is deleted, it should be listed with D in the
+column for index/workspace changes. If a directory is deleted, then all the files inside that
+directory in the index should be listed as deleted. Unlike the reporting of untracked files, all
+other statuses list only files, not directories. In this case, we don’t list a directory as being
+removed from the index, we list every file inside it.
+       # test/command/status_test.rb
+
+             it "reports deleted files" do
+               delete "a/2.txt"
+
+               assert_status <<~STATUS
+                 \ D a/2.txt
+               STATUS
+             end
+
+             it "reports files in deleted directories" do
+               delete "a"
+
+ Chapter 19, Conflict resolution
+ Section 21.1, “Removing files from the index”
+
+                                          Status report
+
+           assert_status <<~STATUS
+             \ D a/2.txt
+             \ D a/b/3.txt
+           STATUS
+         end
+
+We need one new helper method to make these tests work: CommandHelper#delete removes
+the file or directory passed to it.
+     # test/command_helper.rb
+
+       def delete(name)
+         FileUtils.rm_rf(repo_path.join(name))
+       end
+
+When we run these tests, we get an error, because Command::Status#check_index_entry is
+getting nil when it tries to fetch a File::Stat for the given path, so the first method it tries
+to call on this value generates an exception.
+       1) Error:
+     Command::Status::index/workspace changes#test_0006_reports deleted files:
+     NoMethodError: undefined method `size' for nil:NilClass
+         /Users/jcoglan/building-git/jit/lib/command/status.rb:46:in `check_index_entry'
+         # ...
+
+       2) Error:
+     Command::Status::index/workspace changes#test_0007_reports files in deleted directories:
+     NoMethodError: undefined method `size' for nil:NilClass
+         /Users/jcoglan/building-git/jit/lib/command/status.rb:46:in `check_index_entry'
+         # ...
+
+Until now, when we found a file that differed from the index, we just added its path to the
+@changed set. But now, we don’t want to print M for everything in this set, so we’re going
+to need to record what type of change was observed for each path. A path can actually have
+multiple types of change against it, for example, it may be added to the index but modified in
+the workspace. To support this, we’ll add a new hash called @changes whose values default to
+sets. This structure will map paths to a set of types of changes observed for that path. Untracked
+files will still be recorded separately.
+     # lib/command/status.rb
+
+         def run
+           @stats     = {}
+           @changed   = SortedSet.new
+           @changes   = Hash.new { |hash, key| hash[key] = Set.new }
+           @untracked = SortedSet.new
+
+            # ...
+
+We’ve been recording changes so far by calling @changed.add(entry.path) to add paths to
+the set of changed files. But now, we want to record the path and the type of change observed,
+so we’ll add a method for doing that. record_change adds the path to the @changed set, and it
+records the type of the change in the @changes hash.
+     # lib/command/status.rb
+
+                                          Status report
+
+         def record_change(path, type)
+           @changed.add(path)
+           @changes[path].add(type)
+         end
+
+The fix for the actual problem highlighted by the tests is to change check_index_entry so
+that, if we fail to find a File::Stat object for the entry’s path, we record a change type of
+:workspace_deleted and bail out.
+
+     # lib/command/status.rb
+
+         def check_index_entry(entry)
+           stat = @stats[entry.path]
+
+            unless stat
+              return record_change(entry.path, :workspace_deleted)
+            end
+
+The other places where we were logging changes also need to be updated to use record_change;
+we’ll use the name :workspace_modified for all changes that lead to an M being displayed.
+Here’s the check for size and mode:
+     # lib/command/status.rb
+
+            unless entry.stat_match?(stat)
+              return record_change(entry.path, :workspace_modified)
+            end
+
+And here’s the check for hashing the file contents:
+     # lib/command/status.rb
+
+            if entry.oid == oid
+              repo.index.update_entry_stat(entry, stat)
+            else
+              record_change(entry.path, :workspace_modified)
+            end
+
+Running the tests again, we see that the code is no longer crashing, but it is printing the wrong
+thing. The deleted files are being added to @changes, but so far everything in that set is printed
+with an M, whereas we need them to be printed with a D.
+        1) Failure:
+     Command::Status::index/workspace changes#test_0006_reports deleted files
+     --- expected
+     +++ actual
+     @@ -1,2 +1,2 @@
+     -" D a/2.txt
+     +" M a/2.txt
+      "
+
+       2) Failure:
+     Command::Status::index/workspace changes#test_0007_reports files in deleted directories
+     --- expected
+     +++ actual
+     @@ -1,3 +1,3 @@
+     -" D a/2.txt
+     - D a/b/3.txt
+
+                                          Status report
+
+     +" M a/2.txt
+     + M a/b/3.txt
+      "
+
+This can be solved by amending the code at the end of Command::Status#run that prints the
+results. Since it’s about to get a bit more complicated, I’ll extract it into its own method, to be
+called after updating the index and before exiting.
+     # lib/command/status.rb
+
+          def run
+            # ...
+
+            repo.index.write_updates
+
+            print_results
+            exit 0
+          end
+
+print_results iterates over the @changed set, but now invokes status_for to determine what
+to print next to each filename. Untracked files are printed with ?? after everything else, as
+before.
+     # lib/command/status.rb
+
+          def print_results
+            @changed.each do |path|
+              status = status_for(path)
+              puts "#{ status } #{ path }"
+            end
+
+            @untracked.each do |path|
+              puts "?? #{ path }"
+            end
+          end
+
+The status_for method takes a path, looks up its set of changes in the @changes hash, and
+returns a two-character string that’s appropriate for each path. The default value is two spaces;
+if the file was found to be deleted then we change its status to D; if it was found to be modified
+we change it to M.
+     # lib/command/status.rb
+
+          def status_for(path)
+            changes = @changes[path]
+
+            status = " "
+            status = " D" if changes.include?(:workspace_deleted)
+            status = " M" if changes.include?(:workspace_modified)
+
+            status
+          end
+
+This completes the workspace-related functionality of the status command. We’re still not
+able to see the differences between the latest commit and the index and so know what will go
+into the next commit, but we are able to see what has changed relative to the index, and that at
+least makes the workflow of running add . and then committing more tolerable.
+
+                                         Status report
+
+For a full picture, we need to compare the index to the last commit, and this requires developing
+some infrastructure for reading objects back out of the .git/objects database. We’ll be
+looking at that in the next chapter.
+

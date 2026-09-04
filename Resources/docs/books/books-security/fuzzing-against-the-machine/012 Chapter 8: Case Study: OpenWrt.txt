@@ -1,0 +1,321 @@
+                                   Case Study: OpenWrt
+                                    Full-System Fuzzing
+In this chapter, we will explore one of the most famous open source projects for Wi-Fi routers, OpenWrt
+(https://openwrt.org/). As of today (at the end of 2022), the OpenWrt project supports
+almost two thousand router models, and it is capable of bringing enhanced functionality with respect
+to stocking firmware for many models. For the sake of simplicity, in this chapter, we will compile the
+system for x86 because we want to reuse our fuzz harness (TriforceAFL). We will see how easy is to
+generate crashes to explore for vulnerability research.
+In this chapter, we will cover the following topics:
+
+   • OpenWrt
+   • Building the firmware
+   • Fuzzing the kernel
+   • Post-crash core dump training
+
+OpenWrt
+OpenWrt is a Linux-based embedded firmware, mainly for WiFi routers. In addition to the power of
+Linux (for example, firewalls, packet forwarding, routing, and packet mangling), OpenWrt provides a
+full filesystem and a package manager for installing useful extras and customizing our router the way
+that suits our needs. The following screenshot shows the web interface for configuration:
+138   Case Study: OpenWrt Full-System Fuzzing
+
+                                   Figure 8.1 – An example of the web interface
+
+      As you can see, there are numerous options and configuration possibilities available with OpenWrt.
+      Additionally, OpenWrt is now extending its development to modern routers that support speeds of up
+      to 2.5 Gbps and even 10 Gbps. While the x86 platform may not appear to be a realistic IoT option at
+      first glance, many network devices, including the official Zeek intrusion detection system from zeek.
+      org, use this architecture. Furthermore, due to the popularity of the architecture, the firmware can
+      run smoothly within QEMU and VirtualBox, which is great news!
+
+      Building the firmware
+      As mentioned before, we will download the latest version of OpenWrt and build it for x86. On a
+      modern Ubuntu/Debian distribution, you just need to follow these steps:
+
+        1.   Prepare the build environment:
+
+                sudo apt update
+                sudo apt install build-essential clang flex g++ gawk
+                gcc-multilib gettext git libncurses5-dev libssl-dev
+                python3-distutils rsync unzip zlib1g-dev
+
+        2.   Check out the most recent version of the firmware:
+
+                git clone  --depth 1 --branch v21.02.3 https://git.
+                openwrt.org/openwrt/openwrt.git
+                cd openwrt
+                                                                       Building the firmware   139
+
+  3.   Update the feeds:
+
+          /scripts/feeds update -a
+          /scripts/feeds install -a
+
+  4.   Configure the firmware image and the kernel:
+
+          make menuconfig #here you can select cross compilation to
+          other hardware if you'd like
+          make -j $(nproc) kernel_menuconfig
+
+          # Build the firmware image
+          make -j $(nproc) defconfig download clean world #the -j
+          parallelize compilation for your CPU
+
+The make menuconfig command will allow us to select the target hardware that we prefer. To
+give you an idea, we have available the following target boards:
+
+  # CONFIG_TARGET_sunxi is not set
+  # CONFIG_TARGET_apm821xx is not set
+  # CONFIG_TARGET_ath25 is not set
+  # CONFIG_TARGET_ath79 is not set
+  # CONFIG_TARGET_bcm27xx is not set //the bcm27 are raspberry pi
+  compatible
+  # CONFIG_TARGET_bcm53xx is not set
+  # CONFIG_TARGET_bcm47xx is not set
+  # CONFIG_TARGET_bcm4908 is not set
+  # CONFIG_TARGET_bcm63xx is not set
+  # CONFIG_TARGET_octeon is not set
+  # CONFIG_TARGET_gemini is not set
+  # CONFIG_TARGET_mpc85xx is not set
+  # CONFIG_TARGET_imx6 is not set
+  ...
+  CONFIG_TARGET_x86=y
+  CONFIG_TARGET_x86_64=y
+140   Case Study: OpenWrt Full-System Fuzzing
+
+      As you can see, I selected x86 as a reference platform for a few reasons. Firstly, my native hardware is
+      x86_64, so compiling will be simple (no need for cross-compilation). Secondly, we can use TriforceAFL as
+      our fuzz harness for full-system fuzzing since our kernel will run on QEMU without any modifications.
+      It’s worth noting, however, that there are many possible architectures to choose from, including the
+      Nvidia Tegra, which is a GPU architecture!
+      Once the build process is complete, you will find the different files resulting from the compilation in
+      openwrt/bin/targets/x86/64. A quick listing of the directory will show several files:
+
+        openwrt-21.02.3-x86-64-generic-kernel.bin  # this file is
+        important
+        openwrt-21.02.3-x86-64-generic-rootfs.tar.gz                  
+                                               openwrt-21.02.3-x86-64-
+        generic-squashfs-combined-efi.img.gz    openwrt-21.02.3-x86-64-
+        generic-squashfs-combined.img.gz
+        kernel-debug.tar.zst
+        openwrt-21.02.3-x86-64-generic-squashfs-rootfs.img.
+        gz          openwrt-21.02.3-x86-64-generic-ext4-combined-efi.
+        img.gz
+        openwrt-21.02.3-x86-64-generic.
+        manifest                        openwrt-21.02.3-x86-64-generic-
+        ext4-combined.img
+        openwrt-imagebuilder-21.02.3-x86-64.Linux-x86_64.tar.xz
+        openwrt-21.02.3-x86-64-generic-ext4-rootfs.img.gz
+        openwrt-sdk-21.02.3-x86-64_gcc-8.4.0_musl.Linux-x86_64.tar.xz
+
+      These files are various flavors of our firmware compiled and ready to be either tested, flashed, or
+      sent somewhere.
+
+      Testing the firmware in QEMU
+      For the sake of our journey, we will immediately run the firmware through QEMU to check whether
+      the compilation was successful.
+      Let’s first create a small disk for the emulator, just in case:
+
+        qemu-img create data.qcow2 2G
+        qemu-system-x86_64 -enable-kvm -M q35 -drive file=openwrt-
+        21.02.3-x86-64-generic-ext4-combined.img,id=d0,if=none -device
+        ide-hd,drive=d0,bus=ide.0 -drive file=data.qcow2,id=d1,if=none
+        -device ide-hd,drive=d1,bus=ide.1
+                                                                        Building the firmware   141
+
+This will result in the following window appearing:
+
+                               Figure 8.2 – Boot of OpenWrt in QEMU
+
+We have successfully compiled OpenWrt and booted it in QEMU, which means we’re now prepared
+to begin the fuzzing process.
+142   Case Study: OpenWrt Full-System Fuzzing
+
+      Extracting and preparing the kernel
+      The /boot/vmlinuz file corresponds to the openwrt-21.02.3-x86-64-generic-kernel.
+      bin file, the kernel that we will fuzz. To make a quick test, you can use the md5sum or sha256sum
+      commands inside the emulated image and on our compiled file to check that it’s exactly the same.
+      For the version, we set md5sum as f59f429b02f6fa13a6598491032715ce. As you can see
+      here, the file command output tells us what is exactly in the file:
+
+        $ file openwrt-21.02.3-x86-64-generic-kernel.bin
+        openwrt-21.02.3-x86-64-generic-kernel.bin: Linux kernel x86
+        boot executable bzImage, version 5.4.188 (builder@buildhost) #0
+        SMP Sat Apr 16 12:59:34 2022, RO-rootFS, swap_dev 0X4, Normal
+        VGA
+
+      As we can all see, our compiled kernel is bzImage (in Chapter 4, we explain the different kinds
+      of kernel images). After following this point, you will immediately see the beauty of tools such as
+      TriforceAFL. Before firing up the Docker image, let us extract the kernel symbols into a separate file.
+      During our compilation in openwrt/bin/targets/x86/64/debug, we will find a handy
+      vmlinux file, which is the uncompressed kernel with all the symbol information (the one within
+      bzImage is stripped) so by typing nm openwrt/bin/targets/x86/64/debug/vmlinux
+      > kallsyms, we will extract all the functions and their locations in the kernel binary.
+      Here’s an excerpt:
+
+        ffffffff81e09cd0 b aad_shift_arr
+        ffffffff8130cfe0 T __ablkcipher_walk_complete
+        ffffffff8130d530 T ablkcipher_walk_done
+        ffffffff8130d1d0 t ablkcipher_walk_next
+        ffffffff8130d6b0 T ablkcipher_walk_phys
+        ffffffff818bafc6 W abort
+        ffffffff810cc740 T abort_creds
+        ffffffff818ddda9 t abort_endio
+        ffffffff820ff859 T __absent_pages_in_range
+        ffffffff820ffd59 T absent_pages_in_range
+
+      Now, let’s prepare a directory with our kernel bzImage and the kallsysms file:
+
+        mkdir owrtKFuzz
+        mv kallsysm owrtKFuzz/
+        cp openwrt-21.02.3-x86-64-generic-kernel.bin owrtKFuzz/bzImage
+                                                                                  Fuzzing the kernel   143
+
+Before running the Docker image, let’s ensure the core dump pattern is correctly set and the CPU
+scaling governor is set to performance mode:
+
+  sudo -s
+  echo core >/proc/sys/kernel/core_pattern
+  cd /sys/devices/system/cpu
+  echo performance | tee cpu*/cpufreq/scaling_governor
+
+   Core dumps and CPU scaling
+   When running a fuzzer, there are two important configurations that we need to take care
+   of. Firstly, we need to consider core dumps. The fuzzer is very likely to cause our program
+   to crash, so we must configure our underlying operating system to handle these crashes and
+   save the relevant information so we can investigate them later on. Additionally, fuzzing is a
+   very demanding task, so we need to disable the CPU scaling governor to ensure that we have
+   top performance.
+
+Fuzzing the kernel
+Now, we are ready to launch our docker with TriforceAFL and ready to fuzz:
+
+  $: bunzip2 OWRT_x86.tar.bz2 && docker import OWRT_x86.tar
+  $: docker run --rm -it -v $(pwd)/owrtKFuzz:/krn iot-fuzz/
+  openwrt_x86
+  root@5930beaa2553:/TriforceLinuxSyscallFuzzer# md5sum krn/
+  bzImage
+  f59f429b02f6fa13a6598491032715ce  krn/bzImage
+
+As you can see, the Docker image is already equipped with our target kernel to fuzz. Now, we can
+launch the fuzzer, in this case, AFL 2.0, which is quite old and can be updated with some work:
+
+  $: ./runFuzz -M M0
+144   Case Study: OpenWrt Full-System Fuzzing
+
+      The runFuzz script contains some configuration and the startup of QEMU with 64 MB of memory
+      – see the code in bold:
+
+        # run fuzzer and qemu-system
+        $: export AFL_SKIP_CRASHES=1
+        $AFL/afl-fuzz $FARGS -t 500+ -i $INP -o outputs -QQ -- \
+            $AFL/afl-qemu-system-trace \
+            -L $AFL/qemu_mode/qemu/pc-bios \
+            -kernel $KERN/bzImage -initrd ./fuzzRoot.cpio.gz \
+            -m 64M -nographic -append "console=ttyS0" \
+            -aflPanicAddr "$PANIC" \
+            -aflDmesgAddr "$LOGSTORE" \
+            -aflFile @@
+
+        root@ae9e535fdd69:/TriforceLinuxSyscallFuzzer# ./runFuzz -M M0
+        make: 'inputs' is up to date.
+        ./makeRoot fuzzRoot driver
+        .
+        ./tmp
+        ./tmp/.empty
+        ...
+        10342 blocks
+        afl-fuzz 2.06b by <lcamtuf@google.com>
+        [+] You have 20 CPU cores and 4 runnable tasks (utilization:
+        20%).
+        [+] Try parallel jobs - see docs/parallel_fuzzing.txt.
+        [*] Checking core_pattern...
+        [*] Checking CPU scaling governor...
+        [*] Setting up output directories...
+        [*] Scanning 'inputs'...
+        ...
+
+        [+] All set and ready to roll!
+                                                                           Post-crash core dump triaging     145
+
+Our system call fuzzer is up and running on OpenWrt for x86:
+
+                      Figure 8.3 – AFL and QEMU in full-system with OpenWrt 21.02
+
+We have successfully launched our first fuzzing attempt, with a familiar architecture such as x86, using
+a real-world and widespread firmware such as OpenWrt.
+
+Post-crash core dump triaging
+Not all crashes are equal and not all crashes are exploitable. So, how do we proceed when AFL outputs
+a crash? We are going to show how to triage a crash in an older version of the Linux kernel, compatible
+with older CVEs.
+We will reuse the original crash from the TriforceAFL kernel so that it will be easier to examine crashes.
+In order to prepare the environment, we need to install a few utilities. One of the most useful tools is
+gdb, the Linux debugger. The process of analyzing a crash is similar to debugging a program using
+gdb, which is the standard debugger for Linux and can be used with a core dump.
+Our Triforce image, besides the original test cases, also contains their core dumps, so we can go and
+check them.
+146   Case Study: OpenWrt Full-System Fuzzing
+
+      Our Docker image comes with gdb, the most important thing is to have a kernel with symbols. Here,
+      we show the crash exercise. The runTest script leverages runFuzz. Hence, it keeps the same system
+      configuration and allows us to reproduce the status that generated a crash with AFL. Some of the
+      output is truncated so that it is readable:
+
+        $: ./runTest outputs/0/crashes/
+        id\:000000\,sig\:00\,src\:000228\,op\:havoc\,rep\:4
+
+        start up afl forkserver!
+        Input from outputs/0/crashes/
+        id:000000,sig:00,src:000228,op:havoc,rep:4 at time
+        1669464359.065249
+        test running in pid 453
+        call 175
+        arg 0: argNum 30000000001
+        arg 1: argNum 2000000
+        arg 2: argBuf 7efde0eb5044 from 1 bytes
+        contents: 68
+        arg 3: argBuflen 1
+        arg 4: argNum 0
+        arg 5: argNum 200000000ff
+        read 53 bytes, parse result 0 nrecs 1
+        syscall 175 (30000000001, 2000000, 7efde0eb5044, 1, 0,
+        200000000ff)
+        [    1.716794] driver invoked oom-killer: gfp_mask=0x2cc2(GFP_
+        KERNEL|__GFP_HIGHMEM|__GFP_NOWARN), order=0, oom_score_adj=0
+        [    1.716794] CPU: 0 PID: 973 Comm: driver Not tainted 5.4.188
+        #0
+        [    1.716794] Hardware name: QEMU Standard PC (i440FX + PIIX,
+        1996), BIOS rel-1.8.1-0-g4adadbd-20150316_085822-nilsson.home.
+        kraxel.org 04/01/2014
+        [    1.716794] Call Trace:
+        [    1.716794]  0xffffffff818f69d9
+        [    1.716794]  0xffffffff818be5fd
+        ...
+        [    1.716794] Out of memory and no killable processes...
+        [    1.716794] Kernel panic - not syncing: System is deadlocked
+        on memory
+                                                                                            Summary      147
+
+  [    1.716794] Kernel Offset: disabled
+  [    1.716794] Rebooting in 1 seconds..
+
+Once we have replicated a crash, we can review the log output (highlighted in the code block in bold),
+which includes syscall 175 (30000000001, 2000000, 7efde0eb5044, 1, 0,
+200000000ff), along with its arguments. This information can help us determine which syscall
+caused the crash and what arguments were used. The first step is to identify which syscall corresponds
+to the number 175. In our case, it’s due to OpenWrt malfunctioning because the machine only has
+64 MB of RAM, and the init_module syscall is unable to load a driver module. This is confirmed
+by the dmesg log that follows:
+
+  [    1.716794] driver invoked oom-killer
+
+The out-of-memory killer (reaper) was triggered and caused our kernel to crash. If you use our AFL
+Docker image with the default settings, you should be able to reproduce this effect easily.
+
+Summary
+In this chapter, we have run the Linux kernel of OpenWrt within QEMU and fuzzed it with AFL. We
+have explored crashes and understood their structure and impact.
+In the following chapter, we will propose a similar exercise on a different architecture to understand
+the differences in the instructions and the similarities between the crashes.

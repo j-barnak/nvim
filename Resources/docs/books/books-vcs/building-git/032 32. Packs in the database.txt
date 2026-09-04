@@ -1,0 +1,1380 @@
+32. Packs in the database
+At the end of Chapter 29, Pushing changes we tried out our new push command and saw that
+git-receive-pack saved our pack directly to disk in the directory .git/objects/pack, rather
+than extracting its contents into a single file per object. It does this because packs are a much
+more efficient representation of the contents of a version control repository than individual
+files, for two reasons.
+
+First, many of the objects in a repository will have large blocks of content in common, and
+storing each version of a file in full means we’re storing a lot of duplicate content. We used
+delta compression1 to exploit this duplication and make packs much smaller.
+
+The second reason is down to how filesystems work. When the computer allocates storage
+space for a file, it does so in fixed-size blocks2, rather than storing each file exactly end-to-
+end. This is makes it easy to allow files to change size without chopping them into lots of tiny
+pieces. Imagine some files were stored with no space between the end of one file and the start
+of another:
+
+Figure 32.1. Files stored end-to-end
+
+             +-----------+---------------------+--------------+
+             |hello world|require "digest/sha1"|class Database|
+             +-----------+---------------------+--------------+
+
+If we want to add some more content to the end of the first file, we could store that somewhere
+else and link the two chunks back together later. However, reading files goes faster when each
+file is stored contiguously on disk, without fragmentation. To avoid fragmenting the file, we
+should move all the files after it to create space, but that is a costly operation. Instead, files
+are allocated in blocks, so a file may not use all its allocated space, but it’s easier to resize it
+before more blocks are required.
+
+Figure 32.2. Files stored in fixed-size blocks
+
+             +------------------------+------------------------+------------------------+
+             |hello world             |require "digest/sha1"   |class Database          |
+             +------------------------+------------------------+------------------------+
+
+Right now, I am using a MacBook with the stock filesystem settings, and it allocates at least 4
+KiB (4,096 bytes) for each file. Using find and du3 we can see how many files are currently
+stored in .git/objects, and how much disk space they’re taking up.
+       $ find .git/objects -type f | wc -l
+
+       $ du -hd 0 .git/objects
+       6.6M    .git/objects
+
+6.6 MiB is 4 KiB for each file, but it turns out that all the files in .git/objects are actually
+smaller than 4 KiB. In fact the median size is around 400 bytes, just one tenth of the space
+  Chapter 30, Delta compression
+  https://en.wikipedia.org/wiki/Block_(data_storage)
+  https://manpages.ubuntu.com/manpages/bionic/en/man1/du.1.html
+
+                                                 Packs in the database
+
+allocated for the file. The following command shows us the total size of the content of the files;
+                                           4                         5
+stat -f %z prints each file’s size in bytes , and we use a little awk program to sum these values.
+
+       $ find .git/objects -type f | xargs stat -f '%z' | awk '{ s += $1 } END { print s }'
+
+This is just 891 KiB of actual content, for which we’ve used 6.6 MiB of disk space. As our
+repositories get larger this may become a serious problem, and a more compact storage format
+becomes necessary.
+
+If we push the current history to another repository, we can see the size of the pack that’s sent
+over the wire.
+       $ jit init ../push-test
+
+       $ jit push file://$PWD/../push-test master
+       Counting objects: 100% (1696/1696), done.
+       Compressing objects: 100% (1662/1662), done.
+       Writing objects: 100% (1696/1696), 333.11 KiB, done.
+
+Both .git/objects files and packs use zlib compression, but delta compression between
+objects has shrunk 891 KiB of content down to 333 KiB. Compared to the 6.6 MiB that .git/
+objects is currently consuming, this represents a 95% reduction in size. In a packed repository,
+it’s not uncommon for the pack containing the entire history to consume less space than the
+latest commit when decompressed and checked out into the workspace.
+
+To use packs as a primary storage system for repositories, we need two new pieces of
+infrastructure. First, recall that packs do not contain object IDs — the IDs are regenerated from
+the content by the receiving repository. In order to find objects quickly, we’ll need an index
+saying where in the file each object begins, otherwise we’d need to scan every object in a pack
+from the beginning until we found one that hashed to the requested ID. Second, we need to
+extend the Database class so that it can serve objects from packs, as well as from individual
+object files, without any changes to the classes that call the Database.
+
+32.1. Indexing packs
+Currently, the recv_packed_objects method used by fetch and receive-pack uses the
+Pack::Unpacker class to read each object out of the pack and save it to the database, as a file
+in .git/objects. When a delta is encountered, its base object is reloaded from disk and used
+to expand the delta.
+       # lib/command/shared/receive_objects.rb
+
+             def recv_packed_objects(prefix = "")
+               stream   = Pack::Stream.new(@conn.input, prefix)
+               reader   = Pack::Reader.new(stream)
+               progress = Progress.new(@stderr) unless @conn.input == STDIN
+
+               reader.read_header
+
+ https://manpages.ubuntu.com/manpages/bionic/en/man1/stat.1.html
+ https://manpages.ubuntu.com/manpages/bionic/en/man1/awk.1posix.html
+
+                                       Packs in the database
+
+                unpacker = Pack::Unpacker.new(repo.database, reader, stream, progress)
+                unpacker.process_pack
+              end
+
+To keep the pack on disk rather than unpacking it into individual objects, we’ll need to allocate
+a temporary file in .git/objects/pack. Once the whole pack has been received, we’ll rename
+this temporary file to pack-<hash>.pack, where <hash> is the checksum at the end of the file.
+This ensures each pack we receive gets a unique filename, just like objects do. Next to this file
+we’ll generate another called pack-<hash>.idx. This will contain an index of all the object IDs
+that exist in the pack, and where each object begins. Using this index we’ll be able to look up the
+offset for an object, then seek() to that position in the .pack file and read the requested record.
+
+32.1.1. Extracting TempFile
+To create these temporary files, we can reuse some logic we already created in the very
+first commit6. The Database#write_object method contains code that allocates a file called
+tmp_obj_<random_id>, writes to it, then renames it. This process makes the creation of the
+object file appear atomic.
+       # lib/database.rb
+
+           TEMP_CHARS = ("a".."z").to_a + ("A".."Z").to_a + ("0".."9").to_a
+
+           def write_object(oid, content)
+             path = object_path(oid)
+             return if File.exist?(path)
+
+              dirname   = path.dirname
+              temp_path = dirname.join(generate_temp_name)
+
+              begin
+                flags = File::RDWR | File::CREAT | File::EXCL
+                file = File.open(temp_path, flags)
+              rescue Errno::ENOENT
+                Dir.mkdir(dirname)
+                file = File.open(temp_path, flags)
+              end
+
+              compressed = Zlib::Deflate.deflate(content, Zlib::BEST_SPEED)
+              file.write(compressed)
+              file.close
+
+             File.rename(temp_path, path)
+           end
+
+           def generate_temp_name
+             "tmp_obj_#{ (1..6).map { TEMP_CHARS.sample }.join("") }"
+           end
+
+Let’s extract all the file-handling logic into a new class called TempFile, leaving only the code
+for writing the necessary content and selecting the ultimate name of the file.
+       # lib/database.rb
+
+ Section 3.2.1, “Storing blobs”
+
+                                     Packs in the database
+
+       def write_object(oid, content)
+         path = object_path(oid)
+         return if File.exist?(path)
+
+         file = TempFile.new(path.dirname, "tmp_obj")
+         file.write(Zlib::Deflate.deflate(content, Zlib::BEST_SPEED))
+         file.move(path.basename)
+       end
+
+TempFile will be created taking a Pathname for the directory in which to create the file, and the
+prefix of the file’s name. It appends a random ID to that name and stores the result as @path.
+     # lib/temp_file.rb
+
+     class TempFile
+       TEMP_CHARS = ("a".."z").to_a + ("A".."Z").to_a + ("0".."9").to_a
+
+       def initialize(dirname, prefix)
+         @dirname = dirname
+         @path    = @dirname.join(generate_temp_name(prefix))
+         @file    = nil
+       end
+
+       def generate_temp_name(prefix)
+         id = (1..6).map { TEMP_CHARS.sample }.join("")
+         "#{ prefix }_#{ id }"
+       end
+
+       # ...
+     end
+
+Its write method opens the file for writing if it does not already exist, implicitly creating its
+parent directory, before writing the given content to it. move closes the open file and renames
+it as requested.
+     # lib/temp_file.rb
+
+       def write(data)
+         open_file unless @file
+         @file.write(data)
+       end
+
+       def move(name)
+         @file.close
+         File.rename(@path, @dirname.join(name))
+       end
+
+       def open_file
+         flags = File::RDWR | File::CREAT | File::EXCL
+         @file = File.open(@path, flags)
+       rescue Errno::ENOENT
+         Dir.mkdir(@dirname)
+         retry
+       end
+
+This class is a sufficient abstraction for us to store packs and indexes as we receive them.
+
+                                      Packs in the database
+
+32.1.2. Processing the incoming pack
+In Git, a process that’s receiving a pack will sometimes unpack it into individual objects, and
+sometimes it will store it verbatim and generate an index for it. It decides on a course of
+action using the unpackLimit variables: fetch.unpackLimit controls what the fetch command
+does, and receive.unpackLimit controls receive-pack. Both of these default to the value of
+transfer.unpackLimit if it is set, or 100 otherwise.
+
+As the pack begins with a header giving the number of objects it contains, the receiver can
+decide how to process the pack before reading any of its contents. If the number of objects is
+less than the unpack limit, then it’s extracted into individual files. Otherwise, the pack is stored
+directly.
+
+At first, we won’t use the default value of 100. We currently do not have any logic to let
+the Database read objects from packs, so saving them to disk is fairly useless. We’ll only
+do this if an unpackLimit variable is explicitly set, letting us opt into this behaviour and test
+it, before making it the default. In the fetch command, we’ll pass the relevant variable into
+recv_packed_objects:
+
+     # lib/command/fetch.rb
+
+          def recv_objects
+            unpack_limit = repo.config.get(["fetch", "unpackLimit"])
+            recv_packed_objects(unpack_limit, Pack::SIGNATURE)
+          end
+
+And similarly in receive-pack:
+     # lib/command/receive_pack.rb
+
+          def recv_objects
+            @unpack_error = nil
+            unpack_limit = repo.config.get(["receive", "unpackLimit"])
+            recv_packed_objects(unpack_limit) if @requests.values.any?(&:last)
+            report_status("unpack ok")
+          rescue => error
+            @unpack_error = error
+            report_status("unpack #{ error.message }")
+          end
+
+The ReceiveObjects module can now accept this argument and make a decision about
+processing the pack. Instead of always creating a Pack::Unpacker to handle the incoming
+stream, the select_processor_class method now chooses between Pack::Unpacker and the
+new class Pack::Indexer, based on the given unpack limit or transfer.unpackLimit. Once a
+class is selected, it’s instantiated as before with a Database, Pack::Reader, Pack::Stream and
+Progress and then we call process_pack on the resulting object.
+
+     # lib/command/shared/receive_objects.rb
+
+          def recv_packed_objects(unpack_limit = nil, prefix = "")
+            stream   = Pack::Stream.new(@conn.input, prefix)
+            reader   = Pack::Reader.new(stream)
+            progress = Progress.new(@stderr) unless @conn.input == STDIN
+
+                                     Packs in the database
+
+           reader.read_header
+
+           factory   = select_processor_class(reader, unpack_limit)
+           processor = factory.new(repo.database, reader, stream, progress)
+
+           processor.process_pack
+         end
+
+         def select_processor_class(reader, unpack_limit)
+           unpack_limit ||= transfer_unpack_limit
+
+           if unpack_limit and reader.count > unpack_limit
+             Pack::Indexer
+           else
+             Pack::Unpacker
+           end
+         end
+
+         def transfer_unpack_limit
+           repo.config.get(["transfer", "unpackLimit"])
+         end
+
+All we need now is a Process::Indexer class that has the same interface for new and
+process_pack as Pack::Unpacker, but does something different with its inputs.
+
+32.1.3. Generating the index
+Whereas Pack::Unpacker converts the incoming pack into a set of files in .git/objects, each
+object in its own file, the job of Pack::Indexer is to write the pack directly to disk in .git/
+objects/pack, and generate an index for it. To do this, it will need to extract information from
+the pack as it’s streaming in. It will need to determine each object’s ID, which means any
+deltified objects need to be reconstructed and then hashed, and it will need to record how many
+bytes into the pack each object begins, so it can be found without re-parsing the entire file.
+
+We’ll start by storing the inputs the Indexer class is given, and creating some variables to hold
+the metadata that’s gathered while scanning the pack. @index will store the ID and starting
+offset of each non-delta object, and @pending will store a list of positions of deltified objects
+that are based on a certain ID. A first scan through the pack will populate these structures, and
+we can make a second pass to reconstruct any pending deltified objects.
+     # lib/pack/indexer.rb
+
+     module Pack
+       class Indexer
+
+         def initialize(database, reader, stream, progress)
+           @database = database
+           @reader   = reader
+           @stream   = stream
+           @progress = progress
+
+           @index   = {}
+           @pending = Hash.new { |hash, oid| hash[oid] = [] }
+
+           @pack_file   = PackFile.new(@database.pack_path, "tmp_pack")
+
+                                      Packs in the database
+
+           @index_file = PackFile.new(@database.pack_path, "tmp_idx")
+         end
+
+         # ...
+
+       end
+     end
+
+Database#pack_path returns the path to the directory where packs and their indexes should
+be stored:
+     # lib/database.rb
+
+       def pack_path
+         @pathname.join("pack")
+       end
+
+The PackFile class is a decorator for the TempFile class that computes the SHA-1 hash of the
+written content and stores it at the end of the file. Both the .pack and .idx file end with a hash
+of their contents, and the hash of the .pack is used to name both the final files.
+     # lib/pack/indexer.rb
+
+         class PackFile
+           attr_reader :digest
+
+             def initialize(pack_dir, name)
+               @file   = TempFile.new(pack_dir, name)
+               @digest = Digest::SHA1.new
+             end
+
+             def write(data)
+               @file.write(data)
+               @digest.update(data)
+             end
+
+           def move(name)
+             @file.write(@digest.digest)
+             @file.move(name)
+           end
+         end
+
+The Pack::Indexer#process_pack method is what recv_packed_objects calls to set the
+indexer or unpacker running. In this class, it performs a few steps that can be divided into three
+phases. In the first phase, we read in the incoming pack, write its objects to disk, and while
+doing this we gather information about the pack’s contents. In the second phase, we use the
+non-delta records to expand any deltified objects that depend on them to fully recover all the
+pack’s object IDs. Finally, the generated index is written to a file stored next to the pack.
+     # lib/pack/indexer.rb
+
+         def process_pack
+           write_header
+           write_objects
+           write_checksum
+
+             resolve_deltas
+
+                                                   Packs in the database
+
+               write_index
+             end
+
+The write_header method is much the same as that in Pack::Writer. We take the object count
+we’ve read from the beginning of the pack and write it to the file.
+       # lib/pack/indexer.rb
+
+             def write_header
+               header = [SIGNATURE, VERSION, @reader.count].pack(HEADER_FORMAT)
+               @pack_file.write(header)
+             end
+
+The more interesting work begins in write_objects. For the number of objects given in
+the pack’s header, we call index_object, wrapped in a progress meter that shows how
+much data we’ve received using the offset property from the Pack::Stream. index_object
+records this offset, which is the position in the pack that the next object begins. It then calls
+Reader#read_record via Stream#capture to parse the next object and get the chunk of the
+pack data that represents it. The data is written to the pack file on disk, and then we take action
+based on the kind of record we received.
+
+If the object is a Record, a non-delta object, then we can immediately hash it and store the offset
+and CRC327 for the object’s ID. The index stores a CRC32 for each record as a checksum on its
+pack data, so that records can potentially be copied in compressed form between packs, without
+being expanded and then re-compressed. If the object is a RefDelta, then we can’t calculate its
+ID yet as that would require expanding it. So, we just store its offset and CRC32 against the
+ID of the object it’s based on in the @pending set.
+       # lib/pack/indexer.rb
+
+             def write_objects
+               @progress&.start("Receiving objects", @reader.count)
+
+               @reader.count.times do
+                 index_object
+                 @progress&.tick(@stream.offset)
+               end
+               @progress&.stop
+             end
+
+             def index_object
+               offset       = @stream.offset
+               record, data = @stream.capture { @reader.read_record }
+               crc32        = Zlib.crc32(data)
+
+                @pack_file.write(data)
+
+                case record
+                when Record
+                  oid = @database.hash_object(record)
+                  @index[oid] = [offset, crc32]
+                when RefDelta
+                  @pending[record.base_oid].push([offset, crc32])
+                end
+
+ https://en.wikipedia.org/wiki/Cyclic_redundancy_check
+
+                                      Packs in the database
+
+         end
+
+We don’t expand deltas right away, as that requires retrieving the data for the base object. We
+don’t want to hold the whole pack in memory just in case each object might be used as a delta
+base later on, so we instead record this information in the first pass and resolve deltas after all
+the pack data has been stored on disk.
+
+Once all the pack’s objects have been read, write_checksum writes the hash at the end of
+the pack file and renames it, using the hash to generate the filename. To complete the next
+phase, we’ll want to retrieve objects from this file, so we replace our current Reader — the one
+connected to the incoming data stream — with a new one that reads from the file on disk.
+     # lib/pack/indexer.rb
+
+         def write_checksum
+           @stream.verify_checksum
+
+            filename = "pack-#{ @pack_file.digest.hexdigest }.pack"
+            @pack_file.move(filename)
+
+           path    = @database.pack_path.join(filename)
+           @pack   = File.open(path, File::RDONLY)
+           @reader = Reader.new(@pack)
+         end
+
+We can now reload records from the pack by seeking to a known offset in the pack file, and
+asking the new Reader to read from that position.
+     # lib/pack/indexer.rb
+
+         def read_record_at(offset)
+           @pack.seek(offset)
+           @reader.read_record
+         end
+
+32.1.4. Reconstructing objects
+After writing the whole pack out to disk, we have a set of metadata about its contents. @index
+contains the object IDs of all non-delta objects and their offsets in the pack file, and @pending
+contains the IDs of all objects used as delta bases, with the offsets of all the objects based on
+each ID. To reconstruct all the delta objects and discover their IDs, we can take all the non-
+delta objects and use them to expand all the deltas based on them.
+     # lib/pack/indexer.rb
+
+         def resolve_deltas
+           deltas = @pending.reduce(0) { |n, (_, list)| n + list.size }
+           @progress&.start("Resolving deltas", deltas)
+
+           @index.to_a.each do |oid, (offset, _)|
+             record = read_record_at(offset)
+             resolve_delta_base(record, oid)
+           end
+           @progress&.stop
+         end
+
+                                      Packs in the database
+
+resolve_delta_base takes a Pack::Record and its object ID, and checks if there are any
+pending deltas that are based on it — if @pending does not contain the given ID, then we can
+return. Otherwise, for each delta record that’s based on this object, we call resolve_pending.
+     # lib/pack/indexer.rb
+
+          def resolve_delta_base(record, oid)
+            pending = @pending.delete(oid)
+            return unless pending
+
+            pending.each do |offset, crc32|
+              resolve_pending(record, offset, crc32)
+            end
+          end
+
+resolve_pending takes a Record containing the data for the base object, and the offset and
+CRC32 of the delta record. It reloads the RefDelta from the pack on disk, and uses Expander
+to rebuild the deltified object’s original content. From this we can build a new Record and hash
+it to get its object ID, and we can store this ID and the offset into @index.
+
+Not all deltas will be based on non-delta records — some will be based on objects that
+are themselves deltified. So, while we have the reconstructed object in memory, and
+we’ve discovered its ID, we can use it to expand further deltas via a recursive call to
+resolve_delta_base, passing the Record we just generated. In this way, long chains of
+dependent deltas can be rebuilt.
+     # lib/pack/indexer.rb
+
+          def resolve_pending(record, offset, crc32)
+            delta = read_record_at(offset)
+            data   = Expander.expand(record.data, delta.delta_data)
+            object = Record.new(record.type, data)
+            oid    = @database.hash_object(object)
+
+            @index[oid] = [offset, crc32]
+            @progress&.tick
+
+            resolve_delta_base(object, oid)
+          end
+
+Note that since this process of resolving deltas is done once the whole pack is on disk, it does not
+actually matter if a delta record appears before the object it’s based on — it’s resilient against
+implementations that don’t sort their packs effectively. However, to make it easier for other
+clients to read packs, we’ll continue to have the Writer class sort objects so that deltas always
+appear after their base objects.
+
+At the end of this process, @pending should be empty and @index should contain the offset of
+every object in the pack, and we can now write that information out to a file.
+
+32.1.5. Storing the index
+We now have a structure mapping every object ID in the pack to its offset and the CRC32 of
+its packed bytes. In Ruby, this structure looks something like this:
+     {
+
+                                                    Packs in the database
+
+           "cffacfe48418bf5b6e2821d760b6685e9e117a1a" => [ 12, 1483935663],
+           "2d2735624992d5ee494b2b3692287bae3500360c" => [ 613, 994999864],
+           "fe3702f7d6b929af0612da7597a395178920ab33" => [1120, 3642074317],
+           "54be6da57e3212fb5108b0c7cfd72739f1c4dfe8" => [2110, 4083994585],
+           "22223621ee0300b08cc89f154cffc686653b6aaa" => [2476, 2463337663],
+           "7e19f7a6ce33d3755c3f75c3cc74c5757b055da7" => [2944, 979754138],
+           "8dd4387d6802bc3a1e1ec1c795de27bbf4c9aaf7" => [3863, 1020950003],
+           "e41723ba17427114634aeca6ee1806933e734369" => [4395, 3322252285],
+           # ...
+       }
+
+This structure is a hash table8, and most high-level languages provide some built-in form of it.
+Given some key, this structure is designed to take constant time on average to locate the key’s
+value, meaning it takes the same amount of time no matter how many entries are present. If this
+data was in an array, it would take linear time to find an entry as we’d need to search through
+the array one place at a time.
+
+We’ve already encountered a couple of file formats that represent data that we hold in memory
+as tables: the .git/index file which lists every checked-out file in the workspace, and tree
+objects, which list the version of each file in a directory. These files are usually relatively small,
+and so reading the whole file from disk and turning it into a table is fine. In contrast, pack
+indexes can be very large, for example, a recent clone of the Linux kernel repository results in
+a pack file of over 2 GiB, and its index is almost 200 MiB. The .git/index for a recent commit
+is around 6 MiB. The .git/index size grows with the number of files in the latest commit,
+whereas pack indexes grow with the number of objects in the entire history.
+
+We need a file format that lets us look up an object ID quickly without reading the entire file
+from disk. Specifically we need it to be faster than a linear scan that reads items sequentially
+until it finds the right ID. The most common way to do this is to store the values in sorted
+order, for example:
+           0017c6dc181fd13df81fe804c21b82af0f6db5f2
+           001ddd0b5ed61683f8d75fe16c661f90893728dc
+           002f3d6c5bd6de6715c3a44c7c56711b823532ee
+           007b7c8aca328362060effc2697b6ff6f4653ef0
+           0148dff020d1ce12464239c792e23820183c0829
+           016b21200c0ab572aec57315c9106e312de92cc8
+           01dbb5bd6aa8d19294402104f2d009dc2c92d075
+           02b807f0364391f42cbca11eaed97470b4232ea4
+           ...
+           fe3702f7d6b929af0612da7597a395178920ab33
+           fe47a1517afc2d2c44c47faafb53edac4d690019
+           ff01d05dc53ce90f85cd8cdeebbb4fdd93d5f4dc
+           ff3734e5558bd9d9f909c8f7a0eddeaaf46e9e62
+           ff47f6fabf7ef3e7c5e5be150d5f398607458899
+           ff67445e02dadd2c575239c3386dc2d989591219
+           ffd3bad2a54f2efe27d8f85334a9000b33403d3e
+           fff1eeb9a60df7667516ede342300f67362be8a6
+
+Sorting the IDs lets us use binary search9 to find items: we begin in the middle of the list, and
+see if the value there is higher or lower than the one we’re looking for. If it’s too high, then we
+narrow the search to the first half of the list, too low and we search the second half. We keep
+ https://en.wikipedia.org/wiki/Hash_table
+ https://en.wikipedia.org/wiki/Binary_search_algorithm
+
+                                        Packs in the database
+
+cutting the list in half until we either find what we were looking for, or reduce the list down to
+one element and discover the list does not contain the desired value.
+
+This takes logarithmic time; a list of length 16 will be cut in half an average of 4 times to find
+a single item, a list of 32 will take 5 times, a list of 64 will take 6 times and so on. Rather than
+doubling the number of steps required, doubling the size of the list only adds one more step to
+the search, so it scales very well as the index grows. This is exactly what databases do to index
+tables: they create a structure that allows particular keys to be found quicker than it would take
+via a row-by-row scan of the whole table.
+
+To make things even faster, Git pack indexes begin with a fixed-size 256-element list that says
+how many objects exist with IDs beginning 00, 01, 02 and so on up to ff. Each value in this
+list tells us the position in the full sorted list that each ID prefix ends at. For example, say the
+list for our example pack contained the following numbers:
+           4      7      9     12     16     17     19     21     26     28    30     41
+          44     50     54     58     60     62     64     67     72     78    83     86
+          88     92    100    104    108    111    114    116    120    123   130    136
+         140    144    150    157    159    160    164    167    176    181   187    189
+         190    193    194    196    198    204    207    211    214    218   221    224
+         229    230    235    238    241    246    248    249    251    257   262    266
+         268    269    273    276    280    282    285    287    290    294   295    296
+         301    304    309    312    314    317    324    329    329    332   336    339
+         342    348    351    354    360    362    364    370    372    377   379    382
+         386    389    393    398    401    405    412    415    416    416   420    423
+         427    430    435    438    438    438    443    447    450    455   458    459
+         462    466    470    475    479    481    483    488    493    495   501    506
+         510    512    512    515    516    519    522    524    528    532   539    543
+         546    548    548    554    557    561    565    568    569    573   576    578
+         582    585    590    595    597    599    602    603    608    615   620    625
+         630    632    635    644    645    648    651    655    659    662   665    667
+         671    675    678    680    683    685    691    698    700    708   709    713
+         715    715    717    721    723    728    730    734    738    739   742    746
+         750    754    755    759    763    764    766    777    779    784   789    794
+         798    804    808    813    814    814    816    823    827    832   838    840
+         843    848    858    858    860    868    870    873    875    884   893    897
+         899    901    903    909
+
+Say we want to find object 0148dff…. Its prefix is 01, and the table above tells us that these
+IDs begin at position 4 and end before position 7. Similarly, to find fe47a15…, we’d look at the
+prefix fe, the penultimate item in the table, and see that this ID must be somewhere between
+position 901 and 903 in the full list. Splitting the full list into 256 buckets effectively skips 8
+rounds of cutting the list in half, and also gives us an easily accessible count of the objects the
+pack contains.
+
+Git calls this initial structure the fanout table. After this it writes three further lists to the file:
+the full sorted list of object IDs, which are 20 bytes each, then the CRC32 of each object in
+corresponding order, using 4 bytes per number, and finally the offset of each object, again using
+4-byte numbers. If the pack is especially large and an offset is larger than 31 bits (i.e. the pack
+is larger than 4 GiB), then the offset is added to a list of 8-byte numbers at the end of the index,
+and its position in that list is stored in the main offset list instead.
+
+To write the @index to disk then, we perform the following steps: we generate a sorted list of
+all the IDs in the pack, then we write the object table: the 256-value fanout table and the full
+
+                                     Packs in the database
+
+list of IDs. After that we write the CRC32 and offset lists, and we finish the file off with the
+checksum of the .pack file.
+     # lib/pack/indexer.rb
+
+         def write_index
+           @object_ids = @index.keys.sort
+
+           write_object_table
+           write_crc32
+           write_offsets
+           write_index_checksum
+         end
+
+Writing the object table requires first writing a header that identifies this as a version-2 pack
+index file. VERSION has the value 2, and IDX_SIGNATURE is a special value FF744F6316. This is
+chosen because version-1 packs begin with the fanout table and no header, and FF744F6316 is
+an extremely unlikely value for the first fanout bucket given this is near the maximum number
+of objects a single index can hold.
+
+Having written the header, we need to build the fanout table. We first build a list of the number
+of IDs that begin with each prefix from 00 to ff, and store those in counts. Then we iterate
+over counts to generate a running total, and write each value of this total to the file as we go
+through the buckets. After the fanout table, we write all the object IDs, packed to 20 bytes.
+     # lib/pack/indexer.rb
+
+         def write_object_table
+           header = [IDX_SIGNATURE, VERSION].pack("N2")
+           @index_file.write(header)
+
+           counts = Array.new(256, 0)
+           total = 0
+
+           @object_ids.each { |oid| counts[oid[0..1].to_i(16)] += 1 }
+
+           counts.each do |count|
+             total += count
+             @index_file.write([total].pack("N"))
+           end
+
+           @object_ids.each do |oid|
+             @index_file.write([oid].pack("H40"))
+           end
+         end
+
+Writing the CRC32 values is straightforward, we simply iterate over the object IDs in order,
+grab the CRC32 for each one, and write it as a 4-byte big-endian number.
+     # lib/pack/indexer.rb
+
+         def write_crc32
+           @object_ids.each do |oid|
+             crc32 = @index[oid].last
+             @index_file.write([crc32].pack("N"))
+           end
+
+                                      Packs in the database
+
+         end
+
+Writing the offsets is a little more complicated. We still iterate over the object IDs as we did
+in the previous method, but now we need to check each offset we have stored. If it’s less than
+IDX_MAX_OFFSET, which is 8000000016, then we can write it into the first 4-byte offset list. If
+it’s higher than this value, we push it onto the large_offsets array, and write its position in the
+large_offsets array, after a bitwise-or with IDX_MAX_OFFSET which sets the most-significant
+bit and identifies this offset as being stored in the extended list. After writing all the normal
+offsets as 4-byte integers, we write out the large offsets as 8-byte values — Q> is the pack
+formatting instruction for a big-endian 64-bit unsigned integer.
+     # lib/pack/indexer.rb
+
+         def write_offsets
+           large_offsets = []
+
+            @object_ids.each do |oid|
+              offset = @index[oid].first
+
+              unless offset < IDX_MAX_OFFSET
+                large_offsets.push(offset)
+                offset = IDX_MAX_OFFSET | (large_offsets.size - 1)
+              end
+              @index_file.write([offset].pack("N"))
+            end
+
+           large_offsets.each do |offset|
+             @index_file.write([offset].pack("Q>"))
+           end
+         end
+
+Finally, we write the checksum from the .pack file, and rename the .idx file so its name
+matches that of the pack it represents.
+     # lib/pack/indexer.rb
+
+         def write_index_checksum
+           pack_digest = @pack_file.digest
+           @index_file.write(pack_digest.digest)
+
+           filename = "pack-#{ pack_digest.hexdigest }.idx"
+           @index_file.move(filename)
+         end
+
+This index file can now be used to find out whether a pack contains a given object ID, and find
+its offset in the pack if so. That means we can use these files to retrieve objects, rather than
+reading from the individual files generated by the Unpacker.
+
+32.2. A new database backend
+In order to make the packs we’re storing on disk useful, and enable this behaviour by default,
+we need the rest of the Jit codebase to be able to load objects from them. Since a huge amount
+of its functionality involves loading objects, this change should be as transparent as possible:
+most of the code should have no idea that the way object loading works has changed, it should
+just keep working.
+
+                                        Packs in the database
+
+The whole codebase uses the Database class to load objects. This class has quite a broad
+interface, but its methods can be split into three main categories. First, there are methods
+like hash_object and short_oid, which do not talk to the disk storage at all, they only
+perform in-memory operations. These methods are unaffected by a change in the underlying
+storage. Then there are those methods that do rely on talking to disk: load, has?, load_raw,
+prefix_match. Finally there are methods that indirectly rely on the storage but are built on top
+of the aforementioned methods, for example load_tree_list and tree_diff. These methods
+will be unaffected by a change in the storage if the load method continues to respond as it
+currently does.
+
+This means there’s a core of methods in Database that we can identify as relying directly on the
+filesystem, rather than relying on it indirectly or not at all. Git refers to objects stored in a single
+file per object as loose objects, and so I’m going to create a class called Database::Loose that
+encapsulates the management of such objects. Its methods are verbatim copies of those from
+Database, so I won’t repeat their implementation here.
+
+     # lib/database/loose.rb
+
+     class Database
+       class Loose
+
+          def initialize(pathname)
+            @pathname = pathname
+          end
+
+          def has?(oid)
+          def load_info(oid)
+          def load_raw(oid)
+          def prefix_match(name)
+          def write_object(oid, content)
+
+          private
+
+          def object_path(oid)
+          def read_object_header(oid, read_bytes = nil)
+
+       end
+     end
+
+This class only deals with the translation between the Jit object model and the filesystem. It
+does not deal with serialising and hashing objects; Database#store performs those tasks and
+then calls write_object with the results. We can then delete these methods from Database
+and instead delegate them to an instance of Database::Loose. To an external observer, the
+interface and behaviour of Database has not changed, we have only moved some of its methods
+to another class.
+     # lib/database.rb
+
+        extend Forwardable
+        def_delegators :@backend, :has?, :load_info, :load_raw, :prefix_match
+
+        def initialize(pathname)
+          @pathname = pathname
+          @objects = {}
+          @backend = Loose.new(pathname)
+
+                                      Packs in the database
+
+       end
+
+I have made one implementation change in Database. The load method calls read_object,
+which was previously built on top of read_record_header. As we’ll see later, that
+implementation won’t translate well to reading from packs, and so I’ve instead implemented
+read_object on top of load_raw. The Database::Loose class implements load_raw which
+loads unparsed objects, and then the Database class takes care of parsing it into a Blob, Tree
+or Commit.
+     # lib/database.rb
+
+       def read_object(oid)
+         raw     = load_raw(oid)
+         scanner = StringScanner.new(raw.data)
+
+          object = TYPES[raw.type].parse(scanner)
+          object.oid = oid
+
+         object
+       end
+
+Extracting the Loose class has exposed an interface where we can exploit polymorphism. If we
+introduce another class that implements the same interface as Loose, but is based on reading
+packs instead of loose objects, we can swap this new class in where Loose currently is and
+everything will continue working.
+
+32.2.1. Reading the pack index
+To be able to read an object from a .pack file, we need to find out where in the file that object
+begins. We get this information from the associated .idx file, so first we need a class for reading
+pack indexes. All this class needs as input is an IO object representing the file it’s reading from.
+It begins by loading the fanout table — this is just 256 numbers so it’s no problem reading it
+into memory and saving a few disk reads on each object lookup.
+     # lib/pack/index.rb
+
+     module Pack
+       class Index
+
+          HEADER_SIZE = 8
+          FANOUT_SIZE = 1024
+
+          def initialize(input)
+            @input = input
+            load_fanout_table
+          end
+
+          def load_fanout_table
+            @input.seek(HEADER_SIZE)
+            @fanout = @input.read(FANOUT_SIZE).unpack("N256")
+          end
+
+          # ...
+
+       end
+
+                                       Packs in the database
+
+     end
+
+The main job of the Pack::Index class is to take an object ID and tell us its offset, that is the
+byte position in the pack file where that object begins. Using the file format we saw above in
+the Indexer class, we know this will involve a few steps. First, we consult the fanout table to
+see roughly where in the sorted list the ID might appear. Having found the right region, we
+perform a binary search within it to find the exact position of our ID. Once we know its position,
+we look up the corresponding offset, and if it denotes an offset above IDX_MAX_OFFSET, then
+we expand it.
+
+The oid_offset method below outlines this process. It tries to find out the position in the index
+of the given ID, and returns nothing if a negative value is returned. Then, it reads a 32-bit integer
+from the offset list (OFS_LAYER), and returns it if it’s less than IDX_MAX_OFFSET. If not, we select
+the low 31 bits of the number via a bitwise-and with IDX_MAX_OFFSET - 1. We seek() to that
+position in the extended offset list (EXT_LAYER), and read a 64-bit integer from that position.
+     # lib/pack/index.rb
+
+           OID_LAYER = 2
+           CRC_LAYER = 3
+           OFS_LAYER = 4
+           EXT_LAYER = 5
+
+           def oid_offset(oid)
+             pos = oid_position(oid)
+             return nil if pos < 0
+
+            offset = read_int32(OFS_LAYER, pos)
+
+            return offset if offset < IDX_MAX_OFFSET
+
+             pos = offset & (IDX_MAX_OFFSET - 1)
+             @input.seek(offset_for(EXT_LAYER, pos))
+             @input.read(8).unpack("Q>").first
+           end
+
+The LAYER constants help us find positions to read from in the .idx file. We know the file
+begins with an 8-byte header, followed by the 1,024-byte fanout table. If N is the number of
+objects, given by the last fanout entry, there then follow N 20-byte object IDs, N 4-byte CRC32
+values, N 4-byte offsets, and some number of extended offsets. So to find the offset of the nth
+item in a layer, we begin with offset set to 8 + 1,024, then add N times the item size for each
+of the previous layers. Finally we add n times the item size of the requested layer to find the
+desired offset.
+     # lib/pack/index.rb
+
+           SIZES = {
+             OID_LAYER => 20,
+             CRC_LAYER => 4,
+             OFS_LAYER => 4,
+             EXT_LAYER => 8
+           }
+
+           def offset_for(layer, pos)
+             offset = HEADER_SIZE + FANOUT_SIZE
+
+                                                    Packs in the database
+
+                count      = @fanout.last
+
+                SIZES.each { |n, size| offset += size * count if n < layer }
+
+               offset + pos * SIZES[layer]
+             end
+
+read_int32 is a little sugar over this that seeks to the required position and decodes a 4-byte
+integer from there.
+       # lib/pack/index.rb
+
+             def read_int32(layer, pos)
+               @input.seek(offset_for(layer, pos))
+               @input.read(4).unpack("N").first
+             end
+
+To find the exact position of a given ID oid_offset calls the oid_position method. This
+begins by converting the first two digits of the ID to a number from 0 to 255, and then looks
+up the corresponding lower and upper bound for the object’s position from the fanout table.
+Finally it performs a binary search between these positions until it either finds the ID or runs
+out of search space.
+       # lib/pack/index.rb
+
+             def oid_position(oid)
+               prefix = oid[0..1].to_i(16)
+               packed = [oid].pack("H40")
+
+                low = (prefix == 0) ? 0 : @fanout[prefix - 1]
+                high = @fanout[prefix] - 1
+
+               binary_search(packed, low, high)
+             end
+
+binary_search implements the method of binary searching. While low is not greater than high,
+at each turn we calculate mid, the point halfway between the current limits. We then read the
+object ID at that position from OID_LAYER, and compare it to the target ID using the <=> operator
+that Comparable10 values support. A result of –1 means the current ID is less than the target,
+so we set low to one place greater than mid. Conversely, a result of 1 means our current value
+is too high, so we move high to exclude the upper half of the list. A result of 0 means the IDs
+are equal, and mid is the position of the ID in the index.
+       # lib/pack/index.rb
+
+             def binary_search(target, low, high)
+               while low <= high
+                 mid = (low + high) / 2
+
+                   @input.seek(offset_for(OID_LAYER, mid))
+                   oid = @input.read(20)
+
+                   case oid <=> target
+                   when -1 then low = mid + 1
+                   when 0 then return mid
+
+  https://docs.ruby-lang.org/en/2.3.0/Comparable.html
+
+                                     Packs in the database
+
+              when    1 then high = mid - 1
+              end
+            end
+
+           -1 - low
+         end
+
+If the requested ID is not found, binary_search returns a negative number: –1 minus the final
+lower bound (which, if we’ve exited the loop, will exceed the upper bound). This indicates the
+position at which the ID would need to be inserted to keep the list sorted, for example a result
+of –5 means the ID should be inserted at position 4. This is done not because we’re actually
+going to insert new objects — packs and indexes are not modified once created — but because
+we need this to implement prefix_match.
+
+prefix_match is a method relied upon by the Revision class. It lets us give a partial object ID
+and have it expanded to a full one, by matching against the IDs that exist in the database. Any
+incomplete ID will not exist in the index, but if it did, it would sort before any full IDs that
+begin with it as a prefix. Therefore, if oid_position returns a negative number, we can start
+inspecting the IDs from that position and collect any that begin with the given string.
+     # lib/pack/index.rb
+
+         def prefix_match(name)
+           pos = oid_position(name)
+           return [name] unless pos < 0
+
+            @input.seek(offset_for(OID_LAYER, -1 - pos))
+            oids = []
+
+           loop do
+             oid = @input.read(20).unpack("H40").first
+             return oids unless oid.start_with?(name)
+             oids.push(oid)
+           end
+         end
+
+That completes all the functionality we need from the index, and we can now use it to retrieve
+objects from .pack files.
+
+32.2.2. Replacing the backend
+We can now combine Pack::Reader with Pack::Index and retrieve objects from pairs of .pack
+and .idx files. Let’s use this ability to create a new class, Database::Packed, that replicates
+the interface of Database::Loose and can be used to replace it. This class will take the path to a
+.pack file, and instantiate a Pack::Reader for it and a Pack::Index for its corresponding .idx.
+It delegates the prefix_match method to the Index object, as this does not require loading any
+information from the pack itself.
+     # lib/database/packed.rb
+
+     class Database
+       class Packed
+
+         extend Forwardable
+         def_delegators :@index, :prefix_match
+
+                                      Packs in the database
+
+         def initialize(pathname)
+           @pack_file = File.open(pathname, File::RDONLY)
+           @reader    = Pack::Reader.new(@pack_file)
+
+           @index_file = File.open(pathname.sub_ext(".idx"), File::RDONLY)
+           @index      = Pack::Index.new(@index_file)
+         end
+
+         # ...
+
+       end
+     end
+
+Let’s start with a simple method. has? needs to return true only if the database contains the
+given object, so for a pack this just means the index returns an offset for the ID.
+     # lib/database/packed.rb
+
+         def has?(oid)
+           @index.oid_offset(oid) != nil
+         end
+
+Implementing load_raw is a little more work. Just as Pack::Unpacker and Pack::Indexer had
+to reconstruct delta objects, so does Database::Packed. It begins by fetching the object’s offset
+from the .idx file, returning nil if the object is not in this pack. If an offset is found, then we
+seek to the right offset in the .pack file and use our Pack::Reader to read the record there.
+If it’s a Record, we can return it immediately — Pack::Record has the same type and data
+methods as Database::Raw, which is what everything that calls load_raw relies on.
+
+If we get a RefDelta then we need to expand it. Unlike Pack::Unpacker which loads the base
+object from the loose object store, this backend can load the base object from the same pack.
+We recursively call load_raw and use the data from the base object to expand the delta, and
+return a Record containing the result.
+     # lib/database/packed.rb
+
+         def load_raw(oid)
+           offset = @index.oid_offset(oid)
+           offset ? load_raw_at(offset) : nil
+         end
+
+         def load_raw_at(offset)
+           @pack_file.seek(offset)
+           record = @reader.read_record
+
+           case record
+           when Pack::Record
+             record
+           when Pack::RefDelta
+             base = load_raw(record.base_oid)
+             expand_delta(base, record)
+           end
+         end
+
+         def expand_delta(base, record)
+           data = Pack::Expander.expand(base.data, record.delta_data)
+
+                                     Packs in the database
+
+           Pack::Record.new(base.type, data)
+         end
+
+Implementing load_raw means the Database class can now use the Packed class to load both
+raw and parsed objects, and that means we can get most of the codebase working on top of
+packed data stores. Packed does not have a write_object method because new objects are
+always written as loose files, not added to existing packs.
+
+Earlier, we extracted the Database::Loose class and delegated some old Database methods
+to it. To integrate Database::Packed as a source of objects, we now need to replace Loose
+with another class that can load both loose and packed objects. It can use an instance of Loose
+to continue reading loose objects, and an instance of Packed for every .pack file in .git/
+objects/pack.
+
+Below is the beginning of a Database::Backends class, which creates a Loose instance from
+the given path, and one Packed for each packfile. It delegates write_object to the Loose class,
+as that’s where new objects are written. It caches all the stores it can find in @stores when it’s
+first instantiated, because we don’t want to be re-scanning the .git/objects/pack directory
+and re-reading every index fanout table, every single time an object is requested. However,
+sometimes we will need to reload this set when a new packfile is created, so we expose a reload
+method for doing this.
+     # lib/database/backends.rb
+
+     class Database
+       class Backends
+
+         extend Forwardable
+         def_delegators :@loose, :write_object
+
+         def initialize(pathname)
+           @pathname = pathname
+           @loose    = Loose.new(pathname)
+
+           reload
+         end
+
+         def reload
+           @stores = [@loose] + packed
+         end
+
+         def pack_path
+           @pathname.join("pack")
+         end
+
+         def packed
+           packs = Dir.entries(pack_path).grep(/\.pack$/)
+                    .map { |name| pack_path.join(name) }
+                    .sort_by { |path| File.mtime(path) }
+                    .reverse
+
+            packs.map { |path| Packed.new(path) }
+
+         rescue Errno::ENOENT
+           []
+
+                                      Packs in the database
+
+          end
+
+          # ...
+
+       end
+     end
+
+For the methods that read object information, we need an implementation of the Loose interface
+that can use multiple data sources, rather than just one. For example, has? returns true if any
+of the backing stores return true for this method.
+     # lib/database/backends.rb
+
+          def has?(oid)
+            @stores.any? { |store| store.has?(oid) }
+          end
+
+For the load_info and load_raw methods, we can attempt to load the requested object from
+each store in turn, returning the first one we find. It’s possible that an object exists in multiple
+places, but all copies of it ought to be identical or else we’d have calculated different IDs for
+each copy.
+     # lib/database/backends.rb
+
+          def load_info(oid)
+            @stores.reduce(nil) { |info, store| info || store.load_info(oid) }
+          end
+
+          def load_raw(oid)
+            @stores.reduce(nil) { |raw, store| raw || store.load_raw(oid) }
+          end
+
+For prefix_match, we want to find all the IDs from all the stores that match the given input.
+Therefore we need to call prefix_match on every backing store and concatenate the results. We
+filter out duplicate results in case an object exists in multiple places; in some cases returning
+multiple results from this method will make Revision complain about ambiguous refs, so we
+should avoid false failures.
+     # lib/database/backends.rb
+
+          def prefix_match(name)
+            oids = @stores.reduce([]) do |list, store|
+              list + store.prefix_match(name)
+            end
+
+            oids.uniq
+          end
+
+In Database, we can now replace Loose with Backends, and continue delegating all the previous
+methods, as well as pack_path and reload, to the new backend that covers all the objects we
+have stored. Anything that calls Database#load can now recover objects from pack files, as
+well as loose objects, and none of the classes that call Database need to know about the internal
+Backends, Loose or Packed classes.
+
+     # lib/database.rb
+
+                                       Packs in the database
+
+       extend Forwardable
+       def_delegators :@backend, :has?, :load_info, :load_raw,
+                                 :prefix_match, :pack_path, :reload
+
+       def initialize(pathname)
+         @objects = {}
+         @backend = Backends.new(pathname)
+       end
+
+We’ve seen one place where we’ll need to call Database#reload because a new packfile has
+been stored on disk. The receive-pack command stores a new pack sent by the client and
+needs to check that the client’s ref updates point to objects that actually exist. Those objects will
+probably be in the pack the client just sent, so the Database needs to be reloaded to read from
+the newly stored pack before the validations in receive-pack take place. This can be handled
+by calling Database#reload at the end of recv_packed_objects:
+     # lib/command/shared/receive_objects.rb
+
+          def recv_packed_objects(unpack_limit = nil, prefix = "")
+            # ...
+
+            processor.process_pack
+            repo.database.reload
+          end
+
+There remains one part of the codebase that won’t work: Pack::Writer uses the load_info
+method to get just the type and size of an object, and Database::Packed does not yet implement
+that method. Without it, it’s impossible to push objects to another repository if we only have
+copies of them in pack files. To make Packed#load_info work, we need a supporting method
+on Pack::Reader, one that just reads the type and size of a record and doesn’t read any of its
+data.
+
+Like read_record, the Pack::Reader#load_info method can begin by reading the type and
+size of the object from its header. The size in the header is the size of the object before zlib
+compression, so we don’t need to read the full object to get its size. If the record is a commit,
+tree or blob then we can immediately return a Record, using the data field to store the size. If
+we get a delta, then we can read the object’s original size from the beginning of the delta data,
+using the Expander class. However, to get the original type requires looking up the base object,
+so we’ll return a RefDelta giving the base object ID and the target size.
+     # lib/pack/reader.rb
+
+          def read_info
+            type, size = read_record_header
+
+            case type
+            when COMMIT, TREE, BLOB
+              Record.new(TYPE_CODES.key(type), size)
+
+            when REF_DELTA
+              delta = read_ref_delta
+              size = Expander.new(delta.delta_data).target_size
+
+              RefDelta.new(delta.base_oid, size)
+            end
+
+                                     Packs in the database
+
+         end
+
+We can now build Database::Packed#load_info on top of Pack::Reader#load_info. Like
+load_raw, it gets the offset from the index and gets Pack::Reader to load the info from there.
+If we get a Record, we can convert it to a Raw object with the size pulled from the data field.
+If we get a RefDelta, then we have the original object size but we need to recurse to find the
+original type.
+     # lib/database/packed.rb
+
+         def load_info(oid)
+           offset = @index.oid_offset(oid)
+           offset ? load_info_at(offset) : nil
+         end
+
+         def load_info_at(offset)
+           @pack_file.seek(offset)
+           record = @reader.read_info
+
+           case record
+           when Pack::Record
+             Raw.new(record.type, record.data)
+           when Pack::RefDelta
+             base = load_info(record.base_oid)
+             Raw.new(base.type, record.delta_data)
+           end
+         end
+
+The Database::Packed class is now complete, and it can back any data access operation the
+codebase needs. We can fetch objects in a pack from someone else, and then push data from
+that pack to another repository. When Git does this, it can attempt to reuse deltas from existing
+packs to populate new ones, but that’s strictly an optimisation. Our implementation is enough
+to get all the functionality working.
+
+Now that Jit fully supports delta compression and storing packs received from a remote, we can
+use it to clone arbitrary repositories. For example, it can clone the Git repository in a couple
+of minutes:
+     $ jit init git
+     $ cd git
+     $ jit remote add origin ssh://git@github.com/git/git.git
+     $ time jit fetch
+     Receiving objects: 100% (263704/263704), 114.59 MiB, done.
+     Resolving deltas: 100% (196002/196002), done.
+     From ssh://git@github.com/git/git.git
+      * [new branch] maint -> origin/maint
+      * [new branch] master -> origin/master
+      * [new branch] next -> origin/next
+      * [new branch] pu -> origin/pu
+      * [new branch] todo -> origin/todo
+
+     real      1m39.750s
+
+Running jit log --patch origin/master immediately starts printing the recent commits
+with their diffs, confirming the pack has been accurately indexed and deltified records can be
+expanded.
+
+                                              Packs in the database
+
+Just like we did in the Config::Stack class11, Database::Backends uses the composite pattern
+to make a collection of things look like a single object. When combining multiple objects into
+a composite, we need to decide between several strategies for each method: dispatching it to a
+specific backend as in write_object, querying all the backends and using one of the results as
+in has? or load_raw, or querying everything and combining the results as in prefix_match.
+
+32.3. Offset deltas
+When a pack is stored on disk and used as backing storage for the database, it can become
+expensive to load an object at the end of a long chain of deltas — every object it depends on
+must be loaded and reconstructed before can can apply the next delta in the chain. On top of
+this expense, locating each base object requires a call into the pack’s index, and this becomes
+more expensive the larger the index is. We’ve done our best to make it efficient to search, but
+it would be better if this cost could be eliminated entirely.
+
+As it happens, Git has a second kind of delta record: the ofs-delta, short for offset delta. Whereas
+a ref-delta record gives the ID of the base object, whose location must be looked up in the index,
+an ofs-delta gives the offset of the base object. These records let us jump directly to the base
+object without consulting the index, saving a little time when rebuilding objects, and they also
+make the pack a little smaller as the offset numbers tend to be smaller than 20-byte object IDs.
+
+I won’t walk through the implementation here as it’s conceptually similar to handling ref-deltas.
+Ofs-delta records have numeric type 6, and if a receiver advertises the ofs-delta capability,
+then the sender can use ofs-delta records in its pack. To briefly summarise the required changes:
+
+• Pack::Writer and Pack::Entry must be changed so that if ofs-deltas are enabled, they write
+  the type 6 and the offset of the base object, instead of 7 and the base’s ID. The offset uses a
+  number format similar to VarIntLE, except its bytes are in the opposite order.
+
+• Pack::Reader needs to return a new kind of value when it reads an ofs-delta record.
+
+• Pack::Unpacker must remember the offset of each object ID it sees, so that if it reads an ofs-
+  delta record it can recall the ID for that offset and load the base object from disk.
+
+• Pack::Indexer needs to track deltas that depend on a given offset as well as the ID-based
+  dependencies it already tracks. For each expanded object, it needs to expand any deltas
+  depending on that object’s ID and offset.
+
+• Database::Packed needs to handle ofs-delta records from Pack::Reader by using
+  load_raw_at or load_info_at immediately, rather than consulting the index to find the base
+  object’s offset.
+
+The Jit repository contains a commit that implements these changes, but they are mostly
+boilerplate on top of the functionality we’ve already developed. The addition of this feature
+reduces the packed size of the commits so far from 346 KiB to 324 KiB.
+
+  Section 25.2.3, “The configuration stack”
+

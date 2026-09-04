@@ -1,0 +1,697 @@
+Chapter 21
+SSA Destruction for Machine Code
+
+Fabrice Rastello
+
+Chapter 3 provides a basic algorithm for destructing SSA that suffers from several
+limitations and drawbacks: first, it works under implicit assumptions that are not
+necessarily fulfiled at machine level; second, it must rely on subsequent phases to
+remove the numerous copy operations it inserts; finally, it subsequently increases
+the size of the intermediate representation, thus making it unsuitable for just-in-time
+compilation.
+Correctness
+SSA at machine level complicates the process of destruction that can potentially
+lead to bugs if not performed carefully. The algorithm described in Sect. 3.2 involves
+the splitting of every critical edge. Unfortunately, because of specific architectural
+constraints, region boundaries, or exception handling code, edge splitting is not
+always possible. As we will see further on, this obstacle could easily be overcome
+by appending copy operations at the very beginning and very end of basic blocks.
+Unfortunately, appending a copy operation at the very end of a basic block might not
+be possible either (it has to be before the jump operation). Also, care must be taken
+with duplicated edges, i.e., when the same basic block appears twice in the list of
+direct predecessors. This can occur after control-flow graph structural optimizations
+such as dead code elimination or empty block elimination, etc.
+    SSA imposes a strict discipline on variable naming: every “name” must be
+associated with only one definition which, most of the time, is obviously not
+compatible with the instruction set of the target architecture. As an example, a
+two-address mode instruction such as auto-increment (x = x + 1) would force
+its definition to use the same resource as one of its arguments (defined elsewhere),
+thus imposing two different definitions for the same temporary variable. This is
+
+F. Rastello ()
+Inria, Grenoble, France
+e-mail: fabrice.rastello@inria.fr
+
+© The Author(s), under exclusive license to Springer Nature Switzerland AG 2022    285
+F. Rastello, F. Bouchez Tichadou (eds.), SSA-based Compiler Design,
+https://doi.org/10.1007/978-3-030-80515-9_21
+286                                                                         F. Rastello
+
+why some compiler designers prefer using, for SSA construction, the notion of
+versioning in place of renaming. Implicitly, two versions of the same original
+variable should not interfere, while two names can. Such a flavour corresponds to
+the C-SSA form described in Chap. 2. The former simplifies the SSA destruction
+phase, while the latter simplifies and allows more transformations to be performed
+under SSA (updating C-SSA is very difficult) . Apart from dedicated registers for
+which optimizations are usually very careful in managing their live range, register
+constraints related to calling conventions or instruction set architecture might be
+handled by the register allocation phase. However, as we will see, enforcement
+of register constraints impacts the register pressure as well as the number of copy
+operations. For those reasons we may want those constraints to be expressed earlier
+(such as for the pre-pass scheduler), in which case the SSA destruction phase might
+have to cope with them.
+Code Quality
+The natural way of lowering φ-functions and expressing register constraints is
+through the insertion of copies (when edge splitting is not mandatory as discussed
+above). If done carelessly, the resulting code will contain many temporary-to-
+temporary copy operations. In theory, reducing the number of these copies is the
+role of the coalescing during the register allocation phase. A few memory and time-
+consuming existing coalescing heuristics mentioned in Chap. 22 are quite effective
+in practice. The difficulty comes both from the size of the interference graph
+(the information of colourability is spread out) and from the presence of many
+overlapping live ranges that carry the same value (so are non-interfering). With
+less effort, coalescing can also be performed prior to the register allocation phase.
+As opposed to a (so-called conservative) coalescing during register allocation, this
+aggressive coalescing would not cope with the interference graph colourability. As
+we will see, strict SSA form is really helpful for both computing and representing
+equivalent variables. This makes the SSA destruction phase the right candidate for
+eliminating (or not inserting) those copies.
+Speed and Memory Footprint
+The cleanest and simplest way to perform SSA destruction with good code quality
+is to first insert copy instructions to make the SSA form conventional, then
+take advantage of the SSA form to efficiently run aggressive coalescing (without
+breaking the conventional property), before eventually renaming φ-webs and getting
+rid of φ-functions. Unfortunately, in a transitional stage this approach will lead to
+an intermediate representation with a substantial number of variables: The liveness
+sets and the interference graph classically used to perform coalescing become
+prohibitively large for dynamic compilation. To overcome this difficulty liveness
+and interference can be computed on demand, which, as we already mentioned, is
+made simpler by the use of SSA form (see Chap. 9). There remains the process
+of copy insertion itself that might still take a substantial amount of time. To fulfil
+memory and time constraints imposed by just-in-time compilation, one idea is to
+virtually insert those copies, and only effectively insert the non-coalesced ones.
+21 SSA Destruction for Machine Code                                                   287
+
+   This chapter addresses these three issues: handling of machine-level constraints,
+code quality (elimination of copies), and algorithm efficiency (speed and memory
+footprint). The layout falls into three corresponding sections.
+
+21.1 Correctness
+
+Isolating φ-Node Using Copies
+In most cases, edge splitting can be avoided by treating φ-uses and φ-definition
+operands symmetrically: Instead of just inserting copies on the incoming control-
+flow edges of the φ-node (one for each use operand), a copy is also inserted on
+the outgoing edge (one for its defining operand). This has the effect of isolating
+the value associated with the φ-node, thus avoiding (as discussed further on) SSA
+destruction issues such as the well-known lost-copy problem. The process of φ-
+node isolation is illustrated by Fig. 21.1. The corresponding pseudo-code is given in
+Algorithm 21.1. If, because of different φ-functions, several copies are introduced at
+the same place, they should be viewed as parallel copies. For that reason, an empty
+parallel copy is initially inserted both at the beginning (i.e., right after φ-functions,
+if any) and at the end of each basic block (i.e., just before the branching operation, if
+any). Note that, as far as correctness is concerned, these copies can be sequentialized
+in any order, as they concern different variables (this is a consequence of φ-node
+isolation—see below).
+    When incoming edges are not split, it is important to insert a copy not only for
+each argument of the φ-function but also for its result: Without the copy a0 ← a0 ,
+the φ-function defines directly a0 whose live range can be long enough to intersect
+the live range of some ai , i > 0. Prior SSA destruction algorithms that have not
+performed the copy a0 ← a0 have identified two problems. (1) In the “lost-copy
+problem”, a0 is used in a direct successor of Bi = B0 , and the edge from Bi to B0
+is critical. (2) In the “swap problem,” a0 is used in B0 as a φ-function argument.
+In this latter case, if parallel copies are used, a0 is dead before ai is defined. But, if
+copies are sequentialized blindly, the live range of a0 can go beyond the definition
+
+Fig. 21.1 Isolation of a φ-node
+288                                                                                F. Rastello
+
+point of ai and lead to an incorrect code after renaming a0 and ai with the same
+name. φ-node isolation can be used to solve most of the issues that may be faced at
+machine level. However, the subtleties listed below remain.
+Limitations
+A tricky case is where the basic block contains variables defined after the point
+of copy insertion. This, for example, is the case of the PowerPC bclr branch
+instructions with a behaviour similar to hardware loop. In addition to the condition,
+a counter u is decremented by the instruction itself. If u is used in a φ-function in a
+direct successor block, no copy insertion can split its live range. It must then be given
+the same name as the variable defined by the φ-function. If both variables interfere,
+this is simply impossible! For example, suppose that for the code in Fig. 21.2a,
+the instruction selection chooses a branch with decrement (denoted br_dec) for
+Block B1 (Fig. 21.2b). Then, the φ-function of Block B2 , which uses u, cannot
+be translated out of SSA by standard copy insertion because u interferes with t1
+and its live range cannot be split. To destruct SSA, one could add t1 ← u − 1
+in Block B1 to anticipate the branch. Or one could split the critical edge between
+B1 and B2 as in Fig. 21.2c. In other words, simple copy insertions are not enough in
+this case. We see several alternatives to solve the problem: (1) The SSA optimization
+could be designed with more care; (2) the counter variable must not be promoted to
+SSA; (3) some instructions must be changed; (4) the control-flow edge must be split
+somehow.
+
+Fig. 21.2 Copy insertion may not be sufficient. br_dec u, B1 decrements u, then branches to B1
+if u = 0
+21 SSA Destruction for Machine Code                                                  289
+
+Fig. 21.3 Copy folding followed by empty block elimination can lead to SSA code for which
+destruction is not possible through simple copy insertion
+
+    Another tricky case is when a basic block has the same direct predecessor
+block twice. This can result from consecutively applying copy folding and control-
+flow graph structural optimizations such as dead code elimination or empty block
+elimination. This is the case for the example of Fig. 21.3 where copy folding would
+remove the copy a2 ← b in Block B2 . If B2 is eliminated, there is no way to
+implement the control dependence of the value to be assigned to a3 other than
+through predicated code (see Chaps. 15 and 14) or through the reinsertion of a basic
+block between B1 and B0 by splitting one of the edges.
+    The last difficulty SSA destruction faces when performed at machine level
+is related to register constraints such as instruction set architecture (ISA) or
+application binary interface (ABI) constraints. For the sake of the discussion
+we differentiate two kinds of resource constraints that we will refer as operand
+pinning and live range pinning. The live range pinning of a variable v to resource
+R will be represented by Rv , just as if v were a version of temporary R. An
+operand pinning to a resource R will be represented using the exponent ↑R on
+the corresponding operand. Live range pinning expresses the fact that the entire
+live range of a variable must reside in a given resource (usually a dedicated
+register). Examples of live range pinning are versions of the stack-pointer temporary
+that must be assigned back to register SP. On the other hand, the pinning of an
+operation’s operand to a given resource does not impose anything on the live
+range of the corresponding variable. The scope of the constraint is restricted to
+the operation. Examples of operand pinning are operand constraints such as two-
+address mode where two operands of one instruction must use the same resource,
+or where an operand must use a given register. This last case encapsulates ABI
+constraints.
+    Note that looser constraints where the live range or the operand can reside in
+more than one resource are not handled here. We assume that the handling of this
+latter constraint is the responsibility of the register allocation. We first simplify the
+problem by transforming any operand pinning into a live range pinning, as sketched
+290                                                                              F. Rastello
+
+      Operand pinning of an auto-increment             Corresponding live range pinning
+
+      Operand pinning of a function call               Corresponding live range pinning
+
+Fig. 21.4 Operand pinning and corresponding live range pinning
+
+in Fig. 21.4: Parallel copies with new variables pinned to the corresponding resource
+are inserted just before (for use operand pinning) and just after (for definition-
+operand pinning) the operation.
+Detection of Strong Interferences
+The scheme we propose in this section to perform SSA destruction that deals with
+machine level constraints does not address compilation cost (in terms of speed and
+memory footprint). It is designed to be simple. It first inserts parallel copies to isolate
+φ-functions and operand pinning. Then it checks for interferences that may persist.
+We will denote such interferences as strong, as they cannot be tackled through the
+simple insertion of temporary-to-temporary copies in the code. We consider that
+fixing strong interferences should be done on a case-by-case basis and restrict the
+discussion here to their detection.
+    As far as correctness is concerned, Algorithm 21.1 splits the data flow between
+variables and φ-nodes through the insertion of copies. For a given φ-function a0 ←
+φ(a1 , . . . , an ), this transformation is correct as long as the copies can be inserted
+close enough to the φ-function. This might not be the case if the insertion point
+(for a use operand) of copy ai ← ai is not dominated by the definition point of ai
+(such as for argument u of the φ-function t1 ← φ(u, t2 ) for the code in Fig. 21.2b);
+symmetrically, it will not be correct if the insertion point (for the definition-operand)
+of copy a0 ← a0 does not dominate all the uses of a0 . More precisely, this leads to
+the insertion of the following tests in Algorithm 21.1:
+• Line 9: “if the definition of ai does not dominate PCi then continue.”
+• Line 16: “if one use of a0 is not dominated by PC0 then continue.”
+For the discussion, we will denote as split operands the newly created local variables
+to differentiate them from the ones concerned by the two previous cases (designated
+as non-split operands). We suppose that a similar process has been performed for
+operand pinning to express them in terms of live range pinning with (when possible)
+very short live ranges around the concerned operations.
+   At this point, the code is still under SSA, and the goal of the next step is to check
+that it is conventional: This will obviously be the case only if all the variables of a
+21 SSA Destruction for Machine Code                                                              291
+
+φ-web can be coalesced together. But this is not the only constraint: The set of all
+variables pinned to a common resource must also be interference free. We say that x
+and y are pinned-φ-related to one another if they are φ-related or if they are pinned
+to a common resource. The transitive closure of this relation defines an equivalence
+relation that partitions the variables defined locally in the procedure into equivalence
+classes, the pinned-φ-webs. Intuitively, the pinned-φ-equivalence class of a resource
+represents a set of resources “connected” via φ-functions and resource pinning. The
+computation of φ-webs given by Algorithm 3.4 can be generalized easily to compute
+pinned-φ-webs. The resulting pseudo-code is given by Algorithm 21.2.
+
+ Algorithm 21.1: Algorithm making non-conventional SSA form conventional
+ by isolating φ-nodes
+ 1 foreach B: basic block of the CFG do
+ 2     insert an empty parallel copy at the beginning of B
+ 3     insert an empty parallel copy at the end of B
+ 4 foreach B0 : basic block of the CFG do
+ 5     foreach φ-function at the entry of B0 of the form a0 = φ(B1 : a1 , . . . , Bn : an ) do
+ 6         foreach ai (argument of the φ-function corresponding to Bi ) do
+ 7               let PCi be the parallel copy at the end of Bi
+
+10               let ai be a freshly created variable
+11               add copy ai ← ai to PCi
+12               replace ai by ai in the φ-function;
+13          begin
+14              let PC0 be the parallel copy at the beginning of B0
+
+17               let a0 be a freshly created variable
+18               add copy a0 ← a0 to PC0
+19               replace a0 by a0 in the φ-function
+             all ai can be coalesced and the φ-function removed
+
+   Now we need to check that each web is interference free. A web contains
+variables and resources. The notion of interferences between two variables is the
+one discussed in Sect. 2.6 for which we will propose an efficient implementation
+later in this chapter. A variable and a physical resource do not interfere while two
+distinct physical resources interfere with one another.
+   If any interference has been discovered, it has to be fixed on a case-by-case basis.
+Note that some interferences such as the one depicted in Fig. 21.3 can be detected
+and handled initially (through edge splitting if possible) during the copy insertion
+phase.
+292                                                                           F. Rastello
+
+ Algorithm 21.2: The pinned-φ-webs discovery algorithm, based on the union-
+ find pattern
+ 1   for each resource R do
+ 2        web(R) ← {R}
+ 3 for each variable v do
+ 4      web(v) ← {v}
+ 5      if v pinned to a resource R then
+ 6           union(web(R), web(v))
+
+ 7 for each instruction of the form adest = φ(a1 , . . . , an ) do
+ 8      for each source operand ai in instruction do
+ 9           union(web(adest ), web(ai ))
+
+21.2 Code Quality
+
+Once the code is in conventional SSA, the correctness problem is solved: Destruc-
+ting it is by definition straightforward, as it consists in renaming all variables in
+each φ-web into a unique representative name and then removing all φ-functions.
+To improve the code, however, it is important to remove as many copies as possible.
+Aggressive Coalescing
+Aggressive coalescing can be treated with standard non-SSA coalescing technique.
+Indeed, conventional SSA allows us to coalesce the set of all variables in each φ-
+web together. Coalesced variables are no longer SSA variables, but φ-functions can
+be removed. Liveness and interferences can then be defined as for a regular code
+(with parallel copies). An interference graph (as depicted in Fig. 21.5e) can be used.
+A solid edge between two nodes (e.g., between x2 and x3 ) materializes the presence
+of an interference between the two corresponding variables, i.e., expressing the fact
+that they cannot be coalesced and share the same resource. A dashed edge between
+two nodes materializes an affinity between the two corresponding variables, i.e.,
+the presence of a copy (e.g., between x2 and x2 ) that could be removed by their
+coalescing.
+   This process is illustrated by Fig. 21.5: the isolation of the φ-function leads to
+the insertion of the three copies that respectively define x1 , define x3 , and use x2 ;
+the corresponding φ-web {x1 , x2 , x3 } is coalesced into a representative variable x;
+according to the interference graph in Fig. 21.5e, x1 , x3 can then be coalesced with
+x leading to the code in Fig. 21.5c.
+Liveness Under SSA
+If the goal is not to destruct SSA completely but remove as many copies as possible
+while maintaining the conventional property, liveness of φ-function operands should
+reproduce the behaviour of the corresponding non-SSA code as if the variables
+of the φ-web were coalesced all together. The semantic of the φ-operator in the
+21 SSA Destruction for Machine Code                                                       293
+
+    Lost-copy problem                       C-SSA                      After coalescing
+
+                                          Interferences                  Interferences
+
+Fig. 21.5 SSA destruction for the lost-copy problem
+
+so-called multiplexing mode fits the requirements. The corresponding interference
+graph on our example is depicted in Fig. 21.5d.
+Definition 21.1 (Multiplexing Mode) Let a φ-function B0 : a0 = φ(B1 :
+a1 , . . . , Bn : an ) be in multiplexing mode, then its liveness follows the following
+semantic: Its definition-operand is considered to be at the entry of B0 , in other words
+variable a0 is live-in of B0 ; its use operands are at the exit of the corresponding direct
+predecessor basic blocks, in other words, variable ai for i > 0 is live-out of basic
+block Bi .
+Value-Based Interference
+As outlined earlier, after the φ-isolation phase and the treatment of operand pinning
+constraints, the code contains many overlapping live ranges that carry the same
+value. Because of this, to be efficient coalescing must use an accurate notion of
+interference. As already mentioned in Chap. 2, the ultimate notion of interference
+contains two dynamic (i.e., execution-related) notions: the notion of liveness and
+the notion of value. Analysing statically if a variable is live at a given execution
+point or if two variables carry identical values is a difficult problem. The scope
+of variable coalescing is usually not so large, and graph colouring-based register
+allocation commonly takes the following conservative test: Two variables interfere
+if one is live at a definition point of the other and this definition is not a copy between
+the two variables.
+294                                                                                    F. Rastello
+
+   It can be noted that, with this conservative interference definition, when a
+and b are coalesced, the set of interferences of the new variable may be strictly
+smaller than the union of interferences of a and b. Thus, simply merging the two
+corresponding nodes in the interference graph is an over-approximation with respect
+to the interference definition. For example, in a block with two successive copies
+b = a and c = a where a is defined before, and b and c (and possibly a) are used
+after, it is considered that b and c interfere but that neither of them interfere with a.
+However, after coalescing a and b, c should no longer interfere with the coalesced
+variable. Hence the interference graph would have to be updated or rebuilt.
+   However, in SSA, each variable has, statically, a unique value, given by its
+unique definition. Furthermore, the “has-the-same-value” binary relation defined on
+variables is, if the SSA form fulfils the dominance property , an equivalence relation.
+The value of an equivalence class1 is the variable whose definition dominates the
+definitions of all other variables in the class. Hence, using the same scheme as
+in SSA copy folding, finding the value of a variable can be done by a simple
+topological traversal of the dominance tree: When reaching an assignment of a
+variable b, if the instruction is a copy b = a, V (b) is set to V (a), otherwise
+V (b) is set to b. The interference test is now both simple and accurate (no need
+to rebuild/update after a coalescing): if live(x) denotes the set of program points
+where x is live,
+            a interferes with b if live(a) intersects live(b) and V (a) = V (b).
+   The first part reduces to def(a) ∈ live(b) or def(b) ∈ live(a) thanks to the
+dominance property. In the previous example, a, b, and c have the same value
+V (c) = V (b) = V (a) = a, thus they do not interfere.
+   Note that our notion of values is limited to the live ranges of SSA variables,
+as we consider that each φ-function defines a new variable. We could propagate
+information through a φ-function when its arguments are equivalent (same value).
+But we would face the complexity of global value numbering (see Chap. 11). By
+comparison, our equality test in SSA comes for free.
+
+21.3 Speed and Memory Footprint
+
+Implementing the technique of the previous section may be considered too costly.
+First, it inserts many instructions before realizing that most are useless. Also, copy
+insertion is already in itself time-consuming. It introduces many new variables,
+too: The size of the variable universe has an impact on the liveness analysis and
+the interference graph construction. Finally, if a general coalescing algorithm is
+used, a graph representation with adjacency lists (in addition to the bit matrix) and
+a working graph to explicitly merge nodes when coalescing variables, would be
+
+1 Dominance property is required here, e.g., consider the following loop body if(i = 0) {b ← a; }
+
+c ← . . . ; · · · ← b; a ← c; the interference between b and c is actual.
+21 SSA Destruction for Machine Code                                                   295
+
+required. All these constructions, updates, and manipulations are time-consuming
+and memory-consuming. We may improve the whole process by: (a) avoiding
+the use of any interference graph and liveness sets; (b) avoiding the quadratic
+complexity of interference checks between two sets of variables by adopting an
+optimistic approach that first coalesces all copy-related variables (even interfering
+ones), then traverses each set of coalesced variables and un-coalesces all the
+interfering ones one by one; (c) emulating (“virtualizing”) the introduction of the
+φ-related copies.
+Interference Check
+Liveness sets and the interference graph are the main source of memory usage. In
+the context of JIT compilation, this is a good reason not to build an interference
+graph at all, and rely on the liveness check described in Chap. 9 to test if two live
+ranges intersect or not. Let us suppose for this purpose that a “has-the-same-value”
+equivalence relation is available thanks to a mapping V of variables to symbolic
+values:
+
+             variables a and b have the same value ⇔ V (a) = V (b)
+
+As explained in Paragraph 21.2, this can be done linearly (without requiring a hash
+map-table) on a single traversal of the program if under strict SSA form. We also
+suppose that the liveness check is available, meaning that for a given variable a and
+program point p, one can answer if a is live at this point through the boolean value
+of a.islive(p). This can directly be used, under strict SSA form, to check if two
+variables live ranges intersect:
+
+    intersect(a, b) ⇔ liverange(a) ∩ liverange(b) = ∅
+                        a.def .op = b.def .op
+                                                     
+                    ⇔  a.def .op dominates b.def .op a.islive (out(b.def .op))
+                                                      
+                        b.def .op dominates a.def .op     b.islive (out(a.def .op))
+
+   Which leads to our refined notion of interference:
+
+                 interfere(a, b) ⇔ intersect(a, b)      V (a) = V (b)
+
+De-coalescing in Linear Time
+The interference check outlined in the previous paragraph serves to avoid building
+an interference graph of the SSA form program. However, coalescing has the effect
+of merging vertices, and interference queries are actually to be done between sets of
+vertices. To overcome this complexity issue, the technique proposed here is based on
+a de-coalescing scheme. The idea is to first merge all copy- and φ-function-related
+variables together. A merged set might contain interfering variables at this point.
+The principle is to identify some variables that interfere with some other variables
+within the merged set and remove them (along with the one they are pinned with)
+296                                                                          F. Rastello
+
+from the merged set. As we will see, thanks to the dominance property, this can be
+done linearly using a single traversal of the set.
+    In reference to register allocation, and graph colouring, we will associate the
+notion of colours with merged sets: All the variables of the same set are assigned
+the same colour, and different sets are assigned different colours. The process of
+de-coalescing a variable is to extract it from its set; it is not put in another set,
+just isolated. We will say uncoloured. Actually, variables pinned together have
+to stay together. We denote the (interference free) set of variables pinned to a
+common resource that contains variable v, atomic-merged-set(v). So the process
+of uncolouring a variable might have the effect of uncolouring some others. In other
+words, a coloured variable is to be coalesced with variables of the same colour, and
+any uncoloured variable v is to be coalesced only with the variables it is pinned
+with, i.e., atomic-merged-set(v).
+    We suppose that variables have already been coloured, and the goal is to uncolour
+some of them (preferably not all of them) so that each merged set becomes
+interference free. We suppose that if two variables are pinned together they have
+been assigned the same colour, and that a merged set cannot contain variables pinned
+to different physical resources. Here we focus on a single merged set and the goal
+is to make it interference free within a single traversal. The idea exploits the tree
+shape of variables’ live ranges under strict SSA. To this end, variables are identified
+by their definition point and ordered accordingly using dominance.
+    Algorithm 21.3 performs a traversal of this set along the dominance order,
+enforcing at each step the subset of already considered variables to be interference
+free. From now, we will abusively design as the dominators of a variable v, the set
+of variables of colour identical to v whose definition dominates the definition of v.
+Variables defined at the same program point are arbitrarily ordered, so as to use the
+standard definition of immediate dominator (denoted v.idom, set to ⊥ if they do not
+exist, updated lines 6–8). To illustrate the role of v.eanc in Algorithm 21.3, let us
+consider the example of Fig. 21.6 where all variables are assumed to be originally in
+the same merged set: v.eanc (updated line 16) represents the immediate intersecting
+dominator with the same value as v; so we have b.eanc = ⊥ and d.eanc = a. When
+line 14 is reached, cur_anc (if not ⊥) represents a dominating variable interfering
+with v and with the same value than v.idom: when v is set to c (c.idom = b), as b
+does not intersect c and as b.eanc = ⊥, cur_anc = ⊥, which allows us to conclude
+that there is no dominating variable that interferes with c; when v is set to e, d does
+not intersect e but as a intersects and has the same value as d (otherwise a or d
+would have been uncoloured), we have d.eanc = a and thus cur_anc = a. This
+allows us to detect on line 18 the interference of e with a.
+Virtualizing φ-Related Copies
+The last step towards a memory-friendly and fast SSA destruction algorithm consists
+in emulating the initial introduction of copies and only actually inserting them on
+the fly when they appear to be required. We use exactly the same algorithms as for
+the solution without virtualization, and use a special location in the code, identified
+as a “virtual” parallel copy, where the real copies, if any, will be placed.
+21 SSA Destruction for Machine Code                                                        297
+
+ Algorithm 21.3: De-coalescing of a merged set
+ 1   cur_idom = ⊥
+ 2 foreach variable v of the merged set in DFS pre-order of the dominance tree do
+ 3     DeCoalesce(v, cur_idom)
+ 4     cur_idom ← v
+
+ 5   Function DeCoalesce(v,
+                       u)
+ 6      while (u = ⊥) (¬(udominates v) ∨ uncolored(u)) do u ← u.idom
+ 8      v.idom ← u
+ 9      v.eanc ← ⊥
+10      cur_anc ← v.idom
+11      while cur_anc = ⊥ do 
+12          while cur_anc = ⊥ ¬ (colored(cur_anc) ∧ intersect(cur_anc, v)) do
+13              cur_anc ← cur_anc.eanc
+14          if cur_anc = ⊥ then
+15               if V (cur_anc) = V (v) then
+16                    v.eanc ← cur_anc
+17                    break
+18               else                                                cur_anc and v interfere
+19                      if preferable to uncolor v then
+20                           uncolor atomic-merged-set(v)
+21                           break
+22                      else
+23                             uncolor atomic-merged-set(cur_anc)
+24                             cur_anc ← cur_anc.eanc
+
+Fig. 21.6 Variables’ live
+ranges are sub-trees of the
+dominator tree
+
+   Because of this we consider a different semantic for φ-functions from the
+multiplexing mode previously defined. To this end we differentiate φ-operands for
+which a copy cannot be inserted (such as for the br_dec of Fig. 21.2b) from the
+others. We use the terms non-split and split operands introduced in Sect. 21.1. For
+a φ-function B0 : a0 = φ(B1 : a1 , . . . , Bn : an ) and a split operand Bi : ai , we
+denote the program point where the corresponding copy would be inserted as the
+early point of B0 (early(B0 )—right after the φ-functions of B0 ) for the definition-
+operand, and as the late point of Bi (late(Bi )—just before the branching instruction)
+for a use operand.
+298                                                                            F. Rastello
+
+Definition 21.2 (Copy Mode) Let a φ-function B0 : a0 = φ(B1 : a1 , . . . , Bn :
+an ) be in copy mode, then the liveness for any split operand follows the following
+semantic: Its definition-operand is considered to be at the early point of B0 , in other
+words, variable a0 is not live-in of B0 ; its use operands are at the late point of the
+corresponding direct predecessor basic blocks, in other words variable ai for i > 0
+is (unless used further) not live-out of basic block Bi . The liveness for non-split
+operands follows the multiplexing mode semantic.
+    When the algorithm decides that a virtual copy ai ← ai (resp. a0 ← a0 )
+cannot be coalesced, it is materialized in the parallel copy and ai (resp. a0 )
+becomes explicit in its merged set. The corresponding φ-operator is replaced and
+the use of ai (resp. def of a0 ) is now assumed, as in the multiplexing mode, to
+be on the corresponding control-flow edge. This way, only copies that the first
+approach would finally leave un-coalesced are introduced. We choose to postpone
+the materialization of all copies along a single traversal of the program at the very
+end of the de-coalescing process. Because of the virtualization of φ-related copies,
+the de-coalescing scheme given by Algorithm 21.3 has to be adapted to emulate live
+ranges of split operands. The pseudo-code for processing a local virtual variable is
+given by Algorithm 21.5. The trick is to use the φ-function itself as a placeholder for
+its set of local virtual variables. As the live range of a local virtual variable is very
+small, the cases to consider are quite limited: A local virtual variable can interfere
+with another virtual variable (lines 2–4) or with a “real” variable (lines 5–18).
+    The overall scheme works as follows: (1) All copy-related (even virtual) variables
+are first coalesced (unless pinning to physical resources forbids this); (2) then
+merged sets (identified by their associated colour) are traversed and interfering
+variables are de-coalesced; (3) finally, materialization of the remaining virtual
+copies is performed through a single traversal of all φ-functions of the program:
+Whenever one of the two operands of a virtual copy is uncoloured, or whenever the
+colours are different, a copy is inserted.
+    A key implementation aspect is related to the handling of pinning. In particular,
+for the purpose of correctness, coalescing is performed in two separated steps. First
+pinned-φ-webs have to be coalesced. Detection and fixing of strong interferences
+are handled at this point. The merged sets thus obtained (that contain local virtual
+variables) have to be identified as atomic, i.e., they cannot be separated. After
+the second step of coalescing, atomic merged sets will compose larger merged
+sets. A variable cannot be de-coalesced from a set without also de-coalescing its
+atomic merged-set from the set. Non-singleton atomic merged sets have to be
+represented somehow. For φ-functions, the trick is again to use the φ-function itself
+as a placeholder for its set of local virtual variables: The pinning of the virtual
+variables is represented through the pinning of the corresponding φ-function. As a
+consequence, any φ-function will be pinned to all its non-split operands.
+    Without any virtualization, the process of transforming operand pinning into
+live range pinning also introduces copies and new local variables pinned together.
+This systematic copy insertion can also be avoided and managed lazily, just as
+for φ-nodes isolation. We do not address this aspect of the virtualization here: To
+21 SSA Destruction for Machine Code                                                         299
+
+ Algorithm 21.4: De-coalescing with virtualization of φ-related copies
+ 1 foreach c ∈ COLORS do c.cur_idom = ⊥
+ 2 foreach basic block B in CFG in DFS pre-order of the dominance tree do
+ 3     foreach program point l of B in topological order do
+ 4         if l = late(B) then
+ 5              foreach c ∈ COLORS do c.curphi = ⊥
+ 6              foreach basic-block B direct successor of B do
+ 7                   foreach operation Phi: ‘‘B : a0 = φ(. . . , B : v, . . . )’’ in B do
+ 8                       if ¬colored(Phi) then continue
+ 9                       else c ← color(Phi)
+11                         DeCoalesce_virtual(Phi, B : v, c.curphi, c.cur_idom)
+12                         if colored(Phi) then c.curphi ← Phi
+
+14          else
+15                 foreach operation OP at l (including φ-functions) do
+16                     foreach variable v defined by OP do
+17                         if ¬colored(v) then continue
+18                         else c ← color(v)
+20                         DeCoalesce(v, c.cur_idom)
+21                         if colored(v) then c.cur_idom ← v
+
+simplify, we consider any operand pinning to be either ignored (handled by register
+allocation) or expressed as live range pinning.
+Sequentialization of Parallel Copies
+Throughout the algorithm, we treat the copies placed at a given program point as
+parallel copies, which are indeed the semantics of φ-functions. This gives several
+benefits: a simpler implementation, in particular for defining and updating liveness
+sets, a more symmetric implementation, and fewer constraints for the coalescer.
+However, at the end of the process, we need to go back to standard code, i.e., write
+the final copies in sequential order.
+    As explained in Sect. 3.2, (Algorithm 3.6) the sequentialization of a parallel copy
+can be done using a simple traversal of a windmill farm-shaped graph from the
+tips of the blades to the wheels. Algorithm 21.6 emulates a traversal of this graph
+(without building it), allowing a variable to be overwritten as soon as it is saved in
+some other variable.
+    When a variable a is copied in a variable b, the algorithm remembers b as the
+last location where the initial value of a is available. This information is stored into
+loc(a). The initial value that must be copied into b is stored in directpred(b).
+The initialization consists in identifying the variables whose values are not needed
+(tree leaves), which are stored in the list ready. The list to_do contains the
+300                                                                              F. Rastello
+
+ Algorithm 21.5: Process (de-coalescing) a virtual variable
+ 1 Function DeCoalesce_virtual(Phi, B : v, Phi’, u)
+ 2    if Phi = ⊥ ∧ V (operand_from_B(Phi )) = V (a ) then               Interference
+ 3         uncolor atomic-merged-set(Phi)
+ 4         return
+                     
+ 5    while (u = ⊥) (¬(udominates B) ∨ ¬colored(u)) do
+ 6         u ← u.idom
+ 7     v.idom ← u;
+ 8     v.eanc ← ⊥; cur_anc ← u
+ 9     while cur_anc = ⊥ do 
+10         while cur_anc = ⊥ ¬ (colored(cur_anc) ∧ cur_anc.islive(out(B))) do
+11             cur_anc ← cur_anc.eanc
+12         if cur_anc = ⊥ then                                           interference
+13              if preferable to uncolor Phi then
+14                   uncolor atomic-merged-set(Phi)
+15                   break
+16             else
+17                    uncolor atomic-merged-set(cur_anc)
+18                    cur_anc ← cur_anc.eanc
+
+destination of all copies to be treated. Copies are first treated by considering leaves
+(while loop on the list ready). Then, the to_do list is considered, ignoring copies
+that have already been treated, possibly breaking a circuit with no duplication,
+thanks to an extra copy into the fresh variable n.
+
+21.4 Further Reading
+
+SSA destruction was first addressed by Cytron et al. [90] who propose to simply
+replace each φ-function by copies in the direct predecessor basic block. Although
+this naive translation seems, at first sight, correct, Briggs et al. [50] pointed out
+subtle errors due to parallel copies and/or critical edges in the control-flow graph.
+Two typical situations are identified, namely the “lost-copy problem” and the “swap
+problem.” The first solution, both simple and correct, was proposed by Sreedhar
+et al. [267]. They address the associated problem of coalescing and describe three
+solutions. The first one consists of three steps: (a) translate SSA into CSSA, by
+isolating φ-functions; (b) eliminate redundant copies; (c) eliminate φ-functions and
+leave CSSA. The third solution, which turns out to be nothing else than the first
+solution except that it virtualizes the isolation of φ-functions, has the advantage
+of introducing fewer copies. The reason for that, identified by Boissinot et al., is
+21 SSA Destruction for Machine Code                                                             301
+
+ Algorithm 21.6: Parallel copy sequentialization algorithm
+   Data: Set P of parallel copies of the form a )→ b, a = b, one extra fresh variable n
+   Output: List of copies in sequential order
+ 1 ready ← [] ; to_do ← [] ; directpred(n) ← ⊥
+ 2 forall (a )→ b) ∈ P do
+ 3     loc(b)← ⊥ ; directpred(a) ← ⊥                                               initialization
+ 4 forall (a )→ b) ∈ P do
+ 5     loc(a) ← a                                                    needed and not copied yet
+ 6     directpred(b) ← a                                            (unique) direct predecessor
+ 7     to_do.push(b)                                                    copy into b to be done
+ 8   forall (a )→ b) ∈ P do
+ 9       if loc(b) = ⊥ then ready.push(b)                  b is not used and can be overwritten
+10 while to_do = [] do
+11     while ready = [] do
+12          b ← ready.pop()                                               pick a free location
+13          a ← directpred(b) ; c ← loc(a)                                      available in c
+14          emit_copy(c )→ b)                                              generate the copy
+15          loc(a) ← b                                                    now, available in b
+16          if a = c and directpred(a) =⊥ then ready.push(a)  just copied, can be overwritten
+17       b ← to_do.pop()                                               look for remaining copy
+18       if b = loc(directpred(b)) then
+19            emit_copy(b )→ n)                                         break circuit with copy
+20            loc(b) ← n                                                   now, available in n
+21            ready.push(b)                                               b can be overwritten
+
+the fact that in the presence of many copies the code contains many intersecting
+variables that do not actually interfere. Boissinot et al. [35] revisited Sreedhar et
+al.’s approach in the light of this remark and proposed the value-based interference
+described in this chapter.
+    The ultimate notion of interference was discussed by Chaitin et al. [60] in
+the context of register allocation. They proposed a simple conservative test: Two
+variables interfere if one is live at a definition point of the other and this definition is
+not a copy between the two variables. This interference notion is the most commonly
+used, see for example how the interference graph is computed in [10]. Still they
+noticed that, with this conservative interference definition, after coalescing some
+variables the interference graph has to be updated or rebuilt. A counting mechanism
+to update the interference graph was proposed, but it was considered to be too space-
+consuming. Recomputing it from time to time was preferred [59, 60].
+    The value-based technique described here can also obviously be used in the
+context of register allocation even if the code is not under SSA form. The notion
+of value may be approximated using data-flow analysis on specific lattices [6], and
+under SSA form simple global value numbering [249] can be used.
+302                                                                         F. Rastello
+
+    Leung and George [182] addressed SSA destruction for machine code. Register
+renaming constraints, such as calling conventions or dedicated registers, are treated
+with pinned variables. A simple data-flow analysis scheme is used to place repairing
+copies. By revisiting this approach to address the coalescing of copies, Rastello et
+al. [240] pointed out and fixed a few errors present in the original algorithm. While
+being very efficient in minimizing the introduced copies, this algorithm is quite
+complicated to implement and not suited to just-in-time compilation.
+    The first technique to address speed and memory footprint was proposed by
+Budimlić et al. [53]. It proposes the de-coalescing technique, revisited in this
+chapter, that exploits the underlying tree structure of the dominance relation between
+variables of the same merged set.
+    Last, this chapter describes a fast sequentialization algorithm that requires the
+minimum number of copies. A similar algorithm has already been proposed by
+C. May [196].
