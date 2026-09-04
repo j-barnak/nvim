@@ -277,6 +277,15 @@ local function strip_liquid(lines)
 			lines[i] = "```"
 		elseif l:match("^%s*{%%.-%%}%s*$") then
 			lines[i] = ""
+		elseif l:match("^%s*```[%w_+-]+,") then
+			-- ```rust,ignore / ```rust,no_run -> ```rust so treesitter injects
+			-- highlighting (the ,attr is an mdBook/rustdoc annotation, not a lang).
+			lines[i] = l:gsub("^(%s*```[%w_+-]+),.*$", "%1")
+		elseif l:match("^%s*>%s*%[!%u+%]%s*$") then
+			-- GitHub callout marker (> [!NOTE]) -> a bold blockquote label.
+			lines[i] = l:gsub("^(%s*>%s*)%[!(%u)(%u*)%]%s*$", function(pre, h, t)
+				return pre .. "**" .. h .. t:lower() .. "**"
+			end)
 		else
 			-- Drop trailing {#anchor} / {: attrs} (Doxygen/moxygen/kramdown) noise.
 			lines[i] = l:gsub("%s*{[#:][^}]*}%s*$", "")
@@ -300,6 +309,84 @@ local function abs_images(lines, dir)
 		end)
 	end
 	return lines
+end
+
+-- Pick the requested slice of an included file: "" = whole file; "N", "N:",
+-- ":M", "N:M" = 1-based inclusive line range; a name = an mdBook ANCHOR block
+-- (lines between "ANCHOR: name" and "ANCHOR_END: name", markers dropped).
+local function include_select(body, sel)
+	if not sel or sel == "" then
+		return body
+	end
+	local a, colon, b = sel:match("^(%d*)(:?)(%d*)$")
+	if a and (a ~= "" or colon == ":") then
+		local s = tonumber(a) or 1
+		local e = (b ~= "" and tonumber(b)) or (colon == ":" and #body) or s
+		local sub = {}
+		for i = s, math.min(e, #body) do
+			sub[#sub + 1] = body[i]
+		end
+		return sub
+	end
+	local keep, inside = {}, false
+	for _, l in ipairs(body) do
+		if l:match("ANCHOR:%s*" .. vim.pesc(sel) .. "%s*$") then
+			inside = true
+		elseif l:match("ANCHOR_END:%s*" .. vim.pesc(sel) .. "%s*$") then
+			inside = false
+		elseif inside and not l:match("ANCHOR[_%u]*:") then
+			keep[#keep + 1] = l
+		end
+	end
+	return #keep > 0 and keep or body
+end
+
+-- mdBook include preprocessor: {{#include file[:sel]}} (and #rustdoc_include /
+-- #playground) splice a referenced file's code into the page, since the Aya
+-- tutorials keep their example code under the repo's examples/ tree. Paths
+-- resolve relative to the including page's directory; {{#title ...}} is metadata.
+local function expand_includes(lines, dir)
+	if not dir then
+		return lines
+	end
+	local out = {}
+	for _, l in ipairs(lines) do
+		local spec = l:match("^%s*{{#include%s+(.-)%s*}}%s*$")
+			or l:match("^%s*{{#rustdoc_include%s+(.-)%s*}}%s*$")
+			or l:match("^%s*{{#playground%s+(.-)%s*}}%s*$")
+		if spec then
+			local rel, sel = spec:match("^([^:]+):?(.*)$")
+			local full = vim.fs.normalize(dir .. "/" .. rel)
+			if vim.fn.filereadable(full) == 1 then
+				for _, cl in ipairs(include_select(vim.fn.readfile(full), sel)) do
+					out[#out + 1] = cl
+				end
+			else
+				out[#out + 1] = l -- target missing: keep the marker, not a silent gap
+			end
+		elseif not l:match("^%s*{{#title%s+.-}}%s*$") then
+			out[#out + 1] = l
+		end
+	end
+	return out
+end
+
+-- Drop Sphinx-directive residue pandoc emits as body text at the top of a page:
+-- Cilium's ".. only:: not (epub or latex or html)" leaks a literal "not (...)"
+-- line plus an "unreleased documentation" banner. Then trim leading blanks.
+local function strip_doc_noise(lines)
+	local out = {}
+	for _, l in ipairs(lines) do
+		if l:match("^%s*not %(.-or.-%)%s*$") then -- Sphinx only:: expression leak
+		elseif l:match("You are looking at unreleased.-documentation") then -- banner
+		else
+			out[#out + 1] = l
+		end
+	end
+	while out[1] and out[1]:match("^%s*$") do
+		table.remove(out, 1)
+	end
+	return out
 end
 
 -- ── render a doc or source file, by extension ────────────────────────────
@@ -339,7 +426,8 @@ local function open_file(path)
 			end
 		end
 		if ft == "markdown" then
-			lines = abs_images(strip_liquid(strip_frontmatter(lines)), dir)
+			lines = expand_includes(strip_frontmatter(lines), dir)
+			lines = strip_doc_noise(abs_images(strip_liquid(lines), dir))
 		end
 		render_lines(lines, ft, dir, base)
 	end
@@ -1042,9 +1130,11 @@ local simple = {
 		prompt = "eBPF helpers/maps/program-types> ",
 	},
 	aya = {
-		-- The Aya book (aya-rs.dev): writing eBPF programs in Rust.
+		-- The Aya book (aya-rs.dev): writing eBPF programs in Rust. /examples holds
+		-- the tutorial code the pages pull in via mdBook {{#include}} (expanded at
+		-- render time by expand_includes), so browse /src but fetch both.
 		url = "https://github.com/aya-rs/book",
-		sparse = "/src",
+		sparse = "/src /examples",
 		marker = "src",
 		browse = "/src",
 		exts = "-e md",
@@ -1157,6 +1247,11 @@ local SRC_URLS = {
 	bap = "https://github.com/BinaryAnalysisPlatform/bap",
 	ghidra = "https://github.com/NationalSecurityAgency/ghidra",
 }
+-- Providers whose useful source is a different repo than their doc set: aya's
+-- docs are the book, but "explore the source" means the crate itself.
+local GS_OVERRIDE = {
+	aya = "https://github.com/aya-rs/aya",
+}
 gs_source = function(dir)
 	if not dir then
 		return
@@ -1165,7 +1260,9 @@ gs_source = function(dir)
 	-- First path segment under the docs cache is the provider name (simple
 	-- providers live at <name>/master, others at <name>/… or <name>/<ver>).
 	local name = dir:match("/docs/([^/]+)")
-	if name and simple[name] then
+	if name and GS_OVERRIDE[name] then
+		srcname, url = name, GS_OVERRIDE[name]
+	elseif name and simple[name] then
 		srcname, url = name, simple[name].url
 	elseif name == "linux" then
 		srcname, url, excl = "linux", repo, KERNEL_EXCLUDE
