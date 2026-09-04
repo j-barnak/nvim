@@ -8,8 +8,12 @@ local data_root = vim.fn.stdpath("data") .. "/src"
 local function fzf() return require("fzf-lua") end
 local function have(b) return vim.fn.executable(b) == 1 end
 
+local _universal -- cached: ctags flavour is fixed for the session
 local function is_universal()
-	return (vim.fn.system({ "ctags", "--version" })):match("Universal Ctags") ~= nil
+	if _universal == nil then
+		_universal = (vim.fn.system({ "ctags", "--version" })):match("Universal Ctags") ~= nil
+	end
+	return _universal
 end
 
 local EXCLUDE = {
@@ -18,8 +22,9 @@ local EXCLUDE = {
 }
 
 -- cwd = repo root, so ctags writes "." -relative paths; the tag file lives at
--- the root and Neovim resolves those against it ('tagrelative').
-local function ctags_argv(tagfile)
+-- the root and Neovim resolves those against it ('tagrelative'). `excl` adds
+-- per-repo excludes (e.g. the kernel's non-native arches / Documentation).
+local function ctags_argv(tagfile, excl)
 	local uni = is_universal()
 	local extra = uni and "--extras=+q" or "--extra=+q" -- Exuberant uses the singular flag
 	local langs = uni
@@ -29,28 +34,38 @@ local function ctags_argv(tagfile)
 	for _, p in ipairs(EXCLUDE) do
 		argv[#argv + 1] = "--exclude=" .. p
 	end
+	for _, p in ipairs(excl or {}) do
+		argv[#argv + 1] = "--exclude=" .. p
+	end
 	vim.list_extend(argv, { "-R", "-f", tagfile, "." })
 	return argv
 end
 
--- 'tags' is global-local; set it buffer-local only for files under this repo.
+-- 'tags' is global-local; set it buffer-local for files under this repo, and
+-- give those buffers an instant, index-free `gd` (ripgrep for the symbol's
+-- definition) that works before ctags finishes. <C-]> uses ctags once ready.
 local function scope_tags(dir, tagfile)
 	vim.api.nvim_create_autocmd({ "BufReadPost", "BufNewFile" }, {
 		group = vim.api.nvim_create_augroup("SrcTags:" .. dir, { clear = true }),
 		pattern = dir .. "/*",
 		callback = function(ev)
 			vim.bo[ev.buf].tags = tagfile
+			vim.keymap.set("n", "gd", function()
+				local w = vim.fn.expand("<cword>")
+				fzf().grep({ cwd = dir, no_esc = true, search = "\\b" .. w .. "\\s*\\(", prompt = "def " .. w .. "> " })
+			end, { buffer = ev.buf, silent = true, desc = "src: definitions (ripgrep)" })
 		end,
 	})
 end
 
 -- When a source file first shows in `win`, arm restore_fn to run when that
--- window later closes (:q) — so exploring source in the docs split and then
+-- window later closes (:q), so exploring source in the docs split and then
 -- quitting drops you back on the doc.
 local function arm_restore(win, dir, restore_fn)
 	local grp = vim.api.nvim_create_augroup("SrcBack:" .. win, { clear = true })
 	vim.api.nvim_create_autocmd("BufWinEnter", {
 		group = grp,
+		pattern = dir .. "/*", -- only source files, so it doesn't fire session-wide
 		callback = function(ev)
 			local f = vim.api.nvim_buf_get_name(ev.buf)
 			if f:sub(1, #dir) == dir and vim.api.nvim_get_current_win() == win then
@@ -83,12 +98,16 @@ local function open_picker(win, dir, tagfile, restore_fn)
 	})
 end
 
-local function build_tags(dir, cb)
+-- Write to a temp file then rename in, so a <C-]> mid-build never reads a
+-- half-written tag file (the kernel index takes ~30-60s in the background).
+local function build_tags(dir, excl, cb)
 	local tagfile = dir .. "/.srctags"
+	local tmp = tagfile .. ".tmp"
 	vim.notify("Indexing " .. vim.fs.basename(dir) .. " with ctags …")
-	vim.system(ctags_argv(tagfile), { cwd = dir, text = true }, function(res)
+	vim.system(ctags_argv(tmp, excl), { cwd = dir, text = true }, function(res)
 		vim.schedule(function()
-			if vim.fn.filereadable(tagfile) == 1 then
+			if vim.fn.filereadable(tmp) == 1 then
+				vim.uv.fs_rename(tmp, tagfile)
 				cb(tagfile)
 			else
 				vim.notify("ctags failed:\n" .. (res.stderr or ""):sub(1, 300), vim.log.levels.ERROR)
@@ -97,17 +116,25 @@ local function build_tags(dir, cb)
 	end)
 end
 
--- Clone only (no indexing) — cb runs as soon as the source is on disk.
+-- Clone only (no indexing): cb runs as soon as the source is on disk. Clone
+-- into <dir>.tmp then rename, so a clone killed midway never leaves a partial
+-- checkout that looks complete. Cache key is <dir>/.git.
 local function ensure_clone(name, url, cb)
 	local dir = data_root .. "/" .. name
-	if vim.fn.isdirectory(dir) == 1 then
+	if vim.fn.isdirectory(dir .. "/.git") == 1 then
 		return cb(dir)
 	end
 	vim.fn.mkdir(data_root, "p")
 	vim.notify("Cloning " .. name .. " source (shallow, first time) …")
-	vim.system({ "git", "-c", "core.autocrlf=false", "clone", "--depth=1", url, dir }, { text = true, timeout = 900000 }, function(res)
+	local tmp = dir .. ".tmp"
+	local script = table.concat({
+		"rm -rf " .. vim.fn.shellescape(tmp) .. " " .. vim.fn.shellescape(dir),
+		"git -c core.autocrlf=false clone --depth=1 --single-branch --no-tags " .. url .. " " .. vim.fn.shellescape(tmp),
+		"mv " .. vim.fn.shellescape(tmp) .. " " .. vim.fn.shellescape(dir),
+	}, " && ")
+	vim.system({ "sh", "-c", script }, { text = true, timeout = 900000 }, function(res)
 		vim.schedule(function()
-			if res.code ~= 0 or vim.fn.isdirectory(dir) == 0 then
+			if res.code ~= 0 or vim.fn.isdirectory(dir .. "/.git") == 0 then
 				return vim.notify("Source clone failed:\n" .. (res.stderr or ""):sub(1, 300), vim.log.levels.ERROR)
 			end
 			cb(dir)
@@ -118,7 +145,7 @@ end
 -- Open in the current (docs) window; restore_fn re-renders the doc on :q.
 -- The picker opens IMMEDIATELY (fd files + ripgrep are instant even on the
 -- kernel); ctags indexes in the background and <C-]> lights up when ready.
-function M.open(name, url, restore_fn)
+function M.open(name, url, restore_fn, excl)
 	if not (have("git") and have("ctags")) then
 		return vim.notify("git and ctags are needed for source exploration", vim.log.levels.WARN)
 	end
@@ -127,17 +154,17 @@ function M.open(name, url, restore_fn)
 		local tagfile = dir .. "/.srctags"
 		open_picker(win, dir, tagfile, restore_fn)
 		if vim.fn.filereadable(tagfile) == 0 then
-			build_tags(dir, function()
+			build_tags(dir, excl, function()
 				vim.notify("ctags index ready: " .. vim.fs.basename(dir))
 			end)
 		end
 	end)
 end
 
-function M.reindex(name)
+function M.reindex(name, excl)
 	local dir = data_root .. "/" .. name
 	if vim.fn.isdirectory(dir) == 1 then
-		build_tags(dir, function() vim.notify("reindexed " .. name) end)
+		build_tags(dir, excl, function() vim.notify("reindexed " .. name) end)
 	end
 end
 

@@ -449,7 +449,7 @@ local function ensure_docs(version, cb)
 	vim.notify("Cloning kernel Documentation @ " .. version .. " … (first time only)")
 	local script = table.concat({
 		"rm -rf " .. vim.fn.shellescape(dir),
-		"git -c core.autocrlf=false clone -n --depth=1 --filter=tree:0 --branch "
+		"git -c core.autocrlf=false clone -n --depth=1 --filter=blob:none --branch "
 			.. vim.fn.shellescape(version) .. " " .. repo .. " " .. vim.fn.shellescape(dir),
 		"cd " .. vim.fn.shellescape(dir),
 		"git sparse-checkout set --no-cone /Documentation",
@@ -591,7 +591,7 @@ local function ensure_repo(dir, url, sparse, marker, cb)
 	vim.notify("Cloning " .. vim.fs.basename(vim.fs.dirname(dir)) .. " docs … (first time only)")
 	local script = table.concat({
 		"rm -rf " .. vim.fn.shellescape(dir),
-		"git -c core.autocrlf=false clone -n --depth=1 --filter=tree:0 " .. url .. " " .. vim.fn.shellescape(dir),
+		"git -c core.autocrlf=false clone -n --depth=1 --filter=blob:none " .. url .. " " .. vim.fn.shellescape(dir),
 		"cd " .. vim.fn.shellescape(dir),
 		"git sparse-checkout set --no-cone " .. sparse,
 		"git checkout",
@@ -1023,11 +1023,22 @@ end
 
 -- gs from a docs buffer: explore that project's full source (config.src) in
 -- the same split the docs occupy; `:q` on the source restores the doc there.
+-- Skip only non-code dirs for the kernel (keep every arch + driver: the user
+-- does cross-arch and driver work).
+local KERNEL_EXCLUDE = { "Documentation", "samples", "tools", "scripts" }
 gs_source = function(dir)
-	local name = dir and dir:match("/docs/([^/]+)/master")
-	local spec = name and simple[name]
-	if not spec then
-		return vim.notify("Source explorer is only wired for repo-backed providers", vim.log.levels.INFO)
+	if not dir then
+		return
+	end
+	local srcname, url, excl
+	local name = dir:match("/docs/([^/]+)/master")
+	if name and simple[name] then
+		srcname, url = name, simple[name].url
+	elseif dir:match("/docs/linux/") then
+		srcname, url, excl = "linux", repo, KERNEL_EXCLUDE
+	end
+	if not url then
+		return vim.notify("Source explorer: no git source for this doc set", vim.log.levels.INFO)
 	end
 	local buf = vim.api.nvim_get_current_buf()
 	local restore = {
@@ -1035,9 +1046,9 @@ gs_source = function(dir)
 		ft = vim.bo[buf].filetype,
 		title = vim.api.nvim_buf_get_name(buf):match("([^/]+)$") or "doc",
 	}
-	require("config.src").open(name, spec.url, function()
+	require("config.src").open(srcname, url, function()
 		render_lines(restore.lines, restore.ft, dir, restore.title)
-	end)
+	end, excl)
 end
 
 -- ── doxygen providers: doxygen (XML) -> moxygen -> per-class/group Markdown ─
@@ -1586,7 +1597,7 @@ local function pick_ghidra()
 						vim.notify("Cloning Ghidra " .. tag .. " docs … (first time)")
 						local script = table.concat({
 							"rm -rf " .. vim.fn.shellescape(dir),
-							"git -c core.autocrlf=false clone -n --depth=1 --filter=tree:0 --branch " .. vim.fn.shellescape(tag) .. " " .. repo .. " " .. vim.fn.shellescape(dir),
+							"git -c core.autocrlf=false clone -n --depth=1 --filter=blob:none --branch " .. vim.fn.shellescape(tag) .. " " .. repo .. " " .. vim.fn.shellescape(dir),
 							"cd " .. vim.fn.shellescape(dir),
 							"git sparse-checkout set --no-cone /GhidraDocs /Ghidra/Processors/x86/data/languages",
 							"git checkout",
@@ -1854,7 +1865,7 @@ local function pick_android_kernel()
 						vim.notify("Cloning Android kernel " .. br .. " … (first time)")
 						local script = table.concat({
 							"rm -rf " .. vim.fn.shellescape(dir),
-							"git -c core.autocrlf=false clone -n --depth=1 --filter=tree:0 --branch " .. vim.fn.shellescape(br) .. " " .. repo .. " " .. vim.fn.shellescape(dir),
+							"git -c core.autocrlf=false clone -n --depth=1 --filter=blob:none --branch " .. vim.fn.shellescape(br) .. " " .. repo .. " " .. vim.fn.shellescape(dir),
 							"cd " .. vim.fn.shellescape(dir),
 							"git sparse-checkout set --no-cone " .. sparse,
 							"git checkout",
