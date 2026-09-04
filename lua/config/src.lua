@@ -44,8 +44,35 @@ local function scope_tags(dir, tagfile)
 	})
 end
 
-local function open_picker(dir, tagfile)
+-- When a source file first shows in `win`, arm restore_fn to run when that
+-- window later closes (:q) — so exploring source in the docs split and then
+-- quitting drops you back on the doc.
+local function arm_restore(win, dir, restore_fn)
+	local grp = vim.api.nvim_create_augroup("SrcBack:" .. win, { clear = true })
+	vim.api.nvim_create_autocmd("BufWinEnter", {
+		group = grp,
+		callback = function(ev)
+			local f = vim.api.nvim_buf_get_name(ev.buf)
+			if f:sub(1, #dir) == dir and vim.api.nvim_get_current_win() == win then
+				pcall(vim.api.nvim_del_augroup_by_id, grp)
+				vim.api.nvim_create_autocmd("WinClosed", {
+					pattern = tostring(win),
+					once = true,
+					callback = function() vim.schedule(restore_fn) end,
+				})
+			end
+		end,
+	})
+end
+
+local function open_picker(win, dir, tagfile, restore_fn)
+	if vim.api.nvim_win_is_valid(win) then
+		vim.api.nvim_set_current_win(win) -- selections open in the docs split
+	end
 	scope_tags(dir, tagfile)
+	if restore_fn then
+		arm_restore(win, dir, restore_fn)
+	end
 	fzf().files({
 		cwd = dir,
 		prompt = vim.fs.basename(dir) .. " src> ",
@@ -91,11 +118,15 @@ local function ensure_src(name, url, cb)
 	end)
 end
 
-function M.open(name, url)
+-- Open in the current (docs) window; restore_fn re-renders the doc on :q.
+function M.open(name, url, restore_fn)
 	if not (have("git") and have("ctags")) then
 		return vim.notify("git and ctags are needed for source exploration", vim.log.levels.WARN)
 	end
-	ensure_src(name, url, open_picker)
+	local win = vim.api.nvim_get_current_win()
+	ensure_src(name, url, function(dir, tagfile)
+		open_picker(win, dir, tagfile, restore_fn)
+	end)
 end
 
 function M.reindex(name)

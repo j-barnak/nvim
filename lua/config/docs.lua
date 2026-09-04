@@ -1007,16 +1007,23 @@ local function make_wiki(name, url, prompt)
 	end
 end
 
--- gs from a docs buffer: explore that project's full source (config.src).
--- Opens in a NEW TAB so the docs stay put and `:q` on the source returns here.
+-- gs from a docs buffer: explore that project's full source (config.src) in
+-- the same split the docs occupy; `:q` on the source restores the doc there.
 gs_source = function(dir)
 	local name = dir and dir:match("/docs/([^/]+)/master")
 	local spec = name and simple[name]
 	if not spec then
 		return vim.notify("Source explorer is only wired for repo-backed providers", vim.log.levels.INFO)
 	end
-	vim.cmd("tabnew")
-	require("config.src").open(name, spec.url)
+	local buf = vim.api.nvim_get_current_buf()
+	local restore = {
+		lines = vim.api.nvim_buf_get_lines(buf, 0, -1, false),
+		ft = vim.bo[buf].filetype,
+		title = vim.api.nvim_buf_get_name(buf):match("([^/]+)$") or "doc",
+	}
+	require("config.src").open(name, spec.url, function()
+		render_lines(restore.lines, restore.ft, dir, restore.title)
+	end)
 end
 
 -- ── doxygen providers: doxygen (XML) -> moxygen -> per-class/group Markdown ─
