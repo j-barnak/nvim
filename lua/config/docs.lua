@@ -1966,6 +1966,18 @@ if mode == "links":
             continue
         seen.add(h)
         sys.stdout.write(t + "\t" + h + "\n")
+elif mode == "lessontable":
+    # learncpp TOC: each div.lessontable-row has the lesson number and the link,
+    # so emit "N.M Title\tURL" in document (chapter) order.
+    for r in s.select("div.lessontable-row"):
+        num = r.select_one(".lessontable-row-number")
+        a = r.select_one(".lessontable-row-title a[href]")
+        if not (num and a):
+            continue
+        n = " ".join(num.get_text(" ", strip=True).split())
+        t = " ".join(a.get_text(" ", strip=True).split())
+        href = a["href"].split("#")[0].split("?")[0].rstrip("/")
+        sys.stdout.write(f"{n} {t}\t{href}\n")
 elif mode == "content":
     el = s.select_one(arg) or s.find("article")
     if not el:
@@ -1982,10 +1994,8 @@ local function web_index_provider(opts)
 			return vim.notify("curl, pandoc and python3 are needed for " .. opts.name, vim.log.levels.WARN)
 		end
 		local py = tools_dir .. "/webextract.py"
-		if vim.fn.filereadable(py) == 0 then
-			vim.fn.mkdir(tools_dir, "p")
-			pcall(vim.fn.writefile, vim.split(WEBEXTRACT_PY, "\n"), py)
-		end
+		vim.fn.mkdir(tools_dir, "p")
+		pcall(vim.fn.writefile, vim.split(WEBEXTRACT_PY, "\n"), py) -- keep it current
 		local dir = data_root .. "/" .. opts.name
 		local idxfile = dir .. "/index.tsv"
 		local function browse()
@@ -2019,8 +2029,11 @@ local function web_index_provider(opts)
 		end
 		vim.fn.mkdir(dir, "p")
 		vim.notify("Fetching the " .. opts.name .. " index … (first time)")
-		local cmd = "curl -fsSL " .. vim.fn.shellescape(opts.index_url) .. " | python3 " .. vim.fn.shellescape(py)
-			.. " links " .. vim.fn.shellescape(opts.link_filter) .. " " .. vim.fn.shellescape(opts.base or "")
+		local args = {}
+		for _, a in ipairs(opts.index_argv) do
+			args[#args + 1] = vim.fn.shellescape(a)
+		end
+		local cmd = "curl -fsSL " .. vim.fn.shellescape(opts.index_url) .. " | python3 " .. vim.fn.shellescape(py) .. " " .. table.concat(args, " ")
 		vim.system({ "sh", "-c", cmd }, { text = true, timeout = 30000 }, function(res)
 			vim.schedule(function()
 				local items = vim.split(res.stdout or "", "\n", { trimempty = true })
@@ -2039,7 +2052,7 @@ end
 local pick_learncpp = web_index_provider({
 	name = "learncpp",
 	index_url = "https://www.learncpp.com/",
-	link_filter = "learncpp.com/cpp-tutorial/",
+	index_argv = { "lessontable" }, -- numbered TOC (N.M Title) in chapter order
 	content_sel = "div.entry-content",
 	prompt = "Learn C++ lesson> ",
 })
@@ -2048,8 +2061,7 @@ local pick_learncpp = web_index_provider({
 local pick_rayanfam = web_index_provider({
 	name = "rayanfam",
 	index_url = "https://rayanfam.com/tutorials/",
-	link_filter = "/topics/",
-	base = "https://rayanfam.com",
+	index_argv = { "links", "/topics/", "https://rayanfam.com" },
 	content_sel = "div.post-content",
 	prompt = "Rayanfam tutorial> ",
 })
