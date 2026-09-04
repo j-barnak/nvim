@@ -88,14 +88,21 @@ local function open_picker(win, dir, tagfile, restore_fn)
 	if restore_fn then
 		arm_restore(win, dir, restore_fn)
 	end
-	fzf().files({
-		cwd = dir,
-		prompt = vim.fs.basename(dir) .. " src> ",
-		actions = {
-			["ctrl-g"] = function() fzf().live_grep({ cwd = dir }) end,
-			["ctrl-t"] = function() fzf().tags({ cwd = dir, ctags_file = tagfile }) end,
-		},
-	})
+	local base = vim.fs.basename(dir)
+	-- The same three verbs are reachable from any of the pickers.
+	local actions = {
+		["ctrl-t"] = function() fzf().tags({ cwd = dir, ctags_file = tagfile }) end,
+		["ctrl-f"] = function() fzf().files({ cwd = dir }) end,
+		["ctrl-g"] = function() fzf().live_grep({ cwd = dir }) end,
+	}
+	if vim.fn.filereadable(tagfile) == 1 then
+		-- Land in the symbol (tags) picker; ctrl-f files, ctrl-g grep.
+		fzf().tags({ cwd = dir, ctags_file = tagfile, prompt = base .. " tags> ", actions = actions })
+	else
+		-- First time: index still building, so start on files (instant).
+		vim.notify("Indexing " .. base .. " symbols … (Ctrl-t for tags shortly)")
+		fzf().files({ cwd = dir, prompt = base .. " src> ", actions = actions })
+	end
 end
 
 -- Write to a temp file then rename in, so a <C-]> mid-build never reads a
