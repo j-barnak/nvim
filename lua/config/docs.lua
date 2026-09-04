@@ -2452,7 +2452,7 @@ try:
             man[it.get("id")] = it.get("href")
             if it.get("media-type") == "application/x-dtbncx+xml": ncx_rel = it.get("href")
     spine = [uo(man[ir.get("idref")]) for ir in opf.iter() if ir.tag.endswith("}itemref") and man.get(ir.get("idref"))]
-    labels, top = {}, []
+    labels, top, top_a = {}, [], []
     if ncx_rel:
         ncx = ET.parse(os.path.join(root, uo(ncx_rel))).getroot()
         nsn = {"n":"http://www.daisy.org/z3986/2005/ncx/"}
@@ -2466,6 +2466,9 @@ try:
             l = np.find("n:navLabel/n:text", nsn); return " ".join((l.text or "").split()) if l is not None else ""
         def _src(np):
             c = np.find("n:content", nsn); return posixpath.basename(c.get("src").split("#")[0]) if c is not None else None
+        def _anc(np):
+            c = np.find("n:content", nsn); s = (c.get("src") if c is not None else "") or ""
+            return s.split("#")[1] if "#" in s else ""
         for np in (nm if nm is not None else []):
             if not np.tag.endswith("}navPoint"): continue
             plab, psrc = _lab(np), _src(np)
@@ -2474,13 +2477,24 @@ try:
             # Expand a Part/Section container whose children live in distinct
             # spine docs (real chapters, e.g. WACC's "Part I" -> chapters 1-10),
             # keeping the container itself; else it is a single chapter boundary.
-            if re.match(r'(part|section|volume|book|unit)\b', plab, re.I) and len(kid_srcs) >= 2:
+            is_part = re.match(r'(part|section|volume|book|unit)\b', plab, re.I)
+            if is_part and len(kid_srcs) >= 2:
                 if psrc: top.append((plab, psrc))
                 for c in kids:
                     cs = _src(c)
                     if cs: top.append((_lab(c), cs))
             elif psrc:
                 top.append((plab, psrc))
+            # top_a drives the anchor-split path, which can split several chapters
+            # out of one spine doc, so always expand a Part into its children even
+            # when they share the Part's spine doc (page-split epubs).
+            if is_part and kids:
+                if psrc: top_a.append((plab, psrc, _anc(np)))
+                for c in kids:
+                    cs = _src(c)
+                    if cs: top_a.append((_lab(c), cs, _anc(c)))
+            elif psrc:
+                top_a.append((plab, psrc, _anc(np)))
 except Exception as e:
     sys.stderr.write("parse failed: %s\n" % e); sys.exit(2)
 # convert each spine doc once
@@ -2602,6 +2616,54 @@ def strip_furniture(md):
 def write(idx, ttl, md):
     name = ("%03d %s" % (idx, sanitize(ttl))) if ttl else ("%03d" % idx)
     open(os.path.join(out, name + ".md"), "w", encoding="utf-8").write(fence_code(strip_furniture(md)))
+def pandoc_html(html, srcdir):
+    r = subprocess.run(["pandoc","-f","html","-t","gfm-raw_html","--wrap=none",
+        "--resource-path", srcdir, "--extract-media", os.path.join(out,"media")],
+        input=flatten_tables(html), capture_output=True, text=True)
+    return clean(r.stdout)
+# Anchor-split books: the spine/ncx does not line up with chapters (several
+# chapters share one spine doc, or a chapter is marked only by an in-page
+# anchor, or the spine is a coarse page-split). Split each spine document at the
+# ncx chapter anchors (the Part-expanded top-level boundaries) so the picker
+# matches the printed TOC. Every other book keeps the spine/group strategies.
+ANCHOR_SPLIT = {"expert-c-programming","effective-modern-c","c-initialization-story",
+    "linux-device-drivers-3rd-edition","algorithms-illuminated-part-2","system-programming-in-linux",
+    "rust-in-action","bootlin-embedded-linux-bbb-labs","bootlin-linux-kernel-slides",
+    "bootlin-embedded-linux-qemu-labs"}
+SENT = "§§CHAPSPLIT§§"
+if posixpath.basename(out.rstrip("/")) in ANCHOR_SPLIT and top_a:
+    spine_i = {}
+    for i, f in enumerate(spine): spine_i.setdefault(posixpath.basename(f), i)
+    parts = []  # per-spine markdown, with a sentinel paragraph at each chapter start
+    for i, f in enumerate(spine):
+        p = os.path.join(root, f)
+        if not os.path.isfile(p): continue
+        soup = BeautifulSoup(open(p, encoding="utf-8", errors="replace").read(), "html.parser")
+        body = soup.body or soup
+        for lbl, base, anc in top_a:
+            if spine_i.get(base) != i: continue
+            mk = soup.new_tag("p"); mk.string = SENT + lbl + SENT
+            el = (body.find(id=anc) or body.find(attrs={"name": anc})) if anc else None
+            if el is not None: el.insert_before(mk)  # anchor at any depth (handles page-split epubs)
+            else: body.insert(0, mk)                  # whole-doc boundary
+        parts.append(pandoc_html(str(body), os.path.dirname(p)))
+    # split the concatenated stream at the sentinels
+    segs = []; lbl = "Front Matter"; buf = []
+    rx = re.compile(re.escape(SENT) + r"(.*?)" + re.escape(SENT))
+    for line in ("\n\n".join(parts)).split("\n"):
+        m = rx.search(line)
+        if m:
+            segs.append((lbl, "\n".join(buf))); lbl = m.group(1).strip() or "untitled"; buf = []
+        else:
+            buf.append(line)
+    segs.append((lbl, "\n".join(buf)))
+    idx = 0
+    for lbl, md in segs:
+        md = md.strip("\n")
+        if md.strip() and "读累了记得休息一会哦" not in md:
+            idx += 1; write(idx, lbl, md)
+    if idx >= 3:
+        print("strategy=anchor-split chapters=%d" % idx); sys.exit(0)
 if len(conv) <= 60 or len(top) < 3:
     for idx,(i,base,md) in enumerate(conv, 1): write(idx, title_for(base,md), md)
     print("strategy=per-spine chapters=%d" % len(conv)); sys.exit(0)
