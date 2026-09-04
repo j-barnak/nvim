@@ -302,31 +302,71 @@ end
 -- ── render a doc or source file, by extension ────────────────────────────
 --   .rst -> pandoc to Markdown (raw rst as `rst` if pandoc is missing);
 --   .md -> as-is; anything else (code examples) -> raw with detected filetype.
+-- Converted-markdown cache: pandoc (rst/xml/html -> gfm) dominates a doc open
+-- (95%+ of a big .rst) and was run synchronously, freezing the UI for up to a
+-- second on large kernel/python pages. Cache the conversion keyed by path+mtime
+-- (a re-clone or new version reconverts) and run it async on a cache miss.
+local convcache_dir = data_root .. "/.convcache"
 local function open_file(path)
 	local ext = (path:match("%.([%w]+)$") or ""):lower()
-	local lines, ft
+	local dir = vim.fs.dirname(path)
+	local base = vim.fs.basename(path)
 	-- .rst via pandoc rst, .xml via pandoc DocBook (OpenGL refpages), .html via
 	-- pandoc HTML (Ghidra CheatSheet, doxygen pages).
-	if have("pandoc") and (ext == "rst" or ext == "xml" or ext == "html" or ext == "htm") then
-		local from = ext == "xml" and "docbook" or ((ext == "html" or ext == "htm") and "html") or "rst"
-		lines = vim.fn.systemlist({ "pandoc", "-f", from, "-t", "gfm-raw_html", "--wrap=none", path })
-		ft = "markdown"
+	local from
+	if have("pandoc") then
+		from = ext == "rst" and "rst"
+			or ext == "xml" and "docbook"
+			or (ext == "html" or ext == "htm") and "html"
+			or nil
 	end
-	if not lines or #lines == 0 then
-		lines = vim.fn.filereadable(path) == 1 and vim.fn.readfile(path) or {}
-		if ext == "md" or ext == "markdown" or ext == "pandoc" then
-			ft = "markdown"
-		elseif ext == "rst" then
-			ft = "rst"
-		else
-			ft = vim.filetype.match({ filename = path, contents = lines }) or ""
+
+	-- Render `lines`/`ft`; nil lines means "fall back to the raw file".
+	local function finish(lines, ft)
+		if not lines or #lines == 0 then
+			lines = vim.fn.filereadable(path) == 1 and vim.fn.readfile(path) or {}
+			if ext == "md" or ext == "markdown" or ext == "pandoc" then
+				ft = "markdown"
+			elseif ext == "rst" then
+				ft = "rst"
+			else
+				ft = vim.filetype.match({ filename = path, contents = lines }) or ""
+			end
 		end
+		if ft == "markdown" then
+			lines = abs_images(strip_liquid(strip_frontmatter(lines)), dir)
+		end
+		render_lines(lines, ft, dir, base)
 	end
-	local dir = vim.fs.dirname(path)
-	if ft == "markdown" then
-		lines = abs_images(strip_liquid(strip_frontmatter(lines)), dir)
+
+	if not from then
+		return finish(nil, nil) -- markdown / code: raw read is already instant
 	end
-	render_lines(lines, ft, dir, vim.fs.basename(path))
+
+	local cf = convcache_dir .. "/" .. vim.fn.sha256(path .. ":" .. vim.fn.getftime(path)) .. ".md"
+	if vim.fn.filereadable(cf) == 1 then
+		return finish(vim.fn.readfile(cf), "markdown")
+	end
+	vim.system(
+		{ "pandoc", "-f", from, "-t", "gfm-raw_html", "--wrap=none", path },
+		{ text = true },
+		function(res)
+			vim.schedule(function()
+				local lines = vim.split(res.stdout or "", "\n")
+				while #lines > 0 and lines[#lines] == "" do
+					lines[#lines] = nil
+				end
+				if #lines == 0 then
+					return finish(nil, nil) -- conversion empty: show raw source
+				end
+				pcall(function()
+					vim.fn.mkdir(convcache_dir, "p")
+					vim.fn.writefile(lines, cf)
+				end)
+				finish(lines, "markdown")
+			end)
+		end
+	)
 end
 
 -- gd: follow the Markdown/rst link under the cursor to another doc in this set.
@@ -1385,7 +1425,19 @@ end
 -- ── man pages + cppman: reference at your fingertips while writing C/C++ ──
 -- Rendered with filetype=man, so Neovim highlights them AND `K` on any word
 -- opens that word's man page (e.g. K over `read` on the open(2) page).
-local function render_shell(cmd, title, ft)
+-- Web pages fetched over the network are the one slow interactive path (curl +
+-- pandoc is seconds, and every open refetched it). `cache_key`, when given,
+-- serves the previously rendered result from disk instantly and works offline;
+-- `:Docs update` clears this cache so pages can be refreshed on demand.
+local webcache_dir = data_root .. "/.webcache"
+local function render_shell(cmd, title, ft, cache_key)
+	local cf = cache_key and (webcache_dir .. "/" .. vim.fn.sha256(cache_key) .. ".txt")
+	if cf and vim.fn.filereadable(cf) == 1 then
+		local cached = vim.fn.readfile(cf)
+		if #cached > 0 then
+			return render_lines(cached, ft or "man", nil, title)
+		end
+	end
 	vim.system({ "sh", "-c", cmd }, { text = true }, function(res)
 		vim.schedule(function()
 			local out = vim.split(res.stdout or "", "\n")
@@ -1395,6 +1447,12 @@ local function render_shell(cmd, title, ft)
 			if #out == 0 then
 				local err = res.stderr ~= "" and res.stderr or ("Nothing for " .. title)
 				return vim.notify(err, vim.log.levels.WARN)
+			end
+			if cf then -- persist successful, non-empty output for instant reopen
+				pcall(function()
+					vim.fn.mkdir(webcache_dir, "p")
+					vim.fn.writefile(out, cf)
+				end)
 			end
 			render_lines(out, ft or "man", nil, title)
 		end)
@@ -1609,7 +1667,8 @@ local function pick_ocaml()
 							"curl -sSL " .. vim.fn.shellescape("https://ocaml.org/api/" .. sel[1] .. ".html")
 								.. " | pandoc -f html -t gfm-raw_html --wrap=none 2>/dev/null | awk 'f||/OCaml library/{f=1}f'",
 							"OCaml." .. sel[1],
-							"markdown"
+							"markdown",
+							"ocaml:" .. sel[1]
 						)
 					end
 				end,
@@ -1703,7 +1762,7 @@ local function pick_multiboot()
 		actions = {
 			["default"] = function(sel)
 				if sel and sel[1] and specs[sel[1]] then
-					render_shell("curl -sSL " .. vim.fn.shellescape(specs[sel[1]]) .. " | pandoc -f html -t gfm-raw_html --wrap=none 2>/dev/null", sel[1], "markdown")
+					render_shell("curl -sSL " .. vim.fn.shellescape(specs[sel[1]]) .. " | pandoc -f html -t gfm-raw_html --wrap=none 2>/dev/null", sel[1], "markdown", specs[sel[1]])
 				end
 			end,
 		},
@@ -1756,6 +1815,10 @@ local function update_all()
 	scan(data_root .. "/*") -- netbsd and any flat clones
 	scan(data_root .. "/linux/*") -- kernel versions
 	scan(data_root .. "/ghidra/*") -- ghidra tags
+	-- Drop cached web pages (make/ocaml/multiboot) and converted-markdown so
+	-- they refetch/reconvert fresh after a pull.
+	pcall(vim.fn.delete, webcache_dir, "rf")
+	pcall(vim.fn.delete, convcache_dir, "rf")
 	if #repos == 0 then
 		return vim.notify("No cached doc repos to update yet", vim.log.levels.INFO)
 	end
@@ -2113,7 +2176,7 @@ local providers = {
 	{ name = "Ghidra API (versioned)", key = "ghidra", run = pick_ghidra },
 	{ name = "Multiboot specs", key = "multiboot", run = pick_multiboot },
 	{ name = "GNU Make manual", key = "make", run = function()
-		render_shell("curl -sSL https://www.gnu.org/software/make/manual/make.html | pandoc -f html -t gfm-raw_html --wrap=none 2>/dev/null", "GNU Make manual", "markdown")
+		render_shell("curl -sSL https://www.gnu.org/software/make/manual/make.html | pandoc -f html -t gfm-raw_html --wrap=none 2>/dev/null", "GNU Make manual", "markdown", "gnu-make-manual")
 	end },
 	{ name = "GNU ld (linker)", key = "ld", run = man_provider("man ld", "ld(1)") },
 	{ name = "GNU as (assembler)", key = "as", run = man_provider("man as", "as(1)") },
