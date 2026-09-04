@@ -1990,6 +1990,31 @@ elif mode == "content":
         code.string = codeel.get_text()
         pre.append(code)
         cont.replace_with(pre)
+    # Flatten block-content tables so pandoc's gfm writer never drops them to a
+    # bare "[TABLE]" (a code-listing/worked-example box becomes its <pre>; every
+    # other table is rebuilt with text-only cells so it can always be piped).
+    for table in el.select("table"):
+        pres = table.find_all("pre")
+        if pres:
+            div = s.new_tag("div")
+            for p in pres:
+                div.append(p.extract())
+            table.replace_with(div)
+            continue
+        rows = table.find_all("tr")
+        if not rows:
+            table.unwrap()
+            continue
+        nt = s.new_tag("table")
+        for r in rows:
+            nr = s.new_tag("tr")
+            for c in r.find_all(["td", "th"]):
+                nc = s.new_tag(c.name)
+                nc.string = c.get_text(" ", strip=True)
+                nr.append(nc)
+            if nr.find(True):
+                nt.append(nr)
+        table.replace_with(nt)
     sys.stdout.write(str(el))
 ]==]
 
@@ -2306,18 +2331,49 @@ rm -f "$OUT"/*.md "$OUT"/.complete; rm -rf "$OUT/media" "$OUT/.x"; mkdir -p "$OU
 if python3 - "$OUT/.x" "$OUT" "$TITLE" <<'PY'
 import sys, os, posixpath, re, subprocess
 import xml.etree.ElementTree as ET
+from bs4 import BeautifulSoup
 root, out, title = sys.argv[1], sys.argv[2], sys.argv[3]
 def sanitize(t):
     t = re.sub(r'[\\/:*?"<>|]', '-', (t or "").strip()); return (t[:80] or "untitled")
+def flatten_tables(html):
+    # pandoc's gfm writer replaces any table with block-content cells (a <pre>
+    # code listing, lists, multiple <p>) with the literal "[TABLE]" and DROPS the
+    # body. So pre-flatten: a code-listing table becomes its <pre> blocks; every
+    # other table is rebuilt with text-only cells so pandoc can always pipe it.
+    s = BeautifulSoup(html, "html.parser")
+    for table in s.find_all("table"):
+        pres = table.find_all("pre")
+        if pres:
+            div = s.new_tag("div")
+            for p in pres:
+                div.append(p.extract())
+            table.replace_with(div)
+            continue
+        rows = table.find_all("tr")
+        if not rows:
+            table.unwrap()
+            continue
+        nt = s.new_tag("table")
+        for r in rows:
+            nr = s.new_tag("tr")
+            for c in r.find_all(["td", "th"]):
+                nc = s.new_tag(c.name)
+                nc.string = c.get_text(" ", strip=True)
+                nr.append(nc)
+            if nr.find(True):
+                nt.append(nr)
+        table.replace_with(nt)
+    return str(s)
 def clean(md):
     md = re.sub(r'\[!\[[^\]]*\]\([^)]*\)\]\((?!\w+://)[^)]*\.x?html[^)]*\)', '', md)  # dead linked-image nav thumbnail
     md = re.sub(r'\[([^\]]*)\]\(#[^)]*\)', r'\1', md)                        # dead pure-anchor link
     md = re.sub(r'\[([^\]]*)\]\((?!\w+://)[^)]*\.x?html[^)]*\)', r'\1', md)  # dead intra-epub .html link (kept text)
     return md.strip("\n")
 def pandoc(p):
-    r = subprocess.run(["pandoc", p, "-f","html","-t","gfm-raw_html","--wrap=none",
+    html = flatten_tables(open(p, encoding="utf-8", errors="replace").read())
+    r = subprocess.run(["pandoc", "-f","html","-t","gfm-raw_html","--wrap=none",
         "--resource-path", os.path.dirname(p), "--extract-media", os.path.join(out,"media")],
-        capture_output=True, text=True)
+        input=html, capture_output=True, text=True)
     return clean(r.stdout)
 try:
     cont = open(os.path.join(root,"META-INF","container.xml"),encoding="utf-8",errors="replace").read()
