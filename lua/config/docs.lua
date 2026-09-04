@@ -1991,30 +1991,35 @@ elif mode == "content":
         pre.append(code)
         cont.replace_with(pre)
     # Flatten block-content tables so pandoc's gfm writer never drops them to a
-    # bare "[TABLE]" (a code-listing/worked-example box becomes its <pre>; every
-    # other table is rebuilt with text-only cells so it can always be piped).
+    # bare "[TABLE]": a table with block content is linearized (each row -> its
+    # text, then its <pre> code) so nothing is discarded; a simple table is
+    # rebuilt with text-only cells so it can be piped; the <caption> is kept.
     for table in el.select("table"):
-        pres = table.find_all("pre")
-        if pres:
-            div = s.new_tag("div")
-            for p in pres:
-                div.append(p.extract())
-            table.replace_with(div)
-            continue
-        rows = table.find_all("tr")
-        if not rows:
-            table.unwrap()
-            continue
-        nt = s.new_tag("table")
-        for r in rows:
-            nr = s.new_tag("tr")
-            for c in r.find_all(["td", "th"]):
-                nc = s.new_tag(c.name)
-                nc.string = c.get_text(" ", strip=True)
-                nr.append(nc)
-            if nr.find(True):
-                nt.append(nr)
-        table.replace_with(nt)
+        div = s.new_tag("div")
+        cap = table.find("caption")
+        if cap:
+            p = s.new_tag("p"); st = s.new_tag("strong")
+            st.string = cap.get_text(" ", strip=True); p.append(st); div.append(p)
+        if table.find(["pre", "ul", "ol"]):
+            for r in table.find_all("tr"):
+                pres = [pr.extract() for pr in r.find_all("pre")]
+                label = r.get_text(" ", strip=True)
+                if label:
+                    p = s.new_tag("p"); p.string = label; div.append(p)
+                for pr in pres:
+                    div.append(pr)
+        else:
+            nt = s.new_tag("table")
+            for r in table.find_all("tr"):
+                nr = s.new_tag("tr")
+                for c in r.find_all(["td", "th"]):
+                    nc = s.new_tag(c.name)
+                    nc.string = c.get_text(" ", strip=True)
+                    nr.append(nc)
+                if nr.find(True):
+                    nt.append(nr)
+            div.append(nt)
+        table.replace_with(div)
     sys.stdout.write(str(el))
 ]==]
 
@@ -2338,31 +2343,38 @@ def sanitize(t):
 def flatten_tables(html):
     # pandoc's gfm writer replaces any table with block-content cells (a <pre>
     # code listing, lists, multiple <p>) with the literal "[TABLE]" and DROPS the
-    # body. So pre-flatten: a code-listing table becomes its <pre> blocks; every
-    # other table is rebuilt with text-only cells so pandoc can always pipe it.
+    # body. Pre-flatten so nothing is lost: a table with block content is
+    # LINEARIZED (each row -> its cell text, then its <pre> code blocks, so both
+    # a label column and its code survive); a simple table is rebuilt with
+    # text-only cells so pandoc can pipe it. The <caption> is always preserved as
+    # a leading bold line (gfm has no table captions).
     s = BeautifulSoup(html, "html.parser")
     for table in s.find_all("table"):
-        pres = table.find_all("pre")
-        if pres:
-            div = s.new_tag("div")
-            for p in pres:
-                div.append(p.extract())
-            table.replace_with(div)
-            continue
-        rows = table.find_all("tr")
-        if not rows:
-            table.unwrap()
-            continue
-        nt = s.new_tag("table")
-        for r in rows:
-            nr = s.new_tag("tr")
-            for c in r.find_all(["td", "th"]):
-                nc = s.new_tag(c.name)
-                nc.string = c.get_text(" ", strip=True)
-                nr.append(nc)
-            if nr.find(True):
-                nt.append(nr)
-        table.replace_with(nt)
+        div = s.new_tag("div")
+        cap = table.find("caption")
+        if cap:
+            p = s.new_tag("p"); st = s.new_tag("strong")
+            st.string = cap.get_text(" ", strip=True); p.append(st); div.append(p)
+        if table.find(["pre", "ul", "ol"]):
+            for r in table.find_all("tr"):
+                pres = [pr.extract() for pr in r.find_all("pre")]
+                label = r.get_text(" ", strip=True)
+                if label:
+                    p = s.new_tag("p"); p.string = label; div.append(p)
+                for pr in pres:
+                    div.append(pr)
+        else:
+            nt = s.new_tag("table")
+            for r in table.find_all("tr"):
+                nr = s.new_tag("tr")
+                for c in r.find_all(["td", "th"]):
+                    nc = s.new_tag(c.name)
+                    nc.string = c.get_text(" ", strip=True)
+                    nr.append(nc)
+                if nr.find(True):
+                    nt.append(nr)
+            div.append(nt)
+        table.replace_with(div)
     return str(s)
 def clean(md):
     md = re.sub(r'\[!\[[^\]]*\]\([^)]*\)\]\((?!\w+://)[^)]*\.x?html[^)]*\)', '', md)  # dead linked-image nav thumbnail
