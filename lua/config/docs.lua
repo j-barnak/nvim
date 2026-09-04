@@ -2014,7 +2014,14 @@ elif mode == "content":
                 nr = s.new_tag("tr")
                 for c in r.find_all(["td", "th"]):
                     nc = s.new_tag(c.name)
-                    nc.string = c.get_text(" ", strip=True)
+                    txt = c.get_text(" ", strip=True)
+                    inner = c.find(["code", "samp", "kbd", "tt", "var"])
+                    if inner and txt and inner.get_text(" ", strip=True) == txt:
+                        # whole cell is verbatim: keep a <code> wrapper so pandoc
+                        # does not \-escape it (which drops \' \" \. ( ) etc.)
+                        code = s.new_tag("code"); code.string = txt; nc.append(code)
+                    else:
+                        nc.string = txt
                     nr.append(nc)
                 if nr.find(True):
                     nt.append(nr)
@@ -2369,7 +2376,14 @@ def flatten_tables(html):
                 nr = s.new_tag("tr")
                 for c in r.find_all(["td", "th"]):
                     nc = s.new_tag(c.name)
-                    nc.string = c.get_text(" ", strip=True)
+                    txt = c.get_text(" ", strip=True)
+                    inner = c.find(["code", "samp", "kbd", "tt", "var"])
+                    if inner and txt and inner.get_text(" ", strip=True) == txt:
+                        # whole cell is verbatim: keep a <code> wrapper so pandoc
+                        # does not \-escape it (which drops \' \" \. ( ) etc.)
+                        code = s.new_tag("code"); code.string = txt; nc.append(code)
+                    else:
+                        nc.string = txt
                     nr.append(nc)
                 if nr.find(True):
                     nt.append(nr)
