@@ -121,7 +121,14 @@ local function docs_toc()
 		end
 	end
 	if #entries == 0 then
-		return vim.notify("No headings found in this document", vim.log.levels.INFO)
+		-- A code example (no headings): fall back to a treesitter symbol picker,
+		-- which reads the read-only scratch buffer's syntax tree (no file needed).
+		local ft = vim.bo.filetype
+		local prose = ft == "" or ft == "markdown" or ft == "rst" or ft == "text" or ft == "man"
+		if not prose and pcall(function() fzf().treesitter() end) then
+			return
+		end
+		return vim.notify("No headings or symbols in this document", vim.log.levels.INFO)
 	end
 	fzf().fzf_exec(entries, {
 		prompt = "TOC> ",
@@ -219,6 +226,10 @@ local function render_lines(lines, ft, dir, title)
 		vim.keymap.set("n", "gs", function()
 			gs_source(dir)
 		end, { buffer = buf, silent = true, desc = "Docs: explore this project's source" })
+		-- :Src, buffer-local so it exists only inside a docs viewer (not globally).
+		vim.api.nvim_buf_create_user_command(buf, "Src", function()
+			gs_source(dir)
+		end, { desc = "Explore this project's source (docs viewer only)" })
 		vim.keymap.set("n", "D", function()
 			if last_picker then
 				last_picker()
