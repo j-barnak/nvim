@@ -1988,8 +1988,23 @@ elif mode == "content":
     el = s.select_one(arg) or s.find("article")
     if not el:
         sys.exit(1)
-    for t in el.select("script, style, ins, iframe, nav, #comments, .comments, .code-block-buttons, .prevnext, .share-buttons, .page__share, .pagination"):
+    for t in el.select("script, style, ins, iframe, nav, #comments, .comments, .code-block-buttons, .prevnext, .share-buttons, .page__share, .pagination, .code-header"):
         t.decompose()
+    # Jekyll/Rouge highlight blocks put line numbers in a gutter (pre.lineno)
+    # that pandoc turns into a bogus ```lineno block of bare numbers. Rebuild
+    # each as a clean <pre><code class="language-X"> with only the code column.
+    for cont in el.select("div.highlighter-rouge, figure.highlight"):
+        lang = next((c for c in (cont.get("class") or []) if c.startswith("language-")), "")
+        codeel = cont.select_one("td.rouge-code") or cont.select_one("pre")
+        if not codeel:
+            continue
+        pre = s.new_tag("pre")
+        code = s.new_tag("code")
+        if lang:
+            code["class"] = lang
+        code.string = codeel.get_text()
+        pre.append(code)
+        cont.replace_with(pre)
     sys.stdout.write(str(el))
 ]==]
 
