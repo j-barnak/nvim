@@ -1031,12 +1031,15 @@ local simple = {
 		prompt = "bpftrace> ",
 	},
 	ebpf = {
+		-- The low-level eBPF ABI reference (ebpf-docs.dylanreimerink.nl): a page
+		-- per helper function, kfunc, map type, program type, program context,
+		-- and the bpf() syscall. (Cilium = architecture/XDP/tc guide; Aya = Rust.)
 		url = "https://github.com/isovalent/ebpf-docs",
 		sparse = "/docs",
 		marker = "docs",
 		browse = "/docs",
 		exts = "-e md",
-		prompt = "eBPF> ",
+		prompt = "eBPF helpers/maps/program-types> ",
 	},
 	aya = {
 		-- The Aya book (aya-rs.dev): writing eBPF programs in Rust.
@@ -2143,9 +2146,9 @@ local providers = {
 	{ name = "QEMU", key = "qemu", run = make_simple("qemu", simple.qemu) },
 	{ name = "libbpf", key = "libbpf", run = make_simple("libbpf", simple.libbpf) },
 	{ name = "bpftrace", key = "bpftrace", run = make_simple("bpftrace", simple.bpftrace) },
-	{ name = "eBPF docs", key = "ebpf", run = make_simple("ebpf", simple.ebpf) },
-	{ name = "eBPF (Cilium Reference)", key = "cilium", run = make_simple("cilium", simple.cilium) },
-	{ name = "Aya (Rust eBPF)", key = "aya", run = make_simple("aya", simple.aya) },
+	{ name = "eBPF ABI reference (helpers / kfuncs / maps / program types)", key = "ebpf", run = make_simple("ebpf", simple.ebpf) },
+	{ name = "eBPF (Cilium Reference: architecture, XDP, tc, toolchain)", key = "cilium", run = make_simple("cilium", simple.cilium) },
+	{ name = "Aya (Rust eBPF library book)", key = "aya", run = make_simple("aya", simple.aya) },
 	{ name = "drgn", key = "drgn", run = make_simple("drgn", simple.drgn) },
 	{
 		name = "libdrgn",
