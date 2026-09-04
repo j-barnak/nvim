@@ -266,51 +266,6 @@ local function strip_frontmatter(lines)
 	return lines
 end
 
--- Turn Jekyll/Liquid tags into plain Markdown (Frida's docs use these):
--- {% highlight LANG %}..{% endhighlight %} -> fenced code; drop other lone tags.
-local function strip_liquid(lines)
-	for i, l in ipairs(lines) do
-		local lang = l:match("^%s*{%%%s*highlight%s+(%S+)%s*%%}%s*$")
-		if lang then
-			lines[i] = "```" .. lang
-		elseif l:match("^%s*{%%%s*endhighlight%s*%%}%s*$") then
-			lines[i] = "```"
-		elseif l:match("^%s*{%%.-%%}%s*$") then
-			lines[i] = ""
-		elseif l:match("^%s*```[%w_+-]+,") then
-			-- ```rust,ignore / ```rust,no_run -> ```rust so treesitter injects
-			-- highlighting (the ,attr is an mdBook/rustdoc annotation, not a lang).
-			lines[i] = l:gsub("^(%s*```[%w_+-]+),.*$", "%1")
-		elseif l:match("^%s*>%s*%[!%u+%]%s*$") then
-			-- GitHub callout marker (> [!NOTE]) -> a bold blockquote label.
-			lines[i] = l:gsub("^(%s*>%s*)%[!(%u)(%u*)%]%s*$", function(pre, h, t)
-				return pre .. "**" .. h .. t:lower() .. "**"
-			end)
-		else
-			-- Drop trailing {#anchor} / {: attrs} (Doxygen/moxygen/kramdown) noise.
-			lines[i] = l:gsub("%s*{[#:][^}]*}%s*$", "")
-		end
-	end
-	return lines
-end
-
--- Rewrite relative Markdown image links to absolute paths so snacks.image can
--- find them: the doc renders in a scratch buffer with no real file path.
-local function abs_images(lines, dir)
-	if not dir then
-		return lines
-	end
-	for i, l in ipairs(lines) do
-		lines[i] = l:gsub("(!%[[^%]]*%]%()([^)%s]+)(%))", function(pre, url, post)
-			if url:match("^%a[%w+.-]*://") or url:match("^/") then
-				return pre .. url .. post
-			end
-			return pre .. vim.fs.normalize(dir .. "/" .. (url:gsub("^%./", ""))) .. post
-		end)
-	end
-	return lines
-end
-
 -- Pick the requested slice of an included file: "" = whole file; "N", "N:",
 -- ":M", "N:M" = 1-based inclusive line range; a name = an mdBook ANCHOR block
 -- (lines between "ANCHOR: name" and "ANCHOR_END: name", markers dropped).
@@ -341,46 +296,77 @@ local function include_select(body, sel)
 	return #keep > 0 and keep or body
 end
 
--- mdBook include preprocessor: {{#include file[:sel]}} (and #rustdoc_include /
--- #playground) splice a referenced file's code into the page, since the Aya
--- tutorials keep their example code under the repo's examples/ tree. Paths
--- resolve relative to the including page's directory; {{#title ...}} is metadata.
-local function expand_includes(lines, dir)
-	if not dir then
-		return lines
+-- Single-pass markdown cleanup (was four separate passes; the extra passes cost
+-- ~40ms on the largest chapters). Per line it: expands mdBook {{#include}} /
+-- {{#rustdoc_include}} / {{#playground}} (the Aya tutorials keep code under the
+-- repo's examples/, resolved relative to the page) and drops {{#title}}; turns
+-- Jekyll/Liquid tags into Markdown; normalizes ```lang,attr fences and GitHub
+-- ">[!NOTE]" callouts; strips trailing {#anchor}/{:attrs} noise; absolutizes
+-- relative image links (so snacks.image finds them); and drops Sphinx ".. only::"
+-- residue (Cilium's "not (...)" line + unreleased banner). Then trims leading
+-- blanks. Runs after strip_frontmatter.
+local function clean_markdown(lines, dir)
+	-- Rewrite one line; returns the transformed line, or nil to drop it.
+	local function xform(l)
+		-- Fast path: most lines are plain prose with none of the trigger
+		-- characters, so skip the dozen regex tries below (this, not the pass
+		-- count, is what the postprocess spends its time on).
+		if not l:find("[{`!>]") and not l:find("^%s*not %(") and not l:find("unreleased") then
+			return l
+		end
+		local lang = l:match("^%s*{%%%s*highlight%s+(%S+)%s*%%}%s*$")
+		if lang then
+			l = "```" .. lang
+		elseif l:match("^%s*{%%%s*endhighlight%s*%%}%s*$") then
+			l = "```"
+		elseif l:match("^%s*{%%.-%%}%s*$") then
+			l = ""
+		elseif l:match("^%s*```[%w_+-]+,") then
+			l = l:gsub("^(%s*```[%w_+-]+),.*$", "%1") -- ```rust,ignore -> ```rust
+		elseif l:match("^%s*>%s*%[!%u+%]%s*$") then
+			l = l:gsub("^(%s*>%s*)%[!(%u)(%u*)%]%s*$", function(pre, h, t)
+				return pre .. "**" .. h .. t:lower() .. "**"
+			end)
+		else
+			l = l:gsub("%s*{[#:][^}]*}%s*$", "") -- trailing {#anchor}/{:attrs}
+		end
+		if dir then
+			l = l:gsub("(!%[[^%]]*%]%()([^)%s]+)(%))", function(pre, url, post)
+				if url:match("^%a[%w+.-]*://") or url:match("^/") then
+					return pre .. url .. post
+				end
+				return pre .. vim.fs.normalize(dir .. "/" .. (url:gsub("^%./", ""))) .. post
+			end)
+		end
+		if l:match("^%s*not %(.-or.-%)%s*$") or l:match("You are looking at unreleased.-documentation") then
+			return nil -- Sphinx only:: residue / unreleased banner
+		end
+		return l
 	end
 	local out = {}
+	local function push(l)
+		local x = xform(l)
+		if x ~= nil then
+			out[#out + 1] = x
+		end
+	end
 	for _, l in ipairs(lines) do
-		local spec = l:match("^%s*{{#include%s+(.-)%s*}}%s*$")
-			or l:match("^%s*{{#rustdoc_include%s+(.-)%s*}}%s*$")
-			or l:match("^%s*{{#playground%s+(.-)%s*}}%s*$")
+		local spec = dir
+			and (l:match("^%s*{{#include%s+(.-)%s*}}%s*$")
+				or l:match("^%s*{{#rustdoc_include%s+(.-)%s*}}%s*$")
+				or l:match("^%s*{{#playground%s+(.-)%s*}}%s*$"))
 		if spec then
 			local rel, sel = spec:match("^([^:]+):?(.*)$")
 			local full = vim.fs.normalize(dir .. "/" .. rel)
 			if vim.fn.filereadable(full) == 1 then
 				for _, cl in ipairs(include_select(vim.fn.readfile(full), sel)) do
-					out[#out + 1] = cl
+					push(cl)
 				end
 			else
-				out[#out + 1] = l -- target missing: keep the marker, not a silent gap
+				push(l) -- target missing: keep the marker, not a silent gap
 			end
-		elseif not l:match("^%s*{{#title%s+.-}}%s*$") then
-			out[#out + 1] = l
-		end
-	end
-	return out
-end
-
--- Drop Sphinx-directive residue pandoc emits as body text at the top of a page:
--- Cilium's ".. only:: not (epub or latex or html)" leaks a literal "not (...)"
--- line plus an "unreleased documentation" banner. Then trim leading blanks.
-local function strip_doc_noise(lines)
-	local out = {}
-	for _, l in ipairs(lines) do
-		if l:match("^%s*not %(.-or.-%)%s*$") then -- Sphinx only:: expression leak
-		elseif l:match("You are looking at unreleased.-documentation") then -- banner
-		else
-			out[#out + 1] = l
+		elseif not (dir and l:match("^%s*{{#title%s+.-}}%s*$")) then
+			push(l)
 		end
 	end
 	while out[1] and out[1]:match("^%s*$") do
@@ -426,8 +412,7 @@ local function open_file(path)
 			end
 		end
 		if ft == "markdown" then
-			lines = expand_includes(strip_frontmatter(lines), dir)
-			lines = strip_doc_noise(abs_images(strip_liquid(lines), dir))
+			lines = clean_markdown(strip_frontmatter(lines), dir)
 		end
 		render_lines(lines, ft, dir, base)
 	end
