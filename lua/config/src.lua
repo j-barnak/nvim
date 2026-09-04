@@ -60,9 +60,11 @@ end
 
 -- When a source file first shows in `win`, arm restore_fn to run when that
 -- window later closes (:q), so exploring source in the docs split and then
--- quitting drops you back on the doc.
+-- quitting drops you back on the doc. One shared augroup (not per-window), so
+-- a cancelled picker (no source file ever opened) leaves no lingering arm: the
+-- next gs, or the reset below, clears it. Only one restore can be pending.
 local function arm_restore(win, dir, restore_fn)
-	local grp = vim.api.nvim_create_augroup("SrcBack:" .. win, { clear = true })
+	local grp = vim.api.nvim_create_augroup("SrcBack", { clear = true })
 	vim.api.nvim_create_autocmd("BufWinEnter", {
 		group = grp,
 		pattern = dir .. "/*", -- only source files, so it doesn't fire session-wide

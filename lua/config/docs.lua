@@ -155,6 +155,10 @@ local function render_lines(lines, ft, dir, title)
 	if not lines or #lines == 0 then
 		return vim.notify("Nothing to render", vim.log.levels.WARN)
 	end
+	-- Capture the picker that produced this doc, so D reopens THIS provider's
+	-- finder even after another provider has since been browsed (last_picker is
+	-- module-global; at render time it still points at this doc's provider).
+	local reopen = last_picker
 
 	-- Reuse the tracked viewer window if still valid, else recover it by tag,
 	-- else open a new split.
@@ -231,8 +235,8 @@ local function render_lines(lines, ft, dir, title)
 			gs_source(dir)
 		end, { desc = "Explore this project's source (docs viewer only)" })
 		vim.keymap.set("n", "D", function()
-			if last_picker then
-				last_picker()
+			if reopen then
+				reopen()
 			end
 		end, { buffer = buf, nowait = true, silent = true, desc = "Docs: reopen this provider's fuzzy finder" })
 		vim.keymap.set("n", "<leader>fe", function()
@@ -380,6 +384,14 @@ follow_link = function()
 		end)
 	end
 	if path then
+		-- Containment: a crafted ../-laden link must not escape the docs cache
+		-- and open an arbitrary file. Resolve symlinks/.. and require the target
+		-- stay under data_root (cross-section links within it are fine).
+		local real = vim.uv.fs_realpath(path) or path
+		local root = vim.uv.fs_realpath(data_root) or data_root
+		if real:sub(1, #root + 1) ~= root .. "/" then
+			return vim.notify("Link escapes the docs tree: " .. url, vim.log.levels.WARN)
+		end
 		open_file(path)
 	else
 		vim.notify("Link target not found: " .. url, vim.log.levels.WARN)
@@ -458,13 +470,14 @@ local function ensure_docs(version, cb)
 	end
 	vim.fn.mkdir(cache_root, "p")
 	vim.notify("Cloning kernel Documentation @ " .. version .. " … (first time only)")
+	local tmp = dir .. ".tmp"
 	local script = table.concat({
-		"rm -rf " .. vim.fn.shellescape(dir),
+		"rm -rf " .. vim.fn.shellescape(tmp) .. " " .. vim.fn.shellescape(dir),
 		"git -c core.autocrlf=false clone -n --depth=1 --filter=blob:none --branch "
-			.. vim.fn.shellescape(version) .. " " .. repo .. " " .. vim.fn.shellescape(dir),
-		"cd " .. vim.fn.shellescape(dir),
-		"git sparse-checkout set --no-cone /Documentation",
-		"git checkout",
+			.. vim.fn.shellescape(version) .. " " .. repo .. " " .. vim.fn.shellescape(tmp),
+		"git -C " .. vim.fn.shellescape(tmp) .. " sparse-checkout set --no-cone /Documentation",
+		"git -C " .. vim.fn.shellescape(tmp) .. " checkout",
+		"mv " .. vim.fn.shellescape(tmp) .. " " .. vim.fn.shellescape(dir),
 	}, " && ")
 	vim.system({ "sh", "-c", script }, { text = true, timeout = 180000 }, function(res)
 		vim.schedule(function()
@@ -488,7 +501,10 @@ git checkout
 python3 - "$PWD" <<'PY'
 import re, os, sys
 root = sys.argv[1]
-out = open(os.path.join(root, "api-index.tsv"), "w")
+# Write the index atomically: a build killed mid-write must not leave a
+# partial api-index.tsv that filereadable() then treats as complete.
+tmp = os.path.join(root, "api-index.tsv.tmp")
+out = open(tmp, "w")
 hdr = re.compile(r'\s*\*\s*(?:(?:struct|union|enum|typedef)\s+)?([A-Za-z_]\w*)\s*(?:\(\))?\s*[-:]')
 for rel in open(os.path.join(root, ".kd_files.txt")):
     rel = rel.strip(); p = os.path.join(root, rel)
@@ -505,6 +521,7 @@ for rel in open(os.path.join(root, ".kd_files.txt")):
             if m:
                 out.write(m.group(1) + "\t" + rel + "\n")
 out.close()
+os.replace(tmp, os.path.join(root, "api-index.tsv"))
 PY
 ]]
 
@@ -599,13 +616,21 @@ local function ensure_repo(dir, url, sparse, marker, cb)
 		return cb(dir)
 	end
 	vim.fn.mkdir(vim.fs.dirname(dir), "p")
-	vim.notify("Cloning " .. vim.fs.basename(vim.fs.dirname(dir)) .. " docs … (first time only)")
+	-- Clone name: <name>/master -> "<name>"; a flat data_root/<name> -> "<name>".
+	local label = vim.fs.basename(dir)
+	if label == "master" then
+		label = vim.fs.basename(vim.fs.dirname(dir))
+	end
+	vim.notify("Cloning " .. label .. " docs … (first time only)")
+	-- Kill-atomic: build into <dir>.tmp then rename, so a clone/checkout killed
+	-- midway never leaves a partial tree that the marker check treats as done.
+	local tmp = dir .. ".tmp"
 	local script = table.concat({
-		"rm -rf " .. vim.fn.shellescape(dir),
-		"git -c core.autocrlf=false clone -n --depth=1 --filter=blob:none " .. url .. " " .. vim.fn.shellescape(dir),
-		"cd " .. vim.fn.shellescape(dir),
-		"git sparse-checkout set --no-cone " .. sparse,
-		"git checkout",
+		"rm -rf " .. vim.fn.shellescape(tmp) .. " " .. vim.fn.shellescape(dir),
+		"git -c core.autocrlf=false clone -n --depth=1 --filter=blob:none " .. url .. " " .. vim.fn.shellescape(tmp),
+		"git -C " .. vim.fn.shellescape(tmp) .. " sparse-checkout set --no-cone " .. sparse,
+		"git -C " .. vim.fn.shellescape(tmp) .. " checkout",
+		"mv " .. vim.fn.shellescape(tmp) .. " " .. vim.fn.shellescape(dir),
 	}, " && ")
 	vim.system({ "sh", "-c", script }, { text = true, timeout = 180000 }, function(res)
 		vim.schedule(function()
@@ -789,12 +814,14 @@ local simple = {
 		prompt = "QBinDiff> ",
 	},
 	qiling = {
+		-- Upstream /docs/*.md are just redirect stubs to docs.qiling.io; the real,
+		-- runnable documentation is the example scripts, so browse those.
 		url = "https://github.com/qilingframework/qiling",
-		sparse = "/docs /examples",
-		marker = "docs",
-		browse = "",
-		exts = "-e md -e rst -e py -e txt",
-		prompt = "Qiling> ",
+		sparse = "/examples",
+		marker = "examples",
+		browse = "/examples",
+		exts = "-e py -e md -e rst -e txt",
+		prompt = "Qiling example> ",
 	},
 	panda = {
 		-- /docs is QEMU-inherited; PANDA's own docs live in /panda/docs.
@@ -1037,16 +1064,30 @@ end
 -- Skip only non-code dirs for the kernel (keep every arch + driver: the user
 -- does cross-arch and driver work).
 local KERNEL_EXCLUDE = { "Documentation", "samples", "tools", "scripts" }
+-- Non-`simple` providers whose docs still have a real upstream source repo, so
+-- gs works from them too (doxygen libs, sqlite, rust, ghidra, the bap wiki).
+local SRC_URLS = {
+	libdrgn = "https://github.com/osandov/drgn",
+	sfml = "https://github.com/SFML/SFML",
+	sqlite = "https://github.com/sqlite/sqlite",
+	rust = "https://github.com/rust-lang/rust",
+	bap = "https://github.com/BinaryAnalysisPlatform/bap",
+	ghidra = "https://github.com/NationalSecurityAgency/ghidra",
+}
 gs_source = function(dir)
 	if not dir then
 		return
 	end
 	local srcname, url, excl
-	local name = dir:match("/docs/([^/]+)/master")
+	-- First path segment under the docs cache is the provider name (simple
+	-- providers live at <name>/master, others at <name>/… or <name>/<ver>).
+	local name = dir:match("/docs/([^/]+)")
 	if name and simple[name] then
 		srcname, url = name, simple[name].url
-	elseif dir:match("/docs/linux/") then
+	elseif name == "linux" then
 		srcname, url, excl = "linux", repo, KERNEL_EXCLUDE
+	elseif name and SRC_URLS[name] then
+		srcname, url = name, SRC_URLS[name]
 	end
 	if not url then
 		return vim.notify("Source explorer: no git source for this doc set", vim.log.levels.INFO)
@@ -1076,12 +1117,21 @@ if [ -z "$DOXY" ]; then
   ( cd "$TOOLS" && curl -fsSL https://www.doxygen.nl/files/doxygen-1.14.0.linux.bin.tar.gz -o d.tgz && tar xzf d.tgz && rm -f d.tgz )
   DOXY=$(ls "$TOOLS"/doxygen-*/bin/doxygen 2>/dev/null | head -1)
 fi
-XML="$OUT/.xml"; rm -rf "$XML"; mkdir -p "$XML" "$OUT"
+# Kill-atomic: build the whole markdown set in $OUT.stage, then rename it in.
+# A doxygen/moxygen run killed midway must not leave a partial $OUT that the
+# glob check treats as a finished build.
+STAGE="$OUT.stage"; rm -rf "$STAGE" "$OUT"; mkdir -p "$STAGE"
+XML="$STAGE/.xml"; mkdir -p "$XML"
 {
   echo "INPUT = $INPUT"
   echo "FILE_PATTERNS = $PATTERNS"
   echo "RECURSIVE = YES"
+  # Pin every output under the throwaway stage and disable LaTeX: doxygen
+  # defaults GENERATE_LATEX=YES and writes relative dirs into its cwd (the nvim
+  # repo when run from there), which previously leaked a 498-file latex/ tree.
+  echo "OUTPUT_DIRECTORY = $STAGE"
   echo "GENERATE_HTML = NO"
+  echo "GENERATE_LATEX = NO"
   echo "GENERATE_XML = YES"
   echo "XML_OUTPUT = $XML"
   echo "XML_PROGRAMLISTING = NO"
@@ -1090,7 +1140,9 @@ XML="$OUT/.xml"; rm -rf "$XML"; mkdir -p "$XML" "$OUT"
   echo "WARN_IF_UNDOCUMENTED = NO"
 } > "$XML/Doxyfile"
 "$DOXY" "$XML/Doxyfile" >/dev/null 2>&1
-moxygen --classes --groups --anchors --output "$OUT/%s.md" "$XML" >/dev/null 2>&1
+moxygen --classes --groups --anchors --output "$STAGE/%s.md" "$XML" >/dev/null 2>&1
+rm -rf "$XML"
+mv "$STAGE" "$OUT"
 ]]
 
 local function pick_doxygen(name, url, sparse, input, patterns)
@@ -1112,7 +1164,9 @@ local function pick_doxygen(name, url, sparse, input, patterns)
 		vim.notify("Building " .. name .. " API (doxygen + moxygen) … first time, ~1-2 min")
 		vim.system(
 			{ "sh", "-c", DOX_PIPELINE, "dox", dir .. input, md, tools_dir, patterns },
-			{ text = true, timeout = 300000 },
+			-- cwd on the clone (never the nvim repo), so any stray relative
+			-- output can only land in the throwaway cache, not the config repo.
+			{ text = true, timeout = 300000, cwd = dir },
 			function(res)
 				vim.schedule(function()
 					if #vim.fn.glob(md .. "/*.md", false, true) > 0 then
@@ -1235,6 +1289,10 @@ if [ ! -f "$PDF" ]; then
   curl -fsSL "$URL" -o "$PDF"
 fi
 mkdir -p "$OUT"
+# Clean slate; ".complete" is written only after the whole split succeeds, so a
+# build killed midway is retried rather than treated as done (glob-of-*.txt is
+# not kill-atomic). set -e aborts before the sentinel on any error.
+rm -f "$OUT"/*.txt "$OUT"/.complete
 JS="$OUT/.ol.js"
 cat > "$JS" <<EOF2
 var doc = Document.openDocument("$PDF");
@@ -1278,6 +1336,7 @@ if [ -n "$PY" ] && command -v python3 >/dev/null 2>&1 \
    && command -v pdftoppm >/dev/null 2>&1 && command -v convert >/dev/null 2>&1; then
   python3 "$PY" "$PDF" "$OUT/figures" >/dev/null 2>&1 || true
 fi
+touch "$OUT/.complete"
 ]]
 
 local SDM = "https://www.intel.com/content/dam/www/public/us/en/documents/manuals/"
@@ -1299,7 +1358,7 @@ local function pick_sdm(vol)
 	local function browse()
 		pick_files(out, "-e txt", "Intel SDM v" .. vol .. "> ")
 	end
-	if #vim.fn.glob(out .. "/*.txt", false, true) > 0 then
+	if vim.fn.filereadable(out .. "/.complete") == 1 then
 		return browse()
 	end
 	vim.fn.mkdir(out, "p")
@@ -1313,7 +1372,7 @@ local function pick_sdm(vol)
 		{ text = true, timeout = 600000 },
 		function(res)
 			vim.schedule(function()
-				if #vim.fn.glob(out .. "/*.txt", false, true) > 0 then
+				if vim.fn.filereadable(out .. "/.complete") == 1 then
 					browse()
 				else
 					vim.notify("SDM build failed:\n" .. (res.stderr or ""):sub(1, 400), vim.log.levels.ERROR)
@@ -1737,6 +1796,9 @@ set -e
 PDF="$1"; OUT="$2"; URL="$3"
 if [ ! -f "$PDF" ]; then mkdir -p "$(dirname "$PDF")"; curl -fsSL "$URL" -o "$PDF"; fi
 mkdir -p "$OUT"
+# Clean slate; ".complete" (written only on full success) gates reuse, so a
+# build killed midway is retried rather than treated as done.
+rm -f "$OUT"/*.txt "$OUT"/.complete
 JS="$OUT/.ol.js"
 cat > "$JS" <<EOF2
 var doc = Document.openDocument("$PDF");
@@ -1768,6 +1830,7 @@ else
   while [ "$p" -le "$TOTAL" ]; do e=$((p+39)); [ "$e" -gt "$TOTAL" ] && e="$TOTAL"; emit "$p" "$e" "pages $p-$e"; p=$((e+1)); done
 fi
 rm -f "$JS" "$OUT/.all.tsv" "$OUT/.ch.tsv"
+touch "$OUT/.complete"
 ]]
 
 local STD_URLS = {
@@ -1791,14 +1854,14 @@ local function pick_pdf(name, prompt)
 	local function browse()
 		pick_files(out, "-e txt", prompt)
 	end
-	if #vim.fn.glob(out .. "/*.txt", false, true) > 0 then
+	if vim.fn.filereadable(out .. "/.complete") == 1 then
 		return browse()
 	end
 	vim.fn.mkdir(out, "p")
 	vim.notify("Fetching + splitting " .. name .. " … (first time)")
 	vim.system({ "sh", "-c", PDF_BUILD, "pdf", pdf, out, STD_URLS[name] }, { text = true, timeout = 900000 }, function(res)
 		vim.schedule(function()
-			if #vim.fn.glob(out .. "/*.txt", false, true) > 0 then
+			if vim.fn.filereadable(out .. "/.complete") == 1 then
 				browse()
 			else
 				vim.notify(name .. " build failed:\n" .. (res.stderr or ""):sub(1, 300), vim.log.levels.ERROR)
