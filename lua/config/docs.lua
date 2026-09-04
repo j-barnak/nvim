@@ -2329,7 +2329,12 @@ for L in lines:
     if m:
         d = len(m.group(1))
         cnt[d] = cnt.get(d, 0) + 1
-level = next((l for l in range(1, 7) if 5 <= cnt.get(l, 0) <= 200), None)
+# Pick the level that best matches a book's chapter structure: among levels
+# with 5..250 headings, the one whose count is closest to ~35 (a typical
+# chapter count), preferring the shallower on ties. Shallow levels are often
+# inflated (every section marked #), so "closest to 35" beats "shallowest".
+cand = [(l, cnt.get(l, 0)) for l in range(1, 7) if 5 <= cnt.get(l, 0) <= 250]
+level = min(cand, key=lambda lc: (abs(lc[1] - 35), lc[0]))[0] if cand else None
 
 def sanitize(t):
     t = re.sub(r'[\\/:*?"<>|]', '-', t).strip()
