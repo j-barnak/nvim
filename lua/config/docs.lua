@@ -2369,8 +2369,17 @@ if not conv: sys.exit(1)
 def title_for(base, md):
     t = labels.get(base)
     if t: return t
-    first = md.lstrip().split("\n",1)[0]
-    if first.startswith("#"): return first.lstrip("# ").strip()
+    # No ncx label: derive from a heading or bold lead, or a clearly title-like
+    # first line (starts capitalized, no code punctuation) - so a degenerate-ncx
+    # book gets real titles where it can, and a clean numeric index otherwise
+    # (better than dumping a code line like "namespace sdb {" as the title).
+    for line in md.lstrip().split("\n")[:12]:
+        s = line.strip()
+        if s.startswith("#"): return s.lstrip("# ").strip()[:80]
+        b = re.match(r'\*\*(.+?)\*\*', s)
+        if b: return b.group(1).strip()[:80]
+        if re.match(r'[A-Z][A-Za-z0-9].{2,58}$', s) and not re.search(r'[{};=<>|]', s):
+            return s
     stem = re.sub(r'\.x?html?$','',base,flags=re.I)
     return "" if re.fullmatch(r'(index_split_\d+|cover|title\w*|copyright|toc|nav|part\d*|\d+)', stem, re.I) else stem
 def write(idx, ttl, md):
@@ -2399,6 +2408,14 @@ for si, base, md in conv:
     if key not in order:
         order[key] = len(groups); groups.append([key, lab, []])
     groups[order[key]][2].append(md)
+# If one group swallows most of the book's CONTENT (not just doc count), the
+# ncx top-level does not line up with the real chapters (a book whose chapters
+# are not top-level nav points) - fall back to per-spine to recover them.
+glines = [sum(m.count(chr(10)) + 1 for m in mds) for _, _, mds in groups]
+gtot = sum(glines) or 1
+if len(groups) < 2 or max(glines, default=0) > 0.6 * gtot:
+    for idx,(i,base,md) in enumerate(conv, 1): write(idx, title_for(base,md), md)
+    print("strategy=per-spine(fallback) chapters=%d" % len(conv)); sys.exit(0)
 for idx,(key,lab,mds) in enumerate(groups, 1):
     write(idx, lab if key>=0 else "Front Matter", "\n\n".join(mds))
 print("strategy=grouped chapters=%d (from %d spine docs)" % (len(groups), len(conv))); sys.exit(0)
