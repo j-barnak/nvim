@@ -1836,6 +1836,108 @@ local function pick_ocaml()
 	end)
 end
 
+-- ── Aya (Rust eBPF) crate API: browse rustdoc on docs.rs ─────────────────
+-- The book (provider `aya`) is the tutorial; this is the crate reference. Like
+-- the kernel provider it is a submenu: pick a module, then an item, then the
+-- rustdoc page renders (cached web-fetch, chrome trimmed at the first heading).
+-- Index line = "module<TAB>kind Name<TAB>href".
+local AYA_API = "https://docs.rs/aya/latest/aya/"
+local AYA_API_IDX = [[
+curl -fsSL https://docs.rs/aya/latest/aya/all.html \
+ | grep -oE 'href="([a-z0-9_]+/)*(struct|enum|trait|fn|macro|type|constant|union|primitive|derive|attr|keyword|static)\.[A-Za-z0-9_]+\.html"' \
+ | sed -E 's/^href="//; s/"$//' | sort -u \
+ | while IFS= read -r h; do
+     b=${h##*/}; k=${b%%.*}; r=${b#*.}; n=${r%.html}; d=${h%/*}
+     if [ "$d" = "$h" ]; then m="aya"; else m="aya::$(printf '%s' "$d" | sed 's#/#::#g')"; fi
+     printf '%s\t%s %s\t%s\n' "$m" "$k" "$n" "$h"
+   done | sort
+]]
+
+local function pick_aya_api()
+	if not (have("curl") and have("pandoc")) then
+		return vim.notify("curl and pandoc are needed for the Aya API docs", vim.log.levels.WARN)
+	end
+	local dir = data_root .. "/aya-api"
+	local idxfile = dir .. "/items.tsv"
+
+	local function render_item(href, title)
+		local url = AYA_API .. href
+		render_shell(
+			"curl -fsSL " .. vim.fn.shellescape(url)
+				.. " | pandoc -f html -t gfm-raw_html --wrap=none 2>/dev/null | awk 'f||/^## /{f=1}f'",
+			title,
+			"markdown",
+			url
+		)
+	end
+
+	-- second level: the items within one module.
+	local function items_in(mod, items)
+		local sub = {}
+		for _, line in ipairs(items) do
+			if line:match("^([^\t]+)") == mod then
+				sub[#sub + 1] = line
+			end
+		end
+		fzf().fzf_exec(sub, {
+			prompt = mod .. "> ",
+			fzf_opts = { ["--with-nth"] = "2", ["--delimiter"] = "\\t", ["--no-multi"] = true },
+			actions = {
+				["default"] = function(sel)
+					if not (sel and sel[1]) then
+						return
+					end
+					local label, href = sel[1]:match("^[^\t]+\t([^\t]+)\t(.+)$")
+					if href then
+						render_item(href, mod .. "::" .. (label:match("%S+%s+(%S+)") or label))
+					end
+				end,
+			},
+		})
+	end
+
+	-- first level: the module list.
+	local function modules_menu(items)
+		last_picker = function() modules_menu(items) end -- D returns to the module list
+		local mods, seen = {}, {}
+		for _, line in ipairs(items) do
+			local m = line:match("^([^\t]+)\t")
+			if m and not seen[m] then
+				seen[m] = true
+				mods[#mods + 1] = m
+			end
+		end
+		table.sort(mods)
+		fzf().fzf_exec(mods, {
+			prompt = "Aya module> ",
+			fzf_opts = { ["--no-multi"] = true },
+			actions = {
+				["default"] = function(sel)
+					if sel and sel[1] then
+						items_in(sel[1], items)
+					end
+				end,
+			},
+		})
+	end
+
+	if vim.fn.filereadable(idxfile) == 1 then
+		return modules_menu(vim.fn.readfile(idxfile))
+	end
+	vim.fn.mkdir(dir, "p")
+	vim.notify("Fetching the Aya API index (docs.rs) … (first time)")
+	vim.system({ "sh", "-c", AYA_API_IDX }, { text = true, timeout = 30000 }, function(res)
+		vim.schedule(function()
+			local items = vim.split(res.stdout or "", "\n", { trimempty = true })
+			if #items == 0 then
+				return vim.notify("Aya API: could not fetch the item index from docs.rs", vim.log.levels.WARN)
+			end
+			vim.fn.writefile(items, idxfile)
+			modules_menu(items)
+		end)
+	end)
+end
+
 -- ── Ghidra: versioned API/docs (pick a release tag, all versions) ────────
 local function pick_ghidra()
 	if not (have("git") and have("fd")) then
@@ -2184,6 +2286,7 @@ local function pick_rust()
 		["The Rust Reference"] = "https://github.com/rust-lang/reference",
 		["The Rustonomicon (unsafe Rust)"] = "https://github.com/rust-lang/nomicon",
 		["Rust by Example"] = "https://github.com/rust-lang/rust-by-example",
+		["Learn Rust With Entirely Too Many Linked Lists"] = "https://github.com/rust-unofficial/too-many-lists",
 	}
 	fzf().fzf_exec(vim.tbl_keys(books), {
 		prompt = "Rust docs> ",
@@ -2246,6 +2349,7 @@ local providers = {
 	{ name = "eBPF ABI reference (helpers / kfuncs / maps / program types)", key = "ebpf", run = make_simple("ebpf", simple.ebpf) },
 	{ name = "eBPF (Cilium Reference: architecture, XDP, tc, toolchain)", key = "cilium", run = make_simple("cilium", simple.cilium) },
 	{ name = "Aya (Rust eBPF library book)", key = "aya", run = make_simple("aya", simple.aya) },
+	{ name = "Aya API (crate reference, docs.rs)", key = "aya-api", run = pick_aya_api },
 	{ name = "drgn", key = "drgn", run = make_simple("drgn", simple.drgn) },
 	{
 		name = "libdrgn",
