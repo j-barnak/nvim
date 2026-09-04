@@ -1038,6 +1038,25 @@ local simple = {
 		exts = "-e md",
 		prompt = "eBPF> ",
 	},
+	aya = {
+		-- The Aya book (aya-rs.dev): writing eBPF programs in Rust.
+		url = "https://github.com/aya-rs/book",
+		sparse = "/src",
+		marker = "src",
+		browse = "/src",
+		exts = "-e md",
+		prompt = "Aya (Rust eBPF)> ",
+	},
+	cilium = {
+		-- Cilium's BPF and XDP Reference Guide (architecture, instruction set,
+		-- maps, helpers, tail calls, JIT, hardening, XDP, tc, toolchain, ...).
+		url = "https://github.com/cilium/cilium",
+		sparse = "/Documentation/reference-guides/bpf",
+		marker = "Documentation/reference-guides/bpf",
+		browse = "/Documentation/reference-guides/bpf",
+		exts = "-e rst",
+		prompt = "eBPF (Cilium Reference)> ",
+	},
 	lld = {
 		url = "https://github.com/llvm/llvm-project",
 		sparse = "/lld/docs",
@@ -2125,6 +2144,8 @@ local providers = {
 	{ name = "libbpf", key = "libbpf", run = make_simple("libbpf", simple.libbpf) },
 	{ name = "bpftrace", key = "bpftrace", run = make_simple("bpftrace", simple.bpftrace) },
 	{ name = "eBPF docs", key = "ebpf", run = make_simple("ebpf", simple.ebpf) },
+	{ name = "eBPF (Cilium Reference)", key = "cilium", run = make_simple("cilium", simple.cilium) },
+	{ name = "Aya (Rust eBPF)", key = "aya", run = make_simple("aya", simple.aya) },
 	{ name = "drgn", key = "drgn", run = make_simple("drgn", simple.drgn) },
 	{
 		name = "libdrgn",
