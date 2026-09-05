@@ -1,4 +1,3 @@
-INDEX
 
 avatar generator *(continued)*
 
@@ -322,7 +321,6 @@ chunks() option 219
 
 std::fmt::Display 99–102
 
-INDEX
 
 **421**
 
@@ -652,7 +650,6 @@ dynamic dispatch 256
 
 **422**
 
-INDEX
 
 dynamic memory allocation
 
@@ -972,7 +969,6 @@ format 214–216
 
 overview 48–49
 
-INDEX
 
 **423**
 
@@ -1296,7 +1292,6 @@ software interrupts 395
 
 **424**
 
-INDEX
 
 .into() method 318
 
@@ -1612,7 +1607,6 @@ LIFO (Last In, First Out) 188
 
 mem::transmute 157
 
-INDEX
 
 **425**
 
@@ -1940,7 +1934,6 @@ required 119–122
 
 **426**
 
-INDEX
 
 ownership *(continued)*
 
@@ -2256,7 +2249,6 @@ Rc\<RefCell\<T\>\> 132–133, 185
 
 response.text() method 255
 
-INDEX
 
 **427**
 
@@ -2588,7 +2580,6 @@ Heartbleed 21–22
 
 **428**
 
-INDEX
 
 signals 407–408
 
@@ -2912,7 +2903,6 @@ std::net::AddrParseError 271
 
 target_endian attribute 227
 
-INDEX
 
 **429**
 
@@ -3248,7 +3238,6 @@ type safety 110
 
 **430**
 
-INDEX
 
 U
 
@@ -3490,11 +3479,11 @@ using Copy 129–130
 
 process memory 211
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-457_1.png)
+![](media/index-457_1.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-457_2.png)
+![](media/index-457_2.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-457_3.png)
+![](media/index-457_3.png)
 
 PROGRAMMING/RUST
 

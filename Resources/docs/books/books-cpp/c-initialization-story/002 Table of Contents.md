@@ -1,4 +1,4 @@
-![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-1_1.png)
+![](media/index-1_1.png)
 
 **C++ Initialization Story**
 
@@ -14,7 +14,7 @@ This book is for sale at [http://leanpub.com/cppinitbook](http://leanpub.com/cpp
 
 This version was published on 2022-12-23
 
-![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-2_1.png)
+![](media/index-2_1.png)
 
  
 

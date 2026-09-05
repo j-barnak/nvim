@@ -11,7 +11,7 @@ Each of these signal names has a synonym:
 
 The following diagram shows how SPI devices are connected to the controller via the bus it exposes:
 
-![Figure 9.1 – SPI slave devices and master interconnection ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_09_001.jpg)
+![Figure 9.1 – SPI slave devices and master interconnection ](media/image/B17934_09_001.jpg)
 
 Figure 9.1 – SPI slave devices and master interconnection
 
@@ -196,13 +196,13 @@ This allows us to distinguish four SPI modes, which are derived macros made up o
 
 The combinations of these macros give the following SPI modes:
 
-![Table 9.1 – SPI modes kernel definition ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/Table_9.1.jpg)
+![Table 9.1 – SPI modes kernel definition ](media/image/Table_9.1.jpg)
 
 Table 9.1 – SPI modes kernel definition
 
 The following diagram is the representation of each SPI mode, in the same order as defined in the preceding array. That being said, only the MOSI line is represented, but the principle is the same for MISO.
 
-![Figure 9.2 – SPI operating modes ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_09_002.jpg)
+![Figure 9.2 – SPI operating modes ](media/image/B17934_09_002.jpg)
 
 Figure 9.2 – SPI operating modes
 
@@ -236,7 +236,7 @@ This is all we can say for now on this data structure, except that each SPI devi
 
 The SPI I/O model consists of a set of queued messages, each of which can be made up of one or more SPI transfers. While a single message consists of one or more **struct spi_transfer** objects, each transfer represents a full duplex SPI transaction. Messages are submitted and processed either synchronously or asynchronously. The following is a diagram explaining the concept of message and transfer:
 
-![Figure 9.3 – Example SPI message structure ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_09_003.jpg)
+![Figure 9.3 – Example SPI message structure ](media/image/B17934_09_003.jpg)
 
 Figure 9.3 – Example SPI message structure
 

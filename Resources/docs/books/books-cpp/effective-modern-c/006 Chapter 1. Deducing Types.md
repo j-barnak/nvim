@@ -28,6 +28,7 @@ A call can look like this:
 
 f( ***expr***); // call f with some expression During compilation, compilers use *expr* to deduce two types: one for T and one for *ParamType*. These types are frequently different, because *ParamType* often contains adornments, e.g., const or reference qualifiers. For example, if the template is declared like this,
 
+template\<typename T\>
 
 void f(**const T&** param); // *ParamType* is const T& and we have this call,
 
@@ -63,6 +64,7 @@ The simplest situation is when *ParamType* is a reference type or a pointer type
 
 For example, if this is our template,
 
+template\<typename T\>
 
 void f(**T&** param); // param is a reference
 
@@ -96,6 +98,7 @@ These examples all show lvalue reference parameters, but type deduction works ex
 
 If we change the type of f’s parameter from T& to const T&, things change a little, but not in any really surprising ways. The constness of cx and rx continues to be respected, but because we’re now assuming that param is a reference-to-const, there’s no longer a need for const to be deduced as part of T:
 
+template\<typename T\>
 
 void f(**const T&** param); // param is now a ref-to- *const* int x = 27; // as before
 
@@ -107,6 +110,7 @@ f(x); // T is *int*, param's type is *const int&* f(cx); // T is *int*, param's 
 
 If param were a pointer (or a pointer to const) instead of a reference, things would work essentially the same way:
 
+template\<typename T\>
 
 void f(**T\*** param); // param is now a *pointer*
 
@@ -138,6 +142,7 @@ That’s doubly unusual. First, it’s the only situation in template type deduc
 
 For example:
 
+template\<typename T\>
 
 void f(**T&&** param); // param is now a universal reference int x = 27; // as before
 
@@ -167,6 +172,7 @@ Item 24 explains exactly why these examples play out the way they do. The key po
 
 **Case 3: *ParamType*** **is Neither a Pointer nor a Reference** When *ParamType* is neither a pointer nor a reference, we’re dealing with pass-by-value:
 
+template\<typename T\>
 
 void f(**T** param); // param is now passed *by value*
 
@@ -200,6 +206,7 @@ It’s important to recognize that const (and volatile) is ignored only for by-v
 
 case where *expr* is a const pointer to a const object, and *expr* is passed to a by-value param:
 
+template\<typename T\>
 
 void f(**T** param); // param is still passed by value
 
@@ -225,6 +232,7 @@ Here, the const char\* pointer ptrToName is being initialized with name, which i
 
 But what if an array is passed to a template taking a by-value parameter? What happens then?
 
+template\<typename T\>
 
 void f(T param); // template with by-value parameter
 
@@ -248,6 +256,7 @@ f(name); // name is array, but T deduced as const char\*
 
 But now comes a curve ball. Although functions can’t declare parameters that are truly arrays, they *can* declare parameters that are *references* to arrays! So if we modify the template f to take its argument by reference,
 
+template\<typename T\>
 
 void f(T**&** param); // template with by-reference parameter and we pass an array to it,
 
@@ -303,9 +312,11 @@ void someFunc(int, double); // someFunc is a function;
 
 // type is void(int, double)
 
+template\<typename T\>
 
 void f1(T param); // in f1, param passed by value
 
+template\<typename T\>
 
 void f2(T& param); // in f2, param passed by ref
 
@@ -513,6 +524,7 @@ f(**{ 11, 23, 9 }**); // error! can't deduce type for T
 
 However, if you specify in the template that param is a std::initializer_list\<T\> for some unknown T, template type deduction will deduce what T is:
 
+template\<typename T\>
 
 void f(**std::initializer_list\<** T**\>** initList);
 
@@ -916,6 +928,7 @@ This code, which involves a user-defined type (Widget), an STL container (std::v
 
 Loosing typeid on the problem is straightforward. Just add some code to f to display the types you’d like to see:
 
+template\<typename T\>
 
 void f(const T& param)
 
@@ -973,6 +986,7 @@ Here’s how our function f can produce accurate type information using Boost.Ty
 
 **\#include \<boost/type_index.hpp\>**
 
+template\<typename T\>
 
 void f(const T& param)
 

@@ -492,6 +492,7 @@ Now, let’s see what has been installed in /tmp/alsa-utils/ (run tree /tmp/alsa
 
 \|
 
+\`-- LC_MESSAGES
 
 \|
 
@@ -499,6 +500,7 @@ Now, let’s see what has been installed in /tmp/alsa-utils/ (run tree /tmp/alsa
 
 \|
 
+\`-- alsa-utils.mo
 
 \|
 
@@ -512,6 +514,7 @@ Now, let’s see what has been installed in /tmp/alsa-utils/ (run tree /tmp/alsa
 
 \|
 
+\`-- LC_MESSAGES
 
 \|
 
@@ -519,6 +522,7 @@ Now, let’s see what has been installed in /tmp/alsa-utils/ (run tree /tmp/alsa
 
 \|
 
+\`-- alsa-utils.mo
 
 \|
 
@@ -532,6 +536,7 @@ Now, let’s see what has been installed in /tmp/alsa-utils/ (run tree /tmp/alsa
 
 \|
 
+\`-- LC_MESSAGES
 
 \|
 
@@ -539,6 +544,7 @@ Now, let’s see what has been installed in /tmp/alsa-utils/ (run tree /tmp/alsa
 
 \|
 
+\`-- alsa-utils.mo
 
 \|
 
@@ -552,6 +558,7 @@ Now, let’s see what has been installed in /tmp/alsa-utils/ (run tree /tmp/alsa
 
 \|
 
+\`-- LC_MESSAGES
 
 \|
 
@@ -559,6 +566,7 @@ Now, let’s see what has been installed in /tmp/alsa-utils/ (run tree /tmp/alsa
 
 \|
 
+\`-- alsa-utils.mo
 
 \|
 
@@ -572,6 +580,7 @@ Now, let’s see what has been installed in /tmp/alsa-utils/ (run tree /tmp/alsa
 
 \|
 
+\`-- LC_MESSAGES
 
 \|
 
@@ -579,6 +588,7 @@ Now, let’s see what has been installed in /tmp/alsa-utils/ (run tree /tmp/alsa
 
 \|
 
+\`-- alsa-utils.mo
 
 \|
 
@@ -590,11 +600,13 @@ Now, let’s see what has been installed in /tmp/alsa-utils/ (run tree /tmp/alsa
 
 \|
 
+\`-- LC_MESSAGES
 
 \|
 
 \|
 
+\`-- alsa-utils.mo
 
 \|
 

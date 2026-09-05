@@ -155,8 +155,7 @@ That is, the recursive definition for ++ formalises the idea that two lists can 
 
 We conclude this section with two examples of recursion on sorted lists. First of all, a function that inserts a new element of any ordered type into a sorted list to give another sorted list can be defined as follows:
 
-``` haskell
-```
+![image](media/Images/ch6-01.png)
 
 That is, inserting a new element into an empty list gives a singleton list, while for a non-empty list the result depends upon the ordering of the new element x and the head of the list y. In particular, if x \<= y then the new element x is simply prepended to the start of the list, otherwise the head y becomes the first element of the resulting list, and we then proceed to insert the new element into the tail of the given list. For example, we have:
 
@@ -200,8 +199,7 @@ insert 3 [1,2,4]
 
 Functions with multiple arguments can also be defined using recursion on more than one argument at the same time. For example, the library function zip that takes two lists and produces a list of pairs is defined as follows:
 
-``` haskell
-```
+![image](media/Images/ch6-02.png)
 
 For example:
 
@@ -221,14 +219,13 @@ zip [’a’,’b’,’c’] [1,2,3,4]
 
 Note that two base cases are required in the definition of zip, because either of the two argument lists may be empty. As another example of recursion on multiple arguments, the library function drop that removes a given number of elements from the start of a list is defined as follows:
 
-``` haskell
-```
+![image](media/Images/ch06-02.png)
 
 Again, two base cases are required, one for removing zero elements, and one for attempting to remove elements from the empty list.
 
 ### **6.4Multiple recursion**
 
-Functions can also be defined using *multiple recursion*, in which a function is applied more than once in its own definition. For example, recall the Fibonacci sequence 0*,* 1*,* 1*,* 2*,* 3*,* 5*,* 8*,* 13*,...*, in which the first two numbers are 0 and 1, and each subsequent number is given by adding the preceding two numbers in the sequence. A function that calculates the *n*th Fibonacci number for any integer ![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/ch6-03.png) can be defined using double recursion as follows:
+Functions can also be defined using *multiple recursion*, in which a function is applied more than once in its own definition. For example, recall the Fibonacci sequence 0*,* 1*,* 1*,* 2*,* 3*,* 5*,* 8*,* 13*,...*, in which the first two numbers are 0 and 1, and each subsequent number is given by adding the preceding two numbers in the sequence. A function that calculates the *n*th Fibonacci number for any integer ![image](media/Images/ch6-03.png) can be defined using double recursion as follows:
 
 ``` haskell
 fib :: Int -> Int
@@ -239,8 +236,7 @@ fib n = fib (n-2) + fib (n-1)
 
 As another example, in chapter 1 we showed how to implement another well-known method of sorting a list, known as quicksort:
 
-``` haskell
-```
+![image](media/Images/Chapter_6_image_7_30.png)
 
 That is, the empty list is already sorted, and any non-empty list can be sorted by placing its head between the two lists that result from sorting those elements of its tail that are smaller and larger than the head.
 
@@ -275,8 +271,7 @@ True
 
 Similarly, functions that select the elements from a list at all even and odd positions (counting from zero) can be defined as follows:
 
-``` haskell
-```
+![image](media/Images/ch06-01.png)
 
 For example:
 
@@ -392,27 +387,23 @@ Note that we have already made four design decisions in defining this type: usin
 
 As there are two standard cases for the integer argument (0 and n) and two for the list argument (\[\] and x:xs), writing down a skeleton definition for the function using pattern matching requires four cases in total:
 
-``` haskell
-```
+![image](media/Images/ch06-03.png)
 
 ##### **Step 3: define the simple cases**
 
 By definition, removing zero elements from the start of any list gives the same list, so it is straightforward to define the first two cases:
 
-``` haskell
-```
+![image](media/Images/ch06-04.png)
 
 Attempting to remove one or more elements from the empty list is invalid, so the third case could be omitted, which would result in an error being produced if this situation arises. In practice, however, we choose to avoid the production of an error by returning the empty list in this case:
 
-``` haskell
-```
+![image](media/Images/ch06-05.png)
 
 ##### **Step 4: define the other cases**
 
 How can we remove one or more elements from a non-empty list? By simply removing one fewer elements from the tail of the list:
 
-``` haskell
-```
+![image](media/Images/ch06-06.png)
 
 ##### **Step 5: generalise and simplify**
 
@@ -424,13 +415,11 @@ drop :: Integral b => b -> [a] -> [a]
 
 For efficiency reasons, however, this generalisation is not in fact made in the standard prelude, as noted in section 3.9. In terms of simplification, the first two equations for drop can be combined into a single equation that states that removing zero elements from any list gives the same list:
 
-``` haskell
-```
+![image](media/Images/ch06-07.png)
 
 Moreover, the variable n in the second equation and x in the third can be replaced by the wildcard pattern \_, because these variables are not used in the bodies of their equations. In conclusion, our final definition for drop is as follows, which is precisely the definition from the standard prelude.
 
-``` haskell
-```
+![image](media/Images/ch06-08.png)
 
 ##### Example – init
 
@@ -456,8 +445,7 @@ init (x:xs) =
 
 Whereas in the previous two examples defining the simple cases was straightforward, a little more thought is required for the function init. By definition, however, removing the last element from a list with one element gives the empty list, so we can introduce a guard to handle this simple case:
 
-``` haskell
-```
+![image](media/Images/ch6-04.png)
 
 (The library function null :: \[a\] -\> Bool decides if a list is empty.)
 
@@ -465,8 +453,7 @@ Whereas in the previous two examples defining the simple cases was straightforwa
 
 How can we remove the last element from a list with at least two elements? By simply retaining the head and removing the last element from the tail:
 
-``` haskell
-```
+![image](media/Images/ch6-05.png)
 
 #### **Step 5: generalise and simplify**
 

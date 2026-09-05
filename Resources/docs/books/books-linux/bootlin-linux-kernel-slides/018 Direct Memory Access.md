@@ -484,11 +484,11 @@ dma-mapping API
 
 ▶ Configure a DMA controller with the
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-403_1.png)
+![](media/index-403_1.png)
 
 dmaengine API
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-403_2.png)
+![](media/index-403_2.png)
 
 ▶ Configure the hardware to trigger DMA
 
@@ -500,4 +500,4 @@ transfers
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 389/436
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-404_1.jpg)
+![](media/index-404_1.jpg)

@@ -51,15 +51,13 @@ Note that unlike in some programming languages, conditional expressions in Haske
 
 As an alternative to using conditional expressions, functions can also be defined using *guarded equations*, in which a sequence of logical expressions called *guards* is used to choose between a sequence of results of the same type. If the first guard is True, then the first result is chosen; otherwise, if the second is True, then the second result is chosen, and so on. For example, the library function abs can also be defined using guarded equations as follows:
 
-``` haskell
-```
+![image](media/Images/ch4-02.png)
 
 The symbol \| is read as *such that*, and the guard otherwise is defined in the standard prelude simply by otherwise = True. Ending a sequence of guards with otherwise is not necessary, but provides a convenient way of handling all other cases, as well as avoiding the possibility that none of the guards in the sequence is True, which would otherwise result in an error.
 
 The main benefit of guarded equations over conditional expressions is that definitions with multiple guards are easier to read. For example, the library function signum is easier to understand when defined as follows:
 
-``` haskell
-```
+![image](media/Images/ch4-01.png)
 
 ### **4.4Pattern matching**
 
@@ -73,13 +71,11 @@ not True= False
 
 Functions with more than one argument can also be defined using pattern matching, in which case the patterns for each argument are matched in order within each equation. For example, the library operator && that returns the conjunction of two logical values can be defined as follows:
 
-``` haskell
-```
+![image](media/Images/ch4-03.png)
 
 However, this definition can be simplified by combining the last three equations into a single equation that returns False independent of the values of the two arguments, using the *wildcard pattern* \_ that matches any value:
 
-``` haskell
-```
+![image](media/Images/ch4-04.png)
 
 This version also has the benefit that, under lazy evaluation as discussed in chapter 15, if the first argument is False, then the result False is returned without the need to evaluate the second argument. In practice, the prelude defines && using equations that have this same property, but make the choice about which equation applies using the value of the first argument only:
 
@@ -99,8 +95,7 @@ _ && _ = False
 
 If desired, however, a valid version of this definition can be obtained by using a guard to decide if the two arguments are equal:
 
-``` haskell
-```
+![image](media/Images/ch4-05.png)
 
 So far, we have only considered basic patterns that are either values, variables, or the wildcard pattern. In the remainder of this section we introduce two useful ways to build larger patterns by combining smaller patterns.
 
@@ -119,8 +114,7 @@ snd (_,y) = y
 
 Similarly, a list of patterns is itself a pattern, which matches any list of the same length whose elements all match the corresponding patterns in order. For example, a function test that decides if a list contains precisely three characters beginning with the letter ’a’ can be defined as follows:
 
-``` haskell
-```
+![image](media/Images/ch4-06.png)
 
 Up to this point, we have viewed lists as a primitive notion in Haskell. In fact they are not primitive as such, but are constructed one element at a time starting from the empty list \[\] using an operator : called *cons* that *cons*tructs a new list by prepending a new element to the start of an existing list. For example, the list \[1,2,3\] can be decomposed as follows:
 
@@ -138,8 +132,7 @@ That is, \[1,2,3\] is just an abbreviation for 1:(2:(3:\[\])). To avoid excess p
 
 As well as being used to construct lists, the cons operator can also be used to construct patterns, which match any non-empty list whose first and remaining elements match the corresponding patterns in order. For example, we can now define a more general version of the function test that decides if a list containing any number of characters begins with the letter ’a’:
 
-``` haskell
-```
+![image](media/Images/ch4-07.png)
 
 Similarly, the library functions head and tail that respectively select and remove the first element of a non-empty list are defined as follows:
 
@@ -282,8 +275,7 @@ c.pattern matching.
 
 5.Without using any other library functions or operators, show how the meaning of the following pattern matching definition for logical conjunction && can be formalised using conditional expressions:
 
-``` haskell
-```
+![image](media/Images/ch4-08.png)
 
 Hint: use two nested conditional expressions.
 

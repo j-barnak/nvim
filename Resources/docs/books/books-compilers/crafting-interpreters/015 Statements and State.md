@@ -8,7 +8,7 @@ The interpreter we have so far feels less like programming a real language and m
 
 To support bindings, our interpreter needs internal state. When you define a variable at the beginning of the program and use it at the end, the interpreter has to hold on to the value of that variable in the meantime. So in this chapter, we will give our interpreter a brain that can not just process, but *remember*.
 
-![A brain, presumably remembering stuff.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/statements-and-state/brain.png)
+![A brain, presumably remembering stuff.](media/image/statements-and-state/brain.png)
 
 State and statements go hand in hand. Since statements, by definition, don’t evaluate to a value, they need to do something else to be useful. That something is called a **side effect**. It could mean producing user-visible output or modifying some state in the interpreter that can be detected later. The latter makes them a great fit for defining variables or other named entities.
 
@@ -168,6 +168,7 @@ Java doesn’t let you use lowercase “void” as a generic type argument for o
 
 Unlike expressions, statements produce no values, so the return type of the visit methods is Void, not Object. We have two statement types, and we need a visit method for each. The easiest is expression statements.
 
+      @Override
       public Void visitExpressionStmt(Stmt.Expression stmt) {
         evaluate(stmt.expression);
         return null;
@@ -181,6 +182,7 @@ Appropriately enough, we discard the value returned by `evaluate()` by placing t
 
 The `print` statement’s visit method isn’t much different.
 
+      @Override
       public Void visitPrintStmt(Stmt.Print stmt) {
         Object value = evaluate(stmt.expression);
         System.out.println(stringify(value));
@@ -489,7 +491,7 @@ That gives us a working front end for declaring and using variables. All that’
 
 The bindings that associate variables to values need to be stored somewhere. Ever since the Lisp folks invented parentheses, this data structure has been called an **environment**.
 
-![An environment containing two bindings.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/statements-and-state/environment.png)
+![An environment containing two bindings.](media/image/statements-and-state/environment.png)
 
 I like to imagine the environment literally, as a sylvan wonderland where variables and values frolic.
 
@@ -629,6 +631,7 @@ We store it as a field directly in Interpreter so that the variables stay in mem
 
 We have two new syntax trees, so that’s two new visit methods. The first is for declaration statements.
 
+      @Override
       public Void visitVarStmt(Stmt.Var stmt) {
         Object value = null;
         if (stmt.initializer != null) {
@@ -654,6 +657,7 @@ Thus, if there isn’t an initializer, we set the value to `null`, which is the 
 
 Next, we evaluate a variable expression.
 
+      @Override
       public Object visitVariableExpr(Expr.Variable expr) {
         return environment.get(expr.name);
       }
@@ -818,6 +822,7 @@ Right now, the only valid target is a simple variable expression, but we’ll ad
 
 We have a new syntax tree node, so our interpreter gets a new visit method.
 
+      @Override
       public Object visitAssignExpr(Expr.Assign expr) {
         Object value = evaluate(expr.value);
         environment.assign(expr.name, value);
@@ -881,7 +886,7 @@ For example:
 
 Here, we have two blocks with a variable `a` declared in each of them. You and I can tell just from looking at the code that the use of `a` in the first `print` statement refers to the first `a`, and the second one refers to the second.
 
-![An environment for each 'a'.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/statements-and-state/blocks.png)
+![An environment for each 'a'.](media/image/statements-and-state/blocks.png)
 
 This is in contrast to **dynamic scope** where you don’t know what a name refers to until you execute the code. Lox doesn’t have dynamically scoped *variables*, but methods and fields on objects are dynamically scoped.
 
@@ -924,7 +929,7 @@ A first cut at implementing block scope might work like this:
 
 That would work for the previous example. But remember, one motivation for local scope is encapsulation—a block of code in one corner of the program shouldn’t interfere with some other block. Check this out:
 
-``` c
+```
 // How loud?
 var volume = 11;
 
@@ -958,13 +963,13 @@ Here, `global` lives in the outer global environment and `local` is defined insi
 
 We implement this by chaining the environments together. Each environment has a reference to the environment of the immediately enclosing scope. When we look up a variable, we walk that chain from innermost out until we find the variable. Starting at the inner scope is how we make local variables shadow outer ones.
 
-![Environments for each scope, linked together.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/statements-and-state/chaining.png)
+![Environments for each scope, linked together.](media/image/statements-and-state/chaining.png)
 
 While the interpreter is running, the environments form a linear list of objects, but consider the full set of environments created during the entire execution. An outer scope may have multiple blocks nested within it, and each will point to the outer one, giving a tree-like structure, though only one path through the tree exists at a time.
 
 The boring name for this is a [**parent-pointer tree**](https://en.wikipedia.org/wiki/Parent_pointer_tree), but I much prefer the evocative **cactus stack**.
 
-![Each branch points to its parent. The root is global scope.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/statements-and-state/cactus.png)
+![Each branch points to its parent. The root is global scope.](media/image/statements-and-state/cactus.png)
 
 Before we add block syntax to the grammar, we’ll beef up our Environment class with support for this nesting. First, we give each environment a reference to its enclosing one.
 
@@ -1110,6 +1115,7 @@ Having `block()` return the raw list of statements and leaving it to `statement(
 
 That’s it for syntax. For semantics, we add another visit method to Interpreter.
 
+      @Override
       public Void visitBlockStmt(Stmt.Block stmt) {
         executeBlock(stmt.statements, new Environment(environment));
         return null;
@@ -1175,7 +1181,7 @@ Our little interpreter can remember things now. We are inching closer to somethi
 
 2.  Maybe you want Lox to be a little more explicit about variable initialization. Instead of implicitly initializing variables to `nil`, make it a runtime error to access a variable that has not been initialized or assigned to, as in:
 
-    ``` c
+    ```
     // No initializers.
     var a;
     var b;

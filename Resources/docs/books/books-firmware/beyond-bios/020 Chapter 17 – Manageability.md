@@ -308,7 +308,7 @@ Err Detection Mux
 
 SMI Enable **No information** **Firmware/BIOS S/W**
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-293_1.png)
+![](media/index-293_1.png)
 
 MCERR En **Operating System**
 
@@ -646,13 +646,13 @@ identified by a pre-assigned GUID. The definition of the format is scalable and 
 
 event section.
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-298_1.png)
+![](media/index-298_1.png)
 
  
 
 **Provided by:** **Provided by:** **Provided by:** **Provided by:**
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-298_2.png)
+![](media/index-298_2.png)
 
  
 
@@ -696,7 +696,7 @@ in Figure 17.6.
 
 **280** \| Chapter 17 – Manageability
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-299_1.png)
+![](media/index-299_1.png)
 
  
 
@@ -838,7 +838,7 @@ vendor offers differentiation through their own platform hardware implementation
 
 ure 17.8.
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-301_1.png)
+![](media/index-301_1.png)
 
  
 
@@ -912,7 +912,7 @@ The most recent versions of the Intel AMT are DASH-compliant and facilitate inte
 
 **284** \| Chapter 17 – Manageability
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-303_1.png)
+![](media/index-303_1.png)
 
  
 
@@ -968,7 +968,7 @@ con components and handheld devices to PCs, servers, and large-scale data center
 
 agement of remote systems, as illustrated in Figure 17.10.
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-304_1.png)
+![](media/index-304_1.png)
 
  
 
@@ -1020,7 +1020,7 @@ ning on top of the OS can take immediate corrective action through the abstracte
 
 ered by UEFI, but is left to the individual platform vendors to implement through ei-ther IPMI or Intel AMT interfaces.
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-305_1.png)
+![](media/index-305_1.png)
 
  
 
@@ -1134,7 +1134,7 @@ associated to the op-code.
 
 Configuration Namespace \| **289**
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-308_1.png)
+![](media/index-308_1.png)
 
  
 
@@ -1180,7 +1180,7 @@ metadata in the platform.
 
 **290** \| Chapter 17 – Manageability
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-309_1.png)
+![](media/index-309_1.png)
 
  
 
@@ -1270,7 +1270,7 @@ tions.
 
 **292** \| Chapter 17 – Manageability
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-311_1.png)
+![](media/index-311_1.png)
 
  
 
@@ -1340,7 +1340,7 @@ sponding to the request. This gives the caller sufficient information to uniquel
 
 troller in the keyword string.
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-312_1.png)
+![](media/index-312_1.png)
 
  
 

@@ -30,21 +30,21 @@ seconds apart. By 2016, they had drifted to 36 seconds apart.
 
 In addition to the issues with earth’s fickle rotational speed, the physics of your own computer make it challenging to keep accurate time. There are also (at least) two clocks running on your system. One is a battery-powered device, called the *real-time* *clock*. The other one is known as *system time*. System time increments itself based on hardware interrupts provided by the computer’s motherboard. Somewhere in your system, a quartz crystal is oscillating rapidly.
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-321_1.png)
+![](media/index-321_1.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-321_2.png)
+![](media/index-321_2.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-321_3.png)
+![](media/index-321_3.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-321_4.png)
+![](media/index-321_4.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-321_5.png)
+![](media/index-321_5.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-321_6.png)
+![](media/index-321_6.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-321_7.png)
+![](media/index-321_7.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-321_8.png)
+![](media/index-321_8.png)
 
 ***Background***
 

@@ -141,7 +141,7 @@ Node (Leaf 2) (Leaf 3)
 
 In addition to providing a function fmap of the specified type, functors are also required to satisfy two equational laws:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_12_image_4_25.png)
+![image](media/Images/Chapter_12_image_4_25.png)
 
 The first equation states that fmap preserves the identity function, in the sense that applying fmap to this function returns the same function as the result. Note, however, that the two occurrences of id in this equation have different types: on the left-hand side id has type a -\> a and hence fmap id has type f a -\> f a, which means that the id on the right-hand side must also have type f a -\> f a in order for the equation to be well-typed.
 
@@ -355,7 +355,7 @@ getChars n = sequenceA (replicate n getChar)
 
 In addition to providing the functions pure and \<\*\>, applicative functors are also required to satisfy four equational laws:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_12_image_11_14.png)
+![image](media/Images/Chapter_12_image_11_14.png)
 
 The first equation states that pure preserves the identity function, in the sense that applying pure to this function gives an applicative version of the identity function. The second equation states that pure also preserves function application, in the sense that it distributes over normal function application to give applicative application. The third equation states that when an effectful function is applied to a pure argument, the order in which we evaluate the two components doesn’t matter. And finally, the fourth equation states that, modulo the types that are involved, the operator \<\*\> is associative. It is a useful exercise to work out the types for the variables in each of these laws.
 
@@ -594,11 +594,11 @@ type ST a = State -> (a,State)
 
 Such functions can be displayed in pictorial form as follows, where s is the input state, s’ is the output state, and v is the result value:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_12_image_17_21.png)
+![image](media/Images/Chapter_12_image_17_21.png)
 
 Conversely, a state transformer may also wish to take argument values. However, there is no need to further generalise the ST type to take account of this, because this behaviour can already be achieved by exploiting currying. For example, a state transformer that takes a character and returns an integer would have type Char -\> ST Int, which abbreviates the curried function type Char -\> State -\> (Int,State), as illustrated below:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_12_image_17_22.png)
+![image](media/Images/Chapter_12_image_17_22.png)
 
 Given that ST is a parameterised type, it is natural to try and make it into a monad so that the do notation can then be used to write stateful programs. However, types declared using the type mechanism cannot be made into instances of classes. Hence, we first redefine ST using the newtype mechanism, which requires introducing a dummy constructor, which we call S:
 
@@ -623,7 +623,7 @@ fmap g st = S (\s -> let (x,s’) = app st s in (g x, s’))
 
 That is, fmap allows us to apply a function to the result value of a state transformer, as in the following picture:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_12_image_17_23.png)
+![image](media/Images/Chapter_12_image_17_23.png)
 
 The let mechanism of Haskell used in the above definition is similar to the where mechanism, except that it allows local definitions to be made at the level of expressions rather than at the level of function definitions. In turn, the type ST can then be made into an applicative functor:
 
@@ -639,11 +639,11 @@ let (f,s’) = app stf s
 
 In this case, the function pure transforms a value into a state transformer that simply returns this value without modifying the state:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_12_image_18_22.png)
+![image](media/Images/Chapter_12_image_18_22.png)
 
 In turn, the operator \<\*\> applies a state transformer that returns a function to a state transformer that returns an argument to give a state transformer that returns the result of applying the function to the argument:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_12_image_18_23.png)
+![image](media/Images/Chapter_12_image_18_23.png)
 
 The symbol \$ denotes normal function application, defined by f \$ x = f x. Finally, the monadic instance for ST is declared as follows:
 
@@ -655,7 +655,7 @@ st >>= f = S (\s -> let (x,s’) = app st s in app (f x) s’)
 
 That is, st \>\>= f applies the state transformer st to an initial state s, then applies the function f to the resulting value x to give a new state transformer f x, which is then applied to the new state s’ to give the final result:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_12_image_19_26.png)
+![image](media/Images/Chapter_12_image_19_26.png)
 
 In this manner, the bind operator for the state monad integrates the sequencing of state transformers with the processing of their result values. Note that within the definition for \>\>= we produce a new state transformer f x whose behaviour may depend on the result value of the first argument x, whereas with \<\*\> we are restricted to using state transformers that are explicitly supplied as arguments. As such, using the \>\>= operator provides extra flexibility.
 
@@ -802,7 +802,7 @@ Nothing
 
 In a similar manner to functors and applicatives, the two monadic primitives are required to satisfy some equational laws:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_12_image_22_19.png)
+![image](media/Images/Chapter_12_image_22_19.png)
 
 The first two equations concern the link between return and \>\>=. The first equation states that if we return a value and then feed this into a monadic function, this should give the same result as simply applying the function to the value. Dually, the second equation states that if we feed the result of a monadic computation into the function return, this should give the same result as simply performing the computation. Together, these two equations state, modulo the fact that the second argument to \>\>= involves a binding operation, that return is the identity for the \>\>= operator.
 

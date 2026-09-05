@@ -464,7 +464,7 @@ Regardless of the file type, an ELF file always starts with a structure called t
 
 execution of a program, it embeds two different parallel, overlapping
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-670_1.jpg)
+![](media/index-670_1.jpg)
 
 views called the *linking view* and the *execution view*. Figure 10-1 depicts the two different views of an ELF file.
 
@@ -556,7 +556,7 @@ locations because the header tables store their positions. Figure 10-2
 
 illustrates this idea, with the start of the file at the bottom of the image.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-673_1.jpg)
+![](media/index-673_1.jpg)
 
 *Figure 10-2: The overlapping views of the ELF file, showing that multiple sections may be* *part of a single segment*
 
@@ -744,7 +744,7 @@ Al *--snip--* \[12\] .init PROGBITS 0000000000001000 001000 00001b 00 AX 0 0 4 \
 
 Notice that the offsets (Off column) are increasing and that the offset of each successive section is obtained by adding the previous size to the
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-678_1.jpg)
+![](media/index-678_1.jpg)
 
 previous offset and, if it does not fall on the byte boundary specified by the align (Al) column, bumped up so that it falls on a multiple of that alignment.
 
@@ -1044,7 +1044,7 @@ The bottom of the user stack contains the pointers to the command line arguments
 
 are above the stack, which grows downward.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-685_1.jpg)
+![](media/index-685_1.jpg)
 
 *Figure 10-4: The layout of a process in its virtual address space for a typical Linux system,* *showing the correspondence between the ELF file’s segments and the process’s segments* The region above the environment strings is where the kernel is
 
@@ -1362,7 +1362,7 @@ stack to execute the call and any other functions within the kernel that are cal
 
 Figure 10-5 depicts the Linux process descriptor schematically, showing how some parts of it are in separate substructures and some are embedded in the task_struct itself.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-694_1.jpg)
+![](media/index-694_1.jpg)
 
 *Figure 10-5: Fragments of the Linux process descriptor of type* *task_struct* Much of the data in the process descriptor is tied to the program
 

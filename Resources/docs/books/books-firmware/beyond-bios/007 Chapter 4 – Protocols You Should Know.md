@@ -258,7 +258,7 @@ OSKERNEL.BIN is retrieved from the same directory as the image of the OS loader 
 
 **Framework** **Me** **RUNTIME** **Ti** **Boot** **EFI 1.10 or** **SERVICES** **mo** **Compatibility** **EFI BOOT SERVICES** **EFI**
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-75_1.png)
+![](media/index-75_1.png)
 
  
 

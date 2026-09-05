@@ -504,7 +504,7 @@ first();
 
 Step through the program and look at which variables are in memory at each point in time:
 
-![Tracing through the execution of the previous program, showing the stack of variables at each step.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/calls-and-functions/calls.png)
+![Tracing through the execution of the previous program, showing the stack of variables at each step.](media/image/calls-and-functions/calls.png)
 
 As execution flows through the two calls, every local variable obeys the principle that any variable declared after it will be discarded before the first variable needs to be. This is true even across calls. We know we’ll be done with `c` and `d` before we are done with `a`. It seems we should be able to allocate local variables on the VM’s value stack.
 
@@ -536,7 +536,7 @@ At the beginning of each function call, the VM records the location of the first
 
 It’s as if the function gets a “window” or “frame” within the larger stack where it can store its locals. The position of the **call frame** is determined at runtime, but within and relative to that region, we know where to find things.
 
-![The stack at the two points when second() is called, with a window hovering over each one showing the pair of stack slots used by the function.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/calls-and-functions/window.png)
+![The stack at the two points when second() is called, with a window hovering over each one showing the pair of stack slots used by the function.](media/image/calls-and-functions/window.png)
 
 The historical name for this recorded location where the function’s locals start is a **frame pointer** because it points to the beginning of the function’s call frame. Sometimes you hear **base pointer**, because it points to the base stack slot on top of which all of the function’s variables live.
 
@@ -1173,17 +1173,17 @@ print 4 + sum(5, 6, 7);
 
 If we pause the VM right on the `OP_CALL` instruction for that call to `sum()`, the stack looks like this:
 
-![Stack: 4, fn sum, 5, 6, 7.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/calls-and-functions/argument-stack.png)
+![Stack: 4, fn sum, 5, 6, 7.](media/image/calls-and-functions/argument-stack.png)
 
 Picture this from the perspective of `sum()` itself. When the compiler compiled `sum()`, it automatically allocated slot zero. Then, after that, it allocated local slots for the parameters `a`, `b`, and `c`, in order. To perform a call to `sum()`, we need a CallFrame initialized with the function being called and a region of stack slots that it can use. Then we need to collect the arguments passed to the function and get them into the corresponding slots for the parameters.
 
 When the VM starts executing the body of `sum()`, we want its stack window to look like this:
 
-![The same stack with the sum() function's call frame window surrounding fn sum, 5, 6, and 7.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/calls-and-functions/parameter-window.png)
+![The same stack with the sum() function's call frame window surrounding fn sum, 5, 6, and 7.](media/image/calls-and-functions/parameter-window.png)
 
 Do you notice how the argument slots that the caller sets up and the parameter slots the callee needs are both in exactly the right order? How convenient! This is no coincidence. When I talked about each CallFrame having its own window into the stack, I never said those windows must be *disjoint*. There’s nothing preventing us from overlapping them, like this:
 
-![The same stack with the top-level call frame covering the entire stack and the sum() function's call frame window surrounding fn sum, 5, 6, and 7.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/calls-and-functions/overlapping-windows.png)
+![The same stack with the top-level call frame covering the entire stack and the sum() function's call frame window surrounding fn sum, 5, 6, and 7.](media/image/calls-and-functions/overlapping-windows.png)
 
 The top of the caller’s stack contains the function being called followed by the arguments in order. We know the caller doesn’t have any other slots above those in use because any temporaries needed when evaluating argument expressions have been discarded by now. The bottom of the callee’s stack overlaps so that the parameter slots exactly line up with where the argument values already live.
 
@@ -1276,7 +1276,7 @@ static bool call(ObjFunction* function, int argCount) {
 
 This simply initializes the next CallFrame on the stack. It stores a pointer to the function being called and points the frame’s `ip` to the beginning of the function’s bytecode. Finally, it sets up the `slots` pointer to give the frame its window into the stack. The arithmetic there ensures that the arguments already on the stack line up with the function’s parameters:
 
-![The arithmetic to calculate frame-\>slots from stackTop and argCount.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/calls-and-functions/arithmetic.png)
+![The arithmetic to calculate frame-\>slots from stackTop and argCount.](media/image/calls-and-functions/arithmetic.png)
 
 The funny little `- 1` is to account for stack slot zero which the compiler set aside for when we add methods later. The parameters start at slot one so we make the window start one slot earlier to align them with the arguments.
 
@@ -1456,7 +1456,7 @@ Otherwise, we discard all of the slots the callee was using for its parameters a
 
 We push the return value back onto the stack at that new, lower location. Then we update the `run()` function’s cached pointer to the current frame. Just like when we began a call, on the next iteration of the bytecode dispatch loop, the VM will read `ip` from that frame, and execution will jump back to the caller, right where it left off, immediately after the `OP_CALL` instruction.
 
-![Each step of the return process: popping the return value, discarding the call frame, pushing the return value.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/calls-and-functions/return.png)
+![Each step of the return process: popping the return value, discarding the call frame, pushing the return value.](media/image/calls-and-functions/return.png)
 
 Note that we assume here that the function *did* actually return a value, but a function can implicitly return by reaching the end of its body:
 

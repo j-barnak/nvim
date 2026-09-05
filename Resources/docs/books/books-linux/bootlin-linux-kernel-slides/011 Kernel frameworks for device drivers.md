@@ -992,4 +992,4 @@ rtl8150_t \*dev = usb_get_intfdata(intf);
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 251/436
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-266_1.jpg)
+![](media/index-266_1.jpg)

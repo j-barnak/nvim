@@ -582,4 +582,4 @@ nfc-\>caps = of_device_get_match_data(&pdev-\>dev);
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 190/436
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-205_1.jpg)
+![](media/index-205_1.jpg)

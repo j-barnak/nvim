@@ -56,51 +56,51 @@ Figure 5.1 illustrates the phases of boot operation that a platform evolves thro
 
 **Boot Services API Availability**
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-84_1.png)
+![](media/index-84_1.png)
 
 **Runtime Services API Availability**
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-84_2.png)
+![](media/index-84_2.png)
 
 **Reset** **Early** **Launch** **Transient** **Run Time** **After** **Vector** **Platform** **EFI** **System Load** **(RT)** **Life**
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-84_3.png)
+![](media/index-84_3.png)
 
 **Initialization** **Infrastructure** **(TSL)** **(AL)**
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-84_4.png)
+![](media/index-84_4.png)
 
 **Power on** **\[ . . Platform initialization . . \]** **\[ . . . . OS boot . . . . \]** **Shutdown**
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-84_5.png)
+![](media/index-84_5.png)
 
  
 
 **Figure 5.1:** Phases of Boot Operation
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-84_6.png)
+![](media/index-84_6.png)
 
  
 
 DOI 10.1515/9781501505690-007
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-84_7.png)
+![](media/index-84_7.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-84_8.png)
+![](media/index-84_8.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-84_9.png)
+![](media/index-84_9.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-84_10.png)
+![](media/index-84_10.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-84_11.png)
+![](media/index-84_11.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-84_12.png)
+![](media/index-84_12.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-84_13.png)
+![](media/index-84_13.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-84_14.png)
+![](media/index-84_14.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-84_15.png)
+![](media/index-84_15.png)
 
 **66** \| Chapter 5 – UEFI Runtime
 
@@ -388,7 +388,7 @@ MPS tables, as well as function prototypes for an UNDI-compliant network card. F
 
 ble and an example function prototype.
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-88_1.png)
+![](media/index-88_1.png)
 
  
 

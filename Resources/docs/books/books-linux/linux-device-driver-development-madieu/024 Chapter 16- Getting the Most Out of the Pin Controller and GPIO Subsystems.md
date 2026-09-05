@@ -595,7 +595,7 @@ In this section, we will demonstrate how to add the support of an IRQ chip into 
 
 Let's consider the following figure:
 
-![Figure 16.1 – Multiplexing IRQs ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_16_001.jpg)
+![Figure 16.1 – Multiplexing IRQs ](media/image/B17934_16_001.jpg)
 
 Figure 16.1 – Multiplexing IRQs
 
@@ -1356,7 +1356,7 @@ On successful **gpio_chip** registration, a directory entry with a path such as 
 - **label**, which is provided for diagnostics (not always unique).
 - **ngpio**, which tells us how many GPIOs this controller provides (**N** to **N + ngpio - 1**). This is the same as defined in **gpio_chip.ngpios**.
 
-&nbsp;
+
 
 - **/sys/class/gpio/gpioN/**: This directory corresponds to the GPIO line **N**, exported either using the **export** file or directly from the kernel. **/sys/class/gpio/gpio42/** (for GPIO **\#42**) is an example. The following read/write attributes are contained in such directories:
   - **direction**: Use this file to get/set GPIO direction. Acceptable values are either **in** or **out** strings. This attribute will normally be written and writing the **out** value will initialize the GPIO value as **low** by default. To ensure glitch-free operation, values low and high may be written to configure the GPIO as an output with that initial value. If, however, the GPIO has been exported from the kernel (see the **gpiod_export()** or **gpio_export()** functions), then this attribute will be missing, disabling at the same time direction change.

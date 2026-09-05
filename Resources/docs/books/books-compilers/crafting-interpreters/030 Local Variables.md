@@ -35,7 +35,7 @@ This is in large part because the history of languages is deeply tied to single-
 
 Step through this example program and watch how the local variables come in and go out of scope:
 
-![A series of local variables come into and out of scope in a stack-like fashion.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/local-variables/scopes.png)
+![A series of local variables come into and out of scope in a stack-like fashion.](media/image/local-variables/scopes.png)
 
 See how they fit a stack perfectly? It seems that the stack will work for storing locals at runtime. But we can go further than that. Not only do we know *that* they will be on the stack, but we can even pin down precisely *where* they will be on the stack. Since the compiler knows exactly which local variables are in scope at any point in time, it can effectively simulate the stack during compilation and note where in the stack each variable lives.
 
@@ -169,7 +169,7 @@ block          → "{" declaration* "}" ;
 
 When you think about it, “block” is a weird name. Used metaphorically, “block” usually means a small indivisible unit, but for some reason, the Algol 60 committee decided to use it to refer to a *compound* structure—a series of statements. It could be worse, I suppose. Algol 58 called `begin` and `end` “statement parentheses”.
 
-![A cinder block.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/local-variables/block.png)
+![A cinder block.](media/image/local-variables/block.png)
 
 Blocks are a kind of statement, so the rule for them goes in the `statement` production. The corresponding code to compile one looks like this:
 
@@ -235,7 +235,7 @@ That’s it for blocks and scopes—more or less—so we’re ready to stuff som
 
 Usually we start with parsing here, but our compiler already supports parsing and compiling variable declarations. We’ve got `var` statements, identifier expressions and assignment in there now. It’s just that the compiler assumes all variables are global. So we don’t need any new parsing support, we just need to hook up the new scoping semantics to the existing code.
 
-![The code flow within varDeclaration().](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/local-variables/declaration.png)
+![The code flow within varDeclaration().](media/image/local-variables/declaration.png)
 
 Variable declaration parsing begins in `varDeclaration()` and relies on a couple of other functions. First, `parseVariable()` consumes the identifier token for the variable name, adds its lexeme to the chunk’s constant table as a string, and then returns the constant table index where it was added. Then, after `varDeclaration()` compiles the initializer, it calls `defineVariable()` to emit the bytecode for storing the variable’s value in the global variable hash table.
 
@@ -278,7 +278,7 @@ static void defineVariable(uint8_t global) {
 
 Wait, what? Yup. That’s it. There is no code to create a local variable at runtime. Think about what state the VM is in. It has already executed the code for the variable’s initializer (or the implicit `nil` if the user omitted an initializer), and that value is sitting right on top of the stack as the only remaining temporary. We also know that new locals are allocated at the top of the stack . . . right where that value already is. Thus, there’s nothing to do. The temporary simply *becomes* the local variable. It doesn’t get much more efficient than that.
 
-![Walking through the bytecode execution showing that each initializer's result ends up in the local's slot.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/local-variables/local-slots.png)
+![Walking through the bytecode execution showing that each initializer's result ends up in the local's slot.](media/image/local-variables/local-slots.png)
 
 The code on the left compiles to the sequence of instructions on the right.
 
@@ -663,7 +663,7 @@ We’ve got one more edge case to deal with before we end this chapter. Recall t
 
 We slayed it then by splitting a variable’s declaration into two phases, and we’ll do that again here:
 
-![An example variable declaration marked 'declared uninitialized' before the variable name and 'ready for use' after the initializer.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/local-variables/phases.png)
+![An example variable declaration marked 'declared uninitialized' before the variable name and 'ready for use' after the initializer.](media/image/local-variables/phases.png)
 
 As soon as the variable declaration begins—in other words, before its initializer—the name is declared in the current scope. The variable exists, but in a special “uninitialized” state. Then we compile the initializer. If at any point in that expression we resolve an identifier that points back to this variable, we’ll see that it is not initialized yet and report an error. After we finish compiling the initializer, we mark the variable as initialized and ready for use.
 

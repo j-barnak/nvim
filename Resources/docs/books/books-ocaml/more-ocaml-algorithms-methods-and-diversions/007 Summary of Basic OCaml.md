@@ -8,19 +8,19 @@ Integers `min_int `… `-3` `-2` `-1` `0` `1` `2` `3` … `max_int `of 
 
 Mathematical operators `+ - * / mod `which take two integers and give another.
 
-![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00068.jpg)
+![](media/images/00068.jpg)
 
 Operators  `=  <  <=  >  >=  <> ` which compare two values and evaluate to either `true `or `false`.
 
-![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00125.jpg)
+![](media/images/00125.jpg)
 
 The conditional `if `expression1 `then `expression2 `else `expression3, where expresssion1 has type bool and expression2 and expression3 have the same type as one another.
 
-![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00146.jpg)
+![](media/images/00146.jpg)
 
 The boolean operators `&& `(logical AND) and `|| `(logical OR) which allow us to build compound boolean expressions.
 
-![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00243.jpg)
+![](media/images/00243.jpg)
 
 Tuples to combine a fixed number of elements `(a, b)`,  `(a, b, c) `etc. with types α × β,  α × β × γ etc. For example, `(1, '1') `is a tuple of type int × char. On the screen, OCaml writes `'a `for α etc.
 
@@ -38,11 +38,11 @@ Building compound expressions using `let` name1 `= `expression1 `in` `let` na
 
 Anonymous (un-named) functions `fun `name `-> `expression.
 
-![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00095.jpg)
+![](media/images/00095.jpg)
 
 Making operators into functions as in `( < ) `and `( + )`.
 
-`( + ) 1 2` ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00227.jpg)`3`
+`( + ) 1 2` ![](media/images/00227.jpg)`3`
 
 Functions, introduced by `let` name argument1 argument2 … `=` expression. These have type α → β, α → β → γ etc. for some types α, β, γ etc. For example, `let f a b = a > b` is a function of type α → α → bool.
 
@@ -76,8 +76,8 @@ Lists, which are ordered collections of zero or more elements of like type. They
 
 The `::` “cons” operator, which adds an element to the front of a list. The `@ `“append” operator, which concatenates two lists together.
 
-`1 :: [2; 3]` ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00218.jpg)`[1; 2; 3]`  
-`[1; 2] @ [3]` ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00034.jpg)`[1; 2; 3]`
+`1 :: [2; 3]` ![](media/images/00218.jpg)`[1; 2; 3]`  
+`[1; 2] @ [3]` ![](media/images/00034.jpg)`[1; 2; 3]`
 
 Lists and the `::` “cons” symbol may be used for pattern matching to distinguish lists of length zero, one, etc. and with particular contents. For example, we can calculate the length of a list:
 
@@ -107,10 +107,10 @@ Partial application of functions by giving fewer than the full number of argumen
 `let add x y = x + y`  
   
 `List.map (add 3) [1; 2; 3]`  
-![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00008.jpg)`[4; 5; 6]`  
+![](media/images/00008.jpg)`[4; 5; 6]`  
   
 `List.map (( + ) 3) [1; 2; 3]`  
-![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00054.jpg)`[4; 5; 6]`
+![](media/images/00054.jpg)`[4; 5; 6]`
 
 New Data Types
 
@@ -170,7 +170,7 @@ Floating-point Numbers
 
 Floating-point numbers `min_float `… `max_float `of type float. Floating-point operators `+. *. -. /. ** `and built-in functions `sqrt log `etc.
 
-`2. ** 0.2` ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00299.jpg)`1.1486983549970351`
+`2. ** 0.2` ![](media/images/00299.jpg)`1.1486983549970351`
 
 The OCaml Standard Library
 

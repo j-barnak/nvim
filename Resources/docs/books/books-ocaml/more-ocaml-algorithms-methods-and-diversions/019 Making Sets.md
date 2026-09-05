@@ -17,7 +17,7 @@ Figure 11.1 exhibits these five functions by representing sets using the built-i
 
 ------------------------------------------------------------------------
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00200.jpg)
+> ![](media/images/00200.jpg)
 
  
 
@@ -29,11 +29,11 @@ These functions are not terribly efficient. The `member`, `size`, and `insert `f
 
 We have not hidden the type of the sets – they may be manipulated by the caller as plain lists – and so the abstraction is not safe or complete. Here is an interface as a `.mli `file, abstracting the real type of the set to just α t .
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00222.jpg)
+> ![](media/images/00222.jpg)
 
 Here is the corresponding `.ml `file with the implementation:
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00253.jpg)
+> ![](media/images/00253.jpg)
 
 Recall that, by hiding the implementation behind an interface, we can swap implementations at will, making them more efficient, or fixing bugs.
 
@@ -41,7 +41,7 @@ Since we wish to build several of these set implementations, and benchmark them,
 
 ------------------------------------------------------------------------
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00283.jpg)
+> ![](media/images/00283.jpg)
 
  
 
@@ -64,7 +64,7 @@ When this code is pasted into the top level, or loaded in some other way, a new 
 
 Since all our different implementations of sets will share the same interface as SetList, we will split this module definition up using the `module type `syntax to define the signature, and the `include `keyword to use that signature for our module:
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00012.jpg)
+> ![](media/images/00012.jpg)
 
 Thus, we have avoided duplication of the interface. Each new set representation will just need an implementation.
 
@@ -87,7 +87,7 @@ Then, we will, for each of these “ordered” and “unordered” cases:
 
 Here are the results:
 
-![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00042.jpg)
+![](media/images/00042.jpg)
 
 The big difference is in the time for the membership tests, due to the balance or lack of balance in the tree, as expected. When we introduce more ways of storing sets, we will do the same tests, and compare the results.
 
@@ -97,7 +97,7 @@ A binary search tree is a binary tree with the property that all elements in the
 
 Just like the representation of sets, there are multiple representations of sets, depending upon the order of insertion of the elements. Here are the trees corresponding to the insertion orders 123, 132, 213, 231, 312, 321:
 
-![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00070.jpg)
+![](media/images/00070.jpg)
 
 We can see that when the items in the set are added in numerical or reverse-numerical order, this data structure is equivalent to, and has no better performance, than a simple list. The data type is the usual one for binary trees:
 
@@ -107,7 +107,7 @@ The SetTree module is shown in Figure 11.3.
 
 ------------------------------------------------------------------------
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00241.jpg)
+> ![](media/images/00241.jpg)
 
  
 
@@ -117,7 +117,7 @@ The SetTree module is shown in Figure 11.3.
 
 When the tree is balanced `insert `and `member `run in logarithmic time. The `size `function runs in linear time, since it must visit every node irrespective of the balance. The same is true of `list_of_set`. When unbalanced, `insert `and `member `take linear time. We can extend our table now:
 
-![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00048.jpg)
+![](media/images/00048.jpg)
 
 Notice that, in the unordered case, performance is dramatically increased for insertion and membership, by about two hundred times. However, if the elements are inserted in order, the unbalanced tree actually takes longer to build than its equivalent list. Finding all the elements as a list also takes a huge amount of time in the ordered insertion case.
 
@@ -134,7 +134,7 @@ A Red-Black tree is an ordinary binary tree with one addition: each node is eith
 
 These two rules, together, ensure that the tree is reasonably balanced – the longest path from root to leaf (Black, Red, Black, Red … Black) is no more than twice as long as the shortest path (Black, Black, Black … Black). Thus, the maximum depth of a Red-Black tree is proportional to the logarithm of the number of elements in the set. Here is an example valid Red-Black tree, with 3 black nodes in each path:
 
-![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00182.jpg)
+![](media/images/00182.jpg)
 
 Here are the types for representing a Red-Black tree – we have just added a new colour field to each branch of the tree:
 
@@ -146,21 +146,21 @@ The `list_of_set`, `size`, and `member `functions are simple to alter: they just
 
 As with ordinary binary search trees, the new node added by `insert `will be in place of a leaf node. We colour it Red, to make sure that the invariant that no path can have a differing number of black nodes in it is not broken. However, this may break the other invariant (that no Red node has a Red parent). It turns out that, by considering the parent and grandparent of the newly-inserted node, performing a simple operation, and possibly continuing this process upward, we can restore this invariant, and efficiently. The following diagrams, à la Okasaki, illustrate the process:
 
-![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00022.jpg)
+![](media/images/00022.jpg)
 
 In each case, the nodes x,y,z and the sub-trees α,β,γ,δ remain in the same order, so the binary tree invariant is preserved. Pattern matching is particularly elegant here, since all but one of our cases have the same result:
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00163.jpg)
+> ![](media/images/00163.jpg)
 
 Now, we can write the insertion function itself:
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00004.jpg)
+> ![](media/images/00004.jpg)
 
 Note that we wrap it in a function to set the root of the tree to Black – balancing will not do this, since the root has no parent or grandparent to compare with, and so we may otherwise end up with a red root with a red child. The full module is shown in Figure 11.4.
 
 ------------------------------------------------------------------------
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00269.jpg)
+> ![](media/images/00269.jpg)
 
  
 
@@ -170,7 +170,7 @@ Note that we wrap it in a function to set the root of the tree to Black – bala
 
 Since we have guaranteed that the tree will be reasonably balanced, there is no need for tail recursive functions, even for huge sets. The effect of balanced trees on performance is clear, and there appears to be little or no slow-down from the more complex Red-Black data structure:
 
-![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00285.jpg)
+![](media/images/00285.jpg)
 
 Hash Tables
 
@@ -182,7 +182,7 @@ The OCaml Standard Library provides a hash table implementation in the module Ha
 
 ------------------------------------------------------------------------
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00175.jpg)
+> ![](media/images/00175.jpg)
 
  
 
@@ -192,7 +192,7 @@ The OCaml Standard Library provides a hash table implementation in the module Ha
 
 The disadvantage is that hash tables are mutable data structures, and so operations like `insert `mutate the structure. The result of `insert`, then, alters the set rather than creating a new set. This means that whilst the SetType interface is technically satisfied, our intended abstraction is actually broken. Such is mutability. The performance on our benchmarks, however, is clear:
 
-![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00265.jpg)
+![](media/images/00265.jpg)
 
 The benchmarking programs may be found in the online resources.
 

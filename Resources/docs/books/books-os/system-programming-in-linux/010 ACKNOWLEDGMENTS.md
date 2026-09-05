@@ -50,4 +50,4 @@ books about the Unix and Linux operating systems. Those resources
 
 were invaluable during the writing of this book.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-32_1.jpg)
+![](media/index-32_1.jpg)

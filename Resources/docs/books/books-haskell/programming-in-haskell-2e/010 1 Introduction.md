@@ -213,8 +213,7 @@ Types provide useful information about the nature of functions, but, more import
 
 Now let us consider a more sophisticated function concerning lists, which illustrates a number of other aspects of Haskell. Suppose that we define a function called qsort by the following two equations:
 
-``` haskell
-```
+![image](media/Images/Chapter_1_image_8_13.png)
 
 In this definition, ++ is an operator that appends two lists together; for example, \[1,2,3\] ++ \[4,5\] = \[1,2,3,4,5\]. In turn, where is a keyword that introduces local definitions, in this case a list smaller comprising all elements a from the list xs that are less than or equal to x, together with a list larger comprising all elements b from xs that are greater than x. For example, if x = 3 and xs = \[5,1,4,2\], then smaller = \[1,2\] and larger = \[5,4\].
 
@@ -261,8 +260,7 @@ states that, for any type a of ordered values, qsort is a function that maps bet
 
 Our third and final example further emphasises the level of precision and generality that can be achieved in Haskell. Consider a function called seqn that takes a list of input/output actions, such as reading or writing a single character, performs each of these actions in sequence, and returns a list of resulting values. In Haskell, this function can be defined as follows:
 
-``` haskell
-```
+![image](media/Images/Chapter_1_image_10_15.png)
 
 These two equations state that if the list of actions is empty we return the empty list of results, otherwise we perform the first action in the list, then perform the remaining actions, and finally return the list of results that were produced. For example, the expression seqn \[getChar,getChar,getChar\] reads three characters from the keyboard using the action getChar that reads a single character, and returns a list containing the three characters.
 

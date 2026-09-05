@@ -1,4 +1,4 @@
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-3_1.jpg)
+![](media/index-3_1.jpg)
 
 SYSTEM PROGRAMMING IN LINUX
 

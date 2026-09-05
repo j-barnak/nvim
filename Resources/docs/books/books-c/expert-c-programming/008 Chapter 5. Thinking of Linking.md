@@ -34,7 +34,7 @@ to invoke all these pieces and pass the right options to each (see Figure 5-1). 
 
 ***Figure 5-1. A Compiler is Often Split into Smaller Programs***
 
-![Image 52](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-98_1.png)
+![Image 52](media/index-98_1.png)
 
 They are written in pieces because they are easier to design and maintain if each specialized part is a program in its own right. For instance, the rules controlling preprocessing are unique to that phase and
 
@@ -68,9 +68,9 @@ If a copy of the libraries is physically part of the executable, then we say the
 
 ***Figure 5-2. Static Linking versus Dynamic Linking***
 
-![Image 53](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-100_1.png)
+![Image 53](media/index-100_1.png)
 
-![Image 54](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-100_2.png)
+![Image 54](media/index-100_2.png)
 
 Even with static linking, the whole of libc. a is not brought into the executable, just the routines needed.
 
@@ -108,7 +108,7 @@ For example, if you have eight XView™ applications running, only one copy of t
 
 Dynamic linking permits easy versioning of libraries. New libraries can be shipped; once installed on the system, old programs automatically get the benefit of the new versions without needing to be relinked.
 
-![Image 55](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-102_1.png)
+![Image 55](media/index-102_1.png)
 
 Finally (much less common, but still possible), dynamic linking allows users to select at runtime which library to execute against. It's possible to create library versions that are tuned for speed, or for memory efficiency, or that contain extra debugging information, and to allow the user to express a preference when execution takes place by substituting one library file for another.
 
@@ -168,7 +168,7 @@ The -L/home/linden -R/home/linden options tell the linker in which directories t
 
 You will probably also want to use the -K pic compiler option to produce position-independent code for your libraries. Position-independent code means that the generated code makes sure that every global data access is done through an extra indirection. This makes it easy to relocate the data simply by changing one value in the table of global offsets. Similarly, every function call is generated as a call through an indirect address in a procedure linkage table. The text can thus easily be relocated
 
-![Image 56](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-104_1.png)
+![Image 56](media/index-104_1.png)
 
 to anywhere, simply by fixing up the offset tables. So when the code is mapped in at runtime, the runtime linker can directly put it wherever there is room, and the code itself doesn't have to be changed.
 
@@ -248,7 +248,7 @@ L/usr/openwin/lib
 
 Another inconsistency is that a single library may contain routines that satisfy the prototypes declared in multiple header files. For example, the functions declared in the header files \<string.h\>, \<stdio.h\>, and \<time.h\> are all usually supplied in the single library libc.so. If you're in doubt, use the nm utility to list
 
-![Image 57](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-106_1.png)
+![Image 57](media/index-106_1.png)
 
 the routines that a library contains. More about this in the next heuristic!
 
@@ -328,7 +328,7 @@ This causes no end of angst for the unwary. Everyone is used to the general comm
 
 \<files\> \<options\> is very confusing. It's exacerbated by the fact that it will silently accept the first
 
-![Image 58](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-108_1.png)
+![Image 58](media/index-108_1.png)
 
 version and do the wrong thing. At one point, Sun's compiler group amended the compiler drivers so that they coped with the situation. We changed the SunOS 4.x unbundled compiler drivers from SC0.0
 
@@ -368,9 +368,9 @@ Over the years we have seen no convincing examples where interpositioning was es
 
 ***Figure 5-3. Diagram of Interpositioning and Default Global Scope***
 
-![Image 59](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-110_1.png)
+![Image 59](media/index-110_1.png)
 
-![Image 60](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-110_2.png)
+![Image 60](media/index-110_2.png)
 
 Most programmers have not memorized all the names in the C library, and common names like index or mktemp tend to be chosen surprisingly often. Sometimes bugs of this kind even get into production code.
 
@@ -870,7 +870,7 @@ If an identifier is *reserved,* it means that the user is not allowed to redefin
 
 Use the "-m" option to ld for a linker report that includes a note of symbols which have been interposed. In general, the "-m" option to ld will produce a memory map or listing showing what has
 
-![Image 61](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-114_1.png)
+![Image 61](media/index-114_1.png)
 
 been put where in the executable. It also shows multiple instances of the same symbol, and by looking at what files these occur in, the user can determine if any interpositioning took place.
 

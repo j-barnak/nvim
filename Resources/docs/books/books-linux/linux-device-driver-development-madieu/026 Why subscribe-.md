@@ -1,4 +1,4 @@
-![](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/Image87446.jpg)
+![](media/image/Image87446.jpg)
 
 [Packt.com](http://Packt.com)
 
@@ -20,7 +20,7 @@ At [www.packt.com](http://www.packt.com), you can also read a collection of free
 
 If you enjoyed this book, you may be interested in these other books by Packt:
 
-[![](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/9781789342048_Cover.png)](https://packt.link/9781789342048)
+[![](media/image/9781789342048_Cover.png)](https://packt.link/9781789342048)
 
 **Mastering Linux Device Driver Development**
 
@@ -35,7 +35,7 @@ ISBN: 9781789342048
 - Build power-aware device drivers using the kernel power management framework
 - Find out how to get the most out of miscellaneous kernel subsystems such as NVMEM and Watchdog
 
-[![](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/9781789953435_Cover.png)](https://packt.link/9781789953435)
+[![](media/image/9781789953435_Cover.png)](https://packt.link/9781789953435)
 
 **Linux Kernel Programming**
 

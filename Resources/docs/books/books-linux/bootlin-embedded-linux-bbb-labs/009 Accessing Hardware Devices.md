@@ -130,7 +130,7 @@ Take one of the M-M breadboard wires provided by your instructor and:
 
 © 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 25
 
-![](/tmp/audit/iter1/epubregen/bootlin-embedded-linux-bbb-labs/media/index-26_1.png)
+![](media/index-26_1.png)
 
 Source: <https://elinux.org/File:BBB_I-O_pins_.png>
 
@@ -224,7 +224,7 @@ As shown on the below picture found on <https://elinux.org/Beagleboard:Cape_Expa
 
 © 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 27
 
-![](/tmp/audit/iter1/epubregen/bootlin-embedded-linux-bbb-labs/media/index-28_1.png)
+![](media/index-28_1.png)
 
 In this lab, we will try to use I2C1 on P9 pins 17 and 18, because it’s more interesting to use than I2C2 which is already enabled by default.
 
@@ -380,7 +380,7 @@ You can understand the above values thanks to the pin muxing diagram for connect
 
 [https://elinux.org/images/b/b4/HeaderP9.jpg,](https://elinux.org/images/b/b4/HeaderP9.jpg) which was extracted from the board System Reference Manual:
 
-![](/tmp/audit/iter1/epubregen/bootlin-embedded-linux-bbb-labs/media/index-30_1.jpg)
+![](media/index-30_1.jpg)
 
  
 
@@ -426,7 +426,7 @@ No device is detected yet, because this bus is just used for external devices. I
 
 Let’s connect the Nunchuk provided by your instructor to the I2C1 bus on the board, using breadboard wires:
 
-![](/tmp/audit/iter1/epubregen/bootlin-embedded-linux-bbb-labs/media/index-31_1.jpg)
+![](media/index-31_1.jpg)
 
  
 

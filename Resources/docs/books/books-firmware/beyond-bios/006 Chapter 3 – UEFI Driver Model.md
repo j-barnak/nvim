@@ -512,6 +512,7 @@ Status = DriverBinding-\>Supported (
 
 DriverBinding,
 
+ControllerHandle,
 
 NULL
 
@@ -523,6 +524,7 @@ Status = DriverBinding-\>Start (
 
 DriverBinding,
 
+ControllerHandle,
 
 NULL
 
@@ -568,6 +570,7 @@ Status = DriverBinding-\>Supported (
 
 DriverBinding,
 
+ControllerHandle,
 
 RemainingDevicePath
 
@@ -579,6 +582,7 @@ Status = DriverBinding-\>Start (
 
 DriverBinding,
 
+ControllerHandle,
 
 RemainingDevicePath
 
@@ -884,6 +888,7 @@ EFI_ABC_DEVICE AbcDevice;
 
 Status = gBS-\>OpenProtocol (
 
+ControllerHandle,
 
 &gEfiXyzIoProtocol,
 
@@ -891,6 +896,7 @@ Status = gBS-\>OpenProtocol (
 
 gMyImageHandle,
 
+ControllerHandle,
 
 EFI_OPEN_PROTOCOL_BY_DRIVER
 
@@ -1020,6 +1026,7 @@ gBS-\>FreePool (AbcDevice);
 
 gBS-\>CloseProtocol (
 
+ControllerHandle,
 
 &gEfiXyzIoProtocolGuid,
 
@@ -1129,67 +1136,67 @@ Updated Data
 
 **…...**
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-68_1.png)
+![](media/index-68_1.png)
 
  
 
 Camera G-Sensor System
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-68_2.png)
+![](media/index-68_2.png)
 
 firmware
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-68_3.png)
+![](media/index-68_3.png)
 
  
 
 **Figure 3.8:** ESRT, Capsule, FMP
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-68_4.png)
+![](media/index-68_4.png)
 
  
 
 **Networking**
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-68_5.png)
+![](media/index-68_5.png)
 
  
 
 The UEFI driver model has also evolved to support complex device hierarchies, such as a dual IPV4 and IPV6 modular network stack. Figure 3.8 is a picture of the Internet
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-68_6.png)
+![](media/index-68_6.png)
 
 Small Computer Systems Interface (iSCSI) network application atop both the IPV4 and IPV6 network stack.
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-68_7.png)
+![](media/index-68_7.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-68_8.png)
+![](media/index-68_8.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-68_9.png)
+![](media/index-68_9.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-68_10.png)
+![](media/index-68_10.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-68_11.png)
+![](media/index-68_11.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-68_12.png)
+![](media/index-68_12.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-68_13.png)
+![](media/index-68_13.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-68_14.png)
+![](media/index-68_14.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-68_15.png)
+![](media/index-68_15.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-68_16.png)
+![](media/index-68_16.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-68_17.png)
+![](media/index-68_17.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-68_18.png)
+![](media/index-68_18.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-68_19.png)
+![](media/index-68_19.png)
 
 **50** \| Chapter 3 – UEFI Driver Model
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-69_1.png)
+![](media/index-69_1.png)
 
  
 
@@ -1201,7 +1208,7 @@ In addition to the ISCSI usage above, the UEFI standard now has support for HTTP
 
 Additional Innovations \| **51**
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-70_1.png)
+![](media/index-70_1.png)
 
  
 
@@ -1223,116 +1230,116 @@ A common use-case for booting includes the following:
 
 **52** \| Chapter 3 – UEFI Driver Model
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_1.png)
+![](media/index-71_1.png)
 
  
 
 EFI HTTPBoot
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_2.png)
+![](media/index-71_2.png)
 
 DHCP Server DNS Server HTTP(S) Server
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_3.png)
+![](media/index-71_3.png)
 
 Client
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_4.png)
+![](media/index-71_4.png)
 
  
 
 **Figure 3.11:** HTTP network boot
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_5.png)
+![](media/index-71_5.png)
 
  
 
 One notable infrastructure element precipitated by this modular design includes the Service Binding Protocol (SBP). The EFI_DRIVER_BINDING_PROTOCOL allows for
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_6.png)
+![](media/index-71_6.png)
 
 producing a set of protocols related to a device via simple layering, but for more com-plex relationships like graphs and trees, the driver binding protocol was found to be
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_7.png)
+![](media/index-71_7.png)
 
 deficient. For this reason, the SBP provides a member function to create a child han-dle with a new protocol installed upon it. This allows for the more generalized via as
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_8.png)
+![](media/index-71_8.png)
 
 shown in Figure 3.8.
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_9.png)
+![](media/index-71_9.png)
 
  
 
 **Summary**
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_10.png)
+![](media/index-71_10.png)
 
  
 
 This chapter has introduced the UEFI driver model and some sample drivers. The
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_11.png)
+![](media/index-71_11.png)
 
 UEFI driver model allows for support of modern bus architectures in addition to the lazy activation of devices needed by boot for today’s platforms and designs in the
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_12.png)
+![](media/index-71_12.png)
 
 future. The support for buses is key because most of the storage, console, and net-working devices are attached via an industry-standard bus like USB, PCI, and SCSI.
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_13.png)
+![](media/index-71_13.png)
 
 The architecture described is general enough to support these and future evolutions in platform hardware. In addition to access to boot devices, though, there are other
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_14.png)
+![](media/index-71_14.png)
 
 features and innovations that need to be surfaced in the platform. UEFI drivers are the unit of delivery for these types of capabilities, and examples of networking, secu-
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_15.png)
+![](media/index-71_15.png)
 
 rity, and management feature drivers were reviewed.
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_16.png)
+![](media/index-71_16.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_17.png)
+![](media/index-71_17.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_18.png)
+![](media/index-71_18.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_19.png)
+![](media/index-71_19.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_20.png)
+![](media/index-71_20.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_21.png)
+![](media/index-71_21.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_22.png)
+![](media/index-71_22.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_23.png)
+![](media/index-71_23.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_24.png)
+![](media/index-71_24.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_25.png)
+![](media/index-71_25.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_26.png)
+![](media/index-71_26.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_27.png)
+![](media/index-71_27.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_28.png)
+![](media/index-71_28.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_29.png)
+![](media/index-71_29.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_30.png)
+![](media/index-71_30.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_31.png)
+![](media/index-71_31.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_32.png)
+![](media/index-71_32.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_33.png)
+![](media/index-71_33.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_34.png)
+![](media/index-71_34.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_35.png)
+![](media/index-71_35.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_36.png)
+![](media/index-71_36.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-71_37.png)
+![](media/index-71_37.png)

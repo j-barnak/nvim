@@ -1,6 +1,6 @@
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-1_1.png)
+![](media/index-1_1.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-1_2.png)
+![](media/index-1_2.png)
 
 Systems programming concepts
 
@@ -10,29 +10,29 @@ Timothy Samuel McNamara
 
 M A N N I N G
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-2_1.png)
+![](media/index-2_1.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-2_2.png)
+![](media/index-2_2.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-2_3.png)
+![](media/index-2_3.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-2_4.png)
+![](media/index-2_4.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-2_5.png)
+![](media/index-2_5.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-2_6.png)
+![](media/index-2_6.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-2_7.png)
+![](media/index-2_7.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-2_8.png)
+![](media/index-2_8.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-2_9.png)
+![](media/index-2_9.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-2_10.png)
+![](media/index-2_10.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-2_11.png)
+![](media/index-2_11.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-2_12.png)
+![](media/index-2_12.png)
 
 **Raw Pointer**
 

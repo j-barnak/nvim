@@ -28,7 +28,7 @@ This starts off as the simple question, "How can you detect a cycle in a linked 
 
 **Usual first answer:**
 
-![Image 171](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-279_1.png)
+![Image 171](media/index-279_1.png)
 
 Mark each element as you visit it; keep traversing; if you reach an already marked element, the list has a cycle in it.
 
@@ -186,11 +186,11 @@ Typical system calls: chdir, fork, write, brk
 
 Library routines are usually slower than in-line code because of the subroutine call overhead, but system calls are much slower still because of the context switch to the kernel. On a SPARCstation 1, we timed the overhead of a library call (i.e., how fast a procedure call is made) at about half a microsecond. A system call took seventy times longer to establish (35 microseconds). For raw performance, minimize the number of system calls wherever possible, but remember, many routines in the C library do their work by making system calls. Finally, people who believe that crop circles are the work of aliens will have trouble with the concept that the system() call is actually a library call.
 
-![Image 172](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-283_1.png)
+![Image 172](media/index-283_1.png)
 
-![Image 173](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-283_2.png)
+![Image 173](media/index-283_2.png)
 
-![Image 174](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-283_3.png)
+![Image 174](media/index-283_3.png)
 
 **Programming Challenge**
 

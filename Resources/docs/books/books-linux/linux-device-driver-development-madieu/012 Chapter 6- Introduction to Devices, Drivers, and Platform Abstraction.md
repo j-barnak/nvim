@@ -95,7 +95,7 @@ You probably never want to use **driver_register()** as-is; it is up to the bus 
 
 The recommended place to register/unregister the driver is within the **init**/**exit** functions of the module, which are executed at the module loading/unloading stages, respectively. In lots of cases, registering/unregistering the driver is the only action you will want to execute within those **init**/**exit** functions. In such cases, each bus core provides a specific helper macro, which will be expanded as the **init**/**exit** functions of the module and internally call the bus-specific registering/unregistering function. Those bus macros follow the **module\_{bus_name}\_driver(\_\_{bus_name}\_driver);** pattern, where **\_\_{bus_name}\_driver** is the driver structure of the corresponding bus. The following table shows a non-exhaustive list of buses that are supported in Linux, along with their macros:
 
-![Table 6.1 – Some buses, along with their (un)registration macros ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_06_Table_1.jpg)
+![Table 6.1 – Some buses, along with their (un)registration macros ](media/image/B17934_06_Table_1.jpg)
 
 Table 6.1 – Some buses, along with their (un)registration macros
 
@@ -147,13 +147,13 @@ The kernel must be aware of the devices that are supported by a given driver and
 
 If we have a look at each bus-specific device driver structure (**struct platform_driver**, **struct i2c_driver**, **struct spi_driver**, **struct pci_driver**, and **struct usb_driver**), we will see that there is an **id_table** field whose type depends on the bus type. This field should be given an array of device IDs that correspond to those supported by the driver. The following table shows the common buses, along with their device ID structures:
 
-![Table 6.2 – Some buses, along with their device identification data structures ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_06_Table_2.jpg)
+![Table 6.2 – Some buses, along with their device identification data structures ](media/image/B17934_06_Table_2.jpg)
 
 Table 6.2 – Some buses, along with their device identification data structures
 
 I intentionally omitted two special cases: the device tree and ACPI. They can expose devices so that they can be declared either from within the device tree or ACPI using the **driver.of_match_table** or **driver.acpi_match_table** fields, which are not direct elements of the bus-specific driver structure:
 
-![Table 6.3 – Pseudo buses, along with their device identification data structures ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_06_Table_3.jpg)
+![Table 6.3 – Pseudo buses, along with their device identification data structures ](media/image/B17934_06_Table_3.jpg)
 
 Table 6.3 – Pseudo buses, along with their device identification data structures
 

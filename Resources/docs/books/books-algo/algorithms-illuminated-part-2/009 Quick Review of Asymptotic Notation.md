@@ -88,41 +88,41 @@ When we say that c and n0 are constants, we mean they cannot depend on n. For ex
 
 *f* (*n*)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-208_1.jpg)
+![](media/index-208_1.jpg)
 
  
 
 *n* → ∞ *n*0
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-208_2.jpg)
+![](media/index-208_2.jpg)
 
 Figure C.1: A picture illustrating when T(n) = O(f (n)). The constant c quantifies the “constant multiple” of f (n), and the constant n0 quantifies “eventually.”
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-208_3.jpg)
+![](media/index-208_3.jpg)
 
  
 
 Figure C.1, c and n0 were fixed numbers (like 3
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-208_4.jpg)
+![](media/index-208_4.jpg)
 
 or 1000), and we then considered the inequality (C.1)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-208_5.jpg)
+![](media/index-208_5.jpg)
 
 as n grows arbitrarily large (looking rightward on the graph toward infinity). If you ever find yourself saying
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-208_6.jpg)
+![](media/index-208_6.jpg)
 
 “take n0 = n” or “take c = log n 2” in an alleged big-O proof, you need to start over with choices of c and n0 that are independent of n.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-208_7.jpg)
+![](media/index-208_7.jpg)
 
  
 
 C.3 Examples
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-208_8.jpg)
+![](media/index-208_8.jpg)
 
 We claim that if T (n) is a polynomial with some degree k, then T k ( n ) = O ( n) . Thus, big-O notation really is suppressing constant factors and lower-order terms.
 

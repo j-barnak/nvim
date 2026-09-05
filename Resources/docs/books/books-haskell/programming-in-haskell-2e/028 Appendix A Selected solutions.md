@@ -159,7 +159,11 @@ third (_:_:x:_) = x
 
 ``` haskell
 safetail xs = if null xs then [] else tail xs
+```
 
+![image](media/Images/Appendix_a_image_4_25.png)
+
+``` haskell
 safetail [] = []
 safetail (_:xs) = xs
 ```
@@ -176,6 +180,8 @@ _ || _ = True
 False || b = b
 True || _ = True
 ```
+
+![image](media/Images/Appendix_a_image_4_26.png)
 
 ### **A.5List comprehensions**
 
@@ -205,8 +211,7 @@ replicate n x = [x | _ <- [1..n]]
 
 ##### Exercise 5
 
-``` haskell
-```
+![image](media/Images/Appendix_a_image_5_24.png)
 
 ### **A.6Recursive functions**
 
@@ -252,8 +257,7 @@ For example:
 
 ##### Exercise 4
 
-``` haskell
-```
+![image](media/Images/Appendix_a_image_6_24.png)
 
 ### **A.7Higher-order functions**
 
@@ -269,6 +273,8 @@ map f (filter p xs)
 all p = and . map p
 any p = or . map p
 ```
+
+![image](media/Images/Appendix_a_image_6_25.png)
 
 ##### Exercise 3
 
@@ -303,8 +309,7 @@ mult m (Succ n) = add m (mult m n)
 
 ##### Exercise 2
 
-``` haskell
-```
+![image](media/Images/Appendix_a_image_7_20.png)
 
 This version is more efficient because it only requires one comparison between x and y for each node, whereas the previous version may require two.
 
@@ -315,10 +320,11 @@ leaves (Leaf _) = 1
 leaves (Node l r) = leaves l + leaves r
 ```
 
+![image](media/Images/Appendix_a_image_7_21.png)
+
 ##### Exercise 4
 
-``` haskell
-```
+![image](media/Images/Appendix_a_image_8_15.png)
 
 ### **A.9The countdown problem**
 
@@ -330,8 +336,7 @@ choices xs = [zs | ys <- subs xs, zs <- perms ys]
 
 ##### Exercise 2
 
-``` haskell
-```
+![image](media/Images/Appendix_a_image_8_16.png)
 
 ##### Exercise 3
 
@@ -347,8 +352,7 @@ putStr xs = sequence_ [putChar x | x <- xs]
 
 ##### Exercise 2
 
-``` haskell
-```
+![image](media/Images/Appendix_a_image_8_17.png)
 
 ##### Exercise 3
 
@@ -385,6 +389,8 @@ we have:
 ``` haskell
 import System.Random hiding (next)
 ```
+
+![image](media/Images/Appendix_a_image_9_20.png)
 
 Note that the function next from the imported library is hidden to avoid clashing with our next function on player values.
 
@@ -434,18 +440,17 @@ pure x = Z (repeat x)
 
 ##### Exercise 1
 
-``` haskell
-```
+![image](media/Images/Appendix_a_image_11_10.png)
 
 ##### Exercise 2
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Appendix_a_image_11_11.png)
+![image](media/Images/Appendix_a_image_11_11.png)
 
 ##### Exercise 3
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Appendix_a_image_11_12.png)
+![image](media/Images/Appendix_a_image_11_12.png)
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Appendix_a_image_12_17.png)
+![image](media/Images/Appendix_a_image_12_17.png)
 
 ##### Exercise 4
 
@@ -530,6 +535,7 @@ mult 3 4
 
 ##### Exercise 1
 
+Base case:
 
 ``` haskell
 add Zero (Succ m)
@@ -539,6 +545,7 @@ Succ m
 Succ (add Zero m)
 ```
 
+Inductive case:
 
 ``` haskell
 add (Succ n) (Succ m)
@@ -552,6 +559,7 @@ Succ (add (Succ n) m)
 
 ##### Exercise 2
 
+Base case:
 
 ``` haskell
 add Zero m
@@ -561,6 +569,7 @@ m
 add m Zero
 ```
 
+Inductive case:
 
 ``` haskell
 add (Succ n) m
@@ -574,6 +583,7 @@ add m (Succ n)
 
 ##### Exercise 3
 
+Base case:
 
 ``` haskell
 all (== x) (replicate 0 x)
@@ -583,6 +593,7 @@ all (== x) []
 True
 ```
 
+Inductive case:
 
 ``` haskell
 all (== x) (replicate (n+1) x)
@@ -600,6 +611,7 @@ True
 
 ##### Exercise 4
 
+Base case:
 
 ``` haskell
 [] ++ []
@@ -607,6 +619,7 @@ True
 []
 ```
 
+Inductive case:
 
 ``` haskell
 (x : xs) ++ []
@@ -616,6 +629,7 @@ x : (xs ++ [])
 x : xs
 ```
 
+Base case:
 
 ``` haskell
 [] ++ (ys ++ zs)
@@ -625,6 +639,7 @@ ys ++ zs
 ([] ++ ys) ++ zs
 ```
 
+Inductive case:
 
 ``` haskell
 (x : xs) ++ (ys ++ zs)
@@ -640,6 +655,7 @@ x : ((xs ++ ys) ++ zs)
 
 ##### Exercise 5
 
+Base case:
 
 ``` haskell
 take 0 xs ++ drop 0 xs
@@ -649,6 +665,7 @@ take 0 xs ++ drop 0 xs
 xs
 ```
 
+Base case:
 
 ``` haskell
 take (n+1) [] ++ drop (n+1) []
@@ -658,6 +675,7 @@ take (n+1) [] ++ drop (n+1) []
 []
 ```
 
+Inductive case:
 
 ``` haskell
 take (n+1) (x:xs) ++ drop (n+1) (x:xs)

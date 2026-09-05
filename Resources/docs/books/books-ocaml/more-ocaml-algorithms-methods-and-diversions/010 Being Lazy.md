@@ -11,7 +11,7 @@ The constructor `Nil `represents the empty list, and `Cons `builds a list from a
 
 Note that we have no `Nil `constructor, because the list has no end. Our use of unit rather than another type is a choice – we could use any type, but unit is the simplest type, containing only one value. How do we use such a creature? Let us start by writing a function which, given an integer n, builds the lazy list of all integers n,n + 1,n + 2… and returns it:
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00010.jpg)
+> ![](media/images/00010.jpg)
 
 When we type this in to the OCaml top level, here is what we see:
 
@@ -22,11 +22,11 @@ When we type this in to the OCaml top level, here is what we see:
 
 We can see that the head of the list is zero – the rest is yet to be calculated. OCaml represents the tail function with `<fun>`. We can now write functions to extract items from the list. Here are lazy head and tail functions:
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00016.jpg)
+> ![](media/images/00016.jpg)
 
 Notice that, because there is only one constructor in our data type, we can pattern match directly in the function argument. When we apply the unit `() `to the tail function, we are forcing evaluation of the tail. Here are lazy versions of the familiar `take `and `drop `functions, which take or drop the first n elements of a list:
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00019.jpg)
+> ![](media/images/00019.jpg)
 
 The `ltake `function has to yield an ordinary list, of course. Note the use of the `as `keyword to name part of the pattern (here, `Cons (h, tf) `is named `ll`), making the base case of `ldrop `simpler. Now we can actually get at our elements:
 
@@ -40,11 +40,11 @@ The `ltake `function has to yield an ordinary list, of course. Note the use of t
 
 Two favourite list functions have easy analogues in the lazy world:
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00024.jpg)
+> ![](media/images/00024.jpg)
 
 Note that delaying and forcing evaluation often come together, as in both these examples. The function `map` returns almost immediately – assuming `f `is quick. The computation of the rest of the elements is, as always, delayed. The `filter `function is different – it must find at least one matching element to use as the head, before returning. If it does not find one, it will never return, so care is needed. Let us use these two functions to find the cubes divisible by five:
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00028.jpg)
+> ![](media/images/00028.jpg)
 
 Now, using `ltake`:
 
@@ -57,19 +57,19 @@ Now, using `ltake`:
 
 Here is another example of a simple lazy list, this time the list of all primes, created by use of `lfilter `and recursion, beginning with the list of all numbers from 2, calculated with `lseq`:
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00212.jpg)
+> ![](media/images/00212.jpg)
 
 There are plenty of list functions which cannot be adapted to lazy lists. We cannot, for example, reverse a lazy list, or append two lazy lists. But there is an analogue to `append`. We can combine two lists fairly, taking elements in turn from each:
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00040.jpg)
+> ![](media/images/00040.jpg)
 
 For example, the list alternating between zeros and ones can be built with `interleave `and a function to build constant lists:
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00044.jpg)
+> ![](media/images/00044.jpg)
 
 A more interesting example is to calculate the lazy list of all ordinary lists of zeros and ones. We can do this by prepending a zero and a one to the list, and interleaving the resulting lists:
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00049.jpg)
+> ![](media/images/00049.jpg)
 
 This yields:
 
@@ -83,7 +83,7 @@ This yields:
 
 To see why, we can visualise the evaluation as a tree where each left branch prepends a zero and each right branch a one:
 
-![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00025.jpg)
+![](media/images/00025.jpg)
 
 The interleavings are fair, and the interleavings of interleavings equally so, thus we see the results of length two in this order: `[0; 0] [0; 1] [1; 0] [1; 1]`.
 

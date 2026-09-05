@@ -24,7 +24,7 @@ not (not False) :: Bool
 
 In Haskell, every expression must have a type, which is calculated prior to evaluating the expression by a process called *type inference*. The key to this process is the following simple typing rule for function application, which states that if f is a function that maps arguments of type A to results of type B, and e is an expression of type A, then the application f e has type B:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_3_image_2_17.png)
+![image](media/Images/Chapter_3_image_2_17.png)
 
 For example, the typing not False :: Bool can be inferred from this rule using the fact that not :: Bool -\> Bool and False :: Bool. On the other hand, the expression not 3 does not have a type under the above rule, because this would require that 3 :: Bool, which is not valid because 3 is not a logical value. Expressions such as not 3 that do not have a type are said to contain a *type error*, and are deemed to be invalid expressions.
 

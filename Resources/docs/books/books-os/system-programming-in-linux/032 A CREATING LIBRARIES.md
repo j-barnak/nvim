@@ -520,4 +520,4 @@ export LD_RUN_PATH
 
 If this variable is defined when you compile the executable, then the run path will be hardcoded into the executable and the dynamic linker will find your libraries at runtime.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-1225_1.jpg)
+![](media/index-1225_1.jpg)

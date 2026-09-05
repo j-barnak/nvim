@@ -244,11 +244,11 @@ Practical lab - Expose the Nunchuk to user space
 
 ▶ Extend the Nunchuk driver to expose the
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-276_1.png)
+![](media/index-276_1.png)
 
 Nunchuk features to user space applications, as an *input* device.
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-276_2.png)
+![](media/index-276_2.png)
 
 ▶ Test the operation of the Nunchuk using
 
@@ -258,4 +258,4 @@ evtest
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 262/436
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-277_1.jpg)
+![](media/index-277_1.jpg)

@@ -84,4 +84,4 @@ drive ideas home. This book is modeled on this principle. It is also
 
 modeled on my belief that a good teacher teaches students how to learn.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-34_1.jpg)
+![](media/index-34_1.jpg)

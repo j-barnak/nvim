@@ -44,7 +44,7 @@ DOI 10.1515/9781501505690-016
 
 **228** \| Chapter 14 – Putting It All Together—Firmware Emulation
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-247_1.png)
+![](media/index-247_1.png)
 
  
 
@@ -66,7 +66,7 @@ application effectively executes the firmware that was built, and emulates the l
 
 Virtual Platform \| **229**
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-248_1.png)
+![](media/index-248_1.png)
 
  
 
@@ -82,7 +82,7 @@ An example would be the direct initialization of memory, which would be somewhat
 
 more involved.
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-248_2.png)
+![](media/index-248_2.png)
 
  
 
@@ -374,7 +374,7 @@ tem, firmware emulation component, and their associated interaction logic. It sh
 
 Hardware Pass-Through \| **235**
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-254_1.png)
+![](media/index-254_1.png)
 
  
 
@@ -406,7 +406,7 @@ Figure 14.8 shows the logic flow associated with the various components and how 
 
 **236** \| Chapter 14 – Putting It All Together—Firmware Emulation
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-255_1.png)
+![](media/index-255_1.png)
 
  
 

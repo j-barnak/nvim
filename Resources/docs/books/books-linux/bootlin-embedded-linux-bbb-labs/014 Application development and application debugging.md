@@ -298,7 +298,7 @@ Those extensions should appear on top of the ”Recommended” section.
 
 © 2004-2025 [Bootlin,](https://bootlin.com) CC BY-SA license 67
 
-![](/tmp/audit/iter1/epubregen/bootlin-embedded-linux-bbb-labs/media/index-68_1.png)
+![](media/index-68_1.png)
 
 Then open the .env file and if needed, update the TARGET_IP variable to make it match the IP address of the target.
 
@@ -310,13 +310,13 @@ You are now ready to build and debug your application. Start by clicking on the 
 
 You can start debugging the program by clicking on the Run and Debug tab, and then on the green ”Play” button on top:
 
-![](/tmp/audit/iter1/epubregen/bootlin-embedded-linux-bbb-labs/media/index-68_2.png)
+![](media/index-68_2.png)
 
  
 
 In the debug console, you should see that debugging has started:
 
-![](/tmp/audit/iter1/epubregen/bootlin-embedded-linux-bbb-labs/media/index-68_3.png)
+![](media/index-68_3.png)
 
  
 
@@ -324,7 +324,7 @@ In the debug console, you should see that debugging has started:
 
 Then, start using the Nunchuk to control playback, and when you try to quit with the C button, VS Code should now see the segmentation fault:
 
-![](/tmp/audit/iter1/epubregen/bootlin-embedded-linux-bbb-labs/media/index-69_1.png)
+![](media/index-69_1.png)
 
  
 

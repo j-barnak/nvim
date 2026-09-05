@@ -180,7 +180,7 @@ To set up a scatter list mapping, you should do the following:
 
 The following is a diagram that describes most of the concepts of the scatter list:
 
-![Figure 11.1 – Scatter/gather memory organization ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_11_001.jpg)
+![Figure 11.1 – Scatter/gather memory organization ](media/image/B17934_11_001.jpg)
 
 Figure 11.1 – Scatter/gather memory organization
 
@@ -314,7 +314,7 @@ The DMA engine is a generic kernel framework used to develop DMA controller driv
 
 The following diagram is the layering, showing how this framework is integrated with the Linux kernel:
 
-![Figure 11.2 – DMA engine framework ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_11_002.jpg)
+![Figure 11.2 – DMA engine framework ](media/image/B17934_11_002.jpg)
 
 Figure 11.2 – DMA engine framework
 
@@ -1182,7 +1182,7 @@ Cyclic mode is mostly used in TTY drivers, where the data is fed into a **First 
 
 The callback function that has been implemented is used to keep track of the state of the ring buffer and buffer management is implemented using the kernel ring buffer API (so you need to include **\<linux/circ_buf.h\>**):
 
-![Figure 11.3 – Cyclic DMA ring buffer ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_11_003.jpg)
+![Figure 11.3 – Cyclic DMA ring buffer ](media/image/B17934_11_003.jpg)
 
 Figure 11.3 – Cyclic DMA ring buffer
 

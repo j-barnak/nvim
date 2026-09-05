@@ -8,7 +8,7 @@
 
 This chapter marks the culmination of a lot of hard work. The previous chapters add useful functionality in their own right, but each also supplies a piece of a puzzle. We’ll take those pieces—expressions, statements, variables, control flow, and lexical scope—add a couple more, and assemble them all into support for real user-defined functions and function calls.
 
-![A lambda puzzle.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/functions/lambda.png)
+![A lambda puzzle.](media/image/functions/lambda.png)
 
 ## 10.1 Function Calls
 
@@ -174,6 +174,7 @@ import java.util.List;
 
 As always, interpretation starts with a new visit method for our new call expression node.
 
+      @Override
       public Object visitCallExpr(Expr.Call expr) {
         Object callee = evaluate(expr.callee);
 
@@ -308,7 +309,7 @@ Curiously, two names for these functions—“native” and “foreign”—are 
 
 Or it may be that “native” refers to the machine code language of the underlying hardware. In Java, “native” methods are ones implemented in C or C++ and compiled to native machine code.
 
-![All a matter of perspective.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/functions/foreign.png)
+![All a matter of perspective.](media/image/functions/foreign.png)
 
 But when it comes to making your language actually good at doing useful stuff, the native functions your implementation provides are key. They provide access to the fundamental services that all programs are defined in terms of. If you don’t provide native functions to access the file system, a user’s going to have a hell of a time writing a program that reads and displays a file.
 
@@ -547,6 +548,7 @@ class LoxFunction implements LoxCallable {
 
 We implement the `call()` of LoxCallable like so:
 
+      @Override
       public Object call(Interpreter interpreter,
                          List<Object> arguments) {
         Environment environment = new Environment(interpreter.globals);
@@ -582,7 +584,7 @@ count(3);
 
 Imagine we pause the interpreter right at the point where it’s about to print 1 in the innermost nested call. The outer calls to print 2 and 3 haven’t printed their values yet, so there must be environments somewhere in memory that still store the fact that `n` is bound to 3 in one context, 2 in another, and 1 in the innermost, like:
 
-![A separate environment for each recursive call.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/functions/recursion.png)
+![A separate environment for each recursive call.](media/image/functions/recursion.png)
 
 That’s why we create a new environment at each *call*, not at the function *declaration*. The `call()` method we saw earlier does that. At the beginning of the call, it creates a new environment. Then it walks the parameter and argument lists in lockstep. For each pair, it creates a new variable with the parameter’s name and binds it to the argument’s value.
 
@@ -598,7 +600,7 @@ add(1, 2, 3);
 
 At the point of the call to `add()`, the interpreter creates something like this:
 
-![Binding arguments to their parameters.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/functions/binding.png)
+![Binding arguments to their parameters.](media/image/functions/binding.png)
 
 Then `call()` tells the interpreter to execute the body of the function in this new function-local environment. Up until now, the current environment was the environment where the function was being called. Now, we teleport from there inside the new parameter space we’ve created for the function.
 
@@ -610,6 +612,7 @@ Mechanically, the code is pretty simple. Walk a couple of lists. Bind some new v
 
 Done? OK. Note when we bind the parameters, we assume the parameter and argument lists have the same length. This is safe because `visitCallExpr()` checks the arity before calling `call()`. It relies on the function reporting its arity to do that.
 
+      @Override
       public int arity() {
         return declaration.params.size();
       }
@@ -618,6 +621,7 @@ Done? OK. Note when we bind the parameters, we assume the parameter and argument
 
 That’s most of our object representation. While we’re in here, we may as well implement `toString()`.
 
+      @Override
       public String toString() {
         return "<fn " + declaration.name.lexeme + ">";
       }
@@ -638,6 +642,7 @@ print add; // "<fn add>".
 
 We’ll come back and refine LoxFunction soon, but that’s enough to get started. Now we can visit a function declaration.
 
+      @Override
       public Void visitFunctionStmt(Stmt.Function stmt) {
         LoxFunction function = new LoxFunction(stmt);
         environment.define(stmt.name.lexeme, function);
@@ -783,6 +788,7 @@ We need to get from the top of the stack all the way back to `call()`. I don’t
 
 The visit method for our new AST node looks like this:
 
+      @Override
       public Void visitReturnStmt(Stmt.Return stmt) {
         Object value = null;
         if (stmt.value != null) value = evaluate(stmt.value);
@@ -889,13 +895,13 @@ Meanwhile, the top-level code invokes the returned `count()` function. That exec
 
 If you’ve never encountered a language with nested functions before, this might seem crazy, but users do expect it to work. Alas, if you run it now, you get an undefined variable error in the call to `counter()` when the body of `count()` tries to look up `i`. That’s because the environment chain in effect looks like this:
 
-![The environment chain from count()'s body to the global scope.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/functions/global.png)
+![The environment chain from count()'s body to the global scope.](media/image/functions/global.png)
 
 When we call `count()` (through the reference to it stored in `counter`), we create a new empty environment for the function body. The parent of that is the global environment. We lost the environment for `makeCounter()` where `i` is bound.
 
 Let’s go back in time a bit. Here’s what the environment chain looked like right when we declared `count()` inside the body of `makeCounter()`:
 
-![The environment chain inside the body of makeCounter().](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/functions/body.png)
+![The environment chain inside the body of makeCounter().](media/image/functions/body.png)
 
 So at the point where the function is declared, we can see `i`. But when we return from `makeCounter()` and exit its body, the interpreter discards that environment. Since the interpreter doesn’t keep the environment surrounding `count()` around, it’s up to the function object itself to hang on to it.
 
@@ -964,7 +970,7 @@ This is the environment that is active when the function is *declared* not when 
 
 This creates an environment chain that goes from the function’s body out through the environments where the function is declared, all the way out to the global scope. The runtime environment chain matches the textual nesting of the source code like we want. The end result when we call that function looks like this:
 
-![The environment chain with the closure.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/functions/closure.png)
+![The environment chain with the closure.](media/image/functions/closure.png)
 
 Now, as you can see, the interpreter can still find `i` when it needs to because it’s in the middle of the environment chain. Try running that `makeCounter()` example now. It works!
 

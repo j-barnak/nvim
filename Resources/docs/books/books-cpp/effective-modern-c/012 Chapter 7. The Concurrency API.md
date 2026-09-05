@@ -582,13 +582,13 @@ std::thread t;
 
 **Item 37 \| 257**
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-276_1.jpg)
+![](media/index-276_1.jpg)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-276_2.png)
+![](media/index-276_2.png)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-276_3.jpg)
+![](media/index-276_3.jpg)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-276_4.png)
+![](media/index-276_4.png)
 
 **Item 38: Be aware of varying thread handle destructor**
 
@@ -622,17 +622,17 @@ Given that not all result types can be copied (i.e., move-only types) and that t
 
 **258 \| Item 38**
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-277_1.jpg)
+![](media/index-277_1.jpg)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-277_2.png)
+![](media/index-277_2.png)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-277_3.jpg)
+![](media/index-277_3.jpg)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-277_4.png)
+![](media/index-277_4.png)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-277_5.jpg)
+![](media/index-277_5.jpg)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-277_6.png)
+![](media/index-277_6.png)
 
 must live at least as long as the last future referring to it, which of the potentially many futures corresponding to the callee should be the one to contain its result?
 

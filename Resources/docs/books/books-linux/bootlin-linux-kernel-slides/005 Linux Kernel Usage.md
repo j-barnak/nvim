@@ -331,7 +331,7 @@ CONFIG_FAT_DEFAULT_CODEPAGE=437
 
 xconfig
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-62_1.png)
+![](media/index-62_1.png)
 
  
 
@@ -361,7 +361,7 @@ qtbase5-dev on Ubuntu 22.04
 
 make menuconfig
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-63_1.png)
+![](media/index-63_1.png)
 
 ▶ Useful when no graphics are available.
 
@@ -397,11 +397,11 @@ Compiled as a module:
 
 CONFIG_ISO9660_FS=m
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-64_1.png)
+![](media/index-64_1.png)
 
 Additional driver options:
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-64_2.png)
+![](media/index-64_2.png)
 
 CONFIG_JOLIET=y
 
@@ -468,13 +468,13 @@ configuration
 
 ▶ showing the load on 4 threads / 2 CPUs Only works from the top kernel source directory ▶ Should not be performed as a privileged user ▶ Run several **j**obs in parallel. Our advice: \$(nproc) to
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-68_1.png)
+![](media/index-68_1.png)
 
 fully load the CPU and I/Os at all times. Command: make Total time: 129 s
 
 Example: make -j20
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-68_2.png)
+![](media/index-68_2.png)
 
 ▶ To **re**compile faster (7x according to some benchmarks),
 
@@ -610,7 +610,7 @@ make INSTALL_MOD_PATH=\<dir\>/ modules_install
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 74/436 Kernel cleanup targets
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-75_1.png)
+![](media/index-75_1.png)
 
  
 
@@ -709,7 +709,7 @@ Mode” presentation from Michael
 
 Right before starting the kernel, it will store the boots Linux. contents of bootargs in the chosen section of the Device Tree
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-81_1.png)
+![](media/index-81_1.png)
 
 ▶ The kernel will behave differently depending on its
 
@@ -769,11 +769,11 @@ echo "\<n\>Debug info" \> /dev/kmsg
 
 2nd lab: kernel compiling and booting:
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-83_1.png)
+![](media/index-83_1.png)
 
 ▶ Set up a cross-compiling environment ▶ Cross-compile a kernel for an ARM target
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-83_2.png)
+![](media/index-83_2.png)
 
 platform
 
@@ -952,4 +952,4 @@ echo 0 \> /sys/module/usb_storage/parameters/delay_use
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 91/436
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-92_1.jpg)
+![](media/index-92_1.jpg)

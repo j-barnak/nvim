@@ -48,6 +48,7 @@ programming language. Listing 1-1 shows the original version of that program.
 
 *hello_world.c*
 
+\#include \<stdio.h\>
 
 void main()
 
@@ -103,6 +104,7 @@ but has no input. Listing 1-2 performs both input and output.
 
 *hello.c*
 
+\#include \<stdio.h\>
 
 void main() {
 
@@ -190,7 +192,7 @@ Similarly, the printf() function makes calls to a lower-level function named wri
 
 The write() code handles all of the details of writing to the output
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-56_1.jpg)
+![](media/index-56_1.jpg)
 
 device. In short, the operating system performs all transfers of data to and from the output device, which is often the terminal. Figure 1-1
 
@@ -228,7 +230,7 @@ sometimes called *soft resources*. Figure 1-2 illustrates the way an operating s
 
 resources.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-58_1.jpg)
+![](media/index-58_1.jpg)
 
 *Figure 1-2: An operating system has layers to protect resources.*
 
@@ -472,7 +474,7 @@ Figure 1-3 depicts how users and their programs access system resources and serv
 
 interface.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-65_1.jpg)
+![](media/index-65_1.jpg)
 
 *Figure 1-3: A schematic view of the role of the kernel*
 
@@ -844,6 +846,7 @@ named *getenv_demo.c*, prints out the name of the user’s shell:
 
 *getenv_demo.c*
 
+\#include \<stdio.h\>
 
 \#include \<stdlib.h\>
 
@@ -961,7 +964,7 @@ have no end-of-file characters to denote the end of the file, for example, or an
 
 An important fact about files is that *filenames are not part of the status* *of the file.* In fact, a nondirectory file can have multiple names, and those
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-77_1.jpg)
+![](media/index-77_1.jpg)
 
 names aren’t an inherent property of the file itself, but of the directories that contain them.
 
@@ -981,7 +984,7 @@ Directories are never empty because every directory contains two
 
 links, named *.* (dot) and *.* (dot-dot). These entries have a predefined meaning: *.* is a link to the directory itself, and *.* is a link to the directory
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-78_1.jpg)
+![](media/index-78_1.jpg)
 
 containing this directory, which is called the *parent* directory. Figure 1-5
 
@@ -1063,7 +1066,7 @@ working directory, which is *chapters*. We can return to the previous directory 
 
 \$ **ls**
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-80_1.jpg)
+![](media/index-80_1.jpg)
 
 chapters/ fonts/ images/ main.tex main.bib
 
@@ -1149,7 +1152,7 @@ illustrated in Figure 1-7, has several directories just under the root.
 
 These directories are called the *top-level directories*.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-83_1.jpg)
+![](media/index-83_1.jpg)
 
 *Figure 1-7: A portion of the top of a typical UNIX directory hierarchy* The following list describes the top-level directories present in most Unix systems. The only directories actually required by POSIX.1-2024
 
@@ -1359,6 +1362,7 @@ At the programming language level, we can call the getpid() function to obtain t
 
 *getpid_demo.c*
 
+\#include \<stdio.h\>
 
 ➊ \#include \<unistd.h\>
 
@@ -1440,6 +1444,7 @@ has a unique TID. In Linux, a thread can call the gettid() function to obtain it
 
 \#define \_GNU_SOURCE
 
+\#include \<stdio.h\>
 
 \#include \<unistd.h\>
 
@@ -1603,6 +1608,7 @@ scanf, fscanf, sscanf, vscanf, vsscanf, vfscanf
 
 SYNOPSIS
 
+\#include \<stdio.h\>
 
 *--snip--*
 

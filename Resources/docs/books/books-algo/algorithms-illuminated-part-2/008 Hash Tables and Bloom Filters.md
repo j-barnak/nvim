@@ -48,65 +48,65 @@ null -4 -2 null +1 15 12
 
 +1
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-165_1.jpg)
+![](media/index-165_1.jpg)
 
  
 
 ” ” ” b” **.** **.** **.** **.** **.** **.** **.** **.** **.** **.** **.** **.** **.** aa icf ice “Bo “Al “Aa “Al
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-165_2.jpg)
+![](media/index-165_2.jpg)
 
 Figure 12.1: In principle, you could store your friends’ phone numbers in an array indexed by strings with at most 25 characters.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-165_3.jpg)
+![](media/index-165_3.jpg)
 
  
 
 Quiz 12.1
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-165_4.jpg)
+![](media/index-165_4.jpg)
 
 How many length-25 character strings are there? (Choose the strongest true statement.)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-165_5.jpg)
+![](media/index-165_5.jpg)
 
 a\) More than the number of hairs on your head.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-165_6.jpg)
+![](media/index-165_6.jpg)
 
 b\) More than the number of Web pages in existence.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-165_7.jpg)
+![](media/index-165_7.jpg)
 
 c\) More than the total amount of storage available on
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-165_8.jpg)
+![](media/index-165_8.jpg)
 
 Earth (in bits).
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-165_9.jpg)
+![](media/index-165_9.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-165_10.jpg)
+![](media/index-165_10.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-165_11.jpg)
+![](media/index-165_11.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-165_12.jpg)
+![](media/index-165_12.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-165_13.jpg)
+![](media/index-165_13.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-165_14.jpg)
+![](media/index-165_14.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-165_15.jpg)
+![](media/index-165_15.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-165_16.jpg)
+![](media/index-165_16.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-165_17.jpg)
+![](media/index-165_17.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-165_18.jpg)
+![](media/index-165_18.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-165_19.jpg)
+![](media/index-165_19.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-165_20.jpg)
+![](media/index-165_20.jpg)
 
 12.1 Supported Operations 153
 
@@ -430,67 +430,67 @@ Hash Functions
 
 A hash function h : U ! {0, 1, 2, . . . , n 1} assigns every key from the universe U to a position in an array of length n.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-174_1.jpg)
+![](media/index-174_1.jpg)
 
  
 
 h 0
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-174_2.jpg)
+![](media/index-174_2.jpg)
 
 1
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-174_3.jpg)
+![](media/index-174_3.jpg)
 
 **.**
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-174_4.jpg)
+![](media/index-174_4.jpg)
 
  
 
 U **.**
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-174_5.jpg)
+![](media/index-174_5.jpg)
 
 **.**
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-174_6.jpg)
+![](media/index-174_6.jpg)
 
 **.**
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-174_7.jpg)
+![](media/index-174_7.jpg)
 
 **.**
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-174_8.jpg)
+![](media/index-174_8.jpg)
 
  
 
 *n-1*
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-174_9.jpg)
+![](media/index-174_9.jpg)
 
  
 
 Figure 12.2: A hash function maps every possible key in the universe U to a position in {0, 1, 2, . . . , n 1}. When \|U\| \> n, two different keys must be mapped to the same position.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-174_10.jpg)
+![](media/index-174_10.jpg)
 
  
 
 A hash function tells you where to start searching for an object.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-174_11.jpg)
+![](media/index-174_11.jpg)
 
 If you choose a hash function h with h("Alice") = 17—in which case, we say that the string “Alice” hashes to 17—then position 17 of the array is the place to start looking for Alice’s phone number. Similarly, position 17 is the first place to try inserting Alice’s phone number into the hash table.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-174_12.jpg)
+![](media/index-174_12.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-174_13.jpg)
+![](media/index-174_13.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-174_14.jpg)
+![](media/index-174_14.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-174_15.jpg)
+![](media/index-174_15.jpg)
 
 162 Hash Tables and Bloom Filters
 
@@ -560,51 +560,51 @@ multiple objects mapped to the same array position (Figure 12.3). With chaining,
 
 164 Hash Tables and Bloom Filters
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-177_1.jpg)
+![](media/index-177_1.jpg)
 
  
 
 0 “Carol”
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-177_2.jpg)
+![](media/index-177_2.jpg)
 
  
 
 1 null
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-177_3.jpg)
+![](media/index-177_3.jpg)
 
  
 
 2 “Daniel” “Bob”
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-177_4.jpg)
+![](media/index-177_4.jpg)
 
  
 
 3 “Alice”
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-177_5.jpg)
+![](media/index-177_5.jpg)
 
  
 
 Figure 12.3: A hash table with collisions resolved by chaining, with four buckets and four objects. The strings “Bob” and “Daniel” collide in the third bucket (bucket 2). Only the keys are shown, and not the associated data (like phone numbers).
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-177_6.jpg)
+![](media/index-177_6.jpg)
 
  
 
 Chaining
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-177_7.jpg)
+![](media/index-177_7.jpg)
 
 1\. Keep a linked list in each bucket of the hash table.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-177_8.jpg)
+![](media/index-177_8.jpg)
 
 2\. To Lookup/Insert/Delete an object with key k,
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-177_9.jpg)
+![](media/index-177_9.jpg)
 
 perform Lookup/Insert Delete on the linked list in the bucket A\[h(k)\], where h denotes the hash function and A the hash table’s array.
 
@@ -654,83 +654,83 @@ ing the three applications in Section 12.2.
 
 166 Hash Tables and Bloom Filters
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-179_1.jpg)
+![](media/index-179_1.jpg)
 
  
 
 “Carol”
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-179_2.jpg)
+![](media/index-179_2.jpg)
 
 null
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-179_3.jpg)
+![](media/index-179_3.jpg)
 
 null
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-179_4.jpg)
+![](media/index-179_4.jpg)
 
 “Alice”
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-179_5.jpg)
+![](media/index-179_5.jpg)
 
 “Daniel”
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-179_6.jpg)
+![](media/index-179_6.jpg)
 
 null
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-179_7.jpg)
+![](media/index-179_7.jpg)
 
 null
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-179_8.jpg)
+![](media/index-179_8.jpg)
 
 “Bob”
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-179_9.jpg)
+![](media/index-179_9.jpg)
 
 null
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-179_10.jpg)
+![](media/index-179_10.jpg)
 
  
 
 Figure 12.4: An insertion into a hash table with collisions resolved by open addressing. The first entry of the probe sequence for “Daniel” collides with “Alice,” and the second with “Bob,” but the third entry is an unoccupied position.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-179_11.jpg)
+![](media/index-179_11.jpg)
 
  
 
 2\. Lookup: Given a key k, iterate through the probe
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-179_12.jpg)
+![](media/index-179_12.jpg)
 
 sequence associated with k until encountering the de-sired object (in which case, return it) or an empty
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-179_13.jpg)
+![](media/index-179_13.jpg)
 
 position (in which case, report “none”).8
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-179_14.jpg)
+![](media/index-179_14.jpg)
 
  
 
 Linear Probing
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-179_15.jpg)
+![](media/index-179_15.jpg)
 
 There are several ways to use one or more hash functions to define a probe sequence. The simplest is linear probing. This method uses one hash function h, and defines the probe sequence for a key k as h(k), followed by h(k) + 1, followed by h(k) + 2, and so on (wrapping around to the beginning upon reaching the last position). That is, the hash
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-179_16.jpg)
+![](media/index-179_16.jpg)
 
 8 If you encounter an empty position i, you can be confident that no object with key k is in the hash table. Such an object would have been stored either at position i or at an earlier position in k’s probe sequence. \*12.3 Implementation: High-Level Ideas 167
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-179_17.jpg)
+![](media/index-179_17.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-179_18.jpg)
+![](media/index-179_18.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-179_19.jpg)
+![](media/index-179_19.jpg)
 
  
 
@@ -1298,75 +1298,75 @@ h 3(k)
 
 k h (k) 2
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-195_1.jpg)
+![](media/index-195_1.jpg)
 
 h (k) 1 1
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-195_2.jpg)
+![](media/index-195_2.jpg)
 
 1
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-195_3.jpg)
+![](media/index-195_3.jpg)
 
  
 
 Figure 12.5: Inserting a new key k into a bloom filter sets the bits in positions h1(k), . . . , hm(k) to 1.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-195_4.jpg)
+![](media/index-195_4.jpg)
 
  
 
 29 Sections 12.3.6 and 12.4.3 provide guidance for choosing one hash function.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-195_5.jpg)
+![](media/index-195_5.jpg)
 
 Footnote 9 describes a quick-and-dirty way of deriving two hash functions from one; the same idea can be used to derive m hash functions from one. An alternative approach, inspired by double hashing, is to use two hash functions h 0 and h to
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-195_6.jpg)
+![](media/index-195_6.jpg)
 
 define h1 , h2, . . . , hm via the formula 0 h i ( k ) = ( h ( k ) + ( i 1) · h(k)) mod n. \*12.6 Bloom Filters: Heuristic Analysis 183
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-195_7.jpg)
+![](media/index-195_7.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-195_8.jpg)
+![](media/index-195_8.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-195_9.jpg)
+![](media/index-195_9.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-195_10.jpg)
+![](media/index-195_10.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-195_11.jpg)
+![](media/index-195_11.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-195_12.jpg)
+![](media/index-195_12.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-195_13.jpg)
+![](media/index-195_13.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-195_14.jpg)
+![](media/index-195_14.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-195_15.jpg)
+![](media/index-195_15.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-195_16.jpg)
+![](media/index-195_16.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-195_17.jpg)
+![](media/index-195_17.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-195_18.jpg)
+![](media/index-195_18.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-195_19.jpg)
+![](media/index-195_19.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-195_20.jpg)
+![](media/index-195_20.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-195_21.jpg)
+![](media/index-195_21.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-195_22.jpg)
+![](media/index-195_22.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-195_23.jpg)
+![](media/index-195_23.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-195_24.jpg)
+![](media/index-195_24.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-195_25.jpg)
+![](media/index-195_25.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-195_26.jpg)
+![](media/index-195_26.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-195_27.jpg)
+![](media/index-195_27.jpg)
 
  
 
@@ -1414,7 +1414,7 @@ in the next section.30
 
 h3(k4) 1
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_1.jpg)
+![](media/index-197_1.jpg)
 
  
 
@@ -1428,11 +1428,11 @@ h 1 (k )
 
 k h k h3(k3) 2 (k 1 ) 3
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_2.jpg)
+![](media/index-197_2.jpg)
 
 1
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_3.jpg)
+![](media/index-197_3.jpg)
 
 h 1(k1) h1(k3) 1
 
@@ -1446,97 +1446,97 @@ h3(k2)
 
 k h (k 2 22)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_4.jpg)
+![](media/index-197_4.jpg)
 
 1
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_5.jpg)
+![](media/index-197_5.jpg)
 
  
 
 Figure 12.6: False positives: A bloom filter can contain the footprint of a key k1 even if k1 was never inserted.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_6.jpg)
+![](media/index-197_6.jpg)
 
  
 
 \*12.6 Bloom Filters: Heuristic Analysis
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_7.jpg)
+![](media/index-197_7.jpg)
 
 The goal of this section is to understand the quantitative trade-off between the space consumption and the frequency of false positives of a bloom filter. That is, how rapidly does the frequency of false positives of a bloom filter decrease as a function of its array length?
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_8.jpg)
+![](media/index-197_8.jpg)
 
 If a bloom filter uses a length-n bit array and stores (the footprints of) a set S of keys, the per-key storage in bits is
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_9.jpg)
+![](media/index-197_9.jpg)
 
 n
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_10.jpg)
+![](media/index-197_10.jpg)
 
 b = .
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_11.jpg)
+![](media/index-197_11.jpg)
 
 \|S\|
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_12.jpg)
+![](media/index-197_12.jpg)
 
 We’re interested in the case in which b is smaller than the number of bits needed to explicitly store a key or a pointer to an object (which is typically 32 or more). For example, b could be 8 or 16.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_13.jpg)
+![](media/index-197_13.jpg)
 
 12.6.1 Heuristic Assumptions
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_14.jpg)
+![](media/index-197_14.jpg)
 
 The relationship between the per-key storage b and the frequency of false positives is not easy to guess, and working it out requires \*12.6 Bloom Filters: Heuristic Analysis 185
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_15.jpg)
+![](media/index-197_15.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_16.jpg)
+![](media/index-197_16.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_17.jpg)
+![](media/index-197_17.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_18.jpg)
+![](media/index-197_18.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_19.jpg)
+![](media/index-197_19.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_20.jpg)
+![](media/index-197_20.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_21.jpg)
+![](media/index-197_21.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_22.jpg)
+![](media/index-197_22.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_23.jpg)
+![](media/index-197_23.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_24.jpg)
+![](media/index-197_24.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_25.jpg)
+![](media/index-197_25.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_26.jpg)
+![](media/index-197_26.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_27.jpg)
+![](media/index-197_27.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_28.jpg)
+![](media/index-197_28.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_29.jpg)
+![](media/index-197_29.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_30.jpg)
+![](media/index-197_30.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_31.jpg)
+![](media/index-197_31.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_32.jpg)
+![](media/index-197_32.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_33.jpg)
+![](media/index-197_33.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_34.jpg)
+![](media/index-197_34.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_35.jpg)
+![](media/index-197_35.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-197_36.jpg)
+![](media/index-197_36.jpg)
 
  
 
@@ -1652,7 +1652,7 @@ symmetry, the answer to Quiz 12.7 is also the probability that the 7th, or the 2
 
 The solution to Quiz 12.7 is messy. To clean it up, we can use the fact that x e is a good approximation of 1 + x when x is close to 0, where e ⇡ 2.718 . . . is the base of the natural logarithm. This fact is evident from a plot of the two functions:
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-200_1.jpg)
+![](media/index-200_1.jpg)
 
  
 

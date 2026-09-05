@@ -1,1 +1,1 @@
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-2_1.jpg)
+![](media/index-2_1.jpg)

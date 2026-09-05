@@ -66,7 +66,7 @@ Product(**const** Product& other) : Product{other.id\_, other.quantity\_, other.
 
 In a case of a copy constructor, such code might reuse the validation parts. But, **be warned** about the move constructor, as the above code won’t make any “moves” and will copy the data, which fails its primary purpose.
 
-![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-81_1.png)
+![](media/index-81_1.png)
 
 Be careful about the syntax!
 
@@ -104,7 +104,7 @@ What happens when the info object calls its constructor?
 
 You might get a segmentation fault and stack overflow! This is a recursive call, and the compiler cannot detect it until the code is executed at runtime.
 
-![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-82_1.png)
+![](media/index-82_1.png)
 
  
 
@@ -266,7 +266,7 @@ std::cout \<\< "ExProduct(id)**\n**"; }
 
 This behavior is essential to keep the integrity of the object.
 
-![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-85_1.png)
+![](media/index-85_1.png)
 
 Additionally, it’s best not to call virtual functions in constructors as they might behave differently than expected. In short, a call to a virtual function in a base class constructor results in a call to the base implementation, as the inherited class and the implementation is not yet set up. You can read more about this behavior in
 

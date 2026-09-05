@@ -68,6 +68,7 @@ factors :: Int -> [Int]
 factors n = [x | x <- [1..n], n ‘mod‘ x == 0]
 ```
 
+For example:
 
 ``` haskell
 > factors 15
@@ -83,6 +84,7 @@ prime :: Int -> Bool
 prime n = factors n == [1,n]
 ```
 
+For example:
 
 ``` haskell
 > prime 15
@@ -100,6 +102,7 @@ primes :: Int -> [Int]
 primes n = [x | x <- [2..n], prime x]
 ```
 
+For example:
 
 ``` haskell
 > primes 40
@@ -115,6 +118,7 @@ find :: Eq a => a -> [(a,b)] -> [b]
 find k t = [v | (k’,v) <- t, k == k’]
 ```
 
+For example:
 
 ``` haskell
 > find ’b’ [(’a’,1),(’b’,2),(’c’,3),(’b’,4)]
@@ -137,6 +141,7 @@ pairs :: [a] -> [(a,a)]
 pairs xs = zip xs (tail xs)
 ```
 
+For example:
 
 ``` haskell
 > pairs [1,2,3,4]
@@ -150,6 +155,7 @@ sorted :: Ord a => [a] -> Bool
 sorted xs = and [x <= y | (x,y) <- pairs xs]
 ```
 
+For example:
 
 ``` haskell
 > sorted [1,2,3,4]
@@ -167,6 +173,7 @@ positions :: Eq a => a -> [a] -> [Int]
 positions x xs = [i | (x’,i) <- zip xs [0..], x == x’]
 ```
 
+For example:
 
 ``` haskell
 > positions False [True, False, True, False]
@@ -199,6 +206,7 @@ count :: Char -> String -> Int
 count x xs = length [x’ | x’ <- xs, x == x’]
 ```
 
+For example:
 
 ``` haskell
 > lowers "Haskell"
@@ -325,6 +333,7 @@ freqs xs = [percent (count x xs) n | x <- [’a’..’z’]]
 where n = lowers xs
 ```
 
+For example:
 
 ``` haskell
 > freqs "abbcccddddeeeee"
@@ -337,7 +346,7 @@ That is, the letter ’a’ occurs with a frequency of approximately 6*.*6%, the
 
 A standard method for comparing a list of observed frequencies *os* with a list of expected frequencies *es* is the *chi-square statistic*, defined by the following summation in which *n* denotes the length of the two lists, and *xs_(i)* denotes the *i*th element of a list *xs* counting from zero:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_5_image_9_25.png)
+![image](media/Images/Chapter_5_image_9_25.png)
 
 The details of the chi-square statistic need not concern us here, only the fact that the smaller the value it produces the better the match between the two frequency lists. Using the library function zip and a list comprehension, it is easy to translate the above formula into a function definition:
 
@@ -353,6 +362,7 @@ rotate :: Int -> [a] -> [a]
 rotate n xs = drop n xs ++ take n xs
 ```
 
+For example:
 
 ``` haskell
 > rotate 3 [1,2,3,4,5]
@@ -382,6 +392,7 @@ chitab = [chisqr (rotate n table’) table | n <- [0..25]]
 table’ = freqs xs
 ```
 
+For example:
 
 ``` haskell
 > crack "kdvnhoo lv ixq"
@@ -407,7 +418,7 @@ The term *comprehension* comes from the *axiom of comprehension* in set theory, 
 
 1.Using a list comprehension, give an expression that calculates the sum 1² + 2² + *...* 100² of the first one hundred integer squares.
 
-2.Suppose that a *coordinate grid* of size *m* × *n* is given by the list of all pairs (*x, y*) of integers such that ![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/ch5-01.png) Using a list comprehension, define a function grid :: Int -\> Int -\> \[(Int,Int)\] that returns a coordinate grid of a given size. For example:
+2.Suppose that a *coordinate grid* of size *m* × *n* is given by the list of all pairs (*x, y*) of integers such that ![image](media/Images/ch5-01.png) Using a list comprehension, define a function grid :: Int -\> Int -\> \[(Int,Int)\] that returns a coordinate grid of a given size. For example:
 
 ``` haskell
 > grid 1 2
@@ -448,7 +459,7 @@ The term *comprehension* comes from the *axiom of comprehension* in set theory, 
 
 9.The *scalar product* of two lists of integers *xs* and *ys* of length *n* is given by the sum of the products of corresponding integers:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_5_image_12_13.png)
+![image](media/Images/Chapter_5_image_12_13.png)
 
 In a similar manner to chisqr, show how a list comprehension can be used to define a function scalarproduct :: \[Int\] -\> \[Int\] -\> Int that returns the scalar product of two lists. For example:
 

@@ -1,4 +1,4 @@
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-715_1.jpg)
+![](media/index-715_1.jpg)
 
 11 PROCESS CREATION AND
 
@@ -106,7 +106,7 @@ calling process.” The syntax seems simple enough, as does this
 
 description, but in fact exactly what it does is far from simple; it’s both
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-718_1.jpg)
+![](media/index-718_1.jpg)
 
 remarkable and initially perplexing. What’s remarkable is that the new process is an almost exact copy of the calling process (I’ll make this statement more precise shortly). What’s perplexing is what happens
 
@@ -146,7 +146,9 @@ I’ll demonstrate with a very simple example, named *fork_demo1.c*, shown in Li
 
 *fork_demo1.c*
 
+\#include "common_hdrs.h"
 
+int main(int argc, char \*argv\[\])
 
 {
 
@@ -154,6 +156,7 @@ pid_t returnval;
 
 if ( -1 == (returnval = fork()) )
 
+fatal_error(errno, "fork");
 
 else if ( 0 == returnval ) /\* Child executes this branch. \*/
 
@@ -205,6 +208,7 @@ Their final values in the child and parent will be witnesses to fork()’s behav
 
 *fork_demo2.c*
 
+\#include "common_hdrs.h"
 
 const char str\[\] = "On the heap.";
 
@@ -234,6 +238,7 @@ printf("This is printed by the parent process before the call"
 
 " heapvar = \\%s\\ \n\n", getpid(), localvar, globalvar, heapvar); if ( -1 == (result = fork()) )
 
+fatal_error(errno, "fork");
 
 else if ( 0 == result ) { /\* Child executes this branch. \*/
 
@@ -341,9 +346,9 @@ Among the items that are copied into the child are all of the open file descript
 
 Figure 4-1 depicts the relationship between the open file descriptors that are part of a process and the open file descriptions maintained by the kernel. Figure 11-2 shows the effect of fork() on the open file descriptors.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-724_1.jpg)
+![](media/index-724_1.jpg)
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-725_1.jpg)
+![](media/index-725_1.jpg)
 
 *Figure 11-2: The before and after of the duplication of a process’s open file descriptor table* *in the new child process*
 
@@ -385,7 +390,9 @@ manager might.
 
 *fork_demo4.c*
 
+\#include "common_hdrs.h"
 
+int main(int argc, char \*argv\[\])
 
 {
 
@@ -595,7 +602,7 @@ condition when multiple processes write to the end of a file
 
 concurrently, but it isn’t a general solution to preventing races related to the shared file offset when some processes read as well.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-732_1.jpg)
+![](media/index-732_1.jpg)
 
 One situation in which this occurs is when the child and parent
 
@@ -723,6 +730,7 @@ pid_t pid = fork();
 
 if ( -1 == pid )
 
+fatal_error(errno, "fork");
 
 else if ( 0 == pid )
 
@@ -1060,7 +1068,7 @@ search for the directory containing that filename. The second and third argument
 
 strings, respectively. In other words, each is an array of strings followed by a NULL pointer, such as was depicted in Figure 2-4 in Chapter 2. For convenience, the argv\[\] parameter is shown in Figure 11-4.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-742_1.jpg)
+![](media/index-742_1.jpg)
 
 *Figure 11-4: The* *argv* *array passed to* *execve()* The environment strings are expected to be in the proper format,
 
@@ -1158,7 +1166,9 @@ demonstrate a few ideas about the use of execve().
 
 \#define \_GNU_SOURCE /\* For basename() \*/
 
+\#include "common_hdrs.h"
 
+int main(int argc, char \*argv\[\])
 
 {
 
@@ -1214,6 +1224,7 @@ environment strings and does nothing else.
 
 extern char \*\*environ;
 
+int main(int argc, char \*argv\[\])
 
 {
 
@@ -1409,7 +1420,9 @@ the number of arguments is fewer than three, it exits. I give examples of each o
 
 \#define \_GNU_SOURCE
 
+\#include "common_hdrs.h"
 
+int main(int argc, char \*argv\[\])
 
 {
 
@@ -1437,7 +1450,9 @@ The program in Listing 11-9 uses execlp() instead. The only difference is that i
 
 *execlp_demo.c*
 
+\#include "common_hdrs.h"
 
+int main(int argc, char \*argv\[\])
 
 {
 
@@ -1465,6 +1480,7 @@ instead of a vector. In Listing 11-10, we get a chance to pass it an environment
 
 \#define \_GNU_SOURCE
 
+\#include "common_hdrs.h"
 
 int main (int argc, char \*argv\[\])
 
@@ -1492,7 +1508,9 @@ Listing 11-11. It is like execve() except that it uses the caller’s environ va
 
 \#define \_GNU_SOURCE
 
+\#include "common_hdrs.h"
 
+int main(int argc, char \*argv\[\])
 
 {
 
@@ -1616,9 +1634,11 @@ Since wait() sets errno to ECHILD when a process has no unwaited-for children, w
 
 *wait_demo1.c*
 
+\#include "common_hdrs.h"
 
 \#include \<sys/wait.h\>
 
+int main(int argc, char \*argv\[\])
 
 {
 
@@ -1664,7 +1684,7 @@ Let’s focus on the status parameter of wait() and waitpid(). When a
 
 child calls any of the exit() family of functions, passing an integer exit status, or if it executes a return statement from its main() function and passes an integer to it, the kernel arranges for the least significant byte (LSB) of that value to be collectible by the parent process through a call
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-755_1.jpg)
+![](media/index-755_1.jpg)
 
 to any of the wait() family of system calls. In a call such as wait(&status), the parameter (status) is the address of an int variable that receives information about how the child terminated. POSIX doesn’t specify
 
@@ -1710,9 +1730,11 @@ to use. The program *wait_demo2.c*, shown in Listing 11-13, creates a single chi
 
 *wait_demo2.c*
 
+\#include "common_hdrs.h"
 
 \#include \<sys/wait.h\>
 
+int main(int argc, char \*argv\[\])
 
 {
 
@@ -1724,6 +1746,7 @@ switch ( fork() ) {
 
 case -1:
 
+fatal_error(errno, "fork");
 
 case 0:
 
@@ -1843,7 +1866,7 @@ hand side command (sort) and the other to run the right-hand side (cut).
 
 The shell itself is their parent, and it’s able to monitor the two child processes in the same way that this program will. Figure 11-6 depicts this program structure.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-760_1.jpg)
+![](media/index-760_1.jpg)
 
 *Figure 11-6: The structure of the producer-consumer program in which the main program* *forks two children that act as producer and consumer*
 
@@ -2015,6 +2038,7 @@ The last piece of the program is the main() function, most of which is shown in 
 
 *waitpid_demo.c* main()
 
+int main(int argc, char \*argv\[\])
 
 {
 
@@ -2034,6 +2058,7 @@ switch ( pid\[0\] = fork() ) {
 
 case -1:
 
+fatal_error(errno, "fork");
 
 case 0:
 
@@ -2047,6 +2072,7 @@ switch ( pid\[1\] = fork() ) {
 
 case -1:
 
+fatal_error(errno, "fork");
 
 case 0:
 
@@ -2450,6 +2476,7 @@ The main program that uses handle_sigchld() as its SIGCHLD handler, is shown in 
 
 main()
 
+int main(int argc, char \*argv\[\])
 
 {
 
@@ -2497,6 +2524,7 @@ switch ( pid\[i\] = fork() ) {
 
 case -1:
 
+fatal_error(errno, "fork");
 
 case 0:
 
@@ -2708,6 +2736,7 @@ The complete program, named *spl_sh.c*, easily follows from this pseudocode. The
 
 *spl_sh.c* main()
 
+int main(int argc, char \*argv\[\])
 
 {
 
@@ -2773,6 +2802,7 @@ execvp(argvec\[0\], argvec); /\* Child executes command argvec\[0\]. \*/
 
 else if ( -1 == pid )
 
+fatal_error(errno, "fork");
 
 else
 

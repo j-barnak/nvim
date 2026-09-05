@@ -716,4 +716,4 @@ hope that it shows you how you can learn what it doesn’t cover on your own. Fi
 
 appreciation for the marvel and magic of Unix.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-51_1.jpg)
+![](media/index-51_1.jpg)

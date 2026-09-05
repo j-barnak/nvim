@@ -3,15 +3,15 @@ Labelled and Optional Arguments
 
 OCaml allows us to label some or all of the arguments to a function, so as to provide a little documentation, to prevent us from accidently swapping two arguments which have the same type, and to allow partial application of arguments more flexibly. Consider a function to fill in part of an array with an element:
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00215.jpg)
+> ![](media/images/00215.jpg)
 
 The `fill `function takes four arguments: the array itself, the start position, length of the fill and the element to use to fill. However, since the start and length are both integers, it is easy to get them the wrong way round. This can be remedied by giving those two arguments labels. A label is introduced by a tilde, followed by the label name, a colon and the argument name itself. Consider the functions `fill `and `filled `below. As you can see, we have defined `fill `with labels, which appear in the type as well. In the first `filled `function, we call the `fill `function, citing the labels and giving immediate integers. In the second, we show that it works with other names (as it does, indeed, for any expression). In the third, we show that the labelled arguments may be permuted and rearranged with regard to the other arguments (unlabelled arguments must remain in the correct order relative to one another).
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00234.jpg)
+> ![](media/images/00234.jpg)
 
 Another change we can make is to use the label for the name of the argument inside the function too. This simplifies the syntax: we can just write `~label`.
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00083.jpg)
+> ![](media/images/00083.jpg)
 
 You can see that in `filled`, this “punning” works equally well when calling the function, if we happen to have values with the same names. These two facilities need not be used together, of course.
 
@@ -56,15 +56,15 @@ Optional arguments
 
 OCaml also allows us to make a labelled argument optional – that is to say, we need not supply it at all. The function which is called without one or more of its arguments can decide what to do. Consider this simple function `split `which returns a list of singleton lists from an input list, for example returning `[[1]; [2];` `[3]] `for the input list `[1; 2; 3]`:
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00152.jpg)
+> ![](media/images/00152.jpg)
 
 We would like to extend the function to produce sub-lists of a given size, other than the default of 1. We can add a labelled argument and adapt the function, using `take `(which takes a given number of items from the start of a list) and `drop `(which drops a given number of items from the start of a list) from the Util module described on page xiii:
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00157.jpg)
+> ![](media/images/00157.jpg)
 
 There are two problems, though. Existing code using the function will not compile, and we must always specify the `chunksize `argument, even when it will be 1. This can be remedied by using an optional labelled argument, introduced with a question mark instead of a tilde, and given a default value:
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00160.jpg)
+> ![](media/images/00160.jpg)
 
 Notice the question mark appears also in the type. Notice also that in the recursive call to `split `we can write `~chunksize `instead of `~chunksize:chunksize `as usual. Now our `split `function can be called with or without this optional argument:
 
@@ -77,7 +77,7 @@ Notice the question mark appears also in the type. Notice also that in the recur
 
 In fact, if we do not give a default value to the optional argument in the definition of `split`, we have access to its actual implementation – as a value of the option type, either `None `or `Some`, and we can match on it:
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00165.jpg)
+> ![](media/images/00165.jpg)
 
 This is primarily useful when there are several optional arguments.
 
@@ -112,6 +112,6 @@ Questions
 
 4.  Frequently we use an accumulator to make a function tail-recursive, wrapping it up in another function to give the initial value of the accumulator. For example, we might write:
 
-    > ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00168.jpg)
+    > ![](media/images/00168.jpg)
 
     Use an optional argument to express this as a single function.

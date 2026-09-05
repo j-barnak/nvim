@@ -193,7 +193,7 @@ Running: qemu-system-x86_64 -drive
 
 format=raw,file=target/fledge/debug/bootimage-fledgeos.bin
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-395_1.png)
+![](media/index-395_1.png)
 
 ***Fledgeos-0: Getting something working***
 
@@ -1045,7 +1045,7 @@ Source code for fledgeos-2
 
 34 }
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-407_1.png)
+![](media/index-407_1.png)
 
 ***fledgeos-3: Text output***
 
@@ -1469,7 +1469,7 @@ For the benefit of anyone doing embedded development or wanting to execute Rust 
 
 The output shown by figure 11.3 is produced by listing 11.17. panic() now goes through a two-stage process. In the first stage, panic() clears the screen. The second stage involves the core::write! macro. core::write! takes a destination object as its
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-412_1.png)
+![](media/index-412_1.png)
 
 **386**
 

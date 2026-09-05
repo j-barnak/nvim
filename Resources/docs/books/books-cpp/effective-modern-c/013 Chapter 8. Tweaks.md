@@ -8,6 +8,7 @@ For every general technique or feature in C++, there are circumstances where it�
 
 Some function parameters are intended to be copied.1 For example, a member function addName might copy its parameter into a private container. For efficiency, such a function should copy lvalue arguments, but move rvalue arguments:
 
+class Widget {
 
 public:
 
@@ -27,6 +28,7 @@ on page 2 that C++ has no terminology to distinguish a copy made by a copy opera
 
 // of std::move
 
+private:
 
 std::vector\<std::string\> names;
 
@@ -42,6 +44,7 @@ An alternative approach is to make addName a function template taking a universa
 
 reference (see Item 24):
 
+class Widget {
 
 public:
 
@@ -73,6 +76,7 @@ user-defined types by value. For parameters like newName in functions like addNa
 
 Before we discuss why pass-by-value may be a good fit for newName and addName, let’s see how it would be implemented:
 
+class Widget {
 
 public:
 
@@ -128,6 +132,7 @@ void addName(**std::string&&** newName)
 
 …
 
+private:
 
 std::vector\<std::string\> names;
 
@@ -209,6 +214,7 @@ Consider a class with a std::unique_ptr\<std::string\> data member and a setter 
 
 approach to its setter consists of a single function:
 
+class Widget {
 
 public:
 
@@ -218,6 +224,7 @@ void setPtr(**std::unique_ptr\<std::string\>&&** ptr)
 
 { p = **std::move(ptr)**; }
 
+private:
 
 std::unique_ptr\<std::string\> p;
 
@@ -239,6 +246,7 @@ std::make_unique (see Item 21) is passed by rvalue reference to setPtr, where it
 
 If setPtr were to take its parameter by value,
 
+class Widget {
 
 public:
 
@@ -264,6 +272,7 @@ When moves are cheap, the cost of an extra one may be acceptable, but when they�
 
 If it is, the request to add the name is ignored. A pass-by-value implementation could be written like this:
 
+class Widget {
 
 public:
 
@@ -287,6 +296,7 @@ names.push_back(std::move(newName));
 
 …
 
+private:
 
 std::vector\<std::string\> names;
 
@@ -312,6 +322,7 @@ explicit Password(**std::string pwd**) // pass by value
 
 …
 
+private:
 
 std::string text; // text of password
 
@@ -359,6 +370,7 @@ void changeTo(**const std::string& newPwd**) // the overload
 
 **Item 41 \| 289**
 
+private:
 
 std::string text; // as above
 

@@ -30,7 +30,7 @@ This limitation isn’t *too* far-fetched. The initial versions of BASIC out of 
 
 With only 26 possible variables (27 if you consider underscore a “letter”, I guess), the answer is easy. Declare a fixed-size array with 26 elements. We’ll follow tradition and call each element a **bucket**. Each represents a variable with `a` starting at index zero. If there’s a value in the array at some letter’s index, then that key is present with that value. Otherwise, the bucket is empty and that key/value pair isn’t in the data structure.
 
-![A row of buckets, each labeled with a letter of the alphabet.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/hash-tables/bucket-array.png)
+![A row of buckets, each labeled with a letter of the alphabet.](media/image/hash-tables/bucket-array.png)
 
 Memory usage is great—just a single, reasonably sized array. There’s some waste from the empty buckets, but it’s not huge. There’s no overhead for node pointers, padding, or other stuff you’d get with something like a linked list or tree.
 
@@ -54,7 +54,7 @@ I’m using powers of two for the array sizes here, but they don’t need to be.
 
 Using the array size as a modulus lets us map the key’s numeric range down to fit an array of any size. We can thus control the number of buckets independently of the key range. That solves our waste problem, but introduces a new one. Any two variables whose key number has the same remainder when divided by the array size will end up in the same bucket. Keys can **collide**. For example, if we try to add “jam”, it also ends up in bucket 2.
 
-!['Bagel' and 'jam' both end up in bucket index 2.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/hash-tables/collision.png)
+!['Bagel' and 'jam' both end up in bucket index 2.](media/image/hash-tables/collision.png)
 
 We have some control over this by tuning the array size. The bigger the array, the fewer the indexes that get mapped to the same bucket and the fewer the collisions that are likely to occur. Hash table implementers track this collision likelihood by measuring the table’s **load factor**. It’s defined as the number of entries divided by the number of buckets. So a hash table with five entries and an array of 16 elements has a load factor of 0.3125. The higher the load factor, the greater the chance of collisions.
 
@@ -70,13 +70,13 @@ Thus we still have to handle collisions gracefully when they occur. Users don’
 
 Put these two funny-named mathematical rules together and you get this observation: Take a birdhouse containing 365 pigeonholes, and use each pigeon’s birthday to assign it to a pigeonhole. You’ll need only about 26 randomly chosen pigeons before you get a greater than 50% chance of two pigeons in the same box.
 
-![Two pigeons in the same hole.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/hash-tables/pigeons.png)
+![Two pigeons in the same hole.](media/image/hash-tables/pigeons.png)
 
 ### 20.2.1 Separate chaining
 
 Techniques for resolving collisions fall into two broad categories. The first is **separate chaining**. Instead of each bucket containing a single entry, we let it contain a collection of them. In the classic implementation, each bucket points to a linked list of entries. To look up an entry, you find its bucket and then walk the list until you find an entry with the matching key.
 
-![An array with eight buckets. Bucket 2 links to a chain of two nodes. Bucket 5 links to a single node.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/hash-tables/chaining.png)
+![An array with eight buckets. Bucket 2 links to a chain of two nodes. Bucket 5 links to a single node.](media/image/hash-tables/chaining.png)
 
 In catastrophically bad cases where every entry collides in the same bucket, the data structure degrades into a single unsorted linked list with *O(n)* lookup. In practice, it’s easy to avoid that by controlling the load factor and how entries get scattered across buckets. In typical separate-chained hash tables, it’s rare for a bucket to have more than one or two entries.
 
@@ -104,31 +104,31 @@ Compared to separate chaining, open addressing can be harder to wrap your head a
 
 The tricky part is that more than one of these implicit lists may be interleaved together. Let’s walk through an example that covers all the interesting cases. We’ll ignore values for now and just worry about a set of keys. We start with an empty array of 8 buckets.
 
-![An array with eight empty buckets.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/hash-tables/insert-1.png)
+![An array with eight empty buckets.](media/image/hash-tables/insert-1.png)
 
 We decide to insert “bagel”. The first letter, “b” (ASCII value 98), modulo the array size (8) puts it in bucket 2.
 
-![Bagel goes into bucket 2.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/hash-tables/insert-2.png)
+![Bagel goes into bucket 2.](media/image/hash-tables/insert-2.png)
 
 Next, we insert “jam”. That also wants to go in bucket 2 (106 mod 8 = 2), but that bucket’s taken. We keep probing to the next bucket. It’s empty, so we put it there.
 
-![Jam goes into bucket 3, since 2 is full.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/hash-tables/insert-3.png)
+![Jam goes into bucket 3, since 2 is full.](media/image/hash-tables/insert-3.png)
 
 We insert “fruit”, which happily lands in bucket 6.
 
-![Fruit goes into bucket 6.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/hash-tables/insert-4.png)
+![Fruit goes into bucket 6.](media/image/hash-tables/insert-4.png)
 
 Likewise, “migas” can go in its preferred bucket 5.
 
-![Migas goes into bucket 5.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/hash-tables/insert-5.png)
+![Migas goes into bucket 5.](media/image/hash-tables/insert-5.png)
 
 When we try to insert “eggs”, it also wants to be in bucket 5. That’s full, so we skip to 6. Bucket 6 is also full. Note that the entry in there is *not* part of the same probe sequence. “Fruit” is in its preferred bucket, 6. So the 5 and 6 sequences have collided and are interleaved. We skip over that and finally put “eggs” in bucket 7.
 
-![Eggs goes into bucket 7 because 5 and 6 are full.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/hash-tables/insert-6.png)
+![Eggs goes into bucket 7 because 5 and 6 are full.](media/image/hash-tables/insert-6.png)
 
 We run into a similar problem with “nuts”. It can’t land in 6 like it wants to. Nor can it go into 7. So we keep going. But we’ve reached the end of the array, so we wrap back around to 0 and put it there.
 
-![Nuts wraps around to bucket 0 because 6 and 7 are full.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/hash-tables/insert-7.png)
+![Nuts wraps around to bucket 0 because 6 and 7 are full.](media/image/hash-tables/insert-7.png)
 
 In practice, the interleaving turns out to not be much of a problem. Even in separate chaining, we need to walk the list to check each entry’s key because multiple keys can reduce to the same bucket. With open addressing, we need to do that same check, and that also covers the case where you are stepping over entries that “belong” to a different original bucket.
 
@@ -676,7 +676,7 @@ The obvious approach is to mirror insertion. Use `findEntry()` to look up the en
 
 In cases where there are no collisions, that works fine. But if a collision has occurred, then the bucket where the entry lives may be part of one or more implicit probe sequences. For example, here’s a hash table containing three keys all with the same preferred bucket, 2:
 
-![A hash table containing 'bagel' in bucket 2, 'biscuit' in bucket 3, and 'jam' in bucket 4.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/hash-tables/delete-1.png)
+![A hash table containing 'bagel' in bucket 2, 'biscuit' in bucket 3, and 'jam' in bucket 4.](media/image/hash-tables/delete-1.png)
 
 Remember that when we’re walking a probe sequence to find an entry, we know we’ve reached the end of a sequence and that the entry isn’t present when we hit an empty bucket. It’s like the probe sequence is a list of entries and an empty entry terminates that list.
 
@@ -684,11 +684,11 @@ If we delete “biscuit” by simply clearing the Entry, then we break that prob
 
 If we later try to look for “jam”, we’d start at “bagel”, stop at the next empty Entry, and never find it.
 
-![The 'biscuit' entry has been deleted from the hash table, breaking the chain.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/hash-tables/delete-2.png)
+![The 'biscuit' entry has been deleted from the hash table, breaking the chain.](media/image/hash-tables/delete-2.png)
 
 To solve this, most implementations use a trick called **tombstones**. Instead of clearing the entry on deletion, we replace it with a special sentinel entry called a “tombstone”. When we are following a probe sequence during a lookup, and we hit a tombstone, we *don’t* treat it like an empty slot and stop iterating. Instead, we keep going so that deleting an entry doesn’t break any implicit collision chains and we can still find entries after it.
 
-![Instead of deleting 'biscuit', it's replaced with a tombstone.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/hash-tables/delete-3.png)
+![Instead of deleting 'biscuit', it's replaced with a tombstone.](media/image/hash-tables/delete-3.png)
 
 The code looks like this:
 
@@ -711,7 +711,7 @@ bool tableDelete(Table* table, ObjString* key) {
 
 First, we find the bucket containing the entry we want to delete. (If we don’t find it, there’s nothing to delete, so we bail out.) We replace the entry with a tombstone. In clox, we use a `NULL` key and a `true` value to represent that, but any representation that can’t be confused with an empty bucket or a valid entry works.
 
-![A tombstone enscribed 'Here lies entry biscuit → 3.75, gone but not deleted'.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/hash-tables/tombstone.png)
+![A tombstone enscribed 'Here lies entry biscuit → 3.75, gone but not deleted'.](media/image/hash-tables/tombstone.png)
 
 That’s all we need to do to delete an entry. Simple and fast. But all of the other operations need to correctly handle tombstones too. A tombstone is a sort of “half” entry. It has some of the characteristics of a present entry, and some of the characteristics of an empty one.
 

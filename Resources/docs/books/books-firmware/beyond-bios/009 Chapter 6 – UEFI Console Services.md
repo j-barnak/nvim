@@ -116,7 +116,7 @@ start using the console in question.
 
 Simple Text Input Protocol \| **83**
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-102_1.png)
+![](media/index-102_1.png)
 
  
 
@@ -754,13 +754,13 @@ layer of software drivers. In the former examples, the local device was discover
 
 layered onto it, and it in turn would establish a set of Text I/O abstractions.
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-110_1.png)
+![](media/index-110_1.png)
 
  
 
 **Figure 6.3:** Remote Console Software Layering
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-110_2.png)
+![](media/index-110_2.png)
 
 **92** \| Chapter 6 – UEFI Console Services
 
@@ -796,7 +796,7 @@ from the application to the platform-configured consoles.
 
 Network Consoles \| **93**
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-112_1.png)
+![](media/index-112_1.png)
 
  
 
@@ -858,7 +858,7 @@ platform in a much more robust manner without requiring a lot of specially tuned
 
 Summary \| **95**
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-114_1.png)
+![](media/index-114_1.png)
 
  
 

@@ -1,4 +1,4 @@
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-1_1.jpg)
+![](media/index-1_1.jpg)
 
 Linux kernel and driver development training
 
@@ -40,7 +40,7 @@ Linux kernel and driver development training
 
 Bootlin trainer, we offer:
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-2_1.png)
+![](media/index-2_1.png)
 
 *•* **Public online sessions**, opened to individual registration. Dates
 
@@ -64,4 +64,4 @@ from the same company, we send a Bootlin trainer on-site to deliver the training
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 2/436
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-3_1.jpg)
+![](media/index-3_1.jpg)

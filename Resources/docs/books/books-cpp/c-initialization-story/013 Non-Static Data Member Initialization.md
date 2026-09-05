@@ -24,6 +24,7 @@ Here’s the full working example:
 
 **Ex 8.2. Basic Non-static data member initialization. Run** [**@Compiler Explorer**](https://godbolt.org/z/9968jYrsv)
 
+\#include \<iostream\>
 
 **struct SimpleType** {
 
@@ -131,12 +132,15 @@ After running the code, we can see the following output:
 
 SimpleType t0
 
+initA() called
 
+initB() called
 
 SimpleType()
 
 SimpleType t1(10)
 
+initB() called
 
 SimpleType(int)
 
@@ -178,7 +182,7 @@ SimpleType(**int** x) : a(x), b(initB()) { } };
 
 We can also visualize it using the following diagram:
 
-![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-131_1.png)
+![](media/index-131_1.png)
 
  
 
@@ -372,6 +376,7 @@ Now, let’s update our previous examples with copy constructors:
 
 **Ex 8.6. Copy constructor and NSDMI. Run** [**@Compiler Explorer**](https://godbolt.org/z/qf365b5GG)
 
+\#include \<iostream\>
 
 \#include \<string\>
 
@@ -427,11 +432,15 @@ SimpleType t2 = t1;
 
 After running it, we can see the following output:
 
+initA() called
 
+initB() called
 
 SimpleType t2 = t1:
 
+initA() called
 
+initB() called
 
 copy ctor
 
@@ -451,7 +460,9 @@ Non-Static Data Member Initialization 122
 
 SimpleType t1:
 
+initA() called
 
+initB() called
 
 SimpleType t2 = t1:
 
@@ -471,6 +482,7 @@ We can observe a similar effect with a move constructor:
 
 **Ex 8.7. NSDMI and move constructor. Run** [**@Compiler Explorer**](https://godbolt.org/z/xWMPodver)
 
+\#include \<iostream\>
 
 \#include \<string\>
 
@@ -530,11 +542,15 @@ When you run the code, you can see that initA() and initB() are also called only
 
 SimpleType t1:
 
+initA() called
 
+initB() called
 
 SimpleType t2 = t1:
 
+initA() called
 
+initB() called
 
 move ctor
 
@@ -566,6 +582,7 @@ Fortunately, in C++14, the limitation was lifted, and the above line compiles. T
 
 **Ex 8.8. Aggregates and NSDMI in C++14. Run** [**@CompilerExplorer**](https://godbolt.org/z/WxWzsr635)
 
+\#include \<iostream\>
 
 **struct Point** { **float** x = 1.0f; **float** y = 2.0f; };
 
@@ -595,6 +612,7 @@ Non-Static Data Member Initialization 125
 
 **Ex 8.9. Bit fields and NSDMI in C++20. Run** [**@Compiler Explorer**](https://godbolt.org/z/7GoaaTMn5)
 
+\#include \<iostream\>
 
 **struct Type** {
 
@@ -628,7 +646,7 @@ In this section, we’ll discuss the current (as of C++20) limitations of non-st
 
 Since we can declare and initialize a variable inside a class, can we also/still use auto? It seems natural and follows the AAA (Almost Always Auto) Rule.
 
-![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-140_1.png)
+![](media/index-140_1.png)
 
 **Almost Always Auto Rule**: this term was coined by Herb Sutter. It recommends using auto-type deduction rather than writing explicit types. See the blog post
 
@@ -670,7 +688,7 @@ error: non-**static** data member declared **with** placeholder 'auto'
 
 It’s easy for the compiler to deduce the type of a static data member as the initialization happens at the place you declare it. However, it’s not possible for regular data members because the initializer might come from the default member init or the constructor (when you override a default value).
 
-![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-141_1.png)
+![](media/index-141_1.png)
 
  
 
@@ -710,7 +728,7 @@ error: 'vector' does not name a type
 
 Hopefully, both issues presented here are not big blockers, but it’s good to be aware of them.
 
-![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-142_1.png)
+![](media/index-142_1.png)
 
 Non-Static Data Member Initialization 128
 
@@ -730,6 +748,7 @@ What if I want data\_ to be initialized with 40 stars \*? I can write the long s
 
 **Ex 8.10. Direct initialization with parens and** **std::string****. Run** [**@Compiler Explorer**](https://godbolt.org/z/WW569j6h6)
 
+\#include \<iostream\>
 
 **int** main() {
 
@@ -875,7 +894,7 @@ And in [C++ Core Guidelines - C.45⁷](https://isocpp.github.io/CppCoreGuideline
 
 **Reason**: Using in-class member initializers lets the compiler generate the function for you. The compiler-generated function can be more efficient.
 
-![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-146_1.png)
+![](media/index-146_1.png)
 
  
 

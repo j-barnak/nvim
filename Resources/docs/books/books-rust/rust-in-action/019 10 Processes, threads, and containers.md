@@ -84,6 +84,7 @@ Sleeping a subthread for 300 ms
 
 2
 
+3 fn main() {
 
 4 let start = time::Instant::now();
 
@@ -148,6 +149,7 @@ Creating two subthreads to perform work on our behalf
 
 2
 
+3 fn main() {
 
 4 let start = time::Instant::now();
 
@@ -426,6 +428,7 @@ Using **thread::sleep** to suspend threads for 20 ms
 
 2
 
+3 fn main() {
 
 4 for n in 1..1001 {
 
@@ -471,6 +474,7 @@ Using a spin loop waiting strategy
 
 2
 
+3 fn main() {
 
 4 for n in 1..1001 {
 
@@ -561,6 +565,7 @@ Using a spin loop waiting strategy
 
 **337**
 
+3 fn main() {
 
 4 for n in 1..1001 {
 
@@ -711,6 +716,7 @@ Attempting to share a variable in multiple subthreads
 
 2
 
+3 fn main() {
 
 4 let pause = time::Duration::from_millis(20);
 
@@ -839,6 +845,7 @@ Using a variable defined in a parent scope in multiple closures
 
 2
 
+3 fn main() {
 
 4 let pause = time::Duration::from_millis(20);
 

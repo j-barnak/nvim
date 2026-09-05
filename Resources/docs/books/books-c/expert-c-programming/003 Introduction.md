@@ -26,9 +26,9 @@ Once experienced, this painful error (doing an assignment where comparison was i
 
 "attempted assignment to literal." This won't protect you when comparing two variables, but every little bit helps.
 
-![Image 2](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-3_1.png)
+![Image 2](media/index-3_1.png)
 
-![Image 3](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-3_2.png)
+![Image 3](media/index-3_2.png)
 
 **The \$20 Million Bug**
 
@@ -86,7 +86,7 @@ Readers can use this book as a source of ideas, as a collection of C tips and id
 
 Some aspects of C and UNIX are occasionally quite lighthearted. There's nothing wrong with well-placed whimsy. The IBM/Motorola/Apple PowerPC architecture has an E.I.E.I.O. instruction \[1\] that stands for "Enforce In-order Execution of I/O". In a similar spirit, there is a UNIX command,
 
-![Image 4](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-5_1.png)
+![Image 4](media/index-5_1.png)
 
 tunefs, that sophisticated system administrators use to change the dynamic parameters of a filesystem and improve the block layout on disk.
 
@@ -134,7 +134,7 @@ Write a program to find out.
 
 2\. Code a program to place the highest value into a variable of type time_t, then pass it to ctime() to convert it into an ASCII string. Print the string. Note that ctime has nothing to do with the language C, it just means "convert time."
 
-![Image 5](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-6_1.png)
+![Image 5](media/index-6_1.png)
 
 For how many years into the future does the anonymous technical writer who removed the comment have to worry about being dogged by a UNIX daemon? Amend your program to find out.
 

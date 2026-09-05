@@ -8,7 +8,7 @@ In this chapter, we will cover the following topics:
 - Allocating and registering an input device
 - Using polled input devices
 
-&nbsp;
+
 
 - Generating and reporting input events
 - Handling input devices from the user space
@@ -311,7 +311,7 @@ Device allocation and registration are essential, but they are useless if the de
 
 Given an **EV_XXX** capable device, the corresponding report function would be **input_report_xxx()**. The following table shows the mappings between the most important event types and their report functions:
 
-![Table 17.1 – Mapping the input device's capabilities and the report APIs ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_Table_01.jpg)
+![Table 17.1 – Mapping the input device's capabilities and the report APIs ](media/image/B17934_Table_01.jpg)
 
 Table 17.1 – Mapping the input device's capabilities and the report APIs
 

@@ -54,7 +54,7 @@ To make use of the content of this book, prior knowledge of basic C programming 
 
 This book assumes a medium level of understanding of the Linux operating system and basic knowledge of C programming (at least data structures, pointer handling, and memory allocation). All code examples have been tested with Linux kernel v5.10. If additional skill is required for a given chapter, links to document references will be provided for you to quickly learn these skills.
 
-![](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_Preface_001.jpg)
+![](media/image/B17934_Preface_001.jpg)
 
 Other necessary packages are described in the dedicated chapter in the book. Internet connectivity is required for kernel source downloading.
 

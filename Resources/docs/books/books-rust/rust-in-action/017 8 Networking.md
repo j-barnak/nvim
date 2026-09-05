@@ -507,12 +507,17 @@ Listing 8.1
 
 Crate metadata for listing 8.2
 
+\[package\]
 
 name = "ch8-simple"
 
+version = "0.1.0"
 
+authors = \["Tim McNamara \<author@rustinaction.com\>"\]
 
+edition = "2018"
 
+\[dependencies\]
 
 reqwest = "0.9"
 
@@ -688,12 +693,17 @@ Listing 8.3
 
 Crate metadata for the rpg project
 
+\[package\]
 
 name = "rpg"
 
+version = "0.1.0"
 
+authors = \["Tim McNamara \<author@rustinaction.com\>"\]
 
+edition = "2018"
 
+\[dependencies\]
 
 rand = "0.7"
 
@@ -934,12 +944,17 @@ Listing 8.5
 
 Project metadata for listing 8.6
 
+\[package\]
 
 name = "ch8-stdlib"
 
+version = "0.1.0"
 
+authors = \["Tim McNamara \<author@rustinaction.com\>"\]
 
+edition = "2018"
 
+\[dependencies\]
 
 The next listing shows how to use the Rust standard library to construct an HTTP GET
 
@@ -1530,12 +1545,17 @@ Listing 8.8
 
 Crate metadata for the resolve app
 
+\[package\]
 
 name = "resolve"
 
+version = "0.1.0"
 
+authors = \["Tim McNamara \<author@rustinaction.com\>"\]
 
+edition = "2018"
 
+\[dependencies\]
 
 rand = "0.6"
 
@@ -2712,12 +2732,17 @@ Listing 8.16
 
 Crate metadata for the macgen project
 
+\[package\]
 
 name = "ch8-macgen"
 
+version = "0.1.0"
 
+authors = \["Tim McNamara \<author@rustinaction.com\>"\]
 
+edition = "2018"
 
+\[dependencies\]
 
 rand = "0.7"
 
@@ -3131,16 +3156,21 @@ Listing 8.19
 
 Crate metadata for mget
 
+\[package\]
 
 name = "mget"
 
+version = "0.1.0"
 
+authors = \["Tim McNamara \<author@rustinaction.com\>"\]
 
+edition = "2018"
 
 **Provides**
 
 **command-line**
 
+\[dependencies\]
 
 **Selects a random**
 

@@ -1,4 +1,4 @@
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-1135_1.jpg)
+![](media/index-1135_1.jpg)
 
 19 INTERACTIVE PROGRAMMING AND
 
@@ -350,6 +350,7 @@ printf("Return value of read(): %d; no chars read\n", nread);
 
 }
 
+int main(int argc, char \*argv\[\])
 
 {
 
@@ -381,6 +382,7 @@ if ( -1 == tcsetattr( 0 , TCSANOW, &original) ) /\* Restore settings. \*/
 
 fatal_error(errno, "tcsetattr");
 
+return 0;
 
 }
 
@@ -784,6 +786,7 @@ The main() function is the last piece of the program. It is presented in part in
 
 *sprite.c* main()
 
+int main(int argc, char \*argv\[\])
 
 {
 
@@ -891,6 +894,7 @@ tcflush(STDIN_FILENO, TCIFLUSH);
 
 cleanup(0);
 
+return 0;
 
 }
 
@@ -1020,7 +1024,7 @@ Coordinates in Curses
 
 The coordinate system in *ncurses* is derived from matrix coordinates rather than Cartesian coordinates. The origin, (0,0), is in the upper-left corner of the screen, and the coordinate pair ( *y*, *x*) represents the screen cell in row *y* and column *x*, as shown in Figure 19-1.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-1159_1.jpg)
+![](media/index-1159_1.jpg)
 
 *Figure 19-1: The Curses coordinate system*
 
@@ -1042,7 +1046,7 @@ In Curses, when a program calls any function that modifies the
 
 screen contents, those changes are first applied to the virtual screen in
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-1160_1.jpg)
+![](media/index-1160_1.jpg)
 
 memory. When the program is ready to make those changes visible on
 
@@ -1240,6 +1244,7 @@ terminates when the user responds.
 
 \#include \<curses.h\>
 
+int main(int argc, char \*argv\[\])
 
 {
 
@@ -1259,6 +1264,7 @@ getch(); /\* Wait for user to type a character. \*/
 
 endwin(); /\* End curses session. \*/
 
+return 0;
 
 }
 
@@ -1454,6 +1460,7 @@ was terminated. The following program, *getstr_demo.c*, demonstrates the use of 
 
 *getstr_demo.c*
 
+int main(int argc, char \*argv\[\])
 
 {
 
@@ -1473,7 +1480,9 @@ mvaddstr(2, 0, "Type any character to quit.");
 
 getch();
 
+endwin();
 
+return 0;
 
 }
 
@@ -1583,6 +1592,7 @@ const char info_bar\[\] = "A menu and status information could be here.\n"
 
 "Type 's' to save the content area, or 'q' to quit:";
 
+int main(int argc, char \*argv\[\])
 
 {
 
@@ -1608,6 +1618,7 @@ noecho(); /\* Turn off echo. \*/
 
 ➊ if ( NULL == (content_win = newwin(LINES-3, COLS, 3, 0)) ) {
 
+endwin();
 
 fatal_error(-1, "Could not create first window.");
 
@@ -1621,6 +1632,7 @@ Create an information window in the top 3 rows of the screen. \*/
 
 ➌ if ( NULL == (info_win = newwin(3, COLS, 0, 0)) ) {
 
+endwin();
 
 fatal_error(-1, "Could not create second window.");
 
@@ -1646,7 +1658,9 @@ putwin(content_win, fp);
 
 }
 
+endwin();
 
+return 0;
 
 }
 
@@ -1824,7 +1838,7 @@ show_moves(count); }
 
 The complete program, *sprite_curses.c*, is available in the book’s source code distribution. Figure 19-3 is a screenshot of the running program.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-1179_1.jpg)
+![](media/index-1179_1.jpg)
 
 *Figure 19-3: A screenshot of the running* sprite_curses.c *program* The screenshot captured the terminal while the sprite was moving
 
@@ -1852,7 +1866,7 @@ program. However, before I spell out the goals and limitations of this endeavor,
 
 It’s better if it’s even wider. Your terminal window will look like the one in Figure 19-4.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-1181_1.jpg)
+![](media/index-1181_1.jpg)
 
 *Figure 19-4: A screenshot of the running top program*
 
@@ -2048,7 +2062,7 @@ reserves the sixth line of the summary area for prompts and messages. If these a
 
 three windows will fill the screen completely. Figure 19-5 depicts this arrangement.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-1186_1.jpg)
+![](media/index-1186_1.jpg)
 
 *Figure 19-5: Tiled windows of* spl_top.c *program*
 
@@ -2220,6 +2234,7 @@ Let’s look at how the main program can use iowait(). Listing 19-5
 
 shows part of it.
 
+int main(int argc, char \*argv\[\])
 
 {
 
@@ -2261,7 +2276,9 @@ break;
 
 }
 
+endwin();
 
+return 0;
 
 }
 
@@ -2869,6 +2886,7 @@ We’ve now seen all of the major components of the program. I haven’t shown s
 
 *spl_top.c* main()
 
+int main(int argc, char \*argv\[\])
 
 {
 
@@ -2956,7 +2974,9 @@ wrefresh(heading_win);
 
 }
 
+endwin();
 
+return 0;
 
 }
 
@@ -2964,7 +2984,7 @@ wrefresh(heading_win);
 
 Figure 19-6 is a screenshot of it while it’s running, sorted in decreasing order of the total time each process has run.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-1207_1.jpg)
+![](media/index-1207_1.jpg)
 
 *Figure 19-6: A screenshot of the running spl_top program*
 
@@ -3146,4 +3166,4 @@ line argument that is the name of a file containing screen
 
 coordinates, one per line, at which the initial cells will be filled.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-1211_1.jpg)
+![](media/index-1211_1.jpg)

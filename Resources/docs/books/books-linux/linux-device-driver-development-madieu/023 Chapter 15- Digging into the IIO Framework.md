@@ -16,7 +16,7 @@ These are the two ways to interact with an IIO device from user space:
 
 As a picture is worth a thousand words, the following is a figure showing an overview of the IIO framework:
 
-![Figure 15.1 – IIO framework overview ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_15_001.jpg)
+![Figure 15.1 – IIO framework overview ](media/image/B17934_15_001.jpg)
 
 Figure 15.1 – IIO framework overview
 
@@ -1557,7 +1557,7 @@ In this section, we will be using version 0.21 of the library, whose documentati
 
 The following diagram summarizes the architecture:
 
-![Figure 15.2 – libiio overview ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_15_002.jpg)
+![Figure 15.2 – libiio overview ](media/image/B17934_15_002.jpg)
 
 Figure 15.2 – libiio overview
 

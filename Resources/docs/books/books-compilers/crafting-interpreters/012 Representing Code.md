@@ -20,7 +20,7 @@ Because you understand the order of operations—the old “[Please Excuse My De
 
 In order to evaluate an arithmetic node, you need to know the numeric values of its subtrees, so you have to evaluate those first. That means working your way from the leaves up to the root—a *post-order* traversal:
 
-![Evaluating the tree from the bottom up.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/representing-code/tree-evaluate.png)
+![Evaluating the tree from the bottom up.](media/image/representing-code/tree-evaluate.png)
 
 A. Starting with the full tree, evaluate the bottom-most operation, `2 * 3`.
 
@@ -126,7 +126,7 @@ We could keep picking the first production for `breakfast` over and over again y
 
 With that, every nonterminal in the string has been expanded until it finally contains only terminals and we’re left with:
 
-!["Playing" the grammar to generate a string.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/representing-code/breakfast.png)
+!["Playing" the grammar to generate a string.](media/image/representing-code/breakfast.png)
 
 Throw in some ham and Hollandaise, and you’ve got eggs Benedict.
 
@@ -451,13 +451,13 @@ If we added instance methods to the expression classes for every one of those op
 
 This problem is more fundamental than it may seem at first. We have a handful of types, and a handful of high-level operations like “interpret”. For each pair of type and operation, we need a specific implementation. Picture a table:
 
-![A table where rows are labeled with expression classes, and columns are function names.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/representing-code/table.png)
+![A table where rows are labeled with expression classes, and columns are function names.](media/image/representing-code/table.png)
 
 Rows are types, and columns are operations. Each cell represents the unique piece of code to implement that operation on that type.
 
 An object-oriented language like Java assumes that all of the code in one row naturally hangs together. It figures all the things you do with a type are likely related to each other, and the language makes it easy to define them together as methods inside the same class.
 
-![The table split into rows for each class.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/representing-code/rows.png)
+![The table split into rows for each class.](media/image/representing-code/rows.png)
 
 This makes it easy to extend the table by adding new rows. Simply define a new class. No existing code has to be touched. But imagine if you want to add a new *operation*—a new column. In Java, that means cracking open each of those existing classes and adding a method to it.
 
@@ -469,7 +469,7 @@ Much like Lisp, it is one of those languages that is so full of good ideas that 
 
 This makes it trivial to add new operations—simply define another function that pattern matches on all of the types.
 
-![The table split into columns for each function.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/representing-code/columns.png)
+![The table split into columns for each function.](media/image/representing-code/columns.png)
 
 But, conversely, adding a new type is hard. You have to go back and add a new case to all of the pattern matches in all of the existing functions.
 
@@ -571,7 +571,7 @@ To perform an operation on a pastry, we call its `accept()` method and pass in t
 
 That’s the heart of the trick right there. It lets us use polymorphic dispatch on the *pastry* classes to select the appropriate method on the *visitor* class. In the table, each pastry class is a row, but if you look at all of the methods for a single visitor, they form a *column*.
 
-![Now all of the cells for one operation are part of the same class, the visitor.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/representing-code/visitor.png)
+![Now all of the cells for one operation are part of the same class, the visitor.](media/image/representing-code/visitor.png)
 
 We added one `accept()` method to each class, and we can use it for as many visitors as we want without ever having to touch the pastry classes again. It’s a clever pattern.
 
@@ -673,7 +673,7 @@ To that end, the string representation we produce isn’t going to be Lox syntax
 
 Given a syntax tree like:
 
-![An example syntax tree.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/representing-code/expression.png)
+![An example syntax tree.](media/image/representing-code/expression.png)
 
 It produces:
 

@@ -1,1 +1,1 @@
-![](/tmp/audit/iter1/epubregen/database-internals/media/assets/cover.png)
+![](media/assets/cover.png)

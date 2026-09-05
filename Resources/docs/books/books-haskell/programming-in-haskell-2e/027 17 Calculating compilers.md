@@ -334,8 +334,7 @@ exec c (n+m : s’)
 
 In conclusion, we have calculated the following definition:
 
-``` haskell
-```
+![image](media/Images/Chapter_17_image_8_41.png)
 
 That is, exec is a function that executes code using an initial stack to give a final stack. In other words, exec is a virtual machine for executing code.
 
@@ -552,8 +551,7 @@ data Maybe a = Nothing | Just a
 
 That is, a value of type Maybe a is either Nothing, which we view here as an exceptional value, or has the form Just x, which we view as a normal value. Using this type, our original evaluation function for expressions can be rewritten to take account of exceptions as follows:
 
-``` haskell
-```
+![image](media/Images/Chapter_17_image_14_11.png)
 
 Using the approach described in this chapter, calculate a compiler for this language. Hint: this is a challenging exercise!
 

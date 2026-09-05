@@ -225,7 +225,7 @@ class Brunch {
 
 Given that, here is what the compiler generates and how those instructions affect the stack at runtime:
 
-![The series of bytecode instructions for a class declaration with two methods.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/methods-and-initializers/method-instructions.png)
+![The series of bytecode instructions for a class declaration with two methods.](media/image/methods-and-initializers/method-instructions.png)
 
 All that remains for us is to implement the runtime for that new `OP_METHOD` instruction.
 
@@ -514,7 +514,7 @@ The last operation all objects support is printing.
 
 A bound method prints exactly the same way as a function. From the user’s perspective, a bound method *is* a function. It’s an object they can call. We don’t expose that the VM implements bound methods using a different object type.
 
-![A party hat.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/methods-and-initializers/party-hat.png)
+![A party hat.](media/image/methods-and-initializers/party-hat.png)
 
 Put on your party hat because we just reached a little milestone. ObjBoundMethod is the very last runtime type to add to clox. You’ve written your last `IS_` and `AS_` macros. We’re only a few chapters from the end of the book, and we’re getting close to a complete VM.
 
@@ -585,7 +585,7 @@ var eggs = brunch.eggs;
 
 Here is what happens when the VM executes the `bindMethod()` call for the `brunch.eggs` expression:
 
-![The stack changes caused by bindMethod().](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/methods-and-initializers/bind-method.png)
+![The stack changes caused by bindMethod().](media/image/methods-and-initializers/bind-method.png)
 
 That’s a lot of machinery under the hood, but from the user’s perspective, they simply get a function that they can call.
 
@@ -763,7 +763,7 @@ scone.topping("berries", "cream");
 
 We calculate the slot to store the receiver like so:
 
-![Skipping over the argument stack slots to find the slot containing the closure.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/methods-and-initializers/closure-slot.png)
+![Skipping over the argument stack slots to find the slot containing the closure.](media/image/methods-and-initializers/closure-slot.png)
 
 The `-argCount` skips past the arguments and the `- 1` adjusts for the fact that `stackTop` points just *past* the last used stack slot.
 
@@ -936,7 +936,7 @@ Brunch("eggs", "coffee");
 
 When the VM executes the call to `Brunch()`, it goes like this:
 
-![The aligned stack windows for the Brunch() call and the corresponding init() method it forwards to.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/methods-and-initializers/init-call-frame.png)
+![The aligned stack windows for the Brunch() call and the corresponding init() method it forwards to.](media/image/methods-and-initializers/init-call-frame.png)
 
 Any arguments passed to the class when we called it are still sitting on the stack above the instance. The new CallFrame for the `init()` method shares that stack window, so those arguments implicitly get forwarded to the initializer.
 
@@ -1338,7 +1338,7 @@ If you fire up the VM and run a little program that calls methods now, you shoul
 
 We shouldn’t pat ourselves on the back *too* firmly. This performance improvement is relative to our own unoptimized method call implementation which was quite slow. Doing a heap allocation for every single method call isn’t going to win any races.
 
-![Bar chart comparing the two benchmark results.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/methods-and-initializers/benchmark.png)
+![Bar chart comparing the two benchmark results.](media/image/methods-and-initializers/benchmark.png)
 
 ### 28.5.1 Invoking fields
 

@@ -1,4 +1,4 @@
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-366_1.jpg)
+![](media/index-366_1.jpg)
 
 6 OVERVIEW OF FILESYSTEMS AND
 
@@ -58,9 +58,9 @@ concentric circle is called a *track*. The set of all tracks on all surfaces tha
 
 bytes in size, but they can be other sizes, usually, but not necessarily, multiples of 512 bytes. A block is the smallest unit of data that can be transferred to or from a disk. Sometimes groups of adjacent blocks are
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-368_1.jpg)
+![](media/index-368_1.jpg)
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-368_2.jpg)
+![](media/index-368_2.jpg)
 
 called *clusters*. Figure 6-1 is a schematic representation of a single surface.
 
@@ -72,7 +72,7 @@ Figure 6-2 depicts schematically a cylinder for a five-platter disk drive, which
 
 *Figure 6-2: A schematic representation of a cylinder for a five-platter disk*
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-369_1.jpg)
+![](media/index-369_1.jpg)
 
 Each surface on a disk has a disk head, which moves like the tone-
 
@@ -114,7 +114,7 @@ In essence it operates a disk device’s controller, causing actions such as mov
 
 Each different disk has a different controller, and therefore, the disk drivers are specific to particular disk devices. On the other hand, no matter which type of disk the driver controls, its interface to the kernel is the same. In short, the kernel has a set of interface specifications with which each disk driver must conform. Figure 6-4 illustrates schematically the relationship between disks, disk drivers, the kernel, and the filesystem.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-371_1.jpg)
+![](media/index-371_1.jpg)
 
 *Figure 6-4: The layering of interfaces from the hardware up to user space applications* The hardware is the lowest level of the computer system, the device
 
@@ -130,7 +130,7 @@ sequence of blocks intended to contain a single filesystem. Over time, disk capa
 
 The first sector of the disk contains a record of how the disk has been
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-372_1.jpg)
+![](media/index-372_1.jpg)
 
 subdivided. This record is often called a *master boot record* ( *MBR*), but modern systems also call it the *global y unique identifier partition table* ( *GPT*). In the figure it is named the *disk (master) record*.
 
@@ -308,7 +308,7 @@ system to boot the computer. Although there’s a boot block in every
 
 filesystem on a disk, the operating system only uses the very first boot block on the disk for booting under normal circumstances.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-377_1.jpg)
+![](media/index-377_1.jpg)
 
 *Figure 6-6: Layout of an Ext2 partition with* n *block groups and an exploded view of one* *block group*
 
@@ -452,7 +452,7 @@ address files whose total size is in excess of 1024 × 1024 × 1024 ×
 
 Figure 6-7 depicts the use of these direct and indirect blocks in the inode.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-381_1.jpg)
+![](media/index-381_1.jpg)
 
 *Figure 6-7: The structure of a inode, showing pointers to direct and indirect blocks* For clarity, only four addresses are shown in the indirect blocks. The number of addresses in a 4KB block would be 1024.
 
@@ -730,7 +730,7 @@ Solaris, and in BSD and FreeBSD, the concepts of inode and inumber
 
 A schematic representation of these levels within the Ext2 filesystem, based on \[[5\]](index_split_014.html#p1236), is depicted in Figure 6-8.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-390_1.jpg)
+![](media/index-390_1.jpg)
 
 *Figure 6-8: A schematic representation of the Linux VFS incorporating the Ext2 filesystem*
 
@@ -984,7 +984,7 @@ POSIX.1 -2024 specifies the purpose of each of its 16 bits. The highestorder 4 b
 
 illustrates the meanings of the bits.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-398_1.jpg)
+![](media/index-398_1.jpg)
 
 *Figure 6-9: The file mode bits in the st_mode member*
 
@@ -3248,4 +3248,4 @@ same data for a filesystem when given its device file pathname as an
 
 argument, for example, df /dev/sda1.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-443_1.jpg)
+![](media/index-443_1.jpg)

@@ -476,7 +476,7 @@ In the kernel, there is a **clocksource_list** global list that tracks the clock
 
 On a running Linux system, the most intuitive way to list clock source devices that are registered with the framework is by looking for the word **clocksource** in the kernel log message buffer, as shown here:
 
-![Figure 3.1 – System clocksource list ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_03_001.jpg)
+![Figure 3.1 – System clocksource list ](media/image/B17934_03_001.jpg)
 
 Figure 3.1 – System clocksource list
 
@@ -531,7 +531,7 @@ Changing the current clock source must be done with caution since the current cl
 
 One of the main goals of the clock source device is feeding the timekeeper. There can be multiple clock sources in a system, but the timekeeper will choose the one with the highest precision to use. The timekeeper needs to obtain the value of the clock source periodically to update the system time, which is usually updated during the tick processing, as illustrated in the following diagram:
 
-![Figure 3.2 – Linux kernel timekeeper implementation ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_03_002.jpg)
+![Figure 3.2 – Linux kernel timekeeper implementation ](media/image/B17934_03_002.jpg)
 
 Figure 3.2 – Linux kernel timekeeper implementation
 
@@ -544,7 +544,7 @@ The timekeeper provides several types of time: **xtime**, **monotonic time**, **
 
 The following table shows the different types of time and their kernel getter functions:
 
-![Table 3.1 – Linux kernel timekeeping functions ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/Table_01.jpg)
+![Table 3.1 – Linux kernel timekeeping functions ](media/image/Table_01.jpg)
 
 Table 3.1 – Linux kernel timekeeping functions
 
@@ -644,7 +644,7 @@ struct tick_device {
 
 In this data structure, **evtdev** is the clock event device that is abstracted by the tick device. **mode** is used to track the working mode of the underlying clock event. Therefore, when a tick device is said to be in periodic mode, it also means that the underlying clock event device is configured to work in this mode. The following diagram illustrates this:
 
-![Figure 3.3 – Clockevent and tick-device correlation ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_03_003.jpg)
+![Figure 3.3 – Clockevent and tick-device correlation ](media/image/B17934_03_003.jpg)
 
 Figure 3.3 – Clockevent and tick-device correlation
 

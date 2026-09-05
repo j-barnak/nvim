@@ -18,7 +18,7 @@ Corrections, suggestions, contributions and translations are welcome!
 
 Linux Weekly News
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-442_1.png)
+![](media/index-442_1.png)
 
 ▶ <https://lwn.net/>
 
@@ -76,11 +76,11 @@ International Conferences (1)
 
 *•* <https://embeddedlinuxconference.com/> *•* Organized by the Linux Foundation *•* Once per year, alternating North America/Europe *•* Very interesting kernel and user space topics for embedded
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-444_1.png)
+![](media/index-444_1.png)
 
 systems developers. Many kernel and embedded project maintainers are present.
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-444_2.jpg)
+![](media/index-444_2.jpg)
 
 *•* Presentation slides and videos freely available on
 
@@ -98,7 +98,7 @@ presentations, but rather a place where contributors on each topic meet, share t
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 430/436 International Conferences (2)
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-445_1.png)
+![](media/index-445_1.png)
 
  
 
@@ -118,7 +118,7 @@ track at a time, with a format that really allows for discussions.
 
 are much more affordable and often free.
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-445_2.png)
+![](media/index-445_2.png)
 
  
 
@@ -180,4 +180,4 @@ A guide to the kernel development process.
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 433/436
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-448_1.jpg)
+![](media/index-448_1.jpg)

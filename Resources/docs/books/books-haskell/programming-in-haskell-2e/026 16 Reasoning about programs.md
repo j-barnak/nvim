@@ -8,7 +8,7 @@ In this chapter we introduce the idea of reasoning about Haskell programs. We st
 
 At school we learn basic algebraic properties of numbers, such as the fact that multiplication is commutative, addition is associative, and multiplication distributes over addition on both the left- and right-hand sides:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_16_image_1_21.png)
+![image](media/Images/Chapter_16_image_1_21.png)
 
 For example, using these properties we can show that a product of the form (*x* + *a*) (*x* + *b*) can be expanded to a summation *x*² +(*a* + *b*) *x* + *ab*:
 
@@ -166,6 +166,7 @@ Because proofs by induction normally involve more than one calculation, it is us
 
 As another example, let us show that addition of natural numbers is associative. That is, add x (add y z) = add (add x y) z for all x, y and z. There are three variables, so which should induction be performed over? Note that the add function is defined by pattern matching on its first argument, so it is natural to try induction on x, which appears twice as the first argument to add in the associativity equation, whereas y only appears once as such and z never. Using induction on x, the proof of the associativity of add proceeds as follows.
 
+Base case:
 
 ``` haskell
 add Zero (add y z)
@@ -175,6 +176,7 @@ add y z
 add (add Zero y) z
 ```
 
+Inductive case:
 
 ``` haskell
 add (Succ x) (add y z)
@@ -194,7 +196,7 @@ Note that both cases in the proof start by applying definitions, and conclude by
 
 For example, after applying the induction hypothesis in the inductive case above to obtain Succ (add (add x y) z), it may not be clear how to proceed, as there are no more definitions that can be applied. However, if we then focus on the expression that we are aiming towards, add (add (Succ x) y) z, we can simply apply the inner add and then the outer add to produce the expression at which we became stuck, which process can then be reversed (turning applying into unapplying) to complete the calculation.
 
-Although we have introduced induction using the recursive type Nat, the same principle can also be used with the type of integers that is built-in to Haskell. In particular, to prove that some property p holds for all integers ![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_16_image_7_33.png) it is sufficient to show that p holds for 0, the base case, and that if p holds for any ![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_16_image_7_34.png) then it also holds for n+1, the inductive case.
+Although we have introduced induction using the recursive type Nat, the same principle can also be used with the type of integers that is built-in to Haskell. In particular, to prove that some property p holds for all integers ![image](media/Images/Chapter_16_image_7_33.png) it is sufficient to show that p holds for 0, the base case, and that if p holds for any ![image](media/Images/Chapter_16_image_7_34.png) then it also holds for n+1, the inductive case.
 
 For example, consider the following recursive definition for the library function replicate that produces a list with n identical elements:
 
@@ -204,8 +206,9 @@ replicate 0 _ = []
 replicate n x = x : replicate (n-1) x
 ```
 
-It is easy to show that this function does indeed produce a list with n elements, that is length (replicate n x) = n, by induction on ![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_16_image_7_35.png)
+It is easy to show that this function does indeed produce a list with n elements, that is length (replicate n x) = n, by induction on ![image](media/Images/Chapter_16_image_7_35.png)
 
+Base case:
 
 ``` haskell
 length (replicate 0 x)
@@ -215,6 +218,7 @@ length []
 0
 ```
 
+Inductive case:
 
 ``` haskell
 length (replicate (n+1) x)
@@ -272,6 +276,7 @@ reverse (xs ++ ys) = reverse ys ++ reverse xs
 
 Technically, we say that the distribution is *contravariant* . Because the append operator ++ is defined by pattern matching on its first argument, it is natural to attempt to verify this property by induction on xs.
 
+Base case:
 
 ``` haskell
 reverse ([] ++ ys)
@@ -283,6 +288,7 @@ reverse ys ++ []
 reverse ys ++ reverse []
 ```
 
+Inductive case:
 
 ``` haskell
 reverse ((x:xs) ++ ys)
@@ -304,7 +310,7 @@ The above calculations in turn use the fact that ++ is associative with \[\] as 
 
 When we introduced the concept of a functor in chapter 12, we noted that the function fmap is required to satisfy two equational laws:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_16_image_9_35.png)
+![image](media/Images/Chapter_16_image_9_35.png)
 
 As another example of the use of induction on lists, we now show how these laws can be verified for the list functor, for which purpose we use the following recursive definition for the function fmap on lists:
 
@@ -316,6 +322,7 @@ fmap g (x:xs) = g x : fmap g xs
 
 By definition, two functions of the same type are equal if they always return the same results for the same arguments. Hence, to verify the first functor law fmap id = id for the case of lists, which has the form of an equality between functions, we must show that fmap id xs = id xs for any list xs. Using the definition for the identity function, id x = x, this equation simplifies to fmap id xs = xs, which can then be verified by induction on xs.
 
+Base case:
 
 ``` haskell
 fmap id []
@@ -323,6 +330,7 @@ fmap id []
 []
 ```
 
+Inductive case:
 
 ``` haskell
 fmap id (x : xs)
@@ -338,6 +346,7 @@ x : xs
 
 In turn, for the second functor law we must show that fmap (g . h) xs = (fmap g . fmap h) xs for any xs. Using the definition for function composition, (f . g) x = f (g x), this equation simplifies to fmap (g . h) xs = fmap g (fmap h xs), which can then be verified by induction.
 
+Base case:
 
 ``` haskell
 fmap (g . h) []
@@ -349,6 +358,7 @@ fmap g []
 fmap g (fmap h [])
 ```
 
+Inductive case:
 
 ``` haskell
 fmap (g . h) (x : xs)
@@ -392,6 +402,7 @@ That is, applying reverse’ to two lists should give the result of reversing th
 
 Rather than giving the definition for reverse’, and then showing that it satisfies the above equation, we can in fact use this equation as the driving force for *constructing* the definition itself. In particular, we attempt to verify this equation by induction on xs. The base case results in an equation that gives the definition for reverse’ \[\] ys, while the inductive case results in an equation that gives the definition for reverse’ (x:xs) ys.
 
+Base case:
 
 ``` haskell
 reverse’ [] ys
@@ -403,6 +414,7 @@ reverse [] ++ ys
 ys
 ```
 
+Inductive case:
 
 ``` haskell
 reverse’ (x:xs) ys
@@ -472,6 +484,7 @@ flatten’ t ns = flatten t ++ ns
 
 In order to prove that some property holds for all trees, the induction principle for the type Tree states that it is sufficient to show that it holds for all trees of the form Leaf n, and that if the property holds for any trees l and r, then it also holds for Node l r. Using this principle, we construct a definition for flatten’ that satisfies the above equation as follows.
 
+Base case:
 
 ``` haskell
 flatten’ (Leaf n) ns
@@ -483,6 +496,7 @@ flatten (Leaf n) ++ ns
 n : ns
 ```
 
+Inductive case:
 
 ``` haskell
 flatten’ (Node l r) ns
@@ -537,8 +551,7 @@ deriving Show
 
 The meaning of such code is given by defining a function that executes a piece of code using an initial stack to give a final stack:
 
-``` haskell
-```
+![image](media/Images/ch16-01.png)
 
 That is, the push operation places a new integer on the top of the stack, while add replaces the top two integers by their sum. Using these operations, it is now straightforward to define a function that compiles an expression into code. An integer value is compiled by simply pushing that value, while an addition is compiled by first compiling the two argument expressions x and y, and then adding the resulting two integers on the stack:
 
@@ -576,6 +589,7 @@ exec (comp e) s = eval e : s
 
 Using induction for the type Expr, which is the same as induction for the type Tree in the previous section except that the names of the constructors are different, the compiler correctness equation can be verified as follows.
 
+Base case:
 
 ``` haskell
 exec (comp (Val n)) s
@@ -587,6 +601,7 @@ n : s
 eval (Val n) : s
 ```
 
+Inductive case:
 
 ``` haskell
 exec (comp (Add x y)) s
@@ -618,6 +633,7 @@ exec (c ++ d) s = exec d (exec c s)
 
 The proof of this property proceeds by induction on the code c, with the inductive case being split into two separate cases, depending upon whether the first operation in the code is a push or an add.
 
+Base case:
 
 ``` haskell
 exec ([] ++ d) s
@@ -627,6 +643,7 @@ exec d s
 exec d (exec [] s)
 ```
 
+Inductive case:
 
 ``` haskell
 exec ((PUSH n : c) ++ d) s
@@ -640,6 +657,7 @@ exec d (exec c (n : s))
 exec d (exec (PUSH n : c) s)
 ```
 
+Inductive case:
 
 ``` haskell
 exec ((ADD : c) ++ d) s
@@ -681,6 +699,7 @@ exec (comp’ e c) s = exec c (eval e : s)
 
 That is, compiling an expression and then executing the resulting code together with arbitrary additional code gives the same result as executing the additional code with the value of the expression on top of the original stack. The proof of this result is by induction on the expression e.
 
+Base case:
 
 ``` haskell
 exec (comp’ (Val n) c) s
@@ -692,6 +711,7 @@ exec c (n:s)
 exec c (eval (Val n) : s)
 ```
 
+Inductive case:
 
 ``` haskell
 exec (comp’ (Add x y) c) s
@@ -728,7 +748,7 @@ all p []= True
 all p (x:xs) = p x && all p xs
 ```
 
-complete the proof of the correctness of replicate by showing that it produces a list with identical elements, all (== x) (replicate n x), by induction on ![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_16_image_19_19.png) Hint: show that the property is always True.
+complete the proof of the correctness of replicate by showing that it produces a list with identical elements, all (== x) (replicate n x), by induction on ![image](media/Images/Chapter_16_image_19_19.png) Hint: show that the property is always True.
 
 4.Using the definition
 
@@ -748,8 +768,7 @@ Hint: the proofs are similar to those for the add function.
 
 5.Using the above definition for ++, together with
 
-``` haskell
-```
+![image](media/Images/Chapter_16_image_20_31.png)
 
 show that take n xs ++ drop n xs = xs, by simultaneous induction on the integer n --img-- 0 and the list xs. Hint: there are three cases, one for each pattern of arguments in the definitions of take and drop.
 

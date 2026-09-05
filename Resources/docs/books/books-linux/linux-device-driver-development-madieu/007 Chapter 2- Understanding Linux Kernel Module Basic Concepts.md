@@ -344,7 +344,7 @@ CONFIG_PACKT_MYCDEV=y
 
 Everything described here is what embedded board manufacturers do in order to provide a **Board Support Package** (**BSP**) with their board, with a kernel that already contains their custom drivers:
 
-![Figure 2.1 – The Packt_dev module in the kernel tree ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_02_001.jpg)
+![Figure 2.1 – The Packt_dev module in the kernel tree ](media/image/B17934_02_001.jpg)
 
 Figure 2.1 – The Packt_dev module in the kernel tree
 
@@ -712,7 +712,7 @@ Nowadays, while **printk()** remains the low-level message printing API, the pri
 
 In all these helpers, **\<level\>** represents the log level encoded into a quite meaningful name, as described in the following table:
 
-![Table 2.1 – The Linux kernel printing API ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_02_Table_1.jpg)
+![Table 2.1 – The Linux kernel printing API ](media/image/B17934_02_Table_1.jpg)
 
 Table 2.1 – The Linux kernel printing API
 

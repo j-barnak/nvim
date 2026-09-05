@@ -48,6 +48,7 @@ let sat_c = 2;
 
 To check on the status of each of our satellites, we’ll use a stub function and an enum to represent potential status messages:
 
+\#\[derive(Debug)\]
 
 enum StatusMessage {
 
@@ -152,6 +153,7 @@ Listing 4.2
 
 Modeling a CubeSat as its own type
 
+\#\[derive(Debug)\]
 
 struct CubeSat {
 
@@ -1450,6 +1452,7 @@ But there’s a problem. Our CubeSat instances die at the end of the for loop’
 
 Our message store will be a Vec\<Message\> (our Mailbox type defined in one of the first code examples of this chapter). We’ll change the Message struct to add a sender and recipient field, as the following code shows. That way our now-proxy CubeSat instances can match their IDs to receive messages:
 
+\#\[derive(Debug)\]
 
 struct Mailbox {
 
@@ -1457,6 +1460,7 @@ messages: Vec\<Message\>,
 
 }
 
+\#\[derive(Debug)\]
 
 struct Message {
 
@@ -1836,6 +1840,7 @@ IMPLEMENTING COPY
 
 Let’s go back to our original example (listing 4.3), which caused the original movement issue. Here it is replicated for convenience, with sat_b and sat_c removed for brevity:
 
+\#\[derive(Debug)\]
 
 struct CubeSat {
 
@@ -1843,6 +1848,7 @@ id: u64,
 
 }
 
+\#\[derive(Debug)\]
 
 enum StatusMessage {
 

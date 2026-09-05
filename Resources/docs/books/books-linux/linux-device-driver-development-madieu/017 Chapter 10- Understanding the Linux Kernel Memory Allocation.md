@@ -41,7 +41,7 @@ The split varies between architectures and is held by the **CONFIG_PAGE_OFFSET**
 
 A typical process's virtual address space layout looks like the following on a 32-bit system with the default splitting scheme:
 
-![Figure 10.1 – 32-bit system memory splitting ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_001.jpg)
+![Figure 10.1 – 32-bit system memory splitting ](media/image/B17934_10_001.jpg)
 
 Figure 10.1 – 32-bit system memory splitting
 
@@ -51,7 +51,7 @@ While this layout is transparent on 64-bit systems, there are particularities on
 
 In an ideal world, all memory is permanently mappable. There are, however, some restrictions on 32-bit systems. This results in only a portion of RAM being permanently mapped. This part of memory can be accessed directly (by simple dereference) by the kernel and is called **low memory**, while the part of (physical) memory not covered by a permanent mapping is referred to as **high memory**. There are various architecture-dependent constraints on where exactly that border lies. For example, Intel cores can permanently map only up to the first 1 GB of RAM. This is a little bit less, 896 MiB of RAM, because part of this low memory is used to dynamically map high memory:
 
-![Figure 10.2 – High and low memory splitting ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_002.jpg)
+![Figure 10.2 – High and low memory splitting ](media/image/B17934_10_002.jpg)
 
 Figure 10.2 – High and low memory splitting
 
@@ -130,7 +130,7 @@ struct mm_struct {
 
 I intentionally removed some fields we are not interested in. There are some fields we will talk about later: **pgd** for example, which is a pointer to the process's base (first entry) level one table (**Page Global Directory**, abbreviated **PGD**), written in the translation table base address of the CPU at context switching. For a better understanding of this data structure, we can use the following diagram:
 
-![Figure 10.3 – A process address space ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_003.jpg)
+![Figure 10.3 – A process address space ](media/image/B17934_10_003.jpg)
 
 Figure 10.3 – A process address space
 
@@ -175,7 +175,7 @@ For the sake of readability and understandability of this section, only elements
 
 The following diagram is an overview of a process memory mapping, highlighting each VMA and describing some of its structure elements:
 
-![Figure 10.4 – Process memory mappings ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_004.jpg)
+![Figure 10.4 – Process memory mappings ](media/image/B17934_10_004.jpg)
 
 Figure 10.4 – Process memory mappings
 
@@ -244,13 +244,13 @@ The concept of a page table is introduced to manage mapping between pages and fr
 
 To walk through pages, each page is assigned an index, called a **page number**. When it comes to a frame, it is a **Page Frame Number** (**PFN**). This way, VMAs (logical addresses, more precisely) are composed of two parts: a page number and an offset. On 32-bit systems, the offset represents the 12 less significant bits of the address, whereas 13 less significant bits represent it on 8 KB page-size systems. The following diagram highlights this concept of addresses split into a page number and an offset:
 
-![Figure 10.5 – Logical address representation ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_005.jpg)
+![Figure 10.5 – Logical address representation ](media/image/B17934_10_005.jpg)
 
 Figure 10.5 – Logical address representation
 
 How does the OS or CPU know which physical address corresponds to a given logical address? They use a page table as a translation table and know that each entry's index is a virtual page number, and the value at this index is the PFN. To access physical memory given a virtual memory, the OS first extracts the offset, the virtual page number, and then walks through the process's page tables to match the virtual page number to the physical page. Once a match occurs, it is then possible to access data in that page frame:
 
-![Figure 10.6 – Address translation ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_006.jpg)
+![Figure 10.6 – Address translation ](media/image/B17934_10_006.jpg)
 
 Figure 10.6 – Address translation
 
@@ -258,7 +258,7 @@ The offset is used to point to the right location in the frame. A page table not
 
 The following diagram describes address decoding and page table lookup to point to the appropriate location in the appropriate frame:
 
-![ Figure 10.7 – Virtual to physical address translation ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_007.jpg)
+![ Figure 10.7 – Virtual to physical address translation ](media/image/B17934_10_007.jpg)
 
 Figure 10.7 – Virtual to physical address translation
 
@@ -299,7 +299,7 @@ At context switch (when a new process is scheduled and given the CPU), the kerne
 
 For the sake of understandability, the preceding description has been limited to a two-level paging scheme but can easily extended. The following diagram is a representation of this two-level paging scheme:
 
-![Figure 10.8 – A two-level address translation scheme ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_008.jpg)
+![Figure 10.8 – A two-level address translation scheme ](media/image/B17934_10_008.jpg)
 
 Figure 10.8 – A two-level address translation scheme
 
@@ -324,7 +324,7 @@ In both cases, the page fault handler is the same, **do_page_fault()**. This fun
 
 The following is a diagram describing a TLB lookup, a TLB hit, or a TLB miss event:
 
-![Figure 10.9 – The MMU and TLB walk-through process ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_009.jpg)
+![Figure 10.9 – The MMU and TLB walk-through process ](media/image/B17934_10_009.jpg)
 
 Figure 10.9 – The MMU and TLB walk-through process
 
@@ -336,7 +336,7 @@ Dealing with memory allocation mechanisms and their APIs
 
 Before jumping to the list of APIs, let's start with the following figure, showing the different memory allocators that exist on a Linux-based system, which we will discuss later:
 
-![Figure 10.10 – Overview of kernel memory allocators ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_010.jpg)
+![Figure 10.10 – Overview of kernel memory allocators ](media/image/B17934_10_010.jpg)
 
 Figure 10.10 – Overview of kernel memory allocators
 
@@ -428,13 +428,13 @@ The following case study is heavily inspired by <http://dysphoria.net/OperatingS
 
 Let's now imagine a scenario where we want to allocate a 70K block. The buddy allocator will round it up to 128K and will end up splitting the 1 MB into two 512K blocks, then 256K, and finally 128K, and then it will allocate one of the 128K blocks to the user. The following are schemes that summarize this scenario:
 
-![Figure 10.11 – Allocation using the buddy algorithm ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_011.jpg)
+![Figure 10.11 – Allocation using the buddy algorithm ](media/image/B17934_10_011.jpg)
 
 Figure 10.11 – Allocation using the buddy algorithm
 
 The deallocation is as fast as allocation. The following is a figure that summarizes the deallocation algorithm:
 
-![Figure 10.12 – Deallocation using the buddy algorithm ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_012.jpg)
+![Figure 10.12 – Deallocation using the buddy algorithm ](media/image/B17934_10_012.jpg)
 
 Figure 10.12 – Deallocation using the buddy algorithm
 
@@ -457,7 +457,7 @@ The memory allocator is responsible for building caches. Initially, each slab is
 
 The following diagram illustrates the concept of slabs, caches, and their different states:
 
-![Figure 10.13 – Slabs and caches ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_013.jpg)
+![Figure 10.13 – Slabs and caches ](media/image/B17934_10_013.jpg)
 
 Figure 10.13 – Slabs and caches
 
@@ -479,7 +479,7 @@ There are different kinds of slab allocators in the kernel, depending on whether
 
 **kmalloc()** is a kernel memory allocation function. It allocates physically contiguous (but not necessarily page-aligned) memory. The following image describes how memory is allocated and returned to the caller:
 
-![Figure 10.14 – kmalloc memory organization ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_014.jpg)
+![Figure 10.14 – kmalloc memory organization ](media/image/B17934_10_014.jpg)
 
 Figure 10.14 – kmalloc memory organization
 
@@ -580,7 +580,7 @@ Since **kmalloc()** returns a memory area in the kernel permanent mapping, the l
 
 **vmalloc()** is the last kernel allocator we will discuss in the book. It returns memory that is exclusively contiguous in the virtual address space. The underlying frames are scattered, as we can see in the following diagram:
 
-![Figure 10.15 – vmalloc memory organization ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_015.jpg)
+![Figure 10.15 – vmalloc memory organization ](media/image/B17934_10_015.jpg)
 
 Figure 10.15 – vmalloc memory organization
 
@@ -674,7 +674,7 @@ Since the kernel exclusively works with virtual addresses (through page tables),
 
 The following diagram describes how I/O memory and main memory are seen by the CPU:
 
-![Figure 10.16 – (IO)MMU and main memory overview ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_016.jpg)
+![Figure 10.16 – (IO)MMU and main memory overview ](media/image/B17934_10_016.jpg)
 
 Figure 10.16 – (IO)MMU and main memory overview
 

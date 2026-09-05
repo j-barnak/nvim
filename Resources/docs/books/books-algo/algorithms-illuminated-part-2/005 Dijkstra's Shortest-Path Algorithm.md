@@ -64,41 +64,41 @@ Consider the following input to the single-source shortest path problem, with st
 
 1 6
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-90_1.jpg)
+![](media/index-90_1.jpg)
 
 *s* 2 *t*
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-90_2.jpg)
+![](media/index-90_2.jpg)
 
 4 3
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-90_3.jpg)
+![](media/index-90_3.jpg)
 
 *w*
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-90_4.jpg)
+![](media/index-90_4.jpg)
 
  
 
 What are the shortest-path distances to s, v, w, and t, respectively?
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-90_5.jpg)
+![](media/index-90_5.jpg)
 
 a\) 0, 1, 2, 3
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-90_6.jpg)
+![](media/index-90_6.jpg)
 
 b\) 0, 1, 3, 6
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-90_7.jpg)
+![](media/index-90_7.jpg)
 
 c\) 0, 1, 4, 6
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-90_8.jpg)
+![](media/index-90_8.jpg)
 
 d\) 0, 1, 4, 7
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-90_9.jpg)
+![](media/index-90_9.jpg)
 
 (See Section 9.1.4 for the solution and discussion.)
 
@@ -128,33 +128,33 @@ But wait, you say; is the general problem really so different from this special 
 
 3 1 1 1
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-91_1.jpg)
+![](media/index-91_1.jpg)
 
 *v* *w* *v* *w*
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-91_2.jpg)
+![](media/index-91_2.jpg)
 
  
 
 3 In Part 3 we’ll learn about efficient algorithms for the more general single-source shortest path problem in which negative edge lengths are allowed, including the famous Bellman-Ford algorithm.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-91_3.jpg)
+![](media/index-91_3.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-91_4.jpg)
+![](media/index-91_4.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-91_5.jpg)
+![](media/index-91_5.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-91_6.jpg)
+![](media/index-91_6.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-91_7.jpg)
+![](media/index-91_7.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-91_8.jpg)
+![](media/index-91_8.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-91_9.jpg)
+![](media/index-91_9.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-91_10.jpg)
+![](media/index-91_10.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-91_11.jpg)
+![](media/index-91_11.jpg)
 
 9.1 The Single-Source Shortest Path Problem 79
 
@@ -262,7 +262,7 @@ processed not-yet-processed
 
 ### X 
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-94_1.jpg)
+![](media/index-94_1.jpg)
 
 *s* V-X
 
@@ -270,37 +270,37 @@ candidates
 
 for (v\*,w\*)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-94_2.jpg)
+![](media/index-94_2.jpg)
 
  
 
 the frontier
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-94_3.jpg)
+![](media/index-94_3.jpg)
 
 Figure 9.1: Every iteration of Dijkstra’s algorithm processes one new vertex, the head of an edge crossing from X to V X.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-94_4.jpg)
+![](media/index-94_4.jpg)
 
  
 
 You can associate the Dijkstra score for an edge (v, w) with v 2 X
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-94_5.jpg)
+![](media/index-94_5.jpg)
 
 and w / 2 X with the hypothesis that the shortest path from s to w consists of a shortest path from s to v (which hopefully has length len(v) ) with the edge (v, w) (which has length \`vw) tacked on at the end. Thus, the Dijkstra algorithm chooses to add the as-yet-unprocessed vertex that appears closest to s, according to the already-computed shortest-path distances and the lengths of the edges crossing 82 Dijkstra’s Shortest-Path Algorithm
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-94_6.jpg)
+![](media/index-94_6.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-94_7.jpg)
+![](media/index-94_7.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-94_8.jpg)
+![](media/index-94_8.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-94_9.jpg)
+![](media/index-94_9.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-94_10.jpg)
+![](media/index-94_10.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-94_11.jpg)
+![](media/index-94_11.jpg)
 
  
 
@@ -320,41 +320,41 @@ Let’s try out the Dijkstra algorithm on the example from Quiz 9.1:
 
 1 6
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-95_1.jpg)
+![](media/index-95_1.jpg)
 
 *s* 2 *t*
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-95_2.jpg)
+![](media/index-95_2.jpg)
 
 4 3
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-95_3.jpg)
+![](media/index-95_3.jpg)
 
 *w*
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-95_4.jpg)
+![](media/index-95_4.jpg)
 
  
 
 Initially, the set X contains only s, and len(s) = 0. In the first iteration of the main loop, there are two edges crossing from X to ⇤ V X (and hence eligible to play the role of ⇤ ( v , w )), the edges (s, v)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-95_5.jpg)
+![](media/index-95_5.jpg)
 
 and (s, w). The Dijkstra scores (defined in (9.1)) for these two edges are len(s) + \`sv = 0 + 1 = 1 and len(s) + \`sw = 0 + 4 = 4. Because the former edge has the lower score, its head v is added to X, and len(v) is assigned to the Dijkstra score of the edge (s, v), which is 1. In the second iteration, with X = {s, v}, there are three edges to consider for the role of ⇤ ⇤ ( v , w): (s, w), (v, w), and (v, t). Their Dijkstra scores are 0 + 4 = 4, 1 + 2 = 3, and 1 + 6 = 7. Because (v, w) has the lowest Dijkstra score, w gets sucked into X and len(w) is assigned the value 3 ( v, w)’s Dijkstra score). We already know which vertex gets added to X in the final iteration (the only not-yet-processed vertex t), but we still need to determine the edge that leads to its addition (to compute len(t)). As (v, t) and (w, t) have Dijkstra scores
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-95_6.jpg)
+![](media/index-95_6.jpg)
 
 5 To compute the shortest paths themselves (and not just their lengths), associate a pointer ⇤ predecessor ( v ) with each vertex v 2 V . When an edge ⇤ ( v , w)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-95_7.jpg)
+![](media/index-95_7.jpg)
 
 is chosen in an iteration of the main while loop (lines 4–6), assign predecessor ⇤ ( w)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-95_8.jpg)
+![](media/index-95_8.jpg)
 
 to ⇤ v, the vertex responsible for ⇤ w’s selection. After the algorithm concludes, to reconstruct a shortest path from s to a vertex v, follow the predecessor pointers backward from v until you reach s.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-95_9.jpg)
+![](media/index-95_9.jpg)
 
 \*9.3 Why Is Dijkstra’s Algorithm Correct? 83
 
@@ -388,25 +388,25 @@ for reductions to problems you already know how to solve. Alas, you cannot reduc
 
 *s* -2 *t*
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-96_1.jpg)
+![](media/index-96_1.jpg)
 
  
 
 There are two paths from s to t: the direct path (which has length 2)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-96_2.jpg)
+![](media/index-96_2.jpg)
 
 and the two-hop path s ! v ! t (which has length 1 + ( 5) = 4).
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-96_3.jpg)
+![](media/index-96_3.jpg)
 
 6 Even a broken analog clock is correct two times a day. . . 84 Dijkstra’s Shortest-Path Algorithm
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-96_4.jpg)
+![](media/index-96_4.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-96_5.jpg)
+![](media/index-96_5.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-96_6.jpg)
+![](media/index-96_6.jpg)
 
  
 
@@ -420,29 +420,29 @@ To force the graph to have nonnegative edge lengths, we could add 5 to every edg
 
 *s* 3 *t*
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-97_1.jpg)
+![](media/index-97_1.jpg)
 
  
 
 The shortest path from s to t has switched, and is now the direct s-t edge (which has length 3, better than the alternative of 6). Running a shortest-path algorithm on the transformed graph would not produce a correct answer for the original graph.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-97_2.jpg)
+![](media/index-97_2.jpg)
 
 9.3.2 A Bad Example for the Dijkstra Algorithm
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-97_3.jpg)
+![](media/index-97_3.jpg)
 
 What happens if we try running the Dijkstra algorithm directly on a graph with some negative edge lengths, like the graph above? As always, initially X = {s} and len(s) = 0, all of which is fine. In the first iteration of the main loop, however, the algorithm computes the Dijkstra scores of the edges (s, v) and (s, t), which are len(s) + \`sv = 0 + 1 = 1 and len(s) + \`st = 0 + ( 2) = 2. The latter edge has the smaller score, and so the algorithm adds the vertex t to X and assigns len(t) to the score -2. As we already noted, the actual shortest path from s to t (the path s ! v ! t) has length 4. We conclude that the Dijkstra algorithm need not compute the correct shortest-path distances in the presence of negative edge lengths.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-97_4.jpg)
+![](media/index-97_4.jpg)
 
 9.3.3 Correctness with Nonnegative Edge Lengths
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-97_5.jpg)
+![](media/index-97_5.jpg)
 
 Proofs of correctness can feel pretty pedantic. That’s why I often gloss over them for the algorithms for which students tend to have strong and accurate intuition. Dijkstra’s algorithm is different. First, the fact that it doesn’t work on extremely simple graphs with negative
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-97_6.jpg)
+![](media/index-97_6.jpg)
 
 edge lengths (Section 9.3.1) should make you nervous. Second, the
 
@@ -516,25 +516,25 @@ shortest s-v\* path P
 
 *l* *v\*w\**
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-99_1.jpg)
+![](media/index-99_1.jpg)
 
 *s* *w**\**
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-99_2.jpg)
+![](media/index-99_2.jpg)
 
 s-w\* path P\* (length *len(v**\***)+l**v\*w\**)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-99_3.jpg)
+![](media/index-99_3.jpg)
 
 Figure 9.2: Tacking the edge ⇤ ⇤ ⇤ ( v , w ) on at the end of a shortest s-v path ⇤ P produces an s- ⇤ w path P with length len(v) + \`v⇤w⇤ . \*9.3 Why Is Dijkstra’s Algorithm Correct? 87
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-99_4.jpg)
+![](media/index-99_4.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-99_5.jpg)
+![](media/index-99_5.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-99_6.jpg)
+![](media/index-99_6.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-99_7.jpg)
+![](media/index-99_7.jpg)
 
  
 
@@ -560,7 +560,7 @@ processed not-yet-processed
 
 *y* *z*
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-100_1.jpg)
+![](media/index-100_1.jpg)
 
 *s* V-X
 
@@ -568,39 +568,39 @@ processed not-yet-processed
 
 *w**\**
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-100_2.jpg)
+![](media/index-100_2.jpg)
 
  
 
 the frontier
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-100_3.jpg)
+![](media/index-100_3.jpg)
 
 Figure 9.3: Every ⇤ s-w path crosses at least once from X to V X .
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-100_4.jpg)
+![](media/index-100_4.jpg)
 
  
 
 To argue that the length of 0 ⇤ P is at least len ( w), we consider its
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-100_5.jpg)
+![](media/index-100_5.jpg)
 
 three pieces separately: the initial part of 0 P that travels from s to y, the edge ⇤ ( y, z ) , and the final part that travels from z to w. The first part can’t be shorter than a shortest path from s to y, so its length is at least dist(s, y). The length of the edge (y, z) is \`yz. We don’t know much about the final part of the path, which ambles among vertices that the algorithm hasn’t looked at yet. But we do know—because all edge lengths are nonnegative!—that its total length is at least zero:
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-100_6.jpg)
+![](media/index-100_6.jpg)
 
 7 ⇤ No worries if y = s or z = w—the argument works fine, as you should check. 88 Dijkstra’s Shortest-Path Algorithm
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-100_7.jpg)
+![](media/index-100_7.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-100_8.jpg)
+![](media/index-100_8.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-100_9.jpg)
+![](media/index-100_9.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-100_10.jpg)
+![](media/index-100_10.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-100_11.jpg)
+![](media/index-100_11.jpg)
 
  
 
@@ -614,51 +614,51 @@ length ≥ *dist(s,y) = len(y)*
 
 *y* *z*
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-101_1.jpg)
+![](media/index-101_1.jpg)
 
 *s*
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-101_2.jpg)
+![](media/index-101_2.jpg)
 
 length = *l**yz*
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-101_3.jpg)
+![](media/index-101_3.jpg)
 
  
 
 total length ≥ *len(s,y) + l* ≥ *len(s,v**\***) + l* *= len(w**\***)* *yz* *v\*w\**
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-101_4.jpg)
+![](media/index-101_4.jpg)
 
 Combining our length lower bounds for the three parts of 0 P, we have
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-101_5.jpg)
+![](media/index-101_5.jpg)
 
  
 
 length of P 0 dist(s, y) + \`yz + 0 . (9.2) \|{z} \| {z } \|{z} ⇤ z-w subpath s-y subpath edge ( y, z )
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-101_6.jpg)
+![](media/index-101_6.jpg)
 
 The last order of business is to connect our length lower bound
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-101_7.jpg)
+![](media/index-101_7.jpg)
 
 in (9.2) to the Dijkstra scores that guide the algorithm’s decisions. Because y 2 X, it was one of the first k 1 vertices added to X, and the inductive hypothesis implies that the algorithm correctly computed its shortest-path distance: dist(s, y) = len(y). Thus, the
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-101_8.jpg)
+![](media/index-101_8.jpg)
 
 inequality (9.2) translates to
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-101_9.jpg)
+![](media/index-101_9.jpg)
 
 length of P 0 len(y) + \`yz . (9.3)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-101_10.jpg)
+![](media/index-101_10.jpg)
 
 \| {z }
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-101_11.jpg)
+![](media/index-101_11.jpg)
 
 Dijkstra score of edge (y, z)
 

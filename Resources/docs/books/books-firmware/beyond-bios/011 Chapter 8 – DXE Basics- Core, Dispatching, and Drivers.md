@@ -66,13 +66,13 @@ Figure 8.1 shows the phases that a platform with UEFI compatible firmware goes t
 
 ■ The DXE phase’s interaction with the BDS phase
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-131_1.png)
+![](media/index-131_1.png)
 
  
 
 **Figure 8.1:** Platform Boot Phases
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-131_2.png)
+![](media/index-131_2.png)
 
  
 
@@ -118,7 +118,7 @@ DXE Dispatcher.
 
 Below is an illustration showing how data is handed off between the PEI and DXE phases.
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-132_1.png)
+![](media/index-132_1.png)
 
  
 
@@ -180,7 +180,7 @@ HOB entries are all designed to be position-independent. This independence allow
 
 DXE Core.
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-133_1.png)
+![](media/index-133_1.png)
 
  
 
@@ -214,7 +214,7 @@ Runtime Services. Figure 8.4 shows the HOB list being passed to the DXE Core. Th
 
 ure and then produces the EFI System Table, EFI Boot Services Table, and the EFI Runtime Services Table.
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-134_1.png)
+![](media/index-134_1.png)
 
  
 
@@ -320,7 +320,7 @@ and executable image invoked by BDS. It contains all the information that is req
 
 loaded DXE driver. Figure 8.5 shows the various components that are available through the EFI System Table.
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-136_1.png)
+![](media/index-136_1.png)
 
  
 
@@ -586,13 +586,13 @@ similar memory regions that are adjacent to each other into a single memory desc
 
 **122** \| Chapter 8 – DXE Basics: Core, Dispatching, and Drivers
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-141_1.png)
+![](media/index-141_1.png)
 
  
 
 **Figure 8.6:** GCD Memory State Transitions
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-141_2.png)
+![](media/index-141_2.png)
 
  
 
@@ -640,7 +640,7 @@ shows the possible state transitions for each byte of I/O in the GCD I/O space m
 
 cent to each other into a single I/O descriptor, which reduces the number of entries in the GCD I/O space map.
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-142_1.png)
+![](media/index-142_1.png)
 
  
 
@@ -686,7 +686,7 @@ executed all the DXE drivers it can, control is once again returned to the BDS A
 
 between the Dispatcher, its launched drivers, and the BDS.
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-143_1.png)
+![](media/index-143_1.png)
 
  
 

@@ -10,7 +10,13 @@ if python3 - "$OUT/.x" "$OUT" "$TITLE" <<'PY'
 import sys, os, posixpath, re, subprocess
 import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
-root, out, title = sys.argv[1], sys.argv[2], sys.argv[3]
+root, out, title = os.path.abspath(sys.argv[1]), os.path.abspath(sys.argv[2]), sys.argv[3]
+SLUG = os.path.basename(out.rstrip("/"))
+BOOK_TITLES = [title]  # plus the OPF dc:title entries, filled in below
+# Per-slug chapter names for spine docs the ncx never labels (see the labels code).
+NAME_FIX = {"more-ocaml-algorithms-methods-and-diversions": {
+    "index_split_001.html": "Title Page", "index_split_002.html": "Copyright",
+    "index_split_019.html": "Part: Generating PDF Documents (an extended example)"}}
 def sanitize(t):
     t = re.sub(r'[\\/:*?"<>|]', '-', (t or "").strip())
     if len(t) > 140: t = re.sub(r" [^ ]*$", "", t[:140])  # cut at a word boundary
@@ -18,12 +24,35 @@ def sanitize(t):
 
 _CIRC = "\u2460\u2461\u2462\u2463\u2464\u2465\u2466\u2467\u2468\u2469\u246a\u246b\u246c\u246d\u246e\u246f\u2470\u2471\u2472\u2473"
 def prep_code(s):
+    # pandoc's HTML reader emits NOTHING for a <section epub:type="titlepage">
+    # (or "halftitlepage"), so five books lost their title page (title h1,
+    # edition, subtitle, author line, logo) and the builder then skipped the
+    # doc as empty. Every other epub:type value passes through pandoc intact
+    # (tested), so only these two are dropped.
+    for el in s.find_all(attrs={"epub:type": re.compile(r"^(half)?titlepage$")}):
+        del el["epub:type"]
     # O'Reilly epubs carry the listing language in data-code-language, which
     # pandoc ignores (it only reads class): copy it into class="language-X" so
     # the fence gets a real label (was: ~1570 unlabeled Rust listings).
     for pre in s.find_all("pre"):
         lang = pre.get("data-code-language")
         if lang: pre["class"] = lang.strip().lower()
+        # Token-highlighting spans (<code class="k">if</code>, Crafting
+        # Interpreters' pygments output) are not a language label, but when the
+        # listing STARTS with such a span pandoc reads its class as the fence
+        # language ("c" for a comment token, which is a real language name).
+        # Unwrap the spans of exactly those listings; a single <code> wrapping
+        # the whole listing is the legitimate label and is kept, and a listing
+        # that starts with text is left alone (pandoc gives it no label).
+        codes = pre.find_all("code")
+        first = pre.contents[0] if pre.contents else None   # pandoc labels only when <code> is the very first node (a leading newline defeats it)
+        if (codes and getattr(first, "name", None) == "code" and first.get("class")
+                and (len(codes) > 1 or first.get_text().strip() != pre.get_text().strip())):
+            for c in codes: c.unwrap()
+            # keep the block FENCED as before: pandoc turns an attribute-less
+            # <pre> into an indented block; this placeholder class is stripped
+            # by clean() to a bare fence, like the CSS classes of other epubs.
+            if not pre.get("class"): pre["class"] = "listing"
         # numbered callout markers are <img alt="N" src="assets/N.png"> inside
         # the listing; pandoc drops them from a fence, losing the mapping to the
         # numbered explanations below. Replace with the circled digit O'Reilly prints.
@@ -44,11 +73,25 @@ def prep_code(s):
         run = [p]; nxt = p.find_next_sibling()
         while nxt is not None and is_code_p(nxt):
             run.append(nxt); nxt = nxt.find_next_sibling()
-        pre = s.new_tag("pre"); code = s.new_tag("code")
         cls0 = " ".join(p.get("class") or [])
-        pre["class"] = "c" if "source-code" in cls0 else "haskell"  # Packt LDD is C; Cambridge Programming in Haskell
-        code.string = "\n".join(x.get_text().replace("\u00a0", " ").rstrip() for x in run)
-        pre.append(code); run[0].insert_before(pre)
+        lang = "c" if "source-code" in cls0 else "haskell"  # Packt LDD is C; Cambridge Programming in Haskell
+        # A code paragraph can hold its listing as an IMAGE (Cambridge typesets
+        # 116 Haskell listings as <p class="Code1"><img/></p>): keep the image
+        # as its own block, in place, and fence only the text paragraphs around
+        # it. (get_text() used to discard the image and leave an empty fence.)
+        buf = []
+        def flush():
+            if any(x.strip() for x in buf):
+                pre = s.new_tag("pre"); code = s.new_tag("code"); pre["class"] = lang
+                code.string = "\n".join(buf); pre.append(code); run[0].insert_before(pre)
+            del buf[:]
+        for x in run:
+            imgs = x.find_all("img")
+            for im in imgs:
+                flush(); holder = s.new_tag("p"); holder.append(im.extract()); run[0].insert_before(holder)
+            t = x.get_text().replace("\u00a0", " ").rstrip()
+            if t.strip() or not imgs: buf.append(t)
+        flush()
         for x in run: x._merged = True; x.decompose()
 def flatten_tables(html):
     # pandoc's gfm writer replaces any table with block-content cells (a <pre>
@@ -105,12 +148,16 @@ def clean(md):
     md = re.sub(r'\[([^\]]*)\]\((?!\w+://)[^)]*\.x?html[^)]*\)', r'\1', md)  # dead intra-epub .html link (kept text)
     md = re.sub(r'(?m)^([ \t]*`{3,})[ \t]*([A-Za-z][\w+.#-]*)[ \t]*$',
                 lambda m: m.group(1) if m.group(2).lower() not in _LANGS else m.group(0), md)
+    md = re.sub(r'(?m)^&nbsp;[ \t]*$', '', md)  # a paragraph holding one non-breaking space: an empty line, not a literal entity
     return md.strip("\n")
 def pandoc(p):
     html = flatten_tables(open(p, encoding="utf-8", errors="replace").read())
+    # --extract-media is given RELATIVE to cwd=out so the image links come out
+    # as "media/<file>", relative to the chapter file; an absolute directory
+    # here would leak the build directory into the frozen markdown.
     r = subprocess.run(["pandoc", "-f","html","-t","gfm-raw_html","--wrap=none",
-        "--resource-path", os.path.dirname(p), "--extract-media", os.path.join(out,"media")],
-        input=html, capture_output=True, text=True)
+        "--resource-path", os.path.dirname(p), "--extract-media", "media"],
+        input=html, capture_output=True, text=True, cwd=out)
     return clean(r.stdout)
 try:
     cont = open(os.path.join(root,"META-INF","container.xml"),encoding="utf-8",errors="replace").read()
@@ -119,6 +166,8 @@ try:
     opf = ET.parse(os.path.join(root, opf_rel)).getroot()
     man, ncx_rel = {}, None
     for it in opf.iter():
+        if it.tag.endswith("}title") and (it.text or "").strip():
+            BOOK_TITLES.append(" ".join(it.text.split()))  # running heads often print the book title
         if it.tag.endswith("}item"):
             man[it.get("id")] = it.get("href")
             if it.get("media-type") == "application/x-dtbncx+xml": ncx_rel = it.get("href")
@@ -132,6 +181,16 @@ try:
                 lab = np.find(".//n:navLabel/n:text", nsn); con = np.find("n:content", nsn)
                 if lab is not None and con is not None:
                     labels.setdefault(posixpath.basename(con.get("src").split("#")[0]), " ".join((lab.text or "").split()))
+        # The OPF <guide> cover reference names the cover doc (an image-only
+        # page with neither ncx label nor heading): "001 Cover", not "001".
+        for ref in opf.iter():
+            if ref.tag.endswith("}reference") and ref.get("type") == "cover" and ref.get("href"):
+                labels.setdefault(posixpath.basename(ref.get("href").split("#")[0]), "Cover")
+        # Per-slug names for docs the ncx does not label at all. More OCaml is a
+        # calibre PDF-reflow epub: its title page, copyright page and the Part
+        # divider (the ncx points the Part at the previous chapter's doc) have
+        # no navPoint of their own; these follow the book's printed Contents.
+        for base_, name_ in NAME_FIX.get(SLUG, {}).items(): labels[base_] = name_
         nm = ncx.find("n:navMap", nsn)
         def _lab(np):
             l = np.find("n:navLabel/n:text", nsn); return " ".join((l.text or "").split()) if l is not None else ""
@@ -211,7 +270,8 @@ def title_for(base, md):
                 and not s.rstrip().endswith((',', '-', ':')) and '0x' not in s):
             return take(s)
     stem = re.sub(r'\.x?html?$','',base,flags=re.I)
-    return "" if re.fullmatch(r'(index_split_\d+|cover|title\w*|copyright|toc|nav|part\d*|\d+)', stem, re.I) else stem
+    if re.fullmatch(r'cover', stem, re.I): return "Cover"  # cover doc of an epub with no <guide> (Programming Rust)
+    return "" if re.fullmatch(r'(index_split_\d+|title\w*|copyright|toc|nav|part\d*|\d+)', stem, re.I) else stem
 # Some epubs mark code with <p>+<br/>+monospace instead of <pre>, so pandoc
 # renders it as escaped, hard-broken prose (\#include \<x\>) rather than a code
 # block. Re-fence runs of >=2 hard-break-terminated code lines (Building a
@@ -230,6 +290,10 @@ def _is_code(raw):
     if not t: return None
     if re.fullmatch(r'>?\s*\d+', t): return None                        # bare gutter line-number: absorb into a run, never break it
     if re.match(r'#{1,6}\s', t) or t.startswith("|") or t.startswith("`") or t.startswith("!["): return False  # heading/table/inline-code/image
+    # A line that is only a link or a URL (LDD3's bibliography web sites) is not
+    # code by itself: its parentheses used to count as a code signal and fence
+    # it. Neutral, so it is still absorbed when it sits inside a listing.
+    if re.fullmatch(r'\[[^\]]*\]\([^)\s]*\)|(https?|ftp)://\S+', t): return None
     if re.fullmatch(r'-{2,}\s*snip\s*-{2,}|\.\.\.|\[\.\.\.\]', t): return True
     if raw.endswith("  "):                                              # hard-break-terminated line = the <br/>-per-line code shape
         sig = len(_CODE.findall(t))
@@ -267,43 +331,89 @@ def fence_code(md):
         else:
             out.append(lines[i]); i += 1
     return "\n".join(out)
-# Print page furniture: the recto running header ("Chapter Title **page**") and
-# the verso ("**page** Chapter N"), repeated on every printed page and often
-# flowed by the epub into the middle of a paragraph or a code listing. Drop them
-# where they recur (>=4 in a doc = a genuine running header, not an incidental
-# line), so prose reads clean and a listing the header split rejoins into one
-# fenced block. Only removes the boilerplate header lines; never touches a fence.
+# Print page furniture, recognised by SHAPE only, never by raw repetition of
+# arbitrary text (an earlier rule deleted any line repeated 6+ times in a
+# chapter, which also deleted repeated CODE lines such as `int main(void) {`
+# or `@Override`, proof labels, pseudocode and figure descriptions: 1,872
+# content lines in 15 books). Two kinds:
+#  1. recto/verso print headers ("Chapter Title **page**", "**page** Chapter N"),
+#     often flowed into the middle of a paragraph or a listing; dropped where
+#     they recur (>=4 in a doc = a genuine running header).
+#  2. running heads/footers the epub flowed onto every page: a PLAIN PROSE line
+#     that recurs >=6 times in the chapter AND has a furniture shape: equals the
+#     book title or this chapter's title (slide breadcrumbs, the CONTENTS
+#     running head), a bare "CHAPTER N" label (Manning), a copyright footer
+#     (© plus a year: LMM early access), a figure-description back-link
+#     ("Return to text", No Starch), or a per-slug running head (RUNNING_HEADS).
+#     "Plain prose" = outside a fence, not indented, not next to an indented
+#     code block, no trailing hard break, no code punctuation, not ending in ":".
+#     A line failing any of these is never removed, however often it repeats.
 _RECTO = re.compile(r"^[A-Za-z][A-Za-z0-9 ,:/'’.&-]{2,58}? \*\*\d+\*\*$")
 _VERSO = re.compile(r"^\*\*\d+\*\* [A-Z][A-Za-z0-9 ,:/'’.&-]{1,58}$")
+RUNNING_HEADS = {
+    # Bootlin lab book (PDF-derived): the deck title is printed atop every page.
+    "bootlin-embedded-linux-qemu-labs": {"Embedded Linux System Development"},
+}
+_CODEPUNCT = re.compile(r'[{}\[\];=<>`\\|$@#_]|::|->')
+_CHAPLABEL = re.compile(r'(chapter|part)\s+(\d+|[ivxlc]+)', re.I)
+_BACKLINK = re.compile(r'(return|back) to (the )?text', re.I)
+_COPYRIGHT = re.compile(r'©|\(c\)|copyright', re.I)
+_YEAR = re.compile(r'\b(19|20)\d\d\b')
 def _furn(l):
     t = _unesc(l.strip()); return bool(_RECTO.match(t) or _VERSO.match(t))
-def strip_furniture(md):
-    lines = md.split("\n")
-    # A short plain line repeated verbatim many times in one chapter is a running
-    # header/footer the epub flowed onto every page ("The Linux Memory Manager
-    # (Early Access) (c) 2025 by ..."); the recto/verso "**page**" shapes do not
-    # cover it. Count outside fences; drop lines with >= 6 exact repeats.
+def _norm(s): return re.sub(r"[^a-z0-9]+", " ", _unesc(s).lower()).strip()
+def _title_keys(t):
+    ks = set()
+    for s in (t, re.sub(r"\s*\([^)]*\)\s*$", "", t)):   # also without a trailing "(2e)"
+        n = _norm(s); ks.add(n)
+        m = re.match(r"(?:chapter|part|appendix|section)\s+[0-9ivxlc]+\s*(.*)", n)  # "chapter 3 virtual memory"
+        if m: ks.add(m.group(1))
+        m = re.match(r"[0-9]+\s+(.*)", n)                                          # "2 language foundations"
+        if m: ks.add(m.group(1))
+    return {k for k in ks if len(k) >= 4}
+def strip_furniture(md, ttl=""):
+    lines = md.split("\n"); n = len(lines)
+    keys = set()
+    for t in [ttl] + BOOK_TITLES: keys |= _title_keys(t)
+    heads = {_norm(h) for h in RUNNING_HEADS.get(SLUG, ())}
+    def plain(i):
+        l = lines[i]
+        if not l or l[0].isspace() or l.endswith("  "): return None
+        t = _unesc(l.strip())
+        if not t or len(t) > 120 or t[0] in "#|-*>!`+<" or t.endswith(":") or _CODEPUNCT.search(t): return None
+        j = i - 1
+        while j >= 0 and not lines[j].strip(): j -= 1
+        k = i + 1
+        while k < n and not lines[k].strip(): k += 1
+        if (j >= 0 and lines[j][0].isspace()) or (k < n and lines[k][0].isspace()): return None
+        return t
+    def shape(t):
+        nt = _norm(t)
+        return bool(nt in keys or nt in heads or _CHAPLABEL.fullmatch(t) or _BACKLINK.fullmatch(t)
+                    or (_COPYRIGHT.search(t) and _YEAR.search(t)))
     from collections import Counter
-    cnt = Counter(); inf = False
-    for l in lines:
+    cnt = Counter(); cand = {}; inf = False
+    for i, l in enumerate(lines):
         if l.lstrip()[:3] in ("```", "~~~"): inf = not inf; continue
-        t = l.strip()
-        if not inf and 8 <= len(t) <= 100 and not t.startswith(("#", "|", "-", "*", ">", "!", "`")): cnt[t] += 1
-    rep_lines = {t for t, c in cnt.items() if c >= 6}
-    if sum(1 for l in lines if _furn(l)) < 4 and not rep_lines: return md
-    out = []; infence = False
-    for l in lines:
-        if l.lstrip()[:3] in ("```", "~~~"): infence = not infence; out.append(l); continue
-        if not infence and (_furn(l) or l.strip() in rep_lines): continue
+        if inf: continue
+        t = plain(i)
+        if t is not None and shape(t): cnt[t] += 1; cand[i] = t
+    rep = {t for t, c in cnt.items() if c >= 6}
+    nfurn = sum(1 for l in lines if _furn(l))
+    if nfurn < 4 and not rep: return md
+    out = []; inf = False
+    for i, l in enumerate(lines):
+        if l.lstrip()[:3] in ("```", "~~~"): inf = not inf; out.append(l); continue
+        if not inf and ((nfurn >= 4 and _furn(l)) or cand.get(i) in rep): continue
         out.append(l)
     return "\n".join(out)
 def write(idx, ttl, md):
     name = ("%03d %s" % (idx, sanitize(ttl))) if ttl else ("%03d" % idx)
-    open(os.path.join(out, name + ".md"), "w", encoding="utf-8").write(fence_code(strip_furniture(md)))
+    open(os.path.join(out, name + ".md"), "w", encoding="utf-8").write(fence_code(strip_furniture(md, ttl)))
 def pandoc_html(html, srcdir):
     r = subprocess.run(["pandoc","-f","html","-t","gfm-raw_html","--wrap=none",
-        "--resource-path", srcdir, "--extract-media", os.path.join(out,"media")],
-        input=flatten_tables(html), capture_output=True, text=True)
+        "--resource-path", srcdir, "--extract-media", "media"],   # relative, see pandoc()
+        input=flatten_tables(html), capture_output=True, text=True, cwd=out)
     return clean(r.stdout)
 # Anchor-split books: the spine/ncx does not line up with chapters (several
 # chapters share one spine doc, or a chapter is marked only by an in-page
@@ -318,7 +428,10 @@ ANCHOR_SPLIT = {"expert-c-programming","effective-modern-c","c-initialization-st
 # "Introduction" (its siblings are "Chapter N: ...") and its Chapter 11
 # bookmark misspells Pressure.
 RELABEL = {"the-linux-memory-manager": {"Introduction": "Chapter 1: Introduction",
-    "Chapter 11: Reclaim and Memory Pressue": "Chapter 11: Reclaim and Memory Pressure"}}
+    "Chapter 11: Reclaim and Memory Pressue": "Chapter 11: Reclaim and Memory Pressure"},
+    # The PDF-derived ncx invents an "Appendix" navPoint over the section the
+    # published deck (and the file's own first line) calls "Backup slides".
+    "bootlin-linux-kernel-slides": {"Appendix": "Backup slides"}}
 SENT = "§§CHAPSPLIT§§"
 _rl = RELABEL.get(posixpath.basename(out.rstrip("/")), {})
 if _rl: top_a = [(_rl.get(l, l), b, a) for (l, b, a) in top_a]
@@ -357,7 +470,12 @@ if posixpath.basename(out.rstrip("/")) in ANCHOR_SPLIT and top_a:
                     # <p>, No Starch with "<h1>5 MEMORY MAPPING</h1>") wins; else the
                     # first heading; never past another chapter anchor or ~4000 chars.
                     first_head, seen_chars = None, 0
-                    for n in el.find_all_next(True, limit=600):
+                    # Start with the anchor element itself: a calibre page anchor
+                    # often sits ON the title paragraph (<p id="page_15"><b>Revision
+                    # History</b></p>); find_all_next() skips it, which pushed the
+                    # boundary to the next page-number heading (C++ Initialization
+                    # Story's Revision History file opened with chapter 1's first page).
+                    for n in [el] + el.find_all_next(True, limit=600):
                         if n.get("id") in others: break
                         if n.name not in H and n.name != "p": continue
                         t = _nrm(n.get_text())
@@ -428,7 +546,9 @@ print("strategy=per-spine(fallback) chapters=%d" % len(conv)); sys.exit(0)
 PY
 then :
 else
-  pandoc "$SRC" -t gfm-raw_html --wrap=none --extract-media="$OUT/media" -o "$OUT/001 Full Text.md"
+  # cd so --extract-media stays relative (links must be "media/<file>", never the build dir)
+  SRCA=$(readlink -f "$SRC")
+  ( cd "$OUT" && pandoc "$SRCA" -t gfm-raw_html --wrap=none --extract-media=media -o "001 Full Text.md" )
 fi
 rm -rf "$OUT/.x"
 if [ -n "$(find "$OUT" -maxdepth 1 -name '*.md' -print -quit)" ]; then touch "$OUT/.complete"; fi

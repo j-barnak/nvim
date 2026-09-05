@@ -219,7 +219,7 @@ len (Cons _ xs) = 1 + len xs
 
 While lists are one of the most commonly used data structure in computing, it is often useful to store data in a two-way branching structure, or *binary tree*, as depicted in the following example tree:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_8_image_6_32.png)
+![image](media/Images/Chapter_8_image_6_32.png)
 
 In this example, the numbers 1*,* 4*,* 6*,* 9 appear at the external *leaves* of the tree, and the numbers 5*,* 3*,* 7 appear at the internal *nodes*. Using recursion, a suitable type for representing such trees can be declared by
 
@@ -237,15 +237,13 @@ t = Node (Node (Leaf 1) 3 (Leaf 4)) 5
 
 We now consider a number of functions on such trees. First of all, we define a function that decides if a given value occurs in a tree:
 
-``` haskell
-```
+![image](media/Images/Chapter_8_image_7_26.png)
 
 That is, a value occurs in a leaf if it matches the value at the leaf, and occurs in a node if it either matches the value at the node, occurs in the left subtree, or occurs in the right subtree. Note that under lazy evaluation, if either of the first two conditions in the node case is True, then the result True is returned without the need to evaluate the remaining conditions.
 
 In the worst case, however, the function occurs may still traverse the entire tree, in particular when the given value does not occur anywhere in the tree. Now consider a function that flattens a tree to a list:
 
-``` haskell
-```
+![image](media/Images/Chapter_8_image_7_27.png)
 
 If applying this function to a tree gives a sorted list, then the tree is called a *search tree*. For instance, our example tree is a search tree, because:
 
@@ -255,8 +253,7 @@ flatten t = [1,3,4,5,6,7,9]
 
 Search trees have the important property that, when trying to decide if a given value occurs in a tree, which of the two subtrees of a node it may occur in can always be determined in advance. In particular, if the value is less than the value at the node, then it can only occur in the left subtree, and if it is greater than this value, it can only occur in the right subtree. Hence, for search trees the occurs function can be rewritten as follows:
 
-``` haskell
-```
+![image](media/Images/Chapter_8_image_7_28.png)
 
 This definition is more efficient than the previous version, because it only traverses one path down the tree, rather than potentially the entire tree.
 
@@ -283,20 +280,17 @@ x /= y = not (x == y)
 
 This declaration states that for a type a to be an instance of the class Eq, it must support equality and inequality operators of the specified types. In fact, because a *default definition* has already been included for the /= operator, declaring an instance only requires a definition for the == operator. For example, the type Bool can be made into an equality type as follows:
 
-``` haskell
-```
+![image](media/Images/Chapter_8_image_8_22.png)
 
 Only types that are declared using the data and newtype mechanisms can be made into instances of classes. Note also that default definitions can be overridden in instance declarations if desired. For example, for some equality types there may be a more efficient or appropriate way to decide if two values are different than simply checking if they are not equal.
 
 Classes can also be extended to form new classes. For example, the class Ord of types whose values are totally ordered is declared in the standard prelude as an extension of the class Eq as follows:
 
-``` haskell
-```
+![image](media/Images/Chapter_8_image_9_20.png)
 
 That is, for a type to be an instance of Ord it must be an instance of Eq, and support six additional operators. Because default definitions have already been included for min and max, declaring an equality type (such as Bool) as an ordered type only requires defining the four comparison operators:
 
-``` haskell
-```
+![image](media/Images/Chapter_8_image_9_21.png)
 
 ##### Derived instances
 
@@ -344,22 +338,21 @@ We conclude this chapter with two extended programming examples. For our first e
 
 Consider a language of propositions built up from basic values (*False*,*True*) and variables (*A, B,* ...*, Z*) using negation (¬), conjunction (^), implication (⇒), and parentheses. For example, the following are all propositions:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_8_image_11_9.png)
+![image](media/Images/Chapter_8_image_11_9.png)
 
 The meaning of the logical operators can be defined using *truth tables*, which give the resulting value for each combination of argument values:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_8_image_11_10.png)
+![image](media/Images/Chapter_8_image_11_10.png)
 
 (To save space in such tables, we abbreviate the basic values by *F* and *T* .) For example, the truth table for conjunction states that *A* ^ *B* returns *True* if both *A* and *B* are *True*, and *False* otherwise. Using these definitions, the truth table for any proposition can then be constructed. In the case of our four example propositions, the resulting tables are as follows:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_8_image_11_11.png)
+![image](media/Images/Chapter_8_image_11_11.png)
 
 These tables show that the second and fourth propositions are tautologies, because their result value is always *True*, while the first and third are not tautologies, because their result is *False* in at least one case.
 
 The first step towards defining a function that decides if a proposition is a tautology is to declare a type for propositions, with one constructor for each of the five possible forms that a proposition can have:
 
-``` haskell
-```
+![image](media/Images/Chapter_8_image_11_12.png)
 
 Note that an explicit constructor for parentheses is not required, as parentheses within Haskell itself can be used to indicate grouping. For example, the four propositions above can be represented as follows:
 
@@ -383,15 +376,13 @@ type Subst = Assoc Char Bool
 
 For example, the substitution \[(’A’,False),(’B’,True)\] assigns the variable A to False, and B to True. A function that evaluates a proposition given a substitution for its variables can now be defined by pattern matching on the five possible forms that the proposition can have:
 
-``` haskell
-```
+![image](media/Images/Chapter_8_image_12_26.png)
 
 For example, the value of a constant proposition is simply the constant itself, the value of a variable is obtained by looking up its value in the substitution, and the value of a conjunction is given by taking the conjunction of the values of the two argument propositions. Note that the logical implication operator ⇒ is implemented simply by the \<= ordering on logical values.
 
 To decide if a proposition is a tautology, we will consider all possible substitutions for the variables that it contains. First of all, we define a function that returns a list of all the variables in a proposition:
 
-``` haskell
-```
+![image](media/Images/ch8-02.png)
 
 For example, vars p2 = \[’A’,’B’,’A’\]. Note that this function does not remove duplicates, which will be done separately later on.
 
@@ -413,12 +404,11 @@ One way to achieve this behaviour is to observe that each component list corresp
 
 This idea leads to the following definition for bools, in terms of the function int2bin :: Int -\> \[Bit\] from chapter 7 that converts a non-negative integer into a binary number represented as a list of bits:
 
-``` haskell
-```
+![image](media/Images/Chapter_8_image_13_25.png)
 
 There is, however, a simpler way to define bools, which can be revealed by thinking about the structure of the resulting lists. For example, we can observe that bools 3 contains two copies of bools 2, the first preceded by False in each case, and the second preceded by True in each case:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_8_image_14_29.png)
+![image](media/Images/Chapter_8_image_14_29.png)
 
 This observation leads to a recursive definition for bools. In the base case, bools 0, we return all lists of zero logical values, of which the empty list is the only one. In the recursive case, bools n, we take two copies of the lists produced by bools (n-1), place False in front of each list in the first copy, True in front of each list in the second, and append the results:
 
@@ -509,13 +499,11 @@ data Op = EVAL Expr | ADD Int
 
 The meaning of the two operations will be explained shortly. We now define a function that evaluates an expression in the context of a control stack:
 
-``` haskell
-```
+![image](media/Images/Chapter_8_image_16_22.png)
 
 That is, if the expression is an integer, it is already fully evaluated, and we begin executing the control stack. If the expression is an addition, we evaluate the first argument, x, placing the operation EVAL y on top of the control stack to indicate that the second argument, y, should be evaluated once evaluation of the first argument is completed. In turn, we define the function that executes a control stack in the context of an integer argument:
 
-``` haskell
-```
+![image](media/Images/Chapter_8_image_16_23.png)
 
 That is, if the control stack is empty, we return the integer argument as the result of the execution. If the top of the stack is an operation EVAL y, we evaluate the expression y, placing the operation ADD n on top of the remaining stack to indicate that the current integer argument, n, should be added together with the result of evaluating y once this is completed. And, finally, if the top of the stack is an operation ADD n, evaluation of the two arguments of an addition expression is now complete, and we execute the remaining control stack in the context of the sum of the two resulting integer values.
 
@@ -617,7 +605,7 @@ instance Eq a => Eq [a] where
 ...
 ```
 
-8.Extend the tautology checker to support the use of logical disjunction ![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/ch8-01.png) and equivalence (⇔) in propositions.
+8.Extend the tautology checker to support the use of logical disjunction ![image](media/Images/ch8-01.png) and equivalence (⇔) in propositions.
 
 9.Extend the abstract machine to support the use of multiplication.
 

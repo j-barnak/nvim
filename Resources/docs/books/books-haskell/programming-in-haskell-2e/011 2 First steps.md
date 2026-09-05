@@ -113,7 +113,7 @@ f a b + c*d
 
 Moreover, function application has higher priority than all other operators in the language. For example, f a + b means (f a) + b rather than f (a + b). The following table gives a few further examples to illustrate the differences between function application in mathematics and in Haskell:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_2_image_4_13.png)
+![image](media/Images/Chapter_2_image_4_13.png)
 
 Note that parentheses are still required in the Haskell expression f (g x) above, because f g x on its own would be interpreted as the application of the function f to two arguments g and x, whereas the intention is that f is applied to one argument, namely the result of applying the function g to an argument x. A similar remark holds for the expression f x (g y).
 
@@ -176,7 +176,7 @@ GHCi does not automatically reload scripts when they are modified, so a reload c
 
 For reference, the table in figure 2.1 summarises the meaning of some of the most commonly used GHCi commands. Note that any command can be abbreviated by its first character. For example, :load can be abbreviated by :l. The command :set editor is used to set the text editor that is used by the system. For example, if you wish to use vim you would enter :set editor vim. The command :type is explained in more detail in the next chapter.
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_2_image_6_15.png)
+![image](media/Images/Chapter_2_image_6_15.png)
 
 **Figure 2.1** Useful GHCi commands
 
@@ -188,7 +188,7 @@ myFunfun1arg_2x’
 
 The following list of *keywords* have a special meaning in the language, and cannot be used as the names of functions or their arguments:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_2_image_6_16.png)
+![image](media/Images/Chapter_2_image_6_16.png)
 
 By convention, list arguments in Haskell usually have the suffix s on their name to indicate that they may contain multiple values. For example, a list of numbers might be named ns, a list of arbitrary values might be named xs, and a list of lists of characters might be named css.
 

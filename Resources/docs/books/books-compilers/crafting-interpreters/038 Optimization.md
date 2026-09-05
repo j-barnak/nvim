@@ -164,7 +164,7 @@ However, we can take advantage of the fact that we know more about our problem t
 
 Because we’re clever bit twiddlers, we know a faster way to calculate the remainder of a number modulo a power of two: **bit masking**. Let’s say we want to calculate 229 modulo 64. The answer is 37, which is not particularly apparent in decimal, but is clearer when you view those numbers in binary:
 
-![The bit patterns resulting from 229 % 64 = 37 and 229 & 63 = 37.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/optimization/mask.png)
+![The bit patterns resulting from 229 % 64 = 37 and 229 & 63 = 37.](media/image/optimization/mask.png)
 
 On the left side of the illustration, notice how the result (37) is simply the dividend (229) with the highest two bits shaved off? Those two highest bits are the bits at or to the left of the divisor’s single 1 bit.
 
@@ -247,7 +247,7 @@ And also when the linear probing wraps around.
 
 Let’s see if our fixes were worth it. I tweaked that zoological benchmark to count how many batches of 10,000 calls it can run in ten seconds. More batches equals faster performance. On my machine using the unoptimized code, the benchmark gets through 3,192 batches. After this optimization, that jumps to 6,249.
 
-![Bar chart comparing the performance before and after the optimization.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/optimization/hash-chart.png)
+![Bar chart comparing the performance before and after the optimization.](media/image/optimization/hash-chart.png)
 
 That’s almost exactly twice as much work in the same amount of time. We made the VM twice as fast (usual caveat: on this benchmark). That is a massive win when it comes to optimization. Usually you feel good if you can claw a few percentage points here or there. Since methods, fields, and global variables are so prevalent in Lox programs, this tiny optimization improves performance across the board. Almost every Lox program benefits.
 
@@ -273,7 +273,7 @@ Like the heading says, this optimization is called **NaN boxing** or sometimes *
 
 On a 64-bit machine, our Value type takes up 16 bytes. The struct has two fields, a type tag and a union for the payload. The largest fields in the union are an Obj pointer and a double, which are both 8 bytes. To keep the union field aligned to an 8-byte boundary, the compiler adds padding after the tag too:
 
-![Byte layout of the 16-byte tagged union Value.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/optimization/union.png)
+![Byte layout of the 16-byte tagged union Value.](media/image/optimization/union.png)
 
 That’s pretty big. If we could cut that down, then the VM could pack more values into the same amount of memory. Most computers have plenty of RAM these days, so the direct memory savings aren’t a huge deal. But a smaller representation means more Values fit in a cache line. That means fewer cache misses, which affects *speed*.
 
@@ -291,7 +291,7 @@ In the eyes of your computer, a 64-bit, double-precision, IEEE floating-point nu
 
 That’s a lot of hyphens for one sentence.
 
-![Bit representation of an IEEE 754 double.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/optimization/double.png)
+![Bit representation of an IEEE 754 double.](media/image/optimization/double.png)
 
 - Starting from the right, the first 52 bits are the **fraction**, **mantissa**, or **significand** bits. They represent the significant digits of the number, as a binary integer.
 
@@ -313,7 +313,7 @@ Quiet NaNs are supposed to be safer to use. They don’t represent useful numeri
 
 Every double with all of its exponent bits set and its highest mantissa bit set is a quiet NaN. That leaves 52 bits unaccounted for. We’ll avoid one of those so that we don’t step on Intel’s “QNaN Floating-Point Indefinite” value, leaving us 51 bits. Those remaining bits can be anything. We’re talking 2,251,799,813,685,248 unique quiet NaN bit patterns.
 
-![The bits in a double that make it a quiet NaN.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/optimization/nan.png)
+![The bits in a double that make it a quiet NaN.](media/image/optimization/nan.png)
 
 This means a 64-bit double has enough room to store all of the various different numeric floating-point values and *also* has room for another 51 bits of data that we can use however we want. That’s plenty of room to set aside a couple of bit patterns to represent Lox’s `nil`, `true`, and `false` values. But what about Obj pointers? Don’t pointers need a full 64 bits too?
 
@@ -548,7 +548,7 @@ typedef uint64_t Value;
 
 It would be nice if C supported binary literals. But if you do the conversion, you’ll see that value is the same as this:
 
-![The quiet NaN bits.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/optimization/qnan.png)
+![The quiet NaN bits.](media/image/optimization/qnan.png)
 
 This is exactly all of the exponent bits, plus the quiet NaN bit, plus one extra to dodge that Intel value.
 
@@ -576,7 +576,7 @@ typedef uint64_t Value;
 
 Our representation of `nil` is thus all of the bits required to define our quiet NaN representation along with the `nil` type tag bits:
 
-![The bit representation of the nil value.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/optimization/nil.png)
+![The bit representation of the nil value.](media/image/optimization/nil.png)
 
 In code, we check the bits like so:
 
@@ -631,7 +631,7 @@ You can guess how we define the `true` and `false` values.
 
 The bits look like this:
 
-![The bit representation of the true and false values.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/optimization/bools.png)
+![The bit representation of the true and false values.](media/image/optimization/bools.png)
 
 To convert a C bool into a Lox Boolean, we rely on these two singleton values and the good old conditional operator.
 
@@ -711,7 +711,7 @@ This is another value representation optimization called **pointer tagging**.
 
 If the sign bit is set, then the remaining low bits store the pointer to the Obj:
 
-![Bit representation of an Obj\* stored in a Value.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/optimization/obj.png)
+![Bit representation of an Obj\* stored in a Value.](media/image/optimization/obj.png)
 
 To convert a raw Obj pointer to a Value, we take the pointer and set all of the quiet NaN bits and the sign bit.
 

@@ -542,7 +542,7 @@ std::cout \<\< city \<\< ": " \<\< population \<\< '\n';
 
 In the loop body, you can safely use the city and population variables.
 
-![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-117_1.png)
+![](media/index-117_1.png)
 
 Initially structured bindings had some limitations in C++17. For example you couldn’t declare them static or constexpr or capture in a lambda. Those issues were removed in C++20 and backported to C++17. The main idea is that a “binding” should behave like a regular variable.
 
@@ -628,7 +628,7 @@ To have a better solution, you have to store the “big vector” outside:
 
 std::cout \<\< i;
 
-![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-119_1.png)
+![](media/index-119_1.png)
 
  
 
@@ -744,7 +744,7 @@ a value type to a reference, it can introduce some unwanted effects in tha code 
 
 This chapter brought several interesting techniques when defining a new variable. Thanks to auto or decltype, you can ask the compiler to infer the type from the expression or an initializer. This might help when a type has a long or complex name (for example, an iterator) or when the type is unknown (like a type of a closure/lambda object). auto works similarly to template type deduction. Hence, it removes constness or references from types appearing in the initializer. On the other hand, decltype can create an exact type based on other variables and expressions, including their value category. While auto and decltype were added in C++11, in C++17, we got a nice “extension” called structured bindings. Bindings can unpack pairs, tuples, arrays, and simple structures, leading to simpler syntax and more expressive code.
 
-![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-122_1.png)
+![](media/index-122_1.png)
 
 Since C++17, you can also rely on Class Type Argument Deduction (CTAD). This feature allows you to write std::vector nums { 1, 2, 3} and deduces the proper template parameter for the class template. Still, this topic goes beyond the book and won’t be covered. You can read more in books like “C++ Templates: The
 

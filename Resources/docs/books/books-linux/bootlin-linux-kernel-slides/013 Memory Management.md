@@ -270,7 +270,7 @@ scalability, debugging and other features. Not recommended for systems with more
 
 16 MB of RAM.
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-291_1.png)
+![](media/index-291_1.png)
 
  
 
@@ -434,10 +434,10 @@ Virtual memory and Linux, Alan Ott and Matt Porter, 2016 Great and much more com
 
 <https://bit.ly/2Af1G2i> (video: <https://bit.ly/2Bwwv0C>[)](https://bit.ly/2Bwwv0C)
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-298_1.jpg)
+![](media/index-298_1.jpg)
 
  
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 284/436
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-299_1.jpg)
+![](media/index-299_1.jpg)

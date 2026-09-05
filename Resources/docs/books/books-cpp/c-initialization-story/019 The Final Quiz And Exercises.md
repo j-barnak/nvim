@@ -272,7 +272,7 @@ You can practice with the following Compiler Explorer solution: [Point tests @Co
 
 When you run the code, you’ll see that the test fail:
 
-![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-258_1.png)
+![](media/index-258_1.png)
 
  
 
@@ -282,7 +282,7 @@ Your task is to improve the code so that tests pass:
 
 The Final Quiz And Exercises 244
 
-![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-259_1.png)
+![](media/index-259_1.png)
 
  
 
@@ -402,7 +402,7 @@ As you can see, the example creates several CountedType instances and then check
 
 Start from the following runnable code sample [@Wandbox³](https://wandbox.org/permlink/GuGzTWKF8irN2YLz), Click “Clone & Edit” to start the example, and make changes.
 
-![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-261_1.png)
+![](media/index-261_1.png)
 
  
 
@@ -460,7 +460,7 @@ In the chapters about constructors and the destructor, we discussed when a compi
 
 A C++ expert Howard Hinnant, a few years ago created a diagram⁵ with the rules:
 
-![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-263_1.png)
+![](media/index-263_1.png)
 
  
 

@@ -122,11 +122,11 @@ Practical lab - Output-only serial port driver
 
 ▶ Extend the driver started in the previous lab by
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-318_1.png)
+![](media/index-318_1.png)
 
 registering it into the *misc* subsystem.
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-318_2.png)
+![](media/index-318_2.png)
 
 ▶ Implement serial output functionality through
 
@@ -138,4 +138,4 @@ the *misc* subsystem.
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 304/436
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-319_1.jpg)
+![](media/index-319_1.jpg)

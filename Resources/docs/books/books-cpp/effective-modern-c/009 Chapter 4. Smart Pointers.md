@@ -36,21 +36,21 @@ The smart pointer APIs are remarkably varied. About the only functionality commo
 
 When you reach for a smart pointer, std::unique_ptr should generally be the one closest at hand. It’s reasonable to assume that, by default, std::unique_ptrs are the same size as raw pointers, and for most operations (including dereferencing), they execute exactly the same instructions. This means you can use them even in situa-118 \| Item 17
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-137_1.jpg)
+![](media/index-137_1.jpg)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-137_2.png)
+![](media/index-137_2.png)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-137_3.jpg)
+![](media/index-137_3.jpg)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-137_4.png)
+![](media/index-137_4.png)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-137_5.jpg)
+![](media/index-137_5.jpg)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-137_6.png)
+![](media/index-137_6.png)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-137_7.jpg)
+![](media/index-137_7.jpg)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-137_8.png)
+![](media/index-137_8.png)
 
 tions where memory and cycles are tight. If a raw pointer is small enough and fast enough for you, a std::unique_ptr almost certainly is, too.
 
@@ -396,29 +396,29 @@ std::shared_ptr object is two pointers in size. That’s great news, but it shou
 
 **Item 19 \| 127**
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-146_1.jpg)
+![](media/index-146_1.jpg)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-146_2.png)
+![](media/index-146_2.png)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-146_3.jpg)
+![](media/index-146_3.jpg)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-146_4.png)
+![](media/index-146_4.png)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-146_5.jpg)
+![](media/index-146_5.jpg)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-146_6.png)
+![](media/index-146_6.png)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-146_7.jpg)
+![](media/index-146_7.jpg)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-146_8.png)
+![](media/index-146_8.png)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-146_9.jpg)
+![](media/index-146_9.jpg)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-146_10.png)
+![](media/index-146_10.png)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-146_11.jpg)
+![](media/index-146_11.jpg)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-146_12.png)
+![](media/index-146_12.png)
 
 It can’t. It may have to use more memory. However, that memory isn’t part of the std::shared_ptr object. It’s on the heap or, if the creator of the std::shared_ptr took advantage of std::shared_ptr support for custom allocators, it’s wherever the memory managed by the allocator is located. I remarked earlier that a
 
@@ -748,29 +748,29 @@ return objPtr;
 
 **136 \| Item 20**
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-155_1.jpg)
+![](media/index-155_1.jpg)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-155_2.png)
+![](media/index-155_2.png)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-155_3.jpg)
+![](media/index-155_3.jpg)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-155_4.png)
+![](media/index-155_4.png)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-155_5.jpg)
+![](media/index-155_5.jpg)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-155_6.png)
+![](media/index-155_6.png)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-155_7.jpg)
+![](media/index-155_7.jpg)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-155_8.png)
+![](media/index-155_8.png)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-155_9.jpg)
+![](media/index-155_9.jpg)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-155_10.png)
+![](media/index-155_10.png)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-155_11.jpg)
+![](media/index-155_11.jpg)
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-155_12.png)
+![](media/index-155_12.png)
 
 This implementation employs one of C++11’s hash table containers (std::unor dered_map), though it doesn’t show the WidgetID hashing and equality-comparison functions that would also have to be present.
 
@@ -1118,6 +1118,7 @@ class Widget { // in header "widget.h"
 
 public:
 
+Widget();
 
 …
 
@@ -1139,6 +1140,7 @@ Applying the Pimpl Idiom in C++98 could have Widget replace its data members wit
 
 public:
 
+Widget();
 
 ~Widget(); // dtor is needed—see below
 
@@ -1198,6 +1200,7 @@ class Widget { // in "widget.h"
 
 public:
 
+Widget();
 
 …
 
@@ -1205,6 +1208,7 @@ private:
 
 **Item 22 \| 149**
 
+struct Impl;
 
 **std::unique_ptr\<** Impl**\>** pImpl; // use smart pointer
 
@@ -1262,6 +1266,7 @@ class Widget { // as before, in "widget.h"
 
 public:
 
+Widget();
 
 **~Widget();** // *declaration only*
 
@@ -1269,6 +1274,7 @@ public:
 
 private: // as before
 
+struct Impl;
 
 std::unique_ptr\<Impl\> pImpl;
 
@@ -1318,6 +1324,7 @@ class Widget { // still in
 
 public: // "widget.h"
 
+Widget();
 
 ~Widget();
 
@@ -1327,6 +1334,7 @@ public: // "widget.h"
 
 private: // as before
 
+struct Impl;
 
 std::unique_ptr\<Impl\> pImpl;
 
@@ -1342,6 +1350,7 @@ class Widget { // still in "widget.h"
 
 public:
 
+Widget();
 
 ~Widget();
 
@@ -1353,6 +1362,7 @@ public:
 
 private: // as before
 
+struct Impl;
 
 std::unique_ptr\<Impl\> pImpl;
 
@@ -1390,6 +1400,7 @@ public:
 
 private: // as before
 
+struct Impl;
 
 std::unique_ptr\<Impl\> pImpl;
 
@@ -1431,6 +1442,7 @@ class Widget { // in "widget.h"
 
 public:
 
+Widget();
 
 … // *no declarations for dtor*
 
@@ -1438,6 +1450,7 @@ public:
 
 private:
 
+struct Impl;
 
 **std::shared_ptr**\<Impl\> pImpl; // std::shared_ptr
 

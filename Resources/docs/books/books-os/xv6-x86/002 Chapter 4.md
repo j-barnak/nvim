@@ -852,7 +852,7 @@ persistence crash recovery transaction inode
   
 DRAFT as of September 4, 2018 75 https://pdos.csail.mit.edu/6.828/xv6  
   
-![](/tmp/audit/iter1/epubregen/xv6-x86/media/a13c0f45d6bccc818b4ae24eae7b7ca0dc8fbf4c.jpg)  
+![](media/a13c0f45d6bccc818b4ae24eae7b7ca0dc8fbf4c.jpg)  
 Directory Inode  
   
 Logging Buffer cache  

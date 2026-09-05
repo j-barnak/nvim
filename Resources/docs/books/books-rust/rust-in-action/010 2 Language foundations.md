@@ -80,6 +80,7 @@ Listing 2.1
 
 Almost the shortest valid Rust program
 
+1 fn main() {
 
 2 println!("OK")
 
@@ -244,6 +245,7 @@ Adding integers using variables and declaring types
 
 **…or declared by the programmer**
 
+1 fn main() {
 
 **when creating variables.**
 
@@ -368,6 +370,7 @@ Numeric literals and basic operations on numbers in Rust
 
 **…which is done**
 
+1 fn main() {
 
 **on your behalf if you**
 
@@ -475,6 +478,7 @@ Listing 2.4
 
 Using base 2, base 8, and base 16 numeric literals
 
+1 fn main() {
 
 **The 0b prefix indicates**
 
@@ -629,6 +633,7 @@ IMPOSSIBLE TO COMPARE DIFFERENT TYPES
 
 Rust’s type safety requirements prevent comparisons between types. For example, this code does not compile:
 
+fn main() {
 
 let a: i32 = 10;
 
@@ -828,6 +833,7 @@ Rust includes some tolerances to allow comparisons between floating-point values
 
 These tolerances are defined as f32::EPSILON and f64::EPSILON. To be more precise, it’s possible to get closer to how Rust is behaving under the hood, as the following small example shows:
 
+fn main() {
 
 let result: f32 = 0.1 + 0.1;
 
@@ -847,6 +853,7 @@ NAN values poison other numbers. Almost all operations interacting with NAN retu
 
 This small program will always crash:
 
+fn main() {
 
 let x = (-42.0_f32).sqrt();
 
@@ -860,6 +867,7 @@ assert_eq!(x, x);
 
 To program defensively, make use of the is_nan() and is_finite() methods. Inducing a crash, rather than silently proceeding with a mathematical error, allows you to debug close to what has caused the problem. The following illustrates using the is_finite() method to bring about this condition:
 
+fn main() {
 
 let x: f32 = 1.0 / 0.0;
 
@@ -1373,6 +1381,7 @@ println!("{} is {}", n, description);
 
 This can be extended to other blocks including match like this:
 
+fn main() {
 
 let n = 654321;
 
@@ -1394,6 +1403,7 @@ println!("{} is {}", n, description);
 
 Perhaps most surprisingly, the break keyword also returns a value. This can be used to allow “infinite” loops to return values:
 
+fn main() {
 
 let n = loop {
 
@@ -1484,6 +1494,7 @@ Listing 2.8
 
 Using **match** to match multiple values
 
+1 fn main() {
 
 **The variable needle**
 
@@ -1605,6 +1616,7 @@ Listing 2.10
 
 Creating a reference to a large array
 
+fn main() {
 
 **r is a reference to a.**
 
@@ -1632,6 +1644,7 @@ Listing 2.11
 
 Searching for an integer in an array of integers
 
+1 fn main() {
 
 2 let needle = 0o204;
 
@@ -2317,6 +2330,7 @@ Listing 2.18
 
 Searching for a simple pattern within lines of a string
 
+1 fn main() {
 
 2 let search_term = "picture";
 
@@ -2431,6 +2445,7 @@ Listing 2.19
 
 Manually incrementing an index variable
 
+1 fn main() {
 
 **A backslash escapes the newline**
 
@@ -2484,6 +2499,7 @@ Listing 2.20
 
 Automatically incrementing an index variable
 
+1 fn main() {
 
 2 let search_term = "picture";
 
@@ -2558,6 +2574,7 @@ Creating arrays takes two forms. We can provide a comma-delimited list within sq
 
 Defining arrays and iterating over their elements
 
+1 fn main() {
 
 2 let one = \[1, 2, 3\];
 
@@ -2951,6 +2968,7 @@ Listing 2.23
 
 Matching on exact strings with the **contains()** method
 
+fn main() {
 
 let search_term = "picture";
 
@@ -2994,6 +3012,7 @@ use regex::Regex;
 
 **crashing if an error occurs.**
 
+fn main() {
 
 **Handling errors more robustly**
 

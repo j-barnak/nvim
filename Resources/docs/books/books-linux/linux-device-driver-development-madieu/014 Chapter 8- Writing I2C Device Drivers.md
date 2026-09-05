@@ -4,7 +4,7 @@
 
 The following diagram shows various devices (also known as slaves) connected to an I2C bus:
 
-![Figure 8.1 – I2C bus and device representation ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_08.jpg)
+![Figure 8.1 – I2C bus and device representation ](media/image/B17934_08.jpg)
 
 Figure 8.1 – I2C bus and device representation
 

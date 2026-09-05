@@ -102,6 +102,7 @@ C Standards
 
 Summary
 
+Exercises
 
 2FUNDAMENTALS OF SYSTEM PROGRAMMING
 
@@ -157,6 +158,7 @@ Extracting Numbers from Strings
 
 Summary
 
+Exercises
 
 3TIME, DATES, AND LOCALES
 
@@ -210,6 +212,7 @@ Locale Objects
 
 Summary
 
+Exercises
 
 4BASIC CONCEPTS OF FILE I/O
 
@@ -259,6 +262,7 @@ Buffering and Running Time
 
 Summary
 
+Exercises
 
 5FILE I/O AND LOGIN ACCOUNTING
 
@@ -310,6 +314,7 @@ User Space Buffering of Input
 
 Summary
 
+Exercises
 
 6OVERVIEW OF FILESYSTEMS AND FILES
 
@@ -387,6 +392,7 @@ Testing spl_statfs
 
 Summary
 
+Exercises
 
 7THE DIRECTORY HIERARCHY
 
@@ -442,6 +448,7 @@ A Strategy for Implementing the pwd Command
 
 Summary
 
+Exercises
 
 8INTRODUCTION TO SIGNALS
 
@@ -483,6 +490,7 @@ Guidance on Designing Signal Handlers
 
 Summary
 
+Exercises
 
 9TIMERS AND SLEEP FUNCTIONS
 
@@ -494,6 +502,7 @@ Sleep Functions and Timers
 
 Time, Clocks, and Timing
 
+Overview
 
 Hardware Clocks and Hardware Timers
 
@@ -513,6 +522,7 @@ A Progress Bar Based on Alarms
 
 Interval Timers
 
+Overview
 
 POSIX Timers
 
@@ -524,6 +534,7 @@ Real-Time Signals and Multiple Timers
 
 Summary
 
+Exercises
 
 10
 
@@ -579,6 +590,7 @@ A Simple ps Command
 
 Summary
 
+Exercises
 
 11
 
@@ -624,6 +636,7 @@ The system() Library Function
 
 Summary
 
+Exercises
 
 12
 
@@ -643,6 +656,7 @@ Summary of the Common IPC Facilities
 
 POSIX Shared Memory
 
+Overview
 
 The Shared Memory API
 
@@ -654,6 +668,7 @@ Race Conditions
 
 Semaphores
 
+Overview
 
 System V Semaphores
 
@@ -671,6 +686,7 @@ A Program Receiving Asynchronous Notifications
 
 Summary
 
+Exercises
 
 13
 
@@ -708,6 +724,7 @@ Program
 
 Summary
 
+Exercises
 
 14
 
@@ -719,6 +736,7 @@ System Logging Facilities
 
 Daemons
 
+Overview
 
 Converting Processes into Daemons
 
@@ -740,6 +758,7 @@ The Concurrent Server
 
 Summary
 
+Exercises
 
 15
 
@@ -789,6 +808,7 @@ A Multithreaded Concurrent Server
 
 Summary
 
+Exercises
 
 16
 
@@ -846,6 +866,7 @@ Read-Write Lock Example
 
 Summary
 
+Exercises
 
 17
 
@@ -859,6 +880,7 @@ A Program to Demonstrate Nonblocking Input
 
 Signal-Driven I/O
 
+Overview
 
 Procedure for Enabling Signal-Driven I/O
 
@@ -870,6 +892,7 @@ A Program Using Signal-Driven I/O
 
 POSIX Asynchronous I/O
 
+Overview
 
 The AIO API
 
@@ -879,6 +902,7 @@ An AIO-Based Implementation of spl_cp1.c
 
 Multiplexed I/O
 
+Overview
 
 The select() System Call
 
@@ -886,6 +910,7 @@ An Example Program
 
 Summary
 
+Exercises
 
 18
 
@@ -931,6 +956,7 @@ The Form of an ioctl() Call
 
 Summary
 
+Exercises
 
 19
 
@@ -1000,6 +1026,7 @@ Concluding Thoughts
 
 Summary
 
+Exercises
 
 A
 

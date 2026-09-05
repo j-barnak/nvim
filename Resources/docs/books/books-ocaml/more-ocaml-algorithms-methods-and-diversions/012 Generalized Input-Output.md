@@ -26,11 +26,11 @@ We need a way to group them together, and to refer to them easily. A record is i
 
 Now we can build an input from an OCaml in_channel easily (we have re-used some of the standard OCaml names):
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00104.jpg)
+> ![](media/images/00104.jpg)
 
 Notice that the original channel is now hidden inside the input – the functions `pos_in `and `input_char `instead simply take the unit `() `as their input. Let us assure ourselves that this structure also works for abstracting over strings:
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00107.jpg)
+> ![](media/images/00107.jpg)
 
 We allocate a local reference, `pos`, to hold the current position. It cannot be accessed directly, only manipulated through the exposed record of functions. The `pos_in `and `in_channel_length `functions are simple. The `seek_in `function needs to check that the position is positive, but we allow it to be beyond the end, for compatibility with OCaml channels. The `input_char `function checks it is not trying to read beyond the end of the string, then reads a character, advances the position, and returns the character.
 
@@ -48,17 +48,17 @@ we wish to produce
 
 removing spaces, punctuation and making the words lower case. First, let us define a function to rewind the input by one character (useful when we have read a character and decided we do not wish to consume it), and another, a predicate to determine if a character is considered a non-letter, and thus may be skipped:
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00113.jpg)
+> ![](media/images/00113.jpg)
 
 Now, we can write a function `skip_characters `to skip any punctuation from the current point. It may raise `End_of_file`, of course. Then, we have the function `collect_characters `which, given a fresh Buffer.t and an input which has been processed by `skip_characters`, returns the string containing the next sequence of interesting characters, or raises `End_of_file `if we are at the end of the input.
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00119.jpg)
+> ![](media/images/00119.jpg)
 
 Finally, we can write `read_word `which finds the next word, if there is one. Then `read_words `collects them all in a list, and turns them in to lower case using the Standard Library function `String.lowercase`. These functions form Figure 4.1. For example:
 
 ------------------------------------------------------------------------
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00124.jpg)
+> ![](media/images/00124.jpg)
 
  
 
@@ -75,7 +75,7 @@ What do we need for a generic output? We must have an `output_char `function to 
 
 ------------------------------------------------------------------------
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00127.jpg)
+> ![](media/images/00127.jpg)
 
  
 
@@ -85,7 +85,7 @@ What do we need for a generic output? We must have an `output_char `function to 
 
 Note that whilst we have unified the interface for writing to strings and channels, they remain different things: the string has limited length, and if the length is not all used it will contain junk at the end. Let us use these functions to build a function which writes a list of integers to any output:
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00132.jpg)
+> ![](media/images/00132.jpg)
 
 Note that `o.output_char `has an appropriate type for use with standard functions such as `String.iter`. We can test with an output built from standard output:
 

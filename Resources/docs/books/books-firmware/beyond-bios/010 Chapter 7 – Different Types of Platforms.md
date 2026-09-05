@@ -42,19 +42,19 @@ DOI 10.1515/9781501505690-009
 
 **98** \| Chapter 7 – Different Types of Platforms
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-117_1.png)
+![](media/index-117_1.png)
 
  
 
 **Figure 7.1:** Typical PC System
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-117_2.png)
+![](media/index-117_2.png)
 
  
 
 **Figure 7.2:** System Address Map
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-117_3.png)
+![](media/index-117_3.png)
 
  
 
@@ -92,13 +92,13 @@ the platform concept can span many different topologies. These topologies includ
 
 I/O board.
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-118_1.png)
+![](media/index-118_1.png)
 
  
 
 **Figure 7.4:** An Intel Atom®-based System **100** \| Chapter 7 – Different Types of Platforms
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-118_2.png)
+![](media/index-118_2.png)
 
  
 
@@ -116,7 +116,7 @@ PCH is also known as the “South Bridge.” In addition, for the SMBUS (System 
 
 status code PEIM would describe a platform-specific means by which to emit debug information, such as an 8-bit code emitted to I/O port 80-hex
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-119_1.png)
+![](media/index-119_1.png)
 
  
 
@@ -500,7 +500,7 @@ the Super I/O vendor may deliver the ISA ACPI driver, the silicon vendor PCI roo
 
 reusable components based upon the PC/AT ISA hardware.
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-124_1.png)
+![](media/index-124_1.png)
 
  
 
@@ -514,7 +514,7 @@ ure 7.14, provide for other capabilities. These include the platform-specific me
 
 **106** \| Chapter 7 – Different Types of Platforms
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-125_1.png)
+![](media/index-125_1.png)
 
  
 
@@ -596,7 +596,7 @@ performance options of the storage channel can be abstracted via the IDE Control
 
 program or diagnostic can change the PCH settings of this feature.
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-126_1.png)
+![](media/index-126_1.png)
 
  
 

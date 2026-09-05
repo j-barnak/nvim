@@ -8,7 +8,7 @@
 
 Our second interpreter, clox, has three phases—scanner, compiler, and virtual machine. A data structure joins each pair of phases. Tokens flow from scanner to compiler, and chunks of bytecode from compiler to VM. We began our implementation near the end with chunks and the VM. Now, we’re going to hop back to the beginning and build a scanner that makes tokens. In the next chapter, we’ll tie the two ends together with our bytecode compiler.
 
-![Source code → scanner → tokens → compiler → bytecode chunk → VM.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/scanning-on-demand/pipeline.png)
+![Source code → scanner → tokens → compiler → bytecode chunk → VM.](media/image/scanning-on-demand/pipeline.png)
 
 I’ll admit, this is not the most exciting chapter in the book. With two implementations of the same language, there’s bound to be some redundancy. I did sneak in a few interesting differences compared to jlox’s scanner. Read on to see what they are.
 
@@ -322,7 +322,7 @@ As our scanner chews through the user’s source code, it tracks how far it’s 
 
 There are surprisingly few fields. The `start` pointer marks the beginning of the current lexeme being scanned, and `current` points to the current character being looked at.
 
-![The start and current fields pointing at 'print bacon;'. Start points at 'b' and current points at 'o'.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/scanning-on-demand/fields.png)
+![The start and current fields pointing at 'print bacon;'. Start points at 'b' and current points at 'o'.](media/image/scanning-on-demand/fields.png)
 
 Here, we are in the middle of scanning the identifier `bacon`. The current character is `o` and the character we most recently consumed is `c`.
 
@@ -547,7 +547,7 @@ static Token errorToken(const char* message) {
 
 This part of the chapter is pretty dry, so here’s a picture of an axolotl.
 
-![A drawing of an axolotl.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/scanning-on-demand/axolotl.png)
+![A drawing of an axolotl.](media/image/scanning-on-demand/axolotl.png)
 
 The only difference is that the “lexeme” points to the error message string instead of pointing into the user’s source code. Again, we need to ensure that the error message sticks around long enough for the compiler to read it. In practice, we only ever call this function with C string literals. Those are constant and eternal, so we’re fine.
 
@@ -918,7 +918,7 @@ What about “cardigan”? We do have a keyword in Lox that starts with “c”:
 
 Here’s a visual representation of that branching character-inspection logic:
 
-![A trie that contains all of Lox's keywords.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/scanning-on-demand/keywords.png)
+![A trie that contains all of Lox's keywords.](media/image/scanning-on-demand/keywords.png)
 
 Read down each chain of nodes and you’ll see Lox’s keywords emerge.
 
@@ -938,7 +938,7 @@ In a DFA, you have a set of *states* with *transitions* between them, forming a 
 
 Our keyword tree is exactly a DFA that recognizes Lox keywords. But DFAs are more powerful than simple trees because they can be arbitrary *graphs*. Transitions can form cycles between states. That lets you recognize arbitrarily long strings. For example, here’s a DFA that recognizes number literals:
 
-![A syntax diagram that recognizes integer and floating point literals.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/scanning-on-demand/numbers.png)
+![A syntax diagram that recognizes integer and floating point literals.](media/image/scanning-on-demand/numbers.png)
 
 This style of diagram is called a [**syntax diagram**](https://en.wikipedia.org/wiki/Syntax_diagram) or the more charming **railroad diagram**. The latter name is because it looks something like a switching yard for trains.
 

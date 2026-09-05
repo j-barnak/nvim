@@ -20,7 +20,7 @@ Here’s your very first taste of Lox:
 
 Your first taste of Lox, the language, that is. I don’t know if you’ve ever had the cured, cold-smoked salmon before. If not, give it a try too.
 
-``` c
+```
 // Your first Lox program!
 print "Hello, world!";
 ```
@@ -439,13 +439,13 @@ In class-based languages, there are two core concepts: instances and classes. In
 
 In a statically typed language like C++, method lookup typically happens at compile time based on the *static* type of the instance, giving you **static dispatch**. In contrast, **dynamic dispatch** looks up the class of the actual instance object at runtime. This is how virtual methods in statically typed languages and all methods in a dynamically typed language like Lox work.
 
-![How fields and methods are looked up on classes and instances](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/the-lox-language/class-lookup.png)
+![How fields and methods are looked up on classes and instances](media/image/the-lox-language/class-lookup.png)
 
 Prototype-based languages merge these two concepts. There are only objects—no classes—and each individual object may contain state and methods. Objects can directly inherit from each other (or “delegate to” in prototypal lingo):
 
 In practice the line between class-based and prototype-based languages blurs. JavaScript’s “constructor function” notion [pushes you pretty hard](http://gameprogrammingpatterns.com/prototype.html#what-about-javascript) towards defining class-like objects. Meanwhile, class-based Ruby is perfectly happy to let you attach methods to individual instances.
 
-![How fields and methods are looked up in a prototypal system](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/the-lox-language/prototype-lookup.png)
+![How fields and methods are looked up in a prototypal system](media/image/the-lox-language/prototype-lookup.png)
 
 This means that in some ways prototypal languages are more fundamental than classes. They are really neat to implement because they’re *so* simple. Also, they can express lots of unusual patterns that classes steer you away from.
 
@@ -477,7 +477,7 @@ The body of a class contains its methods. They look like function declarations b
 
 They are still just as fun, though.
 
-``` c
+```
 // Store it in variables.
 var someVariable = Breakfast;
 

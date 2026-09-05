@@ -111,17 +111,17 @@ In our interpreter, environments are the dynamic manifestation of static scopes.
 
 Let’s walk through that problematic example and see what the environments look like at each step. First, we declare `a` in the global scope.
 
-![The global environment with 'a' defined in it.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/resolving-and-binding/environment-1.png)
+![The global environment with 'a' defined in it.](media/image/resolving-and-binding/environment-1.png)
 
 That gives us a single environment with a single variable in it. Then we enter the block and execute the declaration of `showA()`.
 
-![A block environment linking to the global one.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/resolving-and-binding/environment-2.png)
+![A block environment linking to the global one.](media/image/resolving-and-binding/environment-2.png)
 
 We get a new environment for the block. In that, we declare one name, `showA`, which is bound to the LoxFunction object we create to represent the function. That object has a `closure` field that captures the environment where the function was declared, so it has a reference back to the environment for the block.
 
 Now we call `showA()`.
 
-![An empty environment for showA()'s body linking to the previous two. 'a' is resolved in the global environment.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/resolving-and-binding/environment-3.png)
+![An empty environment for showA()'s body linking to the previous two. 'a' is resolved in the global environment.](media/image/resolving-and-binding/environment-3.png)
 
 The interpreter dynamically creates a new environment for the function body of `showA()`. It’s empty since that function doesn’t declare any variables. The parent of that environment is the function’s closure—the outer block environment.
 
@@ -129,11 +129,11 @@ Inside the body of `showA()`, we print the value of `a`. The interpreter looks u
 
 Next, we declare the second `a`, this time inside the block.
 
-![The block environment has both 'a' and 'showA' now.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/resolving-and-binding/environment-4.png)
+![The block environment has both 'a' and 'showA' now.](media/image/resolving-and-binding/environment-4.png)
 
 It’s in the same block—the same scope—as `showA()`, so it goes into the same environment, which is also the same environment `showA()`’s closure refers to. This is where it gets interesting. We call `showA()` again.
 
-![An empty environment for showA()'s body linking to the previous two. 'a' is resolved in the block environment.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/resolving-and-binding/environment-5.png)
+![An empty environment for showA()'s body linking to the previous two. 'a' is resolved in the block environment.](media/image/resolving-and-binding/environment-5.png)
 
 We create a new empty environment for the body of `showA()` again, wire it up to that closure, and run the body. When the interpreter walks the chain of environments to find `a`, it now discovers the *new* `a` in the block environment. Boo.
 
@@ -162,7 +162,7 @@ This sounds like it might waste tons of memory and time copying the structure fo
 
 If we were to apply that technique to Environment, then every time you declared a variable it would return a *new* environment that contained all of the previously declared variables along with the one new name. Declaring a variable would do the implicit “split” where you have an environment before the variable is declared and one after:
 
-![Separate environments before and after the variable is declared.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/resolving-and-binding/split.png)
+![Separate environments before and after the variable is declared.](media/image/resolving-and-binding/split.png)
 
 A closure retains a reference to the Environment instance in play when the function was declared. Since any later declarations in that block would produce new Environment objects, the closure wouldn’t see the new variables and our bug would be fixed.
 
@@ -182,11 +182,11 @@ There are a lot of ways we could store the binding between a variable and its de
 
 Instead, we’ll store the resolution in a way that makes the most out of our existing Environment class. Recall how the accesses of `a` are interpreted in the problematic example.
 
-![An empty environment for showA()'s body linking to the previous two. 'a' is resolved in the global environment.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/resolving-and-binding/environment-3.png)
+![An empty environment for showA()'s body linking to the previous two. 'a' is resolved in the global environment.](media/image/resolving-and-binding/environment-3.png)
 
 In the first (correct) evaluation, we look at three environments in the chain before finding the global declaration of `a`. Then, when the inner `a` is later declared in a block scope, it shadows the global one.
 
-![An empty environment for showA()'s body linking to the previous two. 'a' is resolved in the block environment.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/resolving-and-binding/environment-5.png)
+![An empty environment for showA()'s body linking to the previous two. 'a' is resolved in the block environment.](media/image/resolving-and-binding/environment-5.png)
 
 The next lookup walks the chain, finds `a` in the *second* environment and stops there. Each environment corresponds to a single lexical scope where variables are declared. If we could ensure a variable lookup always walked the *same* number of links in the environment chain, that would ensure that it found the same variable in the same scope every time.
 
@@ -245,10 +245,12 @@ The rest of the nodes don’t do anything special, but we still need to implemen
 
 We start with blocks since they create the local scopes where all the magic happens.
 
+      @Override
       public Void visitBlockStmt(Stmt.Block stmt) {
         beginScope();
         resolve(stmt.statements);
         endScope();
+        return null;
       }
 
 *lox/Resolver.java*, add after *Resolver*()
@@ -323,12 +325,14 @@ Now we can push and pop a stack of empty scopes. Let’s put some things in them
 
 Resolving a variable declaration adds a new entry to the current innermost scope’s map. That seems simple, but there’s a little dance we need to do.
 
+      @Override
       public Void visitVarStmt(Stmt.Var stmt) {
         declare(stmt.name);
         if (stmt.initializer != null) {
           resolve(stmt.initializer);
         }
         define(stmt.name);
+        return null;
       }
 
 *lox/Resolver.java*, add after *visitBlockStmt*()
@@ -395,6 +399,7 @@ We set the variable’s value in the scope map to `true` to mark it as fully ini
 
 Variable declarations—and function declarations, which we’ll get to—write to the scope maps. Those maps are read when we resolve variable expressions.
 
+      @Override
       public Void visitVariableExpr(Expr.Variable expr) {
         if (!scopes.isEmpty() &&
             scopes.peek().get(expr.name.lexeme) == Boolean.FALSE) {
@@ -403,6 +408,7 @@ Variable declarations—and function declarations, which we’ll get to—write 
         }
 
         resolveLocal(expr, expr.name);
+        return null;
       }
 
 *lox/Resolver.java*, add after *visitVarStmt*()
@@ -430,9 +436,11 @@ If we walk through all of the block scopes and never find the variable, we leave
 
 The other expression that references a variable is assignment. Resolving one looks like this:
 
+      @Override
       public Void visitAssignExpr(Expr.Assign expr) {
         resolve(expr.value);
         resolveLocal(expr, expr.name);
+        return null;
       }
 
 *lox/Resolver.java*, add after *visitVarStmt*()
@@ -443,11 +451,13 @@ First, we resolve the expression for the assigned value in case it also contains
 
 Finally, functions. Functions both bind names and introduce a scope. The name of the function itself is bound in the surrounding scope where the function is declared. When we step into the function’s body, we also bind its parameters into that inner function scope.
 
+      @Override
       public Void visitFunctionStmt(Stmt.Function stmt) {
         declare(stmt.name);
         define(stmt.name);
 
         resolveFunction(stmt);
+        return null;
       }
 
 *lox/Resolver.java*, add after *visitBlockStmt*()
@@ -480,18 +490,22 @@ I did say the book would have every single line of code for these interpreters. 
 
 An expression statement contains a single expression to traverse.
 
+      @Override
       public Void visitExpressionStmt(Stmt.Expression stmt) {
         resolve(stmt.expression);
+        return null;
       }
 
 *lox/Resolver.java*, add after *visitBlockStmt*()
 
 An if statement has an expression for its condition and one or two statements for the branches.
 
+      @Override
       public Void visitIfStmt(Stmt.If stmt) {
         resolve(stmt.condition);
         resolve(stmt.thenBranch);
         if (stmt.elseBranch != null) resolve(stmt.elseBranch);
+        return null;
       }
 
 *lox/Resolver.java*, add after *visitFunctionStmt*()
@@ -500,28 +514,34 @@ Here, we see how resolution is different from interpretation. When we resolve an
 
 Like expression statements, a `print` statement contains a single subexpression.
 
+      @Override
       public Void visitPrintStmt(Stmt.Print stmt) {
         resolve(stmt.expression);
+        return null;
       }
 
 *lox/Resolver.java*, add after *visitIfStmt*()
 
 Same deal for return.
 
+      @Override
       public Void visitReturnStmt(Stmt.Return stmt) {
         if (stmt.value != null) {
           resolve(stmt.value);
         }
 
+        return null;
       }
 
 *lox/Resolver.java*, add after *visitPrintStmt*()
 
 As in `if` statements, with a `while` statement, we resolve its condition and resolve the body exactly once.
 
+      @Override
       public Void visitWhileStmt(Stmt.While stmt) {
         resolve(stmt.condition);
         resolve(stmt.body);
+        return null;
       }
 
 *lox/Resolver.java*, add after *visitVarStmt*()
@@ -530,15 +550,18 @@ That covers all the statements. On to expressions . . . 
 
 Our old friend the binary expression. We traverse into and resolve both operands.
 
+      @Override
       public Void visitBinaryExpr(Expr.Binary expr) {
         resolve(expr.left);
         resolve(expr.right);
+        return null;
       }
 
 *lox/Resolver.java*, add after *visitAssignExpr*()
 
 Calls are similar—we walk the argument list and resolve them all. The thing being called is also an expression (usually a variable expression), so that gets resolved too.
 
+      @Override
       public Void visitCallExpr(Expr.Call expr) {
         resolve(expr.callee);
 
@@ -546,21 +569,26 @@ Calls are similar—we walk the argument list and resolve them all. The thing be
           resolve(argument);
         }
 
+        return null;
       }
 
 *lox/Resolver.java*, add after *visitBinaryExpr*()
 
 Parentheses are easy.
 
+      @Override
       public Void visitGroupingExpr(Expr.Grouping expr) {
         resolve(expr.expression);
+        return null;
       }
 
 *lox/Resolver.java*, add after *visitCallExpr*()
 
 Literals are easiest of all.
 
+      @Override
       public Void visitLiteralExpr(Expr.Literal expr) {
+        return null;
       }
 
 *lox/Resolver.java*, add after *visitGroupingExpr*()
@@ -569,17 +597,21 @@ A literal expression doesn’t mention any variables and doesn’t contain any s
 
 Since a static analysis does no control flow or short-circuiting, logical expressions are exactly the same as other binary operators.
 
+      @Override
       public Void visitLogicalExpr(Expr.Logical expr) {
         resolve(expr.left);
         resolve(expr.right);
+        return null;
       }
 
 *lox/Resolver.java*, add after *visitLiteralExpr*()
 
 And, finally, the last node. We resolve its one operand.
 
+      @Override
       public Void visitUnaryExpr(Expr.Unary expr) {
         resolve(expr.right);
+        return null;
       }
 
 *lox/Resolver.java*, add after *visitLogicalExpr*()

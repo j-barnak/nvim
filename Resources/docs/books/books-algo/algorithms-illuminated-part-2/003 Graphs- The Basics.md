@@ -28,11 +28,11 @@ f(n)=log n
 
 30
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-14_1.jpg)
+![](media/index-14_1.jpg)
 
 25
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-14_2.jpg)
+![](media/index-14_2.jpg)
 
 f(n) 20
 
@@ -42,45 +42,45 @@ f(n) 20
 
 5
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-14_3.jpg)
+![](media/index-14_3.jpg)
 
 0
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-14_4.jpg)
+![](media/index-14_4.jpg)
 
 0 5 10 15 20 25 30 35 40
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-14_5.jpg)
+![](media/index-14_5.jpg)
 
 n
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-14_6.jpg)
+![](media/index-14_6.jpg)
 
 (a) A graph (to most of the world) (b) A graph (in algorithms)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-14_7.jpg)
+![](media/index-14_7.jpg)
 
 Figure 7.1: In algorithms, a graph is a representation of a set of objects (such as people) and the pairwise relationships between them (such as friendships).
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-14_8.jpg)
+![](media/index-14_8.jpg)
 
  
 
 The second type of graph has two ingredients—the objects being
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-14_9.jpg)
+![](media/index-14_9.jpg)
 
 represented, and their pairwise relationships. The former are called
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-14_10.jpg)
+![](media/index-14_10.jpg)
 
 1
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-14_11.jpg)
+![](media/index-14_11.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-14_12.jpg)
+![](media/index-14_12.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-14_13.jpg)
+![](media/index-14_13.jpg)
 
 2 Graphs: The Basics
 
@@ -98,63 +98,63 @@ vertex v 2 (called the tail ) to the second w (the head ); see Figure 7.2(b).
 
 *v* *v*
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-15_1.jpg)
+![](media/index-15_1.jpg)
 
  
 
 *s* *s* *t* *t*
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-15_2.jpg)
+![](media/index-15_2.jpg)
 
  
 
 *w* *w*
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-15_3.jpg)
+![](media/index-15_3.jpg)
 
 (a) An undirected graph (b) A directed graph
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-15_4.jpg)
+![](media/index-15_4.jpg)
 
 Figure 7.2: Graphs with four vertices and five edges. The edges of undirected and directed graphs are unordered and ordered vertex pairs, respectively.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-15_5.jpg)
+![](media/index-15_5.jpg)
 
  
 
 7.2 A Few Applications
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-15_6.jpg)
+![](media/index-15_6.jpg)
 
 Graphs are a fundamental concept, and they show up all the time in computer science, biology, sociology, economics, and so on. Here are a few of the countless examples.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-15_7.jpg)
+![](media/index-15_7.jpg)
 
 1 Having two names for the same thing can be annoying, but both terms are in widespread use and you should be familiar with them. For the most part, we’ll stick with “vertices” throughout this book series.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-15_8.jpg)
+![](media/index-15_8.jpg)
 
 2 Directed edges are sometimes called arcs, but we won’t use this terminology in this book series.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-15_9.jpg)
+![](media/index-15_9.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-15_10.jpg)
+![](media/index-15_10.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-15_11.jpg)
+![](media/index-15_11.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-15_12.jpg)
+![](media/index-15_12.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-15_13.jpg)
+![](media/index-15_13.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-15_14.jpg)
+![](media/index-15_14.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-15_15.jpg)
+![](media/index-15_15.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-15_16.jpg)
+![](media/index-15_16.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-15_17.jpg)
+![](media/index-15_17.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-15_18.jpg)
+![](media/index-15_18.jpg)
 
 7.3 Measuring the Size of a Graph 3
 
@@ -202,43 +202,43 @@ crossing between the parts. The graphs in Figures 7.1(b) and 7.2(a)
 
 are connected, while the graph in Figure 7.3 is not.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-17_1.jpg)
+![](media/index-17_1.jpg)
 
  
 
 Figure 7.3: An undirected graph that is not connected.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-17_2.jpg)
+![](media/index-17_2.jpg)
 
  
 
 Quiz 7.1
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-17_3.jpg)
+![](media/index-17_3.jpg)
 
 Consider an undirected graph with n vertices and no parallel edges. Assume that the graph is connected, meaning “in one piece.” What are the minimum and maximum numbers of edges, respectively, that the graph could have?
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-17_4.jpg)
+![](media/index-17_4.jpg)
 
  
 
 3 For a finite set S, \|S\| denotes the number of elements in S. 7.3 Measuring the Size of a Graph 5
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-17_5.jpg)
+![](media/index-17_5.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-17_6.jpg)
+![](media/index-17_6.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-17_7.jpg)
+![](media/index-17_7.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-17_8.jpg)
+![](media/index-17_8.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-17_9.jpg)
+![](media/index-17_9.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-17_10.jpg)
+![](media/index-17_10.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-17_11.jpg)
+![](media/index-17_11.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-17_12.jpg)
+![](media/index-17_12.jpg)
 
  
 
@@ -296,85 +296,85 @@ edges. There are plenty of connected graphs that have n vertices and
 
 only n 1 edges—these are called trees (Figure 7.5).
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_1.jpg)
+![](media/index-19_1.jpg)
 
  
 
 newly added edge
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_2.jpg)
+![](media/index-19_2.jpg)
 
 Figure 7.4: Adding a new edge fuses the pieces containing its endpoints into a single piece. In this example, the number of different pieces drops from three to two.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_3.jpg)
+![](media/index-19_3.jpg)
 
  
 
 (a) A path on four vertices (b) A star on four vertices
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_4.jpg)
+![](media/index-19_4.jpg)
 
 Figure 7.5: Two connected undirected graphs with four vertices and three edges.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_5.jpg)
+![](media/index-19_5.jpg)
 
  
 
 The maximum number of edges in a graph with no parallel edges is achieved by the complete graph, with every possible edge present.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_6.jpg)
+![](media/index-19_6.jpg)
 
 7 If both endpoints of the edge are already in the same piece, the number of pieces doesn’t decrease at all.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_7.jpg)
+![](media/index-19_7.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_8.jpg)
+![](media/index-19_8.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_9.jpg)
+![](media/index-19_9.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_10.jpg)
+![](media/index-19_10.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_11.jpg)
+![](media/index-19_11.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_12.jpg)
+![](media/index-19_12.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_13.jpg)
+![](media/index-19_13.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_14.jpg)
+![](media/index-19_14.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_15.jpg)
+![](media/index-19_15.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_16.jpg)
+![](media/index-19_16.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_17.jpg)
+![](media/index-19_17.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_18.jpg)
+![](media/index-19_18.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_19.jpg)
+![](media/index-19_19.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_20.jpg)
+![](media/index-19_20.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_21.jpg)
+![](media/index-19_21.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_22.jpg)
+![](media/index-19_22.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_23.jpg)
+![](media/index-19_23.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_24.jpg)
+![](media/index-19_24.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_25.jpg)
+![](media/index-19_25.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_26.jpg)
+![](media/index-19_26.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_27.jpg)
+![](media/index-19_27.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_28.jpg)
+![](media/index-19_28.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_29.jpg)
+![](media/index-19_29.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_30.jpg)
+![](media/index-19_30.jpg)
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-19_31.jpg)
+![](media/index-19_31.jpg)
 
 7.4 Representing a Graph 7
 
@@ -384,47 +384,47 @@ Because there are n n( 1) n = pairs of vertices in an n-vertex graph, 2 2 this i
 
 the maximum number of edges is 4 8 = 6 (Figure 7.6). 2
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-20_1.jpg)
+![](media/index-20_1.jpg)
 
  
 
 Figure 7.6: The complete graph on four vertices has 4 = 6 edges. 2
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-20_2.jpg)
+![](media/index-20_2.jpg)
 
  
 
 7.4 Representing a Graph
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-20_3.jpg)
+![](media/index-20_3.jpg)
 
 There is more than one way to encode a graph for use in an algorithm. In this book series, we’ll work primarily with the “adjacency list”
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-20_4.jpg)
+![](media/index-20_4.jpg)
 
 representation of a graph (Section 7.4.1), but you should also be
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-20_5.jpg)
+![](media/index-20_5.jpg)
 
 aware of the “adjacency matrix” representation (Section 7.4.2).
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-20_6.jpg)
+![](media/index-20_6.jpg)
 
 7.4.1 Adjacency Lists
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-20_7.jpg)
+![](media/index-20_7.jpg)
 
 The adjacency list representation of graphs is the dominant one that we’ll use in this book series.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-20_8.jpg)
+![](media/index-20_8.jpg)
 
 Ingredients for Adjacency Lists
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-20_9.jpg)
+![](media/index-20_9.jpg)
 
 1\. An array containing the graph’s vertices.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-20_10.jpg)
+![](media/index-20_10.jpg)
 
 2\. An array containing the graph’s edges.
 
@@ -482,7 +482,7 @@ which keeps track of whether or not the edge is present (Figure 7.7). 7.4 Repres
 
 1 0 1 2 3 41
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-22_1.jpg)
+![](media/index-22_1.jpg)
 
  
 
@@ -490,35 +490,35 @@ which keeps track of whether or not the edge is present (Figure 7.7). 7.4 Repres
 
 2 B 0 1 1C 3 B C 0
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-22_2.jpg)
+![](media/index-22_2.jpg)
 
 @ 1 0 1A
 
 4 0 1 1 0
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-22_3.jpg)
+![](media/index-22_3.jpg)
 
 3 4
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-22_4.jpg)
+![](media/index-22_4.jpg)
 
 (a) A graph. . . (b) . . . and its adjacency matrix
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-22_5.jpg)
+![](media/index-22_5.jpg)
 
 Figure 7.7: The adjacency matrix of a graph maintains one bit for each vertex pair, indicating whether or not there is an edge connecting the two vertices.
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-22_6.jpg)
+![](media/index-22_6.jpg)
 
  
 
 It’s easy to add bells and whistles to the adjacency matrix repre-
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-22_7.jpg)
+![](media/index-22_7.jpg)
 
 sentation of a graph:
 
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-22_8.jpg)
+![](media/index-22_8.jpg)
 
 • Parallel edges. If a graph can have multiple edges with the same
 

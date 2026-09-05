@@ -208,9 +208,11 @@ Widget::addFilter could be defined like this:
 
 **Item 31 \| 219**
 
+void Widget::addFilter() const
 
 {
 
+filters.emplace_back(
 
 **\[=\]**(int value) { return value % divisor == 0; }
 
@@ -224,6 +226,7 @@ Wrong. Completely wrong. Horribly wrong. Fatally wrong.
 
 Captures apply only to non-static local variables (including parameters) visible in the scope where the lambda is created. In the body of Widget::addFilter, divisor is not a local variable, it’s a data member of the Widget class. It can’t be captured. Yet if the default capture mode is eliminated, the code won’t compile:
 
+void Widget::addFilter() const
 
 {
 
@@ -237,9 +240,11 @@ filters.emplace_back( // error!
 
 Furthermore, if an attempt is made to explicitly capture divisor (either by value or by reference—it doesn’t matter), the capture won’t compile, because divisor isn’t a local variable or a parameter:
 
+void Widget::addFilter() const
 
 {
 
+filters.emplace_back(
 
 **\[divisor\]**(int value) // error! no local
 
@@ -255,9 +260,11 @@ The explanation hinges on the implicit use of a raw pointer: this. Every non-sta
 
 **220 \| Item 31**
 
+void Widget::addFilter() const
 
 {
 
+filters.emplace_back(
 
 **\[=\]**(int value) { return value % divisor == 0; }
 
@@ -267,11 +274,13 @@ The explanation hinges on the implicit use of a raw pointer: this. Every non-sta
 
 what’s being captured is the Widget’s this pointer, not divisor. Compilers treat the code as if it had been written as follows:
 
+void Widget::addFilter() const
 
 {
 
 **auto currentObjectPtr = this;**
 
+filters.emplace_back(
 
 **\[currentObjectPtr\]**(int value)
 
@@ -317,11 +326,13 @@ lifetime (see Item 18). From that point on, filters contains an entry with a dan
 
 This particular problem can be solved by making a local copy of the data member you want to capture and then capturing the copy:
 
+void Widget::addFilter() const
 
 {
 
 **auto divisorCopy = divisor;** // copy data member
 
+filters.emplace_back(
 
 **\[divisorCopy\]**(int value) // capture the copy
 
@@ -337,6 +348,7 @@ To be honest, if you take this approach, default by-value capture will work, too
 
 **auto divisorCopy = divisor;** // copy data member
 
+filters.emplace_back(
 
 **\[=\]**(int value) // capture the copy
 
@@ -352,6 +364,7 @@ In C++14, a better way to capture a data member is to use generalized lambda cap
 
 ture (see Item 32):
 
+void Widget::addFilter() const
 
 {
 
@@ -383,6 +396,7 @@ void addDivisorFilter()
 
 **static** auto **divisor** = // now static computeDivisor(calc1, calc2);
 
+filters.emplace_back(
 
 **\[=\]**(int value) // captures nothing!
 

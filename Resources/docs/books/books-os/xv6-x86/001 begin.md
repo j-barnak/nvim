@@ -80,7 +80,7 @@ kernel space
   
 shell  
   
-![](/tmp/audit/iter1/epubregen/xv6-x86/media/3b9adb02e35fae3a7893e4343e471dbde1da7b98.jpg)  
+![](media/3b9adb02e35fae3a7893e4343e471dbde1da7b98.jpg)  
 system call  
   
 Kernel  
@@ -511,7 +511,7 @@ kernel space
   
 shell  
   
-![](/tmp/audit/iter1/epubregen/xv6-x86/media/dbc2fcbbad79f3ba6e44199b388413008d804f29.jpg)  
+![](media/dbc2fcbbad79f3ba6e44199b388413008d804f29.jpg)  
 Send message Microkernel  
   
 File server  
@@ -550,7 +550,7 @@ text and data BIOS
   
 heap user stack  
   
-![](/tmp/audit/iter1/epubregen/xv6-x86/media/28ad87e83170c4206044dc1fbe9d9624f3e18edb.jpg)  
+![](media/28ad87e83170c4206044dc1fbe9d9624f3e18edb.jpg)  
 user  
   
 user text and data  
@@ -573,20 +573,20 @@ DRAFT as of September 4, 2018 21 https://pdos.csail.mit.edu/6.828/xv6
   
 0xFFFFFFFF  
   
-![](/tmp/audit/iter1/epubregen/xv6-x86/media/01c4f765887863b761c10f278e61ec0181319200.jpg)  
+![](media/01c4f765887863b761c10f278e61ec0181319200.jpg)  
 0x80100000 0x80000000  
   
 text and data BIOS  
   
 Top physical memory  
   
-![](/tmp/audit/iter1/epubregen/xv6-x86/media/ba54765fbb537ce61d6874cf79f9e32644d2ed59.jpg)  
+![](media/ba54765fbb537ce61d6874cf79f9e32644d2ed59.jpg)  
 4 Mbyte  
   
 text and data  
   
-![](/tmp/audit/iter1/epubregen/xv6-x86/media/350f6891d361a83d0e150048e1c8349cf56bc182.jpg)  
-![](/tmp/audit/iter1/epubregen/xv6-x86/media/a2deace6f51b36d20ff391e08ca18595cc788e79.jpg)  
+![](media/350f6891d361a83d0e150048e1c8349cf56bc182.jpg)  
+![](media/a2deace6f51b36d20ff391e08ca18595cc788e79.jpg)  
 kernel text and data  
   
 0  
@@ -793,7 +793,7 @@ Dir Table Offset
   
 PPN Offset  
   
-![](/tmp/audit/iter1/epubregen/xv6-x86/media/540f573893c162c1781766580a1d4c9c5a341203.jpg)  
+![](media/540f573893c162c1781766580a1d4c9c5a341203.jpg)  
 20 12  
   
 1023  
@@ -808,7 +808,7 @@ PPN Flags
   
 PPN Flags Page Table  
   
-![](/tmp/audit/iter1/epubregen/xv6-x86/media/9be0b9c7a3d981df472ce562b774968c5765a8d3.jpg)  
+![](media/9be0b9c7a3d981df472ce562b774968c5765a8d3.jpg)  
 CR3  
   
 1  
@@ -897,7 +897,7 @@ Physical
   
 Program data & heap  
   
-![](/tmp/audit/iter1/epubregen/xv6-x86/media/2a0bb06a4d297611997546f58729a8067e392b16.jpg)  
+![](media/2a0bb06a4d297611997546f58729a8067e392b16.jpg)  
 Unused if computer has more than 2 Gbyte of memory  
   
 PHYSTOP  

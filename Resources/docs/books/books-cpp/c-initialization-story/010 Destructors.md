@@ -142,7 +142,7 @@ As you can see, the destructors are called in the reverse order of how they were
 
 to the stack, then car is added. When the function goes out of scope, the stack is cleared, taking elements in reverse order. So car is deleted first, and then tvset. This is illustrated by the following diagram:
 
-![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-91_1.png)
+![](media/index-91_1.png)
 
  
 
@@ -228,7 +228,7 @@ For more information about smart pointers, have a look at my blog series: [6 Way
 
 [@C++Stories⁵](https://www.cppstories.com/tags/smart-pointers/).
 
-![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-93_1.png)
+![](media/index-93_1.png)
 
 What’s more, Modern C++ strongly suggests avoiding raw new and delete. Thanks to many library containers, wrappers, and smart pointers, there’s almost no need to rely on those low-level memory management routines. See this C++
 
@@ -552,7 +552,7 @@ exception: bad id...
 
 This time the example creates two objects: TV set and Mustang. In the output, we can notice that both objects call their constructors, but there’s only one destructor invocation (for TV set). Since Mustang threw an exception in the constructor, the destructor won’t be executed.
 
-![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-99_1.png)
+![](media/index-99_1.png)
 
 Since destructors might be called when the compiler performs stack unwinding; they shouldn’t throw exceptions, as this might result in calling std::terminate() . Read this C++ Core Guideline suggestion for more information: [E.16: Destructors, deallocation, and](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Re-never-fail) [swap](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Re-never-fail) [must never fail¹³](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Re-never-fail).
 
@@ -670,7 +670,7 @@ exception: bad id...
 
 The compiler didn’t call the destructor for Product, but the stack unwinding correctly called the destructor for all data members with automatic storage duration.
 
-![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-101_1.png)
+![](media/index-101_1.png)
 
 You can read more information about stack unwinding and handling resources
 

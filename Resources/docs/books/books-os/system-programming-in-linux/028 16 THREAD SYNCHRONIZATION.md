@@ -64,7 +64,7 @@ A *mutex* is one of the tools of the *Pthreads* library that makes it possible t
 
 them briefly in Chapter 12 when we examined race conditions among
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-963_1.jpg)
+![](media/index-963_1.jpg)
 
 processes. A mutex is like a software version of a lock—a thread locks it, uses the shared resource, and unlocks it. Its name is a portmanteau of
 
@@ -272,7 +272,7 @@ time it increases fraction_completed inside its critical section. The
 
 logfile will be a way to check how randomized the updates were.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-968_1.jpg)
+![](media/index-968_1.jpg)
 
 When it terminates, the program will print the total percentage of
 
@@ -396,6 +396,7 @@ int sig;
 
 sigset_t mask = \*(sigset_t\*) data;
 
+while ( TRUE ) {
 
 if ( sigwait(&mask, &sig) != 0 )
 
@@ -697,6 +698,7 @@ void \*thread_routine(void \*data)
 
 up((long) data);
 
+pthread_exit(NULL);
 
 }
 
@@ -754,7 +756,7 @@ A Boolean condition, usually containing one or more shared
 
 variables
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-978_1.jpg)
+![](media/index-978_1.jpg)
 
 A mutex that serializes the access to the code that tests the Boolean
 
@@ -826,6 +828,7 @@ int buf\[BUF_SIZE\]; /\* Capacity of buffer \*/
 
 The producer’s main loop is of the form
 
+while ( TRUE ) {
 
 pthread_mutex_lock(&buf_mutex);
 
@@ -841,11 +844,13 @@ count++;
 
 }
 
+pthread_mutex_unlock(&buf_mutex);
 
 }
 
 and the consumer’s is of the form:
 
+while ( TRUE ) {
 
 pthread_mutex_lock(&buf_mutex);
 
@@ -859,6 +864,7 @@ count--;
 
 }
 
+pthread_mutex_unlock(&buf_mutex);
 
 }
 
@@ -1038,6 +1044,7 @@ pthread_cond_wait(&bufspace_available, &buf_mutex);
 
 // Add data item to buffer.
 
+pthread_mutex_unlock(&buf_mutex);
 
 pthread_cond_signal(&data_available);
 
@@ -1233,6 +1240,7 @@ add_buffer(tid \* (MaxItems) + i);
 
 pthread_cond_signal(&data_available);
 
+pthread_mutex_unlock(&buf_mutex);
 
 }
 
@@ -1292,6 +1300,7 @@ pthread_cond_signal(&data_available);
 
 pthread_mutex_unlock(&prodcount_mutex);
 
+pthread_exit(NULL);
 
 The very last producer to exit needs to make sure that no consumers are left waiting for more data. It checks whether consumer_count \> 0. If so, it signals data_available for each consumer. There is no harm in sending too many signals, because consumers, like producers, wait inside a while
 
@@ -1315,6 +1324,7 @@ void \*consumer(void \*data)
 
 long tid = (long) data;
 
+while ( TRUE ) {
 
 pthread_mutex_lock(&buf_mutex);
 
@@ -1326,6 +1336,7 @@ pthread_cond_wait(&data_available,&buf_mutex);
 
 else { /\* No producers left, so clean up and exit. \*/
 
+pthread_mutex_unlock(&buf_mutex);
 
 printf("Consumer %ld exiting because all producers left.\n", tid);
 
@@ -1335,6 +1346,7 @@ consumer_count--;
 
 pthread_mutex_unlock(&conscount_mutex);
 
+pthread_exit(NULL);
 
 }
 
@@ -1346,9 +1358,11 @@ printf("Consumer %ld received %ld from buffer; buffer size = %d\n", tid, v, buf_
 
 pthread_cond_signal(&space_available);
 
+pthread_mutex_unlock(&buf_mutex);
 
 }
 
+pthread_exit(NULL);
 
 }
 
@@ -1554,7 +1568,7 @@ code locked by update_mutex. If each were allowed to cycle back to the top of th
 
 allowed to go back to the top of the loop until count reaches 0. This is achieved by using a second condition variable, all_threads_at_start. All
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-995_1.jpg)
+![](media/index-995_1.jpg)
 
 threads will block on this condition except the one that sets the value of count to 0 when it decrements it. When that happens, every thread is
 
@@ -1746,7 +1760,7 @@ treated as the entire array. In other words, the lower half is divided in a lowe
 
 Figure 16-5 illustrates the flow of data for an array A of size 16. An arrow from element A\[ *k*\] to element A\[ *j*\] represents adding of A\[ *k*\] to A\[ *j*\].
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-1001_1.jpg)
+![](media/index-1001_1.jpg)
 
 *Figure 16-5: The four stages of parallel reduction of an array with a size of 16 by 16*
 
@@ -2290,7 +2304,7 @@ read-write lock is not currently held by any thread and a reading thread acquire
 
 arriving writers will wait in this line while the reader is in the room. If an arriving thread wants to read, whether or not it’s let into the room depends on the guard. The guard’s decision depends on how *Pthreads* is configured.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-1013_1.jpg)
+![](media/index-1013_1.jpg)
 
 Some systems support a *Pthreads* configuration option known as
 
@@ -2676,6 +2690,7 @@ if ( PTHREAD_BARRIER_SERIAL_THREAD != retval && 0 != retval )
 
 fatal_error(retval, "pthread_barrier_wait");
 
+while ( TRUE ) {
 
 ➊ if ( 0 != (retval = pthread_rwlock_rdlock(&rwlock)) )
 
@@ -2717,6 +2732,7 @@ nanosleep(&sleeptime, &rem);
 
 }
 
+pthread_exit(NULL);
 
 }
 
@@ -2754,6 +2770,7 @@ if ( PTHREAD_BARRIER_SERIAL_THREAD != retval && 0 != retval )
 
 fatal_error(retval, "pthread_barrier_wait");
 
+while ( TRUE ) {
 
 ➊ if ( 0 != (retval = pthread_rwlock_wrlock(&rwlock)) )
 
@@ -2789,6 +2806,7 @@ clock_nanosleep(CLOCK_MONOTONIC, 0, &dt, NULL);
 
 }
 
+pthread_exit(NULL);
 
 }
 
@@ -3244,4 +3262,4 @@ single writer that uses this method to allow the readers to read an
 
 integer variable that gets updated by the writer at random times.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-1032_1.jpg)
+![](media/index-1032_1.jpg)

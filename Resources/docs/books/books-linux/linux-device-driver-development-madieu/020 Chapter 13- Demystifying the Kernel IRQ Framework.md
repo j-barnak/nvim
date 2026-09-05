@@ -15,7 +15,7 @@ To summarize, in this chapter, the following topics will be covered:
 
 On many platforms, a special device is responsible for managing IRQ lines. That device is the interrupt controller and it stands between the CPU and the interrupt lines it manages. The following is a diagram that shows the interactions that take place:
 
-![Figure 13.1 – Interrupt controller and IRQ lines ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_13_001.jpg)
+![Figure 13.1 – Interrupt controller and IRQ lines ](media/image/B17934_13_001.jpg)
 
 Figure 13.1 – Interrupt controller and IRQ lines
 
@@ -407,7 +407,7 @@ The preceding code is an excerpt of the driver sample of an input device driver.
 
 Let's consider the following diagram with a GPIO controller whose interrupt line is connected to a native GPIO on the SoC:
 
-![Figure 13.2 – Interrupt propagation ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_13_002.jpg)
+![Figure 13.2 – Interrupt propagation ](media/image/B17934_13_002.jpg)
 
 Figure 13.2 – Interrupt propagation
 

@@ -134,4 +134,4 @@ Item 42: Consider emplacement instead of insertion. 292
 
 **Table of Contents \| ix**
 
-![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-13_1.png)
+![](media/index-13_1.png)

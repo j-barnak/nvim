@@ -117,7 +117,7 @@ ObjClass* newClass(ObjString* name) {
 
 Pretty much all boilerplate. It takes in the class’s name as a string and stores it. Every time the user declares a new class, the VM will create a new one of these ObjClass structs to represent it.
 
-!['Klass' in a zany kidz font.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/classes-and-instances/klass.png)
+!['Klass' in a zany kidz font.](media/image/classes-and-instances/klass.png)
 
 I named the variable “klass” not just to give the VM a zany preschool “Kidz Korner” feel. It makes it easier to get clox compiling as C++ where “class” is a reserved word.
 
@@ -378,7 +378,7 @@ I want to slow down a bit here because the Lox *language’s* notion of “type�
 
 In the Lox *language*, users can define their own classes—say Cake and Pie—and then create instances of those classes. From the user’s perspective, an instance of Cake is a different type of object than an instance of Pie. But, from the VM’s perspective, every class the user defines is simply another value of type ObjClass. Likewise, each instance in the user’s program, no matter what class it is an instance of, is an ObjInstance. That one VM object type covers instances of all classes. The two worlds map to each other something like this:
 
-![A set of class declarations and instances, and the runtime representations each maps to.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/classes-and-instances/lox-clox.png)
+![A set of class declarations and instances, and the runtime representations each maps to.](media/image/classes-and-instances/lox-clox.png)
 
 Got it? OK, back to the implementation. We also get our usual macros.
 
@@ -768,7 +768,7 @@ After that is a little stack juggling. We pop the stored value off, then pop the
 
 The stack operations go like this:
 
-![Popping two values and then pushing the first value back on the stack.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/classes-and-instances/stack.png)
+![Popping two values and then pushing the first value back on the stack.](media/image/classes-and-instances/stack.png)
 
 ```
 class Toast {}

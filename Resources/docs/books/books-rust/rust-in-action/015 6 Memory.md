@@ -113,6 +113,7 @@ Mimicking pointers with references
 
 static B: \[u8; 10\] = \[99, 97, 114, 114, 121, 116, 111, 119, 101, 108\]; static C: \[u8; 11\] = \[116, 104, 97, 110, 107, 115, 102, 105, 115, 104, 0\]; **For simplicity, uses the same**
 
+fn main() {
 
 **reference type for this example.**
 
@@ -790,6 +791,7 @@ Listing 6.4
 
 Creating a raw pointer (**\*const T**)
 
+fn main() {
 
 **Casts a reference to the**
 
@@ -828,6 +830,7 @@ Listing 6.5
 
 Identifying a value’s address
 
+fn main() {
 
 let a: i64 = 42;
 
@@ -863,6 +866,7 @@ To demonstrate their volatility, let’s work through a quick example with Rust�
 
 Dereferencing that pointer must occur within an unsafe block, as the following snippet shows. An unsafe block implies that the programmer takes full responsibility for any consequences:
 
+fn main() {
 
 **You can create pointers safely from**
 
@@ -926,29 +930,29 @@ With interior mutability, you may want to provide an argument to a method that t
 
 With shared ownership, some objects, such as a network connection or, perhaps, access to some OS service, are difficult to mould into the pattern of having a single place with read-write access at any given time. Code might be simplified if two parts of
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-212_1.png)
+![](media/index-212_1.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-212_2.png)
+![](media/index-212_2.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-212_3.png)
+![](media/index-212_3.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-212_4.png)
+![](media/index-212_4.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-212_5.png)
+![](media/index-212_5.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-212_6.png)
+![](media/index-212_6.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-212_7.png)
+![](media/index-212_7.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-212_8.png)
+![](media/index-212_8.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-212_9.png)
+![](media/index-212_9.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-212_10.png)
+![](media/index-212_10.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-212_11.png)
+![](media/index-212_11.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-212_12.png)
+![](media/index-212_12.png)
 
 **186**
 
@@ -1459,6 +1463,7 @@ Listing 6.6
 
 Creating variables on the heap
 
+fn main() {
 
 **40 lives on the stack.**
 
@@ -1852,11 +1857,11 @@ Accessing data on the stack is fast because a function’s local variables, whic
 
 A contiguous layout is cache-friendly. Alternatively, variables allocated on the heap are unlikely to reside next to each other. Moreover, accessing data on the heap involves dereferencing the pointer. That implies a page table lookup and a trip to main memory. Table 6.1 summarizes these differences.
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-221_1.png)
+![](media/index-221_1.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-221_2.png)
+![](media/index-221_2.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-221_3.png)
+![](media/index-221_3.png)
 
 ***Providing programs with memory for their data***
 
@@ -2797,6 +2802,7 @@ let noop_local = 12345;
 
 **Creates a local variable within noop() so that**
 
+fn main() {
 
 **something outside of main() has a memory address**
 
@@ -2891,9 +2897,9 @@ While the exact process is dependent on the OS and file format, the following fi
 
 loads the right bytes into the right places. Once the virtual address space is created, the CPU can be told to jump to the start of the .text segment, and the program begins executing.
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-234_1.png)
+![](media/index-234_1.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-234_2.png)
+![](media/index-234_2.png)
 
 **208**
 
@@ -3165,6 +3171,7 @@ MEMORY_BASIC_INFORMATION as MEMINFO,
 
 ***Memory***
 
+fn main() {
 
 let this_pid: DWORD;
 
@@ -3368,11 +3375,11 @@ Storing data permanently on digital media is trickier than it looks. This chapte
 
 The chapter introduces some new concepts such as how to structure projects into library crates for Rust developers. This task is needed because one of the projects is ambitious. By the end of the chapter, you’ll have built a working key-value store that’s guaranteed to be durable to hardware failure at any stage. During the chapter, we’ll work through a small number of side quests. For example, we implement parity **212**
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-239_1.png)
+![](media/index-239_1.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-239_2.png)
+![](media/index-239_2.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-239_3.png)
+![](media/index-239_3.png)
 
 ***What is a file format?***
 
@@ -3444,7 +3451,7 @@ dates include display elements like fonts, or encryption
 
 keys that enforce anti-copying restrictions within the file.
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-240_1.png)
+![](media/index-240_1.png)
 
 **214**
 

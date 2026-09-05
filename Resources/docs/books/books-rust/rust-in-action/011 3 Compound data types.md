@@ -2643,7 +2643,7 @@ src
 
 Now save the source code from listing 3.17 to filebasics/src/main.rs, overwriting the “Hello World!” boilerplate code that is already in the file.
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-131_1.png)
+![](media/index-131_1.png)
 
 ***Creating inline documentation for your projects***
 

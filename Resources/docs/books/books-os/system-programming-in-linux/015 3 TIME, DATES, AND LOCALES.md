@@ -598,7 +598,7 @@ void usage_error(const char \*msg)
 
 {
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-184_1.jpg)
+![](media/index-184_1.jpg)
 
 fprintf(stderr,"usage: %s\n", msg);
 
@@ -1106,7 +1106,7 @@ we’ll pass the format specification %c to strftime().
 
 We can put together the *spl_date1.c* program based on what we’ve learned. Figure 3-2 displays the program logic.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-196_1.jpg)
+![](media/index-196_1.jpg)
 
 *Figure 3-2: The program flow of* spl_date1.c
 
@@ -1162,6 +1162,7 @@ fatal_error(EXIT_FAILURE, "Conversion to a date-time string"
 
 printf("%s\n", formatted_date);
 
+return 0;
 
 }
 
@@ -1247,6 +1248,7 @@ fatal_error(BAD_FORMAT_ERROR, "Conversion to a date-time string"
 
 printf("%s\n", formatted_date);
 
+return 0;
 
 }
 
@@ -1488,9 +1490,9 @@ temporary structure to the broken-down current time.
 
 Figure 3-3 shows the control flow with the new logic in bold.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-205_1.jpg)
+![](media/index-205_1.jpg)
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-206_1.jpg)
+![](media/index-206_1.jpg)
 
 *Figure 3-3: The control flow of* spl_date3.c
 
@@ -1686,6 +1688,7 @@ fatal_error(TIME_ADJUST_ERROR,
 
 }
 
+return 0;
 
 }
 
@@ -1731,6 +1734,7 @@ if ( errno != 0 )
 
 fatal_error(errno, NULL);
 
+return 0;
 
 }
 
@@ -1872,6 +1876,7 @@ fatal_error(BAD_FORMAT_ERROR, "Conversion to a date-time string "
 
 printf("%s\n", formatted_date);
 
+return 0;
 
 }
 
@@ -2017,6 +2022,7 @@ Availability Meaning
 
 LC_COLLATE
 
+POSIX.1-
 
 Collation order (how characters are
 
@@ -2026,6 +2032,7 @@ sorted)
 
 LC_CTYPE
 
+POSIX.1-
 
 Character classification and case
 
@@ -2039,6 +2046,7 @@ classes are
 
 LC_MESSAGES
 
+POSIX.1-
 
 Formats of informative and diagnostic
 
@@ -2048,6 +2056,7 @@ messages and interactive responses
 
 LC_MONETARY
 
+POSIX.1-
 
 Monetary formatting, such as currency
 
@@ -2057,6 +2066,7 @@ symbols and conventions
 
 LC_NUMERIC
 
+POSIX.1-
 
 Numeric, nonmonetary formatting
 
@@ -2064,6 +2074,7 @@ Numeric, nonmonetary formatting
 
 LC_TIME
 
+POSIX.1-
 
 Date and time formats
 
@@ -2115,6 +2126,7 @@ Variable Availability Meaning
 
 LC_ALL
 
+POSIX.1-
 
 Represents the set of all locale categories
 
@@ -2124,6 +2136,7 @@ and has special meaning and precedence
 
 LANG
 
+POSIX.1-
 
 Determines the locale category for native
 
@@ -2143,6 +2156,7 @@ language translation
 
 TZ
 
+POSIX.1-
 
 Time zone information
 
@@ -2150,6 +2164,7 @@ Time zone information
 
 NLSPATH
 
+POSIX.1-
 
 A path variable (same format as PATH) used for
 
@@ -2163,6 +2178,7 @@ Variable Availability Meaning
 
 LOCPATH
 
+POSIX.1-
 
 A path variable for finding locale data files
 
@@ -2890,6 +2906,7 @@ printf("With time settings of %s, date/time is: %s\n", argv\[2\], buf); uselocal
 
 freelocale(loc); /\* Release storage for loc. \*/
 
+return 0;
 
 }
 
@@ -3027,4 +3044,4 @@ that does this. This program will be very easy if you examine the source code in
 
 For example, it should reject *megaday* and *saturday* as day time units and only allow *day* and *days*.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-239_1.jpg)
+![](media/index-239_1.jpg)

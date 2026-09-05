@@ -322,7 +322,7 @@ is available to read.
 
 In *signal-driven I/O*, a process informs the kernel in advance that it wants to be sent a signal whenever it’s possible to read or write a given open file descriptor, and it establishes a signal handler to catch this
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-1040_1.jpg)
+![](media/index-1040_1.jpg)
 
 signal. For a read operation, delivery of the signal implies that one or more bytes of data have been transferred to a kernel buffer and can be read by the process. Signal-driven I/O is an edge-triggered notification method.
 
@@ -402,7 +402,7 @@ not get future signals, even if more data is available.
 
 Figure 17-2 shows the relative sequence of events in time.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-1042_1.jpg)
+![](media/index-1042_1.jpg)
 
 *Figure 17-2: A timeline depicting the relative points in time at which events take place for* *signal-driven input*
 
@@ -878,7 +878,7 @@ return to the calling process until the data to be written has been
 
 completely transferred to a kernel buffer. We usually don’t notice the
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-1052_1.jpg)
+![](media/index-1052_1.jpg)
 
 delay because most of the time we’re not sending large enough amounts
 
@@ -982,7 +982,7 @@ a more complex example program.
 
 The aio_read() Function
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-1055_1.jpg)
+![](media/index-1055_1.jpg)
 
 The steps to perform an asynchronous read using POSIX AIO are:
 
@@ -1088,7 +1088,7 @@ The return value is one of the following:
 
 aio_error() is called after the notification is delivered, a return value of 0
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-1058_1.jpg)
+![](media/index-1058_1.jpg)
 
 indicates success, and a positive value is the value of errno that would be set by a synchronous read or write operation. The program
 
@@ -1130,7 +1130,7 @@ devices managed by different drivers, the disk operations can be
 
 run in parallel)
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-1059_1.jpg)
+![](media/index-1059_1.jpg)
 
 To what extent read operations can be satisfied from kernel buffers
 
@@ -1220,7 +1220,7 @@ takes much longer than a write of the same data, the time to read
 
 determines the total running time, and if writing takes longer, then the writes dominate the running time. Figure 17-7 illustrates the difference.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-1061_1.jpg)
+![](media/index-1061_1.jpg)
 
 *Figure 17-7: Overlapped, asynchronous reads using* *aio_read()* *and synchronous writes* *using* *write()* *to copy a source file to a target file* In Figure 17-7(a), writing takes longer—the read requests complete but the process can’t start the next read until the write completes. In
 
@@ -1678,7 +1678,7 @@ whenever the descriptor is ready for writing, and the receiver child
 
 process should read smaller chunks at a rate so that every few seconds, the pipe has at least PIPE_BUF bytes available for a write into it.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-1073_1.jpg)
+![](media/index-1073_1.jpg)
 
 Figure 17-8 depicts the organization of the processes in the program in terms of communication patterns.
 
@@ -2128,4 +2128,4 @@ that is given a number of microseconds and suspends the calling
 
 process for that time, unless it’s interrupted by a signal, by calling select() with suitable arguments.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-1082_1.jpg)
+![](media/index-1082_1.jpg)

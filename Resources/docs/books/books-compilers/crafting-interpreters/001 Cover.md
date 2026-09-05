@@ -1,1 +1,1 @@
-![Crafting Interpreters by Robert Nystrom](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/cover.png)
+![Crafting Interpreters by Robert Nystrom](media/image/cover.png)

@@ -8,7 +8,7 @@ In this chapter we illustrate how monads can be used to implement parsers. We st
 
 A *parser* is a program that takes a string of characters as input, and produces some form of tree that makes the syntactic structure of the string explicit. For example, given the string 2\*3+4, a parser for arithmetic expressions might produce a tree of the following form, in which the numbers appear at the leaves of the tree, and the operators appear at the nodes:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_13_image_1_10.png)
+![image](media/Images/Chapter_13_image_1_10.png)
 
 The structure of this tree makes explicit that + and \* are operators with two arguments, and that \* has higher priority than +.
 
@@ -188,7 +188,7 @@ empty :: f a
 
 That is, for an applicative functor to be an instance of the Alternative class, it must support empty and \<\|\> primitives of the specified types. (The class also provides two further primitives, which will be discussed in the next section.) The intuition is that empty represents an alternative that has failed, and \<\|\> is an appropriate choice operator for the type. The two primitives are also required to satisfy the following identity and associativity laws:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_13_image_6_31.png)
+![image](media/Images/Chapter_13_image_6_31.png)
 
 The motivating example of an Alternative type is the Maybe type, for which empty is given by the failure value Nothing, and \<\|\> returns its first argument if this succeeds, and its second argument otherwise:
 
@@ -403,39 +403,39 @@ We conclude this chapter with two extended programming examples concerning arith
 
 The syntactic structure of a language can be formalised using the mathematical notion of a *grammar*, which is a set of rules that describes how strings of the language can be constructed. For example, a grammar for our language of arithmetic expressions can be defined by the following two rules:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_13_image_11_15.png)
+![image](media/Images/Chapter_13_image_11_15.png)
 
 The first rule states that an expression is either the addition or multiplication of two expressions, a parenthesised expression, or a natural number. In turn, the second rule states that a natural number is either zero, one, two, etc.
 
 For example, using the above grammar the construction of the expression 2\*3+4 can be represented by the following *parse tree*, in which the tokens in the expression appear at the leaves, and the grammatical rules applied to construct the expression give rise to the branching structure:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_13_image_11_16.png)
+![image](media/Images/Chapter_13_image_11_16.png)
 
 The structure of this tree makes explicit that 2\*3+4 can be constructed from the addition of two expressions, the first given by the multiplication of two further expressions which are in turn given by the numbers two and three, and the second expression given by the number four. However, the grammar also permits another possible parse tree for this example, which corresponds to the erroneous interpretation of the expression as 2\*(3+4):
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_13_image_12_8.png)
+![image](media/Images/Chapter_13_image_12_8.png)
 
 The problem is that our grammar for expressions does not take account of the fact that multiplication has higher priority than addition. However, this can easily be addressed by modifying the grammar to have a separate rule for each level of priority, with addition at the lowest level of priority, multiplication at the middle level, and parentheses and numbers at the highest level:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_13_image_12_9.png)
+![image](media/Images/Chapter_13_image_12_9.png)
 
 Using this new grammar, 2\*3+4 indeed has a single parse tree, which corresponds to the correct interpretation of the expression as (2\*3)+4:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_13_image_12_10.png)
+![image](media/Images/Chapter_13_image_12_10.png)
 
 We have now dealt with the issue of priority, but our grammar does not yet take account of the fact that addition and multiplication associate to the right. For example, the expression 2+3+4 currently has two possible parse trees, corresponding to (2+3)+4 and 2+(3+4). However, this can easily be rectified by modifying the rules for addition and multiplication to be recursive in their right argument only, rather than in both arguments:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_13_image_13_9.png)
+![image](media/Images/Chapter_13_image_13_9.png)
 
 Using these new rules, 2+3+4 now has a single parse tree, which corresponds to the correct interpretation of the expression as 2+(3+4):
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_13_image_13_10.png)
+![image](media/Images/Chapter_13_image_13_10.png)
 
 In fact, our grammar for expressions is now *unambiguous*, in the sense that every well-formed expression has precisely one parse tree.
 
 Our final modification to the grammar is a simplification. Consider the rule *expr* ::= *term* + *expr* \| *term*, which states that an expression is either the addition of a term and an expression, or is a term. In other words, an expression always begins with a term, which can then be followed by the addition of an expression or by nothing. Hence, the rule for expressions can be simplified to *expr* ::= *term* (+ *expr* \| *ϵ*), in which the symbol *ϵ* denotes the empty string. Simplifying the rule for terms in a similar manner gives our final grammar:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_13_image_13_11.png)
+![image](media/Images/Chapter_13_image_13_11.png)
 
 It is now straightforward to translate this grammar directly into a parser for expressions, by simply rewriting the rules using the parsing primitives we have introduced. Sequencing in the grammar is translated into the do notation, choice \| is translated into the \<\|\> operator, the empty string *ϵ* becomes the empty parser, special symbols such as + and \* are handled using the symbol function, and natural numbers are parsed using the natural primitive:
 
@@ -464,8 +464,7 @@ Note that each of the above parsers returns the integer value of the expression 
 
 Finally, using expr we define a function that returns the integer value that results from parsing and evaluating an expression. To handle the cases of unconsumed and invalid input, we use the library function error :: String -\> a that displays an error message and then terminates the program:
 
-``` haskell
-```
+![image](media/Images/vimg1.png)
 
 For example:
 
@@ -486,8 +485,7 @@ In the previous section we developed a parser for arithmetic expressions. We now
 
 We begin by considering the user interface of the calculator, for which purpose we use the input/output utilities cls, writeat, goto and getCh from chapter 10. First of all, we define the calculator box as a list of strings:
 
-``` haskell
-```
+![image](media/Images/Chapter_13_image_15_16.png)
 
 The first four buttons on the calculator, q, c, d, and =, allow the user to quit, clear the display, delete a character, and evaluate an expression, while the remaining sixteen buttons allow the user to enter expressions.
 
@@ -532,8 +530,9 @@ calc xs
 
 The action beep :: IO () used above is defined by beep = putStr "\BEL". In turn, the function process takes a valid character and the current string, and performs the appropriate action depending upon the character:
 
-``` haskell
-```
+![image](media/Images/vimg3.png)
+
+![image](media/Images/vimg2.png)
 
 We now consider each of the five possible actions:
 
@@ -553,7 +552,7 @@ We now consider each of the five possible actions:
 
 - Evaluation displays the result of parsing and evaluating the current string, sounding a beep if this process is unsuccessful:
 
-  ![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/vimg4.png)
+  ![image](media/Images/vimg4.png)
 
 - Clearing the display resets the current string to empty:
 
@@ -594,7 +593,7 @@ A library file comprising the parsing primitives from this chapter is available 
 
 6.Extend the parser expr :: Parser Int to support subtraction and division, and to use integer values rather than natural numbers, based upon the following revisions to the grammar:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_13_image_18_13.png)
+![image](media/Images/Chapter_13_image_18_13.png)
 
 7.Further extend the grammar and parser for arithmetic expressions to support exponentiation ^, which is assumed to associate to the right and have higher priority than multiplication and division, but lower priority than parentheses and numbers. For example, 2^3\*4 means (2^3)\*4. Hint: the new level of priority requires a new rule in the grammar.
 

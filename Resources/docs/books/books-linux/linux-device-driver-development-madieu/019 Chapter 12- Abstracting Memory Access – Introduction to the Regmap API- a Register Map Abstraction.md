@@ -4,7 +4,7 @@ Before the Regmap API was developed, there was redundant code for the device dri
 
 The following figure shows how SPI, I2C, and memory-mapped related APIs were used standalone before Regmap was introduced:
 
-![Figure 12.1 – I2C, SPI, and memory-mapped access before Regmap ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_12_001.jpg)
+![Figure 12.1 – I2C, SPI, and memory-mapped access before Regmap ](media/image/B17934_12_001.jpg)
 
 Figure 12.1 – I2C, SPI, and memory-mapped access before Regmap
 
@@ -12,7 +12,7 @@ The Regmap API was introduced in version v3.1 of the Linux kernel and proposes a
 
 The following diagram depicts this API unification:
 
-![Figure 12.2 - I2C, SPI, and memory-mapped access after Regmap ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_12_002.jpg)
+![Figure 12.2 - I2C, SPI, and memory-mapped access after Regmap ](media/image/B17934_12_002.jpg)
 
 Figure 12.2 - I2C, SPI, and memory-mapped access after Regmap
 

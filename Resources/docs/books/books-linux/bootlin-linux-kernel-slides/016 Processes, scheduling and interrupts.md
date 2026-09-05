@@ -728,11 +728,11 @@ Practical lab - Interrupts
 
 developed earlier.
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-354_1.png)
+![](media/index-354_1.png)
 
 ▶ Register an interrupt handler for each device. ▶ Waiting for data to be available in the read file
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-354_2.png)
+![](media/index-354_2.png)
 
 operation.
 
@@ -744,4 +744,4 @@ from the devices.
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 340/436
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-355_1.jpg)
+![](media/index-355_1.jpg)

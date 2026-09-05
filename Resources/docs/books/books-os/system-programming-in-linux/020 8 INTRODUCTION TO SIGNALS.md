@@ -92,7 +92,7 @@ CTRL-C in a terminal while a process is running usually terminates the process. 
 
 Figure 8-1 illustrates the sequence we now describe.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-530_1.jpg)
+![](media/index-530_1.jpg)
 
 *Figure 8-1: The steps taken to transform* *CTRL-C entered on a terminal’s keyboard to a* *SIGINT* *delivered to processes using that terminal*
 
@@ -842,7 +842,7 @@ Figure 8-2 depicts how the handler is run. When a handler has been registered fo
 
 control to the user process starting inside the handler code.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-544_1.jpg)
+![](media/index-544_1.jpg)
 
 *Figure 8-2: A schematic representation of the steps that occur when a process receives a* *signal for which it has registered a signal handler named* *sighandler()* When the signal handler finishes executing, the kernel runs briefly
 
@@ -920,7 +920,9 @@ delivered. It’s as if \_BSD_SOURCE were defined when compiling.
 
 *signal_demo1.c*
 
+\#include "common_hdrs.h"
 
+\#include \<signal.h\>
 
 void catch_sigint(int signum)
 
@@ -944,9 +946,11 @@ int main()
 
 if ( SIG_ERR == signal(SIGINT, catch_sigint) )
 
+fatal_error(errno, "signal()");
 
 if ( SIG_ERR == signal(SIGQUIT, catch_sigquit) )
 
+fatal_error(errno, "signal()");
 
 for ( int i = 20; i \> 0; i-- ) {
 
@@ -956,6 +960,7 @@ sleep(1);
 
 }
 
+return 0;
 
 }
 
@@ -1019,7 +1024,9 @@ sysv_signal() system call. We use it in the exact same way as signal(), but we n
 
 \#define \_GNU_SOURCE
 
+\#include "common_hdrs.h"
 
+\#include \<signal.h\>
 
 void catch_sigint(int signum)
 
@@ -1071,7 +1078,9 @@ argument.
 
 *signal_demo2.c*
 
+\#include "common_hdrs.h"
 
+\#include \<signal.h\>
 
 int main()
 
@@ -1079,9 +1088,11 @@ int main()
 
 if ( SIG_ERR == signal(SIGINT, SIG_IGN) ) /\* Ignore Ctrl-C. \*/
 
+fatal_error(errno, "signal()");
 
 if ( SIG_ERR == signal(SIGQUIT, SIG_IGN) ) /\* Ignore Ctrl-\\ \*/
 
+fatal_error(errno, "signal()");
 
 for ( int i = 10; i \> 0; i-- ) {
 
@@ -1091,6 +1102,7 @@ printf("Try to kill me with ^C or ^\\. "
 
 }
 
+return 0;
 
 }
 
@@ -1204,8 +1216,11 @@ program is displayed in Listing 8-4.
 
 *kill_demo.c*
 
+\#include "common_hdrs.h"
 
+\#include \<signal.h\>
 
+int main(int argc, char \*argv\[\])
 
 {
 
@@ -1231,6 +1246,7 @@ if ( -1 == kill(pid, SIGTERM) )
 
 fatal_error(errno, "kill() sending SIGTERM");
 
+return 0;
 
 }
 
@@ -1250,6 +1266,7 @@ Listing 8-5 shows that program.
 
 *signal_demo3.c*
 
+\#include "common_hdrs.h"
 
 \#include \<signal.h\> static char \*progname;
 
@@ -1261,6 +1278,7 @@ printf("%s caught CTRL-C!\n", progname); /\* UNSAFE \*/
 
 }
 
+int main(int argc, char \*argv\[\])
 
 {
 
@@ -1270,9 +1288,11 @@ printf("PID=%d\n", getpid());
 
 if ( SIG_ERR == signal(SIGINT, catch_sigint) )
 
+fatal_error(errno, "signal()");
 
 while ( TRUE ) continue; /\* Wait for a signal to be received. \*/
 
+return 0;
 
 }
 
@@ -1398,7 +1418,7 @@ NOTE
 
 The kernel manages the blocking of signals by maintaining a *signal* *mask* for every process. When we study threads in Chapter 15, we’ll see that a signal mask is also maintained for every thread of a multithreaded process. The signal mask is the set of signals that are currently blocked for that process (or thread). We can think of it as a bit mask with a bit for every signal type; a signal is blocked if and only if its corresponding
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-558_1.jpg)
+![](media/index-558_1.jpg)
 
 bit in the mask is set, as depicted in Figure 8-3. The mask may not be implemented like this, but it’s an easy way to conceptualize it.
 
@@ -1546,6 +1566,7 @@ milliseconds, and usleep(500000) suspends it for 0.5 seconds.
 
 *sigprocmask_demo1.c*
 
+\#include "common_hdrs.h"
 
 void catch_sigint(int signum) /\* Signal handler for SIGINT \*/
 
@@ -1555,6 +1576,7 @@ printf(" Caught SIGINT\n"); /\* UNSAFE \*/
 
 }
 
+int main(int argc, char \*argv\[\])
 
 {
 
@@ -1564,6 +1586,7 @@ sigset_t blocked_set;
 
 if ( SIG_ERR == signal(SIGINT, catch_sigint) )
 
+fatal_error(errno, "signal()");
 
 /\* Create a signal set with just SIGINT, and block with it. \*/
 
@@ -1573,6 +1596,7 @@ sigaddset(&blocked_set, SIGINT);
 
 if ( -1 == sigprocmask(SIG_BLOCK, &blocked_set, NULL) )
 
+fatal_error(errno, "sigprocmask()");
 
 printf("SIGINT is blocked; sleeping for 5 seconds."
 
@@ -1584,11 +1608,13 @@ usleep(5000);
 
 if ( -1 == sigprocmask(SIG_UNBLOCK, &blocked_set, NULL) )
 
+fatal_error(errno, "sigprocmask()");
 
 printf("SIGINT is no longer blocked. Enter a few CTRL-Cs.\n"); for ( i = 1; i \<= 5; i++ )
 
 usleep(800000);
 
+return 0;
 
 }
 
@@ -1648,8 +1674,11 @@ executes a small fragment of code.
 
 *sigprocmask_demo2.c*
 
+\#include "common_hdrs.h"
 
+\#include \<signal.h\>
 
+int main(int argc, char \*argv\[\])
 
 {
 
@@ -1657,6 +1686,7 @@ sigset_t signals, prevsignals; printf("PID=%d\n", getpid()); sigfillset(&signals
 
 if ( -1 == sigprocmask(SIG_BLOCK, &signals, &prevsignals) )
 
+fatal_error(errno, "sigprocmask()");
 
 while ( TRUE ) {
 
@@ -1670,7 +1700,9 @@ sleep(5);
 
 if ( -1 == sigprocmask(SIG_SETMASK, &prevsignals, NULL) )
 
+fatal_error(errno, "sigprocmask()");
 
+return 0;
 
 }
 
@@ -1730,6 +1762,7 @@ variable and, if it’s set, increments a counter. The program has to block deli
 
 *sigprocmask_demo3.c*
 
+\#include "common_hdrs.h"
 
 static volatile sig_atomic_t sig_received = 0;
 
@@ -1759,6 +1792,7 @@ sigaddset(&blockedset, SIGINT);
 
 if ( SIG_ERR == signal(SIGINT, catch_sigint) )
 
+fatal_error(errno, "signal()");
 
 printf("PID=%d\n Enter CTRL-\\ to end this program.\n", getpid()); while ( TRUE ) {
 
@@ -1766,6 +1800,7 @@ printf("PID=%d\n Enter CTRL-\\ to end this program.\n", getpid()); while ( TRUE 
 
 if ( -1 == sigprocmask(SIG_BLOCK, &blockedset, NULL) )
 
+fatal_error(errno, "sigprocmask()");
 
 if ( sig_received ) {
 
@@ -1779,6 +1814,7 @@ printf("\n%d SIGINTs received so far\n", count); /\* Unblock the signal, allowin
 
 ➊ if ( -1 == sigprocmask(SIG_UNBLOCK, &blockedset, NULL) )
 
+fatal_error(errno, "sigprocmask()");
 
 ➋ pause();
 
@@ -1924,7 +1960,7 @@ union. A union is like a struct in which the members can have overlapping storag
 
 Figure 8-4 depicts a small union.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-571_1.jpg)
+![](media/index-571_1.jpg)
 
 *Figure 8-4: A C union with a 4-byte integer and a four-character string* In the sigaction structure, the two members are both pointers to
 
@@ -2090,6 +2126,7 @@ The simple program in Listing 8-10 is an example that demonstrates the first cas
 
 *sigact_demo1.c*
 
+\#include "common_hdrs.h"
 
 void sig_handler(int signo, siginfo_t \*info, void \*context)
 
@@ -2115,6 +2152,7 @@ raise(SIGTERM);
 
 }
 
+int main(int argc, char \*argv\[\])
 
 { struct sigaction the_action;
 
@@ -2136,6 +2174,7 @@ printf("Open a second terminal window and send SIGINT "
 
 pause();
 
+return 0;
 
 }
 
@@ -2187,7 +2226,9 @@ errors out of the code, we’ll turn off optimization when we compile this progr
 
 \#define \_GNU_SOURCE
 
+\#include "common_hdrs.h"
 
+\#include \<signal.h\>
 
 \#include \<math.h\>
 
@@ -2217,6 +2258,7 @@ printf("Code: FPE_FLTOVF (Floating-point overflow)\n"); break;
 
 }
 
+int main(int argc, char \*argv\[\])
 
 {
 
@@ -2458,7 +2500,7 @@ There are a few complications. First, we’ve never used read() to read
 
 from a terminal. Unlike a read from a file, a read from a terminal does not return until the user presses ENTER. When we study terminals, we’ll
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-583_1.jpg)
+![](media/index-583_1.jpg)
 
 see how to prevent that, but for now, we have to work with this
 
@@ -2510,7 +2552,9 @@ source code distribution for the book.
 
 *sigact_demo3.c*
 
+\#include "common_hdrs.h"
 
+\#include \<signal.h\>
 
 \#include \<termios.h\> /\* Needed for tcflush \*/
 
@@ -2518,6 +2562,7 @@ source code distribution for the book.
 
 void sig_handler(int signo, siginfo_t \*info, void \*context);
 
+int main(int argc, char \*argv\[\])
 
 {
 
@@ -2617,6 +2662,7 @@ write(STDOUT_FILENO, &buffer, n);
 
 }
 
+return 0;
 
 }
 
@@ -2874,4 +2920,4 @@ pending signals are printed. You can open a second terminal to
 
 send signals to this process.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-592_1.jpg)
+![](media/index-592_1.jpg)

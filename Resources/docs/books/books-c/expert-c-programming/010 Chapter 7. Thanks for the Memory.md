@@ -18,7 +18,7 @@ the Intel 80x86 family…the Intel 80x86 memory model and how it got that way…
 
 This chapter starts with a discussion of memory architecture for the Intel 80x86 processor family (the processor at the heart of the IBM PC). It contrasts PC memory with the virtual memory feature found on other systems. A knowledge of memory architecture helps a programmer to understand some of the C conventions and restrictions.
 
-![Image 74](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-142_1.png)
+![Image 74](media/index-142_1.png)
 
 **The Intel 80x86 Family**
 
@@ -28,7 +28,7 @@ Modern Intel processors can trace their heritage all the way back to the earlies
 
 The Intel 4004 was a 4-bit microcontroller built in 1970 to satisfy the specific needs of a single customer, Busicom—a Japanese calculator company. The Intel design engineer conceived the idea of producing a general-purpose programmable chip, instead of the custom logic for each different customer that was the rule at the time. Intel thought they'd sell a few hundred, but a general-purpose design turned out to have vastly wider applicability. Four bits was too limiting, so in April 1972 an 8-bit version, the 8008, was launched. Two years later, that in turn spawned the 8080, which was the first chip powerful enough to be called a microcomputer. It included the entire 8008 instruction set and added 30 more instructions of its own, initiating a trend that continues to this day. If the 4004 was
 
-![Image 75](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-143_1.png)
+![Image 75](media/index-143_1.png)
 
 the chip that got Intel started, the 8080 was the chip that made its fortune, boosting the company's turnover to more than \$1 billion annually and placing it high on the Fortune 500 list.
 
@@ -44,7 +44,7 @@ Its irregular addressing scheme allowed the 8086 to run 8085-ported code more si
 
 Now that this basic addressing model was laid down, all subsequent 80x86 processors had to follow it or give up compatibility. If the 8080 was the chip that brought Intel to prominence, the 8086 was the chip that kept it there. We'll probably never know exactly why IBM selected the Intel 8088 (an 8-bit sibling of the 8086) as the CPU for its new PC back in 1979, in the face of so many technically superior alternatives from companies like Motorola or National Semiconductor. By selecting an Intel chip, IBM made Intel's fortune for the next two decades, just as IBM also made Microsoft's fortune by selecting MS-DOS as the operating executive. Ironically, in August 1993 Intel's stock valuation of \$26.6 billion rose above IBM's stock valuation of \$24.5 billion, and Intel eclipsed IBM as the most valuable electronics company in America.
 
-![Image 76](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-144_1.png)
+![Image 76](media/index-144_1.png)
 
 Intel and Microsoft have effectively become the new IBM, reaping undeserved windfall profits from their closed proprietary systems. IBM is trying desperately to regain its former position by using the PowerPC to challenge Intel's hardware monopoly, and using OS/2 to challenge Microsoft's software monopoly. The OS/2 challenge has probably failed, but it's too early to pass judgment on the PowerPC.
 
@@ -90,9 +90,9 @@ Then the 16-bit offset says where the address is in that segment. If you add the
 
 **Handy Heuristic**
 
-![Image 77](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-146_1.png)
+![Image 77](media/index-146_1.png)
 
-![Image 78](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-146_2.png)
+![Image 78](media/index-146_2.png)
 
 **Different-Looking Pointers, Same Address**
 
@@ -166,7 +166,7 @@ Bubba 264
 
 Eighteen billion billion bytes 18,446,744,073,709,551,616
 
-![Image 79](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-147_1.png)
+![Image 79](media/index-147_1.png)
 
 While on the subject of these numbers, note that all disk manufacturers use decimal rather than binary notation for disk capacity. Thus a 2-Gbyte disk will hold 2,000,000,000 bytes and not 2,147,483,648
 
@@ -196,7 +196,7 @@ machine. The 8086 supported 20-bit addresses, restricting it to 1 Mbyte memory i
 
 That address space was further limited by reserving certain segments (64Kbyte chunks) for
 
-![Image 80](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-148_1.png)
+![Image 80](media/index-148_1.png)
 
 system use:
 
@@ -290,7 +290,7 @@ viruses would be almost unknown if MS-DOS used the memory and task protection ha
 
 —IBM poster explaining virtual memory, circa 1978
 
-![Image 81](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-150_1.png)
+![Image 81](media/index-150_1.png)
 
 It is very inconvenient for a program to be restricted by the amount of main memory installed on a machine, as happens on MS-DOS. So early on in computing, the concept of virtual memory was developed to remove this restriction. The basic idea is to use cheap but slow disk space to extend your fast but expensive main memory. The regions of memory that are actually in use by a program at any given instant are brought into physical memory. When regions of memory lie untouched for a while, they are likely to be saved off to disk, making room to bring in other memory areas that are being used.
 
@@ -302,7 +302,7 @@ Multilevel store is a familiar concept. We see it elsewhere on a computer (e.g.,
 
 **Handy Heuristic**
 
-![Image 82](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-151_1.png)
+![Image 82](media/index-151_1.png)
 
 Processes on SunOS execute in a 32-bit address space. The OS arranges matters so that each process thinks it has exclusive access to the entire address space. The illusion is sus-tained by "virtual memory," which shares access to the machine's physical memory and uses disk to hold data when memory fills up. Data is continually moved from memory to disk and back again as a process runs.
 
@@ -312,7 +312,7 @@ illustrates the virtual memory basics.
 
 ***Figure 7-3. The Basics of Virtual Memory***
 
-![Image 83](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-152_1.png)
+![Image 83](media/index-152_1.png)
 
 Virtual memory is organized into "pages." A page is the unit that the OS moves around and protects, typically a few Kbytes in size. You can look at the pagesize on your system by typing
 
@@ -332,7 +332,7 @@ Virtual memory is an indispensable technique in operating system technology now,
 
 **Programming Challenge**
 
-![Image 84](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-153_1.png)
+![Image 84](media/index-153_1.png)
 
 **How Much Memory Can You Allocate?**
 
@@ -364,7 +364,7 @@ Cache memory is a further extension of the multi-level store concept. It is a sm
 
 ***Figure 7-4. The Basics of Cache Memory***
 
-![Image 85](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-154_1.png)
+![Image 85](media/index-154_1.png)
 
 All modern processors use cache memory. Whenever data is read from memory, an entire "line"
 
@@ -380,7 +380,7 @@ Sun currently uses two types of cache:
 
 • Write-back cache— In the first instance, this writes only to cache. The data is transferred to main memory when the cache line is about to be written again and a save hasn't taken place yet. It will also be transferred on a context switch to a different process or the kernel.
 
-![Image 86](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-155_1.png)
+![Image 86](media/index-155_1.png)
 
 In both cases, the instruction stream continues as soon as the cache access completes, without waiting for slower memory to catch up.
 
@@ -462,7 +462,7 @@ We have covered the background on system-related memory issues, so it's time to 
 
 Just as the stack segment grows dynamically on demand, so the data segment contains an object that can do this, namely, the heap, shown in Figure 7-5. The heap area is for dynamically allocated storage, that is, storage obtained through malloc (memory allocate) and accessed through a pointer.
 
-![Image 87](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-157_1.png)
+![Image 87](media/index-157_1.png)
 
 Everything in the heap is anonymous—you cannot access it directly by name, only indirectly through a pointer. The malloc (and friends: calloc, realloc, etc.) library call is the only way to obtain storage from the heap. The function **c** alloc is like malloc, but **c**lears the memory to zero before giving you the pointer. Don't think that the " **c** " in **c** alloc() has anything to do with C programming—it means
 
@@ -492,7 +492,7 @@ Other programs are more long-lived. Certain utilities such as calendar manager, 
 
 **Handy Heuristic**
 
-![Image 88](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-159_1.png)
+![Image 88](media/index-159_1.png)
 
 **Avoiding Memory Leaks**
 
@@ -524,7 +524,7 @@ total: 17228k bytes allocated + 5396k reserved = 22624k used,
 
 available
 
-![Image 89](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-160_1.png)
+![Image 89](media/index-160_1.png)
 
 Type the command three or four times over the space of a minute or two, to see if available swap space keeps getting smaller. You can also use others of the /usr/bin/\*stat tools, netstat, vmstat, and so on. If you see an increasing amount of memory being used and never released, one possible explanation is that a process has a memory leak.
 
@@ -550,7 +550,7 @@ The column headed SZ is the size of the process in pages. (The pagesize command 
 
 Systems often have different malloc libraries available, including ones tuned for optimal speed or optimal space usage, and to help with debugging. Enter the command man -s 3c malloc
 
-![Image 90](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-161_1.png)
+![Image 90](media/index-161_1.png)
 
 to look at the manpage, and to see all the routines in the malloc family.
 
@@ -612,7 +612,7 @@ Both errors occur when hardware tells the OS about a problematic memory referenc
 
 communicates this to the faulting process by sending it a signal. A *signal* is an event notification or a software-generated interrupt, much used in UNIX systems programming and hardly ever used in
 
-![Image 91](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-163_1.png)
+![Image 91](media/index-163_1.png)
 
 applications programming. By default, on receiving the "bus error" or the "segmentation fault" signal, a process will dump core and terminate; but you can impose some different action by setting up a signal handler for these signals.
 
@@ -674,9 +674,9 @@ One subtlety is that it is usually a different programmatic error that led to th
 
 A worse subtlety is that if the value in the uninitialized pointer happens to be misaligned for the size of data being accessed, it will cause a bus error fault, not a segmentation violation. This is true for most architectures because the CPU sees the address before sending it to the MMU.
 
-![Image 92](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-165_1.png)
+![Image 92](media/index-165_1.png)
 
-![Image 93](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-165_2.png)
+![Image 93](media/index-165_2.png)
 
 **Programming Challenge**
 
@@ -736,7 +736,7 @@ The common programming errors that (eventually) lead to something that gives a s
 
 1\. **Bad pointer value errors:** using a pointer before giving it a value, or passing a bad pointer to a library routine. (Don't be fooled by this one! If the debugger shows that the segv occurred in a system routine, it doesn't mean that the system caused it. The problem is still likely to be in your code.) The third common way to generate a bad pointer is to access something after it has been freed. You can amend your free statements to clear a pointer after freeing what it points to: 2.
 
-![Image 94](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-167_1.png)
+![Image 94](media/index-167_1.png)
 
 free(p); p = NULL;
 
@@ -776,7 +776,7 @@ LISP 1.0 originally had CTR and CXR, too, contents of tag part of register and c
 
 **Handy Heuristic**
 
-![Image 95](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-168_1.png)
+![Image 95](media/index-168_1.png)
 
 **How to Free Elements in a Linked List**
 
@@ -908,7 +908,7 @@ Now doesn't that look a lot more interesting than the non-allegorical translated
 
 11\. The way you get bytes is to ask the VM manager. It only gives out bytes in multiples of powers of two. This is to keep overhead down.
 
-![Image 96](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-171_1.png)
+![Image 96](media/index-171_1.png)
 
 12\. The way you reference a byte is to give its virtual address. If you give the address of a byte that happens to be in the memory it gets referenced right away. If it is on disk, the VM manager brings the page containing your byte back into the memory. If there is no room in the memory, it first finds the oldest page in the memory, whether it be yours or somebody else's, and packs it off with the rest of the page to a disk. In its place it puts the page containing your byte. Your byte then gets referenced and you never know that it wasn't in the memory all along.
 
@@ -944,7 +944,7 @@ signal\n");
 
 if (s == SIGSEGV) printf(" now got a segmentation
 
-![Image 97](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-172_1.png)
+![Image 97](media/index-172_1.png)
 
 violation signal\n");
 

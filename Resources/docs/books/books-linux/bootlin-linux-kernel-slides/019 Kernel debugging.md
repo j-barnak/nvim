@@ -418,11 +418,11 @@ details as possible.
 
 ▶ Use the dynamic debug feature. ▶ Add debugfs entries ▶ Load a broken driver and see it crash ▶ Analyze the error information dumped by the
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-421_1.png)
+![](media/index-421_1.png)
 
 kernel.
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-421_2.png)
+![](media/index-421_2.png)
 
 ▶ Disassemble the code and locate the exact C
 
@@ -432,4 +432,4 @@ instruction which caused the failure.
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 407/436
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-422_1.jpg)
+![](media/index-422_1.jpg)

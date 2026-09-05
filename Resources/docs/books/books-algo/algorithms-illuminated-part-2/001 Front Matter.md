@@ -1,4 +1,4 @@
-![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-1_1.jpg)
+![](media/index-1_1.jpg)
 
 ## Algorithms Illuminated
 

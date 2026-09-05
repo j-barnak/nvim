@@ -1,1 +1,1 @@
-![](/tmp/audit/iter1/epubregen/programming-rust-2e/media/Images/cover.png)
+![](media/Images/cover.png)

@@ -62,7 +62,7 @@ The pipe(7) man page explains much more. Pipes and FIFOs provide
 
 a unidirectional interprocess communication channel. *Unidirectional*
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-844_1.jpg)
+![](media/index-844_1.jpg)
 
 means that data can flow only in one direction through the pipe. The
 
@@ -230,7 +230,7 @@ wait(NULL); /\* Wait for the child. \*/
 
 exit(EXIT_SUCCESS);
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-848_1.jpg)
+![](media/index-848_1.jpg)
 
 }
 
@@ -250,7 +250,7 @@ not reside in the process’s address space; it’s in kernel space and is manag
 
 Figure 4-1 in Chapter 4). After the fork, the picture is different, as shown in Figure 13-3(a). The descriptors are duplicated, but the pipe itself is not.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-849_1.jpg)
+![](media/index-849_1.jpg)
 
 *Figure 13-3: The pipe after the parent forks the child. (a) The state of the pipe before* *parent and child close their respective read and write descriptors. (b) Its state after.*
 
@@ -556,7 +556,7 @@ pipe. We’ll be able to use this program to send arbitrarily large amounts of d
 
 The consumer, in contrast, reads one byte at a time, intentionally, to emphasize that once the data is in the pipe, it’s just a stream of bytes; it
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-855_1.jpg)
+![](media/index-855_1.jpg)
 
 isn’t efficient to read a byte at a time. The consumer converts all
 
@@ -660,7 +660,7 @@ normally points to the standard output stream of the process executing cat to be
 
 Figure 13-5 illustrates the state of the descriptors and the pipe after bash created the pipe and the two processes in our experiment. The read and write ends of the pipe are file descriptors 3 and 4 in each process, assuming that no files were opened before. In other words, if pipefd is the array filled by the call to pipe(), then pipefd\[0\] == 3 and pipefd\[1\] == 4.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-858_1.jpg)
+![](media/index-858_1.jpg)
 
 *Figure 13-5: The state of the pipe and file descriptors immediately after* *bash* *created the* *pipe*
 
@@ -710,7 +710,7 @@ This code hinges on the fact that dup() always chooses the lowest-
 
 numbered unused file descriptor. Figure 13-6 illustrates the state of the descriptors before and after the code is executed.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-860_1.jpg)
+![](media/index-860_1.jpg)
 
 *Figure 13-6: The redirection of standard output to a file* f *referred to by descriptor* *fd, using* *dup()*
 
@@ -740,7 +740,7 @@ Close the pipe's write end descriptor. \*/
 
 A similar strategy works for redirecting standard input to a pipe’s read end descriptor: dup2(pipefd\[0\], 0); /\* Now descriptor 0 points to the
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-861_1.jpg)
+![](media/index-861_1.jpg)
 
 read end of the pipe. \*/ close(pipefd\[0\]); /\* Close the pipe's read end descriptor. \*/
 
@@ -940,7 +940,7 @@ enables the close-on-exec flag for the file descriptor underlying the
 
 returned file stream pointer.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-866_1.jpg)
+![](media/index-866_1.jpg)
 
 THE CLOSE-ON-EXEC FLAG
 

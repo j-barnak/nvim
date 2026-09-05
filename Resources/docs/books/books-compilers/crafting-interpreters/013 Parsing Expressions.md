@@ -46,7 +46,7 @@ operator       → "==" | "!=" | "<" | "<=" | ">" | ">="
 
 This is a valid string in that grammar:
 
-![6 / 3 - 1](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/parsing-expressions/tokens.png)
+![6 / 3 - 1](media/image/parsing-expressions/tokens.png)
 
 But there are two ways we could have generated it. One way is:
 
@@ -66,7 +66,7 @@ Another is:
 
 Those produce the same *strings*, but not the same *syntax trees*:
 
-![Two valid syntax trees: (6 / 3) - 1 and 6 / (3 - 1)](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/parsing-expressions/syntax-trees.png)
+![Two valid syntax trees: (6 / 3) - 1 and 6 / (3 - 1)](media/image/parsing-expressions/syntax-trees.png)
 
 In other words, the grammar allows seeing the expression as `(6 / 3) - 1` or `6 / (3 - 1)`. The `binary` rule lets operands nest any which way you want. That in turn affects the result of evaluating the parsed tree. The way mathematicians have addressed this ambiguity since blackboards were first invented is by defining rules for precedence and associativity.
 
@@ -213,7 +213,7 @@ Recursive descent is considered a **top-down parser** because it starts from the
 
 It’s called “recursive *descent*” because it walks *down* the grammar. Confusingly, we also use direction metaphorically when talking about “high” and “low” precedence, but the orientation is reversed. In a top-down parser, you reach the lowest-precedence expressions first because they may in turn contain subexpressions of higher precedence.
 
-![Top-down grammar rules in order of increasing precedence.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/parsing-expressions/direction.png)
+![Top-down grammar rules in order of increasing precedence.](media/image/parsing-expressions/direction.png)
 
 CS people really need to get together and straighten out their metaphors. Don’t even get me started on which direction a stack grows or why trees have their roots on top.
 
@@ -348,7 +348,7 @@ That’s most of the parsing infrastructure we need. Where were we? Right, so if
 
 We grab the matched operator token so we can track which kind of equality expression we have. Then we call `comparison()` again to parse the right-hand operand. We combine the operator and its two operands into a new `Expr.Binary` syntax tree node, and then loop around. For each iteration, we store the resulting expression back in the same `expr` local variable. As we zip through a sequence of equality expressions, that creates a left-associative nested tree of binary operator nodes.
 
-![The syntax tree created by parsing 'a == b == c == d == e'](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/parsing-expressions/sequence.png)
+![The syntax tree created by parsing 'a == b == c == d == e'](media/image/parsing-expressions/sequence.png)
 
 Parsing `a == b == c == d == e`. For each iteration, we create a new binary expression using the previous one as the left operand.
 
@@ -506,7 +506,7 @@ Today, when parsers complete before you’ve even finished typing, it’s less o
 
 You know you want to push it.
 
-![A big shiny 'PANIC' button.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/parsing-expressions/panic.png)
+![A big shiny 'PANIC' button.](media/image/parsing-expressions/panic.png)
 
 Of all the recovery techniques devised in yesteryear, the one that best stood the test of time is called—somewhat alarmingly—**panic mode**. As soon as the parser detects an error, it enters panic mode. It knows at least one token doesn’t make sense given its current state in the middle of some stack of grammar productions.
 

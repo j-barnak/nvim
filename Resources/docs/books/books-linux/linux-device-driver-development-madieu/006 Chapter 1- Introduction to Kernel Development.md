@@ -246,7 +246,7 @@ As a result, you should leave **CROSS_COMPILE** and **ARCH** undefined to have t
 
 The Linux kernel is a *Makefile-based* project that contains thousands of options and drivers. Each option that's enabled can make another one available or can pull specific code into the build. To configure the kernel, you can use **make menuconfig** for a ncurses-based interface or **make xconfig** for an X-based interface. The ncurses-based interface looks as follows:
 
-![Figure 1.1 – Kernel configuration screen ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_Fig_1.1.jpg)
+![Figure 1.1 – Kernel configuration screen ](media/image/B17934_Fig_1.1.jpg)
 
 Figure 1.1 – Kernel configuration screen
 
@@ -374,7 +374,7 @@ Now that we can configure the kernel, let's enumerate some useful configuration 
 
 - **DEBUG_FS**: This enables support for debug filesystems, where **GPIO**, **CLOCK**, **DMA**, **REGMAP**, **IRQs**, and many other subsystems can be debugged from.
 
-&nbsp;
+
 
 - **FTRACE** and **DYNAMIC_FTRACE**: These options enable the powerful **ftrace** tracer, which can trace the whole system. Once **ftrace** has been enabled, some of its enumeration options can be enabled as well:
   - **FUNCTION_TRACER**: This allows you to trace any non-inline function in the kernel.

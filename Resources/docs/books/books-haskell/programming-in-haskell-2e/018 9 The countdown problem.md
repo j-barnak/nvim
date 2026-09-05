@@ -62,8 +62,7 @@ For example, the application Sub 2 3 is invalid because 2 – 3 is negative, whi
 
 We now declare a type for numeric expressions, which can either be an integer value or the application of an operator to two argument expressions, together with a simple pretty-printer for expressions:
 
-``` haskell
-```
+![image](media/Images/Chapter_9_image_3_23.png)
 
 For example, 1 + (2 ∗ 3) can be represented as a value of type Expr and then shown in more readable form as a string as follows:
 
@@ -74,8 +73,7 @@ For example, 1 + (2 ∗ 3) can be represented as a value of type Expr and then s
 
 Using this type, we define a function that returns the list of values in an expression, and a function eval that returns the overall value of an expression, provided that this value is a positive natural number:
 
-``` haskell
-```
+![image](media/Images/Chapter_9_image_3_24.png)
 
 Note that the possibility of failure within eval is handled by returning a list of results, with the convention that a singleton list denotes success, and the empty list denotes failure. For example, for 2 + 3 and 2 – 3, we have:
 
@@ -92,8 +90,7 @@ Failure within eval could also be handled by using the Maybe type, but we prefer
 
 We now define a number of useful combinatorial functions that return all possible lists that satisfy certain properties. The function subs returns all subsequences of a list, which are given by all possible combinations of excluding or including each element of the list, interleave returns all possible ways of inserting a new element into a list, and finally, perms returns all permutations of a list, which are given by all possible reorderings of the elements:
 
-``` haskell
-```
+![image](media/Images/Chapter_9_image_4_26.png)
 
 For example:
 
@@ -144,8 +141,7 @@ The efficiency of solution could be improved by using a function isChoice that d
 
 Our first approach to solving the countdown problem is by brute force, using the idea of generating all possible expressions over the given list of numbers. We start by defining a function split that returns all possible ways of splitting a list into two non-empty lists that append to give the original list:
 
-``` haskell
-```
+![image](media/Images/Chapter_9_image_5_26.png)
 
 For example:
 
@@ -156,8 +152,7 @@ For example:
 
 Using split we can then define the key function, exprs, which returns all possible expressions whose list of values is precisely a given list:
 
-``` haskell
-```
+![image](media/Images/Chapter_9_image_5_27.png)
 
 That is, for the empty list of numbers there are no possible expressions, while for a single number there is a single expression comprising that number. Otherwise, for a list of two or more numbers we first produce all splittings of the list, then recursively calculate all possible expressions for each of these lists, and, finally, combine each pair of expressions using each of the four numeric operators, using an auxiliary function that is defined as follows:
 
@@ -214,8 +209,7 @@ type Result = (Expr,Int)
 
 Using this type, we then define a function results that returns all possible results comprising expressions whose list of values is precisely a given list:
 
-``` haskell
-```
+![image](media/Images/Chapter_9_image_7_16.png)
 
 That is, for the empty list there are no possible results, while for a single number there is a single result formed from that number, provided that the number itself is a positive natural number. Otherwise, for two or more numbers we first produce all splittings of the list, then recursively calculate all possible results for each of these lists, and, finally, combine each pair of results using each of the four numeric operators that are valid, by means of the following auxiliary function:
 
@@ -241,7 +235,7 @@ The function solutions’ generates all possible expressions over the given numb
 
 Based upon this observation, our final approach to solving the countdown problem is to improve our second program by exploiting such algebraic properties to reduce the number of generated expressions. In particular, we exploit the following five commutativity and identity properties:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_9_image_8_21.png)
+![image](media/Images/Chapter_9_image_8_21.png)
 
 We start by recalling the function valid that decides if the application of an operator to two positive naturals gives another such:
 
@@ -253,7 +247,7 @@ valid Mul _ _ = True
 valid Div x y = x ‘mod‘ y == 0
 ```
 
-This definition can be modified to exploit the commutativity of addition and multiplication simply by requiring that their arguments are in numeric order ![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_9_image_9_17.png) and the identity properties of multiplication and division simply by requiring that the appropriate arguments are non-unitary (≠ 1):
+This definition can be modified to exploit the commutativity of addition and multiplication simply by requiring that their arguments are in numeric order ![image](media/Images/Chapter_9_image_9_17.png) and the identity properties of multiplication and division simply by requiring that the appropriate arguments are non-unitary (≠ 1):
 
 ``` haskell
 valid Add x y = x <= y

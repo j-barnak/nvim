@@ -932,55 +932,55 @@ Modem Codec **LPC I/F** **KBC/** **FWH** **SIO**
 
 **Video** **Bridge** **Modules** **Modules** **Video** **SM Bus** **IDE** **IDE** **South** **PCI** **PCI** **AGP** **North** **Memory** **Memory** **AGP** **Slot** **Slot**
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-243_1.png)
+![](media/index-243_1.png)
 
 **USB** **Bridge** **PCI Bus** **Slots** **USB** **Slots**
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-243_2.png)
+![](media/index-243_2.png)
 
  
 
 **LAN** **LPC Bus** **LAN**
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-243_3.png)
+![](media/index-243_3.png)
 
  
 
 **Audio** **Super** **FLASH** **FLASH** **Audio** **I/O**
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-243_4.png)
+![](media/index-243_4.png)
 
  
 
 **Figure 13.8:** Idealization of Actual System
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-243_5.png)
+![](media/index-243_5.png)
 
  
 
 typedef
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-243_6.png)
+![](media/index-243_6.png)
 
 EFI_STATUS
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-243_7.png)
+![](media/index-243_7.png)
 
 (EFIAPI \*PEI_SMBUS_PPI_EXECUTE_OPERATION) ( IN EFI_PEI_SERVICE \*\*PeiServices, IN struct EFI_PEI_SMBUS_PPI \*This,
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-243_8.png)
+![](media/index-243_8.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-243_9.png)
+![](media/index-243_9.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-243_10.png)
+![](media/index-243_10.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-243_11.png)
+![](media/index-243_11.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-243_12.png)
+![](media/index-243_12.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-243_13.png)
+![](media/index-243_13.png)
 
-![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-243_14.png)
+![](media/index-243_14.png)
 
 Operation \| **225**
 

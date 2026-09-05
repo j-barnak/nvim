@@ -12,6 +12,7 @@ If you have a simple structure with various containers, here are some basic ways
 
 \#include \<array\>
 
+\#include \<iostream\>
 
 \#include \<map\>
 
@@ -117,6 +118,7 @@ From previous chapters, you know that for default initialization, we can also re
 
 **Ex 9.2. Containers as data members and NSDMI. Run** [**@Compiler Explorer**](https://godbolt.org/z/e3njeP9o9) \#include \<array\>
 
+\#include \<iostream\>
 
 \#include \<map\>
 
@@ -204,6 +206,7 @@ Containers as Data Members 136
 
 **Ex 9.3. A function taking** **initializer_list****. Run** [**@Compiler Explorer**](https://godbolt.org/z/h4fY3KanK)
 
+\#include \<iostream\>
 
 \#include \<initializer_list\>
 
@@ -245,6 +248,7 @@ There’s also a handy use case where you can use range-based for loop directly 
 
 Containers as Data Members 137
 
+\#include \<iostream\>
 
 **int** main() {
 
@@ -296,7 +300,7 @@ compiler should warn about such usage. See a demo [@Compiler Explorer⁴](https:
 
 All in all, we can make the following conclusion:
 
-![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-153_1.png)
+![](media/index-153_1.png)
 
 std::initializer_list is a “view” type; it references some implementation—dependent and a local array of const values. Use it mainly for passing into functions when you need a variable number of arguments of the same type. If you try to return such lists and pass them around, then you risk lifetime issues. Use with care.
 
@@ -322,6 +326,7 @@ How does it work? Let’s see the basic class type with a user-declared construc
 
 **Ex 9.4. Test constructor with** **initializer_list****. Run** [**@Compiler Explorer**](https://godbolt.org/z/h1W88Pebq)
 
+\#include \<iostream\>
 
 \#include \<initializer_list\>
 
@@ -449,6 +454,7 @@ Containers as Data Members 141
 
 **Ex 9.5. The Package class demo. Run** [**@Compiler Explorer**](https://godbolt.org/z/djKhxc731)
 
+\#include \<iostream\>
 
 \#include \<string\>
 
@@ -810,7 +816,7 @@ For more information about those techniques, have a look at articles at the C++S
 
 [the Basics⁷](https://www.cppstories.com/2022/tuple-iteration-basics/).
 
-![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-163_1.png)
+![](media/index-163_1.png)
 
 std::initializer_list has a bad reputation in C++. You can see this in Jason
 

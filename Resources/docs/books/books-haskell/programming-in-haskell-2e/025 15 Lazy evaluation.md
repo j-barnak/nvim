@@ -245,7 +245,7 @@ This example shows that call-by-name evaluation may require more reduction steps
 
 Fortunately, the above efficiency problem with call-by-name evaluation can easily be solved, by using pointers to indicate sharing of expressions during evaluation. That is, rather than physically copying an argument if it is used many times in the body of a function, we simply keep one copy of the argument and make many pointers to it. In this manner, any reductions that are performed on the argument are automatically shared between each of the pointers to that argument. For example, using this strategy we have:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_15_image_7_31.png)
+![image](media/Images/Chapter_15_image_7_31.png)
 
 ``` haskell
 = { applying * }
@@ -327,8 +327,7 @@ Lazy evaluation also allows us to separate *control* from *data* in our computat
 
 Using the definition of take from the standard prelude
 
-``` haskell
-```
+![image](media/Images/vimg9.png)
 
 this behaviour arises using lazy evaluation as follows:
 
@@ -385,7 +384,7 @@ We conclude this section with an example concerning prime numbers. Recall that i
 
 Note that the first and third steps each require an infinite amount of work, and hence in practice the steps must be interleaved. The first few iterations of this procedure can be illustrated as follows:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_15_image_11_21.png)
+![image](media/Images/Chapter_15_image_11_21.png)
 
 Each row corresponds to one iteration of the procedure, with the first row being the initial sequence (step one), the first number in each row being circled to indicate its primality (step two), and all multiples of this number being underlined to indicate their deletion (step three) prior to the next iteration. In this manner, we can imagine the initial sequence of numbers falling downwards, with certain numbers being sieved out at each stage by the underlining, and the circled numbers forming the infinite sequence of primes:
 

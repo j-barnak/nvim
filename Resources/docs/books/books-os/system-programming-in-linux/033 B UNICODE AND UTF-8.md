@@ -106,7 +106,7 @@ code space. The code reserves the remaining values for future use
 
 (Figure B-1).
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-1228_1.jpg)
+![](media/index-1228_1.jpg)
 
 *Figure B-1: Unicode layout*
 
@@ -322,4 +322,4 @@ The sequence 11100000 10101010 10111100 in hexadecimal is 0xE0 0xAA
 
 0xBC, which in decimal is 224 170 188, the Gujarati sign *nuqta*.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-1233_1.jpg)
+![](media/index-1233_1.jpg)

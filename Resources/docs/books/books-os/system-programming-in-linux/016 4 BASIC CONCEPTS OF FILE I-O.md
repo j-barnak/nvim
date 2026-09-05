@@ -340,9 +340,9 @@ in Chapter 18.
 
 Figure 4-1 depicts a portion of the tables and data structures created to manage I/O operations on files.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-249_1.jpg)
+![](media/index-249_1.jpg)
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-250_1.jpg)
+![](media/index-250_1.jpg)
 
 *Figure 4-1: The tables used to manage files opened by processes*
 
@@ -904,6 +904,7 @@ if ( EINVAL != errno ) fatal_error(errno, "fsync() to *pathname*");
 
 /\* fsync() was successful. \*/
 
+errno = 0;
 
 if ( -1 == close(fd) )
 
@@ -1003,7 +1004,7 @@ something went wrong, in which case errno contains the error value.
 
 Figure 4-2 represents the actions resulting from a call to read(3,buf,len).
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-266_1.jpg)
+![](media/index-266_1.jpg)
 
 *Figure 4-2: A read of* *len* *bytes by a process from the file with file descriptor 3 to memory* *location* *buf*
 
@@ -1051,7 +1052,7 @@ we’ve read all there is to read, so we set the flag done to TRUE to break the 
 
 handled in the else clause ➋, which in this fragment is just a comment indicating that buffer contains the data just read. That comment tells us
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-268_1.jpg)
+![](media/index-268_1.jpg)
 
 we need to transfer the data before it’s overwritten, which might mean writing it to a file or copying it into some data structure, for example.
 
@@ -1149,6 +1150,7 @@ handle.
 
 A simple way to call write() that doesn’t try to rewrite after a partial write is of the form:
 
+errno = 0;
 
 result = write(fd, buffer, num_bytes);
 
@@ -1396,6 +1398,7 @@ sprintf(message, "%s source destination", basename(argv\[0\])); usage_error(mess
 
 /\* Open source file for reading. \*/
 
+errno = 0;
 
 if ( (source_fd = open(argv\[1\], O_RDONLY)) == -1 ) {
 
@@ -1421,9 +1424,11 @@ fatal_error(errno, message);
 
 target_fd. \*/
 
+errno = 0;
 
 ➋ while ( (num_bytes_read = read(source_fd, buffer, BUFFER_SIZE)) \> 0 ) {
 
+errno = 0;
 
 num_bytes_written = write(target_fd, buffer, num_bytes_read);
 
@@ -1457,6 +1462,7 @@ fatal_error(errno, message);
 
 }
 
+errno = 0;
 
 if ( -1 == fsync(target_fd) ) /\* Flush data to device. \*/
 
@@ -1910,7 +1916,7 @@ When a user process calls read() for data from a disk file, the kernel doesn’t
 
 Symmetrically, when a user process calls write() to transfer data to a disk file, the data it sends is copied to a storage area in kernel memory, and at some future time the kernel transfers it to the disk file. This buffering scheme is depicted in Figure 4-4. The kernel’s storage area for these disk I/O operations is called its *buffer cache*, and the kernel’s use of it is called *system buffering*.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-288_1.jpg)
+![](media/index-288_1.jpg)
 
 *Figure 4-4: The transfer of data during a* *read()* *call from the filesystem on disk to the* *kernel’s buffer cache and then to the process’s address space*
 
@@ -2236,4 +2242,4 @@ Assume that the total number of files allowed on the command line
 
 is 10. Remember that the program does not need to open or close standard output.
 
-![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-295_1.jpg)
+![](media/index-295_1.jpg)

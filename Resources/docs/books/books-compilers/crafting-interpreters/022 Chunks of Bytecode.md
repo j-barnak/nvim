@@ -48,7 +48,7 @@ Those are real advantages. But, on the other hand, it’s *not memory-efficient*
 
 The “(header)” parts are the bookkeeping information the Java virtual machine uses to support memory management and store the object’s type. Those take up space too!
 
-![The tree of Java objects created to represent '1 + 2'.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/chunks-of-bytecode/ast.png)
+![The tree of Java objects created to represent '1 + 2'.](media/image/chunks-of-bytecode/ast.png)
 
 Each of those pointers adds an extra 32 or 64 bits of overhead to the object. Worse, sprinkling our data across the heap in a loosely connected web of objects does bad things for *spatial locality*.
 
@@ -102,7 +102,7 @@ One of the first bytecode formats was [p-code](https://en.wikipedia.org/wiki/P-c
 
 This is the path we’ll take with our new interpreter, clox. We’ll follow in the footsteps of the main implementations of Python, Ruby, Lua, OCaml, Erlang, and others. In many ways, our VM’s design will parallel the structure of our previous interpreter:
 
-![Phases of the two implementations. jlox is Parser to Syntax Trees to Interpreter. clox is Compiler to Bytecode to Virtual Machine.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/chunks-of-bytecode/phases.png)
+![Phases of the two implementations. jlox is Parser to Syntax Trees to Interpreter. clox is Compiler to Bytecode to Virtual Machine.](media/image/chunks-of-bytecode/phases.png)
 
 Of course, we won’t implement the phases strictly in order. Like our previous interpreter, we’ll bounce around, building up the implementation one language feature at a time. In this chapter, we’ll get the skeleton of the application in place and create the data structures needed to store and represent a chunk of bytecode.
 
@@ -224,11 +224,11 @@ typedef struct {
 
 When we add an element, if the count is less than the capacity, then there is already available space in the array. We store the new element right in there and bump the count.
 
-![Storing an element in an array that has enough capacity.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/chunks-of-bytecode/insert.png)
+![Storing an element in an array that has enough capacity.](media/image/chunks-of-bytecode/insert.png)
 
 If we have no spare capacity, then the process is a little more involved.
 
-![Growing the dynamic array before storing an element.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/chunks-of-bytecode/grow.png)
+![Growing the dynamic array before storing an element.](media/image/chunks-of-bytecode/grow.png)
 
 1.  Allocate a new array with more capacity.
 2.  Copy the existing elements from the old array to the new one.
@@ -895,7 +895,7 @@ I’m being vague about what it means to “load” or “produce” a constant 
 
 To handle cases like this, our bytecode—like most others—allows instructions to have **operands**. These are stored as binary data immediately after the opcode in the instruction stream and let us parameterize what the instruction does.
 
-![OP_CONSTANT is a byte for the opcode followed by a byte for the constant index.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/chunks-of-bytecode/format.png)
+![OP_CONSTANT is a byte for the opcode followed by a byte for the constant index.](media/image/chunks-of-bytecode/format.png)
 
 Each opcode determines how many operand bytes it has and what they mean. For example, a simple operation like “return” may have no operands, where an instruction for “load local variable” needs an operand to identify which variable to load. Each time we add a new opcode to clox, we specify what its operands look like—its **instruction format**.
 

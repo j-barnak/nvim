@@ -27,6 +27,7 @@ twice :: (a -> a) -> a -> a
 twice f x = f (f x)
 ```
 
+For example:
 
 ``` haskell
 > twice (*2) 3
@@ -101,8 +102,7 @@ That is, filter p xs returns the list of all values x such that x is an element 
 
 As with map, the function filter can be applied to lists of any type, and can be defined using recursion for the purposes of reasoning:
 
-``` haskell
-```
+![image](media/Images/Chapter_7_image_3_34.png)
 
 That is, selecting all elements that satisfy a predicate from the empty list gives the empty list, while for a non-empty list the result depends upon whether the head satisfies the predicate. If it does then the head is retained and we then proceed to filter elements from the tail of the list, otherwise the head is discarded and we simply filter elements from the tail.
 
@@ -268,9 +268,9 @@ foldr (#) v [x0,x1,...,xn] = x0 # (x1 # (... (xn # v) ...))
 
 It is also possible to define recursive functions on lists using an operator that is assumed to associate to the left. For example, the function sum can be redefined in this manner by using an auxiliary function sum’ that takes an extra argument v that is used to accumulate the final result:
 
-``` haskell
-```
+![image](media/Images/Chapter_7_image_7_35.png)
 
+For example:
 
 ``` haskell
 sum [1,2,3]
@@ -474,7 +474,7 @@ bin2int = foldr (\x y -> x + 2*y) 0
 
 Now let us consider the opposite conversion, from a non-negative integer into a binary number. This can be achieved by repeatedly dividing the integer by two and taking the remainder, until the integer becomes zero. For example, starting with the integer 13, we proceed as follows:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_7_image_12_32.png)
+![image](media/Images/Chapter_7_image_12_32.png)
 
 The sequence of remainders, 1011, provides the binary representation of the integer 13. It is easy to implement this procedure using recursion:
 
@@ -484,6 +484,7 @@ int2bin 0 = []
 int2bin n = n ‘mod‘ 2 : int2bin (n ‘div‘ 2)
 ```
 
+For example:
 
 ``` haskell
 > int2bin 13
@@ -513,6 +514,7 @@ encode :: String -> [Bit]
 encode = concat . map (make8 . int2bin . ord)
 ```
 
+For example:
 
 ``` haskell
 > encode "abc"
@@ -534,6 +536,7 @@ decode :: [Bit] -> String
 decode = map (chr . bin2int) . chop8
 ```
 
+For example:
 
 ``` haskell
 > decode [1,0,0,0,0,1,1,0,0,1,0,0,0,1,1,0,1,1,0,0,0,1,1,0]
@@ -549,6 +552,7 @@ channel :: [Bit] -> [Bit]
 channel = id
 ```
 
+For example:
 
 ``` haskell
 > transmit "higher-order functions are easy"
@@ -577,6 +581,7 @@ count :: Eq a => a -> [a] -> Int
 count x = length . filter (== x)
 ```
 
+For example:
 
 ``` haskell
 > count "Red" votes
@@ -591,6 +596,7 @@ rmdups []= []
 rmdups (x:xs) = x : filter (/= x) (rmdups xs)
 ```
 
+For example:
 
 ``` haskell
 > rmdups votes
@@ -604,6 +610,7 @@ result :: Ord a => [a] -> [(Int,a)]
 result vs = sort [(count v vs, v) | v <- rmdups vs]
 ```
 
+For example:
 
 ``` haskell
 > result votes
@@ -617,6 +624,7 @@ winner :: Ord a => [a] -> a
 winner = snd . last . result
 ```
 
+For example:
 
 ``` haskell
 > winner votes
@@ -674,6 +682,7 @@ rank :: Ord a => [[a]] -> [a]
 rank = map snd . result . map head
 ```
 
+For example:
 
 ``` haskell
 > rank ballots
@@ -749,8 +758,7 @@ Hint: first write down the types of the two functions.
 
 6.A higher-order function unfold that encapsulates a simple pattern of recursion for producing a list can be defined as follows:
 
-``` haskell
-```
+![image](media/Images/Chapter_7_image_18_20.png)
 
 That is, the function unfold p h t produces the empty list if the predicate p is true of the argument value, and otherwise produces a non-empty list by applying the function h to this value to give the head, and the function t to generate another argument that is recursively processed in the same way to produce the tail of the list. For example, the function int2bin can be rewritten more compactly using unfold as follows:
 

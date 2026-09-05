@@ -16,8 +16,7 @@ x /= y = not (x == y)
 
 Ordered types:
 
-``` haskell
-```
+![image](media/Images/Appendix_b_image_1_17.png)
 
 Showable types:
 
@@ -59,6 +58,7 @@ recip n = 1/n
 
 ### **B.2Booleans**
 
+Type declaration:
 
 ``` haskell
 data Bool = False | True
@@ -98,6 +98,7 @@ otherwise = True
 
 ### **B.3Characters**
 
+Type declaration:
 
 ``` haskell
 data Char = ...
@@ -198,6 +199,7 @@ toUpper c | isLower c = chr (ord c - ord ’a’ + ord ’A’)
 
 ### **B.4Strings**
 
+Type declaration:
 
 ``` haskell
 type String = [Char]
@@ -207,8 +209,7 @@ type String = [Char]
 
 Type declarations:
 
-``` haskell
-```
+![image](media/Images/Appendix_b_image_4_19.png)
 
 Decide if an integer is even:
 
@@ -236,8 +237,7 @@ x ^ n = x * (x ^ (n-1))
 
 Type declarations:
 
-``` haskell
-```
+![image](media/Images/Appendix_b_image_5_25.png)
 
 Select the first component of a pair:
 
@@ -269,6 +269,7 @@ uncurry f = \(x,y) -> f x y
 
 ### **B.7Maybe**
 
+Type declaration:
 
 ``` haskell
 data Maybe a = Nothing | Just a
@@ -277,6 +278,7 @@ deriving (Eq, Ord, Show, Read)
 
 ### **B.8Lists**
 
+Type declaration:
 
 ``` haskell
 data [a] = [] | a:[a]
@@ -324,8 +326,7 @@ filter p xs = [x | x <- xs, p x]
 
 Select elements of a list while they satisfy a predicate:
 
-``` haskell
-```
+![image](media/Images/Appendix_b_image_6_31.png)
 
 Remove the first element from a non-empty list:
 
@@ -353,8 +354,7 @@ drop n (_:xs) = drop (n-1) xs
 
 Remove elements from a list while they satisfy a predicate:
 
-``` haskell
-```
+![image](media/Images/Appendix_b_image_7_28.png)
 
 Split a list at the *n*th element:
 
@@ -386,13 +386,11 @@ iterate f x = x : iterate f (f x)
 
 Produce a list of pairs from a pair of lists:
 
-``` haskell
-```
+![image](media/Images/Appendix_b_image_7_29.png)
 
 Append two lists:
 
-``` haskell
-```
+![image](media/Images/Appendix_b_image_7_30.png)
 
 Reverse a list:
 
@@ -410,6 +408,7 @@ map f xs = [f x | x <- xs]
 
 ### **B.9Functions**
 
+Type declaration:
 
 ``` haskell
 data a -> b = ...
@@ -452,6 +451,7 @@ flip f = \y x -> f x y
 
 ### **B.10Input/output**
 
+Type declaration:
 
 ``` haskell
 data IO a = ...
@@ -466,8 +466,7 @@ getChar = ...
 
 Read a string from the keyboard:
 
-``` haskell
-```
+![image](media/Images/Appendix_b_image_9_24.png)
 
 Read a value from the keyboard:
 
@@ -486,13 +485,11 @@ putChar c = ...
 
 Write a string to the screen:
 
-``` haskell
-```
+![image](media/Images/Appendix_b_image_9_25.png)
 
 Write a string to the screen and move to a new line:
 
-``` haskell
-```
+![image](media/Images/Appendix_b_image_9_26.png)
 
 Write a value to the screen:
 
@@ -510,6 +507,7 @@ error xs = ...
 
 ### **B.11Functors**
 
+Class declaration:
 
 ``` haskell
 class Functor f where
@@ -550,6 +548,7 @@ g <$> x = fmap g x
 
 ### **B.12Applicatives**
 
+Class declaration:
 
 ``` haskell
 class Functor f => Applicative f where
@@ -590,6 +589,7 @@ mg <*> mx = do {g <- mg; x <- mx; return (g x)}
 
 ### **B.13Monads**
 
+Class declaration:
 
 ``` haskell
 class Applicative m => Monad m where
@@ -633,6 +633,7 @@ The declarations below are provided in the library Control.Applicative, which ca
 import Control.Applicative
 ```
 
+Class declaration:
 
 ``` haskell
 class Applicative f => Alternative f where
@@ -673,6 +674,7 @@ The declarations below are provided in the library Control.Monad, which can be l
 import Control.Monad
 ```
 
+Class declaration:
 
 ``` haskell
 class (Alternative m, Monad m) => MonadPlus m where
@@ -696,6 +698,7 @@ instance MonadPlus []
 
 ### **B.16Monoids**
 
+Class declaration:
 
 ``` haskell
 class Monoid a where
@@ -713,8 +716,7 @@ import Data.Monoid
 
 Maybe monoid:
 
-``` haskell
-```
+![image](media/Images/Appendix_b_image_13_25.png)
 
 List monoid:
 
@@ -797,21 +799,21 @@ The declarations below are provided in the library Data.Foldable, which can be l
 import Data.Foldable
 ```
 
+Class declaration:
 
-``` haskell
-```
+![image](media/Images/Appendix_b_image_15_16.png)
 
 Default definitions:
 
-``` haskell
-```
+![image](media/Images/Appendix_b_image_15_17.png)
 
 The minimal complete definition for an instance is to define foldMap or foldr, as all other functions in the class can be derived from either of these two using the above default definitions and the following instance for lists.
 
 List foldable:
 
-``` haskell
-```
+![image](media/Images/Appendix_b_image_16_6.png)
+
+![image](media/Images/Appendix_b_image_17_17.png)
 
 Decide if all logical values in a structure are True:
 
@@ -850,23 +852,20 @@ concat = fold
 
 ### **B.18Traversables**
 
+Class declaration:
 
-``` haskell
-```
+![image](media/Images/Appendix_b_image_18_11.png)
 
 Default definitions:
 
-``` haskell
-```
+![image](media/Images/Appendix_b_image_18_12.png)
 
 The minimal complete definition for an instance of the class is to define traverse or sequenceA, as all other functions in the class can be derived from either of these two using the above default definitions.
 
 Maybe traversable:
 
-``` haskell
-```
+![image](media/Images/Appendix_b_image_18_13.png)
 
 List traversable:
 
-``` haskell
-```
+![image](media/Images/Appendix_b_image_18_14.png)

@@ -451,23 +451,23 @@ pattern
 
 01000010001010011010111000010100. That bit pattern is more compactly represented as 0x4229AE14. Table 5.1 shows the values of each of the three fields and what these represent..
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-171_1.png)
+![](media/index-171_1.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-171_2.png)
+![](media/index-171_2.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-171_3.png)
+![](media/index-171_3.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-171_4.png)
+![](media/index-171_4.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-171_5.png)
+![](media/index-171_5.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-171_6.png)
+![](media/index-171_6.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-171_7.png)
+![](media/index-171_7.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-171_8.png)
+![](media/index-171_8.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-171_9.png)
+![](media/index-171_9.png)
 
 ***Floating-point numbers***
 
@@ -579,23 +579,23 @@ That is, floating-point numbers that have different bit patterns compare as equa
 
 and –0) and have identical bit patterns (NAN values) that compare as unequal.
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-172_1.png)
+![](media/index-172_1.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-172_2.png)
+![](media/index-172_2.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-172_3.png)
+![](media/index-172_3.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-172_4.png)
+![](media/index-172_4.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-172_5.png)
+![](media/index-172_5.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-172_6.png)
+![](media/index-172_6.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-172_7.png)
+![](media/index-172_7.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-172_8.png)
+![](media/index-172_8.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-172_9.png)
+![](media/index-172_9.png)
 
 **146**
 
@@ -612,6 +612,7 @@ Listing 5.7
 
 Isolating and decoding the sign bit from an **f32**
 
+1 let n: f32 = 42.42;
 
 2 let n_bits: u32 = n.to_bits();
 
@@ -623,6 +624,7 @@ To provide you with a deeper intuition about what is happening, these steps are 
 
 Start with a f32 value:
 
+1 let n: f32 = 42.42;
 
 2
 
@@ -648,59 +650,59 @@ To isolate the exponent, two bit manipulations are required. First, perform a ri
 
 The exponent’s bits also need to go through a decoding step. To decode the exponent, interpret its 8 bits a signed integer, then subtract 127 from the result. (As discussed in section 5.3.2, 127 is known as the *bias*.) The following listing shows the code that describes the steps given in the last two paragraphs.
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_1.png)
+![](media/index-173_1.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_2.png)
+![](media/index-173_2.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_3.png)
+![](media/index-173_3.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_4.png)
+![](media/index-173_4.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_5.png)
+![](media/index-173_5.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_6.png)
+![](media/index-173_6.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_7.png)
+![](media/index-173_7.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_8.png)
+![](media/index-173_8.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_9.png)
+![](media/index-173_9.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_10.png)
+![](media/index-173_10.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_11.png)
+![](media/index-173_11.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_12.png)
+![](media/index-173_12.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_13.png)
+![](media/index-173_13.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_14.png)
+![](media/index-173_14.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_15.png)
+![](media/index-173_15.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_16.png)
+![](media/index-173_16.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_17.png)
+![](media/index-173_17.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_18.png)
+![](media/index-173_18.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_19.png)
+![](media/index-173_19.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_20.png)
+![](media/index-173_20.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_21.png)
+![](media/index-173_21.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_22.png)
+![](media/index-173_22.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_23.png)
+![](media/index-173_23.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_24.png)
+![](media/index-173_24.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_25.png)
+![](media/index-173_25.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_26.png)
+![](media/index-173_26.png)
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_27.png)
+![](media/index-173_27.png)
 
 ***Floating-point numbers***
 
@@ -710,6 +712,7 @@ Listing 5.8
 
 Isolating and decoding the exponent from an **f32**
 
+1 let n: f32 = 42.42;
 
 2 let n_bits: u32 = n.to_bits();
 
@@ -723,6 +726,7 @@ And to further explain the process, these steps are repeated graphically as foll
 
 Start with an f32 number:
 
+1 let n: f32 = 42.42;
 
 2
 
@@ -777,6 +781,7 @@ Listing 5.9
 
 Isolating and decoding the mantissa from an **f32**
 
+1 let n: f32 = 42.42;
 
 2 let n_bits: u32 = n.to_bits();
 
@@ -808,6 +813,7 @@ Repeating that process slowly:
 
 Start with an f32 value:
 
+1 let n: f32 = 42.42;
 
 ***Floating-point numbers***
 
@@ -2926,6 +2932,7 @@ Listing 5.29 shows our completed emulator for CPU RIA/3, the Caller. You’ll fi
 
 Value in memory
 
+**5** Step in program
 
 80
 

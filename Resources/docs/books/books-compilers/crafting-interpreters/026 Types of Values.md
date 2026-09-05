@@ -52,13 +52,13 @@ In other words, this is the VM’s notion of “type”, not the user’s.
 
 For now, we have only a couple of cases, but this will grow as we add strings, functions, and classes to clox. In addition to the type, we also need to store the data for the value—the `double` for a number, `true` or `false` for a Boolean. We could define a struct with fields for each possible type.
 
-![A struct with two fields laid next to each other in memory.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/types-of-values/struct.png)
+![A struct with two fields laid next to each other in memory.](media/image/types-of-values/struct.png)
 
 But this is a waste of memory. A value can’t simultaneously be both a number and a Boolean. So at any point in time, only one of those fields will be used. C lets you optimize this by defining a union. A union looks like a struct except that all of its fields overlap in memory.
 
 If you’re familiar with a language in the ML family, structs and unions in C roughly mirror the difference between product and sum types, between tuples and algebraic data types.
 
-![A union with two fields overlapping in memory.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/types-of-values/union.png)
+![A union with two fields overlapping in memory.](media/image/types-of-values/union.png)
 
 The size of a union is the size of its largest field. Since the fields all reuse the same bits, you have to be very careful when working with them. If you store data using one field and then access it using another, you will reinterpret what the underlying bits mean.
 
@@ -90,7 +90,7 @@ There’s a field for the type tag, and then a second field containing the union
 
 A smart language hacker gave me the idea to use “as” for the name of the union field because it reads nicely, almost like a cast, when you pull the various values out.
 
-![The full value struct, with the type and as fields next to each other in memory.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/types-of-values/value.png)
+![The full value struct, with the type and as fields next to each other in memory.](media/image/types-of-values/value.png)
 
 The four-byte type tag comes first, then the union. Most architectures prefer values be aligned to their size. Since the union field contains an eight-byte double, the compiler adds four bytes of padding after the type field to keep that double on the nearest eight-byte boundary. That means we’re effectively spending eight bytes on the type tag, which only needs to represent a number between zero and three. We could stuff the enum in a smaller size, but all that would do is increase the padding.
 
@@ -168,7 +168,7 @@ Then we may open a smoldering portal to the Shadow Realm. It’s not safe to use
 
 These macros return `true` if the Value has that type. Any time we call one of the `AS_` macros, we need to guard it behind a call to one of these first. With these eight macros, we can now safely shuttle data between Lox’s dynamic world and C’s static one.
 
-![The earthly C firmament with the Lox heavens above.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/types-of-values/universe.png)
+![The earthly C firmament with the Lox heavens above.](media/image/types-of-values/universe.png)
 
 The `_VAL` macros lift a C value into the heavens. The `AS_` macros bring it back down.
 
@@ -794,7 +794,7 @@ Most dynamically typed languages that have separate integer and floating-point n
 
 For each value type, we have a separate case that handles comparing the value itself. Given how similar the cases are, you might wonder why we can’t simply `memcmp()` the two Value structs and be done with it. The problem is that because of padding and different-sized union fields, a Value contains unused bits. C gives no guarantee about what is in those, so it’s possible that two equal Values actually differ in memory that isn’t used.
 
-![The memory respresentations of two equal values that differ in unused bytes.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/types-of-values/memcmp.png)
+![The memory respresentations of two equal values that differ in unused bytes.](media/image/types-of-values/memcmp.png)
 
 (You wouldn’t believe how much pain I went through before learning this fact.)
 

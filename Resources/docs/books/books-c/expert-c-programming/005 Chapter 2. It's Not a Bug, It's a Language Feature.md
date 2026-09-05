@@ -26,7 +26,7 @@ Variables do not have to be declared in Fortran. The statement as written caused
 
 The bug was detected in time and never caused a Mercury space flight to fail as many versions claim (a different bug, in the Mariner flights, described at the end of the chapter, did have this effect), but it does graphically illustrate the importance of language design. C has all-too-many similar ambiguities or near-ambiguities. This chapter describes a representative sample of the most common ones, and how they typically show up as bugs. There are other problems that can arise in C; for example, any time you encounter the string malloc(strlen(str)); it is almost always sure to be an error, where malloc(strlen(str)+1); was meant. This is because almost all the other string-handling routines include the room needed for the trailing nul terminator, so people get used to not making the special provision for it that strlen needs. The malloc example is an error in the programmer 's knowledge of a library routine, whereas this chapter concentrates on problematic areas in C itself, rather than the programmer 's use of it.
 
-![Image 24](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-35_1.png)
+![Image 24](media/index-35_1.png)
 
 One way of analyzing the deficiencies in a programming language is to consider the flaws in three possible categories: things the language does that it shouldn't do; things it doesn't do that it should; and things that are completely off the wall. For convenience, we can call these "sins of commission,"
 
@@ -56,7 +56,7 @@ The "sins of commission" category covers things that the language does, that it 
 
 The general form of a switch statement is:
 
-![Image 25](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-36_1.png)
+![Image 25](media/index-36_1.png)
 
 switch ( *expression*){
 
@@ -92,7 +92,7 @@ Switch has several problems, one of which is that it is too relaxed about what i
 
 For example, you can declare some local storage by following the switch's opening curly brace with a declaration. This is an artifact of the original compiler—most of the same code that processed any
 
-![Image 26](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-37_1.png)
+![Image 26](media/index-37_1.png)
 
 compound statement could be reused to process the braces-enclosed part of a switch. So a declaration is naturally accepted, though it's futile to add an initial value as part of a declaration in a switch statement, as it will not be exe-cuted—execution starts at the case that matches the expression.
 
@@ -180,7 +180,7 @@ default: printf("default \n");
 
 will print out
 
-![Image 27](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-39_1.png)
+![Image 27](media/index-39_1.png)
 
 case 2
 
@@ -320,7 +320,7 @@ So available_resources\[2\] is "Crayon-line drawing routines". There's quite a d
 
 The total number of resources is one less than expected, so writing to available_resources\[6\] will trash another variable. And by the way, that trailing comma after the final initializer is not a typo, but a blip in the syntax carried over from aboriginal C. Its presence or absence is allowed but has no significance. The justification claimed in the ANSI C
 
-![Image 28](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-42_1.png)
+![Image 28](media/index-42_1.png)
 
 rationale is that it makes automated generation of C easier. The claim would be more credible if trailing commas were permitted in every comma-sepa-rated list, such as in enum declarations, or multiple variable declarators in a single declaration. They are not.
 
@@ -492,7 +492,7 @@ But which C operators specifically have the wrong precedence? The answer is "any
 
 ***Figure 2-1. Precedence Problems of C Operators***
 
-![Image 29](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-46_1.png)
+![Image 29](media/index-46_1.png)
 
 Most of these become more understandable if you sit down to consider them at length. The case involving the comma occasionally causes conniption fits in programmers, though. For example, when this line is executed:
 
@@ -506,9 +506,9 @@ In a posting on Usenet some years ago, Dennis Ritchie explained how some of thes
 
 **Software Dogma**
 
-![Image 30](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-47_1.png)
+![Image 30](media/index-47_1.png)
 
-![Image 31](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-47_2.png)
+![Image 31](media/index-47_2.png)
 
 **'And' and 'AND' or 'Or' or 'OR'**
 
@@ -542,7 +542,7 @@ The moral of all this is that you should always put parentheses around an expres
 
 And remember that while precedence and associativity tell you what is grouped with what,
 
-![Image 32](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-48_1.png)
+![Image 32](media/index-48_1.png)
 
 the order in which these groupings will be evaluated is *always* undefined. In the expression: x = f() + g() \* h();
 
@@ -592,7 +592,7 @@ char line\[512\];
 
 gets(line);
 
-![Image 33](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-50_1.png)
+![Image 33](media/index-50_1.png)
 
 Here, line is a 512-byte array allocated automatically on the stack. When a user provides more input than that to the finger daemon, the gets() routine will keep putting it on the stack. Most architectures are vulnerable to overwriting an existing entry in the middle of the stack with something bigger, that also overwrites neighboring entries. The cost of checking each stack access for size and permission would be prohibitive in software. A knowledgeable malefactor can amend the return address in the procedure activation record on the stack by stashing the right binary patterns in the argument string. This will divert the flow of execution not back to where it came from, but to a special instruction sequence (also carefully deposited on the stack) that calls execv() to replace the running image with a shell. Voilà, you are now talking to a shell on a remote machine instead of the finger daemon, and you can issue commands to drag across a copy of the virus to another machine.
 
@@ -642,7 +642,7 @@ In most cases this was correct, and mail would be read from mymailbox. But it co
 
 mail effie robert
 
-![Image 34](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-52_1.png)
+![Image 34](media/index-52_1.png)
 
 In this case, the argument processing would make the mail program think it was being asked to read mail, not send it. Bingo! E-mail to users with an "f" as the second character of the name disappears!
 
@@ -918,7 +918,7 @@ To avoid the "data corruption" problem, note that lint will complain about the s
 
 saying warning: function returns pointer to automatic. However, neither a compiler nor lint can detect all cases of a local array being returned (it may be hidden by a level of indirection).
 
-![Image 35](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-58_1.png)
+![Image 35](media/index-58_1.png)
 
 **Lint Should Never Have Been Separated Out**
 
@@ -976,7 +976,7 @@ The programmer followed the algorithm he had been given exactly, and used the ra
 
 Moral: Even if you could make your programming language 100% reliable, you would still be prey to catastrophic bugs in the algorithm.
 
-![Image 36](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-60_1.png)
+![Image 36](media/index-60_1.png)
 
 We have long felt that programmers working on real-time control systems should have the privilege of taking the first ride on the operational prototype. In other words, if your code implements the life support systems on the space shuttle, then you get to be launched into space and debug any last minute glitches personally. This would surely bring a whole new focus to product quality. Table 2-2 shows some of the opportunities.
 

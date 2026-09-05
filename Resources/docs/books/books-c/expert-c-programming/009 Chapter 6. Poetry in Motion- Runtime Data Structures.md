@@ -128,9 +128,9 @@ Figure 6-1 shows what the compiler/linker puts in each segment:
 
 ***Figure 6-1. What Kinds of C Statements End Up in Which Segments?***
 
-![Image 62](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-123_1.png)
+![Image 62](media/index-123_1.png)
 
-![Image 63](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-123_2.png)
+![Image 63](media/index-123_2.png)
 
 The BSS segment gets its name from abbreviating "Block Started by Symbol"—a pseudo-op from the old IBM 704 assembler, carried over into UNIX, and there ever since. Some people like to remember it as "Better Save Space." Since the BSS segment only holds variables that don't have any value yet, it doesn't actually need to store the image of these variables. The size that BSS will require at runtime is recorded in the object file, but BSS (unlike the data segment) doesn't take up any actual space in the object file.
 
@@ -148,7 +148,7 @@ The BSS segment gets its name from abbreviating "Block Started by Symbol"—a ps
 
 5\. What changes occur to file and segment sizes if you compile for debugging? For maximum optimization?
 
-![Image 64](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-124_1.png)
+![Image 64](media/index-124_1.png)
 
 Analyze the results of the above "Programming Challenge" to convince yourself that:
 
@@ -184,7 +184,7 @@ When you take shared libraries into account, a process address space appears, as
 
 ***Figure 6-3. Virtual Address Space Layout, Showing Shared Libraries***
 
-![Image 65](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-126_1.png)
+![Image 65](media/index-126_1.png)
 
 **What the C Runtime Does with Your a.out**
 
@@ -196,7 +196,7 @@ The stack segment contains a single data structure, the stack. A classic compute
 
 Compiler-writers take a slightly more flexible approach. We add or delete plates only from the top, but we can also change values that are on a plate in the middle of the stack. A function can access
 
-![Image 66](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-127_1.png)
+![Image 66](media/index-127_1.png)
 
 variables local to its calling function via parameters or global pointers. The runtime maintains a pointer, often in a register and usually called sp, that indicates the current top of the stack. The stack segment has three major uses, two concerned with functions and one with expression evaluation:
 
@@ -228,7 +228,7 @@ return 0;
 
 Discover the data and text segment locations, and the heap within the data segment, by declaring variables that will be placed in those segments and printing their addresses. Make
 
-![Image 67](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-128_1.png)
+![Image 67](media/index-128_1.png)
 
 the stack grow by calling a function, and declaring some large local arrays.
 
@@ -256,7 +256,7 @@ The description of the contents of activation records is illustrative. The exact
 
 /usr/include/sys/frame.h, shows how a stack frame looks on your UNIX system. On SPARC, a stack frame is large—several dozen words in size—because it provides room to save register windows. On the x86 architecture, the frame is somewhat smaller. The runtime maintains a
 
-![Image 68](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-129_1.png)
+![Image 68](media/index-129_1.png)
 
 pointer, often in a register and usually called fp, which indicates the active stack frame. This will be the stack frame nearest to or at the top of the stack.
 
@@ -280,7 +280,7 @@ The code example below will be used to show the activation records on the stack 
 
 1 a (int i) {
 
-![Image 69](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-130_1.png)
+![Image 69](media/index-130_1.png)
 
 2 if (i\>0)
 
@@ -312,7 +312,7 @@ Compiler-writers will try to speed up programs by not storing information that w
 
 **Programming Challenge**
 
-![Image 70](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-131_1.png)
+![Image 70](media/index-131_1.png)
 
 **The Stack Frame**
 
@@ -432,7 +432,7 @@ in banana()
 
 back in main
 
-![Image 71](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-134_1.png)
+![Image 71](media/index-134_1.png)
 
 Point to watch: the only reliable way to ensure that a local variable retains the value that it had at the time of the longjmp is to declare it volatile. (This is for variables whose value changes between the execution of setjmp and the return of longjmp.)
 
@@ -558,6 +558,7 @@ the compiler
 
 sccs
 
+/usr/ccs/bin
 
 A source code version control system.
 
@@ -579,11 +580,13 @@ Doctors can use x-rays, sonograms, arthroscopes, and exploratory operations to l
 
 dis
 
+/usr/ccs/bin
 
 Object code disassembler
 
 dump -
 
+/usr/ccs/bin
 
 Prints dynamic linking information
 
@@ -597,6 +600,7 @@ Prints the dynamic libraries this file needs
 
 nm
 
+/usr/ccs/bin
 
 Prints the symbol table of an object file
 
@@ -612,7 +616,7 @@ Prints checksum and block count for a file. An-swers questions like: "Are two ex
 
 ***Table 6-3. Tools to Help with Debugging***
 
-![Image 72](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-137_1.png)
+![Image 72](media/index-137_1.png)
 
 **Tool Where**
 
@@ -676,6 +680,7 @@ debugger
 
 gprof
 
+/usr/ccs/bin
 
 Displays the call-graph profile data (identifies the compute-
 
@@ -683,6 +688,7 @@ intensive functions).
 
 prof
 
+/usr/ccs/bin
 
 Displays the percentage of time spent in each routi ne.
 
@@ -804,7 +810,7 @@ The ethernet address is built into the
 
 machine
 
-![Image 73](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-139_1.png)
+![Image 73](media/index-139_1.png)
 
 IP address
 

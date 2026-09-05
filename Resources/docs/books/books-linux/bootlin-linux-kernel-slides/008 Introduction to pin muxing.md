@@ -210,11 +210,11 @@ Practical lab - Setup pinmuxing to enable I2C communication
 
 ▶ Configure the pinmuxing for the I2C bus used
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-176_1.png)
+![](media/index-176_1.png)
 
 to communicate with the Nunchuk
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-176_2.png)
+![](media/index-176_2.png)
 
 ▶ Validate that the I2C communication works
 
@@ -224,4 +224,4 @@ with user space tools.
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 162/436
 
-![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-177_1.jpg)
+![](media/index-177_1.jpg)

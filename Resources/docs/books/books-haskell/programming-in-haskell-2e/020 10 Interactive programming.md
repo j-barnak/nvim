@@ -10,13 +10,13 @@ In the early days of computing, most programs were *batch programs* that were ru
 
 In part I of the book, we showed how Haskell can be used to write batch programs. In Haskell such programs, and more generally all programs, are modelled as *pure functions* that take all their inputs as explicit arguments, and produce all their outputs as explicit results, as depicted below:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_10_image_1_9.png)
+![image](media/Images/Chapter_10_image_1_9.png)
 
 For example, a compiler such as GHC may be modelled as a function of type Prog -\> Code that transforms a high-level program into low-level code.
 
 In the modern era of computing, most programs are now *interactive programs* that are run as an ongoing dialogue with their users, to provide increased flexibility and functionality. For example, an interpreter is an interactive program that allows expressions to be entered using the keyboard, and immediately displays the result of evaluating such expressions on the screen:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_10_image_2_14.png)
+![image](media/Images/Chapter_10_image_2_14.png)
 
 How can such programs be modelled as pure functions? At first sight, this may seem impossible, because interactive programs by their very nature require the *side effects* of taking additional inputs and producing additional outputs while the program is running. For example, how can an interpreter such as GHCi be viewed as a pure function from arguments to results?
 
@@ -105,18 +105,15 @@ Note that omitting the use of return in this example would give rise to a type e
 
 Using the three basic actions together with sequencing, we can now define a number of other useful action primitives that are provided in the standard prelude. First of all, we define an action getLine that reads a string of characters from the keyboard, terminated by the newline character ’\n’:
 
-``` haskell
-```
+![image](media/Images/ch10-01.png)
 
 Note the use of recursion to read the rest of the string once the first character has been read. Dually, we define primitives putStr and putStrLn that write a string to the screen, and in the latter case also move to a new line:
 
-``` haskell
-```
+![image](media/Images/ch10-02.png)
 
 For example, using these primitives we can now define an action that prompts for a string to be entered from the keyboard, and displays its length:
 
-``` haskell
-```
+![image](media/Images/ch10-03.png)
 
 For example:
 
@@ -142,8 +139,7 @@ play word
 
 It now remains to complete the definitions for sgetLine and play. First of all, the action sgetLine reads a string of characters from the keyboard in a similar manner to the basic action getLine, except that it echoes each character as a dash symbol ’-’ in order to keep the string secret:
 
-``` haskell
-```
+![image](media/Images/ch10-04.png)
 
 In turn, the action getCh used in this definition reads a single character from the keyboard without echoing it to the screen, and is defined by using the primitive hSetEcho from the library System.IO to turn input echoing off prior to reading the character, and back on again afterwards:
 
@@ -157,8 +153,7 @@ return x
 
 (The primitive hSetEcho can be made available by including the declaration import System.IO at the start of a script.) We now return to the function play, which implements the main game loop by repeatedly prompting the second player to enter a guess until it equals the secret word:
 
-``` haskell
-```
+![image](media/Images/ch10-05.png)
 
 In the case when the guess is not correct, we use a list comprehension to indicate which letters in the secret word occur anywhere in the guess:
 
@@ -188,7 +183,7 @@ You got it!!
 
 For our second example we consider a variant of the *game of nim*, played on a board comprising five numbered rows of stars, initially set up as follows:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_10_image_7_37.png)
+![image](media/Images/Chapter_10_image_7_37.png)
 
 Two players then take it in turn to remove one or more stars from the end of a single row. The winner is the player who makes the board empty, that is, who removes the final star or stars from the board. To contrast with the top-down development of the hangman game in the previous section, we implement nim in a bottom-up manner, starting by defining a series of utility functions, which are then used to implement the game itself.
 
@@ -233,8 +228,7 @@ For example, move initial 1 3 returns the new board \[2,4,3,2,1\] in which three
 
 We begin by defining a function that displays a row of the board on the screen, given the row number and the number of stars remaining:
 
-``` haskell
-```
+![image](media/Images/ch10-06.png)
 
 Recall that the library function replicate produces a list with a given number of identical elements. For example, we have:
 
@@ -245,8 +239,7 @@ Recall that the library function replicate produces a list with a given number o
 
 In turn, putRow can then be used to display the board. For simplicity, we assume that the board always contains precisely five rows:
 
-``` haskell
-```
+![image](media/Images/ch10-07.png)
 
 For example:
 
@@ -261,8 +254,7 @@ For example:
 
 We also define a utility function getDigit that displays a prompt and reads a single character from the keyboard. If the character is a digit, the corresponding integer is returned as the result value, otherwise an error message is displayed and the user is reprompted to enter a digit:
 
-``` haskell
-```
+![image](media/Images/ch10-08.png)
 
 (The function digitToInt :: Char -\> Int converts a digit to an integer, and can be made available by writing import Data.Char at the start of a script.) Finally, we define an action that moves onto a new line:
 
@@ -275,8 +267,7 @@ newline = putChar ’\n’
 
 Using the above utility functions, we can now implement the main game loop, which takes the current board and player number as arguments:
 
-``` haskell
-```
+![image](media/Images/ch10-09.png)
 
 That is, we first display the board, and then check if the game is finished. If so, we display the other player as the winner, as they were the one who made the board empty. Otherwise we prompt the current player for the move they wish to make. If the move is valid, we update the board accordingly and then continue the game with the next player, otherwise we display an error message and reprompt the current player to enter a valid move.
 
@@ -293,11 +284,11 @@ We conclude with two further remarks about our implementation of nim. First of a
 
 Our third and final interactive programming example concerns the *game of life*. The game models a simple evolutionary system based on cells, and is played on a two-dimensional board. Each square on the board is either empty, or contains a single living cell, as illustrated in the following example:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_10_image_11_13.png)
+![image](media/Images/Chapter_10_image_11_13.png)
 
 Each internal square on the board has eight immediate neighbours:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_10_image_11_14.png)
+![image](media/Images/Chapter_10_image_11_14.png)
 
 For uniformity, each external square on the board is also viewed as having eight neighbours, by assuming that the board wraps around from top-to-bottom and from left-to-right. That is, we can think of the board as really being a torus, the surface of a three-dimensional doughnut shaped object.
 
@@ -308,7 +299,7 @@ Given an initial configuration of the board, the next *generation* of the board 
 
 For example, applying these rules to the above board gives:
 
-![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_10_image_12_22.png)
+![image](media/Images/Chapter_10_image_12_22.png)
 
 By repeating this procedure with the new board, an infinite sequence of generations can be produced. By careful design of the initial configuration, many interesting patterns of behaviour can be observed in such sequences. For example, the above arrangement of cells is called a *glider*, and over successive generations will move diagonally down the board. Despite its simplicity, the game of life is in fact computationally complete, in the sense that any computational process can be simulated within it by means of a suitable encoding. In the remainder of this section we show how the game of life can be implemented in Haskell.
 
@@ -329,8 +320,7 @@ type Pos = (Int,Int)
 
 We can then define a function that displays a string at a given position by using control characters to move the cursor to this position:
 
-``` haskell
-```
+![image](media/Images/ch10-10.png)
 
 ##### Game of life
 
@@ -369,13 +359,11 @@ isEmpty b p = not (isAlive b p)
 
 (The library function sequence\_ :: \[IO a\] -\> IO () performs a list of actions in sequence, discarding their result values and returning no result.) Next, we define a function that returns the neighbours of a position:
 
-``` haskell
-```
+![image](media/Images/ch10-11.png)
 
 The auxiliary function wrap takes account of the wrapping around at the edges of the board, by subtracting one from each component of the given position, taking the remainder when divided by the width and height of the board, and then adding one to each component again:
 
-``` haskell
-```
+![image](media/Images/ch10-12.png)
 
 Using function composition, we can now define a function that calculates the number of live neighbours for a given position by producing the list of its neighbours, retaining those that are alive, and counting their number:
 
@@ -393,13 +381,11 @@ survivors b = [p | p <- b, elem (liveneighbs b p) [2,3]]
 
 In turn, the list of empty positions in a board that have precisely three living neighbours, and hence give birth to a new cell, can be produced as follows:
 
-``` haskell
-```
+![image](media/Images/ch10-13.png)
 
 However, this definition considers every position on the board. A more refined approach, which may be more efficient for larger boards, is to only consider the neighbours of living cells, because only such cells can give rise to new births. Using this approach, the function births can be rewritten as follows:
 
-``` haskell
-```
+![image](media/Images/ch10-14.png)
 
 The auxiliary function rmdups removes duplicates from a list, and is used above to ensure that each potential new cell is only considered once:
 

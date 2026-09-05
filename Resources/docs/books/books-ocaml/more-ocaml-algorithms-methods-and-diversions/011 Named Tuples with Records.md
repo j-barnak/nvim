@@ -20,39 +20,39 @@ We can parametrize it just like a list or variant data type:
 
 So now we can have values of type int point and string point and so on. We can define one directly:
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00059.jpg)
+> ![](media/images/00059.jpg)
 
 Notice that frequently we write something like `x = x `in a record definition, as in `make_point `here. This can be shortened to just `x`, and by doing so for all the arguments in `make_point `we obtain this simpler definition:
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00066.jpg)
+> ![](media/images/00066.jpg)
 
 Having built record values, we now need to know how to extract the individual parts. We can use the dot notation, writing record.field like so:
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00069.jpg)
+> ![](media/images/00069.jpg)
 
 Alternatively, we can use record syntax in patterns, here in the argument itself:
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00075.jpg)
+> ![](media/images/00075.jpg)
 
 Notice we only had to include in the pattern the parts of the record we intended to use. This can, optionally, be made more explicit by adding the wildcard `_ `to the pattern:
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00079.jpg)
+> ![](media/images/00079.jpg)
 
 Finally, we can use the shorthand record form in patterns too:
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00084.jpg)
+> ![](media/images/00084.jpg)
 
 Where we need a copy of a record with just one or more fields changed, we can use the `with` keyword:
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00089.jpg)
+> ![](media/images/00089.jpg)
 
 Again, the shortened form can help:
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00094.jpg)
+> ![](media/images/00094.jpg)
 
 Here is a function to reflect a point about the line x = y:
 
-> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00099.jpg)
+> ![](media/images/00099.jpg)
 
 Mutable records
 

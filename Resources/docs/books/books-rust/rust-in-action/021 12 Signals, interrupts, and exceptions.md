@@ -347,7 +347,7 @@ The default behavior for most signals is shutting down the application. When an 
 
 detects an abnormal condition within an application, things don’t end well for the application—it terminates the application. Figure 12.4 depicts this scenario.
 
-![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-422_1.png)
+![](media/index-422_1.png)
 
 **396**
 

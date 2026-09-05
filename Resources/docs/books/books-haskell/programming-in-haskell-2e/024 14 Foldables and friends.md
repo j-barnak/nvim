@@ -26,8 +26,7 @@ x ‘mappend‘ (y ‘mappend‘ (z ‘mappend‘ mempty))
 
 As in mathematics, the two primitives in the Monoid class are required to satisfy the following identity and associativity laws:
 
-``` haskell
-```
+![image](media/Images/vimg5.png)
 
 For example, using these laws the result of mconcat \[x,y,z\] can be written in a simpler manner as follows, without the need for parentheses or mempty, because the monoid laws ensure that these do not affect the result:
 
@@ -258,8 +257,7 @@ Then evaluating foldr (+) 0 tree gives the result 1+(2+(3+0)), in which the addi
 
 In addition to the four basic folding primitives, the Foldable class also includes a range of other useful functions for combining the values in a data structure. The first group generalise familiar functions on lists:
 
-``` haskell
-```
+![image](media/Images/vimg6.png)
 
 For example, null decides if a structure is empty (has no elements), and length counts the number of elements of type a in a structure of type t a. Hence, these functions can be applied to both lists and trees:
 
@@ -305,12 +303,13 @@ foldr1 f = foldr1 f . toList
 foldl1 f = foldl1 f . toList
 ```
 
+![image](media/Images/vimg7.png)
+
 For example, the definition null = null . toList states that we can decide if a data structure is empty by first flattening the structure to a list, and then checking if this list is empty using the instance of null for lists. The other definitions have a similarly straightforward interpretation.
 
 The final three default definitions in the foldable class establish important relationships between the primitives fold, foldMap and toList:
 
-``` haskell
-```
+![image](media/Images/vimg8.png)
 
 That is, fold can be viewed as a special case of foldMap where the identity function is applied to each element prior to combining them. In turn, foldMap can be defined in terms of foldr by applying the function f to each element before they are combined using the monoid primitives. And finally, toList can be defined in terms of foldMap by first transforming each element into a singleton list, and then concatenating the resulting lists using the list monoid.
 
