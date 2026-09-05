@@ -107,15 +107,17 @@ local function docs_toc()
 	local entries = {}
 	for i, L in ipairs(lines) do
 		local title, depth
-		local hashes, htext = L:match("^(#+)%s+(.+)$")
+		-- Leading whitespace allowed: pdftotext -layout indents the section
+		-- headers of the C/C++/DWARF/ABI chapters, which left their TOC empty.
+		local hashes, htext = L:match("^%s*(#+)%s+(.+)$")
 		if hashes then
 			depth, title = #hashes, htext
 		else
-			local num, sect = L:match("^([%dA-Z][%d.]*%.%d[%d.]*)%s%s+([%u%d].*)$")
+			local num, sect = L:match("^%s*([%dA-Z][%d.]*%.%d[%d.]*)%s%s+([%u%d].*)$")
 			if num then
 				depth = select(2, num:gsub("%.", "")) + 1
 				title = num .. "  " .. sect
-			elseif L:match("^%u[%u][%u &/,()'-]*$") then
+			elseif L:match("^%s*%u[%u][%u &/,()'-]*$") then
 				depth, title = 1, L -- man-page section header (NAME, SEE ALSO, …)
 			end
 		end
@@ -222,11 +224,18 @@ local function render_lines(lines, ft, dir, title)
 		pcall(vim.api.nvim_win_close, 0, true)
 	end, { buffer = buf, nowait = true, silent = true, desc = "Close docs viewer" })
 	vim.keymap.set("n", "<leader>fs", docs_toc, { buffer = buf, desc = "Docs: table of contents" })
+	-- D reopens whichever picker produced this doc. Bound for every viewer:
+	-- web articles and man pages render with no dir and used to get no D.
+	vim.keymap.set("n", "D", function()
+		if reopen then
+			reopen()
+		end
+	end, { buffer = buf, nowait = true, silent = true, desc = "Docs: reopen this provider's fuzzy finder" })
 	if ft == "man" then
 		-- gd follows the cross-reference under the cursor (e.g. gd on `read`
-		-- opens read's man page), matching gd = "follow link" in the other docs.
+		-- opens read's man page) in a new split, so this page is not replaced.
 		vim.keymap.set("n", "gd", function()
-			vim.cmd("Man " .. vim.fn.expand("<cword>"))
+			vim.cmd({ cmd = "Man", args = { vim.fn.expand("<cword>") }, mods = { vertical = true, split = "belowright" } })
 		end, { buffer = buf, nowait = true, silent = true, desc = "Docs: follow man cross-reference" })
 	end
 	if dir then
@@ -241,11 +250,6 @@ local function render_lines(lines, ft, dir, title)
 		vim.api.nvim_buf_create_user_command(buf, "Src", function()
 			gs_source(dir)
 		end, { desc = "Explore this project's source (docs viewer only)" })
-		vim.keymap.set("n", "D", function()
-			if reopen then
-				reopen()
-			end
-		end, { buffer = buf, nowait = true, silent = true, desc = "Docs: reopen this provider's fuzzy finder" })
 		vim.keymap.set("n", "<leader>fe", function()
 			require("oil").toggle_float(dir)
 		end, { buffer = buf, desc = "Oil (this doc's directory)" })
@@ -431,7 +435,7 @@ local function open_file(path)
 	end
 	vim.system(
 		{ "pandoc", "-f", from, "-t", "gfm-raw_html", "--wrap=none", path },
-		{ text = true },
+		{ text = true, timeout = 120000 },
 		function(res)
 			vim.schedule(function()
 				local lines = vim.split(res.stdout or "", "\n")
@@ -481,6 +485,23 @@ follow_link = function()
 	end
 	local url = pick or first
 	if not url then
+		-- Reference-style link ([text][id], resolved by a "[id]: target" line
+		-- elsewhere in the page), which the Rust mdBooks use heavily.
+		for id in line:gmatch("%]%[([^%]]+)%]") do
+			local pat = "^%s*%[" .. id:gsub("%p", "%%%0") .. "%]:%s*(%S+)"
+			for _, L in ipairs(vim.api.nvim_buf_get_lines(0, 0, -1, false)) do
+				local t = L:match(pat)
+				if t then
+					url = t
+					break
+				end
+			end
+			if url then
+				break
+			end
+		end
+	end
+	if not url then
 		return vim.notify("No link on this line", vim.log.levels.INFO)
 	end
 	if url:match("^%a[%w+.-]*://") then
@@ -490,10 +511,12 @@ follow_link = function()
 	if url == "" then
 		return
 	end
-	local base = vim.fs.normalize(dir .. "/" .. url:gsub("^%./", ""))
-	-- Wiki links often omit the extension ([SDL_Event](SDL_Event) -> SDL_Event.md).
+	-- clean_markdown already absolutized image links; don't re-join those to dir.
+	local base = url:sub(1, 1) == "/" and url or vim.fs.normalize(dir .. "/" .. url:gsub("^%./", ""))
+	-- Wiki links often omit the extension ([SDL_Event](SDL_Event) -> SDL_Event.md);
+	-- mdBook cross-links point at the rendered .html of a source .md.
 	local path
-	for _, cand in ipairs({ base, base .. ".md", base .. ".markdown", base .. ".rst", base .. ".txt", base .. ".html" }) do
+	for _, cand in ipairs({ base, base .. ".md", base .. ".markdown", base .. ".rst", base .. ".txt", base .. ".html", (base:gsub("%.html$", ".md")) }) do
 		if vim.fn.filereadable(cand) == 1 then
 			path = cand
 			break
@@ -536,6 +559,8 @@ end
 
 -- ── extract one kernel-doc symbol and render it (async) ──────────────────
 local function open_api(dir, name, file)
+	render_seq = render_seq + 1
+	local myseq = render_seq -- a later open supersedes this (up to 15 s) render
 	-- kernel-doc is perl on older trees and Python (needing the kdoc package on
 	-- PYTHONPATH) on recent ones; pick the interpreter by shebang so both work.
 	local cmd = string.format(
@@ -554,6 +579,9 @@ local function open_api(dir, name, file)
 			local out = vim.split(res.stdout or "", "\n", { trimempty = true })
 			if #out == 0 then
 				return vim.notify("kernel-doc: nothing for " .. name .. "\n" .. (res.stderr or ""), vim.log.levels.WARN)
+			end
+			if myseq ~= render_seq then
+				return -- something newer was opened while kernel-doc ran
 			end
 			render_lines(out, "markdown", dir, name)
 		end)
@@ -587,6 +615,9 @@ local function pick_files(dir, fd_args, prompt)
 end
 
 local function api_search(dir)
+	last_picker = function()
+		api_search(dir) -- D in a kernel-API doc reopens this search, not an older picker
+	end
 	fzf().fzf_exec("cat " .. vim.fn.shellescape(dir .. "/api-index.tsv"), {
 		prompt = "Kernel API> ",
 		fzf_opts = { ["--delimiter"] = "\t", ["--with-nth"] = "1..2", ["--no-multi"] = true },
@@ -1066,7 +1097,7 @@ local simple = {
 		-- The LibAFL Book (docs/src), the example fuzzers, and every crate's
 		-- own docs/README (libafl, libafl_bolts, libafl_qemu, libafl_asan, …).
 		url = "https://github.com/AFLplusplus/LibAFL",
-		sparse = "/docs/src /fuzzers /crates",
+		sparse = "/docs/src /docs/listings /fuzzers /crates", -- listings: the book's {{#include}} targets
 		marker = "docs/src",
 		browse = "",
 		exts = "-e md -e rs -e txt",
@@ -1192,11 +1223,16 @@ local simple = {
 
 local function make_simple(name, spec)
 	return function()
+		local dir = data_root .. "/" .. name .. "/master"
+		-- An already-cloned doc set browses without git (offline, or git missing).
+		if vim.fn.isdirectory(dir .. "/" .. spec.marker) == 1 then
+			return pick_files(dir .. spec.browse, spec.exts, spec.prompt)
+		end
 		if not have("git") then
 			return vim.notify("git not found (needed to fetch " .. name .. " docs)", vim.log.levels.WARN)
 		end
-		ensure_repo(data_root .. "/" .. name .. "/master", spec.url, spec.sparse, spec.marker, function(dir)
-			pick_files(dir .. spec.browse, spec.exts, spec.prompt)
+		ensure_repo(dir, spec.url, spec.sparse, spec.marker, function(d)
+			pick_files(d .. spec.browse, spec.exts, spec.prompt)
 		end)
 	end
 end
@@ -1542,18 +1578,19 @@ local SDM_URLS = {
 }
 
 local function pick_sdm(vol)
-	for _, t in ipairs({ "curl", "mutool", "pdftotext", "pdfinfo" }) do
-		if not have(t) then
-			return vim.notify(t .. " needed for Intel SDM", vim.log.levels.WARN)
-		end
-	end
 	local out = data_root .. "/sdm/vol" .. vol
 	local pdf = tools_dir .. "/sdm-vol" .. vol .. ".pdf"
 	local function browse()
 		pick_files(out, "-e txt", "Intel SDM v" .. vol .. "> ")
 	end
+	-- Browse a built cache first; the fetch/split tools are only needed to build.
 	if vim.fn.filereadable(out .. "/.complete") == 1 then
 		return browse()
+	end
+	for _, t in ipairs({ "curl", "mutool", "pdftotext", "pdfinfo" }) do
+		if not have(t) then
+			return vim.notify(t .. " needed to build Intel SDM", vim.log.levels.WARN)
+		end
 	end
 	vim.fn.mkdir(out, "p")
 	-- Drop the figure extractor next to the other downloaded tools.
@@ -1594,7 +1631,8 @@ local function render_shell(cmd, title, ft, cache_key)
 			return render_lines(cached, ft or "man", nil, title)
 		end
 	end
-	vim.system({ "sh", "-c", cmd }, { text = true }, function(res)
+	-- 60 s cap: an unreachable host otherwise hung the fetch for minutes.
+	vim.system({ "sh", "-c", cmd }, { text = true, timeout = 60000 }, function(res)
 		vim.schedule(function()
 			local out = vim.split(res.stdout or "", "\n")
 			while #out > 0 and out[#out]:match("^%s*$") do
@@ -2117,22 +2155,18 @@ local function update_all()
 	if not have("git") then
 		return vim.notify("git not found", vim.log.levels.WARN)
 	end
-	local repos = {}
-	local function scan(glob)
-		for _, d in ipairs(vim.fn.glob(glob, false, true)) do
-			if vim.fn.isdirectory(d .. "/.git") == 1 then
+	-- Every git clone under the cache, whatever its layout (<name>/master, a
+	-- flat <name>, <name>/<version>, rust/<book>, bap/wiki, android-kernel/
+	-- <branch>): glob depth 1..3 and dedupe, so nothing is silently skipped.
+	local repos, seen = {}, {}
+	for _, glob in ipairs({ "/*", "/*/*", "/*/*/*" }) do
+		for _, d in ipairs(vim.fn.glob(data_root .. glob, false, true)) do
+			if not seen[d] and vim.fn.isdirectory(d .. "/.git") == 1 then
+				seen[d] = true
 				repos[#repos + 1] = d
 			end
 		end
 	end
-	scan(data_root .. "/*/master") -- simple providers
-	scan(data_root .. "/*") -- netbsd and any flat clones
-	scan(data_root .. "/linux/*") -- kernel versions
-	scan(data_root .. "/ghidra/*") -- ghidra tags
-	-- Drop cached web pages (make/ocaml/multiboot) and converted-markdown so
-	-- they refetch/reconvert fresh after a pull.
-	pcall(vim.fn.delete, webcache_dir, "rf")
-	pcall(vim.fn.delete, convcache_dir, "rf")
 	if #repos == 0 then
 		return vim.notify("No cached doc repos to update yet", vim.log.levels.INFO)
 	end
@@ -2147,6 +2181,11 @@ local function update_all()
 				end
 				if done == #repos then
 					if #failed == 0 then
+						-- Only now drop the cached web pages and converted markdown so
+						-- they refetch/reconvert fresh; an offline or failed update
+						-- must never wipe what still works.
+						pcall(vim.fn.delete, webcache_dir, "rf")
+						pcall(vim.fn.delete, convcache_dir, "rf")
 						vim.notify("Docs update: all " .. #repos .. " repos up to date")
 					else
 						vim.notify(("Docs update: %d/%d ok; failed: %s"):format(#repos - #failed, #repos, table.concat(failed, ", ")), vim.log.levels.WARN)
@@ -2266,18 +2305,19 @@ local STD_URLS = {
 }
 
 local function pick_pdf(name, prompt)
-	for _, t in ipairs({ "curl", "mutool", "pdftotext", "pdfinfo" }) do
-		if not have(t) then
-			return vim.notify(t .. " needed for " .. name, vim.log.levels.WARN)
-		end
-	end
 	local out = data_root .. "/std/" .. name
 	local pdf = tools_dir .. "/" .. name .. ".pdf"
 	local function browse()
 		pick_files(out, "-e txt", prompt)
 	end
+	-- Browse a built cache first; the fetch/split tools are only needed to build.
 	if vim.fn.filereadable(out .. "/.complete") == 1 then
 		return browse()
+	end
+	for _, t in ipairs({ "curl", "mutool", "pdftotext", "pdfinfo" }) do
+		if not have(t) then
+			return vim.notify(t .. " needed to build " .. name, vim.log.levels.WARN)
+		end
 	end
 	vim.fn.mkdir(out, "p")
 	vim.notify("Fetching + splitting " .. name .. " … (first time)")
