@@ -31,6 +31,9 @@ return {
 		-- If a supported parser isn't installed yet (first run / new language),
 		-- install it on demand and start once it finishes.
 		vim.api.nvim_create_autocmd("FileType", {
+			-- Own augroup (cleared on re-source) so reloading the config never
+			-- stacks duplicate handlers.
+			group = vim.api.nvim_create_augroup("TreesitterStart", { clear = true }),
 			callback = function(args)
 				local buf = args.buf
 				-- Big-file guard: treesitter highlight + injections get slow on very

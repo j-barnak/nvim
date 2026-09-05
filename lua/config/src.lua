@@ -73,6 +73,9 @@ local function arm_restore(win, dir, restore_fn)
 			if f:sub(1, #dir) == dir and vim.api.nvim_get_current_win() == win then
 				pcall(vim.api.nvim_del_augroup_by_id, grp)
 				vim.api.nvim_create_autocmd("WinClosed", {
+					-- A named group (cleared each arm) so a re-armed restore never
+					-- leaves a stale one-shot handler behind.
+					group = vim.api.nvim_create_augroup("SrcBackRestore", { clear = true }),
 					pattern = tostring(win),
 					once = true,
 					callback = function() vim.schedule(restore_fn) end,

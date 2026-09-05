@@ -67,13 +67,13 @@ local function show_figure(png)
 			local b = vim.api.nvim_get_current_buf()
 			vim.bo[b].bufhidden = "wipe"
 			for _, k in ipairs({ "q", "<Esc>" }) do
-				vim.keymap.set("n", k, clear_figure, { buffer = b, nowait = true, silent = true })
+				vim.keymap.set("n", k, clear_figure, { buffer = b, nowait = true, silent = true, desc = "docs: close figure" })
 			end
 		end)
 		return
 	end
 	if have("xdg-open") then
-		vim.system({ "xdg-open", png })
+		vim.system({ "xdg-open", png }, { detach = true }) -- hand off to the desktop; don't hold the handle
 		return vim.notify("Opened " .. vim.fs.basename(png) .. " externally", vim.log.levels.INFO)
 	end
 	vim.notify("Figure image at " .. png, vim.log.levels.INFO)
