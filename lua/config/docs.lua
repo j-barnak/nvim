@@ -17,6 +17,17 @@ local data_root = vim.fn.stdpath("data") .. "/docs"
 -- it is read directly (no epub/pdf build step). stdpath("config") keeps this
 -- portable. Other providers still fetch/convert into the volatile data_root.
 local frozen_root = vim.fn.stdpath("config") .. "/Resources/docs"
+-- The build scripts (PDF/SDM splitters, doxygen pipeline, kernel-doc index,
+-- aya crate index, SDM figure extractor) live as files under Resources/tools
+-- and are read only when a build actually runs; nothing is parsed at startup.
+local tools_src = vim.fn.stdpath("config") .. "/Resources/tools"
+local function tool_script(name)
+	local ok, lines = pcall(vim.fn.readfile, tools_src .. "/" .. name)
+	if not ok or #lines == 0 then
+		error("docs: build tool missing: " .. tools_src .. "/" .. name)
+	end
+	return table.concat(lines, "\n")
+end
 local cache_root = data_root .. "/linux"
 local tags_cache = cache_root .. "/tags.txt"
 
@@ -194,6 +205,23 @@ local function render_lines(lines, ft, dir, title)
 	-- defaults for nvim_create_buf(false, true); only bufhidden needs override.
 	local buf = vim.api.nvim_create_buf(false, true)
 	vim.bo[buf].bufhidden = "wipe"
+	-- Wiping the previous doc buffer re-sourced syntax/markdown.vim (the
+	-- TSHighlighter teardown re-runs the syntaxset FileType autocmd), ~14 ms on
+	-- every open whatever the size. Clearing its filetype first makes the wipe
+	-- free (measured: median open 20.5 -> 8.4 ms).
+	-- Only when this window is its last one: a doc the user :vsplit stays
+	-- highlighted in the other split.
+	local prev = vim.api.nvim_win_get_buf(win)
+	if
+		prev ~= buf
+		and vim.api.nvim_buf_is_valid(prev)
+		and vim.api.nvim_buf_get_name(prev):match("^docs://")
+		and #vim.fn.win_findbuf(prev) == 1
+	then
+		pcall(function()
+			vim.bo[prev].filetype = ""
+		end)
+	end
 	vim.api.nvim_win_set_buf(win, buf)
 	viewer_seq = viewer_seq + 1
 	pcall(vim.api.nvim_buf_set_name, buf, string.format("docs://%d/%s", viewer_seq, title or "doc"))
@@ -216,6 +244,10 @@ local function render_lines(lines, ft, dir, title)
 		vim.api.nvim_set_option_value(k, v, { scope = "local", win = win })
 	end
 
+	-- vim-sleuth runs its indent heuristics on FileType for any named buffer;
+	-- pointless on a read-only doc and 5-14 ms a pop. (With the wipe fix above:
+	-- median open 3.5 ms, max 8 ms across the whole library.)
+	vim.b[buf].sleuth_automatic = 0
 	-- filetype last, while `win` is current, so ftplugin setlocal stays scoped.
 	vim.bo[buf].filetype = ft or "markdown"
 	vim.bo[buf].modifiable = false
@@ -588,11 +620,57 @@ local function open_api(dir, name, file)
 	end)
 end
 
+-- Background pre-conversion of a browsed doc set's .rst/.xml/.html into the
+-- convcache, so the first open of a big page (kernel kvm/api.rst: 1 s of
+-- pandoc) is instant too. One nice'd sequential loop per set, sets queued one
+-- at a time; the key must match open_file's sha256(path .. ":" .. mtime).
+-- Skips what is already cached, so a re-run after a pull converts only the
+-- changed files.
+local PREWARM_SH = [[
+find "$1" -type f \( -name '*.rst' -o -name '*.xml' -o -name '*.html' -o -name '*.htm' \) 2>/dev/null |
+while IFS= read -r f; do
+  m=$(stat -c %Y "$f" 2>/dev/null) || continue
+  key=$(printf '%s:%s' "$f" "$m" | sha256sum | cut -d' ' -f1)
+  out="$2/$key.md"
+  [ -s "$out" ] && continue
+  case "$f" in *.rst) from=rst ;; *.xml) from=docbook ;; *) from=html ;; esac
+  if pandoc -f "$from" -t gfm-raw_html --wrap=none "$f" >"$out.tmp" 2>/dev/null && [ -s "$out.tmp" ]; then
+    mv "$out.tmp" "$out"
+  else
+    rm -f "$out.tmp"
+  fi
+done
+]]
+local prewarm_queue, prewarm_done, prewarm_busy = {}, {}, false
+local function prewarm_next()
+	local dir = table.remove(prewarm_queue, 1)
+	if not dir then
+		prewarm_busy = false
+		return
+	end
+	prewarm_busy = true
+	vim.fn.mkdir(convcache_dir, "p")
+	vim.system({ "nice", "-n", "19", "sh", "-c", PREWARM_SH, "prewarm", dir, convcache_dir }, {}, function()
+		vim.schedule(prewarm_next)
+	end)
+end
+local function prewarm_convcache(dir)
+	if prewarm_done[dir] or not (have("pandoc") and have("sha256sum")) then
+		return
+	end
+	prewarm_done[dir] = true
+	prewarm_queue[#prewarm_queue + 1] = dir
+	if not prewarm_busy then
+		prewarm_next()
+	end
+end
+
 -- ── fuzzy-browse doc/source files under a directory ──────────────────────
 local function pick_files(dir, fd_args, prompt)
 	if not have("fd") then
 		return vim.notify("fd not found (needed to browse docs)", vim.log.levels.WARN)
 	end
+	prewarm_convcache(dir)
 	-- remember this picker so `D` in an opened doc reopens the same fuzzy finder
 	last_picker = function()
 		pick_files(dir, fd_args, prompt)
@@ -664,43 +742,6 @@ local function ensure_docs(version, cb)
 end
 
 -- ── lazy: add scripts/ + referenced sources, build the API symbol index ──
-local API_BUILD = [[
-set -e
-cd %s
-grep -rhoE '^\.\. kernel-doc:: \S+' Documentation --include='*.rst' | awk '{print $3}' | sort -u > .kd_files.txt
-# /scripts holds the perl kernel-doc on older trees; recent kernels rewrote it
-# in Python (scripts/kernel-doc symlinks to /tools/docs/kernel-doc) which imports
-# the kdoc package from /tools/lib/python. Fetch all three or the recent-kernel
-# API path renders nothing (dangling symlink / missing kdoc module).
-git sparse-checkout add /scripts /tools/docs /tools/lib/python
-sed 's|^|/|' .kd_files.txt | xargs -d '\n' git sparse-checkout add
-git checkout
-python3 - "$PWD" <<'PY'
-import re, os, sys
-root = sys.argv[1]
-# Write the index atomically: a build killed mid-write must not leave a
-# partial api-index.tsv that filereadable() then treats as complete.
-tmp = os.path.join(root, "api-index.tsv.tmp")
-out = open(tmp, "w")
-hdr = re.compile(r'\s*\*\s*(?:(?:struct|union|enum|typedef)\s+)?([A-Za-z_]\w*)\s*(?:\(\))?\s*[-:]')
-for rel in open(os.path.join(root, ".kd_files.txt")):
-    rel = rel.strip(); p = os.path.join(root, rel)
-    try:
-        lines = open(p, encoding="utf-8", errors="replace").read().splitlines()
-    except OSError:
-        continue
-    for i, l in enumerate(lines):
-        if l.strip() == "/**" and i + 1 < len(lines):
-            nxt = lines[i + 1]
-            if "DOC:" in nxt:
-                continue
-            m = hdr.match(nxt)
-            if m:
-                out.write(m.group(1) + "\t" + rel + "\n")
-out.close()
-os.replace(tmp, os.path.join(root, "api-index.tsv"))
-PY
-]]
 
 local function ensure_api(version, cb)
 	ensure_docs(version, function(dir, _)
@@ -710,7 +751,7 @@ local function ensure_api(version, cb)
 		end
 		vim.notify("Fetching kernel API sources @ " .. version .. " … (first time, ~1-2 min)")
 		vim.system(
-			{ "sh", "-c", string.format(API_BUILD, vim.fn.shellescape(dir)) },
+			{ "sh", "-c", tool_script("api_build.sh"), "api", dir }, -- argv, not string.format (a % in the script would corrupt it)
 			{ text = true, timeout = 600000 },
 			function(res)
 				vim.schedule(function()
@@ -1338,42 +1379,6 @@ local tools_dir = data_root .. "/.tools"
 -- providers keep working after a reboot.
 -- Books are pre-built and committed under Resources/docs/books (read directly).
 local books_root = frozen_root .. "/books"
-local DOX_PIPELINE = [[
-set -e
-INPUT="$1"; OUT="$2"; TOOLS="$3"; PATTERNS="$4"
-DOXY=$(ls "$TOOLS"/doxygen-*/bin/doxygen 2>/dev/null | head -1)
-if [ -z "$DOXY" ]; then
-  mkdir -p "$TOOLS"
-  ( cd "$TOOLS" && curl -fsSL https://www.doxygen.nl/files/doxygen-1.14.0.linux.bin.tar.gz -o d.tgz && tar xzf d.tgz && rm -f d.tgz )
-  DOXY=$(ls "$TOOLS"/doxygen-*/bin/doxygen 2>/dev/null | head -1)
-fi
-# Kill-atomic: build the whole markdown set in $OUT.stage, then rename it in.
-# A doxygen/moxygen run killed midway must not leave a partial $OUT that the
-# glob check treats as a finished build.
-STAGE="$OUT.stage"; rm -rf "$STAGE" "$OUT"; mkdir -p "$STAGE"
-XML="$STAGE/.xml"; mkdir -p "$XML"
-{
-  echo "INPUT = $INPUT"
-  echo "FILE_PATTERNS = $PATTERNS"
-  echo "RECURSIVE = YES"
-  # Pin every output under the throwaway stage and disable LaTeX: doxygen
-  # defaults GENERATE_LATEX=YES and writes relative dirs into its cwd (the nvim
-  # repo when run from there), which previously leaked a 498-file latex/ tree.
-  echo "OUTPUT_DIRECTORY = $STAGE"
-  echo "GENERATE_HTML = NO"
-  echo "GENERATE_LATEX = NO"
-  echo "GENERATE_XML = YES"
-  echo "XML_OUTPUT = $XML"
-  echo "XML_PROGRAMLISTING = NO"
-  echo "EXTRACT_ALL = YES"
-  echo "QUIET = YES"
-  echo "WARN_IF_UNDOCUMENTED = NO"
-} > "$XML/Doxyfile"
-"$DOXY" "$XML/Doxyfile" >/dev/null 2>&1
-moxygen --classes --groups --anchors --output "$STAGE/%s.md" "$XML" >/dev/null 2>&1
-rm -rf "$XML"
-mv "$STAGE" "$OUT"
-]]
 
 local function pick_doxygen(name, url, sparse, input, patterns)
 	if not have("git") then
@@ -1393,7 +1398,7 @@ local function pick_doxygen(name, url, sparse, input, patterns)
 		end
 		vim.notify("Building " .. name .. " API (doxygen + moxygen) … first time, ~1-2 min")
 		vim.system(
-			{ "sh", "-c", DOX_PIPELINE, "dox", dir .. input, md, tools_dir, patterns },
+			{ "sh", "-c", tool_script("dox_pipeline.sh"), "dox", dir .. input, md, tools_dir, patterns },
 			-- cwd on the clone (never the nvim repo), so any stray relative
 			-- output can only land in the throwaway cache, not the config repo.
 			{ text = true, timeout = 300000, cwd = dir },
@@ -1415,159 +1420,13 @@ end
 -- band between its caption and the nearest full-width paragraph above it. We
 -- find that band from `pdftotext -bbox-layout`, render just that region with
 -- pdftoppm, and trim to a tight PNG named after the figure ("Figure 4-8.png").
-local FIGEXTRACT_PY = [==[
-import sys, os, re, subprocess
-import xml.etree.ElementTree as ET
-
-PDF, OUTDIR = sys.argv[1], sys.argv[2]
-DPI = 300  # crisp enough to zoom; figures are cached under stdpath("data")
-SCALE = DPI / 72.0
-os.makedirs(OUTDIR, exist_ok=True)
-
-raw = subprocess.run(["pdftotext", "-bbox-layout", PDF, "-"],
-                     capture_output=True, text=True).stdout
-raw = re.sub(r'<!DOCTYPE[^>]*>', '', raw)
-raw = re.sub(r'\sxmlns="[^"]*"', '', raw, count=1)
-root = ET.fromstring(raw)
-
-FIG_RE = re.compile(r'^Figure\s+([0-9A-Z]+-[0-9A-Z]+)\.', re.I)
-
-def block_text(b):
-    return " ".join((w.text or "") for w in b.iter("word")).strip()
-
-def fget(el, attr):
-    return float(el.get(attr))
-
-count = 0
-pagenum = 0
-for page in root.iter("page"):
-    pagenum += 1
-    pw, ph = fget(page, "width"), fget(page, "height")
-    blocks = list(page.iter("block"))
-    if not blocks:
-        continue
-    blocks.sort(key=lambda b: fget(b, "yMin"))
-    cl, cr = 45.0, pw - 45.0
-    cw = cr - cl
-    HEADER_Y, FOOTER_Y = 55.0, ph - 45.0
-
-    def is_body(b):
-        w = fget(b, "xMax") - fget(b, "xMin")
-        return w >= 0.55 * cw and fget(b, "xMin") <= cl + 0.12 * cw
-
-    CAP_RE = re.compile(r'^(Figure|Table)\s+[0-9A-Z]+-', re.I)
-
-    for b in blocks:
-        m = FIG_RE.match(block_text(b))
-        if not m:
-            continue
-        fid = m.group(1)
-        final = os.path.join(OUTDIR, "Figure " + fid + ".png")
-        if os.path.exists(final):
-            continue  # keep the first occurrence (main figure, not a "(Contd.)")
-        cap_ymin, cap_ymax = fget(b, "yMin"), fget(b, "yMax")
-        # Top boundary: the nearest body paragraph OR another figure/table
-        # caption above (so stacked figures on one page don't merge).
-        top = HEADER_Y
-        for pb in blocks:
-            if pb is b:
-                continue
-            pby = fget(pb, "yMax")
-            if pby <= cap_ymin - 2 and pby > top and (is_body(pb) or CAP_RE.match(block_text(pb))):
-                top = pby
-        top += 3
-        bottom = min(cap_ymax + 4, FOOTER_Y)
-        if bottom - top < 30:
-            continue
-        xs0, xs1 = [], []
-        for ib in blocks:
-            if fget(ib, "yMin") >= top - 2 and fget(ib, "yMax") <= bottom + 2:
-                xs0.append(fget(ib, "xMin")); xs1.append(fget(ib, "xMax"))
-        left = max(cl, min(xs0) - 8) if xs0 else cl
-        right = min(cr, max(xs1) + 8) if xs1 else cr
-        x, y = int(left * SCALE), int(top * SCALE)
-        w, h = int((right - left) * SCALE), int((bottom - top) * SCALE)
-        if w <= 0 or h <= 0:
-            continue
-        out = os.path.join(OUTDIR, "Figure " + fid)
-        subprocess.run(["pdftoppm", "-png", "-r", str(DPI), "-f", str(pagenum), "-l", str(pagenum),
-                        "-x", str(x), "-y", str(y), "-W", str(w), "-H", str(h), PDF, out],
-                       capture_output=True)
-        produced = next((os.path.join(OUTDIR, f) for f in os.listdir(OUTDIR)
-                         if f.startswith("Figure " + fid + "-") and f.endswith(".png")), None)
-        if produced:
-            final = os.path.join(OUTDIR, "Figure " + fid + ".png")
-            if produced != final:
-                os.replace(produced, final)
-            subprocess.run(["convert", final, "-trim", "+repage",
-                            "-bordercolor", "white", "-border", "14", final], capture_output=True)
-            count += 1
-print("figures:", count)
-]==]
 
 -- ── Intel SDM: download the PDF, split by chapter into text + figures ─────
 -- The manuals aren't published as markdown, so fetch the latest PDF and
 -- pdftotext -layout each chapter (page ranges from the PDF outline) into
 -- per-chapter text files, stripping running headers/footers and form feeds.
--- Figures (vector diagrams) are then cropped to PNGs via FIGEXTRACT_PY so
+-- Figures (vector diagrams) are then cropped to PNGs via Resources/tools/figextract.py so
 -- <CR> on a "Figure N-M" line shows the diagram inline (snacks.image).
-local SDM_BUILD = [[
-set -e
-PDF="$1"; OUT="$2"; URL="$3"; PY="$4"
-if [ ! -f "$PDF" ]; then
-  mkdir -p "$(dirname "$PDF")"
-  curl -fsSL "$URL" -o "$PDF"
-fi
-mkdir -p "$OUT"
-# Clean slate; ".complete" is written only after the whole split succeeds, so a
-# build killed midway is retried rather than treated as done (glob-of-*.txt is
-# not kill-atomic). set -e aborts before the sentinel on any error.
-rm -f "$OUT"/*.txt "$OUT"/.complete
-JS="$OUT/.ol.js"
-cat > "$JS" <<EOF2
-var doc = Document.openDocument("$PDF");
-function pageof(it){ try { var l = doc.resolveLink(it.uri); return (typeof l==="number")?l:(l&&l.page); } catch(e){ return -1; } }
-function walk(items,d){ for(var i=0;i<items.length;i++){ var it=items[i]; print(d+"\t"+(pageof(it)+1)+"\t"+it.title.replace(/\s+/g," ")); if(it.down) walk(it.down,d+1); } }
-walk(doc.loadOutline(),0);
-EOF2
-mutool run "$JS" > "$OUT/.all.tsv" 2>/dev/null
-TOTAL=$(pdfinfo "$PDF" | awk '/^Pages:/{print $2}')
-# Split at the shallowest outline depth with >= 5 entries (volumes differ).
-D=$(awk -F'\t' '{c[$1]++} END{for(d=0;d<8;d++) if(c[d]>=5){print d; exit}}' "$OUT/.all.tsv")
-idx=0; prev_p=""; prev_t=""
-emit() {
-  idx=$((idx+1)); n=$(printf '%03d' "$idx")
-  f=$(printf '%s' "$3" | tr '/' '-' | cut -c1-80)
-  hdr=$(printf '%s' "$3" | sed -E 's/^(Chapter|Appendix) [0-9A-Z]+ *//' | tr '[:lower:]' '[:upper:]')
-  pdftotext -layout -f "$1" -l "$2" "$PDF" - 2>/dev/null \
-    | sed 's/\f//g' \
-    | awk -v h="$hdr" '{t=$0; gsub(/^[ \t]+|[ \t]+$/,"",t)} t ~ /^Vol\. [0-9A-D]+ +[0-9A-Z]+-[0-9]+$/{next} t ~ /^[0-9A-Z]+-[0-9]+ +Vol\. [0-9A-D]+$/{next} h!="" && toupper(t)==h{next} {print}' \
-    | cat -s > "$OUT/$n $f.txt"
-}
-if [ -n "$D" ]; then
-  awk -F'\t' -v D="$D" '$1==D{print $2"\t"$3}' "$OUT/.all.tsv" > "$OUT/.ch.tsv"
-  while IFS="$(printf '\t')" read -r p t; do
-    [ -n "$prev_p" ] && emit "$prev_p" $((p-1)) "$prev_t"
-    prev_p="$p"; prev_t="$t"
-  done < "$OUT/.ch.tsv"
-  [ -n "$prev_p" ] && emit "$prev_p" "$TOTAL" "$prev_t"
-else
-  # No usable outline (e.g. Vol 4): fixed 40-page chunks.
-  p=1
-  while [ "$p" -le "$TOTAL" ]; do
-    e=$((p+39)); [ "$e" -gt "$TOTAL" ] && e="$TOTAL"
-    emit "$p" "$e" "pages $p-$e"
-    p=$((e+1))
-  done
-fi
-rm -f "$JS" "$OUT/.all.tsv" "$OUT/.ch.tsv"
-# Extract figures as tight PNGs (diagrams are vector, so rasterize regions).
-if [ -n "$PY" ] && command -v python3 >/dev/null 2>&1 \
-   && command -v pdftoppm >/dev/null 2>&1 && command -v convert >/dev/null 2>&1; then
-  python3 "$PY" "$PDF" "$OUT/figures" >/dev/null 2>&1 || true
-fi
-touch "$OUT/.complete"
-]]
 
 local SDM = "https://www.intel.com/content/dam/www/public/us/en/documents/manuals/"
 local SDM_URLS = {
@@ -1594,12 +1453,11 @@ local function pick_sdm(vol)
 	end
 	vim.fn.mkdir(out, "p")
 	-- Drop the figure extractor next to the other downloaded tools.
-	local py = tools_dir .. "/sdm-figextract.py"
+	local py = tools_src .. "/figextract.py" -- committed under Resources/tools, no runtime copy
 	vim.fn.mkdir(tools_dir, "p")
-	pcall(vim.fn.writefile, vim.split(FIGEXTRACT_PY, "\n"), py)
 	vim.notify("Fetching + splitting Intel SDM Vol " .. vol .. " … (first time; figures take a minute)")
 	vim.system(
-		{ "sh", "-c", SDM_BUILD, "sdm", pdf, out, SDM_URLS[vol], py },
+		{ "sh", "-c", tool_script("sdm_build.sh"), "sdm", pdf, out, SDM_URLS[vol], py },
 		{ text = true, timeout = 600000 },
 		function(res)
 			vim.schedule(function()
@@ -1661,27 +1519,28 @@ local function pick_man(section)
 	if not have("man") then
 		return vim.notify("man not found", vim.log.levels.WARN)
 	end
-	local list = vim.fn.systemlist("apropos -s " .. section .. " . 2>/dev/null | sort -u")
-	if #list == 0 then
-		list = vim.fn.systemlist(
-			"for d in $(manpath 2>/dev/null | tr ':' ' '); do ls \"$d/man"
-				.. section
-				.. "\" 2>/dev/null; done | sed 's/\\.[0-9].*$//' | sort -u"
-		)
-	end
-	if #list == 0 then
-		return vim.notify("No man pages found in section " .. section, vim.log.levels.WARN)
-	end
-	fzf().fzf_exec(list, {
+	-- Streamed straight into fzf as a shell command (like the fd browsers), not
+	-- collected with systemlist first: apropos over a full manpath blocked the
+	-- UI for 30-50 ms per open. When the apropos database is missing (no
+	-- mandb run), fall back to listing the manpath directories.
+	local cmd = ("apropos -s %s . 2>/dev/null | sort -u | grep . || { for d in $(manpath 2>/dev/null | tr ':' ' '); do ls \"$d/man%s\" 2>/dev/null; done | sed 's/\\.[0-9].*$//' | sort -u; }"):format(
+		section,
+		section
+	)
+	fzf().fzf_exec(cmd, {
 		prompt = "man " .. section .. "> ",
 		fzf_opts = { ["--no-multi"] = true },
 		actions = {
 			["default"] = function(sel)
 				local name = sel and sel[1] and sel[1]:match("^(%S+)")
 				if name then
+					-- Cached by page: big pages (bash(1)) take ~125 ms to format;
+					-- :Docs update clears the cache after a package update.
 					render_shell(
 						"MANWIDTH=90 man " .. section .. " " .. vim.fn.shellescape(name) .. " 2>/dev/null | col -bx",
-						name .. "(" .. section .. ")"
+						name .. "(" .. section .. ")",
+						nil,
+						"man:" .. section .. ":" .. name
 					)
 				end
 			end,
@@ -1707,32 +1566,30 @@ local function pick_cppman()
 		return vim.notify("cppman not found (install with: pipx install cppman)", vim.log.levels.WARN)
 	end
 	local function render(sym)
-		render_shell(bin .. " --force-columns=90 " .. vim.fn.shellescape(sym) .. " 2>/dev/null | col -bx", "cppman " .. sym, "man")
+		render_shell(
+			bin .. " --force-columns=90 " .. vim.fn.shellescape(sym) .. " 2>/dev/null | col -bx",
+			"cppman " .. sym,
+			"man",
+			"cppman:" .. sym
+		)
 	end
 	-- cppman's index is a SQLite db with one "<source>_keywords" table of
-	-- searchable symbol names. Dump those for the picker (read-only).
+	-- searchable symbol names. Dump those for the picker (read-only), streamed
+	-- into fzf rather than collected first (the dump blocked the UI ~45 ms).
 	local db = vim.fn.expand("~/.cache/cppman/index.db")
-	local names = {}
 	if vim.fn.filereadable(db) == 1 and have("python3") then
-		names = vim.fn.systemlist({
-			"python3",
-			"-c",
-			"import sqlite3,sys\n"
-				.. "c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True)\n"
-				.. "s=set()\n"
-				.. "for tbl in [r[0] for r in c.execute(\"SELECT name FROM sqlite_master WHERE type='table'\")]:\n"
-				.. "  if not tbl.endswith('_keywords'): continue\n"
-				.. "  try:\n"
-				.. "    for r in c.execute('SELECT keyword FROM \"%s\"' % tbl):\n"
-				.. "      k=(r[0] or '').strip()\n"
-				.. "      if len(k)>1 and not k.startswith('('): s.add(k)\n"
-				.. "  except Exception: pass\n"
-				.. "print('\\n'.join(sorted(s)))",
-			db,
-		})
-	end
-	if #names > 0 then
-		fzf().fzf_exec(names, {
+		local py = "import sqlite3,sys\n"
+			.. "c=sqlite3.connect('file:'+sys.argv[1]+'?mode=ro',uri=True)\n"
+			.. "s=set()\n"
+			.. "for tbl in [r[0] for r in c.execute(\"SELECT name FROM sqlite_master WHERE type='table'\")]:\n"
+			.. "  if not tbl.endswith('_keywords'): continue\n"
+			.. "  try:\n"
+			.. "    for r in c.execute('SELECT keyword FROM \"%s\"' % tbl):\n"
+			.. "      k=(r[0] or '').strip()\n"
+			.. "      if len(k)>1 and not k.startswith('('): s.add(k)\n"
+			.. "  except Exception: pass\n"
+			.. "print('\\n'.join(sorted(s)))"
+		fzf().fzf_exec("python3 -c " .. vim.fn.shellescape(py) .. " " .. vim.fn.shellescape(db), {
 			prompt = "cppman> ",
 			fzf_opts = { ["--no-multi"] = true },
 			actions = {
@@ -1894,16 +1751,6 @@ end
 -- rustdoc page renders (cached web-fetch, chrome trimmed at the first heading).
 -- Index line = "module<TAB>kind Name<TAB>href".
 local AYA_API = "https://docs.rs/aya/latest/aya/"
-local AYA_API_IDX = [[
-curl -fsSL https://docs.rs/aya/latest/aya/all.html \
- | grep -oE 'href="([a-z0-9_]+/)*(struct|enum|trait|fn|macro|type|constant|union|primitive|derive|attr|keyword|static)\.[A-Za-z0-9_]+\.html"' \
- | sed -E 's/^href="//; s/"$//' | sort -u \
- | while IFS= read -r h; do
-     b=${h##*/}; k=${b%%.*}; r=${b#*.}; n=${r%.html}; d=${h%/*}
-     if [ "$d" = "$h" ]; then m="aya"; else m="aya::$(printf '%s' "$d" | sed 's#/#::#g')"; fi
-     printf '%s\t%s %s\t%s\n' "$m" "$k" "$n" "$h"
-   done | sort
-]]
 
 local function pick_aya_api()
 	if not (have("curl") and have("pandoc")) then
@@ -1978,7 +1825,7 @@ local function pick_aya_api()
 	end
 	vim.fn.mkdir(dir, "p")
 	vim.notify("Fetching the Aya API index (docs.rs) … (first time)")
-	vim.system({ "sh", "-c", AYA_API_IDX }, { text = true, timeout = 30000 }, function(res)
+	vim.system({ "sh", "-c", tool_script("aya_api_idx.sh") }, { text = true, timeout = 30000 }, function(res)
 		vim.schedule(function()
 			local items = vim.split(res.stdout or "", "\n", { trimempty = true })
 			if #items == 0 then
@@ -2129,15 +1976,9 @@ local function pick_pydoc()
 	end
 	-- Fuzzy list of every importable top-level module (stdlib + site-packages,
 	-- e.g. pexpect, requests, numpy) so third-party packages are discoverable.
-	local mods = vim.fn.systemlist({
-		"python3",
-		"-c",
-		"import pkgutil,sys; print(chr(10).join(sorted(set([m.name for m in pkgutil.iter_modules()] + list(sys.builtin_module_names)))))",
-	})
-	if #mods == 0 then
-		return vim.notify("pydoc: could not list modules", vim.log.levels.WARN)
-	end
-	fzf().fzf_exec(mods, {
+	-- Streamed into fzf; collecting it first blocked the UI for ~35 ms.
+	local py = "import pkgutil,sys; print(chr(10).join(sorted(set([m.name for m in pkgutil.iter_modules()] + list(sys.builtin_module_names)))))"
+	fzf().fzf_exec("python3 -c " .. vim.fn.shellescape(py), {
 		prompt = "pydoc> ",
 		fzf_opts = { ["--no-multi"] = true },
 		actions = {
@@ -2181,11 +2022,13 @@ local function update_all()
 				end
 				if done == #repos then
 					if #failed == 0 then
-						-- Only now drop the cached web pages and converted markdown so
-						-- they refetch/reconvert fresh; an offline or failed update
-						-- must never wipe what still works.
+						-- Only now drop the cached web pages so they refetch fresh; an
+						-- offline or failed update must never wipe what still works.
+						-- Converted markdown is keyed by source mtime, so a pull
+						-- invalidates exactly the changed files; just prune entries
+						-- untouched for 90 days instead of re-converting whole doc sets.
 						pcall(vim.fn.delete, webcache_dir, "rf")
-						pcall(vim.fn.delete, convcache_dir, "rf")
+						vim.system({ "find", convcache_dir, "-type", "f", "-mtime", "+90", "-delete" }, {}, function() end)
 						vim.notify("Docs update: all " .. #repos .. " repos up to date")
 					else
 						vim.notify(("Docs update: %d/%d ok; failed: %s"):format(#repos - #failed, #repos, table.concat(failed, ", ")), vim.log.levels.WARN)
@@ -2207,92 +2050,6 @@ end
 -- Same idea as the Intel SDM: fetch the PDF, split by the PDF outline into
 -- per-clause text files (pdftotext -layout), stripping the ISO running
 -- header / page numbers. Browsable, and <leader>fs gives the clause TOC.
-local PDF_BUILD = [[
-set -e
-PDF="$1"; OUT="$2"; URL="$3"; MODE="$4"
-if [ ! -f "$PDF" ]; then mkdir -p "$(dirname "$PDF")"; curl -fsSL "$URL" -o "$PDF"; fi
-mkdir -p "$OUT"
-# Clean slate; ".complete" (written only on full success) gates reuse, so a
-# build killed midway is retried rather than treated as done.
-rm -f "$OUT"/*.txt "$OUT"/.complete
-JS="$OUT/.ol.js"
-cat > "$JS" <<EOF2
-var doc = Document.openDocument("$PDF");
-function pageof(it){ try { var l = doc.resolveLink(it.uri); return (typeof l==="number")?l:(l&&l.page); } catch(e){ return -1; } }
-function walk(items,d){ for(var i=0;i<items.length;i++){ var it=items[i]; print(d+"\t"+(pageof(it)+1)+"\t"+it.title.replace(/\s+/g," ")); if(it.down) walk(it.down,d+1); } }
-walk(doc.loadOutline(),0);
-EOF2
-mutool run "$JS" > "$OUT/.all.tsv" 2>/dev/null
-TOTAL=$(pdfinfo "$PDF" | awk '/^Pages:/{print $2}')
-idx=0; prev_p=""; prev_t=""
-emit() {
-  idx=$((idx+1)); n=$(printf '%03d' "$idx")
-  # Chapter file name: full title, cut at a word boundary near 140 chars (the
-  # old hard cut -c1-80 chopped 11 Beautiful C++ guideline titles mid-word).
-  f=$(printf '%s' "$3" | tr '/' '-' | awk '{ if (length($0) > 140) { s = substr($0, 1, 140); sub(/ [^ ]*$/, "", s); print s } else print }')
-  pdftotext -layout -f "$1" -l "$2" "$PDF" - 2>/dev/null \
-    | sed 's/\f//g' | tr '\000-\010\013-\037' '[?*]' \
-    | awk -v book="$MODE" '{o=$0; gsub(/\[Trial version\]/,""); t=$0; gsub(/^[ \t]+|[ \t]+$/,"",t); pb=prevblank; prevblank=(t=="")} o!=$0 && t==""{next} book!="book" && t ~ /^ISO\/IEC [0-9]/{next} book!="book" && t ~ /^© ISO\/IEC/{next} t ~ /^[0-9]{1,4}$/ && pb{next} t ~ /ABC Amber|Team LiB|processtext\.com/{next} {print}' \
-    | cat -s > "$OUT/$n $f.txt"
-}
-# Book mode ($4=book): pick chapter/part/appendix boundaries from the outline by
-# TITLE pattern at any depth (the printed TOC), so chapters nested under Parts
-# are kept (top-level-only dropped them). Strip a "[Trial version]"/bracket tag
-# some PDF tools stamp on every bookmark. Spec PDFs (C/C++/DWARF/ABI/... which
-# have bare numbered clauses, no Chapter/Part) keep the depth heuristic below.
-SLUG=$(basename "$OUT")
-if [ "$4" = book ] && [ "$SLUG" = operating-systems-three-easy-pieces ]; then
-  # OSTEP's chapters are topic-titled (no Chapter N / number / Part keyword), so
-  # no title pattern can find them; its real chapters are the outline's depth-1
-  # nodes. Take depth 0 too: the depth-0 dialogues/chapter headings are real
-  # boundaries, and without them the text between a chapter heading and its
-  # first subsection (e.g. Chapter 2's opening pages) was silently dropped.
-  awk -F'\t' '$1<=1{print $2"\t"$3}' "$OUT/.all.tsv" > "$OUT/.ch.tsv"
-elif [ "$4" = book ]; then
-  # Match on a lowercased copy so No Starch's "APPENDIX: ..." / "GLOSSARY" count;
-  # accept letter-numbered appendices ("A. The One-Definition Rule") once a
-  # chapter has been seen, at outline depth <= 1 (deeper lettered items are
-  # sub-sections).
-  awk -F'\t' '
-    { t=$3; sub(/^[ \t]+/,"",t); sub(/^\[[A-Za-z0-9 ._-]*\][ \t]*/,"",t); sub(/[ \t]+$/,"",t); lt=tolower(t); ty=0 }
-    lt ~ /^part [ivxlc0-9]/ || lt ~ /^section [0-9]+[ :.]/ || lt ~ /^chapter [0-9]+.*[a-z]/ \
-      || t ~ /^[0-9]+\. [^(]/ || t ~ /^[0-9]+ [A-Z]/ || lt ~ /^appendix[: ]/ { ty=1; seen=1 }
-    seen && $1 <= 1 && lt ~ /^[a-h]\. [a-z]/ { ty=1 }
-    lt ~ /^(preface|foreword|epilogue|afterword)([ .:]|$)/ || lt ~ /^introduction[ ]*$/ { ty=1 }
-    seen && lt ~ /^(bibliography|index|references|glossary)[ ]*$/ { ty=1 }
-    ty { print $2"\t"t }
-  ' "$OUT/.all.tsv" | sort -t"$(printf '\t')" -k1,1n -s \
-    | awk -F'\t' '$1!=lastp{print} {lastp=$1}' > "$OUT/.ch.tsv"
-  [ "$(wc -l < "$OUT/.ch.tsv")" -ge 5 ] || : > "$OUT/.ch.tsv"
-fi
-# Fallback / spec mode: split at the shallowest outline depth with >= 5 entries.
-if [ ! -s "$OUT/.ch.tsv" ]; then
-  D=$(awk -F'\t' '{c[$1]++} END{for(d=0;d<8;d++) if(c[d]>=5){print d; exit}}' "$OUT/.all.tsv")
-  [ -n "$D" ] && awk -F'\t' -v D="$D" '$1==D{print $2"\t"$3}' "$OUT/.all.tsv" > "$OUT/.ch.tsv"
-fi
-if [ -s "$OUT/.ch.tsv" ]; then
-  # Pages before the first outline boundary (a preface, foreword, or an
-  # unbookmarked introduction) used to be dropped entirely; emit them as a
-  # Front Matter chapter so no text is lost.
-  first_p=$(head -1 "$OUT/.ch.tsv" | cut -f1)
-  [ "${first_p:-1}" -gt 1 ] && emit 1 $((first_p-1)) "Front Matter"
-  while IFS="$(printf '\t')" read -r p t; do
-    [ -n "$prev_p" ] && emit "$prev_p" $((p-1)) "$prev_t"
-    prev_p="$p"; prev_t="$t"
-  done < "$OUT/.ch.tsv"
-  [ -n "$prev_p" ] && emit "$prev_p" "$TOTAL" "$prev_t"
-else
-  p=1
-  while [ "$p" -le "$TOTAL" ]; do e=$((p+39)); [ "$e" -gt "$TOTAL" ] && e="$TOTAL"; emit "$p" "$e" "pages $p-$e"; p=$((e+1)); done
-fi
-rm -f "$JS" "$OUT/.all.tsv" "$OUT/.ch.tsv"
-# Drop blank chapter files (cover / back-cover / title pages that are image-only
-# in the PDF and text-extract to nothing) so they are not dead picker entries.
-for t in "$OUT"/*.txt; do
-  [ -e "$t" ] && [ "$(tr -d '[:space:]\f' < "$t" | wc -c)" -lt 3 ] && rm -f "$t"
-done
-touch "$OUT/.complete"
-]]
 
 local STD_URLS = {
 	["c-draft"] = "https://www.open-std.org/jtc1/sc22/wg14/www/docs/n3220.pdf",
@@ -2321,7 +2078,7 @@ local function pick_pdf(name, prompt)
 	end
 	vim.fn.mkdir(out, "p")
 	vim.notify("Fetching + splitting " .. name .. " … (first time)")
-	vim.system({ "sh", "-c", PDF_BUILD, "pdf", pdf, out, STD_URLS[name] }, { text = true, timeout = 900000 }, function(res)
+	vim.system({ "sh", "-c", tool_script("pdf_build.sh"), "pdf", pdf, out, STD_URLS[name] }, { text = true, timeout = 900000 }, function(res)
 		vim.schedule(function()
 			if vim.fn.filereadable(out .. "/.complete") == 1 then
 				browse()

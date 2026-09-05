@@ -42,6 +42,11 @@ return {
 				local nlines = vim.api.nvim_buf_line_count(buf)
 				if nlines > 5000 or vim.api.nvim_buf_get_offset(buf, nlines) > 512 * 1024 then
 					vim.b[buf].ts_disabled_bigfile = true
+					-- The runtime ftplugin (markdown.lua etc.) may already have called
+					-- vim.treesitter.start() for this buffer before this autocmd ran, so
+					-- returning early left the highlighter active (a 13k-line chapter
+					-- spent ~0.5 s parsing and scrolled 5-10x slower). Stop it.
+					pcall(vim.treesitter.stop, buf)
 					return
 				end
 				local lang = vim.treesitter.language.get_lang(vim.bo[buf].filetype)
