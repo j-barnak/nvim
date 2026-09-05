@@ -382,6 +382,21 @@ end
 -- repo's examples/, resolved relative to the page) and drops {{#title}}; turns
 -- Jekyll/Liquid tags into Markdown; normalizes ```lang,attr fences and GitHub
 -- ">[!NOTE]" callouts; strips trailing {#anchor}/{:attrs} noise; absolutizes
+-- True when `path` resolves inside one of the doc trees. Both gd and the
+-- mdBook {{#include}} expansion use it, so a crafted ../-laden target cannot
+-- pull an arbitrary file into the viewer. Defined here, above its first use
+-- in clean_markdown, so the closure captures it as an upvalue.
+local function within_docs(path)
+	local real = vim.uv.fs_realpath(path) or path
+	for _, r in ipairs({ data_root, frozen_root }) do
+		local root = vim.uv.fs_realpath(r) or r
+		if real:sub(1, #root + 1) == root .. "/" then
+			return true
+		end
+	end
+	return false
+end
+
 -- relative image links (so snacks.image finds them); and drops Sphinx ".. only::"
 -- residue (Cilium's "not (...)" line + unreleased banner). Then trims leading
 -- blanks. Runs after strip_frontmatter.
@@ -439,7 +454,9 @@ local function clean_markdown(lines, dir)
 		if spec then
 			local rel, sel = spec:match("^([^:]+):?(.*)$")
 			local full = vim.fs.normalize(dir .. "/" .. rel)
-			if vim.fn.filereadable(full) == 1 then
+			-- Same containment as gd: an include must not reach outside the
+			-- doc trees (a ../-laden target otherwise read any file).
+			if vim.fn.filereadable(full) == 1 and within_docs(full) then
 				for _, cl in ipairs(include_select(vim.fn.readfile(full), sel)) do
 					push(cl)
 				end
@@ -663,16 +680,7 @@ follow_link = function()
 		-- and open an arbitrary file. Resolve symlinks/.. and require the target
 		-- stay under the volatile cache (data_root) or the committed frozen
 		-- library (frozen_root); cross-section links within either are fine.
-		local real = vim.uv.fs_realpath(path) or path
-		local inside = false
-		for _, r in ipairs({ data_root, frozen_root }) do
-			local root = vim.uv.fs_realpath(r) or r
-			if real:sub(1, #root + 1) == root .. "/" then
-				inside = true
-				break
-			end
-		end
-		if not inside then
+		if not within_docs(path) then
 			return vim.notify("Link escapes the docs tree: " .. url, vim.log.levels.WARN)
 		end
 		open_file(path)
@@ -2183,6 +2191,19 @@ local function update_all()
 						pcall(vim.fn.delete, webcache_dir, "rf")
 						vim.system({ "find", convcache_dir, "-type", "f", "-mtime", "+90", "-delete" }, {}, function() end)
 						prewarm_done = {} -- pulled sets get re-warmed (only changed files convert)
+						-- Derived indexes are built once from a tree's contents and
+						-- then reused forever, so a pull would otherwise leave them
+						-- describing the old checkout. Drop them; each rebuilds on
+						-- its next use.
+						pcall(vim.fn.delete, tags_cache)
+						for _, idx in ipairs(vim.fn.glob(data_root .. "/*/api-index.tsv", false, true)) do
+							pcall(vim.fn.delete, idx)
+						end
+						for _, idx in ipairs(vim.fn.glob(data_root .. "/*/*/api-index.tsv", false, true)) do
+							pcall(vim.fn.delete, idx)
+						end
+						pcall(vim.fn.delete, data_root .. "/ocaml/modules.txt")
+						pcall(vim.fn.delete, data_root .. "/aya-api/items.tsv")
 						vim.notify("Docs update: all " .. #repos .. " repos up to date")
 					else
 						vim.notify(("Docs update: %d/%d ok; failed: %s"):format(#repos - #failed, #repos, table.concat(failed, ", ")), vim.log.levels.WARN)

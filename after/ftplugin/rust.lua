@@ -3,32 +3,49 @@ local have, shq = util.have, util.shq
 
 local XPATH = [[xmllint --html --xpath "//*[@id='main-content']" %s 2>/dev/null]]
 
-local function to_markdown(path)
-	local extract = XPATH:format(vim.fn.shellescape(path))
+-- The render pipelines, best first. Each runs under `sh`, so shq (POSIX
+-- quoting), not shellescape (which quotes for the user's 'shell').
+local function pipelines(path)
+	local extract = XPATH:format(shq(path))
+	local out = {}
 	if have("xmllint") and have("pandoc") then
-		local out = vim.fn.systemlist(extract .. " | pandoc -f html -t gfm-raw_html --wrap=none 2>/dev/null")
-		if out and #out > 0 then
-			return out
-		end
+		out[#out + 1] = extract .. " | pandoc -f html -t gfm-raw_html --wrap=none 2>/dev/null"
 	end
-	-- Fallback
 	if have("xmllint") and have("w3m") then
-		local out = vim.fn.systemlist(extract .. " | w3m -dump -T text/html 2>/dev/null")
-		if out and #out > 0 then
-			return out
-		end
+		out[#out + 1] = extract .. " | w3m -dump -T text/html 2>/dev/null"
 	end
 	if have("w3m") then
-		return vim.fn.systemlist({ "w3m", "-dump", path })
+		out[#out + 1] = "w3m -dump " .. shq(path)
 	end
-	return {}
+	return out
 end
 
-local function open_doc(path)
-	local lines = to_markdown(path)
-	if not lines or #lines == 0 then
-		return vim.notify("Could not render " .. vim.fs.basename(path), vim.log.levels.WARN)
+-- Asynchronous: a rustdoc page took about a second to convert, and doing it
+-- with systemlist froze the editor for that whole time.
+local function to_markdown(path, cb)
+	local cmds, i = pipelines(path), 0
+	local function try()
+		i = i + 1
+		if not cmds[i] then
+			return cb({})
+		end
+		vim.system({ "sh", "-c", cmds[i] }, { text = true, timeout = 30000 }, function(res)
+			vim.schedule(function()
+				local lines = vim.split(res.stdout or "", "\n")
+				while #lines > 0 and lines[#lines]:match("^%s*$") do
+					lines[#lines] = nil
+				end
+				if res.code == 0 and #lines > 0 then
+					return cb(lines)
+				end
+				try() -- this pipeline produced nothing; fall back to the next
+			end)
+		end)
 	end
+	try()
+end
+
+local function show(path, lines)
 	vim.cmd.vsplit({ mods = { split = "belowright" } })
 	local buf = vim.api.nvim_create_buf(false, true)
 	vim.api.nvim_win_set_buf(0, buf)
@@ -41,6 +58,15 @@ local function open_doc(path)
 	vim.keymap.set("n", "<leader>fe", function()
 		require("oil").toggle_float(dir)
 	end, { buffer = buf, desc = "Oil (this doc's directory)" })
+end
+
+local function open_doc(path)
+	to_markdown(path, function(lines)
+		if not lines or #lines == 0 then
+			return vim.notify("Could not render " .. vim.fs.basename(path), vim.log.levels.WARN)
+		end
+		show(path, lines)
+	end)
 end
 
 vim.keymap.set("n", "<leader>K", function()
@@ -56,7 +82,12 @@ vim.keymap.set("n", "<leader>K", function()
 
 	local candidates = { vim.fn.getcwd() .. "/target/doc" }
 	if have("rustc") then
-		table.insert(candidates, 1, vim.fn.trim(vim.fn.system({ "rustc", "--print", "sysroot" })) .. "/share/doc/rust/html")
+		-- Cached: the sysroot is fixed for the session, and this is the only
+		-- blocking call left on this path.
+		if vim.g.rust_sysroot == nil then
+			vim.g.rust_sysroot = vim.fn.trim(vim.fn.system({ "rustc", "--print", "sysroot" }))
+		end
+		table.insert(candidates, 1, vim.g.rust_sysroot .. "/share/doc/rust/html")
 	end
 	local roots = {}
 	for _, d in ipairs(candidates) do
