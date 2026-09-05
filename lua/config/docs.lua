@@ -512,12 +512,20 @@ follow_link = function()
 		end)
 	end
 	if path then
-		-- Containment: a crafted ../-laden link must not escape the docs cache
+		-- Containment: a crafted ../-laden link must not escape the docs trees
 		-- and open an arbitrary file. Resolve symlinks/.. and require the target
-		-- stay under data_root (cross-section links within it are fine).
+		-- stay under the volatile cache (data_root) or the committed frozen
+		-- library (frozen_root); cross-section links within either are fine.
 		local real = vim.uv.fs_realpath(path) or path
-		local root = vim.uv.fs_realpath(data_root) or data_root
-		if real:sub(1, #root + 1) ~= root .. "/" then
+		local inside = false
+		for _, r in ipairs({ data_root, frozen_root }) do
+			local root = vim.uv.fs_realpath(r) or r
+			if real:sub(1, #root + 1) == root .. "/" then
+				inside = true
+				break
+			end
+		end
+		if not inside then
 			return vim.notify("Link escapes the docs tree: " .. url, vim.log.levels.WARN)
 		end
 		open_file(path)
