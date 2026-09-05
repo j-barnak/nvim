@@ -28,7 +28,6 @@ return {
 			find_left = "'F",
 			highlight = "'h",
 			replace = "'r",
-			update_n_lines = "'n",
 		},
 
 		custom_surroundings = {

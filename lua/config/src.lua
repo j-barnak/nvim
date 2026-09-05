@@ -164,11 +164,4 @@ function M.open(name, url, restore_fn, excl)
 	end)
 end
 
-function M.reindex(name, excl)
-	local dir = data_root .. "/" .. name
-	if vim.fn.isdirectory(dir) == 1 then
-		build_tags(dir, excl, function() vim.notify("reindexed " .. name) end)
-	end
-end
-
 return M

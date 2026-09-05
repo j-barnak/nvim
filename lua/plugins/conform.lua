@@ -6,6 +6,7 @@ return {
 	cmd = "ConformInfo",
 	opts = {
 		notify_no_formatters = false,
+		default_format_opts = { lsp_format = "fallback" }, -- use an LSP formatter when no CLI one matches
 		formatters_by_ft = {
 			c = { "clang-format" },
 			cpp = { "clang-format" },

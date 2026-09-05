@@ -1,8 +1,11 @@
 return {
 	"gbprod/yanky.nvim",
 	opts = {
+		-- on_put/on_yank are the documented switches; a timer of 0 does not
+		-- turn the highlight off.
 		highlight = {
-			timer = 0,
+			on_put = false,
+			on_yank = false,
 		},
 		system_clipboard = {
 			sync_with_ring = false,

@@ -25,8 +25,13 @@ vim.opt.signcolumn = "yes:1"
 vim.opt.cursorline = true
 vim.opt.colorcolumn = "72"
 vim.opt.cmdheight = 0
-vim.opt.exrc = true -- project-local config, gated by Nvim's trust list (:trust); 'secure' is a no-op here
+-- Project-local config, gated by Nvim's trust list (:trust). 0.12 searches
+-- every parent directory, not just the cwd, and 'secure' is a no-op here.
+vim.opt.exrc = true
 vim.opt.confirm = true
+-- Turns off Neovim's built-in EditorConfig reader only. vim-sleuth ships its
+-- own parser and still honours a project's .editorconfig ahead of its
+-- heuristics, so a project file can set shiftwidth over the values above.
 vim.g.editorconfig = false
 
 vim.api.nvim_create_autocmd("ColorScheme", {
