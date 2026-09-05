@@ -57,7 +57,14 @@ return {
 					-- vim.treesitter.start() for this buffer before this autocmd ran, so
 					-- returning early left the highlighter active (a 13k-line chapter
 					-- spent ~0.5 s parsing and scrolled 5-10x slower). Stop it.
+					-- stop() re-runs the syntaxset autocmd when g:syntax_on is set,
+					-- sourcing syntax/markdown.vim (with its html/css includes) a
+					-- second time in the same FileType chain: 7 ms per open on
+					-- these files. The regular handler still runs afterwards.
+					local syntax_on = vim.g.syntax_on
+					vim.g.syntax_on = nil
 					pcall(vim.treesitter.stop, buf)
+					vim.g.syntax_on = syntax_on
 					return
 				end
 				local lang = vim.treesitter.language.get_lang(vim.bo[buf].filetype)

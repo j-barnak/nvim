@@ -668,6 +668,14 @@ end
 -- Skips what is already cached, so a re-run after a pull converts only the
 -- changed files.
 local PREWARM_SH = [[
+# One find over the set (paths + mtimes) hashed into a stamp: an unchanged,
+# already-converted set costs one process instead of three per file (~6 s of
+# CPU for a kernel tree on every session). The stamp is written only after a
+# complete pass, so an interrupted run re-scans.
+sig=$(find "$1" -type f \( -name '*.rst' -o -name '*.xml' -o -name '*.html' -o -name '*.htm' \) -printf '%p %Ts\n' 2>/dev/null | sort | sha256sum | cut -d' ' -f1)
+mkdir -p "$2/.stamps"
+stamp="$2/.stamps/$(printf '%s' "$1" | sha256sum | cut -d' ' -f1)"
+[ -f "$stamp" ] && [ "$(cat "$stamp")" = "$sig" ] && exit 0
 find "$1" -type f \( -name '*.rst' -o -name '*.xml' -o -name '*.html' -o -name '*.htm' \) 2>/dev/null |
 while IFS= read -r f; do
   m=$(stat -c %Y "$f" 2>/dev/null) || continue
@@ -681,6 +689,7 @@ while IFS= read -r f; do
     rm -f "$out.tmp"
   fi
 done
+printf '%s' "$sig" > "$stamp"
 ]]
 local prewarm_queue, prewarm_done, prewarm_busy, prewarm_job = {}, {}, false, nil
 local function prewarm_next()
