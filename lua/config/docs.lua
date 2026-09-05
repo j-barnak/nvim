@@ -381,7 +381,8 @@ local function clean_markdown(lines, dir)
 			l = l:gsub("%s*{[#:][^}]*}%s*$", "") -- trailing {#anchor}/{:attrs}
 		end
 		if dir then
-			l = l:gsub("(!%[[^%]]*%]%()([^)%s]+)(%))", function(pre, url, post)
+			-- `post` keeps an optional pandoc link title (`media/x.png "caption"`).
+			l = l:gsub("(!%[[^%]]*%]%()([^)%s]+)([^)]*%))", function(pre, url, post)
 				if url:match("^%a[%w+.-]*://") or url:match("^/") then
 					return pre .. url .. post
 				end
@@ -467,6 +468,12 @@ local function open_file(path)
 		render_lines(lines, ft, dir, base)
 	end
 
+	-- An image is shown as a figure, never read into the text viewer (a PNG
+	-- as "text" threw on newlines in the replacement and left an empty,
+	-- modifiable buffer).
+	if ({ png = 1, jpg = 1, jpeg = 1, gif = 1, svg = 1, webp = 1 })[ext] then
+		return show_figure(path)
+	end
 	if not from then
 		return finish(nil, nil) -- markdown / code: raw read is already instant
 	end
@@ -528,8 +535,19 @@ follow_link = function()
 	local url = pick or first
 	if not url then
 		-- Reference-style link ([text][id], resolved by a "[id]: target" line
-		-- elsewhere in the page), which the Rust mdBooks use heavily.
-		for id in line:gmatch("%]%[([^%]]+)%]") do
+		-- elsewhere in the page), which the Rust mdBooks use heavily. The id
+		-- under the cursor wins; otherwise the first on the line.
+		local ids, under = {}, nil
+		for a, id, b in line:gmatch("()%]%[([^%]]+)%]()") do
+			ids[#ids + 1] = id
+			if col >= a - 1 and col < b then
+				under = id
+			end
+		end
+		if under then
+			table.insert(ids, 1, under)
+		end
+		for _, id in ipairs(ids) do
 			local pat = "^%s*%[" .. id:gsub("%p", "%%%0") .. "%]:%s*(%S+)"
 			for _, L in ipairs(vim.api.nvim_buf_get_lines(0, 0, -1, false)) do
 				local t = L:match(pat)
@@ -559,7 +577,7 @@ follow_link = function()
 	if not url then
 		return vim.notify("No link on this line", vim.log.levels.INFO)
 	end
-	if url:match("^%a[%w+.-]*://") then
+	if url:match("^%a[%w+.-]*://") or url:match("^mailto:") then
 		return vim.notify("External link: " .. url, vim.log.levels.INFO)
 	end
 	url = url:gsub("%s.*$", ""):gsub("#.*$", "") -- drop title/anchor
