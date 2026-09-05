@@ -2203,8 +2203,10 @@ SLUG=$(basename "$OUT")
 if [ "$4" = book ] && [ "$SLUG" = operating-systems-three-easy-pieces ]; then
   # OSTEP's chapters are topic-titled (no Chapter N / number / Part keyword), so
   # no title pattern can find them; its real chapters are the outline's depth-1
-  # nodes. Use them directly.
-  awk -F'\t' '$1==1{print $2"\t"$3}' "$OUT/.all.tsv" > "$OUT/.ch.tsv"
+  # nodes. Take depth 0 too: the depth-0 dialogues/chapter headings are real
+  # boundaries, and without them the text between a chapter heading and its
+  # first subsection (e.g. Chapter 2's opening pages) was silently dropped.
+  awk -F'\t' '$1<=1{print $2"\t"$3}' "$OUT/.all.tsv" > "$OUT/.ch.tsv"
 elif [ "$4" = book ]; then
   awk -F'\t' '
     { t=$3; sub(/^[ \t]+/,"",t); sub(/^\[[A-Za-z0-9 ._-]*\][ \t]*/,"",t); sub(/[ \t]+$/,"",t); ty=0 }
@@ -2223,6 +2225,11 @@ if [ ! -s "$OUT/.ch.tsv" ]; then
   [ -n "$D" ] && awk -F'\t' -v D="$D" '$1==D{print $2"\t"$3}' "$OUT/.all.tsv" > "$OUT/.ch.tsv"
 fi
 if [ -s "$OUT/.ch.tsv" ]; then
+  # Pages before the first outline boundary (a preface, foreword, or an
+  # unbookmarked introduction) used to be dropped entirely; emit them as a
+  # Front Matter chapter so no text is lost.
+  first_p=$(head -1 "$OUT/.ch.tsv" | cut -f1)
+  [ "${first_p:-1}" -gt 1 ] && emit 1 $((first_p-1)) "Front Matter"
   while IFS="$(printf '\t')" read -r p t; do
     [ -n "$prev_p" ] && emit "$prev_p" $((p-1)) "$prev_t"
     prev_p="$p"; prev_t="$t"
