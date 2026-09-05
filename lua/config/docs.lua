@@ -117,7 +117,12 @@ local function docs_toc()
 	local win = vim.api.nvim_get_current_win()
 	local lines = vim.api.nvim_buf_get_lines(0, 0, -1, false)
 	local entries = {}
-	for i, L in ipairs(lines) do
+	-- Heading heuristics apply to prose only: in a C header `# define X`
+	-- matched the Markdown heading pattern (26 false entries on sqlite3.h)
+	-- and hid the treesitter symbol picker below.
+	local ft = vim.bo.filetype
+	local prose = ft == "" or ft == "markdown" or ft == "rst" or ft == "text" or ft == "man"
+	for i, L in ipairs(prose and lines or {}) do
 		local title, depth
 		-- Leading whitespace allowed: pdftotext -layout indents the section
 		-- headers of the C/C++/DWARF/ABI chapters, which left their TOC empty.
@@ -141,8 +146,6 @@ local function docs_toc()
 	if #entries == 0 then
 		-- A code example (no headings): fall back to a treesitter symbol picker,
 		-- which reads the read-only scratch buffer's syntax tree (no file needed).
-		local ft = vim.bo.filetype
-		local prose = ft == "" or ft == "markdown" or ft == "rst" or ft == "text" or ft == "man"
 		if not prose and pcall(function() fzf().treesitter() end) then
 			return
 		end
@@ -255,6 +258,7 @@ local function render_lines(lines, ft, dir, title)
 	vim.bo[buf].modifiable = false
 
 	vim.keymap.set("n", "q", function()
+		render_seq = render_seq + 1 -- an in-flight render must not reopen a closed viewer
 		pcall(vim.api.nvim_win_close, 0, true)
 	end, { buffer = buf, nowait = true, silent = true, desc = "Close docs viewer" })
 	vim.keymap.set("n", "<leader>fs", docs_toc, { buffer = buf, desc = "Docs: table of contents" })
@@ -295,12 +299,26 @@ local function render_lines(lines, ft, dir, title)
 		vim.keymap.set("n", "<leader>fe", function()
 			require("oil").toggle_float(dir)
 		end, { buffer = buf, desc = "Oil (this doc's directory)" })
-		-- SDM chapters carry extracted diagrams: <CR> on a "Figure N-M" line
-		-- shows the cropped image inline.
-		if dir:match("/sdm/vol%d") then
-			vim.keymap.set("n", "<CR>", open_figure_under_cursor, { buffer = buf, nowait = true, silent = true, desc = "Show figure under cursor" })
-		end
 	end
+	-- <CR> in every viewer (the global <CR> is `ciw`, which raised E21 on
+	-- these read-only buffers): an image link on the line shows that image,
+	-- an SDM "Figure N-M" line shows the cropped diagram, anything else
+	-- follows the link under the cursor.
+	vim.keymap.set("n", "<CR>", function()
+		local img = vim.api.nvim_get_current_line():match("!%[[^%]]*%]%(([^)%s]+)")
+		if img and dir then
+			local p = img:sub(1, 1) == "/" and img or vim.fs.normalize(dir .. "/" .. img)
+			if vim.fn.filereadable(p) == 1 then
+				return show_figure(p)
+			end
+		end
+		if dir and dir:match("/sdm/vol%d") then
+			return open_figure_under_cursor()
+		end
+		if dir then
+			return follow_link()
+		end
+	end, { buffer = buf, nowait = true, silent = true, desc = "Docs: show figure or follow link" })
 end
 
 -- Drop a leading YAML front-matter block (MS Learn, Jekyll, Sphinx docs),
@@ -580,7 +598,14 @@ follow_link = function()
 	if url:match("^%a[%w+.-]*://") or url:match("^mailto:") then
 		return vim.notify("External link: " .. url, vim.log.levels.INFO)
 	end
-	url = url:gsub("%s.*$", ""):gsub("#.*$", "") -- drop title/anchor
+	-- CommonMark destination forms: <path with spaces>, an optional quoted
+	-- title after whitespace, a #fragment, and %XX escapes (decoded last, so
+	-- %23 survives as a literal # in a file name).
+	url = url:match("^<(.-)>%s*$") or url
+	url = url:gsub("%s+[\"'(][^\"')]*[\"')]%s*$", ""):gsub("#.*$", ""):gsub("%s+$", "")
+	url = url:gsub("%%(%x%x)", function(h)
+		return string.char(tonumber(h, 16))
+	end)
 	if url == "" then
 		return
 	end
@@ -1371,7 +1396,14 @@ local function make_wiki(name, url, prompt)
 		end
 		vim.fn.mkdir(vim.fs.dirname(dir), "p")
 		vim.notify("Cloning " .. name .. " wiki … (first time)")
-		vim.system({ "git", "clone", "--depth=1", url, dir }, { text = true, timeout = 120000 }, function(res)
+		-- Clone into <dir>.tmp and rename, so an interrupted clone never leaves
+		-- a partial dir that makes every retry fail with "already exists".
+		local tmp = dir .. ".tmp"
+		vim.fn.delete(tmp, "rf")
+		vim.system(
+			{ "sh", "-c", 'git clone --depth=1 "$1" "$2" && mv "$2" "$3"', "wiki", url, tmp, dir },
+			{ text = true, timeout = 120000 },
+			function(res)
 			vim.schedule(function()
 				if #vim.fn.glob(dir .. "/*.md", false, true) > 0 then
 					browse()
@@ -2086,7 +2118,8 @@ local function update_all()
 	local repos, seen = {}, {}
 	for _, glob in ipairs({ "/*", "/*/*", "/*/*/*" }) do
 		for _, d in ipairs(vim.fn.glob(data_root .. glob, false, true)) do
-			if not seen[d] and vim.fn.isdirectory(d .. "/.git") == 1 then
+			-- <dir>.tmp is an in-flight clone (renamed into place when done).
+			if not seen[d] and not d:match("%.tmp$") and vim.fn.isdirectory(d .. "/.git") == 1 then
 				seen[d] = true
 				repos[#repos + 1] = d
 			end
