@@ -165,6 +165,7 @@ local function docs_toc()
 end
 
 local follow_link -- forward declaration; assigned after open_file is defined
+local render_shell -- forward declaration; gd on a man page (render_lines) renders through it
 local gs_source -- forward declaration; assigned after the `simple` table exists
 local last_picker -- re-open the current provider's fuzzy finder (D in a doc)
 -- Bumped on every user-initiated open; an async render (pandoc/curl) checks it
@@ -268,7 +269,15 @@ local function render_lines(lines, ft, dir, title)
 		-- gd follows the cross-reference under the cursor (e.g. gd on `read`
 		-- opens read's man page) in a new split, so this page is not replaced.
 		vim.keymap.set("n", "gd", function()
-			vim.cmd({ cmd = "Man", args = { vim.fn.expand("<cword>") }, mods = { vertical = true, split = "belowright" } })
+			-- Not :Man: man.lua reuses the current window when its filetype is
+			-- already "man", which edited man:// over this viewer and, with
+			-- bufhidden=wipe, destroyed the doc. Render into a fresh split with
+			-- the same viewer (cached like the man pickers).
+			local word = vim.fn.expand("<cword>")
+			if word ~= "" then
+				vim.cmd.vsplit({ mods = { split = "belowright" } })
+				render_shell("MANWIDTH=90 man " .. shq(word) .. " 2>/dev/null | col -bx", word, "man", "man::" .. word)
+			end
 		end, { buffer = buf, nowait = true, silent = true, desc = "Docs: follow man cross-reference" })
 	end
 	if dir then
@@ -535,6 +544,19 @@ follow_link = function()
 		end
 	end
 	if not url then
+		-- Autolinks (<https://...>) and bare URLs are external, not "not found";
+		-- prefer the one under the cursor, else the first on the line.
+		local firsturl
+		for a, u, b in line:gmatch("()(%a[%w+.-]*://[^%s<>\"')%]]+)()") do
+			firsturl = firsturl or u
+			if col >= a - 1 and col < b then
+				url = u
+				break
+			end
+		end
+		url = url or firsturl
+	end
+	if not url then
 		return vim.notify("No link on this line", vim.log.levels.INFO)
 	end
 	if url:match("^%a[%w+.-]*://") then
@@ -652,7 +674,10 @@ local function prewarm_next()
 	prewarm_busy = true
 	vim.fn.mkdir(convcache_dir, "p")
 	-- pcall: a spawn failure must not abort the picker or wedge the queue.
-	local ok, job = pcall(vim.system, { "nice", "-n", "19", "sh", "-c", PREWARM_SH, "prewarm", dir, convcache_dir }, {}, function()
+	-- setsid puts the loop, its subshell and every pandoc in their own
+	-- process group, so the kill on exit reaches all of them (a plain kill
+	-- of the parent sh left pandoc running after :qa).
+	local ok, job = pcall(vim.system, { "setsid", "nice", "-n", "19", "sh", "-c", PREWARM_SH, "prewarm", dir, convcache_dir }, {}, function()
 		prewarm_job = nil
 		vim.schedule(prewarm_next)
 	end)
@@ -668,14 +693,19 @@ end
 vim.api.nvim_create_autocmd("VimLeavePre", {
 	group = vim.api.nvim_create_augroup("DocsPrewarm", { clear = true }),
 	callback = function()
-		if prewarm_job then
-			pcall(prewarm_job.kill, prewarm_job, 15)
+		if prewarm_job and prewarm_job.pid then
+			pcall(vim.uv.kill, -prewarm_job.pid, "sigterm") -- the whole process group
 		end
 	end,
 })
 -- Opt out with `vim.g.docs_prewarm = false`.
 local function prewarm_convcache(dir)
-	if prewarm_done[dir] or vim.g.docs_prewarm == false or not (have("pandoc") and have("sha256sum") and have("nice")) then
+	if
+		prewarm_done[dir]
+		or vim.g.docs_prewarm == false
+		or dir:sub(1, #frozen_root) == frozen_root -- the frozen library is markdown/text already
+		or not (have("pandoc") and have("sha256sum") and have("nice") and have("setsid"))
+	then
 		return
 	end
 	prewarm_done[dir] = true
@@ -1498,7 +1528,7 @@ end
 -- serves the previously rendered result from disk instantly and works offline;
 -- `:Docs update` clears this cache so pages can be refreshed on demand.
 local webcache_dir = data_root .. "/.webcache"
-local function render_shell(cmd, title, ft, cache_key)
+render_shell = function(cmd, title, ft, cache_key)
 	render_seq = render_seq + 1
 	local myseq = render_seq -- a later open supersedes this fetch's render
 	-- Locally generated pages (man, cppman) live in a `local/` subdir that
@@ -1513,7 +1543,11 @@ local function render_shell(cmd, title, ft, cache_key)
 		end
 	end
 	-- 60 s cap: an unreachable host otherwise hung the fetch for minutes.
-	vim.system({ "sh", "-c", cmd }, { text = true, timeout = 60000 }, function(res)
+	-- coreutils timeout signals the whole process group, so curl/pandoc die
+	-- with the shell and stdout closes (vim.system's own timeout only killed
+	-- the sh, and the callback waited until curl gave up, 70-140 s later).
+	local argv = have("timeout") and { "timeout", "60", "sh", "-c", cmd } or { "sh", "-c", cmd }
+	vim.system(argv, { text = true, timeout = 65000 }, function(res)
 		vim.schedule(function()
 			local out = vim.split(res.stdout or "", "\n")
 			while #out > 0 and out[#out]:match("^%s*$") do
@@ -2069,7 +2103,7 @@ end
 -- man-page / web providers rendered inline (no clone).
 local function man_provider(cmd, title)
 	return function()
-		render_shell("MANWIDTH=90 " .. cmd .. " 2>/dev/null | col -bx", title, "man")
+		render_shell("MANWIDTH=90 " .. cmd .. " 2>/dev/null | col -bx", title, "man", "man:" .. cmd)
 	end
 end
 
@@ -2572,6 +2606,9 @@ vim.api.nvim_create_user_command("Docs", function(o)
 	end
 	for _, p in ipairs(providers) do
 		if p.key == key then
+			-- Default for `D`: reopen this provider. Providers with a picker
+			-- of their own (a browsed dir, a module list) narrow it further.
+			last_picker = p.run
 			return p.run()
 		end
 	end
