@@ -24,9 +24,19 @@ local tools_src = vim.fn.stdpath("config") .. "/Resources/tools"
 local function tool_script(name)
 	local ok, lines = pcall(vim.fn.readfile, tools_src .. "/" .. name)
 	if not ok or #lines == 0 then
-		error("docs: build tool missing: " .. tools_src .. "/" .. name)
+		-- Callers run this under `sh -c` and report a non-zero exit with its
+		-- stderr, so a failing stub surfaces as a normal build error instead of
+		-- a Lua traceback out of an async callback.
+		return 'echo "docs: build tool missing: ' .. tools_src .. "/" .. name .. '" >&2; exit 1'
 	end
 	return table.concat(lines, "\n")
+end
+-- POSIX single-quote escaping. Every command string here runs under `sh`
+-- (vim.system {"sh","-c",...}, and fzf-lua forces SHELL=sh for its streamed
+-- commands), whereas shq() quotes for the user's 'shell': with
+-- fish it doubles backslashes, which turned python's '\n' into '\\n'.
+local function shq(s)
+	return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
 end
 local cache_root = data_root .. "/linux"
 local tags_cache = cache_root .. "/tags.txt"
@@ -600,11 +610,11 @@ local function open_api(dir, name, file)
 			.. "if head -1 \"$KD\" 2>/dev/null | grep -qi perl; then perl \"$KD\" -rst -function %s %s 2>/dev/null; "
 			.. "else PYTHONPATH=tools/lib/python python3 \"$KD\" -rst -function %s %s 2>/dev/null; fi "
 			.. "| pandoc -f rst -t gfm-raw_html --wrap=none 2>/dev/null",
-		vim.fn.shellescape(dir),
-		vim.fn.shellescape(name),
-		vim.fn.shellescape(file),
-		vim.fn.shellescape(name),
-		vim.fn.shellescape(file)
+		shq(dir),
+		shq(name),
+		shq(file),
+		shq(name),
+		shq(file)
 	)
 	vim.system({ "sh", "-c", cmd }, { text = true, timeout = 15000 }, function(res)
 		vim.schedule(function()
@@ -641,7 +651,7 @@ while IFS= read -r f; do
   fi
 done
 ]]
-local prewarm_queue, prewarm_done, prewarm_busy = {}, {}, false
+local prewarm_queue, prewarm_done, prewarm_busy, prewarm_job = {}, {}, false, nil
 local function prewarm_next()
 	local dir = table.remove(prewarm_queue, 1)
 	if not dir then
@@ -650,12 +660,31 @@ local function prewarm_next()
 	end
 	prewarm_busy = true
 	vim.fn.mkdir(convcache_dir, "p")
-	vim.system({ "nice", "-n", "19", "sh", "-c", PREWARM_SH, "prewarm", dir, convcache_dir }, {}, function()
+	-- pcall: a spawn failure must not abort the picker or wedge the queue.
+	local ok, job = pcall(vim.system, { "nice", "-n", "19", "sh", "-c", PREWARM_SH, "prewarm", dir, convcache_dir }, {}, function()
+		prewarm_job = nil
 		vim.schedule(prewarm_next)
 	end)
+	if ok then
+		prewarm_job = job
+	else
+		prewarm_busy = false
+	end
 end
+-- The loop would otherwise outlive Neovim (a kernel Documentation/ tree is
+-- minutes of pandoc); stop it with the editor. It resumes from the cache
+-- next time the set is browsed.
+vim.api.nvim_create_autocmd("VimLeavePre", {
+	group = vim.api.nvim_create_augroup("DocsPrewarm", { clear = true }),
+	callback = function()
+		if prewarm_job then
+			pcall(prewarm_job.kill, prewarm_job, 15)
+		end
+	end,
+})
+-- Opt out with `vim.g.docs_prewarm = false`.
 local function prewarm_convcache(dir)
-	if prewarm_done[dir] or not (have("pandoc") and have("sha256sum")) then
+	if prewarm_done[dir] or vim.g.docs_prewarm == false or not (have("pandoc") and have("sha256sum") and have("nice")) then
 		return
 	end
 	prewarm_done[dir] = true
@@ -677,7 +706,7 @@ local function pick_files(dir, fd_args, prompt)
 	end
 	-- --base-directory guarantees the search root (fzf-lua's cwd isn't applied
 	-- to the raw command); cwd lets the builtin previewer resolve the entries.
-	fzf().fzf_exec("fd --base-directory " .. vim.fn.shellescape(dir) .. " --type f " .. fd_args, {
+	fzf().fzf_exec("fd --base-directory " .. shq(dir) .. " --type f " .. fd_args, {
 		prompt = prompt,
 		cwd = dir,
 		previewer = "builtin",
@@ -696,7 +725,7 @@ local function api_search(dir)
 	last_picker = function()
 		api_search(dir) -- D in a kernel-API doc reopens this search, not an older picker
 	end
-	fzf().fzf_exec("cat " .. vim.fn.shellescape(dir .. "/api-index.tsv"), {
+	fzf().fzf_exec("cat " .. shq(dir .. "/api-index.tsv"), {
 		prompt = "Kernel API> ",
 		fzf_opts = { ["--delimiter"] = "\t", ["--with-nth"] = "1..2", ["--no-multi"] = true },
 		actions = {
@@ -723,12 +752,12 @@ local function ensure_docs(version, cb)
 	vim.notify("Cloning kernel Documentation @ " .. version .. " … (first time only)")
 	local tmp = dir .. ".tmp"
 	local script = table.concat({
-		"rm -rf " .. vim.fn.shellescape(tmp) .. " " .. vim.fn.shellescape(dir),
+		"rm -rf " .. shq(tmp) .. " " .. shq(dir),
 		"git -c core.autocrlf=false clone -n --depth=1 --filter=blob:none --branch "
-			.. vim.fn.shellescape(version) .. " " .. repo .. " " .. vim.fn.shellescape(tmp),
-		"git -C " .. vim.fn.shellescape(tmp) .. " sparse-checkout set --no-cone /Documentation",
-		"git -C " .. vim.fn.shellescape(tmp) .. " checkout",
-		"mv " .. vim.fn.shellescape(tmp) .. " " .. vim.fn.shellescape(dir),
+			.. shq(version) .. " " .. repo .. " " .. shq(tmp),
+		"git -C " .. shq(tmp) .. " sparse-checkout set --no-cone /Documentation",
+		"git -C " .. shq(tmp) .. " checkout",
+		"mv " .. shq(tmp) .. " " .. shq(dir),
 	}, " && ")
 	vim.system({ "sh", "-c", script }, { text = true, timeout = 180000 }, function(res)
 		vim.schedule(function()
@@ -844,11 +873,11 @@ local function ensure_repo(dir, url, sparse, marker, cb)
 	-- midway never leaves a partial tree that the marker check treats as done.
 	local tmp = dir .. ".tmp"
 	local script = table.concat({
-		"rm -rf " .. vim.fn.shellescape(tmp) .. " " .. vim.fn.shellescape(dir),
-		"git -c core.autocrlf=false clone -n --depth=1 --filter=blob:none " .. url .. " " .. vim.fn.shellescape(tmp),
-		"git -C " .. vim.fn.shellescape(tmp) .. " sparse-checkout set --no-cone " .. sparse,
-		"git -C " .. vim.fn.shellescape(tmp) .. " checkout",
-		"mv " .. vim.fn.shellescape(tmp) .. " " .. vim.fn.shellescape(dir),
+		"rm -rf " .. shq(tmp) .. " " .. shq(dir),
+		"git -c core.autocrlf=false clone -n --depth=1 --filter=blob:none " .. url .. " " .. shq(tmp),
+		"git -C " .. shq(tmp) .. " sparse-checkout set --no-cone " .. sparse,
+		"git -C " .. shq(tmp) .. " checkout",
+		"mv " .. shq(tmp) .. " " .. shq(dir),
 	}, " && ")
 	vim.system({ "sh", "-c", script }, { text = true, timeout = 180000 }, function(res)
 		vim.schedule(function()
@@ -1452,9 +1481,8 @@ local function pick_sdm(vol)
 		end
 	end
 	vim.fn.mkdir(out, "p")
-	-- Drop the figure extractor next to the other downloaded tools.
 	local py = tools_src .. "/figextract.py" -- committed under Resources/tools, no runtime copy
-	vim.fn.mkdir(tools_dir, "p")
+	vim.fn.mkdir(tools_dir, "p") -- the downloaded PDF lands here
 	vim.notify("Fetching + splitting Intel SDM Vol " .. vol .. " … (first time; figures take a minute)")
 	vim.system(
 		{ "sh", "-c", tool_script("sdm_build.sh"), "sdm", pdf, out, SDM_URLS[vol], py },
@@ -1482,7 +1510,11 @@ local webcache_dir = data_root .. "/.webcache"
 local function render_shell(cmd, title, ft, cache_key)
 	render_seq = render_seq + 1
 	local myseq = render_seq -- a later open supersedes this fetch's render
-	local cf = cache_key and (webcache_dir .. "/" .. vim.fn.sha256(cache_key) .. ".txt")
+	-- Locally generated pages (man, cppman) live in a `local/` subdir that
+	-- :Docs update always clears, even offline; fetched web pages are only
+	-- cleared after a successful update so they keep working offline.
+	local sub = (cache_key and cache_key:match("^man:") or cache_key and cache_key:match("^cppman:")) and "/local" or ""
+	local cf = cache_key and (webcache_dir .. sub .. "/" .. vim.fn.sha256(cache_key) .. ".txt")
 	if cf and vim.fn.filereadable(cf) == 1 then
 		local cached = vim.fn.readfile(cf)
 		if #cached > 0 then
@@ -1502,7 +1534,7 @@ local function render_shell(cmd, title, ft, cache_key)
 			end
 			if cf then -- persist successful, non-empty output for instant reopen
 				pcall(function()
-					vim.fn.mkdir(webcache_dir, "p")
+					vim.fn.mkdir(vim.fs.dirname(cf), "p")
 					vim.fn.writefile(out, cf)
 				end)
 			end
@@ -1537,7 +1569,7 @@ local function pick_man(section)
 					-- Cached by page: big pages (bash(1)) take ~125 ms to format;
 					-- :Docs update clears the cache after a package update.
 					render_shell(
-						"MANWIDTH=90 man " .. section .. " " .. vim.fn.shellescape(name) .. " 2>/dev/null | col -bx",
+						"MANWIDTH=90 man " .. section .. " " .. shq(name) .. " 2>/dev/null | col -bx",
 						name .. "(" .. section .. ")",
 						nil,
 						"man:" .. section .. ":" .. name
@@ -1567,7 +1599,7 @@ local function pick_cppman()
 	end
 	local function render(sym)
 		render_shell(
-			bin .. " --force-columns=90 " .. vim.fn.shellescape(sym) .. " 2>/dev/null | col -bx",
+			bin .. " --force-columns=90 " .. shq(sym) .. " 2>/dev/null | col -bx",
 			"cppman " .. sym,
 			"man",
 			"cppman:" .. sym
@@ -1589,7 +1621,7 @@ local function pick_cppman()
 			.. "      if len(k)>1 and not k.startswith('('): s.add(k)\n"
 			.. "  except Exception: pass\n"
 			.. "print('\\n'.join(sorted(s)))"
-		fzf().fzf_exec("python3 -c " .. vim.fn.shellescape(py) .. " " .. vim.fn.shellescape(db), {
+		fzf().fzf_exec("python3 -c " .. shq(py) .. " " .. shq(db), {
 			prompt = "cppman> ",
 			fzf_opts = { ["--no-multi"] = true },
 			actions = {
@@ -1620,7 +1652,7 @@ local function pick_nbsd(section)
 	local dir = data_root .. "/netbsd"
 	ensure_repo(dir, "https://github.com/NetBSD/src", "/share/man/man9 /share/man/man4", "share/man/man9", function(d)
 		local mandir = d .. "/share/man/man" .. section
-		fzf().fzf_exec("fd --base-directory " .. vim.fn.shellescape(mandir) .. " --type f .", {
+		fzf().fzf_exec("fd --base-directory " .. shq(mandir) .. " --type f .", {
 			prompt = "NetBSD (" .. section .. ")> ",
 			cwd = mandir,
 			fzf_opts = { ["--no-multi"] = true },
@@ -1628,7 +1660,7 @@ local function pick_nbsd(section)
 				["default"] = function(sel)
 					if sel and sel[1] then
 						local f = mandir .. "/" .. sel[1]
-						render_shell("MANWIDTH=90 man -l " .. vim.fn.shellescape(f) .. " 2>/dev/null | col -bx", vim.fs.basename(sel[1]), "man")
+						render_shell("MANWIDTH=90 man -l " .. shq(f) .. " 2>/dev/null | col -bx", vim.fs.basename(sel[1]), "man")
 					end
 				end,
 			},
@@ -1718,7 +1750,7 @@ local function pick_ocaml()
 				["default"] = function(sel)
 					if sel and sel[1] then
 						render_shell(
-							"curl -fsSL " .. vim.fn.shellescape("https://ocaml.org/api/" .. sel[1] .. ".html")
+							"curl -fsSL " .. shq("https://ocaml.org/api/" .. sel[1] .. ".html")
 								.. " | pandoc -f html -t gfm-raw_html --wrap=none 2>/dev/null | awk 'f||/OCaml library/{f=1}f'",
 							"OCaml." .. sel[1],
 							"markdown",
@@ -1762,7 +1794,7 @@ local function pick_aya_api()
 	local function render_item(href, title)
 		local url = AYA_API .. href
 		render_shell(
-			"curl -fsSL " .. vim.fn.shellescape(url)
+			"curl -fsSL " .. shq(url)
 				.. " | pandoc -f html -t gfm-raw_html --wrap=none 2>/dev/null | awk 'f||/^## /{f=1}f'",
 			title,
 			"markdown",
@@ -1924,11 +1956,11 @@ local function pick_ghidra()
 						-- marker dir makes the next run treat it as complete.
 						local tmp = dir .. ".tmp"
 						local script = table.concat({
-							"rm -rf " .. vim.fn.shellescape(tmp) .. " " .. vim.fn.shellescape(dir),
-							"git -c core.autocrlf=false clone -n --depth=1 --filter=blob:none --branch " .. vim.fn.shellescape(tag) .. " " .. repo .. " " .. vim.fn.shellescape(tmp),
-							"git -C " .. vim.fn.shellescape(tmp) .. " sparse-checkout set --no-cone /GhidraDocs /Ghidra/Processors/x86/data/languages",
-							"git -C " .. vim.fn.shellescape(tmp) .. " checkout",
-							"mv " .. vim.fn.shellescape(tmp) .. " " .. vim.fn.shellescape(dir),
+							"rm -rf " .. shq(tmp) .. " " .. shq(dir),
+							"git -c core.autocrlf=false clone -n --depth=1 --filter=blob:none --branch " .. shq(tag) .. " " .. repo .. " " .. shq(tmp),
+							"git -C " .. shq(tmp) .. " sparse-checkout set --no-cone /GhidraDocs /Ghidra/Processors/x86/data/languages",
+							"git -C " .. shq(tmp) .. " checkout",
+							"mv " .. shq(tmp) .. " " .. shq(dir),
 						}, " && ")
 						vim.system({ "sh", "-c", script }, { text = true, timeout = 180000 }, function(r2)
 							vim.schedule(function()
@@ -1961,7 +1993,7 @@ local function pick_multiboot()
 		actions = {
 			["default"] = function(sel)
 				if sel and sel[1] and specs[sel[1]] then
-					render_shell("curl -fsSL " .. vim.fn.shellescape(specs[sel[1]]) .. " | pandoc -f html -t gfm-raw_html --wrap=none 2>/dev/null", sel[1], "markdown", specs[sel[1]])
+					render_shell("curl -fsSL " .. shq(specs[sel[1]]) .. " | pandoc -f html -t gfm-raw_html --wrap=none 2>/dev/null", sel[1], "markdown", specs[sel[1]])
 				end
 			end,
 		},
@@ -1978,13 +2010,13 @@ local function pick_pydoc()
 	-- e.g. pexpect, requests, numpy) so third-party packages are discoverable.
 	-- Streamed into fzf; collecting it first blocked the UI for ~35 ms.
 	local py = "import pkgutil,sys; print(chr(10).join(sorted(set([m.name for m in pkgutil.iter_modules()] + list(sys.builtin_module_names)))))"
-	fzf().fzf_exec("python3 -c " .. vim.fn.shellescape(py), {
+	fzf().fzf_exec("python3 -c " .. shq(py), {
 		prompt = "pydoc> ",
 		fzf_opts = { ["--no-multi"] = true },
 		actions = {
 			["default"] = function(sel)
 				if sel and sel[1] then
-					render_shell("python3 -m pydoc " .. vim.fn.shellescape(sel[1]) .. " 2>&1", "pydoc " .. sel[1], "text")
+					render_shell("python3 -m pydoc " .. shq(sel[1]) .. " 2>&1", "pydoc " .. sel[1], "text")
 				end
 			end,
 		},
@@ -2008,8 +2040,11 @@ local function update_all()
 			end
 		end
 	end
+	-- Cached man/cppman renders are regenerated locally, so drop them now
+	-- (a package update changes the pages), whatever happens to the repos.
+	pcall(vim.fn.delete, webcache_dir .. "/local", "rf")
 	if #repos == 0 then
-		return vim.notify("No cached doc repos to update yet", vim.log.levels.INFO)
+		return vim.notify("No cached doc repos to update yet (man page cache cleared)", vim.log.levels.INFO)
 	end
 	vim.notify("Updating " .. #repos .. " cached doc repos … (git pull)")
 	local done, failed = 0, {}
@@ -2111,11 +2146,11 @@ local function pick_gcc()
 						return
 					end
 					local cmd = table.concat({
-						"cd " .. vim.fn.shellescape(d .. "/gcc/doc"),
+						"cd " .. shq(d .. "/gcc/doc"),
 						-- @set srcdir ..: gcc.texi's invoke.texi does `@include @value{srcdir}/../libiberty/at-file.texi`;
 						-- srcdir=.. (the repo's gcc/ dir, from gcc/doc) makes that resolve, else makeinfo aborts empty.
 						"printf '@set version-GCC 15.0.0\\n@set BUGURL https://gcc.gnu.org/bugs/\\n@clear DEVELOPMENT\\n@set srcdir ..\\n' > gcc-vers.texi",
-						"makeinfo --no-split --plaintext -I include " .. vim.fn.shellescape(docs[sel[1]]),
+						"makeinfo --no-split --plaintext -I include " .. shq(docs[sel[1]]),
 					}, " && ")
 					render_shell(cmd, sel[1], "text")
 				end,
@@ -2162,11 +2197,11 @@ local function pick_android_kernel()
 						-- Kill-atomic (tmp+mv), like ensure_repo/ensure_docs.
 						local tmp = dir .. ".tmp"
 						local script = table.concat({
-							"rm -rf " .. vim.fn.shellescape(tmp) .. " " .. vim.fn.shellescape(dir),
-							"git -c core.autocrlf=false clone -n --depth=1 --filter=blob:none --branch " .. vim.fn.shellescape(br) .. " " .. repo .. " " .. vim.fn.shellescape(tmp),
-							"git -C " .. vim.fn.shellescape(tmp) .. " sparse-checkout set --no-cone " .. sparse,
-							"git -C " .. vim.fn.shellescape(tmp) .. " checkout",
-							"mv " .. vim.fn.shellescape(tmp) .. " " .. vim.fn.shellescape(dir),
+							"rm -rf " .. shq(tmp) .. " " .. shq(dir),
+							"git -c core.autocrlf=false clone -n --depth=1 --filter=blob:none --branch " .. shq(br) .. " " .. repo .. " " .. shq(tmp),
+							"git -C " .. shq(tmp) .. " sparse-checkout set --no-cone " .. sparse,
+							"git -C " .. shq(tmp) .. " checkout",
+							"mv " .. shq(tmp) .. " " .. shq(dir),
 						}, " && ")
 						vim.system({ "sh", "-c", script }, { text = true, timeout = 300000 }, function(r2)
 							vim.schedule(function()
@@ -2207,7 +2242,7 @@ local function pick_binutils()
 		actions = {
 			["default"] = function(sel)
 				if sel and sel[1] then
-					render_shell("MANWIDTH=90 man " .. vim.fn.shellescape(sel[1]) .. " 2>/dev/null | col -bx", sel[1] .. "(1)", "man")
+					render_shell("MANWIDTH=90 man " .. shq(sel[1]) .. " 2>/dev/null | col -bx", sel[1] .. "(1)", "man")
 				end
 			end,
 		},

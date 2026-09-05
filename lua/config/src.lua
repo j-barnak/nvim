@@ -7,6 +7,9 @@ local M = {}
 local data_root = vim.fn.stdpath("data") .. "/src"
 local function fzf() return require("fzf-lua") end
 local function have(b) return vim.fn.executable(b) == 1 end
+-- POSIX quoting: the clone script runs under `sh -c`, and vim.fn.shellescape
+-- quotes for the user's 'shell' (fish doubles backslashes) instead.
+local function shq(s) return "'" .. tostring(s):gsub("'", "'\\''") .. "'" end
 
 local _universal -- cached: ctags flavour is fixed for the session
 local function is_universal()
@@ -131,9 +134,9 @@ local function ensure_clone(name, url, cb)
 	vim.notify("Cloning " .. name .. " source (shallow, first time) …")
 	local tmp = dir .. ".tmp"
 	local script = table.concat({
-		"rm -rf " .. vim.fn.shellescape(tmp) .. " " .. vim.fn.shellescape(dir),
-		"git -c core.autocrlf=false clone --depth=1 --single-branch --no-tags " .. url .. " " .. vim.fn.shellescape(tmp),
-		"mv " .. vim.fn.shellescape(tmp) .. " " .. vim.fn.shellescape(dir),
+		"rm -rf " .. shq(tmp) .. " " .. shq(dir),
+		"git -c core.autocrlf=false clone --depth=1 --single-branch --no-tags " .. url .. " " .. shq(tmp),
+		"mv " .. shq(tmp) .. " " .. shq(dir),
 	}, " && ")
 	vim.system({ "sh", "-c", script }, { text = true, timeout = 900000 }, function(res)
 		vim.schedule(function()

@@ -24,6 +24,8 @@ local TOOLS = {
 	{ "makeinfo", "GCC internals/user/cpp manuals (texinfo)" },
 	{ "ctags", ":Src source explorer tag index" },
 	{ "cppman", "CppReference provider" },
+	{ "sha256sum", "background pre-conversion of browsed .rst/.xml/.html sets (optional)" },
+	{ "nice", "background pre-conversion runs at low priority (optional)" },
 	{ "pdftoppm", "Intel SDM figure extraction (optional)" },
 	{ "convert", "Intel SDM figure cropping (optional, ImageMagick)" },
 	{ "xdg-open", "opening a figure when snacks.image is unavailable (optional)" },

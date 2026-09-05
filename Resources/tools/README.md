@@ -1,19 +1,32 @@
 # Resources/tools
 
-One-off generators for the frozen library under `Resources/docs`. These are
-NOT loaded by the Neovim config (the config only reads the frozen output);
-they exist so a book or article can be regenerated reproducibly.
+Build scripts, kept as files so the Neovim config carries no embedded shell or
+python. Two kinds:
 
-- `epub_build.sh` — epub -> per-chapter markdown (`sh -c "$(cat epub_build.sh)" epub <src.epub> <out-dir> <title>`).
+Frozen-library generators (run once by hand; the config only reads their
+output under `Resources/docs`):
+
+- `epub_build.sh`: epub -> per-chapter markdown
+  (`sh -c "$(cat epub_build.sh)" epub <src.epub> <out-dir> <title>`).
   Splits by the epub's ncx (anchor-split for books whose spine does not line up
   with chapters), re-fences code, strips running headers, keeps tables/figures.
-- `pdf_build.sh` — pdf -> per-chapter text (`sh -c "$(cat pdf_build.sh)" pdf <src.pdf> <out-dir> "" book`).
+- `pdf_build.sh`: pdf -> per-chapter text
+  (`sh -c "$(cat pdf_build.sh)" pdf <src.pdf> <out-dir> "" book`).
   Splits by the outline using the printed table-of-contents shape (Parts,
-  chapters, appendices), emits front matter before the first bookmark.
-- `webextract.py` — article HTML -> body HTML for pandoc
+  chapters, appendices), emits front matter before the first bookmark. The
+  config also runs it (without the `book` mode) for the downloaded PDF specs.
+- `webextract.py`: article HTML -> body HTML for pandoc
   (`curl -fsSL <url> | python3 webextract.py content <css-selector> | pandoc -f html -t gfm-raw_html --wrap=none`).
   Flattens tables (outermost table, direct rows/cells only) so nothing is
   dropped or duplicated.
+
+Loaded on demand by `lua/config/docs.lua` (`tool_script()`), only when a live
+provider builds its cache for the first time:
+
+- `api_build.sh`: kernel-doc index for `:Docs kernel-api` (`$1` = kernel tree).
+- `dox_pipeline.sh`: doxygen -> markdown for the doxygen-based providers.
+- `sdm_build.sh` + `figextract.py`: Intel SDM download, split and figure crop.
+- `aya_api_idx.sh`: aya crate item index.
 
 The out-dir basename must be the book's slug (a few books have per-slug rules).
 Sources (epub/pdf) are not kept in the repo.
