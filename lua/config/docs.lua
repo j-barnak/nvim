@@ -1491,7 +1491,7 @@ JS="$OUT/.ol.js"
 cat > "$JS" <<EOF2
 var doc = Document.openDocument("$PDF");
 function pageof(it){ try { var l = doc.resolveLink(it.uri); return (typeof l==="number")?l:(l&&l.page); } catch(e){ return -1; } }
-function walk(items,d){ for(var i=0;i<items.length;i++){ var it=items[i]; print(d+"\t"+(pageof(it)+1)+"\t"+it.title); if(it.down) walk(it.down,d+1); } }
+function walk(items,d){ for(var i=0;i<items.length;i++){ var it=items[i]; print(d+"\t"+(pageof(it)+1)+"\t"+it.title.replace(/\s+/g," ")); if(it.down) walk(it.down,d+1); } }
 walk(doc.loadOutline(),0);
 EOF2
 mutool run "$JS" > "$OUT/.all.tsv" 2>/dev/null
@@ -2180,7 +2180,7 @@ JS="$OUT/.ol.js"
 cat > "$JS" <<EOF2
 var doc = Document.openDocument("$PDF");
 function pageof(it){ try { var l = doc.resolveLink(it.uri); return (typeof l==="number")?l:(l&&l.page); } catch(e){ return -1; } }
-function walk(items,d){ for(var i=0;i<items.length;i++){ var it=items[i]; print(d+"\t"+(pageof(it)+1)+"\t"+it.title); if(it.down) walk(it.down,d+1); } }
+function walk(items,d){ for(var i=0;i<items.length;i++){ var it=items[i]; print(d+"\t"+(pageof(it)+1)+"\t"+it.title.replace(/\s+/g," ")); if(it.down) walk(it.down,d+1); } }
 walk(doc.loadOutline(),0);
 EOF2
 mutool run "$JS" > "$OUT/.all.tsv" 2>/dev/null
@@ -2188,9 +2188,11 @@ TOTAL=$(pdfinfo "$PDF" | awk '/^Pages:/{print $2}')
 idx=0; prev_p=""; prev_t=""
 emit() {
   idx=$((idx+1)); n=$(printf '%03d' "$idx")
-  f=$(printf '%s' "$3" | tr '/' '-' | cut -c1-80)
+  # Chapter file name: full title, cut at a word boundary near 140 chars (the
+  # old hard cut -c1-80 chopped 11 Beautiful C++ guideline titles mid-word).
+  f=$(printf '%s' "$3" | tr '/' '-' | awk '{ if (length($0) > 140) { s = substr($0, 1, 140); sub(/ [^ ]*$/, "", s); print s } else print }')
   pdftotext -layout -f "$1" -l "$2" "$PDF" - 2>/dev/null \
-    | sed 's/\f//g' \
+    | sed 's/\f//g' | tr -d '\000-\010\013-\037' \
     | awk '{o=$0; gsub(/\[Trial version\]/,""); t=$0; gsub(/^[ \t]+|[ \t]+$/,"",t)} o!=$0 && t==""{next} t ~ /^ISO\/IEC [0-9]/{next} t ~ /^© ISO\/IEC/{next} t ~ /^[0-9]+$/{next} t ~ /ABC Amber|Team LiB|processtext\.com/{next} {print}' \
     | cat -s > "$OUT/$n $f.txt"
 }
@@ -2208,12 +2210,17 @@ if [ "$4" = book ] && [ "$SLUG" = operating-systems-three-easy-pieces ]; then
   # first subsection (e.g. Chapter 2's opening pages) was silently dropped.
   awk -F'\t' '$1<=1{print $2"\t"$3}' "$OUT/.all.tsv" > "$OUT/.ch.tsv"
 elif [ "$4" = book ]; then
+  # Match on a lowercased copy so No Starch's "APPENDIX: ..." / "GLOSSARY" count;
+  # accept letter-numbered appendices ("A. The One-Definition Rule") once a
+  # chapter has been seen, at outline depth <= 1 (deeper lettered items are
+  # sub-sections).
   awk -F'\t' '
-    { t=$3; sub(/^[ \t]+/,"",t); sub(/^\[[A-Za-z0-9 ._-]*\][ \t]*/,"",t); sub(/[ \t]+$/,"",t); ty=0 }
-    t ~ /^Part [IVXLC0-9]/ || t ~ /^Section [0-9]+[ :.]/ || t ~ /^Chapter [0-9]+.*[A-Za-z]/ \
-      || t ~ /^[0-9]+\. [^(]/ || t ~ /^[0-9]+ [A-Z]/ || t ~ /^Appendix [A-Z0-9]/ { ty=1; seen=1 }
-    t ~ /^(Preface|Foreword|Epilogue|Afterword)([ .:]|$)/ || t ~ /^Introduction[ ]*$/ { ty=1 }
-    seen && t ~ /^(Bibliography|Index|References|Glossary)[ ]*$/ { ty=1 }
+    { t=$3; sub(/^[ \t]+/,"",t); sub(/^\[[A-Za-z0-9 ._-]*\][ \t]*/,"",t); sub(/[ \t]+$/,"",t); lt=tolower(t); ty=0 }
+    lt ~ /^part [ivxlc0-9]/ || lt ~ /^section [0-9]+[ :.]/ || lt ~ /^chapter [0-9]+.*[a-z]/ \
+      || t ~ /^[0-9]+\. [^(]/ || t ~ /^[0-9]+ [A-Z]/ || lt ~ /^appendix[: ]/ { ty=1; seen=1 }
+    seen && $1 <= 1 && lt ~ /^[a-h]\. [a-z]/ { ty=1 }
+    lt ~ /^(preface|foreword|epilogue|afterword)([ .:]|$)/ || lt ~ /^introduction[ ]*$/ { ty=1 }
+    seen && lt ~ /^(bibliography|index|references|glossary)[ ]*$/ { ty=1 }
     ty { print $2"\t"t }
   ' "$OUT/.all.tsv" | sort -t"$(printf '\t')" -k1,1n -s \
     | awk -F'\t' '$1!=lastp{print} {lastp=$1}' > "$OUT/.ch.tsv"
