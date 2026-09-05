@@ -1949,117 +1949,21 @@ end
 -- page's main article. A small bs4 helper extracts just the content container
 -- (dropping nav, scripts, and the reader-comment section) before pandoc, and
 -- results are cached like the other web-fetch providers.
-local WEBEXTRACT_PY = [==[
-import sys
-from bs4 import BeautifulSoup
-mode = sys.argv[1]
-arg = sys.argv[2] if len(sys.argv) > 2 else ""
-base = sys.argv[3] if len(sys.argv) > 3 else ""
-s = BeautifulSoup(sys.stdin.read(), "html.parser")
-if mode == "links":
-    seen = set()
-    for a in s.find_all("a", href=True):
-        h = a["href"]
-        if arg not in h:
-            continue
-        h = h.split("#")[0].split("?")[0].rstrip("/")
-        if h.startswith("/"):
-            h = base.rstrip("/") + h
-        if h in seen:
-            continue
-        t = " ".join(a.get_text(" ", strip=True).split())
-        if not t or len(t) > 130:
-            continue
-        seen.add(h)
-        sys.stdout.write(t + "\t" + h + "\n")
-elif mode == "lessontable":
-    # learncpp TOC: each div.lessontable-row has the lesson number and the link,
-    # so emit "N.M Title\tURL" in document (chapter) order.
-    for r in s.select("div.lessontable-row"):
-        num = r.select_one(".lessontable-row-number")
-        a = r.select_one(".lessontable-row-title a[href]")
-        if not (num and a):
-            continue
-        n = " ".join(num.get_text(" ", strip=True).split())
-        t = " ".join(a.get_text(" ", strip=True).split())
-        href = a["href"].split("#")[0].split("?")[0].rstrip("/")
-        sys.stdout.write(f"{n} {t}\t{href}\n")
-elif mode == "content":
-    el = s.select_one(arg) or s.find("article")
-    if not el:
-        sys.exit(1)
-    for t in el.select("script, style, ins, iframe, nav, #comments, .comments, .code-block-buttons, .prevnext, .share-buttons, .page__share, .pagination, .code-header"):
-        t.decompose()
-    # Jekyll/Rouge highlight blocks put line numbers in a gutter (pre.lineno)
-    # that pandoc turns into a bogus ```lineno block of bare numbers. Rebuild
-    # each as a clean <pre><code class="language-X"> with only the code column.
-    for cont in el.select("div.highlighter-rouge, figure.highlight"):
-        lang = next((c for c in (cont.get("class") or []) if c.startswith("language-")), "")
-        codeel = cont.select_one("td.rouge-code") or cont.select_one("pre")
-        if not codeel:
-            continue
-        pre = s.new_tag("pre")
-        code = s.new_tag("code")
-        if lang:
-            code["class"] = lang
-        code.string = codeel.get_text()
-        pre.append(code)
-        cont.replace_with(pre)
-    # Flatten block-content tables so pandoc's gfm writer never drops them to a
-    # bare "[TABLE]": a table with block content is linearized (each row -> its
-    # text, then its <pre> code) so nothing is discarded; a simple table is
-    # rebuilt with text-only cells so it can be piped; the <caption> is kept.
-    for table in el.select("table"):
-        div = s.new_tag("div")
-        cap = table.find("caption")
-        if cap:
-            p = s.new_tag("p"); st = s.new_tag("strong")
-            st.string = cap.get_text(" ", strip=True); p.append(st); div.append(p)
-        if table.find(["pre", "ul", "ol"]):
-            for r in table.find_all("tr"):
-                pres = [pr.extract() for pr in r.find_all("pre")]
-                label = r.get_text(" ", strip=True)
-                if label:
-                    p = s.new_tag("p"); p.string = label; div.append(p)
-                for pr in pres:
-                    div.append(pr)
-        else:
-            nt = s.new_tag("table")
-            for r in table.find_all("tr"):
-                nr = s.new_tag("tr")
-                for c in r.find_all(["td", "th"]):
-                    nc = s.new_tag(c.name)
-                    txt = c.get_text(" ", strip=True)
-                    inner = c.find(["code", "samp", "kbd", "tt", "var"])
-                    if inner and txt and inner.get_text(" ", strip=True) == txt:
-                        # whole cell is verbatim: keep a <code> wrapper so pandoc
-                        # does not \-escape it (which drops \' \" \. ( ) etc.)
-                        code = s.new_tag("code"); code.string = txt; nc.append(code)
-                    else:
-                        nc.string = txt
-                    nr.append(nc)
-                if nr.find(True):
-                    nt.append(nr)
-            div.append(nt)
-        table.replace_with(div)
-    sys.stdout.write(str(el))
-]==]
 
 -- opts: name, index_url, link_filter, base, content_sel, prompt
-local function web_index_provider(opts)
+-- learncpp.com and Hypervisor From Scratch are static content; their rendered
+-- articles are committed under Resources/docs (index.tsv + .webcache/<sha>.txt),
+-- so the picker reads them offline - no curl/pandoc, no fetch.
+local function frozen_web_provider(name, prompt)
 	return function()
-		if not (have("curl") and have("pandoc") and have("python3")) then
-			return vim.notify("curl, pandoc and python3 are needed for " .. opts.name, vim.log.levels.WARN)
+		local idxfile = frozen_root .. "/" .. name .. "/index.tsv"
+		if vim.fn.filereadable(idxfile) ~= 1 then
+			return vim.notify(name .. ": frozen index missing", vim.log.levels.WARN)
 		end
-		local py = tools_dir .. "/webextract.py"
-		vim.fn.mkdir(tools_dir, "p")
-		pcall(vim.fn.writefile, vim.split(WEBEXTRACT_PY, "\n"), py) -- keep it current
-		local dir = data_root .. "/" .. opts.name
-		local idxfile = dir .. "/index.tsv"
 		local function browse()
 			last_picker = browse -- D reopens the index
 			fzf().fzf_exec(vim.fn.readfile(idxfile), {
-				prompt = opts.prompt,
+				prompt = prompt,
 				fzf_opts = { ["--with-nth"] = "1", ["--delimiter"] = "\\t", ["--no-multi"] = true },
 				actions = {
 					["default"] = function(sel)
@@ -2070,61 +1974,24 @@ local function web_index_provider(opts)
 						if not url then
 							return
 						end
-						render_shell(
-							"curl -fsSL " .. vim.fn.shellescape(url) .. " | python3 " .. vim.fn.shellescape(py)
-								.. " content " .. vim.fn.shellescape(opts.content_sel)
-								.. " | pandoc -f html -t gfm-raw_html --wrap=none 2>/dev/null",
-							title,
-							"markdown",
-							url
-						)
+						local cf = frozen_root .. "/.webcache/" .. vim.fn.sha256(url) .. ".txt"
+						if vim.fn.filereadable(cf) == 1 then
+							render_lines(vim.fn.readfile(cf), "markdown", nil, title)
+						else
+							vim.notify(title .. ": not in the frozen cache", vim.log.levels.WARN)
+						end
 					end,
 				},
 			})
 		end
-		if vim.fn.filereadable(idxfile) == 1 then
-			return browse()
-		end
-		vim.fn.mkdir(dir, "p")
-		vim.notify("Fetching the " .. opts.name .. " index … (first time)")
-		local args = {}
-		for _, a in ipairs(opts.index_argv) do
-			args[#args + 1] = vim.fn.shellescape(a)
-		end
-		local cmd = "curl -fsSL " .. vim.fn.shellescape(opts.index_url) .. " | python3 " .. vim.fn.shellescape(py) .. " " .. table.concat(args, " ")
-		vim.system({ "sh", "-c", cmd }, { text = true, timeout = 30000 }, function(res)
-			vim.schedule(function()
-				local items = vim.split(res.stdout or "", "\n", { trimempty = true })
-				if opts.title_keep then items = vim.tbl_filter(function(x) return x:match(opts.title_keep) ~= nil end, items) end
-				if #items == 0 then
-					return vim.notify(opts.name .. ": could not fetch the index", vim.log.levels.WARN)
-				end
-				vim.fn.writefile(items, idxfile)
-				browse()
-			end)
-		end)
+		browse()
 	end
 end
 
--- learncpp.com: the full C++ tutorial (356 lessons), lesson body only (the
--- reader-comment threads under div#comments are dropped by the extractor).
-local pick_learncpp = web_index_provider({
-	name = "learncpp",
-	index_url = "https://www.learncpp.com/",
-	index_argv = { "lessontable" }, -- numbered TOC (N.M Title) in chapter order
-	content_sel = "div.entry-content",
-	prompt = "Learn C++ lesson> ",
-})
-
--- rayanfam.com tutorials (the full Hypervisor From Scratch series, and more).
-local pick_rayanfam = web_index_provider({
-	name = "rayanfam",
-	index_url = "https://rayanfam.com/tutorials/",
-	index_argv = { "links", "/topics/", "https://rayanfam.com" },
-	title_keep = "Hypervisor From Scratch",  -- curate to just the HVFS series
-	content_sel = "div.post-content",
-	prompt = "Hypervisor From Scratch> ",
-})
+-- learncpp.com: the full C++ tutorial (356 lessons), lesson body only.
+local pick_learncpp = frozen_web_provider("learncpp", "Learn C++ lesson> ")
+-- rayanfam.com: the full Hypervisor From Scratch series (8 parts).
+local pick_rayanfam = frozen_web_provider("rayanfam", "Hypervisor From Scratch> ")
 
 -- ── Ghidra: versioned API/docs (pick a release tag, all versions) ────────
 local function pick_ghidra()
