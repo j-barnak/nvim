@@ -1,0 +1,794 @@
+
+Chapter 31. Streams
+       Section 31.1.?Introduction
+
+       Section 31.2.?Overview
+
+       Section 31.3.?getmsg and putmsg Functions
+
+       Section 31.4.?getpmsg and putpmsg Functions
+
+       Section 31.5.?ioctl Function
+
+       Section 31.6.?Transport Provider Interface (TPI)
+
+       Section 31.7.?Summary
+
+       Exercises
+
+31.1 Introduction
+In this chapter, we will provide an overview of the STREAMS system and the functions
+used by an application to access a stream. Our goal is to understand the implementation of
+networking protocols within the STREAMS framework. We will also develop a simple TCP
+client using the Transport Provider Interface (TPI), the interface into the transport layer
+that sockets normally use on a system based on STREAMS. Additional information on
+STREAMS, including information on writing kernel routines that utilize STREAMS, can be
+found in [Rago 1993].
+
+STREAMS were designed by Dennis Ritchie [Ritchie 1984] and were first made widely
+available with SVR3 in 1986. The POSIX specification defines STREAMS as an option group,
+which means a system may not implement STREAMS, but if it does, the implementation
+must comply with the POSIX specification. Any system derived from System V should
+provide POSIX, but the various 4.xBSD releases do not provide POSIX.
+
+Be careful to distinguish between STREAMS, the stream I/O system that we are describing
+in this chapter, versus "standard I/O streams." The latter term is used when talking about
+the standard I/O library (e.g., functions such as fopen, fgets, printf, and the like).
+
+31.2 Overview
+STREAMS provide a full-duplex connection between a process and a driver, as shown in
+Figure 31.1. Although we describe the bottom box as a driver, this does not need to be
+associated with a hardware device; it can also be a pseudo-device driver (e.g., a software
+driver).
+
+      Figure 31.1. A stream shown between a process and a driver.
+
+The stream head consists of the kernel routines that are invoked when the application
+makes a system call for a STREAMS descriptor (e.g., read, putmsg, ioctl, and the like).
+
+A process can dynamically add and remove intermediate processing modules between the
+stream head and the driver. A module performs some type of filtering on the messages
+going up and down a stream. We show this in Figure 31.2.
+
+               Figure 31.2. A stream with a processing module.
+
+Any number of modules can be pushed onto a stream. When we say "push," we mean that
+each new module gets inserted just below the stream head.
+
+A special type of pseudo-device driver is a multiplexor, which accepts data from multiple
+sources. A STREAMS-based implementation of the TCP/IP protocol suite, as found on SVR4,
+for example, could be set up as shown in Figure 31.3.
+
+  Figure 31.3. A potential implementation of TCP/IP using STREAMS.
+
+       When a socket is created, the module sockmod is pushed onto the stream by the
+        sockets library. It is the combination of the sockets library and the sockmod
+        STREAMS module that provides the sockets API to the process.
+
+       When an XTI endpoint is created, the module timod is pushed onto the stream by
+        the XTI library. It is the combination of the XTI library and the timod STREAMS
+        module that provides the X/Open Transport Interface (XTI) API to the process.
+
+        This is one of the few places where we mention XTI. An earlier edition of this book
+        described the XTI API in great detail, but it fell out of common use and even the
+        POSIX specification no longer covers it, so we dropped the coverage from this book.
+        Figure 31.3 shows where the XTI implemention typically lives and we touch on it
+        briefly in this chapter, but we stop short of providing any detail since there's rarely
+        a reason to use XTI anymore.
+
+       The STREAMS module tirdwr must normally be pushed onto a stream to use read
+        and write with an XTI endpoint. The middle process using TCP in Figure 31.3 has
+        done this. This process has probably abandoned the use of XTI by doing this, so we
+        have not shown the XTI library there.
+
+       Various service interfaces define the format of the networking messages exchanged
+        up and down a stream. We describe the three most common. TPI [Unix
+        International 1992b] defines the interface provided by a transport-layer provider
+        (e.g., TCP and UDP) to the modules above it. The Network Provider Interface (NPI)
+        [Unix International 1992a] defines the interface provided by a network-layer
+        provider (e.g., IP). DLPI is the Data Link Provider Interface [Unix International
+        1991]. An alternate reference for TPI and DLPI, which contains sample C code, is
+        [Rago 1993].
+
+Each component in a stream the stream head, all processing modules, and the driver
+contains at least one pair of queues: a write queue and a read queue. We show this in
+Figure 31.4.
+
+    Figure 31.4. Each component in a stream has at least one pair of
+                              queues.
+
+Message Types
+STREAMS messages can be categorized as high priority, priority band, or normal. There are
+256 different priority bands, between 0 and 255, with normal messages in band 0. The
+priority of a STREAMS message is used for both queueing and flow control. By convention,
+high-priority messages are unaffected by flow control.
+
+Figure 31.5 shows the ordering of the messages on a given queue.
+
+   Figure 31.5. Ordering of STREAMS messages on a queue, based on
+                                priority.
+
+Although the STREAMS system supports 256 different priority bands, networking protocols
+often use band 1 for expedited data and band 0 for normal data.
+
+TCP's out-of-band data is not considered true expedited data by TPI. Indeed, TCP uses
+band 0 for both normal data and its out-of-band data. The use of band 1 for expedited data
+is for protocols in which the expedited data (not just the urgent pointer, as in TCP) is sent
+ahead of normal data.
+
+Beware of the term "normal". In releases before SVR4, there were no priority bands; there
+were just normal messages and priority messages. SVR4 implemented priority bands,
+requiring the getpmsg and putpmsg functions, which we will describe shortly. The older
+priority messages were renamed high-priority. The question is what to call the new
+messages, with priority bands between 1 and 255. Common terminology [Rago 1993]
+refers to everything other than high-priority messages as normal-priority messages and
+then subdivides these normal-priority messages into priority bands. The term "normal
+message" should always refer to a message with a band of 0.
+
+Although we talk about normal-priority messages and high-priority messages, there are
+about a dozen normal-priority message types and around 18 high-priority message types.
+From an application's perspective, and the getmsg and putmsg functions we are about to
+describe, we are interested in only three different types of messages: M_DATA, M_PROTO,
+and M_PCPROTO (PC stands for "priority control" and implies a high-priority message).
+
+Figure 31.6 shows how these three different message types are generated by the write
+and putmsg functions.
+
+  Figure 31.6. STREAMS message types generated by write and putmsg.
+
+31.3 getmsg and putmsg Functions
+The data transferred up and down a stream consists of messages, and each message
+contains control, data, or both. If we use read and write on a stream, these transfer only
+data. To allow a process to read and write both data and control information, two new
+functions were added.
+
+ #include <stropts.h>
+
+ int getmsg(int fd, struct strbuf *ctlptr, struct strbuf *dataptr, int *flagsp) ;
+
+ int putmsg(int fd, const struct strbuf *ctlptr, const struct strbuf *dataptr, int
+  flags) ;
+
+                              Both return: non-negative value if OK (see text),   1 on error
+
+Both the control and data portions of the message are described by the following strbuf
+structure:
+
+struct strbuf {
+   int   maxlen;         /* maximum size of buf */
+   int   len;            /* actual amount of data in buf */
+   char *buf;            /* data */
+};
+
+Note the similarity between the strbuf structure and the netbuf structure. The names of
+the three elements in each structure are identical.
+
+But the two lengths in the netbuf structure are unsigned integers, while the two lengths in
+the strbuf structure are signed integers. The reason why is that some of the STREAMS
+functions use a len or maxlen value of 1 to indicate something special.
+
+We can send only control information, only data, or both using putmsg. To indicate the
+absence of control information, we can either specify ctlptr as a null pointer or set
+ctlptr->len to 1. The same technique is used to indicate no data.
+
+If there is no control information, an M_DATA message is generated by putmsg (Figure 31.6
+); otherwise, either an M_PROTO or an M_PCPROTO message is generated, depending on the
+flags. The flags argument to putmsg is 0 for a normal message or RS_HIPRI for a
+high-priority message.
+
+The final argument to getmsg is a value-result argument. If the integer pointed to by flagsp
+is 0 when the function is called, the first message on the stream is returned (which can be
+normal- or high-priority). If the integer value is RS_HIPRI when the function is called, the
+function waits for a high-priority message to arrive at the stream head. In both cases, the
+value stored in the integer pointed to by flagsp will be 0 or RS_HIPRI, depending on the
+type of message returned.
+
+Assuming we pass non-null ctlptr and dataptr values to getmsg, if there is no control
+information to return (i.e., an M_DATA message is being returned), this is indicated by
+setting ctlptr->len to 1 on return. Similarly, dataptr->len is set to 1 if there is no data
+to return.
+
+The return value from putmsg is 0 if all is okay, or 1 on an error. But, getmsg returns 0
+only if the entire message was returned to the caller. If the control buffer is too small for
+all the control information, the return value is MORECTL (which is guaranteed to be
+non-negative). Similarly, if the data buffer is too small, MOREDATA can be returned. If both
+are too small, the logical OR of these two flags is returned.
+
+31.4 getpmsg and putpmsg Functions
+When support for different priority bands was added to STREAMS with SVR4, the following
+two variants of getmsg and putmsg were added:
+
+ #include <stropts.h>
+
+ int getpmsg(int fd, struct strbuf *ctlptr, struct strbuf *dataptr, int *bandp,
+ int *flagsp) ;
+
+ int putpmsg(int fd, const struct strbuf *ctlptr, const struct strbuf *dataptr,
+ int band, int flags) ;
+
+                                         Both return: non-negative value if OK,   1 on error
+
+The band argument to putpmsg must be between 0 and 255, inclusive. If the flags
+argument is MSG_BAND, then a message is generated in the specified priority band. Setting
+flags to MSG_BAND and specifying a band of 0 is equivalent to calling putmsg. If flags is
+MSG_HIPRI, band must be 0, and a high-priority message is generated. (Note that this flag
+is named differently from the RS_HIPRI flag for putmsg.)
+
+The two integers pointed to by bandp and flagsp are value-result arguments for getpmsg.
+The integer pointed to by flagsp for getpmsg can be MSG_HIPRI (to read a high-priority
+message), MSG_BAND (to read a message whose priority band is at least equal to the integer
+pointed to by bandp), or MSG_ANY (to read any message). On return, the integer pointed to
+by bandp contains the band of the message that was read and the integer pointed to by
+flagsp contains MSG_HIPRI (if a high-priority message was read) or MSG_BAND (if some other
+message was read).
+
+31.5 ioctl Function
+With STREAMS, we again encounter the ioctl function that was described in Chapter 17.
+
+ #include <stropts.h>
+
+ int ioctl(int fd, int request, ... /* void *arg */ ) ;
+
+                                                               Returns: 0 if OK,   1 on error
+
+The only change from the function prototype shown in Section 17.2 is the headers that
+must be included when dealing with STREAMS.
+
+There are about 30 requests that affect a stream head. Each request begins with I_ and
+they are normally documented on the streamio man page.
+
+31.6 Transport Provider Interface (TPI)
+In Figure 31.3, we showed that TPI is the service interface into the transport layer from
+above. Both sockets and XTI use this interface in a STREAMS environment. In Figure 31.3,
+it is a combination of the sockets library and sockmod, along with a combination of the XTI
+library and timod, that exchange TPI messages with TCP and UDP.
+
+TPI is a message-based interface. It defines the messages that are exchanged up and
+down a stream between the application (e.g., the sockets library) and the transport layer:
+the format of these messages and what operation each message performs. In many
+instances, the application sends a request to the provider (such as "bind this local
+address") and the provider sends back a response ("OK" or "error"). Some events occur
+asynchronously at the provider (the arrival of a connection request for a server), causing a
+message or a signal to be sent up the stream.
+
+We are able to bypass both sockets and XTI and use TPI directly. In this section, we will
+rewrite our simple daytime client using TPI instead of sockets (Figure 1.5). Using
+programming languages as an analogy, using sockets is like programming in a high-level
+language such as C or Pascal, while using TPI directly is like programming in assembly
+language. We are not advocating the use of TPI directly in real applications. But examining
+how TPI works and developing this example give us a better understanding of how the
+sockets library works in a STREAMS environment.
+
+Figure 31.7 is our tpi_daytime.h header.
+
+Figure 31.7 Our tpi_daytime.h header.
+streams/tpi_daytime.h
+
+1 #include        "unpxti.h"
+2 #include        <sys/stream.h>
+3 #include        <sys/tihdr.h>
+
+4 void    tpi_bind(int, const void *, size_t);
+5 void    tpi_connect(int, const void *, size_t);
+6 ssize_t tpi_read(int, void *, size_t);
+7 void    tpi_close(int);
+We need to include one additional STREAMS header along with <sys/tihdr.h>, which
+contains the definitions of the structures for all TPI messages.
+
+Figure 31.8 is the main function for our daytime client.
+
+Figure 31.8 main function for our daytime client written to TPI.
+streams/tpi_daytime.c
+
+ 1 #include       "tpi_daytime.h"
+
+ 2 int
+ 3 main(int argc, char **argv)
+ 4 {
+ 5     int     fd, n;
+ 6     char    recvline[MAXLINE + 1];
+ 7     struct sockaddr_in myaddr, servaddr;
+
+ 8      if (argc != 2)
+ 9          err_quit("usage: tpi_daytime <IPaddress>");
+
+10      fd = Open(XTI_TCP, O_RDWR, 0);
+
+11          /* bind any local address */
+12      bzero(&myaddr, sizeof(myaddr));
+13      myaddr.sin_family = AF_INET;
+14      myaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+15      myaddr.sin_port = htons(0);
+
+16      tpi_bind(fd, &myaddr, sizeof(struct sockaddr_in));
+
+17          /* fill in server's address */
+18      bzero(&servaddr, sizeof(servaddr));
+19      servaddr.sin_family = AF_INET;
+20      servaddr.sin_port = htons(13); /* daytime server */
+21      Inet_pton(AF_INET, argv[1], &servaddr.sin_addr);
+
+22      tpi_connect(fd, &servaddr, sizeof(struct sockaddr_in));
+
+23      for ( ; ; ) {
+24          if ( (n = tpi_read(fd, recvline, MAXLINE)) <= 0) {
+25               if (n == 0)
+26                    break;
+27               else
+28                    err_sys("tpi_read error");
+29          }
+30          recvline[n] = 0;          /* null terminate */
+31          fputs(recvline, stdout);
+32      }
+33      tpi_close(fd);
+34      exit(0);
+35 }
+
+Open transport provider, bind local address
+10 16 We open the device corresponding to the transport provider (normally /dev/tcp).
+We fill in an Internet socket address structure with INADDR_ANY and a port of 0, telling TCP
+to bind any local address to our endpoint. We call our own function tpi_bind (shown
+shortly) to do the bind.
+
+Fill in server's address, establish connection
+17 22 We fill in another Internet socket address structure with the server's IP address
+(taken from the command line) and port (13). We call our tpi_connect function to
+establish the connection.
+
+Read data from server, copy to standard output
+23 33 As in our other daytime clients, we just copy data from the connection to standard
+output, stopping when we receive the EOF from the server (e.g., the FIN). We then call
+our tpi_close function to close our endpoint.
+
+Our tpi_bind function is shown in Figure 31.9.
+
+Fill in T_bind_req structure
+16 20 The <sys/tihdr.h> header defines the T_bind_req structure.
+
+struct T_bind_req {
+   t_scalar_t     PRIM_type;      /* T_BIND_REQ */
+   t_scalar_t     ADDR_length;    /* address length */
+   t_scalar_t     ADDR_offset;    /* address offset */
+   t_uscalar_t    CONIND_number; /* connect indications requested */
+       /* followed by the protocol address for bind */
+};
+
+All TPI requests are defined as a structure that begins with a long integer type field. We
+define our own bind_req structure that begins with the T_bind_req structure, followed by
+a buffer containing the local address to be bound. TPI says nothing about the contents of
+this buffer; it is defined by the provider. TCP providers expect this buffer to contain a
+sockaddr_in structure.
+
+We fill in the T_bind_req structure, setting the ADDR_length member to the size of the
+address (16 bytes for an Internet socket address structure) and ADDR_offset to the byte
+offset of the address (it immediately follows the T_bind_req structure). We are not
+guaranteed that this location is suitably aligned for the sockaddr_in structure that is
+stored there, so we call memcpy to copy the caller's structure into our bind_req structure.
+We set CONIND_number to 0 because we are a client, not a server.
+
+Call putmsg
+21 23 TPI requires the structure that we just built to be passed to the provider as one
+M_PROTO message. We therefore call putmsg, specifying our bind_req structure as the
+control information, with no data and with a flag of 0.
+
+Call getmsg to read high-priority message
+24 30 The response to our T_BIND_REQ request will be either a T_BIND_ACK message or a
+T_ERROR_ACK message. These acknowledgment messages are sent as high-priority
+messages (M_PCPROTO) so we read them using getmsg with a flag of RS_HIPRI. Since the
+reply is a high-priority message, it will bypass any normal-priority messages on the
+stream.
+
+Figure 31.9 tpi_bind function: binds a local address to an endpoint.
+streams/tpi_bind.c
+
+ 1 #include       "tpi_daytime.h"
+
+ 2 void
+ 3 tpi_bind(int fd, const void *addr, size_t addrlen)
+ 4 {
+ 5      struct {
+ 6          struct T_bind_req msg_hdr;
+ 7          char     addr[128];
+ 8      } bind_req;
+ 9      struct {
+10          struct T_bind_ack msg_hdr;
+11          char     addr[128];
+12      } bind_ack;
+13      struct strbuf ctlbuf;
+14      struct T_error_ack *error_ack;
+15      int      flags;
+
+16      bind_req.msg_hdr.PRIM_type = T_BIND_REQ;
+17      bind_req.msg_hdr.ADDR_length = addrlen;
+18      bind_req.msg_hdr.ADDR_offset = sizeof(struct T_bind_req);
+
+19      bind_req.msg_hdr.CONIND_number = 0;
+20      memcpy(bind_req.addr, addr, addrlen);           /* sockaddr_in{} */
+
+21      ctlbuf.len = sizeof(struct T_bind_req) + addrlen;
+22      ctlbuf.buf = (char *) &bind_req;
+23      Putmsg(fd, &ctlbuf, NULL, 0);
+
+24      ctlbuf.maxlen = sizeof(bind_ack);
+25      ctlbuf.len = 0;
+26      ctlbuf.buf = (char *) &bind_ack;
+27      flags = RS_HIPRI;
+28      Getmsg(fd, &ctlbuf, NULL, &flags);
+
+29      if (ctlbuf.len < (int) sizeof(long))
+30          err_quit("bad length from getmsg");
+
+31      switch (bind_ack.msg_hdr.PRIM_type) {
+32      case T_BIND_ACK:
+33          return;
+
+34      case T_ERROR_ACK:
+35          if (ctlbuf.len < (int) sizeof(struct T_error_ack))
+36              err_quit("bad length for T_ERROR_ACK");
+37          error_ack = (struct T_error_ack *) &bind_ack.msg_hdr;
+38          err_quit("T_ERROR_ACK from bind (%d, %d)",
+39                   error_ack->TLI_error, error_ack->UNIX_error);
+
+40      default:
+41          err_quit("unexpected message type: %d", bind_ack.msg_hdr.PRIM_type);
+42      }
+43 }
+These two messages are as follows:
+
+struct T_bind_ack {
+   t_scalar_t     PRIM_type;     /* T_BIND_ACK */
+   t_scalar_t     ADDR_length;   /* address length */
+   t_scalar_t     ADDR_offset;   /* address offset */
+   t_uscalar_t    CONIND_number; /* connect ind to be queued */
+       /* followed by the bound address */
+};
+
+struct T_error_ack {
+   t_scalar_t    PRIM_type;           /* T_ERROR_ACK */
+   t_scalar_t    ERROR_prim           /* primitive in error */
+   t_scalar_t    TLI_error;           /* TLI error code */
+   t_scalar_t    UNIX_error;          /* UNIX error code */
+};
+
+All these messages begin with the type, so we can read the reply assuming it is a
+T_BIND_ACK message, look at the type, and process the message accordingly. We do not
+expect any data from the provider, so we specify a null pointer as the third argument to
+getmsg.
+
+When we verify that the amount of control information returned is at least the size of a
+long integer, we must be careful to cast the sizeof value to an integer. The sizeof
+operator returns an unsigned integer value, but it is possible for the returned len field to
+be 1. But since the less-than comparison is comparing a signed value on the left to an
+
+unsigned value on the right, the compiler casts the signed value to an unsigned value. On
+a two's-complement architecture, 1, considered as an unsigned value, is very large,
+causing 1 to be greater than 4 (if we assume a long integer occupies 4 bytes).
+
+Process reply
+31 33 If the reply is T_BIND_ACK, the bind was successful and we return. The actual
+address that was bound to the endpoint is returned in the addr member of our bind_ack
+structure, which we ignore.
+
+34 39 If the reply is T_ERROR_ACK, we verify that the entire message was received and then
+print the three return values in the structure. In this simple program, we terminate when
+an error occurs; we do not return to the caller.
+
+We can see these errors from the bind request by changing our main function to bind some
+port other than 0. For example, if we try to bind port 1 (which requires superuser
+privileges, since it is a port less than 1024), we get
+
+solaris % tpi_daytime 127.0.0.1
+T_ERROR_ACK from bind (3, 0)
+
+The error TACCES has the value 3 on this system. If we change the port to a value greater
+than 1023, but one that is currently in use by another TCP endpoint, we get
+
+solaris % tpi_daytime 127.0.0.1
+T_ERROR_ACK from bind (23, 0)
+
+The error TADDRBUSY has the value 23 on this system.
+
+The next function, shown in Figure 31.10, is tpi_connect, which establishes the
+connection with the server.
+
+Fill in request structure and send to provider
+18 26 TPI defines a T_conn_req structure that contains the protocol address and options
+for the connection.
+
+struct T_conn_req {
+   t_scalar_t     PRIM_type;   /* T_CONN_REQ */
+   t_scalar_t     DEST_length; /* destination address length */
+   t_scalar_t     DEST_offset; /* destination address offset */
+   t_scalar_t     OPT_length; /* options length */
+   t_scalar_t     OPT_offset; /* options offset */
+       /* followed by the protocol address and options for connection */
+};
+
+As in our tpi_bind function, we define our own structure named conn_req, which includes
+a T_conn_req structure along with room for the protocol address. We fill in our conn_req
+structure, setting the two members dealing with options to 0. We call putmsg with only
+control information and a flag of 0 to send an M_PROTO message down the stream.
+
+Figure 31.10 tpi_connect function: establishes connection with server.
+streams/tpi_connect.c
+
+ 1 #include       "tpi_daytime.h"
+
+ 2 void
+ 3 tpi_connect(int fd, const void *addr, size_t addrlen)
+ 4 {
+ 5      struct {
+ 6          struct T_conn_req msg_hdr;
+ 7          char     addr[128];
+ 8      } conn_req;
+ 9      struct {
+10          struct T_conn_con msg_hdr;
+11          char     addr[128];
+12      } conn_con;
+13      struct strbuf ctlbuf;
+14      union T_primitives rcvbuf;
+15      struct T_error_ack *error_ack;
+16      struct T_discon_ind *discon_ind;
+17      int      flags;
+
+18      conn_req.msg_hdr.PRIM_type = T_CONN_REQ;
+19      conn_req.msg_hdr.DEST_length = addrlen;
+20      conn_req.msg_hdr.DEST_offset = sizeof(struct T_conn_req);
+21      conn_req.msg_hdr.OPT_length = 0;
+22      conn_req.msg_hdr.OPT_offset = 0;
+23      memcpy(conn_req.addr, addr, addrlen);    /* sockaddr_in{} */
+
+24      ctlbuf.len = sizeof(struct T_conn_req) + addrlen;
+25      ctlbuf.buf = (char *) &conn_req;
+26      Putmsg(fd, &ctlbuf, NULL, 0);
+
+27      ctlbuf.maxlen = sizeof(union T_primitives);
+28      ctlbuf.len = 0;
+29      ctlbuf.buf = (char *) &rcvbuf;
+30      flags = RS_HIPRI;
+31      Getmsg(fd, &ctlbuf, NULL, &flags);
+
+32      if (ctlbuf.len < (int) sizeof(long))
+33          err_quit("tpi_connect: bad length from getmsg");
+
+34      switch (rcvbuf.type) {
+35      case T_OK_ACK:
+36          break;
+
+37      case T_ERROR_ACK:
+38          if (ctlbuf.len < (int) sizeof(struct T_error_ack))
+39              err_quit("tpi_connect: bad length for T_ERROR_ACK");
+40          error_ack = (struct T_error_ack *) &rcvbuf;
+41          err_quit("tpi_connect: T_ERROR_ACK from conn (%d, %d)",
+42                   error_ack->TLI_error, error_ack->UNIX_error);
+
+43      default:
+44          err_quit("tpi_connect: unexpected message type: %d", rcvbuf.type);
+45      }
+
+46      ctlbuf.maxlen = sizeof(conn_con);
+
+47      ctlbuf.len = 0;
+48      ctlbuf.buf = (char *) &conn_con;
+49      flags = 0;
+50      Getmsg(fd, &ctlbuf, NULL, &flags);
+
+51      if (ctlbuf.len < (int) sizeof(long))
+52          err_quit("tpi_connect2: bad length from getmsg");
+
+53      switch (conn_con.msg_hdr.PRIM_type) {
+54      case T_CONN_CON:
+55          break;
+
+56      case T_DISCON_IND:
+57          if (ctlbuf.len < (int) sizeof(struct T_discon_ind))
+58              err_quit("tpi_connect2: bad length for T_DISCON_IND");
+59          discon_ind = (struct T_discon_ind *) &conn_con.msg_hdr;
+60          err_quit("tpi_connect2: T_DISCON_IND from conn (%d)",
+61                   discon_ind->DISCON_reason);
+
+62      default:
+63          err_quit("tpi_connect2: unexpected message type: %d",
+64                   conn_con.msg_hdr.PRIM_type);
+65      }
+66 }
+
+Read response
+27 45 We call getmsg, expecting to receive either a T_OK_ACK message if the connection
+establishment was started, or a T_ERROR_ACK message (which we showed earlier).
+
+struct T_ok_ack {
+   t_scalar_t   PRIM_type;              /* T_OK_ACK */
+   t_scalar_t   CORRECT_prim;           /* correct primitive */
+};
+
+In case of an error, we terminate. Since we do not know what type of message we will
+receive, a union named T_primitives is defined as the union of all the possible requests
+and replies, and we allocate one of these that we use as the input buffer for the control
+information when we call getmsg.
+
+Wait for connection to be established
+46 65 The successful T_OK_ACK message that was just received only tells us that the
+connection establishment was started. We must now wait for a T_CONN_CON message to tell
+us that the other end has confirmed the connection request.
+
+struct T_conn_con {
+   t_scalar_t     PRIM_type;      /* T_CONN_CON */
+   t_scalar_t     RES_length;     /* responding address length */
+   t_scalar_t     RES_offset;     /* responding address offset */
+   t_scalar_t     OPT_length;     /* option length */
+   t_scalar_t     OPT_offset;     /* option offset */
+       /* followed by peer's protocol address and options */
+};
+
+We call getmsg again, but the expected message is sent as an M_PROTO message, not an
+M_PCPROTO message, so we set the flags to 0. If we receive the T_CONN_CON message, the
+connection is established and we return, but if the connection was not established (either
+the peer process was not running, a timeout occurred, or whatever), a T_DISCON_IND
+message is sent up the stream instead.
+
+struct T_discon_ind {
+   t_scalar_t    PRIM_type;            /* T_DISCON_IND */
+   t_scalar_t    DISCON_reason;        /* disconnect reason */
+   t_scalar_t    SEQ_number;           /* sequence number */
+};
+
+We can see the different errors that are returned by the provider. We first specify the IP
+address of a host that is not running the daytime server.
+
+solaris % tpi_daytime 192.168.1.10
+tpi_connect2: T_DISCON_IND from conn (146)
+
+The error of 146 corresponds to ECONNREFUSED. Next, we specify an IP address that is not
+connected to the Internet.
+
+solaris % tpi_daytime 192.3.4.5
+tpi_connect2: T_DISCON_IND from conn (145)
+
+The error this time is ETIMEDOUT. But if we run our program again, specifying the same IP
+address, we get a different error.
+
+solaris % tpi_daytime 192.3.4.5
+tpi_connect2: T_DISCON_IND from conn (148)
+
+The error this time is EHOSTUNREACH. The difference in the last two results is that the first
+time, no ICMP "host unreachable" errors were returned, while the next time, this error was
+returned.
+
+The next function is tpi_read, shown in Figure 31.11. It reads data from a stream.
+
+Figure 31.11 tpi_read function: reads data from a stream.
+streams/tpi_read.c
+
+ 1 #include       "tpi_daytime.h"
+
+ 2 ssize_t
+ 3 tpi_read(int fd, void *buf, size_t len)
+ 4 {
+ 5     struct strbuf ctlbuf;
+ 6     struct strbuf datbuf;
+ 7     union T_primitives rcvbuf;
+ 8     int     flags;
+
+ 9        ctlbuf.maxlen = sizeof(union T_primitives);
+10        ctlbuf.buf = (char *) &rcvbuf;
+
+11        datbuf.maxlen = len;
+12        datbuf.buf = buf;
+13        datbuf.len = 0;
+
+14        flags = 0;
+15        Getmsg(fd, &ctlbuf, &datbuf, &flags);
+
+16        if (ctlbuf.len >= (int) sizeof(long)) {
+17             if (rcvbuf.type == T_DATA_IND)
+18                  return (datbuf.len);
+19             else if (rcvbuf.type == T_ORDREL_IND)
+20                  return (0);
+21             else
+22                  err_quit("tpi_read: unexpected type %d", rcvbuf.type);
+23        } else if (ctlbuf.len == -1)
+24             return (datbuf.len);
+25        else
+26             err_quit("tpi_read: bad length from getmsg");
+27 }
+
+Read control and data; process reply
+9 26 This time, we call getmsg to read both control information and data. The strbuf
+structure for the data points to the caller's buffer. Four different scenarios can occur on the
+stream:
+
+        The data can arrive as an M_DATA message, which is indicated by the returned
+         control length being set to 1. The data was copied into the caller's buffer by
+         getmsg, and we just return the length of this data as the return value of the
+         function.
+
+        The data can arrive as a T_DATA_IND message, in which case, the control information
+         will be a T_data_ind structure.
+     
+     
+     
+        struct T_data_ind {
+           t_scalar_t   PRIM_type;         /* T_DATA_IND */
+           t_scalar_t   MORE_flag;         /* more data */
+        };
+     
+         If this message is returned, we ignore the MORE_flag member (it will never be set
+         for a stream protocol such as TCP) and just return the length of the data that was
+         copied into the caller's buffer by getmsg.
+
+        A T_ORDREL_IND message is returned if all the data has been consumed and the
+         next item is a FIN.
+     
+     
+     
+        struct T_ordrel_ind {
+           t_scalar_t   PRIM_type;         /* T_ORDREL_IND */
+        };
+     
+
+         This is the orderly release. We just return 0, indicating to the caller that the EOF has
+         been encountered on the connection.
+
+        A T_DISCON_IND message is returned if a disconnect has been received.
+
+Our final function is tpi_close, shown in Figure 31.12.
+
+Figure 31.12 tpi_close function: sends an orderly release to the peer.
+streams/tpi_close.c
+
+ 1 #include        "tpi_daytime.h"
+
+ 2 void
+ 3 tpi_close(int fd)
+ 4 {
+ 5      struct T_ordrel_req ordrel_req;
+ 6      struct strbuf ctlbuf;
+
+ 7        ordrel_req.PRIM_type = T_ORDREL_REQ;
+
+ 8        ctlbuf.len = sizeof(struct T_ordrel_req);
+ 9        ctlbuf.buf = (char *) &ordrel_req;
+10        Putmsg(fd, &ctlbuf, NULL, 0);
+
+11        Close(fd);
+12 }
+
+Send orderly release to peer
+7 10 We build a T_ordrel_req structure
+
+struct T_ordrel_req {
+   long PRIM_type;    /* T_ORDREL_REQ */
+};
+
+and send it as an M_PROTO message using putmsg.
+
+This example has given us a flavor for TPI. The application sends messages down a stream
+to the provider (requests) and the provider sends messages up the stream (replies). Some
+exchanges follow a simple request-reply scenario (binding a local address), while others
+may take a while (establishing a connection), allowing us to do something while we wait
+for the reply. Our choice of writing a TCP client using TPI was done for simplicity; writing a
+TCP server and handling connections are much harder.
+
+We can compare the number of system calls required for the network operations that we
+have seen in this chapter when using TPI versus a kernel that implements sockets within
+the kernel. Binding a local address takes two system calls with TPI, but only one with
+kernel sockets (TCPv2, p. 454). To establish a connection on a blocking descriptor takes
+three system calls with TPI, but only one with kernel sockets (TCPv2, p. 466).
+
+31.7 Summary
+Sockets are sometimes implemented using STREAMS. Four new functions are provided to
+access the STREAMS subsystem: getmsg, getpmsg, putmsg, and putpmsg, plus the existing
+ioctl function is heavily used by the STREAMS subsystem also.
+
+TPI is the SVR4 STREAMS interface from the upper layers into the transport layer. It is
+used by both sockets and XTI, as shown in Figure 31.3. We developed a version of our
+daytime client using TPI directly as an example to show the message-based interface that
+TPI uses.
+
+Exercises
+     31.1 In Figure 31.12, we call putmsg to send the orderly release request
+          down the stream and then immediately close the stream. What
+          happens if our orderly release request is lost by the STREAMS
+          subsystem when the stream is closed?
+

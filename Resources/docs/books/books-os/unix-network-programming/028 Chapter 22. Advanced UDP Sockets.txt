@@ -1,0 +1,1627 @@
+
+Chapter 22. Advanced UDP Sockets
+       Section 22.1.?Introduction
+
+       Section 22.2.?Receiving Flags, Destination IP Address, and Interface Index
+
+       Section 22.3.?Datagram Truncation
+
+       Section 22.4.?When to Use UDP Instead of TCP
+
+       Section 22.5.?Adding Reliability to a UDP Application
+
+       Section 22.6.?Binding Interface Addresses
+
+       Section 22.7.?Concurrent UDP Servers
+
+       Section 22.8.?IPv6 Packet Information
+
+       Section 22.9.?IPv6 Path MTU Control
+
+       Section 22.10.?Summary
+
+       Exercises
+
+22.1 Introduction
+This chapter is a collection of various topics that affect applications using UDP sockets. First
+is determining the destination address of a UDP datagram and the interface on which the
+datagram was received, because a socket bound to a UDP port and the wildcard address
+can receive unicast, broadcast, and multicast datagrams on any interface.
+
+TCP is a byte-stream protocol and it uses a sliding window, so there is no such thing as a
+record boundary or allowing the sender to overrun the receiver with data. With UDP,
+however, each input operation corresponds to a UDP datagram (a record), so a problem
+arises of what happens when the received datagram is larger than the application's input
+buffer.
+
+UDP is unreliable but there are applications where it makes sense to use UDP instead of
+TCP. We will discuss the factors affecting when UDP can be used instead of TCP. In these
+UDP applications, we must include some features to make up for UDP's unreliability: a
+timeout and retransmission, to handle lost datagrams, and sequence numbers, to match
+the replies to the requests. We develop a set of functions that we can call from our UDP
+applications to handle these details.
+
+If the implementation does not support the IP_RECVDSTADDR socket option, then one way to
+determine the destination IP address of a UDP datagram is to bind all the interface
+addresses and use select.
+
+Most UDP servers are iterative, but there are applications that exchange multiple UDP
+datagrams between the client and server requiring some form of concurrency. TFTP is the
+common example, and we will discuss how this is done, both with and without inetd.
+
+The final topic is the per-packet information that can be specified as ancillary data for an
+IPv6 datagram: the source IP address, the sending interface, the outgoing hop limit, and
+the next-hop address. Similar information can be returned with an IPv6 datagram: the
+destination IP address, received interface, and received hop limit.
+
+22.2 Receiving Flags, Destination IP Address, and
+Interface Index
+Historically, sendmsg and recvmsg have been used only to pass descriptors across Unix
+domain sockets (Section 15.7), and even this was rare. But the use of these two functions
+is increasing for two reasons:
+
+    1.   The msg_flags member, which was added to the msghdr structure with 4.3BSD
+         Reno, returns flags to the application. We summarized these flags in Figure 14.7.
+
+    2.   Ancillary data is being used to pass more and more information between the
+         application and the kernel. We will see in Chapter 27 that IPv6 continues this trend.
+
+As an example of recvmsg, we will write a function named recvfrom_flags, which is similar
+to recvfrom but also returns the following:
+
+        The returned msg_flags value
+
+        The destination address of the received datagram (from the IP_RECVDSTADDR socket
+         option)
+
+        The index of the interface on which the datagram was received (the IP_RECVIF
+         socket option)
+
+To return the last two items, we define the following structure in our unp.h header:
+
+struct unp_in_pktinfo {
+   struct in_addr ipi_addr;             /* destination IPv4 address */
+   int            ipi_ifindex;          /* received interface index */
+};
+
+We have purposely chosen the structure name and member names to be similar to the
+IPv6 in6_pktinfo structure that returns the same two items for an IPv6 socket (Section
+22.8). Our recvfrom_flags function will take a pointer to an unp_in_pktinfo structure as
+an argument, and if this pointer is non-null, we will return the structure through the
+pointer.
+
+A design problem with this structure is what to return if the IP_RECVDSTADDR information is
+not available (i.e., the implementation does not support the socket option). The interface
+index is easy to handle because a value of 0 can indicate that the index is not known. But
+all 32-bit values for an IP address are valid. What we have chosen is to return a value of all
+zeros (0.0.0.0) as the destination address when the actual value is not available. While this
+is a valid IP address, it is never allowed as the destination IP address (RFC 1122 [Braden
+1989]); it is valid only as the source IP address when a host is bootstrapping and does not
+yet know its IP address.
+
+Unfortunately, Berkeley-derived kernels accept IP datagrams destined to 0.0.0.0 (pp. 218
+ 219 of TCPv2). These are obsolete broadcasts generated by 4.2BSD-derived kernels.
+
+We now show the first half of our recvfrom_flags function in Figure 22.1. This function is
+intended to be used with a UDP socket.
+
+Figure 22.1 recvfrom_flags function: calls recvmsg.
+
+advio/recvfromflags.c
+
+ 1 #include       "unp.h"
+ 2 #include       <sys/param.h>          /* ALIGN macro for CMSG_NXTHDR() macro */
+
+ 3 ssize_t
+ 4 recvfrom_flags(int fd, void *ptr, size_t nbytes, int *flagsp,
+ 5                SA *sa, socklen_t *salenptr, struct unp_in_pktinfo *pktp)
+ 6 {
+ 7     struct msghdr msg;
+ 8     struct iovec iov[1];
+ 9     ssize_t n;
+
+10 #ifdef HAVE_MSGHDR_MSG_CONTROL
+11     struct cmsghdr *cmptr;
+12     union {
+13         struct cmsghdr cm;
+14         char    control[CMSG_SPACE(sizeof(struct in_addr)) +
+15                         CMSG_SPACE(sizeof(struct unp_in_pktinfo))];
+16     } control_un;
+
+17     msg.msg_control = control_un.control;
+18     msg.msg_controllen = sizeof(control_un.control);
+19     msg.msg_flags = 0;
+20 #else
+21     bzero(&msg, sizeof(msg));   /* make certain msg_accrightslen = 0 */
+22 #endif
+
+23      msg.msg_name = sa;
+24      msg.msg_namelen = *salenptr;
+25      iov[0].iov_base = ptr;
+26      iov[0].iov_len = nbytes;
+27      msg.msg_iov = iov;
+28      msg.msg_iovlen = 1;
+
+29      if ( (n = recvmsg(fd, &msg, *flagsp)) < 0)
+30          return (n);
+
+31      *salenptr = msg.msg_namelen;    /* pass back results */
+32      if (pktp)
+33          bzero(pktp, sizeof(struct unp_in_pktinfo)); /* 0.0.0.0, i/f = 0 */
+
+Include files
+1 2 The CMSG_NXTHDR macro requires the <sys/param.h> header.
+
+Function arguments
+3 5 The function arguments are similar to recvfrom, except the fourth argument is now a
+pointer to an integer flag (so that we can return the flags returned by recvmsg) and the
+seventh argument is new: It is a pointer to an unp_in_pktinfo structure that will contain
+the destination IPv4 address of the received datagram and the interface index on which the
+datagram was received.
+
+Implemenation differences
+10 22 When dealing with the msghdr structure and the various MSG_xxx constants, we
+encounter lots of differences between various implementations. Our way of handling these
+differences is to use C's conditional inclusion feature (#ifdef). If the implementation
+
+supports the msg_control member, space is allocated to hold the values returned by both
+the IP_RECVDSTADDR and IP_RECVIF socket options, and the appropriate members are
+initialized.
+
+Fill in msghdr structure and call recvmsg
+23 33 A msghdr structure is filled in and recvmsg is called. The values of the msg_namelen
+and msg_flags members must be passed back to the caller; they are value-result
+arguments. We also initialize the caller's unp_in_pktinfo structure, setting the IP address
+to 0.0.0.0 and the interface index to 0.
+
+Figure 22.2 shows the second half of our function.
+
+34 37 If the implementation does not support the msg_control member, we just set the
+returned flags to 0 and return. The remainder of the function handles the msg_control
+information.
+
+Return if no control information
+38 41 We return the msg_flags value and then return to the caller if: (i) there is no control
+information; (ii) the control information was truncated; or (iii) the caller does not want an
+unp_in_pktinfo structure returned.
+
+Process ancillary data
+42 43 We process any number of ancillary data objects using the CMSG_FIRSTHDR and
+CMSG_NXTHDR macros.
+
+Process IP_RECVDSTADDR
+44 51 If the destination IP address was returned as control information (Figure 14.9), it is
+returned to the caller.
+
+Process IP_RECVIF
+52 59 If the index of the received interface was returned as control information, it is
+returned to the caller. Figure 22.3 shows the contents of the ancillary data object that is
+returned.
+
+Figure 22.2 recvfrom_flags function: returns flags and destination
+address.
+advio/recvfromflags.c
+
+34 #ifndef HAVE_MSGHDR_MSG_CONTROL
+35     *flagsp = 0;                /* pass back results */
+36     return (n);
+37 #else
+
+38      *flagsp = msg.msg_flags;    /* pass back results */
+39      if (msg.msg_controllen < sizeof(struct cmsghdr) ||
+40          (msg.msg_flags & MSG_CTRUNC) || pktp == NULL)
+41          return (n);
+
+42      for (cmptr = CMSG_FIRSTHDR(&msg); cmptr != NULL;
+43           cmptr = CMSG_NXTHDR(&msg, cmptr)) {
+
+44 #ifdef    IP_RECVDSTADDR
+45           if (cmptr->cmsg_level == IPPROTO_IP &&
+
+46                cmptr->cmsg_type == IP_RECVDSTADDR) {
+
+47                memcpy(&pktp->ipi_addr, CMSG_DATA(cmptr),
+48                       sizeof(struct in_addr));
+49                continue;
+50           }
+51 #endif
+
+52 #ifdef IP_RECVIF
+53         if (cmptr->cmsg_level == IPPROTO_IP && cmptr->cmsg_type ==
+IP_RECVIF) {
+54             struct sockaddr_dl *sdl;
+
+55             sdl = (struct sockaddr_dl *) CMSG_DATA(cmptr);
+56             pktp->ipi_ifindex = sdl->sdl_index;
+57             continue;
+58         }
+59 #endif
+60         err_quit("unknown ancillary data, len = %d, level = %d, type = %d",
+61                  cmptr->cmsg_len, cmptr->cmsg_level, cmptr->cmsg_type);
+62     }
+63     return (n);
+64 #endif /* HAVE_MSGHDR_MSG_CONTROL */
+65 }
+
+          Figure 22.3. Ancillary data object returned for IP_RECVIF.
+
+Recall the datalink socket address structure in Figure 18.1. The data returned in the
+ancillary data object is one of these structures, but the three lengths are 0 (name length,
+address length, and selector length). Therefore, there is no need for any of the data that
+follows these lengths, so the size of the structure should be 8 bytes, not the 20 that we
+show in Figure 18.1. The information we return is the interface index.
+
+Example: Print Destination IP Address and Datagram-Truncated Flag
+To test our function, we modify our dg_echo function (Figure 8.4) to call recvfrom_flags
+instead of recvfrom. We show this new version of dg_echo in Figure 22.4.
+
+Change MAXLINE
+
+2 3 We remove the existing definition of MAXLINE that occurs in our unp.h header and
+redefine it to be 20. We do this to see what happens when we receive a UDP datagram that
+is larger than the buffer that we pass to the input function (recvmsg in this case).
+
+Set IP_RECVDSTADDR and IP_RECVIF socket options
+
+14 21 If the IP_RECVDSTADDR socket option is defined, it is turned on. Similarly, the
+IP_RECVIF socket option is turned on.
+
+Figure 22.4 dg_echo function that calls our recvfrom_flags function.
+advio/dgechoaddr.c
+
+ 1 #include       "unpifi.h"
+
+ 2 #undef MAXLINE
+ 3 #define MAXLINE 20                    /* to see datagram truncation */
+
+ 4 void
+ 5 dg_echo(int sockfd, SA *pcliaddr, socklen_t clilen)
+ 6 {
+ 7      int     flags;
+ 8      const int on = 1;
+ 9      socklen_t len;
+10      ssize_t n;
+11      char    mesg[MAXLINE], str[INET6_ADDRSTRLEN], ifname[IFNAMSIZ];
+12      struct in_addr in_zero;
+13      struct unp_in_pktinfo pktinfo;
+
+14 #ifdef IP_RECVDSTADDR
+15     if (setsockopt(sockfd, IPPROTO_IP, IP_RECVDSTADDR, &on, sizeof(on)) < 0)
+16         err_ret("setsockopt of IP_RECVDSTADDR");
+17 #endif
+18 #ifdef IP_RECVIF
+19     if (setsockopt(sockfd, IPPROTO_IP, IP_RECVIF, &on, sizeof(on)) < 0)
+20         err_ret("setsockopt of IP_RECVIF");
+21 #endif
+22     bzero(&in_zero, sizeof(struct in_addr));     /* all 0 IPv4 address */
+
+23     for ( ; ; ) {
+24         len = clilen;
+25         flags = 0;
+26         n = Recvfrom_flags(sockfd, mesg, MAXLINE, &flags,
+27                            pcliaddr, &len, &pktinfo);
+28         printf("%d-byte datagram from %s", n, Sock_ntop(pcliaddr, len));
+29         if (memcmp(&pktinfo.ipi_addr, &in_zero, sizeof(in_zero)) != 0)
+30             printf(", to %s", Inet_ntop(AF_INET, &pktinfo.ipi_addr,
+31                                         str, sizeof(str)));
+32         if (pktinfo.ipi_ifindex > 0)
+33             printf(", recv i/f = %s",
+34                    If_indextoname(pktinfo.ipi_ifindex, ifname));
+35 #ifdef MSG_TRUNC
+36         if (flags & MSG_TRUNC)
+37             printf(" (datagram truncated)");
+38 #endif
+39 #ifdef MSG_CTRUNC
+40         if (flags & MSG_CTRUNC)
+41             printf(" (control info truncated)");
+42 #endif
+43 #ifdef MSG_BCAST
+44         if (flags & MSG_BCAST)
+45             printf(" (broadcast)");
+46 #endif
+47 #ifdef MSG_MCAST
+48         if (flags & MSG_MCAST)
+49             printf(" (multicast)");
+50 #endif
+51         printf("\n");
+
+52           Sendto(sockfd, mesg, n, 0, pcliaddr, len);
+53      }
+54 }
+Read datagram, print source IP address and port
+
+24 28 The datagram is read by calling recvfrom_flags. The source IP address and port of
+the server's reply are converted to presentation format by sock_ntop.
+
+Print destination IP address
+
+29 31 If the returned IP address is not 0, it is converted to presentation format by
+inet_ntop and printed.
+
+Print name of received interface
+
+32 34 If the returned interface index is not 0, its name is obtained by calling
+if_indextoname and it is printed.
+
+Test various flags
+
+35 51 We test four additional flags and print a message if any are on.
+
+22.3 Datagram Truncation
+On BSD-derived systems, when a UDP datagram arrives that is larger than the application's
+buffer, recvmsg sets the MSG_TRUNC flag in the msg_flags member of the msghdr structure (
+Figure 14.7). All Berkeley-derived implementations that support the msghdr structure with
+the msg_flags member provide this notification.
+
+This is an example of a flag that must be returned from the kernel to the process. We
+mentioned in Section 14.3 that one design problem with the recv and recvfrom functions
+is that their flags argument is an integer, which allows flags to be passed from the process
+to the kernel, but not vice versa.
+
+Unfortunately, not all implementations handle a larger-than-expected UDP datagram in this
+fashion. There are three possible scenarios:
+
+    1.   Discard the excess bytes and return the MSG_TRUNC flag to the application. This
+         requires that the application call recvmsg to receive the flag.
+
+    2.   Discard the excess bytes, but do not tell the application.
+
+    3.   Keep the excess bytes and return them in subsequent read operations on the
+         socket.
+
+         The POSIX specification specifies the first type of behavior: discarding the excess
+         bytes and setting the MSG_TRUNC flag. Early releases of SVR4 exhibited the third
+         type of behavior.
+
+Since there are such variations in how implementations handle datagrams that are larger
+than the application's receive buffer, one way to detect the problem is to always allocate an
+application buffer that is one byte greater than the largest datagram the application should
+ever receive. If a datagram is ever received whose length equals this buffer, consider it an
+error.
+
+22.4 When to Use UDP Instead of TCP
+In Sections 2.3 and 2.4, we described the major differences between UDP and TCP. Given
+that TCP is reliable while UDP is not, the question arises: When should we use UDP instead
+of TCP, and why? We first list the advantages of UDP:
+
+       As we show in Figure 20.1, UDP supports broadcasting and multicasting. Indeed,
+        UDP must be used if the application uses broadcasting or multicasting. We
+        discussed these two addressing modes in Chapters 20 and 21.
+
+       UDP has no connection setup or teardown. With regard to Figure 2.5, UDP requires
+        only two packets to exchange a request and a reply (assuming the size of each is
+        less than the minimum MTU between the two end-systems). TCP requires about 10
+        packets, assuming that a new TCP connection is established for each request-reply
+        exchange.
+
+        Also important in this number-of-packet analysis is the number of packet round
+        trips required to obtain the reply. This becomes important if the latency exceeds the
+        bandwidth, as described in Appendix A of TCPv3. That text shows that the
+        minimum transaction time for a UDP request-reply is RTT + server processing time
+        (SPT). With TCP, however, if a new TCP connection is used for the request-reply, the
+        minimum transaction time is 2 x RTT + SPT, one RTT greater than the UDP time.
+
+It should be obvious with regard to the second point that if a TCP connection is used for
+multiple request-reply exchanges, then the cost of the connection's establishment and
+teardown is amortized across all the requests and replies, and this is normally a better
+design than using a new connection for each request-reply. Nevertheless, there are
+applications that use a new TCP connection for each request-reply (e.g., the older versions
+of HTTP), and there are applications in which the client and server exchange one
+request-reply (e.g., the DNS) and then might not talk to each other for hours or days.
+
+We now list the features of TCP that are not provided by UDP, which means that an
+application must provide these features itself, if they are necessary to the application. We
+use the qualifier "necessary" because not all features are needed by all applications. For
+example, dropped segments might not need to be retransmitted for a real-time audio
+application, if the receiver can interpolate the missing data. Also, for simple request-reply
+transactions, windowed flow control might not be needed if the two ends agree ahead of
+time on the size of the largest request and reply.
+
+       Positive acknowledgments, retransmission of lost packets, duplicate detection, and
+        sequencing of packets reordered by the network TCP acknowledges all data,
+        allowing lost packets to be detected. The implementation of these two features
+        requires that every TCP data segment contain a sequence number that can then be
+        acknowledged. It also requires that TCP estimate a retransmission timeout value for
+        the connection and that this value be updated continually as network traffic
+        between the two end-systems changes.
+
+       Windowed flow control A receiving TCP tells the sender how much buffer space it
+        has allocated for receiving data, and the sender cannot exceed this. That is, the
+        amount of unacknowledged data at the sender can never exceed the receiver's
+        advertised window.
+
+       Slow start and congestion avoidance This is a form of flow control imposed by the
+        sender to determine the current network capacity and to handle periods of
+        congestion. All current TCPs must support these two features and we know from
+        experience (before these algorithms were implemented in the late 1980s) that
+        protocols that do not "back off" in the face of congestion just make the congestion
+        worse (e.g., [Jacobson 1988]).
+
+In summary, we can state the following recommendations:
+
+       UDP must be used for broadcast or multicast applications. Any form of desired error
+        control must be added to the clients and servers, but applications often use
+        broadcasting or multicasting when some (assumed small) amount of error is
+        acceptable (such as lost packets for audio or video). Multicast applications requiring
+        reliable delivery have been built (e.g., multicast file transfer), but we must decide
+        whether the performance gain in using multicasting (sending one packet to N
+        destinations versus sending N copies of the packet across N TCP connections)
+        outweighs the added complexity required within the application to provide reliable
+        communications.
+
+       UDP can be used for simple request-reply applications, but error detection must
+        then be built into the application. Minimally, this involves acknowledgments,
+        timeouts, and retransmission. Flow control is often not an issue for reasonably sized
+        requests and responses. We will provide an example of these features in a UDP
+        application in Section 22.5. The factors to consider here are how often the client and
+        server communicate (Could a TCP connection be left up between the two?) and how
+        much data is exchanged (if multiple packets are normally required, then the cost of
+        the TCP connection's establishment and teardown becomes less of a factor).
+
+       UDP should not be used for bulk data transfer (e.g., file transfer). The reason is that
+        windowed flow control, congestion avoidance, and slow-start must all be built into
+        the application, along with the features from the previous bullet point, which means
+        we are reinventing TCP within the application. We should let the vendors focus on
+        better TCP performance and concentrate our efforts on the application itself.
+
+There are exceptions to these rules, especially in existing applications. TFTP, for example,
+uses UDP for bulk data transfer. UDP was chosen for TFTP because it is simpler to
+implement than TCP in bootstrap code (800 lines of C code for UDP versus 4500 lines for
+TCP in TCPv2, for example), and because TFTP is used only to bootstrap systems on a LAN,
+not for bulk data transfer across WANs. But this requires that TFTP include its own
+sequence number field for acknowledgments, along with a timeout and retransmission
+capability.
+
+NFS is another exception to the rule: It also uses UDP for bulk data transfer (although
+some might claim it is really a request-reply application, albeit using large requests and
+replies). This is partly historical, because in the mid-1980s when it was designed, UDP
+implementations were faster than TCP, and NFS was used only on LANs, where packet loss
+is often orders of magnitude less than on WANs. But as NFS started being used across
+WANs in the early 1990s, and as TCP implementations passed UDP in terms of bulk data
+transfer performance, NFS version 3 was designed to support TCP, and most vendors are
+now providing NFS over both UDP and TCP. Similar reasoning (UDP being faster than TCP in
+the mid-1980s along with a predominance of LANs over WANs) led the precursor of the
+DCE RPC package (the Apollo NCS package) to also choose UDP over TCP, although current
+implementations support both UDP and TCP.
+
+We might be tempted to say that UDP usage is decreasing compared to TCP, with good TCP
+implementations being as fast as the network today, and with fewer application designers
+wanting to reinvent TCP within their UDP application. But the predicted increase in
+multimedia applications over the next decade will see an increase in UDP usage, since
+multimedia usually implies multicasting, which requires UDP.
+
+22.5 Adding Reliability to a UDP Application
+If we are going to use UDP for a request-reply application, as mentioned in the previous
+section, then we must add two features to our client:
+
+    1.   Timeout and retransmission to handle datagrams that are discarded
+
+    2.   Sequence numbers so the client can verify that a reply is for the appropriate request
+
+These two features are part of most existing UDP applications that use the simple
+request-reply paradigm: DNS resolvers, SNMP agents, TFTP, and RPC, for example. We are
+not trying to use UDP for bulk data transfer; our intent is for an application that sends a
+request and waits for a reply.
+
+By definition, a datagram is unreliable; therefore, we purposely do not call this a "reliable
+datagram service." Indeed, the term "reliable datagram" is an oxymoron. What we are
+showing is an application that adds reliability on top of an unreliable datagram service
+(UDP).
+
+Adding sequence numbers is simple. The client prepends a sequence number to each
+request and the server must echo this number back to the client in the reply. This lets the
+client verify that a given reply is for the request that was issued.
+
+The old-fashioned method for handling timeout and retransmission was to send a request
+and wait for N seconds. If no response was received, retransmit and wait another N
+seconds. After this had happened some number of times, the application gave up. This is
+an example of a linear retransmit timer. (Figure 6.8 of TCPv1 shows an example of a TFTP
+client that uses this technique. Many TFTP clients still use this method).
+
+The problem with this technique is that the amount of time required for a datagram to
+make a round trip on a network can vary from fractions of a second on a LAN to many
+seconds on a WAN. Factors affecting the RTT are distance, network speed, and congestion.
+Additionally, the RTT between a client and server can change rapidly with time, as network
+conditions change. We must use a timeout and retransmission algorithm that take into
+account the actual RTTs that we measure along with the changes in the RTT over time.
+Much work has been focused on this area, mostly relating to TCP, but the same ideas apply
+to any network application.
+
+We want to calculate the RTO to use for every packet that we send. To calculate this, we
+measure the RTT: the actual round-trip time for a packet. Every time we measure an RTT,
+we update two statistical estimators: srtt is the smoothed RTT estimator and rttvar is the
+smoothed mean deviation estimator. The latter is a good approximation of the standard
+deviation, but easier to compute since it does not involve a square root. Given these two
+estimators, the RTO to use is srtt plus four times rttvar. [Jacobson 1988] provides all the
+details of these calculations, which we can summarize in the following four equations:
+
+delta is the difference between the measured RTT and the current smoothed RTT estimator
+(srtt). g is the gain applied to the RTT estimator and equals 1/8. h is the gain applied to
+the mean deviation estimator and equals 1/4.
+
+The two gains and the multiplier 4 in the RTO calculation are purposely powers of 2 so they
+can be calculated using shift operations instead of multiplying or dividing. Indeed, the TCP
+
+kernel implementation (Section 25.7 of TCPv2) is normally performed using fixed-point
+arithmetic for speed, but for simplicity, we use floating-point calculations in our code that
+follows.
+
+Another point made in [Jacobson 1988] is that when the retransmission timer expires, an
+exponential backoff must be used for the next RTO. For example, if our first RTO is 2
+seconds and the reply is not received in this time, then the next RTO is 4 seconds. If there
+is still no reply, the next RTO is 8 seconds, and then 16, and so on.
+
+Jacobson's algorithms tell us how to calculate the RTO each time we measure an RTT and
+how to increase the RTO when we retransmit. But, a problem arises when we have to
+retransmit a packet and then receive a reply. This is called the retransmission ambiguity
+problem. Figure 22.5 shows the following three possible scenarios when our retransmission
+timer expires:
+
+    Figure 22.5. Three scenarios when retransmission timer expires.
+
+       The request is lost
+
+       The reply is lost
+
+       The RTO is too small
+
+When the client receives a reply to a request that was retransmitted, it cannot tell to which
+request the reply corresponds. In the example on the right, the reply corresponds to the
+original request, while in the two other examples, the reply corresponds to the
+retransmitted request.
+
+Karn's algorithm [Karn and Partridge 1991] handles this scenario with the following rules
+that apply whenever a reply is received for a request that was retransmitted:
+
+       If an RTT was measured, do not use it to update the estimators since we do not
+        know to which request the reply corresponds.
+
+       Since this reply arrived before our retransmission timer expired, reuse this RTO for
+        the next packet. Only when we receive a reply to a request that is not retransmitted
+        will we update the RTT estimators and recalculate the RTO.
+
+It is not hard to take Karn's algorithm into account when coding our RTT functions, but it
+turns out that an even better and more elegant solution exists. This solution is from the
+TCP extensions for "long fat pipes" (networks with either a high bandwidth, a long RTT, or
+both), which are documented in RFC 1323 [Jacobson, Braden, and Borman 1992]. In
+addition to prepending a sequence number to each request, which the server must echo
+back, we also prepend a timestamp that the server must also echo. Each time we send a
+request, we store the current time in the timestamp. When a reply is received, we calculate
+the RTT of that packet as the current time minus the timestamp that was echoed by the
+server in its reply. Since every request carries a timestamp that is echoed by the server,
+we can calculate the RTT of every reply we receive. There is no longer any ambiguity at all.
+Furthermore, since all the server does is echo the client's timestamp, the client can use
+any units desired for the timestamps and there is no requirement at all that the client and
+server have synchronized clocks.
+
+Example
+We will now put all of this together in an example. We start with our UDP client main
+function from Figure 8.7 and just change the port number from SERV_PORT to 7 (the
+standard echo server, Figure 2.18).
+
+Figure 22.6 is the dg_cli function. The only change from Figure 8.8 is to replace the calls
+to sendto and recvfrom with a call to our new function, dg_send_recv.
+
+Before showing our dg_send_recv function and the RTT functions it calls, Figure 22.7
+shows an outline of how we add reliability to a UDP client. All functions beginning with
+rtt_ will be shown shortly.
+
+Figure 22.6 dg_cli function that calls our dg_send_recv function.
+rtt/dg_cli.c
+
+ 1 #include        "unp.h"
+
+ 2 ssize_t Dg_send_recv(int, const void *, size_t, void *, size_t,
+ 3                      const SA *, socklen_t);
+
+ 4 void
+ 5 dg_cli(FILE *fp, int sockfd, const SA *pservaddr, socklen_t servlen)
+ 6 {
+ 7      ssize_t n;
+ 8      char    sendline[MAXLINE], recvline[MAXLINE + 1];
+
+ 9      while (Fgets(sendline, MAXLINE, fp) != NULL) {
+
+10             n = Dg_send_recv(sockfd, sendline, strlen(sendline),
+11                              recvline, MAXLINE, pservaddr, servlen);
+
+12             recvline[n] = 0;         /* null terminate */
+13             Fputs(recvline, stdout);
+14      }
+15 }
+
+Figure 22.7 Outline of RTT functions and when they are called.
+
+static sigjmp_buf jmpbuf;
+{
+    . . .
+    form request
+
+    signal(SIGALRM, sig_alrm); /* establish signal handler */
+    rtt_newpack();             /* initialize rexmt counter to 0 */
+sendagain:
+    sendto();
+
+     alarm(rtt_start());        /* set alarm for RTO seconds */
+     if (sigsetjmp(jmpbuf, 1) != 0) {
+          if (rtt_timeout())    /* double RTO, retransmitted enough? */
+              give up
+          goto sendagain;       /* retransmit */
+     }
+     do {
+          recvfrom();
+     } while (wrong sequence#);
+
+     alarm(0);                      /* turn off alarm */
+     rtt_stop();                    /* calculate RTT and update estimators */
+
+     process reply
+     . . .
+}
+
+void
+sig_alrm(int signo)
+{
+     siglongjmp(jmpbuf, 1);
+}
+When a reply is received but the sequence number is not the one expected, we call
+recvfrom again, but we do not retransmit the request and we do not restart the
+retransmission timer that is running. Notice in the rightmost example in Figure 22.5 that
+the final reply from the retransmitted request will be in the socket receive buffer the next
+time the client sends a new request. That is fine as the client will read this reply, notice
+that the sequence number is not the one expected, discard the reply, and call recvfrom
+again.
+
+We call sigsetjmp and siglongjmp to avoid the race condition with the SIGALRM signal we
+described in Section 20.5.
+
+Figure 22.8 shows the first half of our dg_send_recv function.
+
+1 5 We include a new header, unprtt.h, shown in Figure 22.10, which defines the
+rtt_info structure that maintains the RTT information for a client. We define one of these
+structures and numerous other variables.
+
+Define msghdr structures and hdr structure
+
+6 10 We want to hide the fact from the caller that we prepend a sequence number and a
+timestamp to each packet. The easiest way to do this is to use writev, writing our header
+(the hdr structure), followed by the caller's data, as a single UDP datagram. Recall that the
+output for writev on a datagram socket is a single datagram. This is easier than forcing
+the caller to allocate room at the front of its buffer for our use and is also faster than
+copying our header and the caller's data into one buffer (that we would have to allocate)
+for a single sendto. But since we are using UDP and have to specify a destination address,
+we must use the iovec capability of sendmsg and recvmsg, instead of sendto and recvfrom.
+Recall from Section 14.5 that some systems have a newer msghdr structure with ancillary
+data, while older systems still have the access rights members at the end of the structure.
+To avoid complicating the code with #ifdefs to handle these differences, we declare two
+msghdr structures as static, forcing their initialization to all zero bits by C and then just
+ignore the unused members at the end of the structures.
+
+Initialize first time we are called
+
+20 24 The first time we are called, we call the rtt_init function.
+
+Fill in msghdr structures
+
+25 41 We fill in the two msghdr structures that are used for output and input. We
+increment the sending sequence number for this packet, but do not set the sending
+timestamp until we send the packet (since it might be retransmitted, and each
+retransmission needs the current timestamp).
+
+The second half of the function, along with the sig_alrm signal handler, is shown in Figure
+22.9.
+
+Figure 22.8 dg_send_recv function: first half.
+
+ 1 #include       "unprtt.h"
+ 2 #include       <setjmp.h>
+
+ 3 #define RTT_DEBUG
+
+ 4 static struct rtt_info rttinfo;
+ 5 static int rttinit = 0;
+ 6 static struct msghdr msgsend, msgrecv; /* assumed init to 0 */
+ 7 static struct hdr {
+ 8     uint32_t seq;               /* sequence # */
+ 9     uint32_t ts;                /* timestamp when sent */
+10 } sendhdr, recvhdr;
+
+11 static void sig_alrm(int signo);
+12 static sigjmp_buf jmpbuf;
+
+13 ssize_t
+14 dg_send_recv(int fd, const void *outbuff, size_t outbytes,
+15              void *inbuff, size_t inbytes,
+16              const SA *destaddr, socklen_t destlen)
+17 {
+18     ssize_t n;
+19     struct iovec iovsend[2], iovrecv[2];
+
+20      if (rttinit == 0) {
+21          rtt_init(&rttinfo);          /* first time we're called */
+22          rttinit = 1;
+23          rtt_d_flag = 1;
+24      }
+
+25      sendhdr.seq++;
+26      msgsend.msg_name = destaddr;
+27      msgsend.msg_namelen = destlen;
+28      msgsend.msg_iov = iovsend;
+29      msgsend.msg_iovlen = 2;
+30      iovsend[0].iov_base = &sendhdr;
+31      iovsend[0].iov_len = sizeof(struct hdr);
+32      iovsend[1].iov_base = outbuff;
+33      iovsend[1].iov_len = outbytes;
+
+34      msgrecv.msg_name = NULL;
+35      msgrecv.msg_namelen = 0;
+36      msgrecv.msg_iov = iovrecv;
+37      msgrecv.msg_iovlen = 2;
+38      iovrecv[0].iov_base = &recvhdr;
+39      iovrecv[0].iov_len = sizeof(struct hdr);
+40      iovrecv[1].iov_base = inbuff;
+41      iovrecv[1].iov_len = inbytes;
+
+Figure 22.9 dg_send_recv function:second half.
+rtt/dg_send_recv.c
+
+42     Signal(SIGALRM, sig_alrm);
+43     rtt_newpack(&rttinfo);           /* initialize for this packet */
+
+44   sendagain:
+
+45     sendhdr.ts = rtt_ts(&rttinfo);
+46     Sendmsg(fd, &msgsend, 0);
+
+47     alarm(rtt_start(&rttinfo)); /* calc timeout value & start timer */
+
+48     if (sigsetjmp(jmpbuf, 1) != 0) {
+49         if (rtt_timeout(&rttinfo) < 0) {
+50             err_msg("dg_send_recv: no response from server, giving up");
+51             rttinit = 0;        /* reinit in case we're called again */
+52             errno = ETIMEDOUT;
+53             return (-1);
+54         }
+55         goto sendagain;
+56     }
+
+57     do {
+58         n = Recvmsg(fd, &msgrecv, 0);
+59     } while (n < sizeof(struct hdr) || recvhdr.seq ! = sendhdr.seq);
+
+60     alarm(0);                   /* stop SIGALRM timer */
+61         /* calculate & store new RTT estimator values */
+62     rtt_stop(&rttinfo, rtt_ts(&rttinfo) - recvhdr.ts);
+
+63     return (n - sizeof(struct hdr));          /* return size of received datagram
+*/
+64 }
+
+65 static void
+66 sig_alrm(int signo)
+67 {
+68     siglongjmp(jmpbuf, 1);
+69 }
+Establish signal handler
+
+42 43 A signal handler is established for SIGALRM and rtt_newpack sets the retransmission
+counter to 0.
+
+Send datagram
+
+45 47 The current timestamp is obtained by rtt_ts and stored in the hdr structure
+prepended to the user's data. A single UDP datagram is sent by sendmsg. rtt_start
+returns the number of seconds for this timeout and the SIGALRM is scheduled by calling
+alarm.
+
+Establish jump buffer
+
+48 We establish a jump buffer for our signal handler with sigsetjmp. We wait for the next
+datagram to arrive by calling recvmsg. (We discussed the use of sigsetjmp and
+siglongjmp along with SIGALRM with Figure 20.9.) If the alarm timer expires, sigsetjmp
+returns 1.
+
+Handle timeout
+
+49 55 When a timeout occurs, rtt_timeout calculates the next RTO (the exponential
+backoff) and returns -1 if we should give up, or 0 if we should retransmit. If we give up,
+we set errno to ETIMEDOUT and return to the caller.
+
+Call recvmsg, compare sequence numbers
+
+57 59 We wait for a datagram to arrive by calling recvmsg. When it returns, the datagram's
+
+length must be at least the size of our hdr structure and its sequence number must equal
+the sequence number that was sent. If either comparison is false, recvmsg is called again.
+
+Turn off alarm and update RTT estimators
+
+60 62 When the expected reply is received, the pending alarm is turned off and rtt_stop
+updates the RTT estimators. rtt_ts returns the current timestamp and the timestamp
+from the received datagram is subtracted from this, giving the RTT.
+
+SIGALRM handler
+
+65 69 siglongjmp is called, causing the sigsetjmp in dg_send_recv to return 1.
+
+We now look at the various RTT functions that were called by dg_send_recv. Figure 22.10
+shows the unprtt.h header.
+
+Figure 22.10 unprtt.h header.
+lib/unprtt.h
+
+ 1 #ifndef __unp_rtt_h
+ 2 #define __unp_rtt_h
+
+ 3 #include        "unp.h"
+
+ 4 struct rtt_info {
+ 5     float   rtt_rtt;                  /* most recent measured RTT, in seconds */
+ 6     float   rtt_srtt;                 /* smoothed RTT estimator, in seconds */
+ 7     float   rtt_rttvar;               /* smoothed mean deviation, in seconds */
+ 8     float   rtt_rto;                  /* current RTO to use, in seconds */
+ 9     int     rtt_nrexmt;               /* # times retransmitted: 0, 1, 2, ... */
+10     uint32_t rtt_base;                /* # sec since 1/1/1970 at start */
+11 };
+
+12 #define RTT_RXTMIN           2        /* min retransmit timeout value, in seconds
+*/
+13 #define RTT_RXTMAX          60        /* max retransmit timeout value, in seconds
+*/
+14 #define RTT_MAXNREXMT        3        /* max # times to retransmit */
+
+15                 /* function prototypes */
+16 void    rtt_debug(struct rtt_info *);
+17 void    rtt_init(struct rtt_info *);
+18 void    rtt_newpack(struct rtt_info *);
+19 int     rtt_start(struct rtt_info *);
+20 void    rtt_stop(struct rtt_info *, uint32_t);
+21 int     rtt_timeout(struct rtt_info *);
+22 uint32_t rtt_ts(struct rtt_info *);
+
+23 extern int rtt_d_flag;                /* can be set to nonzero for addl info */
+
+24 #endif      /* __unp_rtt_h */
+rtt_info structure
+
+4 11 This structure contains the variables necessary to time the packets between a client
+and server. The first four variables are from the equations given near the beginning of this
+section.
+
+12 14 These constants define the minimum and maximum retransmission timeouts and
+
+the maximum number of times we retransmitted.
+
+Figure 22.11 shows a macro and the first two of our RTT functions.
+
+Figure 22.11 RTT_RTOCALC macro and rtt_minmax and rtt_init functions.
+lib/rtt.c
+
+ 1 #include         "unprtt.h"
+
+ 2 int          rtt_d_flag = 0;          /* debug flag; can be set by caller */
+
+ 3 /*
+ 4 * Calculate the RTO value based on current estimators:
+ 5 *       smoothed RTT plus four times the deviation
+ 6 */
+ 7 #define RTT_RTOCALC(ptr) ((ptr)->rtt_srtt + (4.0 * (ptr)->rtt_rttvar))
+
+ 8 static float
+ 9 rtt_minmax(float rto)
+10 {
+11     if (rto < RTT_RXTMIN)
+12         rto = RTT_RXTMIN;
+13     else if (rto > RTT_RXTMAX)
+14         rto = RTT_RXTMAX;
+15     return (rto);
+16 }
+
+17 void
+18 rtt_init(struct rtt_info *ptr)
+19 {
+20      struct timeval tv;
+
+21          Gettimeofday(&tv, NULL);
+22          ptr->rtt_base = tv.tv_sec;    /* # sec since 1/1/1970 at start */
+
+23          ptr->rtt_rtt = 0;
+24          ptr->rtt_srtt = 0;
+25          ptr->rtt_rttvar = 0.75;
+26          ptr->rtt_rto = rtt_minmax(RTT_RTOCALC(ptr));
+27          /* first RTO at (srtt + (4 * rttvar)) = 3 seconds */
+28 }
+3 7 The RTT_RTOCALC macro calculates the RTO as the RTT estimator plus four times the
+mean deviation estimator.
+
+8 16 rtt_minmax makes certain that the RTO is between the upper and lower limits in the
+unprtt.h header.
+
+17 28 rtt_init is called by dg_send_recv the first time any packet is sent. gettimeofday
+returns the current time and date in the same timeval structure that we saw with select (
+Section 6.3). We save only the current number of seconds since the Unix Epoch, which is
+00:00:00 January 1, 1970, UTC. The measured RTT is set to 0 and the RTT and mean
+deviation estimators are set to 0 and 0.75, respectively, giving an initial RTO of 3 seconds.
+
+Figure 22.12 shows the next three RTT functions.
+
+Figure 22.12 rtt_ts, rtt_newpack, and rtt_start functions.
+lib/rtt.c
+
+34 uint 32_t
+35 rtt_ts(struct rtt_info *ptr)
+36 {
+37     uint32_t ts;
+38     struct timeval tv;
+
+39          Gettimeofday(&tv, NULL);
+40          ts = ((tv.tv_sec - ptr->rtt_base) * 1000) + (tv. tv_usec / 1000);
+41          return (ts);
+42 }
+
+43 void
+44 rtt_newpack(struct rtt_info *ptr)
+45 {
+46      ptr->rtt_nrexmt = 0;
+47 }
+
+48 int
+49 rtt_start(struct rtt_info *ptr)
+50 {
+51     return ((int) (ptr->rtt_rto + 0.5));    /* round float to int */
+52         /* return value can be used as: alarm(rtt_start(&foo)) */
+53 }
+34 42 rtt_ts returns the current timestamp for the caller to store as an unsigned 32-bit
+integer in the datagram being sent. We obtain the current time and date from
+gettimeofday and then subtract the number of seconds when rtt_init was called (the
+value saved in rtt_base). We convert this to milliseconds and also convert the
+microsecond value returned by gettimeofday into milliseconds. The timestamp is then the
+sum of these two values in milliseconds.
+
+The difference between two calls to rtt_ts is the number of milliseconds between the two
+calls. But, we store the millisecond timestamps in an unsigned 32-bit integer instead of a
+timeval structure.
+
+43 47 rtt_newpack just sets the retransmission counter to 0. This function should be called
+whenever a new packet is sent for the first time.
+
+48 53 rtt_start returns the current RTO in seconds. The return value can then be used as
+the argument to alarm.
+
+rtt_stop, shown in Figure 22.13, is called after a reply is received to update the RTT
+estimators and calculate the new RTO.
+
+Figure 22.13 rtt_stop function: updates RTT estimators and calculates
+new RTO.
+lib/rtt.c
+
+62 void
+63 rtt_stop(struct rtt_info *ptr, uint32_t ms)
+64 {
+65      double delta;
+
+66          ptr->rtt_rtt = ms / 1000.0; /* measured RTT in seconds */
+
+67          /*
+68           * Update our estimators of RTT and mean deviation of RTT.
+69           * See Jacobson's SIGCOMM '88 paper, Appendix A, for the details.
+
+70           * We use floating point here for simplicity.
+71           */
+
+72          delta = ptr->rtt_rtt - ptr->rtt_srtt;
+73          ptr->rtt_srtt += delta / 8; /* g = 1/8 */
+
+74          if (delta < 0.0)
+75              delta = -delta;           /* |delta| */
+
+76          ptr->rtt_rttvar += (delta - ptr->rtt_rttvar) / 4; /* h = 1/4 */
+
+77          ptr->rtt_rto = rtt_minmax(RTT_RTOCALC(ptr));
+78 }
+62 78 The second argument is the measured RTT, obtained by the caller by subtracting the
+received timestamp in the reply from the current timestamp (rtt_ts). The equations at
+the beginning of this section are then applied, storing new values for rtt_srtt,
+rtt_rttvar, and rtt_rto.
+
+The final function, rtt_timeout, is shown in Figure 22.14. This function is called when the
+retransmission timer expires.
+
+Figure 22.14 rtt_timeout function: applies exponential backoff.
+lib/rtt.c
+
+83 int
+84 rtt_timeout(struct rtt_info *ptr)
+85 {
+86     ptr->rtt_rto *= 2;          /* next RTO */
+
+87          if (++ptr->rtt_nrexmt > RTT_MAXNREXMT)
+88              return (-1);            /* time to give up for this packet */
+89          return (0);
+90 }
+86 The current RTO is doubled: This is the exponential backoff.
+
+87 89 If we have reached the maximum number of retransmissions,           1 is returned to tell
+the caller to give up; otherwise, 0 is returned.
+
+As an example, our client was run twice to two different echo servers across the Internet in
+the morning on a weekday. Five hundred lines were sent to each server. Eight packets
+were lost to the first server and 16 packets were lost to the second server. Of the 16 lost to
+the second server, one packet was lost twice in a row: that is, the packet had to be
+retransmitted two times before a reply was received. All other lost packets were handled
+with a single retransmission. We could verify that these packets were really lost by printing
+the sequence number of each received packet. If a packet is just delayed and not lost,
+after the retransmission, two replies will be received by the client: one corresponding to
+the original transmission that was delayed and one corresponding to the retransmission.
+Notice we are unable to tell when we retransmit whether it was the client's request or the
+server's reply that was discarded.
+
+For the first edition of this book, the author wrote a UDP server that randomly discarded
+packets to test this client. That is no longer needed; all we have to do is run the client to a
+server across the Internet and we are almost guaranteed of some packet loss!
+
+22.6 Binding Interface Addresses
+One common use for our get_ifi_info function is with UDP applications that need to
+monitor all interfaces on a host to know when a datagram arrives, and on which interface it
+arrives. This allows the receiving program to know the destination address of the UDP
+datagram, since that address is what determines the socket to which a datagram is
+delivered, even if the host does not support the IP_RECVDSTADDR socket option.
+
+Recall our discussion at the end of Section 22.2. If the host employs the common weak
+end system model, the destination IP address may differ from the IP address of the
+receiving interface. In this case, all we can determine is the destination address of the
+datagram, which does not need to be an address assigned to the receiving interface. To
+determine the receiving interface requires either the IP_RECVIF or IPV6_PKTINFO socket
+option.
+
+Figure 22.15 is the first part of a simple example of this technique with a UDP server that
+binds all the unicast addresses, all the broadcast addresses, and finally the wildcard
+address.
+
+Call get_ifi_info, to obtain interface information
+11 12 get_ifi_info, obtains all the IPv4 addresses, including aliases, for all interfaces.
+The program then loops through each returned ifi_info structure.
+
+Create UDP socket and bind unicast address
+13 20 A UDP socket is created and the unicast address is bound to it. We also set the
+SO_REUSEADDR socket option, as we are binding the same port (SERV_PORT) for all IP
+addresses.
+
+Figure 22.15 First part of UDP server that binds all addresses.
+advio/udpserv03.c
+
+ 1 #include        "unpifi.h"
+
+ 2 void        mydg_echo(int, SA *, socklen_t, SA *);
+
+ 3 int
+ 4 main(int argc, char **argv)
+ 5 {
+ 6     int     sockfd;
+ 7     const int on = 1;
+ 8     pid_t   pid;
+ 9     struct ifi_info *ifi, *ifihead;
+10     struct sockaddr_in *sa, cliaddr, wildaddr;
+
+11      for (ifihead = ifi = Get_ifi_info(AF_INET, 1);
+12           ifi != NULL; ifi = ifi->ifi_next) {
+
+13                 /* bind unicast address */
+14             sockfd = Socket(AF_INET, SOCK_DGRAM, 0);
+
+15             Setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+
+16             sa = (struct sockaddr_in *) ifi->ifi_addr;
+17             sa->sin_family = AF_INET;
+
+18           sa->sin_port = htons(SERV_PORT);
+19           Bind(sockfd, (SA *) sa, sizeof(*sa));
+20           printf("bound %s\n", Sock_ntop((SA *) sa, sizeof(*sa)));
+
+21           if ( (pid = Fork()) == 0) { /* child */
+22               mydg_echo(sockfd, (SA *) &cliaddr, sizeof(cliaddr), (SA *) sa);
+23               exit(0);            /* never executed */
+24           }
+Not all implementations require that this socket option be set. Berkeley-derived
+implementations, for example, do not require the option and allow a new bind of an
+already bound port if the new IP address being bound: (i) is not the wildcard, and (ii)
+differs from all the IP addresses that are already bound to the port.
+
+fork child for this address
+
+21 24 A child is forked and the function mydg_echo is called for the child. This function
+waits for any datagram to arrive on this socket and echoes it back to the sender.
+
+Figure 22.16 shows the next part of the main function, which handles broadcast addresses.
+
+Bind broadcast address
+25 42 If the interface supports broadcasting, a UDP socket is created and the broadcast
+address is bound to it. This time, we allow the bind to fail with an error of EADDRINUSE
+because if an interface has multiple addresses (aliases) on the same subnet, then each of
+the different unicast addresses will have the same broadcast address. We showed an
+example of this following Figure 17.6. In this scenario, we expect only the first bind to
+succeed.
+
+Figure 22.16 Second part of UDP server that binds all addresses.
+advio/udpserv03.c
+
+25      if (ifi->ifi_flags & IFF_BROADCAST) {
+26              /* try to bind broadcast address */
+27          sockfd = Socket(AF_INET, SOCK_DGRAM, 0);
+28          Setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+
+29           sa = (struct sockaddr_in *) ifi->ifi_brdaddr;
+30           sa->sin_family = AF_INET;
+31           sa->sin_port = htons(SERV_PORT);
+32           if (bind(sockfd, (SA *) sa, sizeof(*sa)) < 0) {
+33               if (errno == EADDRINUSE) {
+34                   printf("EADDRINUSE: %s\n",
+35                          Sock_ntop((SA *) sa, sizeof(*sa)));
+36                   Close(sockfd);
+37                   continue;
+38               } else
+39                   err_sys("bind error for %s",
+40                           Sock_ntop((SA *) sa, sizeof(*sa)));
+41           }
+42           printf("bound %s\n", Sock_ntop((SA *) sa, sizeof(*sa)));
+
+43           if ( (pid = Fork()) == 0) { /* child */
+44               mydg_echo(sockfd, (SA *) &cliaddr, sizeof(cliaddr),
+45                         (SA *) sa);
+46               exit(0);        /* never executed */
+47           }
+48      }
+
+49 }
+
+fork child
+
+43 47 A child is spawned and it calls the function mydg_echo.
+
+The final part of the main function is shown in Figure 22.17. This code binds the wildcard
+address to handle any destination addresses except the unicast and broadcast addresses
+we have already bound. The only datagrams that should arrive on this socket should be
+those destined to the limited broadcast address (255.255.255.255).
+
+Create socket and bind wildcard address
+50 62 A UDP socket is created, the SO_REUSEADDR socket option is set, and the wildcard IP
+address is bound. A child is spawned, which calls the mydg_echo function.
+
+main function terminates
+
+63 The main function terminates, and the server continues executing all the children that
+were spawned.
+
+Figure 22.17 Final part of UDP server that binds all addresses.
+advio/udpserv03.c
+
+50          /* bind wildcard address */
+51      sockfd = Socket(AF_INET, SOCK_DGRAM, 0);
+52      Setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, &on, sizeof(on));
+
+53      bzero(&wildaddr, sizeof(wildaddr));
+54      wildaddr.sin_family = AF_INET;
+55      wildaddr.sin_addr.s_addr = htonl(INADDR_ANY);
+56      wildaddr.sin_port = htons(SERV_PORT);
+57      Bind(sockfd, (SA *) &wildaddr, sizeof(wildaddr));
+58      printf("bound %s\n", Sock_ntop((SA *) &wildaddr, sizeof(wildaddr)));
+
+59      if ( (pid = Fork()) == 0) { /* child */
+60          mydg_echo(sockfd, (SA *) &cliaddr, sizeof(cliaddr), (SA *) sa);
+61          exit(0);                /* never executed */
+62      }
+63      exit(0);
+64 }
+The function mydg_echo, which is executed by all the children, is shown in Figure 22.18.
+
+Figure 22.18 mydg_echo function.
+advio/udpserv03.c
+
+65 void
+66 mydg_echo(int sockfd, SA *pcliaddr, socklen_t clilen, SA *myaddr)
+67 {
+68      int     n;
+69      char    mesg[MAXLINE];
+70      socklen_t len;
+
+71      for ( ; ; ) {
+72          len = clilen;
+73          n = Recvfrom(sockfd, mesg, MAXLINE, 0, pcliaddr, &len);
+74          printf("child %d, datagram from %s", getpid(),
+75                 Sock_ntop(pcliaddr, len));
+
+76            printf(", to %s\n", Sock_ntop(myaddr, clilen));
+
+77            Sendto(sockfd, mesg, n, 0, pcliaddr, len);
+78        }
+79 }
+
+New argument
+65 66 The fourth argument to this function is the IP address that was bound to the socket.
+This socket should receive only datagrams destined to that IP address. If the IP address is
+the wildcard, then the socket should receive only datagrams that are not matched by some
+other socket bound to the same port.
+
+Read datagram and echo reply
+71 78 The datagram is read with recvfrom and sent back to the client with sendto.
+
+This function also prints the client's IP address and the IP address that was bound to the
+socket.
+
+We now run this program on our host solaris after establishing an alias address for the
+hme0 Ethernet interface. The alias address is host number 200 on 10.0.0/24.
+
+ solaris % udpserv03
+
+ bound 127.0.0.1:9877                    loopback interface
+
+ bound 10.0.0.200:9877                   unicast address of hme0:1 interface
+
+ bound 10.0.0.255:9877                   broadcast address of hme0:1 interface
+
+ bound 192.168.1.20:9877                 unicast address of hme0 interface
+
+ bound 192.168.1.255:9877                broadcast address of hme0 interface
+
+ bound 0.0.0.0.9877                      wildcard
+
+We can check that all these sockets are bound to the indicated IP address and port using
+netstat.
+
+ solaris % netstat -na | grep 9877
+
+ 127.0.0.1.9877                                                                  Idle
+
+ 10.0.0.200.9877                                                                 Idle
+
+ *.9877                                                                          Idle
+
+ 192.129.100.100.9877                                                            Idle
+
+ *.9877                                                                          Idle
+
+ *.9877                                                                          Idle
+
+We should note that our design of one child process per socket is for simplicity and other
+designs are possible. For example, to reduce the number of processes, the program could
+
+manage all the descriptors itself using select, never calling fork. The problem with this
+design is the added code complexity. While it is easy to use select for all the descriptors,
+we would have to maintain some type of mapping of each descriptor to its bound IP
+address (probably an array of structures) so we could print the destination IP address
+when a datagram was read from a socket. It is often simpler to use a single process or a
+single thread for one operation or descriptor instead of having a single process multiplex
+many different operations or descriptors.
+
+22.7 Concurrent UDP Servers
+Most UDP servers are iterative: The server waits for a client request, reads the request,
+processes the request, sends back the reply, and then waits for the next client request. But
+when the processing of the client request takes a long time, some form of concurrency is
+desired.
+
+The definition of a "long time" is whatever is considered too much time for another client to
+wait while the current client is being serviced. For example, if two client requests arrive
+within 10 ms of each other, and it takes an average of 5 seconds of clock time to service a
+client, then the second client will have to wait about 10 seconds for its reply, instead of
+about 5 seconds if the request was handled as soon as it arrived.
+
+With TCP, it is simple to just fork a new child (or create a new thread, as we will see in
+Chapter 26) and let the child handle the new client. What simplifies this server
+concurrency when TCP is being used is that every client connection is unique: The TCP
+socket pair is unique for every connection. But with UDP, we must deal with two different
+types of servers:
+
+    1.   First is a simple UDP server that reads a client request, sends a reply, and is then
+         finished with the client. In this scenario, the server that reads the client request
+         can fork a child and let it handle the request. The "request," that is, the contents of
+         the datagram and the socket address structure containing the client's protocol
+         address, are passed to the child in its memory image from fork. The child then
+         sends its reply directly to the client.
+
+    2.   Second is a UDP server that exchanges multiple datagrams with the client. The
+         problem is that the only port number the client knows for the server is its wellknown
+         port. The client sends the first datagram of its request to that port, but how does
+         the server distinguish between subsequent datagrams from that client and new
+         requests? The typical solution to this problem is for the server to create a new
+         socket for each client, bind an ephemeral port to that socket, and use that socket
+         for all its replies. This requires that the client look at the port number of the server's
+         first reply and send subsequent datagrams for this request to that port.
+
+An example of the second type of UDP server is TFTP. To transfer a file using TFTP normally
+requires many datagrams (hundreds or thousands, depending on the file size), because the
+protocol sends only 512 bytes per datagram. The client sends a datagram to the server's
+well-known port (69), specifying the file to send or receive. The server reads the request,
+but sends its reply from another socket that it creates and bind to an ephemeral port. All
+subsequent datagrams between the client and server for this file use the new socket. This
+allows the main TFTP server to continue to handle other client requests, which arrive at
+port 69, while this file transfer takes place (perhaps over seconds, or even minutes).
+
+If we assume a standalone TFTP server (i.e., not invoked by inetd), we have the scenario
+shown in Figure 22.19. We assume that the ephemeral port bound by the child to its new
+socket is 2134.
+
+     Figure 22.19. Processes involved in standalone concurrent UDP
+                                 server.
+
+If inetd is used, the scenario involves one more step. Recall from Figure 13.6 that most
+UDP servers specify the wait-flag as wait. In our description following Figure 13.10, we
+said that this causes inetd to stop selecting on the socket until its child terminates,
+allowing its child to read the datagram that has arrived on the socket. Figure 22.20 shows
+the steps involved.
+
+           Figure 22.20. UDP concurrent server invoked by inetd.
+
+The TFTP server that is the child of inetd calls recvfrom and reads the client request. It
+then forks a child of its own, and that child will process the client request. The TFTP server
+then calls exit, sending SIGCHLD to inetd, which tells inetd to again select on the socket
+bound to UDP port 69.
+
+22.8 IPv6 Packet Information
+IPv6 allows an application to specify up to five pieces of information for an outgoing
+datagram:
+
+    1.   Source IPv6 address
+
+    2.   Outgoing interface index
+
+    3.   Outgoing hop limit
+
+    4.   Next-hop address
+
+    5.   Outgoing traffic class
+
+This information is sent as ancillary data with sendmsg. "Sticky" values can be set for the
+socket, so that they apply to every packet sent, as described in Section 27.7. Four similar
+pieces of information can be returned for a received packet, and they are returned as
+ancillary data with recvmsg:
+
+    1.   Destination IPv6 address
+
+    2.   Arriving interface index
+
+    3.   Arriving hop limit
+
+    4.   Arriving traffic class
+
+Figure 22.21 summarizes the contents of the ancillary data, which we will discuss shortly.
+
+           Figure 22.21. Ancillary data for IPv6 packet information.
+
+An in6_pktinfo structure contains either the source IPv6 address and outgoing interface
+index for an outgoing datagram or the destination IPv6 address and arriving interface
+index for a received datagram.
+
+struct in6_pktinfo {
+
+  struct in6_addr ipi6_addr;           /* src/dst IPv6 address */
+  int             ipi6_ifindex;        /* send/recv interface index */
+};
+
+This structure is defined by including the <netinet/in.h> header. In the cmsghdr structure
+containing this ancillary data, the cmsg_level member will be IPPROTO_IPV6, the
+cmsg_type member will be IPV6_PKTINFO, and the first byte of data will be the first byte of
+the in6_pktinfo structure. In the example in Figure 22.21, we assume no padding
+between the cmsghdr structure and the data, and 4 bytes for an integer.
+
+To specify this information for a given packet, just specify the control information as
+ancillary data for sendmsg. To specify this information for all packets sent on a socket, set
+the IPV6_PKTINFO socket option with the in6_pktinfo as the option value as described in
+Section 27.7. This information is returned as ancillary data by recvmsg only if the
+application has the IPV6_RECVPKTINFO socket option enabled.
+
+Outgoing and Arriving Interface
+Interfaces on an IPv6 node are identified by positive integers, as we discussed in Section
+18.6. Recall that no interface is ever assigned an index of 0. When specifying the outgoing
+interface, if the ipi6_ifindex value is 0, the kernel will choose the outgoing interface. If
+the application specifies an outgoing interface for a multicast packet, the interface
+specified by the ancillary data overrides any interface specified by the IPV6_MULTICAST_IF
+socket option for this datagram only.
+
+Source and Destination IPv6 Addresses
+The source IPv6 address is normally specified by calling bind. Supplying the source
+address together with the data may require less overhead. This option also allows a server
+to guarantee that the source address of its reply equals the destination address of the
+client's request, a feature some clients require and that is harder to accomplish with IPv4 (
+Exercise 22.4).
+
+When specifying the source IPv6 address as ancillary data, if the ipi6_addr member of
+the in6_pktinfo structure is IN6ADDR_ANY_INIT, then: (i) if an address is currently bound
+to the socket, it is used as the source address, or (ii) if no address is currently bound to
+the socket, the kernel will choose the source address. If the ipi6_addr member is not the
+unspecified address, but the socket has already bound a source address, then the
+ipi6_addr value overrides the already bound source address for this output operation only.
+The kernel will verify that the requested source address is indeed a unicast address
+assigned to the node.
+
+When the in6_pktinfo structure is returned as ancillary data by recvmsg, the ipi6_addr
+member contains the destination IPv6 address from the received packet. This is similar in
+concept to the IP_RECVDSTADDR socket option for IPv4.
+
+Specifying and Receiving the Hop Limit
+The outgoing hop limit is normally specified with either the IPV6_UNICAST_HOPS socket
+option for unicast datagrams (Section 7.8) or the IPV6_MULTICAST_HOPS socket option for
+multicast datagrams (Section 21.6). Specifying the hop limit as ancillary data lets us
+override either the kernel's default or a previously specified value, for either a unicast
+destination or a multicast destination, for a single output operation. Returning the received
+hop limit is useful for programs such as traceroute and for a class of IPv6 applications
+that need to verify that the received hop limit is 255 (e.g., that the packet has not been
+forwarded).
+
+The received hop limit is returned as ancillary data by recvmsg only if the application has
+
+enabled the IPV6_RECVHOPLIMIT socket option. In the cmsghdr structure containing this
+ancillary data, the cmsg_level member will be IPPROTO_IPV6, the cmsg_type member will
+be IPV6_HOPLIMIT, and the first byte of data will be the first byte of the (4-byte) integer
+hop limit. We showed this in Figure 22.21. Realize that the value returned as ancillary data
+is the actual value from the received datagram, while the value returned by a getsockopt
+of the IPV6_UNICAST_HOPS option is the default value the kernel will use for outgoing
+datagrams on the socket.
+
+To control the outgoing hop limit for a given packet, just specify the control information as
+ancillary data for sendmsg. The normal values for the hop limit are between 0 and 255,
+inclusive, but if the integer value is -1, this tells the kernel to use its default.
+
+The hop limit is not contained in the in6_pktinfo structure for the following reason: Some
+UDP servers want to respond to client requests by sending their reply out the same
+interface on which the request was received and with the source IPv6 address of the reply
+equal to the destination IPv6 address of the request. To do this, the application can enable
+just the IPV6_RECVPKTINFO socket option and then use the received control information
+from recvmsg as the outgoing control information for sendmsg. The application need not
+examine or modify the in6_pktinfo structure at all. But if the hop limit was contained in
+this structure, the application would have to parse the received control information and
+change the hop limit member, since the received hop limit is not the desired value for an
+outgoing packet.
+
+Specifying the Next-Hop Address
+The IPV6_NEXTHOP ancillary data object specifies the next hop for the datagram as a socket
+address structure. In the cmsghdr structure containing this ancillary data, the cmsg_level
+member is IPPROTO_IPV6, the cmsg_type member is IPV6_NEXTHOP, and the first byte of
+data is the first byte of the socket address structure.
+
+In Figure 22.21, we show an example of this ancillary data object, assuming the socket
+address structure is a 28-byte sockaddr_in6 structure. In this case, the node identified by
+that address must be a neighbor of the sending host. If that address equals the destination
+IPv6 address of the datagram, then this is equivalent to the existing SO_DONTROUTE socket
+option. The next-hop address can be set for all packets on a socket by setting the
+IPv6_NEXTHOP socket option with the sockaddr_in6 as the option value, as described in
+Section 27.7. Setting this option requires superuser privileges.
+
+Specifying and Receiving the Traffic Class
+The IPV6_TCLASS ancillary data object specifies the traffic class for the datagram. In the
+cmsghdr structure containing this ancillary data, the cmsg_level member will be
+IPPROTO_IPV6, the cmsg_type member will be IPV6_TCLASS, and the first byte of data will
+be the first byte of the (4-byte) integer traffic class. We showed this in Figure 22.21. As
+described in Section A.3, the traffic class is made up of the DSCP and ECN fields. These
+fields must be set together. The kernel may mask or ignore the user-specified value if it
+needs to control the value (e.g., if the kernel implements ECN, it may set the ECN bits to
+its own desired value, ignoring the two bits specified with the IPV6_TCLASS option). The
+traffic class specified may be in the normal range of 0 to 255, or -1 to allow the kernel to
+use its default value.
+
+To specify the traffic class for a given packet, include the ancillary data with that packet. To
+specify the traffic class for all packets on a socket, specify the traffic class as an integer to
+the IPV6_TCLASS socket option, as described in Section 27.7. The received traffic class is
+returned as ancillary data by recvmsg only if the application has the IPV6_RECVTCLASS
+socket option enabled.
+
+22.9 IPv6 Path MTU Control
+IPv6 gives applications several controls over path MTU discovery (Section 2.11). The
+defaults are appropriate for the vast majority of applications, but special-purpose programs
+may want to modify the path MTU discovery behavior. Four socket options are provided for
+this purpose.
+
+Sending with Minimum MTU
+When performing path MTU discovery, packets are normally fragmented using the MTU of
+the outgoing interface or the path MTU, whichever is smaller. IPv6 defines a minimum MTU
+of 1,280 bytes, which must be supported by all paths. Fragmenting to this minimum MTU
+wastes opportunities for sending larger packets (which is more efficient), but avoids the
+drawbacks of path MTU discovery (dropped packets and delay while the MTU is being
+discovered).
+
+Two classes of applications may want to use the minimum MTU: those that use multicast
+(to avoid an implosion of ICMP "packet too big" messages) and those that perform brief
+transactions to lots of destinations (such as the DNS). Learning the MTU for a multicast
+session may not be important enough to pay the cost of receiving and processing millions
+of ICMP "packet too big" messages, and applications such as the DNS generally don't talk
+to the same server often enough to make it worthwhile to risk the cost of dropped packets.
+
+The use of the minimum MTU is controlled with the IPV6_USE_MIN_MTU socket option. It has
+three defined values: -1, the default, uses the minimum MTU for multicast destinations but
+performs path MTU discovery to unicast destinations; 0 performs path MTU discovery to all
+destinations; and 1 uses the minimum MTU for all destinations.
+
+IPV6_USE_MIN_MTU can also be sent as ancillary data. In the cmsghdr structure containing
+this ancillary data, the cmsg_level member will be IPPROTO_IPV6, the cmsg_type member
+will be IPV6_USE_MIN_MTU, and the first byte of data will be the first byte of the (4-byte)
+integer value.
+
+Receiving Path MTU Change Indications
+To receive change notifications in the path MTU, an application can enable the
+IPV6_RECVPATHMTU socket option. This flag enables the reception of the path MTU as
+ancillary data anytime it changes. recvmsg will return a zero-length datagram, but there
+will be ancillary data indicating the path MTU. In the cmsghdr structure containing this
+ancillary data, the cmsg_level member will be IPPROTO_IPV6, the cmsg_type member will
+be IPV6_PATHMTU, and the first byte of data will be the first byte of an ip6_mtuinfo
+structure. This structure contains the destination for which the path MTU has changed and
+the new path MTU value in bytes.
+
+struct ip6_mtuinfo {
+   struct sockaddr_in6 ip6m_addr;        /* destination address */
+   uint32_t            ip6m_mtu;         /* path MTU in host byte order */
+};
+
+This structure is defined by including the <netinet/in.h> header.
+
+Determining the Current Path MTU
+If an application has not been keeping track with the IPV6_RECVPATHMTU option, it can
+
+determine the current path MTU of a connected socket with the IPV6_PATHMTU socket
+option. This is a get-only option, which returns an ip6_mtuinfo structure (see above)
+containing the current path MTU. If no path MTU has been determined, it returns the MTU
+of the outgoing interface. The value of the returned address is undefined.
+
+Avoiding Fragmentation
+By default, the IPv6 stack will fragment outgoing packets to the path MTU. An application
+such as traceroute may not want this automatic fragmentation, to discover the path MTU
+on its own. The IPV6_DONTFRAG socket option is used to turn off automatic fragmentation; a
+value of 0 (the default) permits automatic fragmentation, while a value of 1 turns off
+automatic fragmentation.
+
+When automatic fragmentation is off, a send call providing a packet that requires
+fragmentation may return EMSGSIZE; however, the implementation is not required to
+provide this. The only way to determine whether a packet requires fragmentation is to use
+the IPV6_RECVPATHMTU option, which was already described.
+
+IPV6_DONTFRAG can also be sent as ancillary data. In the cmsghdr structure containing this
+ancillary data, the cmsg_level member will be IPPROTO_IPV6, the cmsg_type member will
+be IPV6_DONTFRAG, and the first byte of data will be the first byte of the (4-byte) integer
+value.
+
+22.10 Summary
+There are applications that want to know the destination IP address and the received
+interface for a UDP datagram. The IP_RECVDSTADDR and IP_RECVIF socket options can be
+enabled to return this information as ancillary data with each datagram. Similar
+information, along with the received hop limit, can be returned for IPv6 sockets by
+enabling the IPV6_RECVPKTINFO socket option.
+
+Despite all the features provided by TCP that are not provided by UDP, there are times to
+use UDP. UDP must be used for broadcasting or multicasting. UDP can be used for simple
+request-reply scenarios, but some form of reliability must then be added to the application.
+UDP should not be used for bulk data transfer.
+
+We added reliability to our UDP client in Section 22.5 by detecting lost packets using a
+timeout and retransmission. We modified our retransmission timeout dynamically by
+adding a timestamp to each packet and kept track of two estimators: the RTT and its mean
+deviation. We also added a sequence number to verify that a given reply was the one
+expected. Our client still employed a simple stop-and-wait protocol, but that is the type of
+application for which UDP can be used.
+
+Exercises
+     22.1 In Figure 22.18, why are there two calls to printf?
+
+     22.2 Can dg_send_recv (Figures 22.8 and 22.9) ever return 0?
+
+     22.3 Recode dg_send_recv to use select and its timer instead of using
+          alarm, SIGALRM, sigsetjmp, and siglongjmp.
+
+     22.4 How can an IPv4 server guarantee that the source address of its reply
+          equals the destination address of the client's request (e.g., functionality
+          similar to that provided by the IPV6_PKTINFO socket option)?
+
+     22.5 The main function in Section 22.6 is protocol-dependent on IPv4.
+          Recode it to be protocolindependent. Require the user to specify one or
+          two command-line arguments, the first being an optional IP address
+          (e.g., 0.0.0.0 or 0::0) and the second being a required port number.
+          Then call udp_client just to obtain the address family, port number,
+          and length of the socket address structure.
+
+            What happens if you call udp_client, as suggested, without specifying
+            a hostname argument because udp_client does not specify the
+            AI_PASSIVE hint to getaddrinfo?
+
+     22.6 Run the client in Figure 22.6 to an echo server across the Internet after
+          modifying the RTT functions to print each RTT. Also, modify the
+          dg_send_recv function to print each received sequence number. Plot
+          the resulting RTTs along with the estimators for the RTT and its mean
+          deviation.
+
