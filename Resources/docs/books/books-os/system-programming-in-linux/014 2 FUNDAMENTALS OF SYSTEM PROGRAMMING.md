@@ -1,5 +1,3 @@
-![](media/index-118_1.jpg)
-
 2 FUNDAMENTALS OF SYSTEM
 
 PROGRAMMING
@@ -2158,7 +2156,7 @@ exit(EXIT_FAILURE);
 
 which we can call an error or not, depending. \*/
 
-printf("Characters following the number: \\%s\\\n", endptr);
+printf("Characters following the number: \\"%s\\"\n", endptr);
 
 /\* If we reached here, strtol() successfully parsed a number. \*/
 

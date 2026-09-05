@@ -1,3 +1,19 @@
+*about this book*
+
+*Rust in Action* is primarily intended for people who may have explored Rust’s free material online, but who then have asked themselves, “What’s next?” This book contains dozens of examples that are interesting and can be extended as creativity and time allow. Those examples allow the book’s 12 chapters to cover a productive subset of Rust and many of the ecosystem’s most important third-party libraries.
+
+The code examples emphasize accessiblity to beginners over elegant, idiomatic Rust. If you are already a knowledgeable Rust programmer, you may find yourself disagreeing with some style decisions in the examples. I hope that you will tolerate this for the sake of learners.
+
+*Rust in Action* is not intended as a comprehensive reference text book. There are parts of the languages and standard library that have been omitted. Typically, these are highly specialized and deserve specific treatment. Instead, this book aims to provide readers with enough basic knowledge and confidence to learn specialized topics when necessary. *Rust in Action* is also unique from the point of view of systems programming books as almost every example works on Microsoft Windows.
+
+***Who should read this book***
+
+Anyone who is interested in Rust, who learns by applying practical examples, or who is intimidated by the fact that Rust is a systems programming language will enjoy *Rust in* *Action*. Readers with prior programming experience will benefit most as some computer programming concepts are assumed.
+
+**xix**
+
+**xx**
+
 ABOUT THIS BOOK
 
 ***How this book is organized: A roadmap***

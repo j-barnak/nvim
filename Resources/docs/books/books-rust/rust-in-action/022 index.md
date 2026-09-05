@@ -1,3 +1,216 @@
+*index*
+
+Symbols
+
+\#\[cfg(not(...))\] 227
+
+Arc 354
+
+\#\[cfg(target_os ! 227
+
+Arc\<Mutex\<\_\>\> 363
+
+! type 79–90
+
+\#\[derive(…)\] block 152
+
+Arc\<Mutex\<T\>\> 133, 354
+
+? operator 275
+
+\#\[derive(Debug)\] 98, 272–273
+
+Arc\<T\> 133, 185
+
+'static lifetime 62
+
+arena::Arena 201
+
+() type 79–90
+
+A
+
+arena::TypedArena 201
+
+\*const fn() -\> () type 406
+
+arrays, making lists with 64–65
+
+\*const i8 413
+
+abort() function 373
+
+Artist struct 344–345
+
+\*const T 183
+
+abort exception 391
+
+as keyword 39
+
+\*mut i32 183
+
+absolute time 296
+
+asm! macro 395
+
+\*mut i8 411–413
+
+abstract classes 40
+
+AsMut\<T\> 189
+
+\*mut T 183
+
+ActionKV 228, 231
+
+as operator 39
+
+\*mut u32 376
+
+actionkv
+
+AsRef\<str\> 189
+
+\*mut u8 376
+
+conditional compilation
+
+AsRef\<T\> 189
+
+&'static str 189
+
+226–228
+
+associative arrays 242
+
+&dyn Rng 259
+
+front-end code 224–228
+
+asynchronous interrupts 392
+
+&dyn Trait 256
+
+full code listing 237–241
+
+asynchronous programming 362
+
+&mut dyn Trait 256
+
+libactionkv crate 228–249
+
+atomic operations 411
+
+&mut T 119
+
+overview 222–223
+
+atomic reference counter 133
+
+&Rng 260
+
+ActionKV::load(). open() 228
+
+avatar generator 341–360
+
+&str type 61, 189, 222, 242, 292, ActionKV::open() 228–229
+
+render-hex 342–349
+
+387
+
+activation frames 188
+
+generating SVGs 346
+
+&T 119
+
+address space 177
+
+input parsing 344
+
+&Trait 256
+
+add_with_lifetimes() 57
+
+interpreting
+
+&\[u8\] 292, 387
+
+akv_mem executable 223
+
+instructions 344–346
+
+\#\![allow(unused_variables)\]
+
+aliasing 91
+
+running 342
+
+attribute 78
+
+alloc::raw_vec::RawVec type 187
+
+source code 346–349
+
+\#\![core_intrinsics\] attribute 373
+
+alloc() 194, 201
+
+spawning a thread per logical
+
+\#\![no_main\] attribute 374
+
+allocation records 188
+
+task 351–353
+
+\#\![no_mangle\] attribute 373,
+
+allocator 194
+
+functional programming
+
+389
+
+alloc module 187
+
+style 351–352
+
+\#\![no_std\] attribute 373–374,
+
+always on mode 314
+
+parallel iterators 352–353
+
+389
+
+Amazon Web Services (AWS) 2
+
+thread pools 353–360
+
+\#\![repr(u8\]) 389
+
+anonymous functions 9, 199, channels 356
+
+\#\[cfg(all(...))\] 227
+
+329–330
+
+implementing task
+
+\#\[cfg(any(...))\] 227
+
+application-level protocol 254
+
+queues 358–360
+
+**419**
+
+**420**
+
+INDEX
 
 avatar generator *(continued)*
 

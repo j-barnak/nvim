@@ -1,5 +1,3 @@
-![](media/index-884_1.jpg)
-
 14 CLIENT-SERVER APPLICATIONS AND
 
 DAEMONS
@@ -496,7 +494,7 @@ Because bc can be run as a shell command, we can use popen() to
 
 execute it. When the user runs the calc client, the client will send its command line argument to the server, which stores it into a variable.
 
-For example, suppose that variable is named expression. The server stores the string 'echo "expression" \| bc' into a string variable named command sprintf(command, "echo \\%s\\ \| bc", expression);
+For example, suppose that variable is named expression. The server stores the string 'echo "expression" \| bc' into a string variable named command sprintf(command, "echo \\"%s\\" \| bc", expression);
 
 and passes it to popen() for execution: fp = popen(command, "r"); It will then use the returned file stream pointer fp to read bc’s calculated result, which it places on its standard output, now connected to the
 
@@ -846,7 +844,7 @@ else { /\* Create command to give to popen(). \*/
 
 memset(command, 0, strlen(command)); /\* Clear command. \*/
 
-sprintf(command, "echo \\%s\\ \| bc ", msg.text ); fp = popen(command, "r");
+sprintf(command, "echo \\"%s\\" \| bc ", msg.text ); fp = popen(command, "r");
 
 memset(result, 0, PIPE_BUF);
 

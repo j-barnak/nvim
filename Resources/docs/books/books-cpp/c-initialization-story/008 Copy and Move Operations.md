@@ -134,23 +134,30 @@ And here’s the code that creates Product objects:
 
 **Ex 3.1. An example of a logging copy constructor, demo. Run** [**@Compiler Explorer**](https://godbolt.org/z/jscG5Ydx9)
 
-1 **void** foo(Product p) { std::cout \<\< "inside foo()**\n**"; } 2
-
-3 **int** main() {
-
-4 Product base { 42, "base product" }; // an initial object 5 std::cout \<\< base.Name() \<\< " created**\n**"; 6 std::cout \<\< "Product other { base };**\n**"; 7 Product other { base };
-
-8 std::cout \<\< "Product another(base);**\n**"; 9 Product another(base);
-
-10 std::cout \<\< "Product oneMore = base;**\n**"; 11 Product oneMore = base;
+``` cpp
+1 void foo(Product p) { std::cout << "inside foo()\n"; }
+2
+3 int main() {
+4        Product base { 42, "base product" }; // an initial object
+5        std::cout << base.Name() << " created\n";
+6        std::cout << "Product other { base };\n";
+7        Product other { base };
+8        std::cout << "Product another(base);\n";
+9        Product another(base);
+10       std::cout << "Product oneMore = base;\n";
+11       Product oneMore = base;
+```
 
 Copy and Move Operations 42
 
-12 std::cout \<\< "std::array\<Product, 2\> = { base, other };**\n**"; 13 std::array\<Product, 2\> arr = { base, other }; 14
-
-15 std::cout \<\< "calling foo()**\n**"; 16 foo(arr\[0\]);
-
-17 }
+``` cpp
+12       std::cout << "std::array<Product, 2> = { base, other };\n";
+13       std::array<Product, 2> arr = { base, other };
+14
+15       std::cout << "calling foo()\n";
+16       foo(arr[0]);
+17   }
+```
 
  
 
@@ -834,55 +841,59 @@ As an exercise, let’s add logging to our DataPacket class and see when each co
 
 **Ex 3.10. Logging in the** **DataPacket** **class. Run** [**@Compiler Explorer**](https://godbolt.org/z/ar1Yzrqr6)
 
-1 **class DataPacket** {
-
-2 std::string data\_;
-
-3 **size_t** checkSum\_;
-
-4 **size_t** serverId\_;
-
+``` cpp
+1 class DataPacket {
+2        std::string data_;
+3 size_t checkSum_;
+4 size_t serverId_;
 5
-
-6 **public**:
-
-7 DataPacket() : data\_{}, checkSum\_{0}, serverId\_{0} { } 8
-
-9 **explicit** DataPacket(**const** std::string& data, **size_t** serverId)
-
-10 : data\_{data}, checkSum\_{calcCheckSum(data)}, serverId\_{serverId} { 11 std::cout \<\< "Ctor for **\\**" \<\< data\_ \<\< "**\\\n**"; 12 }
-
-13 DataPacket(**const** DataPacket& other) 14 : data\_{other.data\_}
-
-15 , checkSum\_{other.checkSum\_}
-
-16 , serverId\_{other.serverId\_} { 17 std::cout \<\< "Copy ctor for **\\**" \<\< data\_ \<\< "**\\\n**"; 18 }
-
-19 DataPacket(DataPacket&& other) **noexcept** 20 : data\_{std::move(other.data\_)} // move string member... 21 , checkSum\_{other.checkSum\_} // no need to move built-in types... 22 , serverId\_{other.serverId\_} { 23 other.checkSum\_ = 0; // leave this in a proper state 24 std::cout \<\< "Move ctor for **\\**" \<\< data\_ \<\< "**\\\n**"; 25 }
-
-26 DataPacket& **operator**=(**const** DataPacket& other) { 27 **if** (**this** != &other) {
-
-28 data\_ = other.data\_;
-
-29 checkSum\_ = other.checkSum\_; 30 serverId\_ = other.serverId\_; 31 std::cout \<\< "Assignment for **\\**" \<\< data\_ \<\< "**\\\n**"; 32 }
+6 public:
+7        DataPacket() : data_{}, checkSum_{0}, serverId_{0} { }
+8
+9 explicit DataPacket(const std::string& data, size_t serverId)
+10       : data_{data}, checkSum_{calcCheckSum(data)}, serverId_{serverId} {
+11           std::cout << "Ctor for \"" << data_ << "\"\n";
+12       }
+13       DataPacket(const DataPacket& other)
+14       : data_{other.data_}
+15       , checkSum_{other.checkSum_}
+16       , serverId_{other.serverId_} {
+17           std::cout << "Copy ctor for \"" << data_ << "\"\n";
+18       }
+19       DataPacket(DataPacket&& other) noexcept
+20       : data_{std::move(other.data_)}    // move string member...
+21       , checkSum_{other.checkSum_}        // no need to move built-in types...
+22       , serverId_{other.serverId_} {
+23           other.checkSum_ = 0; // leave this in a proper state
+24           std::cout << "Move ctor for \"" << data_ << "\"\n";
+25       }
+26       DataPacket& operator=(const DataPacket& other) {
+27 if (this != &other) {
+28                data_ = other.data_;
+29                checkSum_ = other.checkSum_;
+30                serverId_ = other.serverId_;
+31                std::cout << "Assignment for \"" << data_ << "\"\n";
+32           }
+```
 
 Copy and Move Operations 58
 
-33 **return** \***this**;
-
-34 }
-
-35 DataPacket& **operator**=(DataPacket&& other) **noexcept** { 36 **if** (**this** != &other) {
-
-37 data\_ = std::move(other.data\_); 38 checkSum\_ = other.checkSum\_; 39 other.checkSum\_ = 0; // leave this in a proper state 40 serverId\_ = other.serverId\_; 41 std::cout \<\< "Move Assignment for **\\**" \<\< data\_ \<\< "**\\\n**"; 42 }
-
-43 **return** \***this**;
-
-44 }
-
-45 // getters/setters
-
-46 };
+``` cpp
+33 return *this;
+34       }
+35       DataPacket& operator=(DataPacket&& other) noexcept {
+36 if (this != &other) {
+37                data_ = std::move(other.data_);
+38                checkSum_ = other.checkSum_;
+39                other.checkSum_ = 0; // leave this in a proper state
+40                serverId_ = other.serverId_;
+41                std::cout << "Move Assignment for \"" << data_ << "\"\n";
+42           }
+43 return *this;
+44       }
+45       // getters/setters
+46   };
+```
 
  
 
@@ -890,21 +901,28 @@ And here’s the main() function:
 
 **Ex 3.11. Logging in the** **DataPacket** **class, the main function. Run** [**@Compiler Explorer**](https://godbolt.org/z/ar1Yzrqr6)
 
-1 **int** main() {
-
-2 DataPacket firstMsg {"first msg", 101 }; 3 DataPacket copyMsg { firstMsg }; 4
-
-5 DataPacket secondMsg { "second msg", 202 }; 6 copyMsg = secondMsg;
-
+``` cpp
+1 int main() {
+2        DataPacket firstMsg {"first msg", 101 };
+3        DataPacket copyMsg { firstMsg };
+4
+5        DataPacket secondMsg { "second msg", 202 };
+6        copyMsg = secondMsg;
 7
-
-8 DataPacket movedMsg { std::move(secondMsg)}; 9 // now we stole the data, so it should be empty...
-
-10 std::cout \<\< "secondMsg's data after move ctor): **\\**" 11 \<\< secondMsg.getData() \<\< "**\\**, sum: " 12 \<\< secondMsg.getCheckSum() \<\< '\n'; 13
-
-14 movedMsg = std::move(firstMsg); 15
-
-16 // now we stole the name, so it should be empty... 17 std::cout \<\< "firstMsg's data after move ctor): **\\**" 18 \<\< firstMsg.getData() \<\< "**\\**, sum: " 19 \<\< firstMsg.getCheckSum() \<\< '\n'; 20 }
+8        DataPacket movedMsg { std::move(secondMsg)};
+9        // now we stole the data, so it should be empty...
+10       std::cout << "secondMsg's data after move ctor): \""
+11                  << secondMsg.getData() << "\", sum: "
+12                  << secondMsg.getCheckSum() << '\n';
+13
+14       movedMsg = std::move(firstMsg);
+15
+16       // now we stole the name, so it should be empty...
+17       std::cout << "firstMsg's data after move ctor): \""
+18                  << firstMsg.getData() << "\", sum: "
+19                  << firstMsg.getCheckSum() << '\n';
+20   }
+```
 
 Copy and Move Operations 59
 

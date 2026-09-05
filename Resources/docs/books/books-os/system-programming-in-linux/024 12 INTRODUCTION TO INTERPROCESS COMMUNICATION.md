@@ -1,5 +1,3 @@
-![](media/index-784_1.jpg)
-
 12 INTRODUCTION TO INTERPROCESS
 
 COMMUNICATION
@@ -838,7 +836,7 @@ Semaphores were invented by Edsger Dijkstra in 1963 while he was
 
 trying to solve synchronization problems in the design of the *THE*
 
-operating system [\[9\]](index_split_014.html#p1236). Dijkstra originally defined two operations that acted on semaphores, which he named *P* and *V*, short for the two Dutch words that translate to English as *probe* and *increase*. People have used other names for these operations; the *P* operation is sometimes called *wait* or *down*, and the *V* operation *post*, *up*, or *signal*. I’ll use *wait* and *post* here, since they’re the names adopted in the POSIX.1-2024
+operating system \[9\]. Dijkstra originally defined two operations that acted on semaphores, which he named *P* and *V*, short for the two Dutch words that translate to English as *probe* and *increase*. People have used other names for these operations; the *P* operation is sometimes called *wait* or *down*, and the *V* operation *post*, *up*, or *signal*. I’ll use *wait* and *post* here, since they’re the names adopted in the POSIX.1-2024
 
 specification.
 

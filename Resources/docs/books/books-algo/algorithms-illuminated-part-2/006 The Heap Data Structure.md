@@ -1924,6 +1924,6 @@ the heap-based version of the Dijkstra algorithm from Section 10.4, and use it t
 
 [www.algorithmsilluminated.org](http://www.algorithmsilluminated.org) for test cases and challenge data sets.)
 
-\Hint: This requires the Delete operation, which may force you to implement a customized heap data structure from scratch. To delete an object from a heap at a given position, follow the high-level approach of Insert and ExtractMin, using Bubble-Up or Bubble-Down as needed to squash violations of the heap property. You will also need to keep track of which vertex is in which position
+\[Hint: This requires the Delete operation, which may force you to implement a customized heap data structure from scratch. To delete an object from a heap at a given position, follow the high-level approach of Insert and ExtractMin, using Bubble-Up or Bubble-Down as needed to squash violations of the heap property. You will also need to keep track of which vertex is in which position
 
-of your heap, perhaps by using a hash table (Chapter [12).\]
+of your heap, perhaps by using a hash table (Chapter 12).\]

@@ -424,7 +424,7 @@ allocated buffer, and closes the file.
 
 StrCpy(FileName,DevicePathToStr(LoadedImage-\>FilePath));
 
-for(i=StrLen(FileName);i\>=0 && FileName\[i\]!='\\';i--);
+for(i=StrLen(FileName);i\>=0 && FileName\[i\]!='\\\\';i--);
 
  
 
@@ -432,7 +432,7 @@ FileName\[i\] = 0;
 
  
 
-StrCat(FileName,L"\\OSKERNEL.BIN");
+StrCat(FileName,L"\\\OSKERNEL.BIN");
 
 CurDir-\>Open (CurDir, &FileHandle, FileName, EFI_FILE_MODE_READ, 0);
 

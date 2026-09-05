@@ -1,3 +1,5 @@
+**CHAPTER 1**
+
 **Deducing Types**
 
 C++98 had a single set of rules for type deduction: the one for function templates.
@@ -1059,5 +1061,3 @@ Such near-uniformity is nice, but it’s important to remember that IDE editors,
 • The results of some tools may be neither helpful nor accurate, so an understanding of C++’s type deduction rules remains essential.
 
 **Item 4 \| 35**
-
-**CHAPTER 2**

@@ -756,7 +756,7 @@ Contents in Detail **xv**
 
  
 
-[**INDEX**]() **1287**
+**INDEX** **1287**
 
  
 

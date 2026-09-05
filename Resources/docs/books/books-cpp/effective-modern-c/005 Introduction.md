@@ -195,5 +195,3 @@ To view the list of the issues I do know about, consult the book’s errata page
 [*www.aristeia.com/BookErrata/emc++-errata.html*.](http://www.aristeia.com/BookErrata/emc++-errata.html)
 
 **\| 7**
-
-**CHAPTER 1**

@@ -338,7 +338,7 @@ available. We’re primarily interested in signal-driven reading. Figure
 
 portable method of I/O. It was originally part of an early POSIX
 
-standard, POSIX.1g, but it was subsequently removed [\[20\]](index_split_014.html#p1237).
+standard, POSIX.1g, but it was subsequently removed \[20\].
 
 *Procedure for Enabling Signal-Driven I/O*
 
@@ -684,7 +684,7 @@ int numcols; /\* Window column dimension \*/ char msg\[32\]; /\* To print
 
 in bottom row \*/ int user_row_adjust = 0; /\* Net row change caused by
 
-user \*/ const char CLEAR_SCREEN\[\] = "\033\[2J"; /\* Escape seq to clear screen \*/ const char CLEAR_ABOVE\[\] = "\033\1J"; /\* Clears all lines above \*/ int clr_above_len = strlen(CLEAR_ABOVE); /\* Length of
+user \*/ const char CLEAR_SCREEN\[\] = "\033\[2J"; /\* Escape seq to clear screen \*/ const char CLEAR_ABOVE\[\] = "\033\[1J"; /\* Clears all lines above \*/ int clr_above_len = strlen(CLEAR_ABOVE); /\* Length of
 
 CLEAR_ABOVE \*/
 
@@ -816,7 +816,7 @@ detected doesn’t update the sprite’s position. Instead, the changes are reco
 
 This program uses ANSI escape sequences to animate the moving
 
-sprite and move the cursor. In [Chapter 19, we’ll see how to manage the screen using the *ncurses* library API instead. Here, we do what we can with the elementary tools at our disposal. If you build and run the
+sprite and move the cursor. In Chapter 19, we’ll see how to manage the screen using the *ncurses* library API instead. Here, we do what we can with the elementary tools at our disposal. If you build and run the
 
 program, you’ll see that it meets all of the requirements we established earlier.
 
@@ -1944,7 +1944,7 @@ sprintf(line, "Message from sender %d
 
 (transit-time = %s):\n"
 
-" Content = \\%s\\ Sent at time %s\n\n",
+" Content = \\"%s\\" Sent at time %s\n\n",
 
 i, str, child_msg.content, gentimestr);
 

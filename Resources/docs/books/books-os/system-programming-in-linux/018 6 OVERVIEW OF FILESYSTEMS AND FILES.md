@@ -1,5 +1,3 @@
-![](media/index-366_1.jpg)
-
 6 OVERVIEW OF FILESYSTEMS AND
 
 FILES
@@ -192,7 +190,7 @@ part of any Unix standard. Over the years, various flavors of Unix
 
 developed their own filesystems, each of which had its own unique
 
-interface and implementation. For example, Tanenbaum [\[42\]](index_split_014.html#p1239) created the *Minix File System* when he wrote the Minix operating system in 1987, and McKusick et al. [\[26\]](index_split_014.html#p1238) later developed the *Berkeley Fast File System* ( *FFS*) for BSD2. Several Unix distributions adopted and modified the Berkeley FFS. A filesystem derived from FFS is often called a *Unix File* *System*, or *UFS*. The developers of Solaris, for example, created *Solaris* *UFS* \[24\], based on FFS. As of this writing, there are dozens of UFS
+interface and implementation. For example, Tanenbaum \[42\] created the *Minix File System* when he wrote the Minix operating system in 1987, and McKusick et al. \[26\] later developed the *Berkeley Fast File System* ( *FFS*) for BSD2. Several Unix distributions adopted and modified the Berkeley FFS. A filesystem derived from FFS is often called a *Unix File* *System*, or *UFS*. The developers of Solaris, for example, created *Solaris* *UFS* \[24\], based on FFS. As of this writing, there are dozens of UFS
 
 filesystems as well as many others supported by Unix distributions in
 
@@ -244,7 +242,7 @@ different computers across a network. A tmpfs filesystem resides entirely in mem
 
 *The Ext Filesystems*
 
-When Linus Torvalds wrote the first version of Linux, he incorporated the Minix operating system into it, mostly because it was already written and bug free \[[5\]](index_split_014.html#p1236). Shortly after, he and others in the Linux development community implemented a new filesystem named the *extended filesystem* ( *Ext*), which added many new features \[[4\]](index_split_014.html#p1236). Subsequently, the Ext2
+When Linus Torvalds wrote the first version of Linux, he incorporated the Minix operating system into it, mostly because it was already written and bug free \[5\]. Shortly after, he and others in the Linux development community implemented a new filesystem named the *extended filesystem* ( *Ext*), which added many new features \[4\]. Subsequently, the Ext2
 
 filesystem was written by Rémy Card, Theodore Ts’o, and Stephen
 
@@ -516,7 +514,7 @@ space also translates to wasted time, since there’s more disk activity and mor
 
 Larger block sizes improve performance for filesystems expecting
 
-large files. Often a system administrator will choose smaller block sizes for the root filesystem, which tends to have smaller files, and larger ones for user data. How large are files on average? In 1993, one study that surveyed the sizes of files found on the internet, by collecting data on over 12 million files across 1,000 filesystems, found that the median file size was just under 2048 bytes, with the average size being 22KB [\[15\]](index_split_014.html#p1237).
+large files. Often a system administrator will choose smaller block sizes for the root filesystem, which tends to have smaller files, and larger ones for user data. How large are files on average? In 1993, one study that surveyed the sizes of files found on the internet, by collecting data on over 12 million files across 1,000 filesystems, found that the median file size was just under 2048 bytes, with the average size being 22KB \[15\].
 
 The Kernel’s Filesystem Interface
 
@@ -728,7 +726,7 @@ Solaris, and in BSD and FreeBSD, the concepts of inode and inumber
 
 (inode number) have been replaced with those of *vnode* and *vnumber*, with the *v* standing for “virtual.” Linux continues to use the term *inode*.
 
-A schematic representation of these levels within the Ext2 filesystem, based on \[[5\]](index_split_014.html#p1236), is depicted in Figure 6-8.
+A schematic representation of these levels within the Ext2 filesystem, based on \[5\], is depicted in Figure 6-8.
 
 ![](media/index-390_1.jpg)
 
@@ -1484,7 +1482,7 @@ resorting to what might yield an unreliable answer online, we can try a more ext
 
 We can confirm that these are not native C types by reading the
 
-most recent C standard, *C23* [\[6\]](index_split_014.html#p1236). Therefore, they must be defined in Linux. Since all type and function definitions exposed to user space
+most recent C standard, *C23* \[6\]. Therefore, they must be defined in Linux. Since all type and function definitions exposed to user space
 
 programs are in a header file somewhere, we can do a recursive grep
 
@@ -2908,9 +2906,9 @@ We can then convert all uppercase to lowercase using the vi command
 
 0x09041934 *--snip--*
 
-and rearrange each line using the command :1,\$s/^\\\[^ \]\*\\ \*\\\[0-9a-
+and rearrange each line using the command :1,\$s/^\\(\[^ \]\*\\) \*\\(\[0-9a-
 
-z\]\*\\\[ \]\*\$/case \2: return "\1";/
+z\]\*\\)\[ \]\*\$/case \2: return "\1";/
 
 so that they look like: case 0xadf5: return "adfs"; case 0xadff: return
 
@@ -3034,7 +3032,7 @@ usage_error(mssge);
 
 }
 
-printf(" File: \\%s\\\n", argv\[1\]);
+printf(" File: \\"%s\\"\n", argv\[1\]);
 
 errno = 0;
 

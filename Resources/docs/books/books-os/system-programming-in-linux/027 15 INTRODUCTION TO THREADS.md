@@ -92,7 +92,7 @@ variants, including current versions of Linux, each thread is scheduled individu
 
 Older versions of Unix and Linux had no support for multithreading; a program that was multithreaded using a threading library such as
 
-*Pthreads* was seen by the kernel as a single process. The individual threads within that process weren’t visible to the kernel and were not scheduled individually. Books on operating system design refer to this as a *many-to-one (M:1)* threading model [\[37\]](index_split_014.html#p1239). The major problem with this design was that if one thread made a blocking system call, the entire
+*Pthreads* was seen by the kernel as a single process. The individual threads within that process weren’t visible to the kernel and were not scheduled individually. Books on operating system design refer to this as a *many-to-one (M:1)* threading model \[37\]. The major problem with this design was that if one thread made a blocking system call, the entire
 
 process was blocked. Modern Linux kernels recognize the individual
 
@@ -1286,7 +1286,7 @@ programs.
 
 For this reason, it’s better to handle signals synchronously in a
 
-dedicated thread. Kerrisk \[[20\]](index_split_014.html#p1237) suggests the following:
+dedicated thread. Kerrisk \[20\] suggests the following:
 
 Before creating any child threads, the main program’s thread should block all asynchronous signals. The child threads will
 

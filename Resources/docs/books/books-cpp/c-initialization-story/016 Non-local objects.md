@@ -8,7 +8,7 @@ Thus far, we considered variables that appeared in some local function scope or 
 
 To start, we need to understand two key properties of an object in C++: *storage* and *linkage*.
 
-Let’s begin with the definition of *storage*, from \[[basic.stc#general¹](https://timsong-cpp.github.io/cppwp/n4868/basic.stc#general)[\]:](index_split_028.html#page_185)
+Let’s begin with the definition of *storage*, from \[[basic.stc#general¹](https://timsong-cpp.github.io/cppwp/n4868/basic.stc#general)\]:
 
  
 
@@ -44,7 +44,7 @@ Non-local objects 171
 
  
 
-And the definition for the second property: *linkage*, extracted from [\[](https://timsong-cpp.github.io/cppwp/n4868/basic.link#2)[basic.link²](https://timsong-cpp.github.io/cppwp/n4868/basic.link#2)[\]:](index_split_028.html#page_186)
+And the definition for the second property: *linkage*, extracted from [\[](https://timsong-cpp.github.io/cppwp/n4868/basic.link#2)[basic.link²](https://timsong-cpp.github.io/cppwp/n4868/basic.link#2)\]:
 
  
 

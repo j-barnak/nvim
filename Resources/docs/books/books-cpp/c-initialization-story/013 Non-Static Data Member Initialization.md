@@ -196,19 +196,28 @@ Non-Static Data Member Initialization 117
 
 **Ex 8.4. Various syntax for NSDMI. Run** [**@Compiler Explorer**](https://godbolt.org/z/a4f5E1r4s)
 
-1 **struct S** {
-
-2 **int** zero {}; // fine, value initialization 3 **int** a = 10; // fine, copy initialization 4 **double** b { 10.5 }; // fine, direct list initialization 5 // short c ( 100 ); // err, direct initialization with parens 6 **int** d { zero + a }; // dependency, risky, but fine 7 // double e { \*mem \* 2.0 }; // undefined! 8 **int**\* mem = **new int**(d); // only for demo, use smart pointers... 9 std::unique_ptr\<**int**\[\]\> pInts = std::make_unique\<**int**\[\]\>(10);
-
-10 **long** arr\[4\] = { 0, 1, 2, 3 }; 11 std::array\<**int**, 4\> moreNumbers { 10, 20, 30, 40}; 12 // long arr2\[\] = { 1, 2 }; // cannot deduce 13 // auto f = 1; // err, type deduction doesn't work 14 **double** g { compute() };
-
-15 //int& ref { }; // error, cannot set ref to null! 16 **int**& refOk { zero };
-
+``` cpp
+1 struct S {
+2 int zero {};        // fine, value initialization
+3 int a = 10;         // fine, copy initialization
+4 double b { 10.5 }; // fine, direct list initialization
+5        // short c ( 100 );    // err, direct initialization with parens
+6 int d { zero + a }; // dependency, risky, but fine
+7        // double e { *mem * 2.0 }; // undefined!
+8 int* mem = new int(d); // only for demo, use smart pointers...
+9        std::unique_ptr<int[]> pInts = std::make_unique<int[]>(10);
+10 long arr[4] = { 0, 1, 2, 3 };
+11       std::array<int, 4> moreNumbers { 10, 20, 30, 40};
+12       // long arr2[] = { 1, 2 }; // cannot deduce
+13       // auto f = 1;      // err, type deduction doesn't work
+14 double g { compute() };
+15       //int& ref { }; // error, cannot set ref to null!
+16 int& refOk { zero };
 17
-
-18 ~S() { **delete** mem; }
-
-19 **double** compute() { **return** a\*b; } 20 };
+18       ~S() { delete mem; }
+19 double compute() { return a*b; }
+20   };
+```
 
  
 

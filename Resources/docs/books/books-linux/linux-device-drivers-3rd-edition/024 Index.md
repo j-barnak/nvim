@@ -1790,7 +1790,7 @@ File System header (fs.h), Quick Reference
 
 files, Initialization and Shutdown, Major and Minor Numbers, File Operations, File Operations–File Operations, The file Structure, The file Structure, The file Structure, The file Structure, The inode Structure, How Messages Get Logged, Implementing files in /proc, Capabilities and Restricted Operations, poll and select, Access Control on a Device File, Quick Reference, Quick Reference, Quick Reference, Quick Reference, The /proc Interface, The /proc Interface, Assigning IP Numbers, Interface Information
 
-/etc/networks\files, [Assigning IP Numbers
+/etc/networks\[files, Assigning IP Numbers
 
 etc/networks, Assigning IP Numbers
 
@@ -1860,7 +1860,7 @@ in ioctl method, ioctl
 
 in read/write methods, read and write
 
-filp-\\\>f_op, The file Structure
+filp-\\\\\>f_op, The file Structure
 
 filter hotplug operation, Hotplug Operations
 

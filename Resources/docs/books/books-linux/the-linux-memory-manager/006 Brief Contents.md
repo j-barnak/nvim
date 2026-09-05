@@ -34,6 +34,6 @@ The Linux Memory Manager (Early Access) © 2025 by Lorenzo Stoakes
 
 ## Chapter 14: Practical Memory Management . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .1217
 
-[Index]() . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .1287
+Index . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . .1287
 
 The Linux Memory Manager (Early Access) © 2025 by Lorenzo Stoakes

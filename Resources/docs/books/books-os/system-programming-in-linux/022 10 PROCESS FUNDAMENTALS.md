@@ -102,7 +102,7 @@ we call the creating process the *parent process*, the created one the *child*
 
 Process Groups
 
-Modern Unix systems introduced the concept of a *process group* as an abstraction of a job \[[4\]](index_split_014.html#p1236). The motivation for this feature was to simplify the way in which a pipeline could be terminated with a signal \[13\].
+Modern Unix systems introduced the concept of a *process group* as an abstraction of a job \[4\]. The motivation for this feature was to simplify the way in which a pipeline could be terminated with a signal \[13\].
 
 When we enter a shell pipeline such as \$ **last \| cut -d' ' -f1 \|**
 
@@ -1206,7 +1206,7 @@ indented so that the segment boundaries are more visible: *displayvm.c*
 
 \#include "common_hdrs.h" typedef unsigned long long ull; extern int etext, edata, end; char \*title = "Layout of virtual memory\n"; /\*
 
-Initialized data \*/ char string\[256\]; /\* Uninitialized data (BSS) \*/ typedef struct { /\* Type definitions are not in memory image! \*/ ull loc; char name[\[16\]](index_split_014.html#p1237); } symbol; void sort(symbol addresses\[\], int count) /\* Text segment \*/ { // OMITTED: Function that sorts symbols by addresses }
+Initialized data \*/ char string\[256\]; /\* Uninitialized data (BSS) \*/ typedef struct { /\* Type definitions are not in memory image! \*/ ull loc; char name\[16\]; } symbol; void sort(symbol addresses\[\], int count) /\* Text segment \*/ { // OMITTED: Function that sorts symbols by addresses }
 
 int main(int argc, char \*argv\[\], char \*envp\[\]) /\* Text segment \*/ { int i; /\*
 
@@ -1458,7 +1458,7 @@ The proc Pseudofilesystem
 
 The */proc* filesystem was introduced in Eighth Edition UNIX in 1984
 
-\[[21\]](index_split_014.html#p1237). A modified version of it was later added to 4.4BSD \[[26\]](index_split_014.html#p1238). Enter the command **ls /proc** and you’ll see a large collection of directories, the majority of whose names are integers, as well as some whose names are
+\[21\]. A modified version of it was later added to 4.4BSD \[26\]. Enter the command **ls /proc** and you’ll see a large collection of directories, the majority of whose names are integers, as well as some whose names are
 
 alphabetic, such as *irq* and *drivers*. You’ll also see regular files with alphabetic names such as *cmdline*, *cpuinfo*, and *uptime*. Sprinkled among them is a handful of symbolic links such as *mounts*, *net*, and *self*. Most of the regular files in */proc* are world readable and can be viewed with any command that can read text files, such as cat and more. For example: \$
 
@@ -2054,7 +2054,7 @@ The function print_one_ps() prints the metadata for a single process:
 
 print_one_ps() void print_one_ps(procstat ps, char \*buf) { char
 
-start_time\[10\]; char ttyname\[10\]; char cputimestr\[[16\]](index_split_014.html#p1237); char \*cmd; make_start_time_str(ps, start_time); /\* Create the start time string. \*/ /\*
+start_time\[10\]; char ttyname\[10\]; char cputimestr\[16\]; char \*cmd; make_start_time_str(ps, start_time); /\* Create the start time string. \*/ /\*
 
 Use tty_nr field to create a name for the tty. If it returns 0, set the name to "?". \*/ if ( ! tty_name(ttyname, major(ps.tty_nr), minor(ps.tty_nr)) ) strcpy(ttyname, "?"); /\* Create a time string for the total cpu time (user
 
@@ -2275,3 +2275,5 @@ section.)
 The format specifiers can be of your own choosing, but if you look
 
 at the man page for ps, you’ll see that there is a list of specifiers in this form that you can emulate.
+
+![](media/index-715_1.jpg)

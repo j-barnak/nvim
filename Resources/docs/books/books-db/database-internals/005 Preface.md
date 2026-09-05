@@ -8,7 +8,7 @@ Some of these databases have focused on *horizontal scaling* (scaling *out*)—i
 
 Around 2010, a new class of *eventually consistent* databases started appearing, and terms such as *NoSQL*, and later, *big data* grew in popularity. Over the last 15 years, the open source community, large internet companies, and database vendors have created so many databases and tools that it’s easy to get lost trying to understand use cases, details, and specifics.
 
-The Dynamo paper [\[DECANDIA07\]](app01.html#DECANDIA07), published by the team at Amazon in 2007, had so much impact on the database community that within a short period it inspired many variants and implementations. The most prominent of them were Apache Cassandra, created at Facebook; Project Voldemort, created at LinkedIn; and Riak, created by former Akamai engineers.
+The Dynamo paper \[DECANDIA07\], published by the team at Amazon in 2007, had so much impact on the database community that within a short period it inspired many variants and implementations. The most prominent of them were Apache Cassandra, created at Facebook; Project Voldemort, created at LinkedIn; and Riak, created by former Akamai engineers.
 
 Today, the field is changing again: after the time of key-value stores, NoSQL, and eventual consistency, we have started seeing more scalable and performant databases, able to execute complex queries with stronger consistency guarantees.
 
@@ -48,7 +48,7 @@ To collect material for this book, I studied over 15 books, more than 300 papers
 
 ## Structure of This Book
 
-There are some examples of extensible databases with pluggable components (such as [\[SCHWARZ86\]](app01.html#SCHWARZ86)), but they are rather rare. At the same time, there are plenty of examples where databases use pluggable storage. Similarly, we rarely hear database vendors talking about query execution, while they are very eager to discuss the ways their databases preserve consistency.
+There are some examples of extensible databases with pluggable components (such as \[SCHWARZ86\]), but they are rather rare. At the same time, there are plenty of examples where databases use pluggable storage. Similarly, we rarely hear database vendors talking about query execution, while they are very eager to discuss the ways their databases preserve consistency.
 
 The most significant distinctions between database systems are concentrated around two aspects: how they *store* and how they *distribute* the data. (Other subsystems can at times also be of importance, but are not covered here.) The book is arranged into parts that discuss the subsystems and components responsible for *storage* (Part I) and *distribution* (Part II).
 
@@ -64,7 +64,7 @@ After that, we dive deep into distributed algorithms. Here, we start with algori
 
 As one of the most difficult things in distributed systems is achieving data consistency, we discuss concepts of replication, followed by consistency models, possible divergence between replicas, and eventual consistency. Since eventually consistent systems sometimes rely on anti-entropy for convergence and gossip for data dissemination, we discuss several anti-entropy and gossip approaches. Finally, we discuss logical consistency in the context of database transactions, and finish with consensus algorithms.
 
-It would’ve been impossible to write this book without all the research and publications. You will find many references to papers and publications in the text, in square brackets with monospace font; for example, [\[DECANDIA07\]](app01.html#DECANDIA07). You can use these references to learn more about related concepts in more detail.
+It would’ve been impossible to write this book without all the research and publications. You will find many references to papers and publications in the text, in square brackets with monospace font; for example, \[DECANDIA07\]. You can use these references to learn more about related concepts in more detail.
 
 After each chapter, you will find a summary section that contains material for further study, related to the content of the chapter.
 

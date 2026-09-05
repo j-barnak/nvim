@@ -418,7 +418,7 @@ if ( msg != NULL )
 
 sprintf(msg, "Trailing characters follow the number:
 
-\\%s\\\n", endptr);
+\\"%s\\"\n", endptr);
 
 return TRAILING_CHARS_FOUND;
 
@@ -786,7 +786,7 @@ documentation and on the GNU website
 
 “invoking date with no *format* argument is equivalent to invoking it with a default format that depends on the LC_TIME locale category.” In the
 
-default C locale, this format is +"\\a \\b \\e \\H:\\M:\\S \\Z \\Y", so the output looks like Thu Mar 3 13:47:51 PST 2005. Clearly, we need to know more about locales to understand this explanation, but for now we’ll
+default C locale, this format is +"\\%a \\%b \\%e \\%H:\\%M:\\%S \\%Z \\%Y", so the output looks like Thu Mar 3 13:47:51 PST 2005. Clearly, we need to know more about locales to understand this explanation, but for now we’ll
 
 focus on writing some simple programs that behave like date, and we’ll explore locales later in this chapter.
 
@@ -872,7 +872,7 @@ The time (7) man page also mentions a type of time representation
 
 called *broken-down time*, which is a time representation that’s broken down into various commonly used components. As Robert Grudin put
 
-it in *Time and the Art of Living* \[[11\]](index_split_014.html#p1237):
+it in *Time and the Art of Living* \[11\]:
 
 Our units of temporal measurement, from seconds on up to months, are so complicated, asymmetrical and disjunctive so as to make coherent mental reckoning in time all but impossible. . . . It is as though architects had to measure length in feet, width in meters and height in ells; as though basic instruction manuals demanded a knowledge of five different languages.
 
@@ -1200,7 +1200,7 @@ strlen(argvec\[nargs-1\] + 1 ) \< MAXLEN ) strncpy(format_str,
 
 argvec\[nargs-1\] + 1, MAXLEN - 1); else { sprintf(err_msg, "Format string length is too long\n"); fatal_error(BAD_FORMAT_ERROR,
 
-err_msg); } else { sprintf(err_msg,"%s: Format should be +\\format-string\\\n", basename(argvec\[0\]));
+err_msg); } else { sprintf(err_msg,"%s: Format should be +\\"format-string\\"\n", basename(argvec\[0\]));
 
 fatal_error(BAD_FORMAT_ERROR, err_msg); } }
 
@@ -1818,7 +1818,7 @@ case 'h':
 
 sprintf(usage_msg, "%s \[-d \<time adjustment\>\]"
 
-" \[+\\format specification\\\]", basename(argv\[0\])); usage_error(usage_msg);
+" \[+\\"format specification\\"\]", basename(argv\[0\])); usage_error(usage_msg);
 
 case '?':
 
@@ -1826,7 +1826,7 @@ fprintf(stderr,"Found invalid option %c\n", optopt);
 
 sprintf(usage_msg, "%s \[-d \<time adjustment\>\]"
 
-" \[+\\format specification\\\]", basename(argv\[1\])); usage_error(usage_msg);
+" \[+\\"format specification\\"\]", basename(argv\[1\])); usage_error(usage_msg);
 
 case ':':
 
@@ -1834,7 +1834,7 @@ fprintf(stderr,"Missing required argument to -d\n");
 
 sprintf(usage_msg, "%s \[-d \<time adjustment\>\]"
 
-" \[+\\format specification\\\]", basename(argv\[0\])); usage_error(usage_msg);
+" \[+\\"format specification\\"\]", basename(argv\[0\])); usage_error(usage_msg);
 
 }
 

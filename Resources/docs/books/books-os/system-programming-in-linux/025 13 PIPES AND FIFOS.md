@@ -22,7 +22,7 @@ connects the output of last to the input of grep. In this case, grep removes all
 
 redirected into the standard input of grep.
 
-This pipe functionality has an interesting origin; it was introduced into Third Edition UNIX in 1973 [\[25\]](index_split_014.html#p1238):
+This pipe functionality has an interesting origin; it was introduced into Third Edition UNIX in 1973 \[25\]:
 
 The basic redirectability of input-output made it easy to put pipes in when Doug Mcllroy finally persuaded Ken Thompson to do it. In one feverish night Ken wrote and installed the pipe system call, added pipes to the shell, and modified several utilities.
 
@@ -1751,3 +1751,5 @@ command line argument, creates a structure containing its
 process ID and that message, and writes that structure into
 
 the FIFO whose name is in the *fifodef.h* file. If the message on the command line is too long, decide how to handle it.
+
+![](media/index-884_1.jpg)

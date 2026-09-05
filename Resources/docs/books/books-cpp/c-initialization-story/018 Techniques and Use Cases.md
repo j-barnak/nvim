@@ -614,7 +614,7 @@ swap(checkSum\_, other.checkSum\_);
 
 swap(serverId\_, other.serverId\_);
 
-std::cout \<\< "Assignment for **\\**" \<\< data\_ \<\< "**\\\n**";
+std::cout \<\< "Assignment for **\\"**" \<\< data\_ \<\< "**\\"\n**";
 
 **return** \***this**;
 
@@ -648,13 +648,13 @@ DataPacket(DataPacket&& other) **noexcept** : DataPacket() { // make sure data i
 
 swap(\***this**, other);
 
-std::cout \<\< "Move ctor for **\\**" \<\< data\_ \<\< "**\\\n**"; }
+std::cout \<\< "Move ctor for **\\"**" \<\< data\_ \<\< "**\\"\n**"; }
 
 DataPacket& **operator**=(DataPacket other) **noexcept** {
 
 swap(\***this**, other);
 
-std::cout \<\< "Assignment for **\\**" \<\< data\_ \<\< "**\\\n**";
+std::cout \<\< "Assignment for **\\"**" \<\< data\_ \<\< "**\\"\n**";
 
 **return** \***this**;
 

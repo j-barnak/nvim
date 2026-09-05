@@ -1,5 +1,3 @@
-Embedded Linux System Development
-
 **Using a build system, example with Buil-**
 
 **droot**

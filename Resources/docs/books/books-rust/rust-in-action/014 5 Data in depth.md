@@ -1,3 +1,31 @@
+*Data in depth*
+
+***This chapter covers***
+
+ Learning how the computer represents data
+
+ Building a working CPU emulator
+
+ Creating your own numeric data type
+
+ Understanding floating-point numbers
+
+This chapter is all about understanding how zeroes and ones can become much larger objects like text, images, and sound. We will also touch on how computers do computation.
+
+By the end of the chapter, you will have emulated a fully functional computer with CPU, memory, and user-defined functions. You will break apart floating-point numbers to create a numeric data type of your own that only takes a single byte. The chapter introduces a number of terms, such as *endianness* and *integer overflow*, that may not be familiar to programmers who have never done systems programming.
+
+***5.1***
+
+***Bit patterns and types***
+
+A small but important lesson is that a single bit pattern can mean different things. The type system of a higher-level language, such as Rust, is just an artificial abstraction over reality. Understanding this becomes important as you begin to unravel some of that abstraction and to gain a deeper understanding of how computers work.
+
+**137**
+
+**138**
+
+CHAPTER 5
+
 ***Data in depth***
 
 Listing 5.1 (in ch5-int-vs-int.rs) is an example that uses the same bit pattern to represent two different numbers. The type system—not the CPU—is what makes this distinction. The following shows the listing’s output:
@@ -3253,25 +3281,3 @@ But in cases where the conversion may fail, the std::convert::TryFrom trait is t
  A CPU opcode is a number that represents an instruction rather than data.
 
 Memory addresses are also just numbers. Function calls are just sequences of numbers.
-
-*Memory*
-
-***This chapter covers***
-
- What pointers are and why some are smart
-
- What the terms stack and heap mean
-
- How a program views its memory
-
-This chapter provides you with some of the tacit knowledge held by systems programmers about how a computer’s memory operates. It aims to be the most accessible guide to pointers and memory management available. You will learn how applications interact with an operating system (OS). Programmers who understand these dynamics can use that knowledge to maximize their programs’ performance, while minimizing their memory footprint.
-
-Memory is a shared resource, and the OS is an arbiter. To make its life easier, the OS lies to your program about how much memory is available and where it’s located. Revealing the truth behind those lies requires us to work through some prior knowledge. This is the work of the first two sections of the chapter.
-
-Each of the four sections in this chapter builds on the previous one. None of these sections assume that you’ve encountered the topic before. There is a fairly large body of theory to cover, but all of it is explained by examples.
-
-**175**
-
-**176**
-
-CHAPTER 6

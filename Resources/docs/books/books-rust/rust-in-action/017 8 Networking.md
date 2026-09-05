@@ -1,3 +1,27 @@
+*Networking*
+
+***This chapter covers***
+
+ Implementing a networking stack
+
+ Handling multiple error types within local scope
+
+ When to use trait objects
+
+ Implementing state machines in Rust
+
+This chapter describes how to make HTTP requests multiple times, stripping away a layer of abstraction each time. We start by using a user-friendly library, then boil that away until we’re left with manipulating raw TCP packets. When we’re finished, you’ll be able to distinguish an IP address from a MAC address. And you’ll learn why we went straight from IPv4 to IPv6.
+
+You’ll also learn lots of Rust in this chapter, most of it related to advanced error handling techniques that become essential for incorporating upstream crates. Several pages are devoted to error handling. This includes a thorough introduction to trait objects.
+
+Networking is a difficult subject to cover in a single chapter. Each layer is a fractal of complexity. Networking experts will hopefully overlook my lack of depth in treating such a diverse topic.
+
+**251**
+
+**252**
+
+CHAPTER 8
+
 ***Networking***
 
 Figure 8.1 provides an overview of the topics that the chapter covers. Some of the projects that we cover include implementing DNS resolution and generating standards-compliant MAC addresses, including multiple examples of generating HTTP requests.
@@ -4057,31 +4081,3 @@ Perhaps, surprisingly, there are several more networking layers to unwrap. Well 
  Finite state machines can be elegantly modeled in Rust with an enum and a loop. At each iteration, indicate the next state by returning the appropriate enum variant.
 
  To enable two-way communications in UDP, each side of the conversation must be able to act as a client and a server.
-
-*Time and timekeeping*
-
-***This chapter covers***
-
- Understanding how a computer keeps time
-
- How operating systems represent timestamps
-
- Synchronizing atomic clocks with the Network
-
-Time Protocol (NTP)
-
-In this chapter, you’ll produce an NTP (Network Time Protocol) client that requests the current time from the world’s network of public time servers. It’s a fully functioning client that can be included in your own computer’s boot process to keep it in sync with the world.
-
-Understanding how time works within computers supports your efforts to build resilient applications. The system clock jumps both backwards and forwards in time.
-
-Knowing why this happens allows you to anticipate and prepare for that eventuality.
-
-Your computer also contains multiple physical and virtual clocks. It takes some knowledge to understand the limitations of each and when these are appropriate.
-
-Understanding the limitations of each should foster a healthy skepticism about micro benchmarks and other time-sensitive code.
-
-Some of the hardest software engineering involves distributed systems that need to agree on what the time is. If you have the resources of Google, then **293**
-
-**294**
-
-CHAPTER 9

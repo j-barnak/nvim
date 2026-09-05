@@ -2993,3 +2993,5 @@ times to compare their running times. If you have access to some
 Linux systems with many users, run the two versions on them to
 
 see which is faster.
+
+![](media/index-366_1.jpg)

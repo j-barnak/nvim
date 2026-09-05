@@ -36,7 +36,7 @@ Universal I/O
 
 From its inception, Unix employed a *universal* model of I/O. As Ritchie and Thompson wrote in 1974, “the system calls to do I/O are designed
 
-to eliminate the differences between the various devices and styles of access” \[[33\]](index_split_014.html#p1239). In other words, the same system calls that are used to perform I/O on disk files are also used on all other types of files,
+to eliminate the differences between the various devices and styles of access” \[33\]. In other words, the same system calls that are used to perform I/O on disk files are also used on all other types of files,
 
 including device files. A program that can read from or write to disk files can also read from or write to devices such as terminals, network
 
@@ -1228,7 +1228,7 @@ If *source_file* is a symbolic link to another file, does cp copy the file refer
 
 Can cp make copies of special files and directories?
 
-The POSIX specification of cp [\[14\]](index_split_014.html#p1237) answers all of these questions for systems that conform to POSIX requirements:
+The POSIX specification of cp \[14\] answers all of these questions for systems that conform to POSIX requirements:
 
 If *target_file* exists, cp truncates the file and replaces its contents with the contents of *source_file*, an action known as *clobbering*. This is dangerous, as you cannot recover a file once you’ve clobbered it,
 

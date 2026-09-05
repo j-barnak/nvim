@@ -44,13 +44,13 @@ If it fails sometimes due to how its threads are scheduled, it isn’t correct.
 
 This is an example of a safety property, a concept defined by Leslie
 
-Lamport in 1977. A *safety* property is one that means, essentially, *bad* *things don’t happen* [\[22\]](index_split_014.html#p1237).
+Lamport in 1977. A *safety* property is one that means, essentially, *bad* *things don’t happen* \[22\].
 
 A multithreaded program also has to have certain liveness
 
 properties, such as being free from deadlock, starvation of one or more threads, and livelock, which occurs when two or more threads
 
-continuously attempt an action that fails. (Think of two people trying to pass each other in a narrow corridor, with each telling the other to go first, but neither ever passing the other.) A *liveness* property, also defined by Lamport \[[22\]](index_split_014.html#p1237), is one that means *good things do happen*.
+continuously attempt an action that fails. (Think of two people trying to pass each other in a narrow corridor, with each telling the other to go first, but neither ever passing the other.) A *liveness* property, also defined by Lamport \[22\], is one that means *good things do happen*.
 
 When we develop any multithreaded program, we need to be
 
@@ -2330,7 +2330,7 @@ These decisions about which threads must wait when threads are
 
 blocked on a lock can lead to unfair scheduling and even starvation. A discussion of this topic is outside of the scope of this book. Several of
 
-the operating systems books mentioned in the bibliography examine these issues [\[37\]](index_split_014.html#p1239) [\[42\]](index_split_014.html#p1239) \[[39\]](index_split_014.html#p1239). At the very least, you should be aware that if the implementation gives arriving readers precedence over waiting
+the operating systems books mentioned in the bibliography examine these issues \[37\] \[42\] \[39\]. At the very least, you should be aware that if the implementation gives arriving readers precedence over waiting
 
 writers when a reader has the lock, then a steady stream of readers could prevent a writer from ever writing. This isn’t good.
 

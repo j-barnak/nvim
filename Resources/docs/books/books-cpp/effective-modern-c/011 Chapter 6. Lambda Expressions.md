@@ -1,3 +1,5 @@
+**CHAPTER 6**
+
 **Lambda Expressions**
 
 Lambda expressions— *lambdas*—are a game changer in C++ programming. That’s somewhat surprising, because they bring no new expressive power to the language.
@@ -1119,5 +1121,3 @@ When bind was unofficially added to C++ in 2005, it was a big improvement over i
 • In C++11 only, std::bind may be useful for implementing move capture or for binding objects with templatized function call operators.
 
 **240 \| Item 34**
-
-**CHAPTER 7**

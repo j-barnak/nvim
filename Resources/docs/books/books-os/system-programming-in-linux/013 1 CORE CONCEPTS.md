@@ -292,7 +292,7 @@ around a small set of clever ideas, as its authors, Dennis Ritchie and Ken Thomp
 
 inventions but rather in the full exploitation of a carefully selected set of fertile ideas, and especially in showing that they can be keys to the
 
-implementation of a small yet powerful operating system” [\[33\]](index_split_014.html#p1239). Those
+implementation of a small yet powerful operating system” \[33\]. Those
 
 “fertile ideas” included, in the order in which we discuss them, the
 
@@ -324,7 +324,7 @@ I’ll point this out when it is relevant.
 
 *The Unix Kernel*
 
-It is perhaps unfortunate that the term *operating system* has no single, universally agreed upon definition. If you look at almost any textbook on operating systems \[[37, 41\]](index_split_014.html#p1239), you’ll find two different views of what constitutes an operating system:
+It is perhaps unfortunate that the term *operating system* has no single, universally agreed upon definition. If you look at almost any textbook on operating systems \[37, 41\], you’ll find two different views of what constitutes an operating system:
 
 The operating system is the collection of all software that provides
 
@@ -342,7 +342,7 @@ computer resources, until the computer is powered off.
 
 Regardless of which definition you decide to adopt, the term *kernel* is unambiguously used as another name for the second definition. It’s an appropriate name, since it’s the core of the Unix system. In the seminal book on the design of the 4.4BSD operating system, *The Design and*
 
-*Implementation of the 4.4BSD Operating System*, McKusick and co-authors define a kernel as “a small nucleus of software that provides only the minimal facilities necessary for implementing additional operating system services” [\[26\]](index_split_014.html#p1238). In this book, I use the narrow definition of an *operating system*, namely that it is the kernel and nothing more.
+*Implementation of the 4.4BSD Operating System*, McKusick and co-authors define a kernel as “a small nucleus of software that provides only the minimal facilities necessary for implementing additional operating system services” \[26\]. In this book, I use the narrow definition of an *operating system*, namely that it is the kernel and nothing more.
 
 The *kernel* is a program, or a collection of interacting programs, depending on the particular implementation of Unix, with many entry
 
@@ -794,7 +794,7 @@ has the value stewart. Variable names are not allowed to contain the =
 
 character, but otherwise they have no restrictions. However, for
 
-portability of any programs that use these variables, and by convention, they should contain only uppercase letters, digits, and underscores and should not begin with a digit (see *The Open Group Base Specifications*, Issue 7, 2018, Chapter 8 \[[14\]](index_split_014.html#p1237)).
+portability of any programs that use these variables, and by convention, they should contain only uppercase letters, digits, and underscores and should not begin with a digit (see *The Open Group Base Specifications*, Issue 7, 2018, Chapter 8 \[14\]).
 
 In this example
 
@@ -1428,7 +1428,7 @@ It doesn’t provide any special scheduling or data structures for threads.
 
 To the Linux kernel, processes and threads are both called *tasks* and are both represented internally by the same data structure, called a
 
-task_struct \[[4\]](index_split_014.html#p1236). In Linux, a *task* is an entity that’s assigned system resources and can be scheduled on a processor. The difference between
+task_struct \[4\]. In Linux, a *task* is an entity that’s assigned system resources and can be scheduled on a processor. The difference between
 
 threads and ordinary processes in Linux is that threads can share
 
@@ -2158,7 +2158,7 @@ keyword is usually a regular expression, as if (-r) was used, or may
 
 contain wildcards (-w), or match the exact keyword (-e). Using these
 
-options, it may be necessary to quote the keyword or escape (\\ the
+options, it may be necessary to quote the keyword or escape (\\) the
 
 special characters to stop the shell from interpreting them.
 
@@ -2368,7 +2368,7 @@ at the University of Helsinki. Many of his ideas were based on the Minix operati
 
 Vrije Universiteit in Amsterdam. Tanenbaum made the sources for
 
-Minix available with copies of his book on operating systems [\[41\]](index_split_014.html#p1239). Minix ran on Intel 386 processors but wasn’t efficient. Torvalds wanted to
+Minix available with copies of his book on operating systems \[41\]. Minix ran on Intel 386 processors but wasn’t efficient. Torvalds wanted to
 
 build a Unix kernel to run more efficiently on the Intel 386.
 
@@ -2396,13 +2396,13 @@ explore the various Unix standards.
 
 You can read more about the history of various aspects of Unix in
 
-resources such as Dennis Ritchie’s telling of its history \[31\]; Salus and Reed’s *The Daemon, the Gnu, and the Penguin* \[36\]; Salus’s comprehensive telling in *A Quarter Century of UNIX* [\[35\]](index_split_014.html#p1239); Brian Kernighan’s memoir, *Unix: A History and a Memoir* \[17\]; *UNIX Internals* \[[28\]](index_split_014.html#p1238); and *The Design* *and Implementation of the 4.4BSD Operating System* \[26\]. You can read transcripts of interviews with many UNIX developers in the *Oral*
+resources such as Dennis Ritchie’s telling of its history \[31\]; Salus and Reed’s *The Daemon, the Gnu, and the Penguin* \[36\]; Salus’s comprehensive telling in *A Quarter Century of UNIX* \[35\]; Brian Kernighan’s memoir, *Unix: A History and a Memoir* \[17\]; *UNIX Internals* \[28\]; and *The Design* *and Implementation of the 4.4BSD Operating System* \[26\]. You can read transcripts of interviews with many UNIX developers in the *Oral*
 
-*History of UNIX* [\[23\]](index_split_014.html#p1238) and read the history of the GNU project at
+*History of UNIX* \[23\] and read the history of the GNU project at
 
-[*https://www.gnu.org/gnu/gnu.xhtml*.](https://www.gnu.org/gnu/gnu.xhtml) Torvalds and Diamond published an account of Linux development \[[46\]](index_split_014.html#p1240), and Appendix A of *Open Sources:* *Voices from the Open Source Revolution* \[7\] has an interesting exchange of ideas between Torvalds and Tanenbaum germane to the design of the
+[*https://www.gnu.org/gnu/gnu.xhtml*.](https://www.gnu.org/gnu/gnu.xhtml) Torvalds and Diamond published an account of Linux development \[46\], and Appendix A of *Open Sources:* *Voices from the Open Source Revolution* \[7\] has an interesting exchange of ideas between Torvalds and Tanenbaum germane to the design of the
 
-Linux kernel. The bibliography also has additional references on Unix history \[20\] \[32\] [\[35\]](index_split_014.html#p1239) \[38\].
+Linux kernel. The bibliography also has additional references on Unix history \[20\] \[32\] \[35\] \[38\].
 
 *Unix and Related Standards*
 
@@ -2669,3 +2669,5 @@ program. There might be more than one needed for some of these.
 5\. What command can be used to print the creation date of a file?
 
 (Hint: This information is part of a file’s status.)
+
+![](media/index-118_1.jpg)

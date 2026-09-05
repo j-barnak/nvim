@@ -1,3 +1,5 @@
+**CHAPTER 2**
+
 **auto**
 
 In concept, auto is as simple as simple can be, but it’s more subtle than it looks.
@@ -355,5 +357,3 @@ but this obscures the fact that you’re intentionally converting the double on 
 • The explicitly typed initializer idiom forces auto to deduce the type you want it to have.
 
 **48 \| Item 6**
-
-**CHAPTER 3**

@@ -1,3 +1,35 @@
+*Lifetimes, ownership,*
+
+*and borrowing*
+
+***This chapter covers***
+
+ Discovering what the term *lifetime* means in Rust
+
+programming
+
+ Working with the borrow checker rather than
+
+against it
+
+ Multiple tactics for dealing with issues when
+
+these crop up
+
+ Understanding the responsibilities of an owner
+
+ Learning how to borrow values that are owned
+
+elsewhere
+
+This chapter explains one of the concepts that trip up most newcomers to Rust—its borrow checker. The *borrow checker* checks that all access to data is legal, which allows Rust to prevent safety issues. Learning how this works will, at the very least, speed up your development time by helping you avoid run-ins with the compiler. More significantly though, learning to work with the borrow checker allows you to build larger software systems with confidence. It underpins the term *fearless concurrency*.
+
+This chapter will explain how this system operates and help you learn how to comply with it when an error is discovered. It uses the somewhat lofty example of **107**
+
+**108**
+
+CHAPTER 4
+
 ***Lifetimes, ownership, and borrowing***
 
 simulating a satellite constellation to explain the trade-offs relating to different ways to provide shared access to data. The details of borrow checking are thoroughly explored within the chapter. However, a few points might be useful for readers wanting to quickly get the gist. Borrow checking relies on three interrelated concepts—

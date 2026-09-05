@@ -1,3 +1,5 @@
+**CHAPTER 7**
+
 **The Concurrency API**
 
 One of C++11’s great triumphs is the incorporation of concurrency into the language and library. Programmers familiar with other threading APIs (e.g., pthreads or Windows threads) are sometimes surprised at the comparatively Spartan feature set that C++ offers, but that’s because a great deal of C++’s support for concurrency is in the form of constraints on compiler-writers. The resulting language assurances mean that for the first time in C++’s history, programmers can write multithreaded programs with standard behavior across all platforms. This establishes a solid foundation on which expressive libraries can be built, and the concurrency elements of the Standard Library (tasks, futures, threads, mutexes, condition variables, atomic objects, and more) are merely the beginning of what is sure to become an increasingly rich set of tools for the development of concurrent C++ software.
@@ -1347,5 +1349,3 @@ mutexes. It’s a tool for writing concurrent software.
 • volatile is for memory where reads and writes should not be optimized away. It’s a tool for working with special memory.
 
 **Item 40 \| 279**
-
-**CHAPTER 8**

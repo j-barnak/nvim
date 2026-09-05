@@ -288,21 +288,21 @@ In our previous example with DebugPropertyInfo we didn’t have any new data mem
 
 **Ex 4.4. Inheriting constructors. Run** [**@Compiler Explorer**](https://godbolt.org/z/jeo6Kbd8P)
 
-1 **class DebugDataPacket** : **public** DataPacket { 2 **public**:
-
-3 **using** DataPacket::DataPacket; 4
-
-5 **void** DebugPrint(std::ostream& os) { 6 os \<\< getData() \<\< ", " \<\< getCheckSum() \<\< '\n'; 7 }
-
-8 };
-
+``` cpp
+1 class DebugDataPacket : public DataPacket {
+2 public:
+3 using DataPacket::DataPacket;
+4
+5 void DebugPrint(std::ostream& os) {
+6            os << getData() << ", " << getCheckSum() << '\n';
+7        }
+8   };
 9
-
-10 **int** main() {
-
-11 DebugDataPacket hello{"hello!", 404}; 12 hello.DebugPrint(std::cout);
-
-13 }
+10 int main() {
+11       DebugDataPacket hello{"hello!", 404};
+12       hello.DebugPrint(std::cout);
+13   }
+```
 
  
 

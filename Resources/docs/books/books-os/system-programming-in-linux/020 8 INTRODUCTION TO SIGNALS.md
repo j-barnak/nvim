@@ -706,7 +706,7 @@ terminate a process. If a process has a signal handler for it, it can
 
 perform cleanup before exiting, or even ignore it. By default, SIGQUIT
 
-is sent when the user enters CTRL-\\ Unlike SIGINT, this produces a
+is sent when the user enters CTRL-\\. Unlike SIGINT, this produces a
 
 core dump and terminates the process.
 
@@ -908,7 +908,7 @@ If SIG_DFL is supplied, the default action will be taken, and if SIG_IGN, the si
 
 Let’s take a look at a simple example that uses signal(). Listing 8-1
 
-shows how a program can install signal handlers to catch the SIGINT and SIGQUIT signals generated when the user enters CTRL-C and CTRL-\\
+shows how a program can install signal handlers to catch the SIGINT and SIGQUIT signals generated when the user enters CTRL-C and CTRL-\\,
 
 respectively. When compiling on Linux, using the typical default
 
@@ -936,7 +936,7 @@ void catch_sigquit(int signum)
 
 {
 
-printf("I'm not terminated by CTRL-\\!\n");
+printf("I'm not terminated by CTRL-\\\\!\n");
 
 }
 
@@ -954,7 +954,7 @@ fatal_error(errno, "signal()");
 
 for ( int i = 20; i \> 0; i-- ) {
 
-printf("Try to terminate me with ^C or ^\\.\n");
+printf("Try to terminate me with ^C or ^\\\\.\n");
 
 sleep(1);
 
@@ -1012,7 +1012,7 @@ defining the macro \_XOPEN_SOURCE when we compile it. Doing so exposes a differe
 
 and rerun the program, we’ll see different behavior, as the following run shows. The ^C is what appears on the terminal when we enter CTRL-C: \$
 
-**./signal_demo1** Try to terminate me with ^C or ^\\ **^C**I'm not terminated by CTRL-C! Try to terminate me with ^C or ^\\ **^C** \$
+**./signal_demo1** Try to terminate me with ^C or ^\\. **^C**I'm not terminated by CTRL-C! Try to terminate me with ^C or ^\\. **^C** \$
 
 The first CTRL-C is caught, but the second terminates the program.
 
@@ -1040,7 +1040,7 @@ void catch_sigquit(int signum)
 
 {
 
-printf("I'm not terminated by the first CTRL-\\!\n"); /\* UNSAFE \*/
+printf("I'm not terminated by the first CTRL-\\\\!\n"); /\* UNSAFE \*/
 
 }
 
@@ -1058,7 +1058,7 @@ fatal_error(errno, "sysv_signal()");
 
 for ( int i = 20; i \> 0; i-- ) {
 
-printf("Try to terminate me with ^C or ^\\.\n");
+printf("Try to terminate me with ^C or ^\\\\.\n");
 
 sleep(1);
 
@@ -1090,13 +1090,13 @@ if ( SIG_ERR == signal(SIGINT, SIG_IGN) ) /\* Ignore Ctrl-C. \*/
 
 fatal_error(errno, "signal()");
 
-if ( SIG_ERR == signal(SIGQUIT, SIG_IGN) ) /\* Ignore Ctrl-\\ \*/
+if ( SIG_ERR == signal(SIGQUIT, SIG_IGN) ) /\* Ignore Ctrl-\\. \*/
 
 fatal_error(errno, "signal()");
 
 for ( int i = 10; i \> 0; i-- ) {
 
-printf("Try to kill me with ^C or ^\\. "
+printf("Try to kill me with ^C or ^\\\\. "
 
 "Seconds remaining: %2d\n", i); sleep(1);
 
@@ -1794,7 +1794,7 @@ if ( SIG_ERR == signal(SIGINT, catch_sigint) )
 
 fatal_error(errno, "signal()");
 
-printf("PID=%d\n Enter CTRL-\\ to end this program.\n", getpid()); while ( TRUE ) {
+printf("PID=%d\n Enter CTRL-\\\\ to end this program.\n", getpid()); while ( TRUE ) {
 
 /\* Block the signal while we print the count. \*/
 
@@ -1822,7 +1822,7 @@ fatal_error(errno, "sigprocmask()");
 
 }
 
-*Listing 8-9: A program in which the signal handler updates an atomic variable accessed by* *the* *main()* *function* Listing 8-9 introduces a new system call, pause() ➋, which suspends the calling process until it receives a signal that either terminates the process or causes a signal handling function to run. If the program doesn’t have a signal handler for the signal and the default action is to ignore it, pause() does not return. Using pause() here is intended to serve two purposes. The first is to give us as much time as we need to send a signal, either by entering the kill -s SIGINT command in another terminal window or by entering CTRL-C in the process’s terminal. The second is to ensure that the program’s count of received SIGINTs is correct, because they can only be delivered while the process is suspended in the pause(), which would cause the handler to run and the process to wake up, block signals again, and update and print the count. When you run this program, enter sequences of CTRL-C and check whether the number is counted correctly by the main program. You’ll need to terminate it with a signal other than CTRL-C, such as CTRL-\\ It might be correct for all of your tests of it, but unfortunately, it isn’t correct.
+*Listing 8-9: A program in which the signal handler updates an atomic variable accessed by* *the* *main()* *function* Listing 8-9 introduces a new system call, pause() ➋, which suspends the calling process until it receives a signal that either terminates the process or causes a signal handling function to run. If the program doesn’t have a signal handler for the signal and the default action is to ignore it, pause() does not return. Using pause() here is intended to serve two purposes. The first is to give us as much time as we need to send a signal, either by entering the kill -s SIGINT command in another terminal window or by entering CTRL-C in the process’s terminal. The second is to ensure that the program’s count of received SIGINTs is correct, because they can only be delivered while the process is suspended in the pause(), which would cause the handler to run and the process to wake up, block signals again, and update and print the count. When you run this program, enter sequences of CTRL-C and check whether the number is counted correctly by the main program. You’ll need to terminate it with a signal other than CTRL-C, such as CTRL-\\. It might be correct for all of your tests of it, but unfortunately, it isn’t correct.
 
 Although it’s hard to arrange it, we could send a SIGINT between the
 
@@ -2688,7 +2688,7 @@ ID=53552785 Leaving handler for SIGINT ID=53552785
 
 The display does not show the prompt character because the program is
 
-still in the read() system call, waiting for input, evidence that the read() was restarted. You can enter quit or terminate it with CTRL-\\ or you can continue by pressing ENTER, in which case you’ll get the prompt back.
+still in the read() system call, waiting for input, evidence that the read() was restarted. You can enter quit or terminate it with CTRL-\\, or you can continue by pressing ENTER, in which case you’ll get the prompt back.
 
 Notice that the signals are not blocked; all of them were delivered to the handler, but they were queued, so that the handler got them one
 

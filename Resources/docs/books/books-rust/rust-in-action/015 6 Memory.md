@@ -1,3 +1,25 @@
+*Memory*
+
+***This chapter covers***
+
+ What pointers are and why some are smart
+
+ What the terms stack and heap mean
+
+ How a program views its memory
+
+This chapter provides you with some of the tacit knowledge held by systems programmers about how a computer’s memory operates. It aims to be the most accessible guide to pointers and memory management available. You will learn how applications interact with an operating system (OS). Programmers who understand these dynamics can use that knowledge to maximize their programs’ performance, while minimizing their memory footprint.
+
+Memory is a shared resource, and the OS is an arbiter. To make its life easier, the OS lies to your program about how much memory is available and where it’s located. Revealing the truth behind those lies requires us to work through some prior knowledge. This is the work of the first two sections of the chapter.
+
+Each of the four sections in this chapter builds on the previous one. None of these sections assume that you’ve encountered the topic before. There is a fairly large body of theory to cover, but all of it is explained by examples.
+
+**175**
+
+**176**
+
+CHAPTER 6
+
 ***Memory***
 
 In this chapter, you’ll create your first graphical application. The chapter introduces little new Rust syntax, as the material is quite dense. You’ll learn how to construct pointers, how to interact with an OS via its native API, and how to interact with other programs through Rust’s foreign function interface.
@@ -3350,109 +3372,3 @@ Memory management is a complicated area with many levels of abstraction to uncov
  The heap and the stack are abstractions provided by operating systems and programming languages. These do not exist at the level of the CPU.
 
  Operating systems often provide mechanisms such as memory allocations to inspect a program’s behavior.
-
-*Files and storage*
-
-***This chapter covers***
-
- Learning how data is represented on physical
-
-storage devices
-
- Writing data structures to your preferred file
-
-format
-
- Building a tool to read from a file and inspect
-
-its contents
-
- Creating a working key-value store that’s
-
-immune from corruption
-
-Storing data permanently on digital media is trickier than it looks. This chapter takes you though some of the details. To transfer information held by ephemeral electrical charges in RAM to (semi)permanent storage media and then be able to retrieve it again later takes several layers of software indirection.
-
-The chapter introduces some new concepts such as how to structure projects into library crates for Rust developers. This task is needed because one of the projects is ambitious. By the end of the chapter, you’ll have built a working key-value store that’s guaranteed to be durable to hardware failure at any stage. During the chapter, we’ll work through a small number of side quests. For example, we implement parity **212**
-
-![](media/index-239_1.png)
-
-![](media/index-239_2.png)
-
-![](media/index-239_3.png)
-
-***What is a file format?***
-
-**213**
-
-bit checking and explore what it means to hash a value. To start with, however, let’s see if we can create patterns from the raw byte sequence within files.
-
-***7.1***
-
-***What is a file format?***
-
-File formats are standards for working with data as an single, ordered sequence of bytes. Storage media like hard disk drives work faster when reading or writing large blocks of data in serial. This contrasts with in-memory data structures, where data layout has less of an impact.
-
-File formats live in a large design space with trade-offs in performance, human-readability, and portability. Some formats are highly portable and self-describing. Others restrict themselves to being accessible within a single environment and are unable to be read by third-party tools, yet they are high performance.
-
-Table 7.1 illustrates some of the design space for file formats. Each row reveals the file format’s internal patterns, which are generated from the same source text. By color-coding each byte within the file, it’s possible to see structural differences between each representation.
-
-Table 7.1
-
-The internals of four digital versions of William Shakespeare’s ***Much Ado About Nothing***
-
-produced by Project Gutenberg.
-
-The plain text version of the play contains printable char-
-
-acters only. These are indicated by dark grey for letters
-
-and punctuation, and white for whitespace.
-
-Visually, the image appears to be noisy. It lacks internal
-
-structure. That’s due to the variation in length of the natu-
-
-ral language that the file represents. A file with regular,
-
-repeating structures, such as a file format designed to
-
-hold arrays of floating-point numbers, tends to look quite
-
-different.
-
-The EPUB format is actually a compressed ZIP archive
-
-with a bespoke file extension. There are many bytes
-
-within the file that fall out of the range of the printable
-
-category as indicated by the mid-grey pixels.
-
-MOBI includes four bands of NULL bytes (0x00), repre-
-
-sented as black pixels. These bands probably represent
-
-the result of an engineering trade-off. In some sense,
-
-these empty bytes are wasted space. They’re probably
-
-added as padding so that the file’s sections are easy to
-
-parse later on.
-
-The other notable feature of this file is its size. It’s larger
-
-than the other versions of the play. This might imply that
-
-the file is harboring more data than just the text. Candi-
-
-dates include display elements like fonts, or encryption
-
-keys that enforce anti-copying restrictions within the file.
-
-![](media/index-240_1.png)
-
-**214**
-
-CHAPTER 7

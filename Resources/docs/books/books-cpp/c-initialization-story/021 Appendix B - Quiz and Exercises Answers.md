@@ -66,7 +66,7 @@ Appendix B - Quiz and Exercises Answers 255
 
 11. 2, the proper element type is std::pair\<const std::string, int\>, so each time,
 
-we’ll have a copy in the loop iteration; see [chapter on deduction]().
+we’ll have a copy in the loop iteration; see chapter on deduction.
 
 12. 3, this is the special rule for the copy list initialization, it will yield initializer_list.
 

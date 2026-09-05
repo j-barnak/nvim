@@ -380,7 +380,7 @@ The stty command can both display and alter terminal characteristics.
 
 Without options or arguments, it displays a small subset of the current settings of the terminal connected to the shell in which the command is invoked. Different systems may display different pieces of information by default. The man page for stty provides answers to all of the
 
-questions I posed earlier. It states that the -a option displays all settings in human-readable form; following is the output of stty -a: \$ **stty -a** speed 38400 baud; rows 24; columns 79; line = 0; intr = ^C; quit = ^\\ erase = ^?; kill = ^U; eof = ^D; eol = \<undef\>; eol2 = \<undef\>; swtch =
+questions I posed earlier. It states that the -a option displays all settings in human-readable form; following is the output of stty -a: \$ **stty -a** speed 38400 baud; rows 24; columns 79; line = 0; intr = ^C; quit = ^\\; erase = ^?; kill = ^U; eof = ^D; eol = \<undef\>; eol2 = \<undef\>; swtch =
 
 \<undef\>; start = ^Q; stop = ^S; susp = ^Z; rprnt = ^R; werase = ^W; lnext = ^V; discard = ^O; min = 1; time = 0; -parenb -parodd -cmspar
 
@@ -456,11 +456,11 @@ two forms:
 
 For example, this output rows 24; columns 80; line = 0; intr = ^C; quit =
 
-^\\
+^\\;
 
 indicates that the number of rows in the terminal is 24 and the number of columns is 80. In the expression line = 0, *line* refers to the line discipline. Line disciplines have unique small integer identifiers. For example, the *TTY* line discipline has the number 0 and the *PPP* line discipline’s number is 2. The next two show that CTRL-C is the interrupt character and CTRL-\\ generates SIGQUIT.
 
-The man page explains that erase is the character that erases the last character typed. In other words, it’s the character we call *backspace*. Let’s look at the erase key setting: \$ **stty -a \| grep -E -o '\\erase =**
+The man page explains that erase is the character that erases the last character typed. In other words, it’s the character we call *backspace*. Let’s look at the erase key setting: \$ **stty -a \| grep -E -o '\\\<erase =**
 
 **...'** erase = ^?;
 
@@ -534,7 +534,7 @@ define modes such as cooked mode, raw mode, and sane mode.
 
 Input switch names always begin with i and output switch names
 
-begin with o. I’ll display the output of stty -a again, rearranged and annotated to show the categories of the variables and switches: special characters: intr = ^C; quit = ^\\ erase = ^?; kill = ^U; eof = ^D; eol =
+begin with o. I’ll display the output of stty -a again, rearranged and annotated to show the categories of the variables and switches: special characters: intr = ^C; quit = ^\\; erase = ^?; kill = ^U; eof = ^D; eol =
 
 \<undef\>; eol2 = \<undef\>; swtch = \<undef\>; start = ^Q; stop = ^S; susp =
 
@@ -1620,7 +1620,7 @@ int ttyfd; /\* File descriptor for control terminal \*/
 
 int rows, cols; /\* Window dimensions \*/
 
-char speedstr\[[16\]](index_split_014.html#p1237); /\* String to store displayed or entered speed \*/
+char speedstr\[16\]; /\* String to store displayed or entered speed \*/
 
 /\* Get file descriptor for terminal; if redirected it still gets it. \*/
 
@@ -2114,7 +2114,7 @@ brkint imaxbel iutf8
 
 **\$ spl_stty -a \| grep erase**
 
-ntr = ^C; quit = ^\\ erase = ^F; kill = ^U; eof = ^D; eol = \<undef\>; werase = ^W; lnext = ^V; discard = ^O; min = 1; time = 0;
+ntr = ^C; quit = ^\\; erase = ^F; kill = ^U; eof = ^D; eol = \<undef\>; werase = ^W; lnext = ^V; discard = ^O; min = 1; time = 0;
 
 I leave several modifications and enhancements of this program as exercises at the end of the chapter. In Chapter 19, we’ll examine the various terminal driver modes and how they can be used to make
 
@@ -2140,7 +2140,7 @@ POSIX Working Group developed the functions listed on the termios(3)
 
 man page as a replacement for ioctl() because they thought it was
 
-difficult to use [\[26\]](index_split_014.html#p1238). They separated out the terminal control functions into the termios interface and left the control of all other devices to the ioctl() system call without including it in the standard. However, on
+difficult to use \[26\]. They separated out the terminal control functions into the termios interface and left the control of all other devices to the ioctl() system call without including it in the standard. However, on
 
 Linux, *glibc* always includes ioctl(), and it’s part of many other Unix distributions as well.
 
@@ -2521,3 +2521,5 @@ returns the absolute pathname of the device file corresponding to
 fd. Implement a simple version of this function. Hint: First try
 
 searching the */proc* pseudofilesystem for the pathname, and if that fails, get a stat structure for fd, try to find an entry in the */dev* directory with the same inode and device number as in that stat
+
+![](media/index-1135_1.jpg)

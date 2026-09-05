@@ -1,3 +1,5 @@
+**CHAPTER 3**
+
 **Moving to Modern C++**
 
 When it comes to big-name features, C++11 and C++14 have a lot to boast of. auto, smart pointers, move semantics, lambdas, concurrency—each is so important, I devote a chapter to it. It’s essential to master those features, but becoming an effective modern C++ programmer requires a series of smaller steps, too. Each step answers specific questions that arise during the journey from C++98 to modern C++. When should you use braces instead of parentheses for object creation? Why are alias declarations better than typedefs? How does constexpr differ from const? What’s the relationship between const member functions and thread safety? The list goes on and on. And one by one, this chapter provides the answers.
@@ -2557,5 +2559,3 @@ The copy assignment operator is generated only for classes lacking an explicitly
 • Member function templates never suppress generation of special member functions.
 
 **Item 17 \| 115**
-
-**CHAPTER 4**

@@ -358,7 +358,7 @@ You can practice with the following Compiler Explorer solution: [Point tests @Co
 
 We can combine our knowledge about constructors and inline variables and continue with
 
-the CountedType introduced in the [Non-local types]() chapter. Please implement the support for other constructors so that the following test passes.
+the CountedType introduced in the Non-local types chapter. Please implement the support for other constructors so that the following test passes.
 
 **struct CountedType** {
 

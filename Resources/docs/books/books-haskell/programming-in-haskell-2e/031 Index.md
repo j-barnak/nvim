@@ -612,7 +612,7 @@ lists, 6, 9, 15, 25, 47, 285
 
 elements, 25, 41
 
-empty, *see* [\[\]](#ind25)
+empty, *see* \[\]
 
 indexing, *see* !!
 

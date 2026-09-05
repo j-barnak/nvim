@@ -72,7 +72,7 @@ std::cout \<\< "s.moreInts\[9\]: " \<\< s.moreInts\[9\] \<\< '\n';
 
 std::cout \<\< "s.names\[9\]: " \<\< s.names\[9\] \<\< '\n';
 
-std::cout \<\< "s.mapping\[**\\**one**\\**\]: " \<\< s.mapping\["one"\] \<\< '\n'; }
+std::cout \<\< "s.mapping\[**\\"**one**\\"**\]: " \<\< s.mapping\["one"\] \<\< '\n'; }
 
  
 
@@ -156,7 +156,7 @@ std::cout \<\< "s.moreInts\[9\]: " \<\< s.moreInts\[9\] \<\< '\n';
 
 std::cout \<\< "s.names\[9\]: " \<\< s.names\[9\] \<\< '\n';
 
-std::cout \<\< "s.mapping\[**\\**one**\\**\]: " \<\< s.mapping\["one"\] \<\< '\n'; }
+std::cout \<\< "s.mapping\[**\\"**one**\\"**\]: " \<\< s.mapping\["one"\] \<\< '\n'; }
 
  
 
@@ -624,7 +624,7 @@ Passing elements through std::initializer_list is very convenient, but it’s go
 
 Value(**int** x) : v(x) { std::cout \<\< "Value(" \<\< v \<\< ")**\n**"; }
 
-Value(**const** Value& rhs) : v{rhs.v} {std::cout \<\< "copy Value(" \<\< v \<\< ")**\\** n"; }
+Value(**const** Value& rhs) : v{rhs.v} {std::cout \<\< "copy Value(" \<\< v \<\< ")**\\\\** n"; }
 
 Value(Value&& rhs) : v{rhs.v} {std::cout \<\< "move Value(" \<\< v \<\< ")**\n**"; }
 

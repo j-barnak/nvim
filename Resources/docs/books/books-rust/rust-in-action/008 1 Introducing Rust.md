@@ -1,3 +1,7 @@
+*Introducing Rust*
+
+***This chapter covers***
+
  Introducing Rust’s features and goals
 
  Exposing Rust’s syntax
@@ -24,6 +28,7 @@ When you begin to program in Rust, it’s likely that you will want to continue 
 
 **2**
 
+CHAPTER 1
 
 ***Introducing Rust***
 
@@ -188,7 +193,7 @@ The first thing that most programmers do when they reach for a new programming l
 
 If you use Windows, open the Rust command prompt that is available in the Start menu after installing Rust. Then execute this command:
 
-**C:\\ cd %TMP%**
+**C:\\\> cd %TMP%**
 
 If you are running Linux or macOS, open a Terminal window. Once open, enter the following:
 
@@ -208,15 +213,15 @@ Here is an example of what the entire session looks like when running cmd.exe on
 
 Windows:
 
-**C:\\ cd %TMP%**
+**C:\\\> cd %TMP%**
 
-**C:\Users\Tim\AppData\Local\Temp\\ cargo new hello**
+**C:\Users\Tim\AppData\Local\Temp\\\> cargo new hello**
 
 Created binary (application) \`hellò project
 
-**C:\Users\Tim\AppData\Local\Temp\\ cd hello**
+**C:\Users\Tim\AppData\Local\Temp\\\> cd hello**
 
-**C:\Users\Tim\AppData\Local\Temp\hello\\ cargo run**
+**C:\Users\Tim\AppData\Local\Temp\hello\\\> cargo run**
 
 Compiling hello v0.1.0 (file:/ / /C:/Users/Tim/AppData/Local/Temp/hello) Finished dev \[unoptimized + debuginfo\] target(s) in 0.32s
 
@@ -1503,9 +1508,9 @@ The goto fail; bug, officially designated as CVE-2014-1266,17 was caused by prog
 
 22 ctx-\>peerPubKey,
 
-23 dataToSign, /\* plaintext \\/
+23 dataToSign, /\* plaintext \\\*/
 
-24 dataToSignLen, /\* plaintext length \\/
+24 dataToSignLen, /\* plaintext length \\\*/
 
 25 signature,
 
@@ -1728,5 +1733,3 @@ When you program in Rust, safety does not sacrifice speed.
  Rust projects are not immune from all bugs.
 
  Rust code is stable, fast, and light on resources.
-
-*Part 1*

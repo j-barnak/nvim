@@ -2243,5 +2243,3 @@ In most cases, perfect forwarding works exactly as advertised. You rarely have t
 • The kinds of arguments that lead to perfect forwarding failure are braced initializers, null pointers expressed as 0 or NULL, declaration-only integral const static data members, template and overloaded function names, and bitfields.
 
 **214 \| Item 30**
-
-**CHAPTER 6**

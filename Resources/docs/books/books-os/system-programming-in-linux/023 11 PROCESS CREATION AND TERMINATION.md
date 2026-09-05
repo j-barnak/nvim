@@ -1,5 +1,3 @@
-![](media/index-715_1.jpg)
-
 11 PROCESS CREATION AND
 
 TERMINATION
@@ -236,7 +234,7 @@ printf("This is printed by the parent process before the call"
 
 " to fork():\npid = %d, localvar = %d, globalvar = %d, "
 
-" heapvar = \\%s\\ \n\n", getpid(), localvar, globalvar, heapvar); if ( -1 == (result = fork()) )
+" heapvar = \\"%s\\" \n\n", getpid(), localvar, globalvar, heapvar); if ( -1 == (result = fork()) )
 
 fatal_error(errno, "fork");
 
@@ -248,7 +246,7 @@ printf("This is printed by the child process:\n");
 
 printf("Child PID = %d, localvar = %d, globalvar = %d, "
 
-"heapvar = \\%s\\\n", mypid, localvar, globalvar, heapvar); localvar = 1; /\* Make changes to these variables. \*/
+"heapvar = \\"%s\\"\n", mypid, localvar, globalvar, heapvar); localvar = 1; /\* Make changes to these variables. \*/
 
 globalvar = mypid;
 
@@ -282,7 +280,7 @@ printf("\nMy pid is %d. The variables "
 
 "have the following values in my address space:\n "
 
-"localvar = %d, globalvar = %d, heapvar = \\%s\\ \n\n", mypid, localvar, globalvar, heapvar);
+"localvar = %d, globalvar = %d, heapvar = \\"%s\\" \n\n", mypid, localvar, globalvar, heapvar);
 
 return 0;
 
@@ -372,7 +370,7 @@ fatal_error(errno, "open"); if ( -1 == (retval = fork()) ) fatal_error(errno,
 
 i++ ) { if ( 0 \>= write(fd, "p", 1) ) fatal_error(errno, "write"); usleep(200000); } write(fd, "\0", 1); close(fd); if ( retval != 0 ) printf("File
 
-\\newfile\\ is ready for viewing.\n"); return 0; }
+\\"newfile\\" is ready for viewing.\n"); return 0; }
 
 The parent process opens a file named *newfile* for writing in its current working directory. It then calls fork(). The child inherits a copy of the open file descriptor for the file and can therefore write to it, because the file access mode is part of the descriptor. Both the child and the parent write characters into the file, one at a time. The child writes *c*’s and the parent *p*’s. The calls to usleep() decrease the chance that one process will perform all of its output before the other. Both processes close the file when they finish writing.
 
@@ -2995,3 +2993,5 @@ the signals in sigmask, after which it calls sigwait(&sigmask,
 zombie, what must the program do in the case that the
 
 value returned in sig is SIGCHLD?
+
+![](media/index-784_1.jpg)

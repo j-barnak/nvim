@@ -17,6 +17,13 @@ BOOK_TITLES = [title]  # plus the OPF dc:title entries, filled in below
 NAME_FIX = {"more-ocaml-algorithms-methods-and-diversions": {
     "index_split_001.html": "Title Page", "index_split_002.html": "Copyright",
     "index_split_019.html": "Part: Generating PDF Documents (an extended example)"}}
+# Calibre PDF-reflow listings printed as <p> paragraphs whose lines are led by a
+# small-font <span class="X">N</span> line number (C++ Initialization Story:
+# 55 paragraphs, 7 listing runs). Value: (line-number span class, fence
+# language). Keyed per slug because the same shape means something else in
+# other epubs (LMM's 12,567 kernel-source lines, footnote numbers in Bootlin
+# and Algorithms Illuminated).
+NUMBERED_LISTINGS = {"c-initialization-story": ("calibre20", "cpp")}
 def sanitize(t):
     t = re.sub(r'[\\/:*?"<>|]', '-', (t or "").strip())
     if len(t) > 140: t = re.sub(r" [^ ]*$", "", t[:140])  # cut at a word boundary
@@ -93,6 +100,60 @@ def prep_code(s):
             if t.strip() or not imgs: buf.append(t)
         flush()
         for x in run: x._merged = True; x.decompose()
+    # Line-numbered listing paragraphs (see NUMBERED_LISTINGS): pandoc rendered
+    # each paragraph (a chunk of 3 to 16 numbered lines) as ONE escaped prose
+    # line and swallowed the \" escapes inside it (F7). Merge each run of such
+    # paragraphs into a <pre>, one line per numbered span; a listing whose
+    # numbering restarts (several listings printed back to back) gets its own.
+    spec = NUMBERED_LISTINGS.get(SLUG)
+    if spec:
+        ncls, lang = spec
+        def num_span(c):
+            return (getattr(c, "name", None) == "span" and ncls in (c.get("class") or [])
+                    and c.get_text().strip().isdigit())
+        def lead_num(el):
+            if getattr(el, "name", None) != "p": return False
+            for c in el.contents:
+                if isinstance(c, str) and not c.strip(): continue
+                return num_span(c)
+            return False
+        for p in list(s.find_all("p")):
+            if not lead_num(p) or p.parent is None or getattr(p, "_merged", False): continue
+            run = [p]; nxt = p.find_next_sibling()
+            while nxt is not None and lead_num(nxt):
+                run.append(nxt); nxt = nxt.find_next_sibling()
+            blocks = []; lines = []; last = 0
+            for x in run:
+                for c in x.contents:
+                    if num_span(c):
+                        n = int(c.get_text())
+                        if n <= last and lines: blocks.append(lines); lines = []
+                        last = n; lines.append(c.get_text().strip())
+                    elif lines:
+                        lines[-1] += (c if isinstance(c, str) else c.get_text()).replace("\u00a0", " ")
+            if lines: blocks.append(lines)
+            for b in blocks:
+                pre = s.new_tag("pre"); code = s.new_tag("code"); pre["class"] = lang
+                code.string = "\n".join(l.rstrip() for l in b); pre.append(code); run[0].insert_before(pre)
+            for x in run: x._merged = True; x.decompose()
+# pandoc 3.1.3's gfm writer mishandles a backslash in TEXT (outside code): a
+# backslash before any ASCII punctuation is written as "\\" and the punctuation
+# character is dropped (`A \" B` -> `A \\ B`, likewise \' \* \_ \[ and the
+# second of a "\\" pair), so every C/C++/Rust string escape in a paragraph-coded
+# listing lost its quote (F7: 63 sites in 3 books). A doubled backslash comes
+# through intact (`\\"` -> `\\"`, which renders as `\"`), so double every
+# backslash that precedes punctuation in text nodes that pandoc will escape.
+# Verbatim contexts (pre, code, kbd, samp, tt, var: pandoc emits them as code)
+# are left alone; there the text passes through untouched.
+_ESCAPABLE = re.compile(r'\\(?=[!-/:-@\[-`{-~])')
+_VERBATIM = ["pre", "code", "kbd", "samp", "tt", "var", "script", "style", "textarea", "math", "svg"]
+def guard_backslashes(s):
+    from bs4 import NavigableString
+    for t in s.find_all(string=True):
+        if type(t) is not NavigableString or "\\" not in t: continue   # subclasses are comments, CDATA, doctype
+        if t.find_parent(_VERBATIM): continue
+        new = _ESCAPABLE.sub(r"\\\\", t)
+        if new != t: t.replace_with(new)
 def flatten_tables(html):
     # pandoc's gfm writer replaces any table with block-content cells (a <pre>
     # code listing, lists, multiple <p>) with the literal "[TABLE]" and DROPS the
@@ -104,6 +165,14 @@ def flatten_tables(html):
     s = BeautifulSoup(html, "html.parser")
     prep_code(s)
     for table in s.find_all("table"):
+        # get_text would flatten <sup>/<sub> to "2 63": write them TeX-style,
+        # ^{...} / _{...}, braces only when the content is more than one token
+        # (F9: Programming Rust Table 3-1). Prose keeps pandoc's own rendering
+        # (Unicode superscript digits, or ^(n) when no glyph exists).
+        for el in table.find_all(["sup", "sub"]):
+            t = el.get_text().strip(); mark = "^" if el.name == "sup" else "_"
+            el.replace_with(mark + (t if re.fullmatch(r"\w+", t) else "{" + t + "}"))
+        table.smooth()   # merge the new strings with their neighbours, else get_text(" ") prints "2 ^8"
         div = s.new_tag("div")
         cap = table.find("caption")
         if cap:
@@ -136,16 +205,48 @@ def flatten_tables(html):
                     nt.append(nr)
             div.append(nt)
         table.replace_with(div)
+    guard_backslashes(s)   # after the tables are rebuilt: their text-only cells are pandoc-escaped text too
     return str(s)
 # Real code-fence languages; anything else on a fence line is a CSS/DocBook class
 # pandoc leaked from the source's <pre class="..."> (programlisting, insert,
 # insert-before, table, less_space, pagebreak-before, ...) - strip it to a plain
 # fence so the block still renders as code without a bogus "language".
 _LANGS = set("c cpp c++ cc cxx h hpp cs csharp objc rust rs python py py3 js javascript jsx mjs ts typescript tsx json json5 jsonc sh bash zsh shell console shell-session sh-session shellsession terminal doscon bat batch powershell ps1 java kotlin kt go golang lua ruby rb perl pl php swift scala r matlab octave html xhtml xml svg css scss sass less styl yaml yml toml ini cfg conf sql haskell hs ocaml ml sml fsharp fs asm nasm gas x86asm armasm mips llvm diff patch udiff make makefile cmake meson ninja dockerfile docker text plaintext plain txt none nohighlight ada d dart elixir ex erlang clojure clj lisp elisp scheme racket vim viml vimscript proto protobuf graphql gql markdown md rst tex latex bibtex verilog systemverilog vhdl gdb ld linker-script nginx apache toml groovy gradle tcl awk sed regex ebnf bnf abnf pseudocode".split())
+# Dead links. Nothing inside a book directory can be a link target except the
+# extracted media/ files (chapter anchors do not survive pandoc, the epub's
+# .html files are not copied), so every relative link is dead: keep its text,
+# drop the target. The link text may hold an escaped bracket (pandoc writes a
+# literal [ ] as \[ \]: Database Internals' citations `[\[DEMERS87\]](app01.html#DEMERS87)`,
+# System Programming in Linux's `\[[4\]](index_split_014.html#p1236)`) or a
+# callout image (Command-Line Rust: `[![1](media/assets/1.png)](#co_...)`);
+# the old `[^\]]*` text pattern could cross neither, which left 370 citation
+# links and 882 callout links with targets that do not exist (F8).
+_LINKTXT = r'((?:\\.|!\[[^\]]*\]\([^)]*\)|[^\]\\])*)'
+_EXTERNAL = r'(?:[A-Za-z][\w+.-]*://|mailto:|tel:|urn:|data:|news:|irc:)'
+_LINK = re.compile(r'(?<![!\\])\[' + _LINKTXT + r'\]\((?!' + _EXTERNAL + r'|media/)([^)]*)\)')
+def _links(seg):
+    # a segment of markdown between fences; a link text may span two lines
+    # (a hard-broken TOC entry: "54. [`3`  \n    `BINARY OPERATORS`](chapter3.xhtml#ch3)")
+    seg = re.sub(r'\[!\[[^\]]*\]\([^)]*\)\]\((?!' + _EXTERNAL + r')[^)]*\.x?html[^)]*\)', '', seg)   # dead linked-image nav thumbnail
+    def strip(m):
+        # A 4-space-indented line may be an indented code block, where `a[0]()`
+        # is code: there only the target shapes the old rules handled go.
+        ls = seg.rfind("\n", 0, m.start()) + 1
+        if re.match(r'(?: {4}|\t)', seg[ls:]) and not (m.group(2).startswith("#") or re.search(r'\.x?html', m.group(2))):
+            return m.group(0)
+        return m.group(1)   # dead intra-epub link (or pure anchor): keep the text
+    return _LINK.sub(strip, seg)
 def clean(md):
-    md = re.sub(r'\[!\[[^\]]*\]\([^)]*\)\]\((?!\w+://)[^)]*\.x?html[^)]*\)', '', md)  # dead linked-image nav thumbnail
-    md = re.sub(r'\[([^\]]*)\]\(#[^)]*\)', r'\1', md)                        # dead pure-anchor link
-    md = re.sub(r'\[([^\]]*)\]\((?!\w+://)[^)]*\.x?html[^)]*\)', r'\1', md)  # dead intra-epub .html link (kept text)
+    # the link rules never run inside a fence: a fence is verbatim source text
+    out = []; buf = []; inf = False
+    def flush():
+        if buf: out.append(_links("\n".join(buf))); del buf[:]
+    for l in md.split("\n"):
+        if l.lstrip()[:3] in ("```", "~~~"): flush(); inf = not inf; out.append(l)
+        elif inf: out.append(l)
+        else: buf.append(l)
+    flush()
+    md = "\n".join(out)
     md = re.sub(r'(?m)^([ \t]*`{3,})[ \t]*([A-Za-z][\w+.#-]*)[ \t]*$',
                 lambda m: m.group(1) if m.group(2).lower() not in _LANGS else m.group(0), md)
     md = re.sub(r'(?m)^&nbsp;[ \t]*$', '', md)  # a paragraph holding one non-breaking space: an empty line, not a literal entity
@@ -348,6 +449,11 @@ def fence_code(md):
 #     "Plain prose" = outside a fence, not indented, not next to an indented
 #     code block, no trailing hard break, no code punctuation, not ending in ":".
 #     A line failing any of these is never removed, however often it repeats.
+#     A title-shaped head (book/chapter title, "CHAPTER N") is also the text of
+#     the chapter opener, so its FIRST occurrence in the file is kept and only
+#     the later repeats go (F10: Rust in Action's "CHAPTER N", "INDEX" and
+#     "CONTENTS", the section title on a Bootlin section's first slide); a
+#     copyright footer, back-link or per-slug head has no opener and goes always.
 _RECTO = re.compile(r"^[A-Za-z][A-Za-z0-9 ,:/'’.&-]{2,58}? \*\*\d+\*\*$")
 _VERSO = re.compile(r"^\*\*\d+\*\* [A-Z][A-Za-z0-9 ,:/'’.&-]{1,58}$")
 RUNNING_HEADS = {
@@ -389,22 +495,28 @@ def strip_furniture(md, ttl=""):
         return t
     def shape(t):
         nt = _norm(t)
-        return bool(nt in keys or nt in heads or _CHAPLABEL.fullmatch(t) or _BACKLINK.fullmatch(t)
-                    or (_COPYRIGHT.search(t) and _YEAR.search(t)))
+        if nt in keys or _CHAPLABEL.fullmatch(t): return "title"      # doubles as the opener: first occurrence kept
+        if nt in heads or _BACKLINK.fullmatch(t) or (_COPYRIGHT.search(t) and _YEAR.search(t)): return "furniture"
+        return None
     from collections import Counter
     cnt = Counter(); cand = {}; inf = False
     for i, l in enumerate(lines):
         if l.lstrip()[:3] in ("```", "~~~"): inf = not inf; continue
         if inf: continue
-        t = plain(i)
-        if t is not None and shape(t): cnt[t] += 1; cand[i] = t
+        t = plain(i); k = shape(t) if t is not None else None
+        if k: cnt[t] += 1; cand[i] = (t, k)
     rep = {t for t, c in cnt.items() if c >= 6}
     nfurn = sum(1 for l in lines if _furn(l))
     if nfurn < 4 and not rep: return md
-    out = []; inf = False
+    out = []; inf = False; seen = set()
     for i, l in enumerate(lines):
         if l.lstrip()[:3] in ("```", "~~~"): inf = not inf; out.append(l); continue
-        if not inf and ((nfurn >= 4 and _furn(l)) or cand.get(i) in rep): continue
+        if not inf:
+            if nfurn >= 4 and _furn(l): continue
+            c = cand.get(i)
+            if c and c[0] in rep:
+                if c[1] == "title" and c[0] not in seen: seen.add(c[0])   # the opener
+                else: continue
         out.append(l)
     return "\n".join(out)
 def write(idx, ttl, md):
@@ -475,15 +587,34 @@ if posixpath.basename(out.rstrip("/")) in ANCHOR_SPLIT and top_a:
                     # History</b></p>); find_all_next() skips it, which pushed the
                     # boundary to the next page-number heading (C++ Initialization
                     # Story's Revision History file opened with chapter 1's first page).
-                    for n in [el] + el.find_all_next(True, limit=600):
+                    # An INLINE anchor (<p><a id="p57"></a><i>Language foundations</i></p>,
+                    # Rust in Action) is tested through the paragraph that holds it:
+                    # walking from the <a> skipped that title and matched the same
+                    # words in the next page's running head, so every chapter's
+                    # opener page sat at the tail of the previous chapter file.
+                    start = el if el.name == "p" else (el.find_parent("p") or el)
+                    for n in [start] + start.find_all_next(True, limit=600):
                         if n.get("id") in others: break
                         if n.name not in H and n.name != "p": continue
                         t = _nrm(n.get_text())
                         if any(t == k or (t.startswith(k) and len(t) <= len(k) * 2 + 4) for k in keys): h = n; break
+                        # a title wrapped over two paragraphs ("Lifetimes, ownership," /
+                        # "and borrowing"): the first holds a prefix, the next completes it
+                        if n.name == "p" and len(t) >= 6 and any(k.startswith(t) for k in keys):
+                            nx = n.find_next_sibling("p")
+                            if nx is not None and any((t + _nrm(nx.get_text())).startswith(k) for k in keys): h = n; break
                         if n.name in H and first_head is None: first_head = n
                         seen_chars += len(n.get_text());
                         if seen_chars > 4000: break
                     if h is None: h = first_head
+                # A bare "CHAPTER N" label paragraph right before the title
+                # belongs to the chapter (Effective Modern C++ prints it on
+                # its own line above the title).
+                if h is not None:
+                    pv = h.find_previous_sibling(["p"] + list(H))
+                    if (pv is not None and pv.get("id") not in others
+                            and re.fullmatch(r"(chapter|part|appendix)\s*[0-9ivxlc]+", " ".join(pv.get_text().split()), re.I)):
+                        h = pv
                 (h if h is not None else el).insert_before(mk)
             else: body.insert(0, mk)                  # whole-doc boundary
         parts.append(pandoc_html(str(body), os.path.dirname(p)))

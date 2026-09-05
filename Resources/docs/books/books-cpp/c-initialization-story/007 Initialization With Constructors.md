@@ -394,7 +394,7 @@ std::cout \<\< tvSet.Id() \<\< ", " \<\< tvSet.Name() \<\< '\n'; }
 
 You might also scratch your head and ask why I declared the name parameter as const std::string& rather than just std::string&. First, we don’t want to modify this parameter in the constructor’s body. What’s more, const T&-const references can bind to “temporary” objects like a string literal "super car". Without a const reference, we would have to pass some named string object. Alternatively, we can pass the name by value and perform a “move operation” on that argument. Further in the book, I’ll address this topic in detail; see
 
-chapter: [A Use Case - Best Way to Initialize string Data Members]()[.]()
+chapter: A Use Case - Best Way to Initialize string Data Members.
 
  
 

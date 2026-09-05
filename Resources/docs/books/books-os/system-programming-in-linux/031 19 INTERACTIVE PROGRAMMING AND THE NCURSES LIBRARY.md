@@ -1,5 +1,3 @@
-![](media/index-1135_1.jpg)
-
 19 INTERACTIVE PROGRAMMING AND
 
 THE NCURSES LIBRARY
@@ -236,7 +234,7 @@ Some applications need to distinguish between, say three characters
 
 entered slowly and three characters that are part of a single command or escape sequence. For example, the arrow keys on the keyboard generate
 
-3-byte sequences. If you press the left arrow key, it sends the escape sequence ESC \ B. If you enter these same characters slower than the
+3-byte sequences. If you press the left arrow key, it sends the escape sequence ESC \[ B. If you enter these same characters slower than the
 
 timeout allows, they’ll be read as three separate characters and won’t cause a cursor movement. Programs such as vi that put the terminal into raw mode depend on being able to make this distinction.
 
@@ -288,7 +286,7 @@ Only when the queue has been emptied will the driver behave as
 
 described in Case 1.
 
-The program in [Listing 19-1 is designed to experiment with these values. It accepts two command line options: -m *MIN value* and -t *TIME value*.
+The program in Listing 19-1 is designed to experiment with these values. It accepts two command line options: -m *MIN value* and -t *TIME value*.
 
 It puts the terminal into noncanonical mode and sets these variables
 
@@ -1826,7 +1824,7 @@ numrows/2 \*/ sprite_obj-\>pos.c = 0; /\* Instead of 1 \*/ sprite_obj-
 
 In other words, the left margin is 0, not 1 and the right is COLS - 1, not numcols, and similarly for the top and bottom.
 
-The rest of the changes are essentially replacing calls to write to the screen by addstr() and replacing references to numrows by LINES and to numcols by COLS: void show_moves(int count) { char moves\[[16\]](index_split_014.html#p1237); sprintf(moves, " moves: %d", count); addstr(moves); /\* Curses change.
+The rest of the changes are essentially replacing calls to write to the screen by addstr() and replacing references to numrows by LINES and to numcols by COLS: void show_moves(int count) { char moves\[16\]; sprintf(moves, " moves: %d", count); addstr(moves); /\* Curses change.
 
 \*/ } void show_moves_only(int count) { move(LINES - 1, 0); /\* Curses
 

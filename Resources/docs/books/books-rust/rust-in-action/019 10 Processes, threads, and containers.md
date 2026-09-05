@@ -1,3 +1,75 @@
+*Processes, threads,*
+
+*and containers*
+
+***This chapter covers***
+
+ Concurrent programming in Rust
+
+ How to distinguish processes, threads,
+
+and containers
+
+ Channels and message passing
+
+ Task queues
+
+So far this book has almost completely avoided two fundamental terms of systems programming: threads and processes. Instead, the book has used the single term: program. This chapter expands our vocabulary.
+
+Processes, threads, and containers are abstractions created to enable multiple tasks to be carried out at the same time. This enables *concurrency*. Its peer term, *parallelism*, means to make use of multiple physical CPU cores at the same time.
+
+Counterintuitively, it is possible to have a concurrent system on a single CPU
+
+core. Because accessing data from memory and I/O take a long time, threads requesting data can be set to a *blocked* state. Blocked threads are rescheduled when their data is available.
+
+Concurrency, or doing multiple things at the same time, is difficult to introduce into a computer program. Employing concurrency effectively involves both new concepts and new syntax.
+
+**328**
+
+***Anonymous functions***
+
+**329**
+
+The aim of this chapter is to give you the confidence to explore more advanced material. You will have a solid understanding of the different tools that are available to you as an applications programmer. This chapter exposes you to the standard library and the well engineered crates crossbeam and rayon. It will enable you to use them, though it won’t give you sufficient background to be able to implement your own concurrency crates. The chapter follows the following structure:
+
+ *It introduces you to Rust’s closure syntax in section 10.1.* Closures are also known as anonymous functions and lambda functions. The syntax is important because the standard library and many (perhaps all) external crates rely on that syntax to provide support for Rust’s concurrency model.
+
+ *It provides a quick lesson on spawning threads in section 10.2.* You’ll learn what a thread is and how to create (spawn) those. You’ll also encounter a discussion of why programmers are warned against spawning tens of thousands of threads.
+
+ *It distinguishes between functions and closures in section 10.3.* Conflating these two concepts can be a source of confusion for programmers new to Rust as these are often indistinguishable in other languages.
+
+ *It follows with a large project in section 10.4.* You’ll implement a multithreaded parser and a code generator using multiple strategies. As a nice aside, you get to create procedural art along the way.
+
+ *The chapter concludes with an overview of other forms of concurrency.* This includes processes and containers.
+
+***10.1***
+
+***Anonymous functions***
+
+This chapter is fairly dense, so let’s get some points on the board quickly with some basic syntax and practical examples. We’ll circle back to fill in a lot of the conceptual and theoretical material.
+
+Threads and other forms of code that can run concurrently use a form of function definition that we’ve avoided for the bulk of the book. Taking a look at it now, defining a function looks like this:
+
+fn add(a: i32, b: i32) -\> i32 {
+
+a + b
+
+}
+
+The (loosely) equivalent lambda function is
+
+let add = \|a,b\| { a + b };
+
+Lambda functions are denoted by the pair of vertical bars (\|…\|) followed by curly brackets ({…}). The pair of vertical bars lets you define arguments. Lambda functions in Rust can read variables from within their scope. These are *closures*.
+
+Unlike regular functions, lambda functions cannot be defined in global scope.
+
+The following listing gets around this by defining one within its main(). It defines two
+
+**330**
+
+CHAPTER 10
+
 ***Processes, threads, and containers***
 
 functions, a regular function and a lambda function, and then checks that these produce the same result.
@@ -1908,7 +1980,7 @@ Source code for render-hex
 
 185 .set("width", WIDTH)
 
-186 .set("style", "style=\\outline: 5px solid \#800000;\\") 187 .add(background)
+186 .set("style", "style=\\"outline: 5px solid \#800000;\\"") 187 .add(background)
 
 188 .add(sketch)
 
@@ -2918,33 +2990,3 @@ Using freestanding binaries can involve significant limitations, though. Without
  To increase the convenience of enums, it can be handy to bring their variants into local scope with use crate::.
 
  Isolation is provided as a spectrum. In general, as isolation between software components increases, performance decreases.
-
-*Kernel*
-
-***This chapter covers***
-
- Writing and compiling your own OS kernel
-
- Gaining a deeper understanding of the Rust
-
-compiler’s capabilities
-
- Extending cargo with custom subcommands
-
-Let’s build an operating system (OS). By the end of the chapter, you’ll be running your own OS (or, at least, a minimal subset of one). Not only that, but you will have compiled your own bootloader, your own kernel, and the Rust language directly for that new target (which doesn’t exist yet).
-
-This chapter covers many features of Rust that are important for programming without an OS. Accordingly, the chapter is important for programmers who intend to work with Rust on embedded devices.
-
-***11.1***
-
-***A fledgling operating system (FledgeOS)***
-
-In this section, we’ll implement an OS kernel. The OS kernel performs several important roles, such as interacting with hardware and memory management, and coordinating work. Typically, work is coordinated through processes and threads.
-
-We won’t be able to cover much of that in this chapter, but we will get off the ground. We’ll fledge, so let’s call the system we’re building *FledgeOS*.
-
-**365**
-
-**366**
-
-CHAPTER 11

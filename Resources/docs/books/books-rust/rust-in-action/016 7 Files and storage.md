@@ -1,3 +1,109 @@
+*Files and storage*
+
+***This chapter covers***
+
+ Learning how data is represented on physical
+
+storage devices
+
+ Writing data structures to your preferred file
+
+format
+
+ Building a tool to read from a file and inspect
+
+its contents
+
+ Creating a working key-value store that’s
+
+immune from corruption
+
+Storing data permanently on digital media is trickier than it looks. This chapter takes you though some of the details. To transfer information held by ephemeral electrical charges in RAM to (semi)permanent storage media and then be able to retrieve it again later takes several layers of software indirection.
+
+The chapter introduces some new concepts such as how to structure projects into library crates for Rust developers. This task is needed because one of the projects is ambitious. By the end of the chapter, you’ll have built a working key-value store that’s guaranteed to be durable to hardware failure at any stage. During the chapter, we’ll work through a small number of side quests. For example, we implement parity **212**
+
+![](media/index-239_1.png)
+
+![](media/index-239_2.png)
+
+![](media/index-239_3.png)
+
+***What is a file format?***
+
+**213**
+
+bit checking and explore what it means to hash a value. To start with, however, let’s see if we can create patterns from the raw byte sequence within files.
+
+***7.1***
+
+***What is a file format?***
+
+File formats are standards for working with data as an single, ordered sequence of bytes. Storage media like hard disk drives work faster when reading or writing large blocks of data in serial. This contrasts with in-memory data structures, where data layout has less of an impact.
+
+File formats live in a large design space with trade-offs in performance, human-readability, and portability. Some formats are highly portable and self-describing. Others restrict themselves to being accessible within a single environment and are unable to be read by third-party tools, yet they are high performance.
+
+Table 7.1 illustrates some of the design space for file formats. Each row reveals the file format’s internal patterns, which are generated from the same source text. By color-coding each byte within the file, it’s possible to see structural differences between each representation.
+
+Table 7.1
+
+The internals of four digital versions of William Shakespeare’s ***Much Ado About Nothing***
+
+produced by Project Gutenberg.
+
+The plain text version of the play contains printable char-
+
+acters only. These are indicated by dark grey for letters
+
+and punctuation, and white for whitespace.
+
+Visually, the image appears to be noisy. It lacks internal
+
+structure. That’s due to the variation in length of the natu-
+
+ral language that the file represents. A file with regular,
+
+repeating structures, such as a file format designed to
+
+hold arrays of floating-point numbers, tends to look quite
+
+different.
+
+The EPUB format is actually a compressed ZIP archive
+
+with a bespoke file extension. There are many bytes
+
+within the file that fall out of the range of the printable
+
+category as indicated by the mid-grey pixels.
+
+MOBI includes four bands of NULL bytes (0x00), repre-
+
+sented as black pixels. These bands probably represent
+
+the result of an engineering trade-off. In some sense,
+
+these empty bytes are wasted space. They’re probably
+
+added as padding so that the file’s sections are easy to
+
+parse later on.
+
+The other notable feature of this file is its size. It’s larger
+
+than the other versions of the play. This might imply that
+
+the file is harboring more data than just the text. Candi-
+
+dates include display elements like fonts, or encryption
+
+keys that enforce anti-copying restrictions within the file.
+
+![](media/index-240_1.png)
+
+**214**
+
+CHAPTER 7
+
 ***Files and storage***
 
 Table 7.1
@@ -98,7 +204,7 @@ json (as UTF-8):
 
 cbor (as UTF-8):
 
-�dnamegCalabarjpopulation+�hlatitude�@������ilongitude�@ ��\\
+�dnamegCalabarjpopulation+�hlatitude�@������ilongitude�@ ��\\)
 
 bincode (as UTF-8):
 
@@ -3555,27 +3661,3 @@ Persisting index data between runs
  To print to standard error (stderr), use the eprintln! macro. Its API is identical to the println! macro that is used to print to standard output (stdout).
 
  The Option type is used to indicate when values may be missing, such as asking for an item from an empty list.
-
-*Networking*
-
-***This chapter covers***
-
- Implementing a networking stack
-
- Handling multiple error types within local scope
-
- When to use trait objects
-
- Implementing state machines in Rust
-
-This chapter describes how to make HTTP requests multiple times, stripping away a layer of abstraction each time. We start by using a user-friendly library, then boil that away until we’re left with manipulating raw TCP packets. When we’re finished, you’ll be able to distinguish an IP address from a MAC address. And you’ll learn why we went straight from IPv4 to IPv6.
-
-You’ll also learn lots of Rust in this chapter, most of it related to advanced error handling techniques that become essential for incorporating upstream crates. Several pages are devoted to error handling. This includes a thorough introduction to trait objects.
-
-Networking is a difficult subject to cover in a single chapter. Each layer is a fractal of complexity. Networking experts will hopefully overlook my lack of depth in treating such a diverse topic.
-
-**251**
-
-**252**
-
-CHAPTER 8

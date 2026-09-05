@@ -1269,3 +1269,21 @@ through step 2 to step 3
 char \* **(int \*\*p)** ; step 3
 
 say " **function returning…**"
+
+char **\*** ;
+
+step 5
+
+say " **pointer to…**"
+
+char ;
+
+step 6
+
+say " **char;** "
+
+Then put it all together to read:
+
+"c is an array\[0..9\] of pointer to a function returning a pointer-to-char"
+
+and we're done. Note: the fuctions pointed to in the array take a pointer to a pointer as their one and only parameter.

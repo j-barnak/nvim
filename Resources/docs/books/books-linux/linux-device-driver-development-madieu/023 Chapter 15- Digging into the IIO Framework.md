@@ -1395,7 +1395,7 @@ There is no configurable attribute in the **config** directory for the **hrtimer
     echo 1 > /sys/bus/iio/devices/iio:device0/buffer/enable
     ```
 
-4.  Finally, data can be dumped using **cat /dev/iio\\device0 \| xxd –**. Because the trigger is an hrtimer, data will be captured and pushed at every hrtimer period interval.
+4.  Finally, data can be dumped using **cat /dev/iio\\:device0 \| xxd –**. Because the trigger is an hrtimer, data will be captured and pushed at every hrtimer period interval.
 
 5.  To disable this periodic capture, the command to use is the following:
 

@@ -2052,7 +2052,7 @@ driver, they undergo some preliminary processing. Some codes are
 
 actual characters to be displayed, called *printable* characters, such as letters, numbers, and punctuation. Their graphical representations on
 
-the screen are called *glyphs*. Other codes are control characters. You’re familiar with some of them, such as CTRL-C and CTRL-\\ but there are
+the screen are called *glyphs*. Other codes are control characters. You’re familiar with some of them, such as CTRL-C and CTRL-\\, but there are
 
 several others. Some sequences are consecutive bytes that tell the driver where to position the cursor, or what colors to use to display text,
 
@@ -2080,7 +2080,7 @@ in 1997.
 
 An ANSI escape sequence is a sequence of ASCII characters, the first
 
-two of which are the ASCII *escape* character, whose decimal code is 27, followed by the left-bracket character \. The escape character is often written as the octal code \033 or the hexadecimal code \x1b. The string
+two of which are the ASCII *escape* character, whose decimal code is 27, followed by the left-bracket character \[. The escape character is often written as the octal code \033 or the hexadecimal code \x1b. The string
 
 \033\[ is known as the *Control Sequence Introducer (CSI)*. The character or characters following the CSI are an alphanumeric code that specifies a particular keyboard or display function. For example, the ANSI escape
 
@@ -2092,7 +2092,7 @@ principle, a program that uses these sequences should behave the same
 
 regardless of which terminal is being emulated; however, this is not
 
-guaranteed. This is why the *curses* library (now called *ncurses*) was developed. This library provides a consistent, standardized interface to the terminal. We’ll cover the *ncurses* library in [Chapter 19.
+guaranteed. This is why the *curses* library (now called *ncurses*) was developed. This library provides a consistent, standardized interface to the terminal. We’ll cover the *ncurses* library in Chapter 19.
 
 It’s surprisingly easy to find the escape sequences that are available: \$
 
@@ -2116,7 +2116,7 @@ notation
 
 Example Action
 
-ESC \ 1 J
+ESC \[ 1 J
 
 \033\[1J
 
@@ -2178,7 +2178,7 @@ There are two ways to replace the displayed file size at each update.
 
 One is, for each file, to move the cursor to the start of its size in the display area, erase the current size, and write the new size. The other is to erase the screen from the top line down to the line containing the last file, construct a single string in memory with all of the new sizes, and print that entire string to the screen all at once at cursor position (1,1).
 
-The second method is a lot cleaner and easier than the first. [Figure 9-3
+The second method is a lot cleaner and easier than the first. Figure 9-3
 
 illustrates this idea.
 
@@ -2260,7 +2260,7 @@ number of line containing the prompt \*/ volatile sig_atomic_t stopflag =
 
 The signal handler code follows. It makes no calls to unsafe
 
-functions; the file size is converted to a string by a function lltostr() whose source is in the file *common/l ongtostr.c* in the source code repository. The inline comments explain the steps: void update_stats(int signum) { const char prompt\[\] = "Enter \\q\\ to quit:"; struct stat statbuf; /\* stat structure filled by statx() \*/ char outbuffer\[4096\]; /\*
+functions; the file size is converted to a string by a function lltostr() whose source is in the file *common/l ongtostr.c* in the source code repository. The inline comments explain the steps: void update_stats(int signum) { const char prompt\[\] = "Enter \\'q\\' to quit:"; struct stat statbuf; /\* stat structure filled by statx() \*/ char outbuffer\[4096\]; /\*
 
 String to display w/ every update \*/ char one_line\[256\]; /\* Buffer to
 
