@@ -37,6 +37,20 @@ end
 -- fish it doubles backslashes, which turned python's '\n' into '\\n'.
 local util = require("config.util")
 local shq, have, fzf = util.shq, util.have, util.fzf
+
+-- mkdir -p that reports instead of throwing: vim.fn.mkdir raises, and an
+-- unwritable cache directory turned any :Docs call into an E739 traceback.
+-- Returns true when the directory exists afterwards.
+local function mkdir(path)
+	if vim.fn.isdirectory(path) == 1 then
+		return true
+	end
+	local ok = pcall(vim.fn.mkdir, path, "p")
+	if not ok then
+		vim.notify("Docs: cannot create " .. path, vim.log.levels.ERROR)
+	end
+	return ok
+end
 local cache_root = data_root .. "/linux"
 local tags_cache = cache_root .. "/tags.txt"
 
@@ -204,7 +218,12 @@ local function render_lines(lines, ft, dir, title)
 		end
 	end
 	if win then
-		vim.api.nvim_set_current_win(win)
+		-- Focus it only when it is on this tabpage: a slow render that lands
+		-- after the user has moved on should fill the viewer, not drag them
+		-- back (and never switch tabpage under them).
+		if vim.api.nvim_win_get_tabpage(win) == vim.api.nvim_get_current_tabpage() then
+			vim.api.nvim_set_current_win(win)
+		end
 	else
 		vim.cmd.vsplit({ mods = { split = "belowright" } })
 		win = vim.api.nvim_get_current_win()
@@ -558,7 +577,7 @@ local function open_file(path)
 				-- then fail, and that truncation would be served forever.
 				if res.code == 0 then
 					pcall(function() -- cache even if a newer open won the race
-						vim.fn.mkdir(convcache_dir, "p")
+						mkdir(convcache_dir)
 						vim.fn.writefile(lines, cf)
 					end)
 				end
@@ -758,7 +777,7 @@ local function prewarm_next()
 		return
 	end
 	prewarm_busy = true
-	vim.fn.mkdir(convcache_dir, "p")
+	mkdir(convcache_dir)
 	-- pcall: a spawn failure must not abort the picker or wedge the queue.
 	-- setsid puts the loop, its subshell and every pandoc in their own
 	-- process group, so the kill on exit reaches all of them (a plain kill
@@ -855,7 +874,7 @@ local function ensure_docs(version, cb)
 	if vim.fn.isdirectory(docdir) == 1 then
 		return cb(dir, docdir)
 	end
-	vim.fn.mkdir(cache_root, "p")
+	mkdir(cache_root)
 	vim.notify("Cloning kernel Documentation @ " .. version .. " … (first time only)")
 	local tmp = dir .. ".tmp"
 	local script = table.concat({
@@ -907,7 +926,7 @@ local function with_versions(cb)
 	if vim.fn.filereadable(tags_cache) == 1 then
 		return cb(vim.fn.readfile(tags_cache))
 	end
-	vim.fn.mkdir(cache_root, "p")
+	mkdir(cache_root)
 	vim.notify("Fetching kernel versions …")
 	local cmd = "git ls-remote --tags --refs " .. repo .. " | grep -oE 'v[0-9]+\\.[0-9]+(\\.[0-9]+)?$' | sort -Vr"
 	vim.system({ "sh", "-c", cmd }, { text = true, timeout = 30000 }, function(res)
@@ -969,7 +988,7 @@ local function ensure_repo(dir, url, sparse, marker, cb)
 	if vim.fn.isdirectory(dir .. "/" .. marker) == 1 then
 		return cb(dir)
 	end
-	vim.fn.mkdir(vim.fs.dirname(dir), "p")
+	mkdir(vim.fs.dirname(dir))
 	-- Clone name: <name>/master -> "<name>"; a flat data_root/<name> -> "<name>".
 	local label = vim.fs.basename(dir)
 	if label == "master" then
@@ -1428,7 +1447,7 @@ local function make_wiki(name, url, prompt)
 		if #vim.fn.glob(dir .. "/*.md", false, true) > 0 then
 			return browse()
 		end
-		vim.fn.mkdir(vim.fs.dirname(dir), "p")
+		mkdir(vim.fs.dirname(dir))
 		vim.notify("Cloning " .. name .. " wiki … (first time)")
 		-- Clone into <dir>.tmp and rename, so an interrupted clone never leaves
 		-- a partial dir that makes every retry fail with "already exists".
@@ -1596,9 +1615,9 @@ local function pick_sdm(vol)
 			return vim.notify(t .. " needed to build Intel SDM", vim.log.levels.WARN)
 		end
 	end
-	vim.fn.mkdir(out, "p")
+	mkdir(out)
 	local py = tools_src .. "/figextract.py" -- committed under Resources/tools, no runtime copy
-	vim.fn.mkdir(tools_dir, "p") -- the downloaded PDF lands here
+	mkdir(tools_dir) -- the downloaded PDF lands here
 	vim.notify("Fetching + splitting Intel SDM Vol " .. vol .. " … (first time; figures take a minute)")
 	vim.system(
 		{ "sh", "-c", tool_script("sdm_build.sh"), "sdm", pdf, out, SDM_URLS[vol], py },
@@ -1657,7 +1676,7 @@ render_shell = function(cmd, title, ft, cache_key)
 			-- serve the truncation forever.
 			if cf and res.code == 0 then
 				pcall(function()
-					vim.fn.mkdir(vim.fs.dirname(cf), "p")
+					mkdir(vim.fs.dirname(cf))
 					vim.fn.writefile(out, cf)
 				end)
 			end
@@ -1889,7 +1908,7 @@ local function pick_ocaml()
 	if vim.fn.filereadable(idxfile) == 1 then
 		return browse()
 	end
-	vim.fn.mkdir(dir, "p")
+	mkdir(dir)
 	vim.system({ "sh", "-c", OCAML_IDX }, { text = true, timeout = 20000 }, function(res)
 		vim.schedule(function()
 			local mods = vim.split(res.stdout or "", "\n", { trimempty = true })
@@ -1980,7 +1999,7 @@ local function pick_aya_api()
 	if vim.fn.filereadable(idxfile) == 1 then
 		return modules_menu(vim.fn.readfile(idxfile))
 	end
-	vim.fn.mkdir(dir, "p")
+	mkdir(dir)
 	vim.notify("Fetching the Aya API index (docs.rs) … (first time)")
 	vim.system({ "sh", "-c", tool_script("aya_api_idx.sh") }, { text = true, timeout = 30000 }, function(res)
 		vim.schedule(function()
@@ -2074,7 +2093,7 @@ local function pick_ghidra()
 						if vim.fn.isdirectory(marker) == 1 then
 							return browse()
 						end
-						vim.fn.mkdir(vim.fs.dirname(dir), "p")
+						mkdir(vim.fs.dirname(dir))
 						vim.notify("Cloning Ghidra " .. tag .. " docs … (first time)")
 						-- Kill-atomic (tmp+mv), like ensure_repo/ensure_docs, so a
 						-- checkout killed midway never leaves a partial tree whose
@@ -2251,7 +2270,7 @@ local function pick_pdf(name, prompt)
 			return vim.notify(t .. " needed to build " .. name, vim.log.levels.WARN)
 		end
 	end
-	vim.fn.mkdir(out, "p")
+	mkdir(out)
 	vim.notify("Fetching + splitting " .. name .. " … (first time)")
 	vim.system({ "sh", "-c", tool_script("pdf_build.sh"), "pdf", pdf, out, STD_URLS[name] }, { text = true, timeout = 900000 }, function(res)
 		vim.schedule(function()
@@ -2332,7 +2351,7 @@ local function pick_android_kernel()
 						if vim.fn.isdirectory(marker) == 1 then
 							return browse()
 						end
-						vim.fn.mkdir(vim.fs.dirname(dir), "p")
+						mkdir(vim.fs.dirname(dir))
 						vim.notify("Cloning Android kernel " .. br .. " … (first time)")
 						-- Kill-atomic (tmp+mv), like ensure_repo/ensure_docs.
 						local tmp = dir .. ".tmp"

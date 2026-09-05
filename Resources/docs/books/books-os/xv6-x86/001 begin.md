@@ -364,7 +364,7 @@ DRAFT as of September 4, 2018 14 https://pdos.csail.mit.edu/6.828/xv6
 ```cpp
 mkdir("/dir");
 
-fd = open("/dir/file", O_CREATE\|O_WRONLY);
+fd = open("/dir/file", O_CREATE|O_WRONLY);
 
 close(fd);
 
@@ -394,7 +394,7 @@ uint size; // Size of file in bytes
 A file’s name is distinct from the file itself; the same underlying file, called an in- ode, can have multiple names, called links. The link system call creates another file system name referring to the same inode as an existing file. This fragment creates a new file named both a and b .  
   
 ```cpp
-open("a", O_CREATE\|O_WRONLY);
+open("a", O_CREATE|O_WRONLY);
 
 link("a", "b");
 ```
@@ -408,7 +408,7 @@ unlink("a");
 to the last code sequence leaves the inode and file content accessible as b. Further- more,  
   
 ```cpp
-fd = open("/tmp/xyz", O_CREATE\|O_RDWR);
+fd = open("/tmp/xyz", O_CREATE|O_RDWR);
 
 unlink("/tmp/xyz");
 ```

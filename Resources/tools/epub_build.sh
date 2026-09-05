@@ -240,11 +240,54 @@ def _links(seg):
             return m.group(0)
         return m.group(1)   # dead intra-epub link (or pure anchor): keep the text
     return _LINK.sub(strip, seg)
+# GFM splits a table row on "|" BEFORE it parses inline code spans, so a literal
+# pipe inside backticks in a cell has to be written "\|". pandoc's gfm writer
+# escapes pipes in a cell's plain text but NOT inside a code span it emits, so a
+# cell like <td><code>n | 1</code></td> came out as `| `n | 1` |`: the row gained
+# a column and the code span was cut in half (22 rows in 3 books). Escape the
+# unescaped pipes inside the code spans of a pipe-table row. Only rows of a real
+# table are touched (a block of "|...|" lines led by a "|---|" delimiter row), and
+# only pipes that are not already escaped, so a cell that pandoc got right, and
+# any other line that happens to start with a pipe, are left exactly as they were.
+_TBLROW = re.compile(r'^ {0,3}\|.*\|[ \t]*$')
+_TBLDELIM = re.compile(r'^ {0,3}\|[ \t:|-]*-[ \t:|-]*\|[ \t]*$')
+def _esc_cell_pipes(line):
+    out = []; i = 0; n = len(line)
+    while i < n:
+        c = line[i]
+        if c == "\\" and i + 1 < n:          # an escape outside a span: skip the pair
+            out.append(line[i:i+2]); i += 2; continue
+        if c == "`":
+            j = i
+            while j < n and line[j] == "`": j += 1
+            run = line[i:j]; k = j           # a span closes on a backtick run of the same length
+            while True:
+                k = line.find(run, k)
+                if k < 0: break
+                if line[k-1] == "`" or (k + len(run) < n and line[k+len(run)] == "`"): k += 1; continue
+                break
+            if k < 0:                        # unclosed: not a code span, leave it
+                out.append(run); i = j; continue
+            body = []; bs = 0
+            for ch in line[j:k]:
+                body.append("\\|" if (ch == "|" and bs % 2 == 0) else ch)
+                bs = bs + 1 if ch == "\\" else 0
+            out.append(run + "".join(body) + run); i = k + len(run); continue
+        out.append(c); i += 1
+    return "".join(out)
+def _table_pipes(seg):
+    lines = seg.split("\n"); i = 0; n = len(lines)
+    while i < n:
+        if _TBLROW.match(lines[i]) and i + 1 < n and _TBLDELIM.match(lines[i+1]):
+            while i < n and _TBLROW.match(lines[i]):
+                lines[i] = _esc_cell_pipes(lines[i]); i += 1
+        else: i += 1
+    return "\n".join(lines)
 def clean(md):
     # the link rules never run inside a fence: a fence is verbatim source text
     out = []; buf = []; inf = False
     def flush():
-        if buf: out.append(_links("\n".join(buf))); del buf[:]
+        if buf: out.append(_table_pipes(_links("\n".join(buf)))); del buf[:]
     for l in md.split("\n"):
         if l.lstrip()[:3] in ("```", "~~~"): flush(); inf = not inf; out.append(l)
         elif inf: out.append(l)
@@ -389,7 +432,11 @@ _CODE = re.compile(r'[{}();]|::|#\s*(?:include|define|undef|ifn?def|ifdef|elif|e
 # () ; excluded - those do show up in prose). Two or more => code even when word
 # operators (if/and/or) inflate the stopword count.
 _HARD = re.compile(r'[{}]|==|!=|->|::|<=|>=|\+=|-=|&&|\|\||std::|#\s*(?:include|define|undef|ifn?def|ifdef|elif|else|endif|pragma|if)\b')
-def _unesc(s): return re.sub(r'\\([\\`*_{}\[\]()>#+.!<>&~=-])', r'\1', s)
+# Undo pandoc's markdown escaping. "|" belongs in this set: pandoc escapes a pipe
+# in prose, and when fence_code turns that prose back into a code fence the escape
+# has to go, because markdown does not unescape inside a fence and the backslash
+# would be displayed (xv6's `O_CREATE\|O_WRONLY`, the only 3 such sites).
+def _unesc(s): return re.sub(r'\\([\\`*_{}\[\]()>#+.!<>&~=|-])', r'\1', s)
 def _is_code(raw):
     t = _unesc(raw.rstrip().strip())
     if not t: return None
