@@ -1,10 +1,12 @@
 return {
 	"nvim-mini/mini.icons",
-	lazy = false,
-	priority = 900,
+	lazy = true, -- oil depends on it, so it loads with oil; the mock below covers the rest
 	opts = {},
-	config = function(_, opts)
-		require("mini.icons").setup(opts)
-		require("mini.icons").mock_nvim_web_devicons()
+	init = function()
+		-- Serve nvim-web-devicons from mini.icons only when a plugin asks for it.
+		package.preload["nvim-web-devicons"] = function()
+			require("mini.icons").mock_nvim_web_devicons()
+			return package.loaded["nvim-web-devicons"]
+		end
 	end,
 }

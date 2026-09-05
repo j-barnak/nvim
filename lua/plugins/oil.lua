@@ -79,8 +79,4 @@ return {
 		},
 		use_default_keymaps = true,
 	},
-
-	config = function(_, opts)
-		require("oil").setup(opts)
-	end,
 }

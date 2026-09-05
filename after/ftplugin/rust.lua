@@ -1,6 +1,5 @@
-local function have(bin)
-	return vim.fn.executable(bin) == 1
-end
+local util = require("config.util")
+local have, shq = util.have, util.shq
 
 local XPATH = [[xmllint --html --xpath "//*[@id='main-content']" %s 2>/dev/null]]
 
@@ -30,7 +29,7 @@ local function open_doc(path)
 	if not lines or #lines == 0 then
 		return vim.notify("Could not render " .. vim.fs.basename(path), vim.log.levels.WARN)
 	end
-	vim.cmd("rightbelow vsplit")
+	vim.cmd.vsplit({ mods = { split = "belowright" } })
 	local buf = vim.api.nvim_create_buf(false, true)
 	vim.api.nvim_win_set_buf(0, buf)
 	vim.bo[buf].buftype, vim.bo[buf].bufhidden = "nofile", "wipe"
@@ -62,7 +61,7 @@ vim.keymap.set("n", "<leader>K", function()
 	local roots = {}
 	for _, d in ipairs(candidates) do
 		if vim.fn.isdirectory(d) == 1 then
-			roots[#roots + 1] = vim.fn.shellescape(d)
+			roots[#roots + 1] = shq(d) -- the fzf command runs under sh, not 'shell'
 		end
 	end
 	if #roots == 0 then

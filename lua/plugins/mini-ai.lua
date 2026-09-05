@@ -1,10 +1,8 @@
 return {
-	"echasnovski/mini.ai",
-	keys = {
-		{ "a", mode = { "x", "o" } },
-		{ "i", mode = { "x", "o" } },
-	},
+	"nvim-mini/mini.ai",
 	event = "VeryLazy",
+	-- Only the textobjects query files are needed on the runtimepath; the
+	-- plugin's own setup() is for its select/move/swap modules.
 	dependencies = {
 		{ "nvim-treesitter/nvim-treesitter-textobjects", branch = "main" },
 	},
@@ -21,9 +19,5 @@ return {
 				c = ai.gen_spec.treesitter({ a = "@class.outer", i = "@class.inner" }, {}),
 			},
 		}
-	end,
-	config = function(_, opts)
-		require("nvim-treesitter-textobjects").setup({})
-		require("mini.ai").setup(opts)
 	end,
 }

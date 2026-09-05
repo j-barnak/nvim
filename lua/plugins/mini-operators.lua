@@ -1,15 +1,11 @@
 return {
-	"echasnovski/mini.operators",
+	"nvim-mini/mini.operators",
 	version = false,
 	opts = {
-		exchange = {
-			prefix = "X",
-		},
-		multiply = {
-			prefix = "M",
-		},
+		exchange = { prefix = "X" },
+		multiply = { prefix = "M" },
+		-- The default `gr` prefix would remove Nvim's gra/gri/grn/grr/grt LSP
+		-- mappings (mini.operators deletes conflicting built-ins).
+		replace = { prefix = "gR" },
 	},
-	config = function(_, opts)
-		require("mini.operators").setup(opts)
-	end,
 }

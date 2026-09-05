@@ -1,7 +1,7 @@
 return {
-	"echasnovski/mini.surround",
+	"nvim-mini/mini.surround",
 	event = "VeryLazy",
-	version = "*",
+	version = false, -- main branch, like the other mini modules here
 	keys = {
 		{
 			mode = "x",
@@ -37,8 +37,4 @@ return {
 			},
 		},
 	},
-
-	config = function(_, opts)
-		require("mini.surround").setup(opts)
-	end,
 }

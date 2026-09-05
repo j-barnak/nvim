@@ -16,6 +16,7 @@ return {
 	config = function(_, opts)
 		require("conform").setup(opts)
 		vim.api.nvim_create_autocmd("FileType", {
+			group = vim.api.nvim_create_augroup("jb.conform", { clear = true }),
 			pattern = filetypes,
 			callback = function(args)
 				vim.keymap.set("n", "==", function()

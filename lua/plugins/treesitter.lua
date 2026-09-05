@@ -25,7 +25,18 @@ return {
 	build = ":TSUpdate",
 	config = function()
 		local nt = require("nvim-treesitter")
-		nt.install(ensure)
+		-- install() is a no-op when nothing is missing but still loads the
+		-- parser table (~2 ms per launch), so filter against what is installed
+		-- and run it off the start path; build = ":TSUpdate" keeps them current.
+		vim.schedule(function()
+			local installed = nt.get_installed()
+			local missing = vim.tbl_filter(function(l)
+				return not vim.tbl_contains(installed, l)
+			end, ensure)
+			if #missing > 0 then
+				nt.install(missing)
+			end
+		end)
 
 		-- Start treesitter highlighting for any buffer whose parser is available.
 		-- If a supported parser isn't installed yet (first run / new language),
@@ -56,7 +67,7 @@ return {
 				-- language.add returns (true) / (nil, err); pcall guards a hard error.
 				local ok, added = pcall(vim.treesitter.language.add, lang)
 				if ok and added then
-					vim.treesitter.start(buf, lang)
+					pcall(vim.treesitter.start, buf, lang) -- start() raises on a broken query file
 				elseif vim.tbl_contains(nt.get_available(), lang) then
 					nt.install({ lang }):await(function(err)
 						if err then

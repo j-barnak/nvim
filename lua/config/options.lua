@@ -1,6 +1,5 @@
--- Disable netrw early so oil is the file explorer from the first buffer.
-vim.g.loaded_netrw = 1
-vim.g.loaded_netrwPlugin = 1
+-- netrw and the other unused runtime plugins are disabled through lazy.nvim's
+-- performance.rtp.disabled_plugins (init.lua); oil is the file explorer.
 
 vim.opt.hlsearch = false
 vim.opt.ignorecase = true
@@ -11,7 +10,7 @@ vim.opt.splitright = true
 vim.opt.swapfile = false
 vim.opt.termguicolors = true
 vim.opt.undofile = true
-vim.opt.undodir = os.getenv("HOME") .. "/.vim/undodir"
+vim.opt.undodir = vim.env.HOME .. "/.vim/undodir" -- shared with Vim; Nvim's default would also persist
 vim.opt.updatetime = 50
 vim.opt.writebackup = false
 vim.opt.expandtab = true
@@ -25,12 +24,13 @@ vim.opt.scrolloff = 10
 vim.opt.signcolumn = "yes:1"
 vim.opt.cursorline = true
 vim.opt.colorcolumn = "72"
-vim.opt.exrc = true
-vim.opt.secure = true
+vim.opt.cmdheight = 0
+vim.opt.exrc = true -- project-local config, gated by Nvim's trust list (:trust); 'secure' is a no-op here
 vim.opt.confirm = true
 vim.g.editorconfig = false
 
 vim.api.nvim_create_autocmd("ColorScheme", {
+	group = vim.api.nvim_create_augroup("jb.colorscheme", { clear = true }),
 	pattern = "*",
 	callback = function()
 		vim.api.nvim_set_hl(0, "Pmenu", { fg = "#dddddd", bg = "#303030" })

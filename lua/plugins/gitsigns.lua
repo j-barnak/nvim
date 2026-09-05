@@ -12,7 +12,7 @@ return {
 			untracked = { text = "▎" },
 		},
 		on_attach = function(bufnr)
-			local gs = package.loaded.gitsigns
+			local gs = require("gitsigns")
 
 			local function map(mode, l, r, opts)
 				opts = opts or {}
@@ -39,7 +39,7 @@ return {
 			map("n", "<leader>hD", function()
 				gs.diffthis("~")
 			end)
-			map("n", "<leader>td", gs.toggle_deleted)
+			map("n", "<leader>td", gs.preview_hunk_inline) -- toggle_deleted is deprecated
 
 			map({ "o", "x" }, "ih", ":<C-U>Gitsigns select_hunk<CR>")
 		end,

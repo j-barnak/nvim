@@ -1,4 +1,4 @@
-local vault = vim.fn.expand("~/Documents/Obsidian Vault")
+local vault = vim.fs.normalize("~/Documents/Obsidian Vault")
 
 return {
 	"obsidian-nvim/obsidian.nvim",
@@ -19,6 +19,7 @@ return {
 	config = function(_, opts)
 		require("obsidian").setup(opts)
 		vim.api.nvim_create_autocmd("User", {
+			group = vim.api.nvim_create_augroup("jb.obsidian", { clear = true }),
 			pattern = "ObsidianNoteEnter",
 			callback = function()
 				pcall(vim.keymap.del, "n", "<CR>", { buffer = true })

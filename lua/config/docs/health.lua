@@ -4,9 +4,7 @@
 -- each provider degrades to a notify when its tool is missing.
 local M = {}
 
-local function have(bin)
-	return vim.fn.executable(bin) == 1
-end
+local have = require("config.util").have
 
 -- tool -> what it enables (missing = that feature is unavailable, not an error)
 local TOOLS = {
@@ -17,7 +15,7 @@ local TOOLS = {
 	{ "mutool", "splitting PDF specs (C/C++/DWARF/ABI/RISC-V/Arm, Intel SDM)" },
 	{ "pdftotext", "extracting PDF spec text" },
 	{ "pdfinfo", "PDF page counts for the spec splitter" },
-	{ "man", "man 1-9, ld/as/elf/bash, binutils, NetBSD pages" },
+	{ "man", "man 1-8, ld/as/elf/bash, binutils, NetBSD pages" },
 	{ "col", "man page rendering (col -bx)" },
 	{ "python3", "web article extraction, kernel-doc (recent trees)" },
 	{ "perl", "kernel-doc on older kernel trees" },

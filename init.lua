@@ -16,4 +16,12 @@ vim.g.mapleader = " "
 vim.g.maplocalleader = " "
 
 require("config")
-require("lazy").setup("plugins")
+require("lazy").setup("plugins", {
+	performance = {
+		rtp = {
+			-- Runtime plugins nothing here uses (netrw is replaced by oil);
+			-- skipping them saves ~1.3 ms of sourcing per launch.
+			disabled_plugins = { "gzip", "matchit", "netrwPlugin", "tarPlugin", "tohtml", "tutor", "zipPlugin" },
+		},
+	},
+})

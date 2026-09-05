@@ -31,26 +31,17 @@ local function tool_script(name)
 	end
 	return table.concat(lines, "\n")
 end
--- POSIX single-quote escaping. Every command string here runs under `sh`
+-- Shared helpers (config/util.lua). shq is POSIX single-quote escaping: every command string here runs under `sh`
 -- (vim.system {"sh","-c",...}, and fzf-lua forces SHELL=sh for its streamed
 -- commands), whereas shq() quotes for the user's 'shell': with
 -- fish it doubles backslashes, which turned python's '\n' into '\\n'.
-local function shq(s)
-	return "'" .. tostring(s):gsub("'", "'\\''") .. "'"
-end
+local util = require("config.util")
+local shq, have, fzf = util.shq, util.have, util.fzf
 local cache_root = data_root .. "/linux"
 local tags_cache = cache_root .. "/tags.txt"
 
 local viewer_win -- reused doc-viewer window handle
 local viewer_seq = 0 -- for unique scratch buffer names
-
-local function fzf()
-	return require("fzf-lua")
-end
-
-local function have(bin)
-	return vim.fn.executable(bin) == 1
-end
 
 -- ── figure viewer: show an extracted SDM diagram inline (snacks.image) ────
 -- snacks renders PNG natively via the kitty graphics protocol (works over
@@ -166,7 +157,7 @@ local function docs_toc()
 				if lnum and vim.api.nvim_win_is_valid(win) then
 					vim.api.nvim_set_current_win(win)
 					vim.api.nvim_win_set_cursor(win, { lnum, 0 })
-					vim.cmd("normal! zz")
+					vim.cmd.normal({ "zz", bang = true })
 				end
 			end,
 		},
@@ -205,7 +196,7 @@ local function render_lines(lines, ft, dir, title)
 	if win then
 		vim.api.nvim_set_current_win(win)
 	else
-		vim.cmd("rightbelow vsplit")
+		vim.cmd.vsplit({ mods = { split = "belowright" } })
 		win = vim.api.nvim_get_current_win()
 	end
 	viewer_win = win
@@ -874,8 +865,8 @@ local function ensure_repo(dir, url, sparse, marker, cb)
 	local tmp = dir .. ".tmp"
 	local script = table.concat({
 		"rm -rf " .. shq(tmp) .. " " .. shq(dir),
-		"git -c core.autocrlf=false clone -n --depth=1 --filter=blob:none " .. url .. " " .. shq(tmp),
-		"git -C " .. shq(tmp) .. " sparse-checkout set --no-cone " .. sparse,
+		"git -c core.autocrlf=false clone -n --depth=1 --filter=blob:none " .. shq(url) .. " " .. shq(tmp),
+		"git -C " .. shq(tmp) .. " sparse-checkout set --no-cone " .. table.concat(vim.tbl_map(shq, vim.split(sparse, " ", { trimempty = true })), " "),
 		"git -C " .. shq(tmp) .. " checkout",
 		"mv " .. shq(tmp) .. " " .. shq(dir),
 	}, " && ")
@@ -2064,6 +2055,7 @@ local function update_all()
 						-- untouched for 90 days instead of re-converting whole doc sets.
 						pcall(vim.fn.delete, webcache_dir, "rf")
 						vim.system({ "find", convcache_dir, "-type", "f", "-mtime", "+90", "-delete" }, {}, function() end)
+						prewarm_done = {} -- pulled sets get re-warmed (only changed files convert)
 						vim.notify("Docs update: all " .. #repos .. " repos up to date")
 					else
 						vim.notify(("Docs update: %d/%d ok; failed: %s"):format(#repos - #failed, #repos, table.concat(failed, ", ")), vim.log.levels.WARN)
@@ -2199,7 +2191,7 @@ local function pick_android_kernel()
 						local script = table.concat({
 							"rm -rf " .. shq(tmp) .. " " .. shq(dir),
 							"git -c core.autocrlf=false clone -n --depth=1 --filter=blob:none --branch " .. shq(br) .. " " .. repo .. " " .. shq(tmp),
-							"git -C " .. shq(tmp) .. " sparse-checkout set --no-cone " .. sparse,
+							"git -C " .. shq(tmp) .. " sparse-checkout set --no-cone " .. table.concat(vim.tbl_map(shq, vim.split(sparse, " ", { trimempty = true })), " "),
 							"git -C " .. shq(tmp) .. " checkout",
 							"mv " .. shq(tmp) .. " " .. shq(dir),
 						}, " && ")
