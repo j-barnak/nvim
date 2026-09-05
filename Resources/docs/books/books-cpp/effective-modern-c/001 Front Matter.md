@@ -1,10 +1,10 @@
-![](media/index-1_1.png)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-1_1.png)
 
-![](media/index-1_2.png)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-1_2.png)
 
-![](media/index-1_3.png)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-1_3.png)
 
-![](media/index-1_4.png)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-1_4.png)
 
 Effective Modern C++
 
@@ -138,13 +138,13 @@ ISBN: 978-1-491-90399-5
 
 Scott Meyers
 
-![](media/index-2_1.png)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-2_1.png)
 
-![](media/index-2_2.png)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-2_2.png)
 
-![](media/index-2_3.png)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-2_3.png)
 
-![](media/index-2_4.png)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-2_4.png)
 
 Effective Modern C++
 

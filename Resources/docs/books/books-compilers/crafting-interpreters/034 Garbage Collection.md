@@ -18,7 +18,7 @@ Lox provides the illusion that the computer has an infinite amount of memory. Us
 
 Recycling would really be a better metaphor for this. The GC doesn’t *throw away* the memory, it reclaims it to be reused for new data. But managed languages are older than Earth Day, so the inventors went with the analogy they knew.
 
-![A recycle bin full of bits.](media/image/garbage-collection/recycle.png)
+![A recycle bin full of bits.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/garbage-collection/recycle.png)
 
 ## 26.1 Reachability
 
@@ -74,11 +74,11 @@ fun makeClosure() {
 
 Say we pause the program on the marked line and run the garbage collector. When the collector is done and the program resumes, it will call the closure, which will in turn print `"data"`. So the collector needs to *not* free that string. But here’s what the stack looks like when we pause the program:
 
-![The stack, containing only the script and closure.](media/image/garbage-collection/stack.png)
+![The stack, containing only the script and closure.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/garbage-collection/stack.png)
 
 The `"data"` string is nowhere on it. It has already been hoisted off the stack and moved into the closed upvalue that the closure uses. The closure itself is on the stack. But to get to the string, we need to trace through the closure and its upvalue array. Since it *is* possible for the user’s program to do that, all of these indirectly accessible objects are also considered reachable.
 
-![All of the referenced objects from the closure, and the path to the 'data' string from the stack.](media/image/garbage-collection/reachable.png)
+![All of the referenced objects from the closure, and the path to the 'data' string from the stack.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/garbage-collection/reachable.png)
 
 This gives us an inductive definition of reachability:
 
@@ -112,7 +112,7 @@ As the name implies, mark-sweep works in two phases:
 
 It looks something like this:
 
-![Starting from a graph of objects, first the reachable ones are marked, the remaining are swept, and then only the reachable remain.](media/image/garbage-collection/mark-sweep.png)
+![Starting from a graph of objects, first the reachable ones are marked, the remaining are swept, and then only the reachable remain.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/garbage-collection/mark-sweep.png)
 
 A **tracing garbage collector** is any algorithm that traces through the graph of object references. This is in contrast with reference counting, which has a different strategy for tracking the reachable objects.
 
@@ -643,11 +643,11 @@ To help us soft-brained humans reason about this complex process, VM hackers cam
 
 Advanced garbage collection algorithms often add other colors to the abstraction. I’ve seen multiple shades of gray, and even purple in some designs. My puce-chartreuse-fuchsia-malachite collector paper was, alas, not accepted for publication.
 
-- **![A white circle.](media/image/garbage-collection/white.png) White:** At the beginning of a garbage collection, every object is white. This color means we have not reached or processed the object at all.
+- **![A white circle.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/garbage-collection/white.png) White:** At the beginning of a garbage collection, every object is white. This color means we have not reached or processed the object at all.
 
-- **![A gray circle.](media/image/garbage-collection/gray.png) Gray:** During marking, when we first reach an object, we darken it gray. This color means we know the object itself is reachable and should not be collected. But we have not yet traced *through* it to see what *other* objects it references. In graph algorithm terms, this is the *worklist*—the set of objects we know about but haven’t processed yet.
+- **![A gray circle.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/garbage-collection/gray.png) Gray:** During marking, when we first reach an object, we darken it gray. This color means we know the object itself is reachable and should not be collected. But we have not yet traced *through* it to see what *other* objects it references. In graph algorithm terms, this is the *worklist*—the set of objects we know about but haven’t processed yet.
 
-- **![A black circle.](media/image/garbage-collection/black.png) Black:** When we take a gray object and mark all of the objects it references, we then turn the gray object black. This color means the mark phase is done processing that object.
+- **![A black circle.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/garbage-collection/black.png) Black:** When we take a gray object and mark all of the objects it references, we then turn the gray object black. This color means the mark phase is done processing that object.
 
 In terms of that abstraction, the marking process now looks like this:
 
@@ -663,7 +663,7 @@ In terms of that abstraction, the marking process now looks like this:
 
 I find it helps to visualize this. You have a web of objects with references between them. Initially, they are all little white dots. Off to the side are some incoming edges from the VM that point to the roots. Those roots turn gray. Then each gray object’s siblings turn gray while the object itself turns black. The full effect is a gray wavefront that passes through the graph, leaving a field of reachable black objects behind it. Unreachable objects are not touched by the wavefront and stay white.
 
-![A gray wavefront working through a graph of nodes.](media/image/garbage-collection/tricolor-trace.png)
+![A gray wavefront working through a graph of nodes.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/garbage-collection/tricolor-trace.png)
 
 At the end, you’re left with a sea of reached, black objects sprinkled with islands of white objects that can be swept up and freed. Once the unreachable objects are freed, the remaining objects—all black—are reset to white for the next garbage collection cycle.
 
@@ -990,7 +990,7 @@ static void sweep() {
 
 I know that’s kind of a lot of code and pointer shenanigans, but there isn’t much to it once you work through it. The outer `while` loop walks the linked list of every object in the heap, checking their mark bits. If an object is marked (black), we leave it alone and continue past it. If it is unmarked (white), we unlink it from the list and free it using the `freeObject()` function we already wrote.
 
-![A recycle bin full of bits.](media/image/garbage-collection/unlink.png)
+![A recycle bin full of bits.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/garbage-collection/unlink.png)
 
 Most of the other code in here deals with the fact that removing a node from a singly linked list is cumbersome. We have to continuously remember the previous node so we can unlink its next pointer, and we have to handle the edge case where we are freeing the first node. But, otherwise, it’s pretty simple—delete every node in a linked list that doesn’t have a bit set in it.
 
@@ -1104,7 +1104,7 @@ Well, not *exactly* 100%. It did still put the allocated objects into a linked l
 
   Consider two runs of a clox program that both take ten seconds. In the first run, the GC kicks in once and spends a solid second in `collectGarbage()` in one massive collection. In the second run, the GC gets invoked five times, each for a fifth of a second. The *total* amount of time spent collecting is still a second, so the throughput is 90% in both cases. But in the second run, the latency is only 1/5th of a second, five times less than in the first.
 
-![A bar representing execution time with slices for running user code and running the GC. The largest GC slice is latency. The size of all of the user code slices is throughput.](media/image/garbage-collection/latency-throughput.png)
+![A bar representing execution time with slices for running user code and running the GC. The largest GC slice is latency. The size of all of the user code slices is throughput.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/garbage-collection/latency-throughput.png)
 
 The bar represents the execution of a program, divided into time spent running user code and time spent in the GC. The size of the largest single slice of time running the GC is the latency. The size of all of the user code slices added up is the throughput.
 
@@ -1116,7 +1116,7 @@ If each person represents a thread, then an obvious optimization is to have sepa
 
 However, coordination is required. You don’t want a dishwasher grabbing a bowl out of a baker’s hands! This coordination adds overhead and a lot of complexity. Concurrent collectors are fast, but challenging to implement correctly.
 
-![Un baguette.](media/image/garbage-collection/baguette.png)
+![Un baguette.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/garbage-collection/baguette.png)
 
 Selling fewer loaves of bread a day is bad, and making any particular customer sit and wait while you clean all the dishes is too. The goal is to maximize throughput and minimize latency, but there is no free lunch, even inside a bakery. Garbage collectors make different trade-offs between how much throughput they sacrifice and latency they tolerate.
 

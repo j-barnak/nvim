@@ -41,7 +41,7 @@ The split varies between architectures and is held by the **CONFIG_PAGE_OFFSET**
 
 A typical process's virtual address space layout looks like the following on a 32-bit system with the default splitting scheme:
 
-![Figure 10.1 – 32-bit system memory splitting ](media/image/B17934_10_001.jpg)
+![Figure 10.1 – 32-bit system memory splitting ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_001.jpg)
 
 Figure 10.1 – 32-bit system memory splitting
 
@@ -51,7 +51,7 @@ While this layout is transparent on 64-bit systems, there are particularities on
 
 In an ideal world, all memory is permanently mappable. There are, however, some restrictions on 32-bit systems. This results in only a portion of RAM being permanently mapped. This part of memory can be accessed directly (by simple dereference) by the kernel and is called **low memory**, while the part of (physical) memory not covered by a permanent mapping is referred to as **high memory**. There are various architecture-dependent constraints on where exactly that border lies. For example, Intel cores can permanently map only up to the first 1 GB of RAM. This is a little bit less, 896 MiB of RAM, because part of this low memory is used to dynamically map high memory:
 
-![Figure 10.2 – High and low memory splitting ](media/image/B17934_10_002.jpg)
+![Figure 10.2 – High and low memory splitting ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_002.jpg)
 
 Figure 10.2 – High and low memory splitting
 
@@ -89,73 +89,48 @@ Mapping to access high memory is created on the fly by the kernel and destroyed 
 
 On a Linux system, each process is represented in the kernel as an instance of **struct task_struct** (see **include/linux/sched.h**), which characterizes and describes this process. Before the process starts running, it is allocated a table of memory mapping, stored in a variable of the **struct mm_struct** type (see **include/linux/mm_types.h**). This can be verified by looking at the following excerpt of the **struct task_struct** definition, which embeds pointers to elements of the **struct mm_struct** type:
 
+``` c
 struct task_struct{
-
-    \[…\]
-
-    struct mm_struct \*mm, \*active_mm;
-
-    \[…\]
-
+    […]
+    struct mm_struct *mm, *active_mm;
+    […]
 }
+```
 
 In the kernel, there is a global variable that always points to the current process, **current**, and the **current-\>mm** field points to the current process memory-mapping table. Before going further in our explanation, let's have a look at the following excerpt of a **struct mm_struct** data structure:
 
+``` c
 struct mm_struct {
-
-    struct vm_area_struct \*mmap;
-
-    unsigned long mmap_base;
-
-    unsigned long task_size;
-
-    unsigned long highest_vm_end;
-
-    pgd_t \* pgd;
-
-    atomic_t mm_users;
-
-    atomic_t mm_count;
-
-    atomic_long_t nr_ptes;
-
-\#if CONFIG_PGTABLE_LEVELS \> 2
-
-    atomic_long_t nr_pmds;
-
-\#endif
-
-    int map_count;
-
-    spinlock_t page_table_lock;
-
-    unsigned long total_vm;
-
-    unsigned long locked_vm;
-
-    unsigned long pinned_vm;
-
-    unsigned long data_vm;
-
-    unsigned long exec_vm;
-
-    unsigned long stack_vm;
-
-    unsigned long start_code, end_code, start_data, end_data;
-
-    unsigned long start_brk, brk, start_stack;
-
-    unsigned long arg_start, arg_end, env_start, env_end;
-
-    /\* ref to file /proc/\<pid\>/exe symlink points to \*/
-
-    struct file \_\_rcu \*exe_file;
-
+    struct vm_area_struct *mmap;
+    unsigned long mmap_base;
+    unsigned long task_size;
+    unsigned long highest_vm_end;
+    pgd_t * pgd;
+    atomic_t mm_users;
+    atomic_t mm_count;
+    atomic_long_t nr_ptes;
+#if CONFIG_PGTABLE_LEVELS > 2
+    atomic_long_t nr_pmds;
+#endif
+    int map_count;
+    spinlock_t page_table_lock;
+    unsigned long total_vm;
+    unsigned long locked_vm;
+    unsigned long pinned_vm;
+    unsigned long data_vm;
+    unsigned long exec_vm;
+    unsigned long stack_vm;
+    unsigned long start_code, end_code, start_data, end_data;
+    unsigned long start_brk, brk, start_stack;
+    unsigned long arg_start, arg_end, env_start, env_end;
+    /* ref to file /proc/<pid>/exe symlink points to */
+    struct file __rcu *exe_file;
 };
+```
 
 I intentionally removed some fields we are not interested in. There are some fields we will talk about later: **pgd** for example, which is a pointer to the process's base (first entry) level one table (**Page Global Directory**, abbreviated **PGD**), written in the translation table base address of the CPU at context switching. For a better understanding of this data structure, we can use the following diagram:
 
-![Figure 10.3 – A process address space ](media/image/B17934_10_003.jpg)
+![Figure 10.3 – A process address space ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_003.jpg)
 
 Figure 10.3 – A process address space
 
@@ -174,27 +149,19 @@ In the kernel, process memory mappings are organized into areas, each referred t
 
 A VMA is represented in the kernel as an instance of **struct vma_area**, defined as the following:
 
+``` c
 struct vm_area_struct {
-
-    unsigned long vm_start;
-
-    unsigned long vm_end;
-
-    struct vm_area_struct \*vm_next, \*vm_prev;
-
-    struct mm_struct \*vm_mm;
-
-    pgprot_t vm_page_prot;
-
-    unsigned long vm_flags;
-
-    unsigned long vm_pgoff;
-
-    struct file \* vm_file;
-
-    \[...\]
-
+    unsigned long vm_start;
+    unsigned long vm_end;
+    struct vm_area_struct *vm_next, *vm_prev;
+    struct mm_struct *vm_mm;
+    pgprot_t vm_page_prot;
+    unsigned long vm_flags;
+    unsigned long vm_pgoff;
+    struct file * vm_file;
+    [...]
 }
+```
 
 For the sake of readability and understandability of this section, only elements that are relevant for us have been listed. However, the following are the meanings of the remaining elements:
 
@@ -208,7 +175,7 @@ For the sake of readability and understandability of this section, only elements
 
 The following diagram is an overview of a process memory mapping, highlighting each VMA and describing some of its structure elements:
 
-![Figure 10.4 – Process memory mappings ](media/image/B17934_10_004.jpg)
+![Figure 10.4 – Process memory mappings ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_004.jpg)
 
 Figure 10.4 – Process memory mappings
 
@@ -216,53 +183,41 @@ The preceding image (from http://duartes.org/gustavo/blog/post/how-the-kernel-ma
 
 You can use the **find_vma()** function to find the VMA that corresponds to a given virtual address. **find_vma()** is declared in **linux/mm.h** as the following:
 
-extern struct vm_area_struct \* find_vma(
-
-           struct mm_struct \* mm, unsigned long addr);
+``` c
+extern struct vm_area_struct * find_vma(
+           struct mm_struct * mm, unsigned long addr);
+```
 
 This function searches and returns the first VMA that satisfies **vm_start \<= addr \< vm_end** or returns **NULL** if none is found. **mm** is the process address space to search in. For the current process, it can be **current-\>mm**. The following is an example:
 
-struct vm_area_struct \*vma =
-
-                     find_vma(task-\>mm, 0x603000);
-
-if (vma == NULL) /\* Not found ? \*/
-
-    return -EFAULT;
-
-/\* Beyond the end of returned VMA ? \*/
-
-if (0x13000 \>= vma-\>vm_end)
-
-    return -EFAULT;
+``` c
+struct vm_area_struct *vma =
+                     find_vma(task->mm, 0x603000);
+if (vma == NULL) /* Not found ? */
+    return -EFAULT;
+/* Beyond the end of returned VMA ? */
+if (0x13000 >= vma->vm_end)
+    return -EFAULT;
+```
 
 The preceding code excerpt will look for a VMA whose memory bounds contain **0x603000**.
 
 Given a process whose identifier is **\<PID\>**, the whole memory mappings of this process can be obtained by reading the **/proc/\<PID\>/maps**, **/proc/\<PID\>/smaps**, and **/proc/\<PID\>/pagemap** files. The following lists the mappings of a running process, whose Process Identifier (PID) is **1073**:
 
-\# cat /proc/1073/maps
-
-00400000-00403000 r-xp 00000000 b3:04 6438             /usr/sbin/net-listener
-
-00602000-00603000 rw-p 00002000 b3:04 6438             /usr/sbin/net-listener
-
-00603000-00624000 rw-p 00000000 00:00 0                \[heap\]
-
-7f0eebe4d000-7f0eebe54000 r-xp 00000000 b3:04 11717    /usr/lib/libffi.so.6.0.4
-
-7f0eebe54000-7f0eec054000 ---p 00007000 b3:04 11717    /usr/lib/libffi.so.6.0.4
-
-7f0eec054000-7f0eec055000 rw-p 00007000 b3:04 11717    /usr/lib/libffi.so.6.0.4
-
-7f0eec055000-7f0eec069000 r-xp 00000000 b3:04 21629    /lib/libresolv-2.22.so
-
-7f0eec069000-7f0eec268000 ---p 00014000 b3:04 21629    /lib/libresolv-2.22.so
-
-\[...\]
-
-7f0eee1e7000-7f0eee1e8000 rw-s 00000000 00:12 12532    /dev/shm/sem.thk-mcp-231016-sema
-
-\[...\]
+``` c
+# cat /proc/1073/maps
+00400000-00403000 r-xp 00000000 b3:04 6438             /usr/sbin/net-listener
+00602000-00603000 rw-p 00002000 b3:04 6438             /usr/sbin/net-listener
+00603000-00624000 rw-p 00000000 00:00 0                [heap]
+7f0eebe4d000-7f0eebe54000 r-xp 00000000 b3:04 11717    /usr/lib/libffi.so.6.0.4
+7f0eebe54000-7f0eec054000 ---p 00007000 b3:04 11717    /usr/lib/libffi.so.6.0.4
+7f0eec054000-7f0eec055000 rw-p 00007000 b3:04 11717    /usr/lib/libffi.so.6.0.4
+7f0eec055000-7f0eec069000 r-xp 00000000 b3:04 21629    /lib/libresolv-2.22.so
+7f0eec069000-7f0eec268000 ---p 00014000 b3:04 21629    /lib/libresolv-2.22.so
+[...]
+7f0eee1e7000-7f0eee1e8000 rw-s 00000000 00:12 12532    /dev/shm/sem.thk-mcp-231016-sema
+[...]
+```
 
 Each line in the preceding excerpt represents a VMA, and the fields correspond to the **{address (start-end)} {permissions} {offset} {device (major:minor)} {inode} {pathname (image)}** pattern:
 
@@ -289,13 +244,13 @@ The concept of a page table is introduced to manage mapping between pages and fr
 
 To walk through pages, each page is assigned an index, called a **page number**. When it comes to a frame, it is a **Page Frame Number** (**PFN**). This way, VMAs (logical addresses, more precisely) are composed of two parts: a page number and an offset. On 32-bit systems, the offset represents the 12 less significant bits of the address, whereas 13 less significant bits represent it on 8 KB page-size systems. The following diagram highlights this concept of addresses split into a page number and an offset:
 
-![Figure 10.5 – Logical address representation ](media/image/B17934_10_005.jpg)
+![Figure 10.5 – Logical address representation ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_005.jpg)
 
 Figure 10.5 – Logical address representation
 
 How does the OS or CPU know which physical address corresponds to a given logical address? They use a page table as a translation table and know that each entry's index is a virtual page number, and the value at this index is the PFN. To access physical memory given a virtual memory, the OS first extracts the offset, the virtual page number, and then walks through the process's page tables to match the virtual page number to the physical page. Once a match occurs, it is then possible to access data in that page frame:
 
-![Figure 10.6 – Address translation ](media/image/B17934_10_006.jpg)
+![Figure 10.6 – Address translation ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_006.jpg)
 
 Figure 10.6 – Address translation
 
@@ -303,27 +258,22 @@ The offset is used to point to the right location in the frame. A page table not
 
 The following diagram describes address decoding and page table lookup to point to the appropriate location in the appropriate frame:
 
-![ Figure 10.7 – Virtual to physical address translation ](media/image/B17934_10_007.jpg)
+![ Figure 10.7 – Virtual to physical address translation ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_007.jpg)
 
 Figure 10.7 – Virtual to physical address translation
 
 The number of bits used to represent the offset is defined by the **PAGE_SHIFT** kernel macro. **PAGE_SHIFT** is the number of times needed to left-shift 1 bit to obtain the **PAGE_SIZE** value. It is also the number of times needed to right-shift a page's logical address to obtain its page number, which is the same for a physical address to obtain its page frame number. This macro is architecture-dependent and also depends on the page granularity. Its value could be considered as the following:
 
-\#ifdef CONFIG_ARM64_64K_PAGES
-
-\#define PAGE_SHIFT        16
-
-\#elif defined(CONFIG_ARM64_16K_PAGES)
-
-\#define PAGE_SHIFT       14
-
-\#else
-
-\#define PAGE_SHIFT        12
-
-\#endif
-
-\#define PAGE_SIZE        (\_AC(1, UL) \<\< PAGE_SHIFT)
+``` c
+#ifdef CONFIG_ARM64_64K_PAGES
+#define PAGE_SHIFT        16
+#elif defined(CONFIG_ARM64_16K_PAGES)
+#define PAGE_SHIFT       14
+#else
+#define PAGE_SHIFT        12
+#endif
+#define PAGE_SIZE        (_AC(1, UL) << PAGE_SHIFT)
+```
 
 The preceding states that by default (whether on ARM or ARM64), **PAGE_SHIFT** is **12**, which means a 4 KB page size. On ARM64, it **14** or **16** when respectively a 16 KB or 64 KB page size is chosen.
 
@@ -349,7 +299,7 @@ At context switch (when a new process is scheduled and given the CPU), the kerne
 
 For the sake of understandability, the preceding description has been limited to a two-level paging scheme but can easily extended. The following diagram is a representation of this two-level paging scheme:
 
-![Figure 10.8 – A two-level address translation scheme ](media/image/B17934_10_008.jpg)
+![Figure 10.8 – A two-level address translation scheme ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_008.jpg)
 
 Figure 10.8 – A two-level address translation scheme
 
@@ -374,7 +324,7 @@ In both cases, the page fault handler is the same, **do_page_fault()**. This fun
 
 The following is a diagram describing a TLB lookup, a TLB hit, or a TLB miss event:
 
-![Figure 10.9 – The MMU and TLB walk-through process ](media/image/B17934_10_009.jpg)
+![Figure 10.9 – The MMU and TLB walk-through process ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_009.jpg)
 
 Figure 10.9 – The MMU and TLB walk-through process
 
@@ -386,7 +336,7 @@ Dealing with memory allocation mechanisms and their APIs
 
 Before jumping to the list of APIs, let's start with the following figure, showing the different memory allocators that exist on a Linux-based system, which we will discuss later:
 
-![Figure 10.10 – Overview of kernel memory allocators ](media/image/B17934_10_010.jpg)
+![Figure 10.10 – Overview of kernel memory allocators ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_010.jpg)
 
 Figure 10.10 – Overview of kernel memory allocators
 
@@ -402,29 +352,37 @@ The page allocator is the low-level allocator on the Linux system, the one that 
 
 This is the lowest-level allocator. It allocates and deallocates blocks of pages using the buddy algorithm. Pages are allocated in blocks that are to the power of 2 in size (to get the best from the buddy algorithm). That means it can allocate a block of 1 page, 2 pages, 4 pages, 8, 16, and so on. Pages returned from this allocation are physically contiguous. **alloc_pages()** is the main API and is defined as the following:
 
-struct page \*alloc_pages(gfp_t mask, unsigned int order)
+``` c
+struct page *alloc_pages(gfp_t mask, unsigned int order)
+```
 
 The preceding function returns **NULL** when no page can be allocated. Otherwise, it allocates *2*order pages and returns a pointer to an instance of **struct page**, which points the first page of the reserved block. There is, however, a helper macro, **alloc_page()**, which can be used to allocate a single page. The following is its definition:
 
-\#define alloc_page(gfp_mask) alloc_pages(gfp_mask, 0)
+``` c
+#define alloc_page(gfp_mask) alloc_pages(gfp_mask, 0)
+```
 
 This macro wraps **alloc_pages()** with an order parameter set with **0**.
 
 **\_\_free_pages()** must be used to release memory pages allocated with the **alloc_pages()** function. It takes a pointer to the first page of the allocated block as a parameter, along with the order, the same that was used for allocation. It is defined as the following:
 
-void \_\_free_pages(struct page \*page, unsigned int order);
+``` c
+void __free_pages(struct page *page, unsigned int order);
+```
 
 There are other functions working in the same way, but instead of an instance of **struct page**, they return the (logical) address of the reserved block. These are **\_\_get_free_pages()** and **\_\_get_free_page()**, and the following are their definitions:
 
-unsigned long \_\_get_free_pages(gfp_t mask,
-
-                               unsigned int order);
-
+``` c
+unsigned long __get_free_pages(gfp_t mask,
+                               unsigned int order);
 unsigned long get_zeroed_page(gfp_t mask);
+```
 
 **free_pages()** is used to free a page allocated with **\_\_get_free_pages()**. It takes the kernel address representing the start region of allocated page(s), along with the order, which should be the same as that used for allocation:
 
+``` c
 free_pages(unsigned long addr, unsigned int order);
+```
 
 Whatever the allocation type is, **mask** speciﬁes the memory zones from where the pages should be allocated and the behavior of the allocators. The following are possible values:
 
@@ -445,13 +403,16 @@ The maximum order that can be used varies between architectures. It depends on t
 
 There are convenient functions exposed by the kernel to switch back and forth between the **struct page** instances and their corresponding logical addresses, which can be useful at different moments while dealing with memory. The **page_to_virt()** function is used to convert a struct page (as returned by **alloc_pages()**, for example) into a kernel logical address. Alternatively, **virt_to_page()** takes a kernel logical address and returns its associated **struct page** instance (as if it was allocated using the **alloc_pages()** function). Both **virt_to_page()** and **page_to_virt()** are declared in **\<asm/page.h\>** as the following:
 
-struct page \*virt_to_page(void \*kaddr);
-
-void \*page_to_virt(struct page \*pg)
+``` c
+struct page *virt_to_page(void *kaddr);
+void *page_to_virt(struct page *pg)
+```
 
 There is another macro, **page_address()**, which simply wraps **page_to_virt()** and which is declared as the following:
 
-void \*page_address(const struct page \*page)
+``` c
+void *page_address(const struct page *page)
+```
 
 It returns the logical address of the page passed in the parameter.
 
@@ -467,13 +428,13 @@ The following case study is heavily inspired by <http://dysphoria.net/OperatingS
 
 Let's now imagine a scenario where we want to allocate a 70K block. The buddy allocator will round it up to 128K and will end up splitting the 1 MB into two 512K blocks, then 256K, and finally 128K, and then it will allocate one of the 128K blocks to the user. The following are schemes that summarize this scenario:
 
-![Figure 10.11 – Allocation using the buddy algorithm ](media/image/B17934_10_011.jpg)
+![Figure 10.11 – Allocation using the buddy algorithm ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_011.jpg)
 
 Figure 10.11 – Allocation using the buddy algorithm
 
 The deallocation is as fast as allocation. The following is a figure that summarizes the deallocation algorithm:
 
-![Figure 10.12 – Deallocation using the buddy algorithm ](media/image/B17934_10_012.jpg)
+![Figure 10.12 – Deallocation using the buddy algorithm ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_012.jpg)
 
 Figure 10.12 – Deallocation using the buddy algorithm
 
@@ -496,7 +457,7 @@ The memory allocator is responsible for building caches. Initially, each slab is
 
 The following diagram illustrates the concept of slabs, caches, and their different states:
 
-![Figure 10.13 – Slabs and caches ](media/image/B17934_10_013.jpg)
+![Figure 10.13 – Slabs and caches ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_013.jpg)
 
 Figure 10.13 – Slabs and caches
 
@@ -518,13 +479,15 @@ There are different kinds of slab allocators in the kernel, depending on whether
 
 **kmalloc()** is a kernel memory allocation function. It allocates physically contiguous (but not necessarily page-aligned) memory. The following image describes how memory is allocated and returned to the caller:
 
-![Figure 10.14 – kmalloc memory organization ](media/image/B17934_10_014.jpg)
+![Figure 10.14 – kmalloc memory organization ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_014.jpg)
 
 Figure 10.14 – kmalloc memory organization
 
 This allocation API is the general and highest-level memory allocation API in the kernel, which relies on the SLAB allocator. Memory returned from **kmalloc()** has a kernel logical address because it is allocated from the **LOW_MEM** region unless **HIGH_MEM** is specified. It is declared in **\<linux/slab.h\>**, which is the header to include before using the API. It is defined as follows:
 
-void \*kmalloc(size_t size, int flags);
+``` c
+void *kmalloc(size_t size, int flags);
+```
 
 In the preceding code, **size** specifies the size of the memory to be allocated (in bytes). **flags** determines how and where memory should be allocated. Available flags are the same as the page allocator (**GFP_KERNEL**, **GFP_ATOMIC**, **GFP_DMA**, and so on) and the following are their definitions:
 
@@ -542,9 +505,10 @@ On successful allocation of memory, **kmalloc()** returns the virtual (logical, 
 
 For a device driver, however, it is recommended to use the managed version, **devm_kmalloc()**, which does not necessarily require freeing the memory, as it is handled internally by the memory core. The following is its prototype:
 
-void \*devm_kmalloc(struct device \*dev, size_t size,
-
-                   gfp_t gfp);
+``` c
+void *devm_kmalloc(struct device *dev, size_t size,
+                   gfp_t gfp);
+```
 
 In the preceding prototype, **dev** is the device for which memory is allocated.
 
@@ -552,7 +516,9 @@ Note that **kmalloc()** relies on SLAB caches when allocating a small size of me
 
 The following is the **ksize** prototype:
 
-size_t ksize(const void \*objp);
+``` c
+size_t ksize(const void *objp);
+```
 
 In the preceding, **objp** is the object whose real size in bytes will be returned.
 
@@ -560,75 +526,51 @@ In the preceding, **objp** is the object whose real size in bytes will be return
 
 **kfree** function is used to free the memory allocated by **kmalloc()**. It is defined as the following:
 
-void kfree(const void \*ptr)
+``` c
+void kfree(const void *ptr)
+```
 
 The following is an example of allocating and freeing memory using **kmalloc()** and **kfree()** respectively:
 
-\#include \<linux/init.h\>
-
-\#include \<linux/module.h\>
-
-\#include \<linux/slab.h\>
-
-\#include \<linux/mm.h\>
-
-static void \*ptr;
-
+``` c
+#include <linux/init.h>
+#include <linux/module.h>
+#include <linux/slab.h>
+#include <linux/mm.h>
+static void *ptr;
 static int alloc_init(void)
-
 {
-
-    size_t size = 1024; /\* allocate 1024 bytes \*/
-
-    ptr = kmalloc(size,GFP_KERNEL);
-
-    if(!ptr) {
-
-        /\* handle error \*/
-
-        pr_err("memory allocation failed\n");
-
-        return -ENOMEM;
-
-    } else {
-
-        pr_info("Memory allocated successfully\n");
-
-    }
-
-    return 0;
-
+    size_t size = 1024; /* allocate 1024 bytes */
+    ptr = kmalloc(size,GFP_KERNEL);
+    if(!ptr) {
+        /* handle error */
+        pr_err("memory allocation failed\n");
+        return -ENOMEM;
+    } else {
+        pr_info("Memory allocated successfully\n");
+    }
+    return 0;
 }
-
 static void alloc_exit(void)
-
 {
-
-    kfree(ptr);
-
-    pr_info("Memory freed\n");
-
+    kfree(ptr);
+    pr_info("Memory freed\n");
 }
-
 module_init(alloc_init);
-
 module_exit(alloc_exit);
-
 MODULE_LICENSE("GPL");
-
 MODULE_AUTHOR("John Madieu");
+```
 
 The kernel provides other helpers based on **kmalloc()**as follows:
 
+``` c
 void kzalloc(size_t size, gfp_t flags);
-
-void kzfree(const void \*p);
-
-void \*kcalloc(size_t n, size_t size, gfp_t flags);
-
-void \*krealloc(const void \*p, size_t new_size,
-
-                gfp_t flags);
+void kzfree(const void *p);
+void *kcalloc(size_t n, size_t size, gfp_t flags);
+void *krealloc(const void *p, size_t new_size,
+                gfp_t flags);
+```
 
 **krealloc()** is the kernel equivalent of user space **realloc()** function. Because memory returned by **kmalloc()** retains the contents from its previous incarnation, you can request a zeroed **kmalloc**-allocated memory using **kzalloc()**. **kzfree()** is the freeing function for **kzalloc()**, whereas **kcalloc()** allocates memory for an array, and its **n** and **size** parameters respectively represent the number of elements in the array and the size of an element.
 
@@ -638,7 +580,7 @@ Since **kmalloc()** returns a memory area in the kernel permanent mapping, the l
 
 **vmalloc()** is the last kernel allocator we will discuss in the book. It returns memory that is exclusively contiguous in the virtual address space. The underlying frames are scattered, as we can see in the following diagram:
 
-![Figure 10.15 – vmalloc memory organization ](media/image/B17934_10_015.jpg)
+![Figure 10.15 – vmalloc memory organization ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_015.jpg)
 
 Figure 10.15 – vmalloc memory organization
 
@@ -646,73 +588,51 @@ In the preceding diagram, we can see that memory is not physically contiguous. M
 
 Before using the **vmalloc()** API, you should include this header:
 
-\#include \<linux/vmalloc.h\>
+``` c
+#include <linux/vmalloc.h>
+```
 
 The following are the **vmalloc** family prototypes:
 
-void \*vmalloc(unsigned long size);
-
-void \*vzalloc(unsigned long size);
-
-void vfree(void \*addr);
+``` c
+void *vmalloc(unsigned long size);
+void *vzalloc(unsigned long size);
+void vfree(void *addr);
+```
 
 In the preceding prototypes, argument size is the size of memory you need to allocate. Upon successful allocation of memory, it returns the address of the first byte of the allocated memory block. On failure, it returns **NULL**. **vfree()** does the reverse and releases the memory allocated by **vmalloc()**. The **vzalloc** variant returns zeroed initialized memory.
 
 The following is an example of using **vmalloc**:
 
-\#include\<linux/init.h\>
-
-\#include\<linux/module.h\>
-
-\#include \<linux/vmalloc.h\>
-
-Static void \*ptr;
-
+``` c
+#include<linux/init.h>
+#include<linux/module.h>
+#include <linux/vmalloc.h>
+Static void *ptr;
 static int alloc_init(void)
-
 {
-
-    unsigned long size = 8192; /\* 2 x 4KB \*/
-
-    ptr = vmalloc(size);
-
-    if(!ptr)
-
-    {
-
-        /\* handle error \*/
-
-        pr_err("memory allocation failed\n");
-
-        return -ENOMEM;
-
-    } else {
-
-        pr_info("Memory allocated successfully\n");
-
-    }
-
-    return 0;
-
+    unsigned long size = 8192; /* 2 x 4KB */
+    ptr = vmalloc(size);
+    if(!ptr)
+    {
+        /* handle error */
+        pr_err("memory allocation failed\n");
+        return -ENOMEM;
+    } else {
+        pr_info("Memory allocated successfully\n");
+    }
+    return 0;
 }
-
 static void my_vmalloc_exit(void)
-
 {
-
-    vfree(ptr);
-
-    pr_info("Memory freed\n");
-
+    vfree(ptr);
+    pr_info("Memory freed\n");
 }
-
 module_init(my_vmalloc_init);
-
 module_exit(my_vmalloc_exit);
-
 MODULE_LICENSE("GPL");
-
 MODULE_AUTHOR("john Madieu, john.madieu@gmail.com");
+```
 
 **vmalloc()** will allocate non-contiguous physical pages and map them to a contiguous virtual address region. These **vmalloc** virtual addresses are limited in an area of kernel space, delimited by **VMALLOC_START** and **VMALLOC_END**, which are architecture-dependent. The kernel exposes **/proc/vmallocinfo** to display all **vmalloc**-allocated memory on the system.
 
@@ -754,7 +674,7 @@ Since the kernel exclusively works with virtual addresses (through page tables),
 
 The following diagram describes how I/O memory and main memory are seen by the CPU:
 
-![Figure 10.16 – (IO)MMU and main memory overview ](media/image/B17934_10_016.jpg)
+![Figure 10.16 – (IO)MMU and main memory overview ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_10_016.jpg)
 
 Figure 10.16 – (IO)MMU and main memory overview
 
@@ -772,31 +692,30 @@ On a system where PIO is used, I/O devices are mapped into a separate address sp
 
 The kernel exports a few functions (symbols) to handle I/O ports. Prior to accessing any port regions, we must first inform the kernel that we are using a range of ports using the **request_region()** function, which will return **NULL** on error. Once done with the region, we must call **release_region()**. These are both declared in **linux/ioport.h** as the following:
 
-struct ressource \*request_region(unsigned long start,
-
-                         unsigned long len, char \*name);
-
+``` c
+struct ressource *request_region(unsigned long start,
+                         unsigned long len, char *name);
 void release_region(unsigned long start,
-
-                         unsigned long len);
+                         unsigned long len);
+```
 
 These are politeness functions that inform the kernel about your intention to make use/release of a region of **len** ports, starting from **start**. The **name** parameter should be set with the name of the device or a meaningful one. Their use is not mandatory, however. It prevents two or more drivers from referencing the same range of ports. You can consult the ports currently in use on the system by reading the content of the **/proc/ioports** files.
 
 After the region reservation has succeeded, the following APIs can be used to access the ports:
 
+``` c
 u8 inb(unsigned long addr)
-
 u16 inw(unsigned long addr)
-
 u32 inl(unsigned long addr)
+```
 
 The preceding functions respectively read 8, 16, or 32-bit-sized (wide) data from the **addr** ports. The write variants are defined as the following:
 
+``` c
 void outb(u8 b, unsigned long addr)
-
 void outw(u16 b, unsigned long addr)
-
 void outl(u32 b, unsigned long addr)
+```
 
 The preceding functions write **b** data, which can be 8, 16, or 32-bit-sized, into the **addr** port.
 
@@ -810,41 +729,40 @@ If we need to access, let's say, the 4 MB of I/O memory assigned to IPU-2 (from 
 
 Like PIO, there are MMIO functions to inform the kernel about our intention to use a memory region. Remember that this information is a pure reservation only. These are **request_mem_region()** and **release_mem_region()**, defined as the following:
 
-struct ressource\* request_mem_region(unsigned long start,
-
-                           unsigned long len, char \*name)
-
+``` c
+struct ressource* request_mem_region(unsigned long start,
+                           unsigned long len, char *name)
 void release_mem_region(unsigned long start,
-
-                        unsigned long len)
+                        unsigned long len)
+```
 
 These are only politeness functions, though the former builds and returns an appropriate **resource** structure, corresponding to the start and length of the memory region, while the latter releases it.
 
 For the device driver, however, it is recommended to use the managed variant, as it simplifies the code and takes care of releasing the resource. This managed version is defined as the following:
 
-struct ressource\* devm_request_region(
-
-               struct device \*dev, resource_size_t start,
-
-               resource_size_t n, const char \*name);
+``` c
+struct ressource* devm_request_region(
+               struct device *dev, resource_size_t start,
+               resource_size_t n, const char *name);
+```
 
 In the preceding, **dev** is the device owning the memory region, and the other parameters are the same as the non-managed version. Upon successful request, the memory region will be visible in **/proc/iomem**, which is a file that contains memory regions in use on the system.
 
 Prior to accessing a memory region (and after you successfully request it), the region must be mapped into kernel address space by calling special architecture-dependent functions (which make use of IOMMU to build a page table and thus cannot be called from an interrupt handler). These are **ioremap()** and **iounmap()**, which handle cache coherency as well. The followings are their definitions:
 
-void \_\_iomem \*ioremap(unsigned long phys_addr,
-
-                      unsigned long size);
-
-void iounmap(void \_\_iomem \*addr);
+``` c
+void __iomem *ioremap(unsigned long phys_addr,
+                      unsigned long size);
+void iounmap(void __iomem *addr);
+```
 
 In the preceding functions, **phys_addr** corresponds to the device's physical address as specified in the device tree or in the board file. **size** corresponds to the size of the region to map. **ioremap()** returns a **\_\_iomem void** pointer to the start of the mapped region. Once again, it is recommended to use the managed version, which has the following definition:
 
-void \_\_iomem \*devm_ioremap(struct device \*dev,
-
-                           resource_size_t offset,
-
-                           resource_size_t size);
+``` c
+void __iomem *devm_ioremap(struct device *dev,
+                           resource_size_t offset,
+                           resource_size_t size);
+```
 
 Note
 
@@ -852,17 +770,14 @@ Note
 
 Because the mapping APIs are architecture-dependent, you should not deference (that is, getting/setting their value by reading/writing to the pointer) such pointers, even though on some architectures you can. The kernel provides portable functions to access memory-mapped regions. These are the following:
 
-unsigned int ioread8(void \_\_iomem \*addr);
-
-unsigned int ioread16(void \_\_iomem \*addr);
-
-unsigned int ioread32(void \_\_iomem \*addr);
-
-void iowrite8(u8 value, void \_\_iomem \*addr);
-
-void iowrite16(u16 value, void \_\_iomem \*addr);
-
-void iowrite32(u32 value, void \_\_iomem \*addr);
+``` c
+unsigned int ioread8(void __iomem *addr);
+unsigned int ioread16(void __iomem *addr);
+unsigned int ioread32(void __iomem *addr);
+void iowrite8(u8 value, void __iomem *addr);
+void iowrite16(u16 value, void __iomem *addr);
+void iowrite32(u32 value, void __iomem *addr);
+```
 
 The preceding functions respectively read and write 8-, 16-, and 32-bit values.
 
@@ -880,29 +795,29 @@ Kernel memory sometimes needs to be remapped, either from kernel to user space, 
 
 The Linux kernel permanently maps 896 MB of its address space to the lower 896 MB of the physical memory (low memory). On a 4 GB system, there is only 128 MB left to the kernel to map the remaining 3.2 GB of physical memory (high memory). However, low memory is directly addressable by the kernel because of the permanent and one-to-one mapping. When it comes to high memory (memory preceding 896 MB), the kernel has to map the requested region of high memory into its address space, and the 128 MB mentioned previously is especially reserved for this. The function used to perform this trick is **kmap()**. The **kmap()** function is used to map a given page into the kernel address space.
 
-void \*kmap(struct page \*page);
+``` c
+void *kmap(struct page *page);
+```
 
 **page** is a pointer to the struct page structure to map. When a high memory page is allocated, it is not directly addressable. **kmap()** is the function we call to temporarily map high memory into the kernel address space. The mapping will last until **kunmap()** is called:
 
-void kunmap(struct page \*page);
+``` c
+void kunmap(struct page *page);
+```
 
 By *temporarily*, I mean the mapping should be undone as soon as it is no longer needed. A best programming practice is to unmap high memory mapping when it is no longer required.
 
 This function works on both high and low memory. However, if a page structure resides in low memory, then just the virtual address of the page is returned (because low-memory pages already have permanent mappings). If the page belongs to high memory, a permanent mapping is created in the kernel's page tables, and the address is returned:
 
-void \*kmap(struct page \*page)
-
+``` c
+void *kmap(struct page *page)
 {
-
-    BUG_ON(in_interrupt());
-
-    if (!PageHighMem(page))
-
-        return page_address(page);
-
-    return kmap_high(page);
-
+    BUG_ON(in_interrupt());
+    if (!PageHighMem(page))
+        return page_address(page);
+    return kmap_high(page);
 }
+```
 
 **kmap_high()** and **kunmap_high()**, which are defined in **mm/highmem.c**, are at the heart of these implementations. However, **kmap()** maps pages into kernel space using a physically contiguous set of page tables allocated during the boot. Because the page tables are all connected, it's simple to move around without having to consult the page directory all the time. You should note that the **kmap** page tables correspond to kernel virtual addresses beginning with **PKMAP BASE**, which differs per architecture, and the reference count for its page table entries is kept in a separate array called **pkmap_count**.
 
@@ -922,13 +837,12 @@ After invoking the **mmap()** system call on a file descriptor (a device-backed 
 
 **remap_pfn_range()** is defined as the following:
 
-int remap_pfn_range(struct vm_area_struct \*vma,
-
-                    unsigned long addr,
-
-                    unsigned long pfn,
-
-                    unsigned long size, pgprot_t flags);
+``` c
+int remap_pfn_range(struct vm_area_struct *vma,
+                    unsigned long addr,
+                    unsigned long pfn,
+                    unsigned long size, pgprot_t flags);
+```
 
 A successful call will return **0**, and a negative error code is returned on failure. Most of this function's arguments are provided when the **mmap()** system call is invoked. The following are their descriptions:
 
@@ -937,17 +851,22 @@ A successful call will return **0**, and a negative error code is returned on fa
 - **pfn**: This represents the page frame number of the physical memory region to map. To obtain this page frame number, we must consider how the memory allocation was performed:
   - For memory allocated with **kmalloc()** or any other allocation API that returns a kernel logical address (**\_\_get_free_pages()** with the **GFP_KERNEL** flag, for instance), **pfn** can be obtained as follows (obtaining the physical address and right-shifting this address's **PAGE_SHIFT** time):
 
-        unsigned long pfn =
-
-          virt_to_phys((void \*)kmalloc_area)\>\>PAGE_SHIFT;
+    ``` c
+        unsigned long pfn =
+          virt_to_phys((void *)kmalloc_area)>>PAGE_SHIFT;
+    ```
 
   - For memory allocated with **alloc_pages()**, we can use the following (where **page** is the pointer returned at allocation):
 
-        unsigned long pfn = page_to_pfn(page)
+    ``` c
+        unsigned long pfn = page_to_pfn(page)
+    ```
 
   - Finally, for memory allocated with **vmalloc()**, the following can be used:
 
-        unsigned long pfn = vmalloc_to_pfn(vmalloc_area);
+    ``` c
+        unsigned long pfn = vmalloc_to_pfn(vmalloc_area);
+    ```
 - **size**: This is the dimension, in bytes, of the area being remapped. If it is not page-aligned, the kernel will take care of its alignment to the (next) page boundary.
 - **flags**: This represents the protection requested for the new VMA. The driver can change the final values but should use the initial default values (found in **vma-\>vm_page_prot**) as a skeleton using the OR (**\|** in the C language) operator. These default values are those which have been set by user space. Some of these flags are as follows:
   - **VM_IO**, which specifies a device's memory-mapped I/O.
@@ -960,25 +879,18 @@ Memory mapping works with memory regions that are multiples of **PAGE_SIZE**, so
 
 If your baking object (a file or device) supports an offset, then the VMA offset (the offset into the object where the mapping must start) should be considered to produce the PFN where mapping must start. **vma-\>vm_pgoff** will contain this offset (if specified by user space in the **mmap()**) value in units of the number of pages. The final PFN computation (or the position from where the mapping must start) will look like the following:
 
+``` c
 unsigned long pos
-
-unsigned long off = vma-\>vm_pgoff;
-
-/\*compute the initial PFN according to the memory area \*/
-
-\[...\]
-
-/\* Then compute the final position \*/
-
+unsigned long off = vma->vm_pgoff;
+/*compute the initial PFN according to the memory area */
+[...]
+/* Then compute the final position */
 pos = pfn + off
-
-\[...\]
-
-return remap_pfn_range(vma, vma-\>vm_start,
-
-        pos, vma-\>vm_end - vma-\>vm_start,
-
-         vma-\>vm_page_prot);
+[...]
+return remap_pfn_range(vma, vma->vm_start,
+        pos, vma->vm_end - vma->vm_start,
+         vma->vm_page_prot);
+```
 
 In the preceding excerpt, the offset (specified in term of number of pages) has been included in the final position computation. This offset can, however, be ignored if the driver implementation does need its support.
 
@@ -990,25 +902,18 @@ The offset can be used differently, by left-shifting **PAGE_SIZE** to obtain the
 
 Note that memory allocated with **vmalloc()** is not physically contiguous, so if you need to map a memory region allocated with **vmalloc()**, you must map each page individually and compute the physical address for each page. This can be achieved by looping over all pages in that **vmalloc**-allocated memory region and calling **remap_pfn_range()** as follows:
 
-while (length \> 0) {
-
-    pfn = vmalloc_to_pfn(vmalloc_area_ptr);
-
-    if ((ret = remap_pfn_range(vma, start, pfn,
-
-      PAGE_SIZE, PAGE_SHARED)) \< 0) {
-
-        return ret;
-
-    }
-
-    start += PAGE_SIZE;
-
-    vmalloc_area_ptr += PAGE_SIZE;
-
-    length -= PAGE_SIZE;
-
+``` c
+while (length > 0) {
+    pfn = vmalloc_to_pfn(vmalloc_area_ptr);
+    if ((ret = remap_pfn_range(vma, start, pfn,
+      PAGE_SIZE, PAGE_SHARED)) < 0) {
+        return ret;
+    }
+    start += PAGE_SIZE;
+    vmalloc_area_ptr += PAGE_SIZE;
+    length -= PAGE_SIZE;
 }
+```
 
 In the preceding excerpt, **length** corresponds to the VMA size (**length = vma-\>vm_end - vma-\>vm_start**). **pfn** is computed for each page, and the starting address for the next mapping is incremented by **PAGE_SIZE** to map the next page in the region. The initial value of **start** is **start = vma-\>vm_start**.
 
@@ -1018,21 +923,21 @@ That said, from within the kernel, the **vmalloc**-allocated memory can be used 
 
 Remapping the I/O memory requires a device's physical addresses, as specified in the device tree or the board file. In this case, for portability reasons, the appropriate function to use is **io_remap_pfn_range()**, whose parameters are the same as **remap_pfn_range()**. The only thing that changes is where the PFN comes from. Its prototype looks like the following:
 
-int io_remap_page_range(struct vm_area_struct \*vma,
-
-                     unsigned long start,
-
-                     unsigned long phys_pfn,
-
-                     unsigned long size, pgprot_t flags);
+``` c
+int io_remap_page_range(struct vm_area_struct *vma,
+                     unsigned long start,
+                     unsigned long phys_pfn,
+                     unsigned long size, pgprot_t flags);
+```
 
 In the preceding function, **vma** and **start** have the same meanings as **remap_pfn_range()**. **phys_pfn** is different, however, in the way it is obtained; it must correspond to the physical I/O memory address, as it will have been given to **ioremap()**, right-shifted **PAGE_SHIFT** times.
 
 There is, however, a simplified **io_remap_pfn_range()** for common driver use: **vm_iomap_memory()**. This lite variant is defined as the following:
 
-int vm_iomap_memory(struct vm_area_struct \*vma,
-
-                    phys_addr_t start, unsigned long len)
+``` c
+int vm_iomap_memory(struct vm_area_struct *vma,
+                    phys_addr_t start, unsigned long len)
+```
 
 In the preceding function, **vma** is the user VMA to map to. **start** is the start of the I/O memory region to be mapped (as it would have been given to **ioremap()**), and **len** is the size of area. With **vm_iomap_memory()**, the driver just needs to give us the physical memory range to be mapped; the function will figure out the rest from the **vma** information. As with **io_remap_pfn_range()**, it returns **0** on success or a negative error code otherwise.
 
@@ -1044,7 +949,9 @@ You should note that, by default, the kernel remaps memory to user space with ca
 
 It is used as follows:
 
-vma-\>vm_page_prot = pgprot_noncached(vma-\>vm_page_prot);
+``` c
+vma->vm_page_prot = pgprot_noncached(vma->vm_page_prot);
+```
 
 While testing a driver that I've developed for a memory-mapped device, I faced an issue where I had roughly 20 ms of latency (the time between when I updated the device register in user space through the mmap'ed area and the time when it was visible to the device) when caching was used.
 
@@ -1056,15 +963,17 @@ From user space, the **mmap()** system call is used to map physical memory into 
 
 The **mmap()** system call is declared as follows:
 
-int mmap (void \*addr, size_t len, int prot,
-
-           int flags, int fd, ff_t offset);
+``` c
+int mmap (void *addr, size_t len, int prot,
+           int flags, int fd, ff_t offset);
+```
 
 From the kernel side, the **mmap** field in the driver's file operation structure (**struct file_operations** structure) has the following prototype:
 
-int (\*mmap)(struct file \*filp,
-
-             struct vm_area_struct \*vma);
+``` c
+int (*mmap)(struct file *filp,
+             struct vm_area_struct *vma);
+```
 
 In the preceding file operation function, **filp** is a pointer to the open device file for the driver that results from the translation of the **fd** parameter (given in the system call). **vma** is allocated and given as parameter by the kernel. It points to the user process's VMA where the mapping should go. To understand how the kernel creates the new VMA, it uses the parameters given to the **mmap()** system call, which somehow affect some fields of the VMA as follows:
 
@@ -1078,25 +987,26 @@ With all these parameters defined, we can split the **mmap** file operation impl
 
 1.  Get the mapping offset and check whether it is beyond our buffer size or not:
 
-    unsigned long offset = vma-\>vm_pgoff \<\< PAGE_SHIFT;
-
-    if (offset \>= buffer_size)
-
-            return -EINVAL;
+    ``` c
+    unsigned long offset = vma->vm_pgoff << PAGE_SHIFT;
+    if (offset >= buffer_size)
+            return -EINVAL;
+    ```
 
 2.  Check whether the mapping length is bigger than our buffer size:
 
-    unsigned long size = vma-\>vm_end - vma-\>vm_start;
-
-    if (buffer_size \< (size + offset))
-
-        return -EINVAL;
+    ``` c
+    unsigned long size = vma->vm_end - vma->vm_start;
+    if (buffer_size < (size + offset))
+        return -EINVAL;
+    ```
 
 3.  Compute the PFN that corresponds to the page where **offset** is located in the buffer. Note that the way the PFN is obtained depends on the way the buffer has been allocated:
 
-    unsigned long pfn;    
-
-    pfn = virt_to_phys(buffer + offset) \>\> PAGE_SHIFT;
+    ``` c
+    unsigned long pfn;
+    pfn = virt_to_phys(buffer + offset) >> PAGE_SHIFT;
+    ```
 
 4.  Set the appropriate flags, disabling caching if necessary:
     - Disable caching using **vma-\>vm_page_prot = pgprot_noncached(vma-\>vm_page_prot);**.
@@ -1105,29 +1015,24 @@ With all these parameters defined, we can split the **mmap** file operation impl
 
 5.  Call **remap_pfn_range()** with the PFN calculated previously, **size**, and the protection flags. We will use **vm_iomap_memory()** in case of I/O memory mapping:
 
-    if (remap_pfn_range(vma, vma-\>vm_start, pfn,
-
-                       size, vma-\>vm_page_prot)) {
-
-        return -EAGAIN;
-
+    ``` c
+    if (remap_pfn_range(vma, vma->vm_start, pfn,
+                       size, vma->vm_page_prot)) {
+        return -EAGAIN;
     }
-
     return 0;
+    ```
 
 6.  Finally, pass the function to the **struct file_operations** structure:
 
+    ``` c
     static const struct file_operations my_fops = {
-
-        .owner = THIS_MODULE,
-
-        \[...\]
-
-        .mmap = my_mmap,
-
-        \[...\]
-
+        .owner = THIS_MODULE,
+        [...]
+        .mmap = my_mmap,
+        [...]
     };
+    ```
 
 This file operation implementation closes our series on memory mappings. In this section, we have learned how mappings work under the hood and all the mechanisms involved, caching considerations included.
 

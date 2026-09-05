@@ -1,9 +1,3 @@
-**Write a Palindrome**
-
-Claim your 15 minutes of fame: write a C program to generate that 10,000-word palindrome. Really make yourself famous by posting it to rec.arts.startrek.misc on Usenet.
-
-They're fed up with discussing Captain Kirk's middle name, and they love to hear about new diversions.
-
 **Chapter 5. Thinking of Linking**
 
 *As the* Pall Mall Gazette *described on March 11, 1889 "Mr Thomas Edison has been up on the two* *previous nights discovering 'a bug' in his phonograph."*
@@ -40,7 +34,7 @@ to invoke all these pieces and pass the right options to each (see Figure 5-1). 
 
 ***Figure 5-1. A Compiler is Often Split into Smaller Programs***
 
-![Image 52](media/index-98_1.png)
+![Image 52](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-98_1.png)
 
 They are written in pieces because they are easier to design and maintain if each specialized part is a program in its own right. For instance, the rules controlling preprocessing are unique to that phase and
 
@@ -74,9 +68,9 @@ If a copy of the libraries is physically part of the executable, then we say the
 
 ***Figure 5-2. Static Linking versus Dynamic Linking***
 
-![Image 53](media/index-100_1.png)
+![Image 53](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-100_1.png)
 
-![Image 54](media/index-100_2.png)
+![Image 54](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-100_2.png)
 
 Even with static linking, the whole of libc. a is not brought into the executable, just the routines needed.
 
@@ -114,7 +108,7 @@ For example, if you have eight XView™ applications running, only one copy of t
 
 Dynamic linking permits easy versioning of libraries. New libraries can be shipped; once installed on the system, old programs automatically get the benefit of the new versions without needing to be relinked.
 
-![Image 55](media/index-102_1.png)
+![Image 55](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-102_1.png)
 
 Finally (much less common, but still possible), dynamic linking allows users to select at runtime which library to execute against. It's possible to create library versions that are tuned for speed, or for memory efficiency, or that contain extra debugging information, and to allow the user to express a preference when execution takes place by substituting one library file for another.
 
@@ -174,7 +168,7 @@ The -L/home/linden -R/home/linden options tell the linker in which directories t
 
 You will probably also want to use the -K pic compiler option to produce position-independent code for your libraries. Position-independent code means that the generated code makes sure that every global data access is done through an extra indirection. This makes it easy to relocate the data simply by changing one value in the table of global offsets. Similarly, every function call is generated as a call through an indirect address in a procedure linkage table. The text can thus easily be relocated
 
-![Image 56](media/index-104_1.png)
+![Image 56](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-104_1.png)
 
 to anywhere, simply by fixing up the offset tables. So when the code is mapped in at runtime, the runtime linker can directly put it wherever there is room, and the code itself doesn't have to be changed.
 
@@ -254,7 +248,7 @@ L/usr/openwin/lib
 
 Another inconsistency is that a single library may contain routines that satisfy the prototypes declared in multiple header files. For example, the functions declared in the header files \<string.h\>, \<stdio.h\>, and \<time.h\> are all usually supplied in the single library libc.so. If you're in doubt, use the nm utility to list
 
-![Image 57](media/index-106_1.png)
+![Image 57](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-106_1.png)
 
 the routines that a library contains. More about this in the next heuristic!
 
@@ -334,7 +328,7 @@ This causes no end of angst for the unwary. Everyone is used to the general comm
 
 \<files\> \<options\> is very confusing. It's exacerbated by the fact that it will silently accept the first
 
-![Image 58](media/index-108_1.png)
+![Image 58](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-108_1.png)
 
 version and do the wrong thing. At one point, Sun's compiler group amended the compiler drivers so that they coped with the situation. We changed the SunOS 4.x unbundled compiler drivers from SC0.0
 
@@ -374,9 +368,9 @@ Over the years we have seen no convincing examples where interpositioning was es
 
 ***Figure 5-3. Diagram of Interpositioning and Default Global Scope***
 
-![Image 59](media/index-110_1.png)
+![Image 59](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-110_1.png)
 
-![Image 60](media/index-110_2.png)
+![Image 60](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-110_2.png)
 
 Most programmers have not memorized all the names in the C library, and common names like index or mktemp tend to be chosen surprisingly often. Sometimes bugs of this kind even get into production code.
 
@@ -876,7 +870,7 @@ If an identifier is *reserved,* it means that the user is not allowed to redefin
 
 Use the "-m" option to ld for a linker report that includes a note of symbols which have been interposed. In general, the "-m" option to ld will produce a memory map or listing showing what has
 
-![Image 61](media/index-114_1.png)
+![Image 61](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-114_1.png)
 
 been put where in the executable. It also shows multiple instances of the same symbol, and by looking at what files these occur in, the user can determine if any interpositioning took place.
 
@@ -1095,3 +1089,21 @@ One might think that all that is necessary is to reemphasize this aspect of the 
 One way to fix the Turing test is to repair the weak link: the element of human gullibility. Just as we require doctors to pass several years of study before they can conduct medical examinations, so we must add the condition that the Turing interrogators should not be representatives of the average person in the street. The interrogators should instead be well versed in computer science, perhaps graduate students familiar with the capabilities and weaknesses of computer systems. Then they won't be thrown off by witty remarks extracted from a large database in lieu of real answers.
 
 Another interesting idea is to explore the sense of humor displayed by the terminal. Ask it to distinguish whether a particular story qualifies as a joke or not, and explain why it is funny. I think such a test is too severe—too many people would fail it.
+
+Although a brilliant theoretician, Turing was often hopeless when it came to practical matters. His impracticality showed itself in unusual ways: at his office, he chained his mug to the radiator to prevent his colleagues from using it. They naturally regarded this as a challenge, picked the lock, and drank from it wilfully. He routinely ran a dozen or more miles to distant appointments, arriving sticky and exhausted, rather than use public transport. When war broke out in Europe in 1939, Turing converted his savings into two silver ingots which he buried in the countryside for safety; by the end of the war he was unable to remember where he cached them. Turing eventually committed suicide in a characteristically impractical fashion: he ate an apple that he had injected with cyanide. And the test which bears his name is a triumph of theory over practical experience. The difference between theory and practice is a lot bigger in practice than in theory.
+
+**Postscript**
+
+Turing also wrote that he believed that "at the end of the century the use of words and general educated opinion would have altered so much that one will be able to speak of machines thinking without expecting to be contradicted." That actually happened much sooner than Turing reckoned.
+
+Programmers habitually explain a computer 's quirks in terms of thought processes: "You haven't pressed carriage return so the machine thinks that there's more input coming, and it's waiting for it."
+
+However, this is because the term "think" has become debased, rather than because machines have acquired consciousness, as Turing predicted.
+
+Alan Turing was rightly recognized as one of the great theoretical pioneers in computing. The Association for Computing Machinery established its highest annual prize, the Turing Award, in his memory. In 1983, the Turing Award was given to Dennis Ritchie and Ken Thompson in recognition of their work on UNIX and C.
+
+**Further Reading**
+
+If you are interested in learning more about the advances and limitations of artificial intelligence, a good book to read is *What Computers Still Can't Do: A Critique of Artificial Reason* by Hubert L.
+
+Dreyfus, published by the MIT Press, Boston, 1992.

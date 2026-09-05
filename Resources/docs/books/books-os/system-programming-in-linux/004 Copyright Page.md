@@ -1,4 +1,4 @@
-![](media/index-4_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-4_1.jpg)
 
 SYSTEM PROGRAMMING IN LINUX. Copyright © 2026 by Stewart N. Weiss.
 

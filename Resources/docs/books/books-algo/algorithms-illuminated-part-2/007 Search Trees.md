@@ -246,73 +246,73 @@ The search tree property imposes a requirement for every node of a search tree, 
 
 toward the root
 
-![](media/index-145_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-145_1.jpg)
 
 ### *x* 
 
-![](media/index-145_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-145_2.jpg)
 
  
 
 all keys all keys
 
-![](media/index-145_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-145_3.jpg)
 
 \< x \> x
 
-![](media/index-145_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-145_4.jpg)
 
  
 
 For example, here’s a search tree containing objects with the keys {1, 2, 3, 4, 5}, and a table listing the destinations of the three pointers at each node:
 
-![](media/index-145_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-145_5.jpg)
 
 root 3 Node Parent Left Right
 
-![](media/index-145_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-145_6.jpg)
 
 1 3 null 2
 
-![](media/index-145_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-145_7.jpg)
 
 1 2 1 null null 5
 
-![](media/index-145_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-145_8.jpg)
 
 3 null 1 5 4 5 null null
 
-![](media/index-145_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-145_9.jpg)
 
 leaves 2 4 5 3 4 null
 
-![](media/index-145_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-145_10.jpg)
 
 (a) Search tree (b) Pointers
 
-![](media/index-145_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-145_11.jpg)
 
 Figure 11.1: A search tree and its corresponding parent and child pointers.
 
-![](media/index-145_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-145_12.jpg)
 
  
 
 Binary search trees and heaps differ in several ways. Heaps can be thought of as trees, but they are implemented as arrays, with no explicit pointers between objects. A search tree explicitly stores three pointers per object, and hence uses more space (by a constant factor). Heaps don’t need explicit pointers because they always correspond to full binary trees, while binary search trees can have an arbitrary structure.
 
-![](media/index-145_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-145_13.jpg)
 
 Search trees have a different purpose than heaps. For this reason, the search tree property is incomparable to the heap property. Heaps \*11.3 Implementation Details 133
 
-![](media/index-145_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-145_14.jpg)
 
-![](media/index-145_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-145_15.jpg)
 
-![](media/index-145_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-145_16.jpg)
 
-![](media/index-145_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-145_17.jpg)
 
-![](media/index-145_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-145_18.jpg)
 
  
 
@@ -324,41 +324,41 @@ Many different search trees exist for a given set of keys. Here’s a second sea
 
 5
 
-![](media/index-146_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-146_1.jpg)
 
 4
 
-![](media/index-146_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-146_2.jpg)
 
 3
 
-![](media/index-146_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-146_3.jpg)
 
 2
 
-![](media/index-146_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-146_4.jpg)
 
 1
 
-![](media/index-146_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-146_5.jpg)
 
 Both conditions in the search tree property hold, the second one vacuously (as there are no non-empty right subtrees).
 
-![](media/index-146_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-146_6.jpg)
 
 The height of a tree is defined as the length of a longest path from
 
-![](media/index-146_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-146_7.jpg)
 
 its root to a leaf.10 Different search trees containing identical sets of objects can have different heights, as in our first two examples (which have heights 2 and 4, respectively). In general, a binary search tree containing n objects can have a height anywhere from
 
-![](media/index-146_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-146_8.jpg)
 
  
 
 perfectly balanced binary tree ⇡ log n n 1. 2 to \| {z } \| {z } chain, as above (worst-case scenario) (best-case scenario)
 
-![](media/index-146_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-146_9.jpg)
 
 The rest of this section outlines how to implement all the operations
 
@@ -388,35 +388,35 @@ For example, suppose we search for an object with key 2 in our first binary sear
 
 3
 
-![](media/index-147_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-147_1.jpg)
 
  
 
 1 5
 
-![](media/index-147_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-147_2.jpg)
 
  
 
 2 4
 
-![](media/index-147_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-147_3.jpg)
 
  
 
 Because the root’s key (3) is too big, the first step traverses the left child pointer. Because the next node’s key is too small (1), the second step traverses the right child pointer, arriving at the desired object. If we search for an object with key 6, the search traverses the root’s right child pointer (as the root’s key is too small). Because the next node’s key (5) is also too small, the search tries to follow another right child pointer, encounters a null pointer, and halts the search (unsuccessfully).
 
-![](media/index-147_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-147_4.jpg)
 
-![](media/index-147_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-147_5.jpg)
 
-![](media/index-147_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-147_6.jpg)
 
-![](media/index-147_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-147_7.jpg)
 
-![](media/index-147_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-147_8.jpg)
 
-![](media/index-147_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-147_9.jpg)
 
 \*11.3 Implementation Details 135
 
@@ -452,57 +452,57 @@ For example, in the search trees we considered earlier:
 
 3 4
 
-![](media/index-148_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-148_1.jpg)
 
 3
 
-![](media/index-148_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-148_2.jpg)
 
 1 5
 
-![](media/index-148_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-148_3.jpg)
 
 2
 
-![](media/index-148_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-148_4.jpg)
 
 minimum
 
-![](media/index-148_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-148_5.jpg)
 
 2 4 1 minimum
 
-![](media/index-148_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-148_6.jpg)
 
 repeatedly following left child pointers leads to the object with the minimum key.
 
-![](media/index-148_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-148_7.jpg)
 
-![](media/index-148_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-148_8.jpg)
 
-![](media/index-148_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-148_9.jpg)
 
-![](media/index-148_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-148_10.jpg)
 
-![](media/index-148_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-148_11.jpg)
 
-![](media/index-148_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-148_12.jpg)
 
-![](media/index-148_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-148_13.jpg)
 
-![](media/index-148_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-148_14.jpg)
 
-![](media/index-148_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-148_15.jpg)
 
-![](media/index-148_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-148_16.jpg)
 
-![](media/index-148_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-148_17.jpg)
 
-![](media/index-148_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-148_18.jpg)
 
-![](media/index-148_19.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-148_19.jpg)
 
-![](media/index-148_20.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-148_20.jpg)
 
 136 Search Trees
 
@@ -544,35 +544,35 @@ Given an object x, where could x’s predecessor reside? Not in x’s right subt
 
 3
 
-![](media/index-149_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-149_1.jpg)
 
  
 
 1 5
 
-![](media/index-149_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-149_2.jpg)
 
  
 
 2 4
 
-![](media/index-149_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-149_3.jpg)
 
  
 
 illustrates two cases. The predecessor might appear in the left subtree (as for the nodes with keys 3 and 5), or it could be an ancestor farther up in the tree (as for the nodes with keys 2 and 4).
 
-![](media/index-149_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-149_4.jpg)
 
-![](media/index-149_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-149_5.jpg)
 
-![](media/index-149_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-149_6.jpg)
 
-![](media/index-149_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-149_7.jpg)
 
-![](media/index-149_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-149_8.jpg)
 
-![](media/index-149_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-149_9.jpg)
 
 \*11.3 Implementation Details 137
 
@@ -654,85 +654,85 @@ The Insert operation piggybacks on Search. An unsuccessful search for an object 
 
 3 3
 
-![](media/index-152_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-152_1.jpg)
 
 1 5 1 5
 
-![](media/index-152_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-152_2.jpg)
 
  
 
 2 4 2 4 6
 
-![](media/index-152_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-152_3.jpg)
 
  
 
 What if there is already an object with key k in the tree? If you want to avoid duplicate keys, the insertion can be ignored. Otherwise, the search follows the left child of the existing object with key k, pushing onward until a null pointer is encountered.
 
-![](media/index-152_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-152_4.jpg)
 
 Insert
 
-![](media/index-152_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-152_5.jpg)
 
 1\. Start at the root node.
 
-![](media/index-152_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-152_6.jpg)
 
 2\. Repeatedly traverse left and right child pointers, as
 
-![](media/index-152_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-152_7.jpg)
 
 appropriate (left if k is at most the current node’s key, right if it’s bigger), until a null pointer is encountered.
 
-![](media/index-152_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-152_8.jpg)
 
 3\. Replace the null pointer with one to the new object.
 
-![](media/index-152_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-152_9.jpg)
 
 Set the new node’s parent pointer to its parent, and
 
-![](media/index-152_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-152_10.jpg)
 
 its child pointers to null.
 
-![](media/index-152_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-152_11.jpg)
 
  
 
 The operation preserves the search tree property because it places
 
-![](media/index-152_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-152_12.jpg)
 
 the new object where it should have been.13 The running time is the same as for Search, which is O(height).
 
-![](media/index-152_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-152_13.jpg)
 
 11.3.8 Implementing Delete in O(height) Time
 
-![](media/index-152_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-152_14.jpg)
 
 In most data structures, the Delete operation is the toughest one to get right. Search trees are no exception.
 
-![](media/index-152_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-152_15.jpg)
 
 Delete : for a key k, delete an object with key k from the search tree, if one exists.
 
-![](media/index-152_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-152_16.jpg)
 
 13 More formally, let x denote the newly inserted object and consider an existing object y. If x is not a member of the subtree rooted at y, then it cannot interfere with the search tree property at y. If it is a member of the subtree rooted at y, then y was one of the nodes visited during the unsuccessful search for x. The keys of x and y were explicitly compared in this search, with x placed in y’s left subtree if and only if its key is no larger than y’s. 140 Search Trees
 
-![](media/index-152_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-152_17.jpg)
 
-![](media/index-152_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-152_18.jpg)
 
-![](media/index-152_19.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-152_19.jpg)
 
-![](media/index-152_20.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-152_20.jpg)
 
-![](media/index-152_21.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-152_21.jpg)
 
  
 
@@ -742,113 +742,113 @@ The first step is to invoke Search to locate an object x with key k. (If there i
 
 3 3
 
-![](media/index-153_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_1.jpg)
 
  
 
 1 5 1 5
 
-![](media/index-153_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_2.jpg)
 
  
 
 delete 2 4 4
 
-![](media/index-153_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_3.jpg)
 
  
 
 For every remaining node y, the nodes in y’s subtrees are the same as before, except possibly with x removed; the search tree property continues to hold.
 
-![](media/index-153_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_4.jpg)
 
 When x has one child y, we can splice it out. Deleting x leaves y without a parent and x’s old parent z without one of its children. The
 
-![](media/index-153_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_5.jpg)
 
 obvious fix is to let y 14 assume x ’s previous position (as z ’s child).
 
-![](media/index-153_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_6.jpg)
 
 For example, if we delete the node with key 5 from our favorite search tree:
 
-![](media/index-153_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_7.jpg)
 
 3 3
 
-![](media/index-153_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_8.jpg)
 
  
 
 1 delete 5 1 4
 
-![](media/index-153_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_9.jpg)
 
  
 
 2 4 2
 
-![](media/index-153_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_10.jpg)
 
  
 
 By the same reasoning as in the first case, the search property is preserved.
 
-![](media/index-153_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_11.jpg)
 
 The hard case is when x has two children. Deleting x leaves two nodes without a parent, and it’s not clear where to put them. In our running example, it’s not obvious how to repair the tree after deleting its root.
 
-![](media/index-153_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_12.jpg)
 
 14 Insert your favorite nerdy Shakespeare joke here. . . \*11.3 Implementation Details 141
 
-![](media/index-153_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_13.jpg)
 
-![](media/index-153_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_14.jpg)
 
-![](media/index-153_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_15.jpg)
 
-![](media/index-153_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_16.jpg)
 
-![](media/index-153_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_17.jpg)
 
-![](media/index-153_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_18.jpg)
 
-![](media/index-153_19.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_19.jpg)
 
-![](media/index-153_20.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_20.jpg)
 
-![](media/index-153_21.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_21.jpg)
 
-![](media/index-153_22.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_22.jpg)
 
-![](media/index-153_23.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_23.jpg)
 
-![](media/index-153_24.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_24.jpg)
 
-![](media/index-153_25.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_25.jpg)
 
-![](media/index-153_26.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_26.jpg)
 
-![](media/index-153_27.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_27.jpg)
 
-![](media/index-153_28.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_28.jpg)
 
-![](media/index-153_29.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_29.jpg)
 
-![](media/index-153_30.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_30.jpg)
 
-![](media/index-153_31.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_31.jpg)
 
-![](media/index-153_32.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_32.jpg)
 
-![](media/index-153_33.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_33.jpg)
 
-![](media/index-153_34.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_34.jpg)
 
-![](media/index-153_35.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_35.jpg)
 
-![](media/index-153_36.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-153_36.jpg)
 
  
 
@@ -868,111 +868,111 @@ the root node acting as x:
 
 delete 3 2
 
-![](media/index-154_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_1.jpg)
 
 1 5 1 5
 
-![](media/index-154_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_2.jpg)
 
  
 
 predecessor 2 4 3 4
 
-![](media/index-154_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_3.jpg)
 
  
 
 This crazy idea looks like a bad one, as we’ve now violated the search tree property (with the node with key 3 in the left subtree of the node with key 2). But every violation of the search tree property
 
-![](media/index-154_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_4.jpg)
 
 involves the node x 16 , which we’re going to delete anyway. Because x now occupies y’s previous position, it no longer has a right child. Deleting x from its new position falls into one of the two easy cases: We delete it if it also has no left child, and splice it out if it does have a left child. Either way, with x out of the picture, the search tree property is restored. Back to our running example:
 
-![](media/index-154_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_5.jpg)
 
 2 2
 
-![](media/index-154_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_6.jpg)
 
  
 
 1 5 1 5
 
-![](media/index-154_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_7.jpg)
 
  
 
 delete 4 3 4
 
-![](media/index-154_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_8.jpg)
 
  
 
 15 The successor also works fine, if you prefer.
 
-![](media/index-154_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_9.jpg)
 
 16 For every node z other than y, the only possible new node in z’s subtree is x. Meanwhile y, as x’s immediate predecessor in the sorted ordering of all keys, has a key larger than those in x’s old left subtree and greater than those in x’s old right subtree. Thus, the search tree condition holds for y in its new position, except with respect to x.
 
-![](media/index-154_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_10.jpg)
 
-![](media/index-154_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_11.jpg)
 
-![](media/index-154_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_12.jpg)
 
-![](media/index-154_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_13.jpg)
 
-![](media/index-154_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_14.jpg)
 
-![](media/index-154_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_15.jpg)
 
-![](media/index-154_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_16.jpg)
 
-![](media/index-154_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_17.jpg)
 
-![](media/index-154_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_18.jpg)
 
-![](media/index-154_19.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_19.jpg)
 
-![](media/index-154_20.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_20.jpg)
 
-![](media/index-154_21.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_21.jpg)
 
-![](media/index-154_22.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_22.jpg)
 
-![](media/index-154_23.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_23.jpg)
 
-![](media/index-154_24.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_24.jpg)
 
-![](media/index-154_25.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_25.jpg)
 
-![](media/index-154_26.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_26.jpg)
 
-![](media/index-154_27.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_27.jpg)
 
-![](media/index-154_28.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_28.jpg)
 
-![](media/index-154_29.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_29.jpg)
 
-![](media/index-154_30.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_30.jpg)
 
-![](media/index-154_31.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_31.jpg)
 
-![](media/index-154_32.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_32.jpg)
 
-![](media/index-154_33.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_33.jpg)
 
-![](media/index-154_34.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_34.jpg)
 
-![](media/index-154_35.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_35.jpg)
 
-![](media/index-154_36.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_36.jpg)
 
-![](media/index-154_37.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_37.jpg)
 
-![](media/index-154_38.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_38.jpg)
 
-![](media/index-154_39.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-154_39.jpg)
 
 142 Search Trees
 
@@ -1028,47 +1028,47 @@ time (as you should check).
 
 *size(3)=5* 3
 
-![](media/index-156_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-156_1.jpg)
 
  
 
 1 *size(1)=2* *size(5)=2* 5
 
-![](media/index-156_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-156_2.jpg)
 
  
 
 *size(2)=1* 2 4 *size(4)=1*
 
-![](media/index-156_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-156_3.jpg)
 
  
 
 we have size(1) = 2, size(2) = 1, size(3) = 5, size(4) = 1, and size(5) = 2.
 
-![](media/index-156_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-156_4.jpg)
 
  
 
 Quiz 11.1
 
-![](media/index-156_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-156_5.jpg)
 
 Suppose the node x in a search tree has children y and z. What is the relationship between size(x), size(y), and size(z)?
 
-![](media/index-156_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-156_6.jpg)
 
 a\) size(x) = max{size(y), size(z)} + 1
 
-![](media/index-156_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-156_7.jpg)
 
 b\) size(x) = size(y) + size(z)
 
-![](media/index-156_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-156_8.jpg)
 
 c\) size(x) = size(y) + size(z) + 1
 
-![](media/index-156_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-156_9.jpg)
 
 d\) There is no general relationship.
 
@@ -1142,41 +1142,41 @@ The running time of every binary search tree operation (save Out-putSorted) is p
 
 5
 
-![](media/index-158_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-158_1.jpg)
 
 4
 
-![](media/index-158_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-158_2.jpg)
 
 3
 
-![](media/index-158_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-158_3.jpg)
 
 2
 
-![](media/index-158_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-158_4.jpg)
 
 1
 
-![](media/index-158_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-158_5.jpg)
 
  
 
 The difference between a logarithmic and a linear running time is huge, so it’s a win to work a little harder in Insert and Delete—still O(height) time, but with a larger constant factor—to guarantee that the tree’s height is always O(log n).
 
-![](media/index-158_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-158_6.jpg)
 
 Several different types of balanced search trees guarantee O(log n)
 
-![](media/index-158_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-158_7.jpg)
 
 height and, hence, achieve the operation running times stated in the
 
-![](media/index-158_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-158_8.jpg)
 
 scorecard in Table 11.2.20 The devil is in the implementation details, and they can get pretty tricky for balanced search trees. Happily, implementations are readily available and it’s unlikely that you’ll ever need to code up your own version from scratch. I encourage readers interested in what’s under the hood of a balanced search tree to check out a textbook treatment or explore the open-source implementations
 
-![](media/index-158_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-158_9.jpg)
 
 and visualization demos that are freely available online.21 To whet
 
@@ -1196,93 +1196,93 @@ All the most common implementations of balanced search trees use rotations, a co
 
 5
 
-![](media/index-159_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-159_1.jpg)
 
 4 4 3
 
-![](media/index-159_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-159_2.jpg)
 
 rotate rotate 3 5 2
 
-![](media/index-159_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-159_3.jpg)
 
 3 4
 
-![](media/index-159_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-159_4.jpg)
 
 2 2 5 1
 
-![](media/index-159_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-159_5.jpg)
 
 1
 
-![](media/index-159_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-159_6.jpg)
 
 1
 
-![](media/index-159_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-159_7.jpg)
 
  
 
 A rotation takes a parent-child pair and reverses their relationship
 
-![](media/index-159_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-159_8.jpg)
 
 (Figure 11.2). A right rotation applies when the child y is the left child of its parent x (and so y has a smaller key than x); after the rotation, x is the right child of y. When y is the right child of x, a left rotation makes x the left child of y.
 
-![](media/index-159_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-159_9.jpg)
 
 The search tree property dictates the remaining details. For example, consider a left rotation, with y the right child of x. The search tree property implies that x’s key is less than y’s; that all the
 
-![](media/index-159_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-159_10.jpg)
 
 keys in x’s left subtree (“A” in Figure 11.2) are less than that of x
 
-![](media/index-159_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-159_11.jpg)
 
 (and y); that all the keys in y’s right subtree (“C” in Figure 11.2) are greater than that of y (and x); and that all the keys in y’s left subtree
 
-![](media/index-159_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-159_12.jpg)
 
 (“B” in Figure 11.2) are between those of x and y. After the rotation, y inherits x’s old parent and has x as its new left child. There’s a unique way to put all the pieces back together while preserving the search tree property, so let’s just follow our nose.
 
-![](media/index-159_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-159_13.jpg)
 
 There are three free slots for the subtrees A, B, and C: y’s right child pointer and both child pointers of x. The search tree property
 
-![](media/index-159_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-159_14.jpg)
 
 See also the bonus videos at [www.algorithmsilluminated.org](http://www.algorithmsilluminated.org) for the basics of red-black trees.
 
-![](media/index-159_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-159_15.jpg)
 
-![](media/index-159_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-159_16.jpg)
 
-![](media/index-159_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-159_17.jpg)
 
-![](media/index-159_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-159_18.jpg)
 
-![](media/index-159_19.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-159_19.jpg)
 
-![](media/index-159_20.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-159_20.jpg)
 
-![](media/index-159_21.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-159_21.jpg)
 
-![](media/index-159_22.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-159_22.jpg)
 
-![](media/index-159_23.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-159_23.jpg)
 
-![](media/index-159_24.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-159_24.jpg)
 
-![](media/index-159_25.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-159_25.jpg)
 
-![](media/index-159_26.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-159_26.jpg)
 
-![](media/index-159_27.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-159_27.jpg)
 
-![](media/index-159_28.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-159_28.jpg)
 
-![](media/index-159_29.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-159_29.jpg)
 
 \*11.4 Balanced Search Trees 147
 
@@ -1290,163 +1290,163 @@ See also the bonus videos at [www.algorithmsilluminated.org](http://www.algorith
 
 toward the root toward the root
 
-![](media/index-160_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_1.jpg)
 
 *x* *y*
 
-![](media/index-160_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_2.jpg)
 
 *y* *x*
 
-![](media/index-160_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_3.jpg)
 
 all keys C A
 
-![](media/index-160_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_4.jpg)
 
 \< x
 
-![](media/index-160_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_5.jpg)
 
 B C A B
 
-![](media/index-160_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_6.jpg)
 
 all keys all keys
 
-![](media/index-160_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_7.jpg)
 
 between x and y \> y
 
-![](media/index-160_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_8.jpg)
 
 (a) Before rotation (b) After rotation
 
-![](media/index-160_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_9.jpg)
 
 Figure 11.2: A left rotation in action.
 
-![](media/index-160_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_10.jpg)
 
  
 
 forces us to stick the smallest subtree (A) as x’s left child, and the largest subtree (C) as y’s right child. This leaves one slot for subtree B (x’s right child pointer), and fortunately the search tree property works out: All the subtree’s keys are wedged between those of x and y, and the subtree winds up in y’s left subtree (where it needs to be) and x’s right subtree (ditto).
 
-![](media/index-160_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_11.jpg)
 
 A right rotation is then a left rotation in reverse (Figure 11.3).
 
-![](media/index-160_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_12.jpg)
 
  
 
 toward the root
 
-![](media/index-160_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_13.jpg)
 
 *x* toward the root
 
-![](media/index-160_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_14.jpg)
 
 *y*
 
-![](media/index-160_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_15.jpg)
 
 *y*
 
-![](media/index-160_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_16.jpg)
 
 ### *x* 
 
-![](media/index-160_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_17.jpg)
 
 C
 
-![](media/index-160_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_18.jpg)
 
 all keys A
 
-![](media/index-160_19.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_19.jpg)
 
 \> x
 
-![](media/index-160_20.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_20.jpg)
 
 all keys A B C all keys B
 
-![](media/index-160_21.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_21.jpg)
 
 \< y between y and x
 
-![](media/index-160_22.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_22.jpg)
 
 (a) Before rotation (b) After rotation
 
-![](media/index-160_23.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_23.jpg)
 
 Figure 11.3: A right rotation in action.
 
-![](media/index-160_24.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_24.jpg)
 
  
 
 Because a rotation merely rewires a few pointers, it can be imple-
 
-![](media/index-160_25.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_25.jpg)
 
 mented with a constant number of operations. By construction, it preserves the search tree property.
 
-![](media/index-160_26.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_26.jpg)
 
 The operations that modify the search tree—Insert and Delete— 148 Search Trees
 
-![](media/index-160_27.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_27.jpg)
 
-![](media/index-160_28.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_28.jpg)
 
-![](media/index-160_29.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_29.jpg)
 
-![](media/index-160_30.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_30.jpg)
 
-![](media/index-160_31.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_31.jpg)
 
-![](media/index-160_32.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_32.jpg)
 
-![](media/index-160_33.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_33.jpg)
 
-![](media/index-160_34.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_34.jpg)
 
-![](media/index-160_35.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_35.jpg)
 
-![](media/index-160_36.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_36.jpg)
 
-![](media/index-160_37.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_37.jpg)
 
-![](media/index-160_38.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_38.jpg)
 
-![](media/index-160_39.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_39.jpg)
 
-![](media/index-160_40.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_40.jpg)
 
-![](media/index-160_41.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_41.jpg)
 
-![](media/index-160_42.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_42.jpg)
 
-![](media/index-160_43.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_43.jpg)
 
-![](media/index-160_44.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_44.jpg)
 
-![](media/index-160_45.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_45.jpg)
 
-![](media/index-160_46.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_46.jpg)
 
-![](media/index-160_47.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_47.jpg)
 
-![](media/index-160_48.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_48.jpg)
 
-![](media/index-160_49.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_49.jpg)
 
-![](media/index-160_50.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-160_50.jpg)
 
  
 

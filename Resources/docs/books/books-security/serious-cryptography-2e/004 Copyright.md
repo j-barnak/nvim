@@ -7,7 +7,7 @@ First printing
 ISBN-13: 978-1-7185-0384-7 (print)  
 ISBN-13: 978-1-7185-0385-4 (ebook)
 
-![](media/f29d5cdefaf14b8fe9ecc8dbcf4810cdb20f793f.jpg)
+![](/tmp/audit/iter1/epubregen/serious-cryptography-2e/media/f29d5cdefaf14b8fe9ecc8dbcf4810cdb20f793f.jpg)
 
 Published by No Starch Press^(®), Inc.  
 245 8th Street, San Francisco, CA 94103  

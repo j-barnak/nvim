@@ -1,5 +1,3 @@
-**CHAPTER 8**
-
 **Tweaks**
 
 For every general technique or feature in C++, there are circumstances where it’s reasonable to use it, and there are circumstances where it’s not. Describing when it makes sense to use a general technique or feature is usually fairly straightforward, but this chapter covers two exceptions. The general technique is pass by value, and the general feature is emplacement. The decision about when to employ them is affected by so many factors, the best advice I can offer is to *consider* their use. Nevertheless, both are important players in effective modern C++ programming, and the Items that follow provide the information you’ll need to determine whether using them is appropriate for your software.
@@ -10,7 +8,6 @@ For every general technique or feature in C++, there are circumstances where it�
 
 Some function parameters are intended to be copied.1 For example, a member function addName might copy its parameter into a private container. For efficiency, such a function should copy lvalue arguments, but move rvalue arguments:
 
-class Widget {
 
 public:
 
@@ -30,7 +27,6 @@ on page 2 that C++ has no terminology to distinguish a copy made by a copy opera
 
 // of std::move
 
-private:
 
 std::vector\<std::string\> names;
 
@@ -46,7 +42,6 @@ An alternative approach is to make addName a function template taking a universa
 
 reference (see Item 24):
 
-class Widget {
 
 public:
 
@@ -78,7 +73,6 @@ user-defined types by value. For parameters like newName in functions like addNa
 
 Before we discuss why pass-by-value may be a good fit for newName and addName, let’s see how it would be implemented:
 
-class Widget {
 
 public:
 
@@ -134,7 +128,6 @@ void addName(**std::string&&** newName)
 
 …
 
-private:
 
 std::vector\<std::string\> names;
 
@@ -216,7 +209,6 @@ Consider a class with a std::unique_ptr\<std::string\> data member and a setter 
 
 approach to its setter consists of a single function:
 
-class Widget {
 
 public:
 
@@ -226,7 +218,6 @@ void setPtr(**std::unique_ptr\<std::string\>&&** ptr)
 
 { p = **std::move(ptr)**; }
 
-private:
 
 std::unique_ptr\<std::string\> p;
 
@@ -248,7 +239,6 @@ std::make_unique (see Item 21) is passed by rvalue reference to setPtr, where it
 
 If setPtr were to take its parameter by value,
 
-class Widget {
 
 public:
 
@@ -274,7 +264,6 @@ When moves are cheap, the cost of an extra one may be acceptable, but when they�
 
 If it is, the request to add the name is ignored. A pass-by-value implementation could be written like this:
 
-class Widget {
 
 public:
 
@@ -298,7 +287,6 @@ names.push_back(std::move(newName));
 
 …
 
-private:
 
 std::vector\<std::string\> names;
 
@@ -324,7 +312,6 @@ explicit Password(**std::string pwd**) // pass by value
 
 …
 
-private:
 
 std::string text; // text of password
 
@@ -372,7 +359,6 @@ void changeTo(**const std::string& newPwd**) // the overload
 
 **Item 41 \| 289**
 
-private:
 
 std::string text; // as above
 
@@ -709,3 +695,331 @@ The lesson to take away is that when you use an emplacement function, be especia
 • Emplacement functions may perform type conversions that would be rejected by insertion functions.
 
 **Item 42 \| 301**
+
+**Index**
+
+**Symbols**
+
+arguments, 15-17
+
+&&, meanings of, 164
+
+decay, definition of, 15
+
+0 (zero)
+
+parameters, 16
+
+overloading and, 59
+
+reference to, 16
+
+templates and, 60
+
+size, deducing, 16
+
+type of, 58
+
+auto, 37-48
+
+= (equals sign), assignment vs. initialization, 50
+
+advantages of, 38-41
+
+=default, 112, 152, 257
+
+braced initializers and, 21-23
+
+=delete (see deleted functions)
+
+code readability and, 42
+
+maintenance and, 42
+
+**A**
+
+proxy classes and, 43-46
+
+refactoring and, 42
+
+Abrahams, David, xiv
+
+reference collapsing and, 201
+
+"Adventure", allusion to, 295
+
+return type deduction and braced initializ‐
+
+Alexandrescu, Andrei, xiii
+
+ers and, 21-23
+
+alias declarations
+
+std::initializer_list and, 21
+
+alias templates and, 63-65
+
+trailing return types and, 25
+
+definition of, 63
+
+type deduction, 18-23
+
+reference collapsing and, 202
+
+universal references and, 167
+
+vs. typedefs, 63-65
+
+vs. std::function for function objects, 39
+
+alias templates, 63
+
+allusions
+
+to "Adventure", 295
+
+**B**
+
+to "Citizen Kane", 239
+
+back pointers, 138
+
+to "Jabberwocky", 289
+
+Barry, Dave, allusion to, 33
+
+to "Mary Poppins", 289
+
+basic guarantee, definition of, 4
+
+to "Star Trek", 125
+
+Becker, Thomas, xiv
+
+to "Star Wars", 189
+
+big three, the, 111
+
+to "The Hitchhiker's Guide to the Galaxy",
+
+bitfield arguments, 214
+
+30
+
+boolean flags and event communication, 264
+
+to Dave Barry, 33
+
+Boost.TypeIndex, 34-35
+
+to John 8:32, 164
+
+braced initialization, 50-55
+
+apostrophe, as digit separator, 252
+
+auto and, 21-23
+
+arguments, bound and unbound, 238
+
+definition of, 50
+
+array
+
+perfect forwarding and, 208-209
+
+**303**
+
+return type deduction and, 23
+
+event communication and, 262-266
+
+std::initializer_lists and, 52-54
+
+spurious wakeups and, 264
+
+Browning, Elizabeth Barrett, 117
+
+timing dependencies and, 264
+
+by-reference captures, 217-219
+
+condvar (see condition variables)
+
+by-value capture
+
+const
+
+pointers and, 219
+
+const member functions and thread safety,
+
+problems with, 219-223
+
+103-109
+
+std::move and, 283
+
+const propagation, definition of, 210
+
+by-value parameters, std::move and, 283
+
+const T&&, 166
+
+pointers and type deduction, 14
+
+**C**
+
+vs. constexpr, 98
+
+C with Classes, 86
+
+constexpr, 97-103
+
+"C++ Concurrency in Action" (book), 257
+
+constexpr functions, 98-102
+
+C++03, definition of, 2
+
+restrictions on, 99-102
+
+C++11, definition of, 2
+
+runtime arguments and, 99
+
+C++14, definition of, 2
+
+constexpr objects, 97-98
+
+C++98
+
+interface design and, 102
+
+definition of, 2
+
+vs. const, 98
+
+exception specifications, 90
+
+constructors
+
+c++filt, 32
+
+constructor calls, braces vs. parentheses,
+
+caching factory function, 136
+
+52-55
+
+callable objects, definition of, 5
+
+explicit, 299-300
+
+captures
+
+universal references and, 180-183, 188-194
+
+by-reference, 217
+
+const_iterators
+
+by-value, 219
+
+converting to iterators, 87
+
+default modes, 216-223
+
+vs. iterators, 86-89
+
+this pointer and, 220-222
+
+contextual keywords, definition of, 83
+
+casts
+
+contracts, wide vs. narrow, 95
+
+conditional vs. unconditional, 161
+
+control blocks, 128-132
+
+std::move vs. std::forward, 158
+
+definition of, 128
+
+cbegin, 87
+
+size of, 132
+
+cend, 87
+
+std::shared_ptr and, 129
+
+Cheng, Rachel, xiv
+
+copy elision, definition of, 174
+
+"Citizen Kane", allusion to, 239
+
+copy of an object, definition of, 4
+
+class templates, definition of, 5
+
+copy operations
+
+closures
+
+automatic generation of, 112
+
+closure class, definition of, 216
+
+defaulting, 113-114
+
+copies of, 216
+
+definition of, 3
+
+definition of, 5, 216
+
+for classes declaring copy operations or
+
+code examples (see example classes/templates;
+
+dtor, 112
+
+example functions/templates)
+
+for std::atomic, 277
+
+code reordering
+
+implicit
+
+std::atomic and, 273
+
+in classes declaring move operations,
+
+volatile and, 275
+
+111
+
+code smells, 263
+
+Pimpl Idiom and, 153-154
+
+compiler warnings, 81
+
+relationship to destructor and resource
+
+noexcept and, 96
+
+management, 111
+
+virtual function overriding and, 81
+
+via construction vs. assignment, 288-290
+
+condition variables

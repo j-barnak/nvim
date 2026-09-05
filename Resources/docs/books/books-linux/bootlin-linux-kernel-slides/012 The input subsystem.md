@@ -1,5 +1,3 @@
-![](media/index-266_1.jpg)
-
 The input subsystem
 
  
@@ -246,11 +244,11 @@ Practical lab - Expose the Nunchuk to user space
 
 ▶ Extend the Nunchuk driver to expose the
 
-![](media/index-276_1.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-276_1.png)
 
 Nunchuk features to user space applications, as an *input* device.
 
-![](media/index-276_2.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-276_2.png)
 
 ▶ Test the operation of the Nunchuk using
 
@@ -259,3 +257,5 @@ evtest
  
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 262/436
+
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-277_1.jpg)

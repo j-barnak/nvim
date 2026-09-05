@@ -50,27 +50,27 @@ needed to reach the fairly ubiquitous actor Kevin Bacon. 2 So, Kevin Bacon himse
 
 in Atom Egoyan’s 3 Where the Truth Lies (Figure 8.1).
 
-![](media/index-29_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-29_1.jpg)
 
  
 
 Jon *A Single Man* *Where the* Colin Kevin
 
-![](media/index-29_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-29_2.jpg)
 
 Hamm Firth Bacon *Truth Lies*
 
-![](media/index-29_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-29_3.jpg)
 
  
 
 Figure 8.1: A snippet of the movie network, showing that Jon Hamm’s Bacon number is at most 2.
 
-![](media/index-29_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-29_4.jpg)
 
 [1 https://oracleofbacon.org/](https://oracleofbacon.org/)
 
-![](media/index-29_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-29_5.jpg)
 
 2 The Bacon number is a riff on the older concept of the Erdös number, named after the famous mathematician Paul Erdös, which measures the number of degrees of separation from Erdös in the co-authorship graph (where vertices are researchers, and there is an edge between each pair of researchers who have co-authored a
 
@@ -182,79 +182,79 @@ are reachable from s 8 via a directed path.
 
 *x* *y* *x* *y*
 
-![](media/index-32_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-32_1.jpg)
 
 *s* *w* *s* *w*
 
-![](media/index-32_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-32_2.jpg)
 
 *z* *z*
 
-![](media/index-32_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-32_3.jpg)
 
 *v* *v*
 
-![](media/index-32_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-32_4.jpg)
 
 (a) An undirected graph (b) A directed version
 
-![](media/index-32_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-32_5.jpg)
 
 Figure 8.2: In (a), the set of vertices reachable from s is {s, u, v, w}. In (b), it is {s, u, v}.
 
-![](media/index-32_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-32_6.jpg)
 
  
 
 The two graph search strategies that we’ll focus on—breadth-first
 
-![](media/index-32_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-32_7.jpg)
 
 search and depth-first search—are different ways of instantiating a generic graph search algorithm. The generic algorithm systematically finds all the reachable vertices, taking care to avoid exploring anything twice. It maintains an extra variable with each vertex that keeps track of whether or not it has already been explored, planting a flag the first time that vertex is reached. The main loop’s responsibility is to reach a new unexplored vertex in each iteration.
 
-![](media/index-32_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-32_8.jpg)
 
  
 
 8 In general, most of the algorithms and arguments in this chapter apply
 
-![](media/index-32_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-32_9.jpg)
 
 equally well to undirected and directed graphs. The big exception is computing connected components, which is a trickier problem in directed graphs than in undirected graphs.
 
-![](media/index-32_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-32_10.jpg)
 
-![](media/index-32_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-32_11.jpg)
 
-![](media/index-32_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-32_12.jpg)
 
-![](media/index-32_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-32_13.jpg)
 
-![](media/index-32_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-32_14.jpg)
 
-![](media/index-32_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-32_15.jpg)
 
-![](media/index-32_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-32_16.jpg)
 
-![](media/index-32_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-32_17.jpg)
 
-![](media/index-32_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-32_18.jpg)
 
-![](media/index-32_19.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-32_19.jpg)
 
-![](media/index-32_20.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-32_20.jpg)
 
-![](media/index-32_21.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-32_21.jpg)
 
-![](media/index-32_22.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-32_22.jpg)
 
-![](media/index-32_23.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-32_23.jpg)
 
-![](media/index-32_24.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-32_24.jpg)
 
-![](media/index-32_25.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-32_25.jpg)
 
-![](media/index-32_26.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-32_26.jpg)
 
 20 Graph Search and Its Applications
 
@@ -386,55 +386,54 @@ shortest path between one vertex and all other vertices, with the 8.1 Overview 2
 
 explored unexplored
 
-![](media/index-36_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-36_1.jpg)
 
  
 
 *s*
 
-![](media/index-36_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-36_2.jpg)
 
  
 
-the frontier
 
-![](media/index-36_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-36_3.jpg)
 
 Figure 8.3: Every iteration of the GenericSearch algorithm chooses an edge “on the frontier,” with one endpoint explored and the other unexplored.
 
-![](media/index-36_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-36_4.jpg)
 
  
 
 layer-i vertices being precisely the vertices at distance i from s;
 
-![](media/index-36_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-36_5.jpg)
 
 • how to use BFS to compute (in linear time) the connected
 
-![](media/index-36_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-36_6.jpg)
 
 components of an undirected graph.
 
-![](media/index-36_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-36_7.jpg)
 
  
 
 Depth-first search (DFS). Depth-first search—DFS to its friends—is perhaps even more important. DFS employs a more aggressive strategy for exploring a graph, very much in the spirit of how you might explore a maze, going as deeply as you can and
 
-![](media/index-36_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-36_8.jpg)
 
 backtracking only when absolutely necessary. In Sections 8.4–8.7, we’ll see:
 
-![](media/index-36_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-36_9.jpg)
 
 • how to implement DFS in linear time using either recursion or
 
-![](media/index-36_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-36_10.jpg)
 
 an explicit stack (last-in first-out) data structure;
 
-![](media/index-36_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-36_11.jpg)
 
 • how to use DFS to compute (in linear time) a topological order-
 
@@ -478,65 +477,65 @@ eligible for exploration!
 
 *e*
 
-![](media/index-38_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-38_1.jpg)
 
 *s* *u*
 
-![](media/index-38_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-38_2.jpg)
 
  
 
 S = explored vertices
 
-![](media/index-38_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-38_3.jpg)
 
 Figure 8.4: Proof of Proposition 8.1. As long as the GenericSearch algorithm has not yet discovered all the reachable vertices, there is an eligible edge along which it can explore further.
 
-![](media/index-38_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-38_4.jpg)
 
  
 
 8.2 Breadth-First Search and Shortest Paths
 
-![](media/index-38_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-38_5.jpg)
 
 Let’s drill down on our first specific graph search strategy, breadth-first search.
 
-![](media/index-38_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-38_6.jpg)
 
 8.2.1 High-Level Idea
 
-![](media/index-38_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-38_7.jpg)
 
 Breadth-first search explores the vertices of a graph in layers, in order of increasing distance from the starting vertex. Layer 0 contains the starting vertex s and nothing else. Layer 1 is the set of vertices that are one hop away from s—that is, s’s neighbors. These are the vertices that are explored immediately after s in breadth-first search. For
 
-![](media/index-38_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-38_8.jpg)
 
 example, in the graph in Figure 8.5, a and b are the neighbors of s and constitute layer 1. In general, the vertices in a layer i are those that neighbor a vertex in layer i 1 and that do not already belong to one of the layers 0, 1, 2, . . . , i 1. Breadth-first search explores all of layer-i vertices immediately after completing its exploration of layer-(i 1) vertices. (Vertices not reachable from s do not belong
 
-![](media/index-38_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-38_9.jpg)
 
 to any layer.) For example, in Figure 8.5, the layer-2 vertices are c and d, as they neighbor layer-1 vertices but do not themselves belong to layer 0 or 1. (The vertex s is also a neighbor of a layer-1 vertex, but it already belongs to layer 0.) The last layer of the graph in
 
-![](media/index-38_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-38_10.jpg)
 
 Figure 8.5 comprises only the vertex e.
 
-![](media/index-38_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-38_11.jpg)
 
-![](media/index-38_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-38_12.jpg)
 
-![](media/index-38_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-38_13.jpg)
 
-![](media/index-38_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-38_14.jpg)
 
-![](media/index-38_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-38_15.jpg)
 
-![](media/index-38_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-38_16.jpg)
 
-![](media/index-38_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-38_17.jpg)
 
-![](media/index-38_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-38_18.jpg)
 
 26 Graph Search and Its Applications
 
@@ -544,87 +543,87 @@ Figure 8.5 comprises only the vertex e.
 
 *a* *e* layer 3
 
-![](media/index-39_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-39_1.jpg)
 
  
 
 *s* *c*
 
-![](media/index-39_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-39_2.jpg)
 
  
 
 *b* *d*
 
-![](media/index-39_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-39_3.jpg)
 
 layer 0
 
-![](media/index-39_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-39_4.jpg)
 
 layer 2
 
-![](media/index-39_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-39_5.jpg)
 
 layer 1
 
-![](media/index-39_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-39_6.jpg)
 
 Figure 8.5: Breadth-first search discovers vertices in layers. The layer-i vertices are the neighbors of the layer-(i 1) vertices that do not appear in any earlier layer.
 
-![](media/index-39_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-39_7.jpg)
 
  
 
 Quiz 8.1
 
-![](media/index-39_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-39_8.jpg)
 
 Consider an undirected graph with n 2 vertices. What are the minimum and maximum number of different layers that the graph could have, respectively?
 
-![](media/index-39_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-39_9.jpg)
 
 a\) 1 and n 1
 
-![](media/index-39_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-39_10.jpg)
 
 b\) 2 and n 1
 
-![](media/index-39_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-39_11.jpg)
 
 c\) 1 and n
 
-![](media/index-39_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-39_12.jpg)
 
 d\) 2 and n
 
-![](media/index-39_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-39_13.jpg)
 
 (See Section 8.2.6 for the solution and discussion.)
 
-![](media/index-39_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-39_14.jpg)
 
  
 
 8.2.2 Pseudocode for BFS
 
-![](media/index-39_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-39_15.jpg)
 
 Implementing breadth-first search in linear time requires a simple “first-in first-out” data structure known as a queue. BFS uses a queue to keep track of which vertices to explore next. If you’re unfamiliar with queues, now is a good time to read up on them in your favorite introductory programming book (or on Wikipedia). The gist is that 8.2 Breadth-First Search and Shortest Paths 27
 
-![](media/index-39_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-39_16.jpg)
 
-![](media/index-39_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-39_17.jpg)
 
-![](media/index-39_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-39_18.jpg)
 
-![](media/index-39_19.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-39_19.jpg)
 
-![](media/index-39_20.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-39_20.jpg)
 
-![](media/index-39_21.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-39_21.jpg)
 
-![](media/index-39_22.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-39_22.jpg)
 
  
 
@@ -636,7 +635,6 @@ BFS
 
 Input: graph G = (V, E) in adjacency-list
 
-representation, and a vertex s 2 V .
 
 Postcondition: a vertex is reachable from s if and
 
@@ -666,7 +664,6 @@ Let’s see how our pseudocode works for the graph in Figure 8.5, num-bering the
 
 be explored. The first iteration of the while loop extracts s from the queue Q and the subsequent for loop examines the edges (s, a) and (s, b), in whatever order these edges appear in s’s adjacency list. Because neither a nor b is marked as explored, both get inserted into the queue. Let’s say that edge (s, a) came first and so a is inserted before b. The current state of the graph and the queue is now:
 
-the frontier
 
 \#2
 
@@ -676,127 +673,126 @@ the frontier
 
 front of queue already removed
 
-![](media/index-41_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_1.jpg)
 
 *s* *c*
 
-![](media/index-41_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_2.jpg)
 
  
 
 *b* *b a s* *d*
 
-![](media/index-41_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_3.jpg)
 
 \#3 state of the queue Q
 
-![](media/index-41_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_4.jpg)
 
  
 
 The next iteration of the while loop extracts the vertex a from the front of the queue, and considers its incident edges (s, a) and (a, c). It skips over the former after double-checking that s is already marked as explored, and adds the (previously unexplored) vertex c to the end of the queue. The third iteration extracts the vertex b from the front of the queue and adds vertex d to the end (because s and c are already marked as explored, they are skipped over). The new picture is:
 
-![](media/index-41_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_5.jpg)
 
-the frontier
 
-![](media/index-41_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_6.jpg)
 
 \#2
 
-![](media/index-41_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_7.jpg)
 
 *a* *e*
 
-![](media/index-41_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_8.jpg)
 
 \#1 \#4
 
-![](media/index-41_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_9.jpg)
 
 front of queue already removed
 
-![](media/index-41_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_10.jpg)
 
 *s* *c*
 
-![](media/index-41_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_11.jpg)
 
 *b* *d* *c* *b a s*
 
-![](media/index-41_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_12.jpg)
 
 *d*
 
-![](media/index-41_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_13.jpg)
 
 \#3 \#5 state of the queue Q
 
-![](media/index-41_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_14.jpg)
 
 In the fourth iteration, the vertex c is removed from the front of the queue. Of its neighbors, the vertex e is the only one not encountered 8.2 Breadth-First Search and Shortest Paths 29
 
-![](media/index-41_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_15.jpg)
 
-![](media/index-41_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_16.jpg)
 
-![](media/index-41_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_17.jpg)
 
-![](media/index-41_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_18.jpg)
 
-![](media/index-41_19.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_19.jpg)
 
-![](media/index-41_20.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_20.jpg)
 
-![](media/index-41_21.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_21.jpg)
 
-![](media/index-41_22.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_22.jpg)
 
-![](media/index-41_23.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_23.jpg)
 
-![](media/index-41_24.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_24.jpg)
 
-![](media/index-41_25.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_25.jpg)
 
-![](media/index-41_26.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_26.jpg)
 
-![](media/index-41_27.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_27.jpg)
 
-![](media/index-41_28.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_28.jpg)
 
-![](media/index-41_29.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_29.jpg)
 
-![](media/index-41_30.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_30.jpg)
 
-![](media/index-41_31.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_31.jpg)
 
-![](media/index-41_32.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_32.jpg)
 
-![](media/index-41_33.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_33.jpg)
 
-![](media/index-41_34.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_34.jpg)
 
-![](media/index-41_35.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_35.jpg)
 
-![](media/index-41_36.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_36.jpg)
 
-![](media/index-41_37.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_37.jpg)
 
-![](media/index-41_38.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_38.jpg)
 
-![](media/index-41_39.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_39.jpg)
 
-![](media/index-41_40.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_40.jpg)
 
-![](media/index-41_41.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_41.jpg)
 
-![](media/index-41_42.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_42.jpg)
 
-![](media/index-41_43.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_43.jpg)
 
-![](media/index-41_44.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_44.jpg)
 
-![](media/index-41_45.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-41_45.jpg)
 
  
 
@@ -812,111 +808,111 @@ layer-(i 1) vertices (Figure 8.6).
 
 \#1 *s* *c* \#4
 
-![](media/index-42_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_1.jpg)
 
 *s* *c*
 
-![](media/index-42_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_2.jpg)
 
 *b* *d*
 
 layer 0
 
-![](media/index-42_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_3.jpg)
 
 *b* *d* layer 2
 
-![](media/index-42_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_4.jpg)
 
 \#3 layer 1 \#5
 
-![](media/index-42_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_5.jpg)
 
 (a) Order of exploration (b) Layers
 
-![](media/index-42_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_6.jpg)
 
 Figure 8.6: In breadth-first search, the layer-i vertices are explored imme-diately after the layer-(i 1) vertices.
 
-![](media/index-42_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_7.jpg)
 
  
 
 8.2.4 Correctness and Running Time
 
-![](media/index-42_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_8.jpg)
 
 Breadth-first search discovers all the vertices reachable from the starting vertex, and it runs in linear time. The more refined running
 
-![](media/index-42_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_9.jpg)
 
 time bound in Theorem 8.2(c) below will come in handy for our linear-time algorithm for computing connected components (described
 
-![](media/index-42_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_10.jpg)
 
 in Section 8.3).
 
-![](media/index-42_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_11.jpg)
 
 Theorem 8.2 (Properties of BFS) For every undirected or di-rected graph G = (V, E) in adjacency-list representation and for every starting vertex s 2 V :
 
-![](media/index-42_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_12.jpg)
 
 \(a\) At the conclusion of BFS, a vertex v 2 V is marked as explored
 
-![](media/index-42_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_13.jpg)
 
 if and only if there is a path from s to v in G.
 
-![](media/index-42_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_14.jpg)
 
 \(b\) The running time of BFS is O(m + n), where m = \|E\| and
 
-![](media/index-42_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_15.jpg)
 
 n = \|V \| .
 
-![](media/index-42_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_16.jpg)
 
-![](media/index-42_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_17.jpg)
 
-![](media/index-42_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_18.jpg)
 
-![](media/index-42_19.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_19.jpg)
 
-![](media/index-42_20.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_20.jpg)
 
-![](media/index-42_21.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_21.jpg)
 
-![](media/index-42_22.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_22.jpg)
 
-![](media/index-42_23.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_23.jpg)
 
-![](media/index-42_24.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_24.jpg)
 
-![](media/index-42_25.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_25.jpg)
 
-![](media/index-42_26.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_26.jpg)
 
-![](media/index-42_27.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_27.jpg)
 
-![](media/index-42_28.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_28.jpg)
 
-![](media/index-42_29.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_29.jpg)
 
-![](media/index-42_30.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_30.jpg)
 
-![](media/index-42_31.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_31.jpg)
 
-![](media/index-42_32.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_32.jpg)
 
-![](media/index-42_33.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_33.jpg)
 
-![](media/index-42_34.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_34.jpg)
 
-![](media/index-42_35.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_35.jpg)
 
-![](media/index-42_36.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-42_36.jpg)
 
 30 Graph Search and Its Applications
 
@@ -998,7 +994,6 @@ Augmented-BFS
 
 Input: graph G = (V, E) in adjacency-list
 
-representation, and a vertex s 2 V .
 
 Postcondition: for every vertex v 2 V , the value l(v)
 
@@ -1014,7 +1009,6 @@ Example and Analysis
 
 In our running example (Figure 8.6), the first iteration of the while loop discovers the vertices a and b. Because s triggered their discovery and l(s) = 0, the algorithm reassigns l(a) and l(b) from +1 to 1:
 
-the frontier
 
 *l*(*a*)=1 *l*(*e*)=+∞
 
@@ -1024,61 +1018,60 @@ the frontier
 
 front of queue already removed
 
-![](media/index-45_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-45_1.jpg)
 
 *s* *c* *l*(*c*)=+∞
 
-![](media/index-45_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-45_2.jpg)
 
 *b* *b a s*
 
-![](media/index-45_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-45_3.jpg)
 
 *d*
 
-![](media/index-45_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-45_4.jpg)
 
 *l* *l*(*d*)=+∞ ( *b* )=1 state of the queue Q
 
-![](media/index-45_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-45_5.jpg)
 
  
 
 The second iteration of the while loop processes the vertex a, leading to c’s discovery. The algorithm reassigns l(c) from +1 to l(a) + 1, which is 2. Similarly, in the third iteration, l(d) is set to l(b) + 1, which is also 2:
 
-![](media/index-45_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-45_6.jpg)
 
-![](media/index-45_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-45_7.jpg)
 
-![](media/index-45_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-45_8.jpg)
 
-![](media/index-45_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-45_9.jpg)
 
-![](media/index-45_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-45_10.jpg)
 
-![](media/index-45_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-45_11.jpg)
 
-![](media/index-45_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-45_12.jpg)
 
-![](media/index-45_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-45_13.jpg)
 
-![](media/index-45_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-45_14.jpg)
 
-![](media/index-45_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-45_15.jpg)
 
-![](media/index-45_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-45_16.jpg)
 
-![](media/index-45_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-45_17.jpg)
 
-![](media/index-45_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-45_18.jpg)
 
-![](media/index-45_19.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-45_19.jpg)
 
-![](media/index-45_20.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-45_20.jpg)
 
 8.2 Breadth-First Search and Shortest Paths 33
 
-the frontier
 
 *l*(*a*)=1 *l*(*e*)=+∞
 
@@ -1088,93 +1081,93 @@ the frontier
 
 front of queue already removed
 
-![](media/index-46_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-46_1.jpg)
 
 *s* *c* *l*(*c*)=2
 
-![](media/index-46_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-46_2.jpg)
 
 *b* *d* *c* *b a s*
 
-![](media/index-46_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-46_3.jpg)
 
 *d*
 
-![](media/index-46_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-46_4.jpg)
 
 *l* *l*(*d*)=2 ( *b* )=1 state of the queue Q
 
-![](media/index-46_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-46_5.jpg)
 
 The fourth iteration discovers the final vertex e via the vertex c, and sets l(e) to l(c) + 1, which is 3. At this point, for every vertex v, l(v) equals the true shortest-path distance dist(s, v), which also equals
 
-![](media/index-46_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-46_6.jpg)
 
 the number of the layer that contains v (Figure 8.6). These properties hold in general, and not just for this example.
 
-![](media/index-46_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-46_7.jpg)
 
 Theorem 8.3 (Properties of Augmented-BFS) For every undi-rected or directed graph G = (V, E) in adjacency-list representation and for every starting vertex s 2 V :
 
-![](media/index-46_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-46_8.jpg)
 
 \(a\) At the conclusion of Augmented-BFS, for every vertex v 2 V ,
 
-![](media/index-46_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-46_9.jpg)
 
 the value of l(v) equals the length dist(s, v) of a shortest path from s to v in G (or +1, if no such path exists).
 
-![](media/index-46_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-46_10.jpg)
 
 \(b\) The running time of Augmented-BFS is O(m+n), where m = \|E\|
 
-![](media/index-46_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-46_11.jpg)
 
 and n = \|V \|.
 
-![](media/index-46_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-46_12.jpg)
 
 Because the asymptotic running time of the Augmented-BFS al-
 
-![](media/index-46_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-46_13.jpg)
 
 gorithm is the same as that of BFS, part (b) of Theorem 8.3 follows
 
-![](media/index-46_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-46_14.jpg)
 
 from the latter’s running time guarantee (Theorem 8.2(b)). Part (a) follows from two observations. First, the vertices v with dist(s, v) = i are precisely the vertices in the ith layer of the graph—this is why we defined layers the way we did. Second, for every layer-i vertex w, Augmented-BFS eventually sets l(w) = i (since w is discovered via a layer-(i 1) vertex v with l(v) = i 1). For vertices not in any layer—
 
-![](media/index-46_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-46_15.jpg)
 
 that is, not reachable from 17 s —both dist ( s, v ) and l ( v ) are + 1 .
 
-![](media/index-46_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-46_16.jpg)
 
  
 
 17 If you’re hungry for a more rigorous proof, then proceed—in the privacy of your own home—by induction on the number of while loop iterations performed
 
-![](media/index-46_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-46_17.jpg)
 
 by the Augmented-BFS algorithm. Alternatively, Theorem 8.3(a) is a special case
 
-![](media/index-46_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-46_18.jpg)
 
 of the correctness of Dijkstra’s shortest-path algorithm, as proved in Section 9.3. 34 Graph Search and Its Applications
 
-![](media/index-46_19.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-46_19.jpg)
 
-![](media/index-46_20.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-46_20.jpg)
 
-![](media/index-46_21.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-46_21.jpg)
 
-![](media/index-46_22.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-46_22.jpg)
 
-![](media/index-46_23.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-46_23.jpg)
 
-![](media/index-46_24.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-46_24.jpg)
 
-![](media/index-46_25.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-46_25.jpg)
 
  
 
@@ -1186,173 +1179,173 @@ graphs have only two layers (Figure 8.7(a)). There cannot be more than n layers,
 
 each. Path graphs have n layers (Figure 8.7(b)).
 
-![](media/index-47_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-47_1.jpg)
 
  
 
 *s*
 
-![](media/index-47_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-47_2.jpg)
 
 *s*
 
-![](media/index-47_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-47_3.jpg)
 
  
 
 layer 0 layer 1 layer 1 layer 3 layer 0 layer 2
 
-![](media/index-47_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-47_4.jpg)
 
 (a) A complete graph (b) A path graph
 
-![](media/index-47_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-47_5.jpg)
 
 Figure 8.7: An n-vertex graph can have anywhere from two to n different layers.
 
-![](media/index-47_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-47_6.jpg)
 
  
 
 8.3 Computing Connected Components
 
-![](media/index-47_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-47_7.jpg)
 
 In this section, G = (V, E) will always denote an undirected graph. We postpone the more difficult connectivity problems in directed graphs
 
-![](media/index-47_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-47_8.jpg)
 
 until Section 8.6.
 
-![](media/index-47_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-47_9.jpg)
 
 8.3.1 Connected Components
 
-![](media/index-47_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-47_10.jpg)
 
 An undirected graph G = (V, E) naturally falls into “pieces,” which are
 
-![](media/index-47_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-47_11.jpg)
 
 called connected components (Figure 8.8). More formally, a connected component is a maximal subset S ✓ V of vertices such that there is a
 
-![](media/index-47_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-47_12.jpg)
 
 path from any vertex in 18 S to any other vertex in S . For example,
 
-![](media/index-47_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-47_13.jpg)
 
 18 Still more formally, the connected components of a graph can be defined as
 
-![](media/index-47_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-47_14.jpg)
 
 the equivalence classes of a suitable equivalence relation. Equivalence relations are usually covered in a first course on proofs or on discrete mathematics. A 8.3 Computing Connected Components 35
 
-![](media/index-47_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-47_15.jpg)
 
-![](media/index-47_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-47_16.jpg)
 
-![](media/index-47_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-47_17.jpg)
 
-![](media/index-47_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-47_18.jpg)
 
-![](media/index-47_19.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-47_19.jpg)
 
-![](media/index-47_20.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-47_20.jpg)
 
-![](media/index-47_21.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-47_21.jpg)
 
-![](media/index-47_22.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-47_22.jpg)
 
-![](media/index-47_23.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-47_23.jpg)
 
-![](media/index-47_24.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-47_24.jpg)
 
-![](media/index-47_25.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-47_25.jpg)
 
-![](media/index-47_26.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-47_26.jpg)
 
-![](media/index-47_27.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-47_27.jpg)
 
-![](media/index-47_28.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-47_28.jpg)
 
-![](media/index-47_29.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-47_29.jpg)
 
  
 
 the connected components of the graph in Figure 8.8 are {1, 3, 5, 7, 9}, {2, 4} , and {6, 8, 10}.
 
-![](media/index-48_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-48_1.jpg)
 
 1 3
 
 6
 
-![](media/index-48_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-48_2.jpg)
 
 5 2 4
 
-![](media/index-48_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-48_3.jpg)
 
 8 10
 
-![](media/index-48_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-48_4.jpg)
 
 7 9
 
-![](media/index-48_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-48_5.jpg)
 
  
 
 Figure 8.8: A graph with vertex set {1, 2, 3, . . . , 10} and three connected components.
 
-![](media/index-48_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-48_6.jpg)
 
  
 
 The goal of this section is to use breadth-first search to compute
 
-![](media/index-48_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-48_7.jpg)
 
 the connected components of a graph in linear time.19
 
-![](media/index-48_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-48_8.jpg)
 
 Problem: Undirected Connected Components
 
-![](media/index-48_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-48_9.jpg)
 
 Input: An undirected graph G = (V, E).
 
-![](media/index-48_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-48_10.jpg)
 
 Goal: Identify the connected components of G.
 
-![](media/index-48_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-48_11.jpg)
 
  
 
 Next, let’s double-check your understanding of the definition of
 
-![](media/index-48_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-48_12.jpg)
 
 connected components.
 
-![](media/index-48_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-48_13.jpg)
 
 relation on a set X of objects specifies, for each pair x, y 2 X of objects, whether or not x and y are related. (If so, we write x ⇠ y.) For connected components, the relevant relation (on the set V ) is “ v ⇠G w if and only if there is a path between v and w in G.” An equivalence relation satisfies three properties. First, it is reflexive, meaning that x ⇠ x for every x 2 X . (Satisfied by ⇠G, as the empty path connects a vertex with itself.) Second, it is symmetric, with x ⇠ y if and only if y ⇠ x. (Satisfied by ⇠G, as G is undirected.) Finally, it is transitive, meaning that x ⇠ y and y ⇠ z implies that x ⇠ z. (Satisfied by ⇠G, as you can paste together a path between vertices u and v with a path between vertices v and w to get a path between u and w.) An equivalence relation partitions the set of objects into equivalence classes, with each object related to all the objects in its class, and only to these. The equivalence classes of the relation ⇠G are the connected components of G.
 
-![](media/index-48_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-48_14.jpg)
 
 19 Other graph search algorithms, including depth-first search, can be used to compute connected components in exactly the same way.
 
-![](media/index-48_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-48_15.jpg)
 
-![](media/index-48_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-48_16.jpg)
 
-![](media/index-48_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-48_17.jpg)
 
-![](media/index-48_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-48_18.jpg)
 
 36 Graph Search and Its Applications
 
@@ -1434,7 +1427,7 @@ from its starting vertex (Theorem 8.2(a)), it discovers all the vertices in {1, 
 
 \#1 \#2
 
-![](media/index-51_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_1.jpg)
 
 1 3
 
@@ -1442,95 +1435,95 @@ unexplored
 
 \#3 6 unexplored unexplored 5 2 4
 
-![](media/index-51_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_2.jpg)
 
 \#4 \#5 8 10 7 unexplored unexplored 9
 
-![](media/index-51_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_3.jpg)
 
 connected component \#1
 
-![](media/index-51_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_4.jpg)
 
 Once this call to BFS completes, the algorithm’s outer for loop marches on and considers vertex 2. This vertex was not discovered by the first call to BFS, so BFS is invoked again, this time with vertex 2 as the starting vertex. After discovering vertices 2 and 4 (and setting their cc-values to 2), this call to BFS completes and the UCC algorithm resumes its outer for loop. Has the algorithm seen vertex 3 before? Yup, in the first BFS call. What about vertex 4? Yes again, this time in the second BFS call. Vertex 5? Been there, done that in the first BFS call. But what about vertex 6? Neither of the previous BFS calls discovered this vertex, so BFS is called again with vertex 6 as the starting vertex. This third call to BFS discovers the vertices in {6, 8, 10}, and sets their cc-values to 3:
 
-![](media/index-51_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_5.jpg)
 
 \#1 \#2
 
-![](media/index-51_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_6.jpg)
 
 1 3
 
-![](media/index-51_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_7.jpg)
 
 \#8
 
-![](media/index-51_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_8.jpg)
 
 \#3 6 \#6 \#7 5 2 4
 
-![](media/index-51_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_9.jpg)
 
 \#4 connected 8 \#5 10
 
-![](media/index-51_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_10.jpg)
 
 7 component \#2 \#9 9 \#10
 
-![](media/index-51_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_11.jpg)
 
 connected component \#1 connected component \#3 8.3 Computing Connected Components 39
 
-![](media/index-51_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_12.jpg)
 
-![](media/index-51_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_13.jpg)
 
-![](media/index-51_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_14.jpg)
 
-![](media/index-51_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_15.jpg)
 
-![](media/index-51_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_16.jpg)
 
-![](media/index-51_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_17.jpg)
 
-![](media/index-51_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_18.jpg)
 
-![](media/index-51_19.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_19.jpg)
 
-![](media/index-51_20.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_20.jpg)
 
-![](media/index-51_21.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_21.jpg)
 
-![](media/index-51_22.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_22.jpg)
 
-![](media/index-51_23.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_23.jpg)
 
-![](media/index-51_24.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_24.jpg)
 
-![](media/index-51_25.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_25.jpg)
 
-![](media/index-51_26.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_26.jpg)
 
-![](media/index-51_27.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_27.jpg)
 
-![](media/index-51_28.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_28.jpg)
 
-![](media/index-51_29.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_29.jpg)
 
-![](media/index-51_30.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_30.jpg)
 
-![](media/index-51_31.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_31.jpg)
 
-![](media/index-51_32.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_32.jpg)
 
-![](media/index-51_33.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_33.jpg)
 
-![](media/index-51_34.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_34.jpg)
 
-![](media/index-51_35.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_35.jpg)
 
-![](media/index-51_36.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-51_36.jpg)
 
  
 
@@ -1588,45 +1581,45 @@ example used in Section 8.2 (Figure 8.9).
 
 *a* *e*
 
-![](media/index-53_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-53_1.jpg)
 
  
 
 *s* *c*
 
-![](media/index-53_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-53_2.jpg)
 
  
 
 *b* *d*
 
-![](media/index-53_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-53_3.jpg)
 
  
 
 Figure 8.9: Running example for depth-first search. 8.4 Depth-First Search 41
 
-![](media/index-53_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-53_4.jpg)
 
-![](media/index-53_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-53_5.jpg)
 
-![](media/index-53_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-53_6.jpg)
 
-![](media/index-53_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-53_7.jpg)
 
-![](media/index-53_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-53_8.jpg)
 
-![](media/index-53_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-53_9.jpg)
 
-![](media/index-53_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-53_10.jpg)
 
-![](media/index-53_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-53_11.jpg)
 
-![](media/index-53_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-53_12.jpg)
 
-![](media/index-53_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-53_13.jpg)
 
-![](media/index-53_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-53_14.jpg)
 
  
 
@@ -1636,7 +1629,6 @@ it. Because it begins its exploration at the starting vertex s, for the
 
 graph in Figure 8.9, the first iteration of DFS examines the edges (s, a) and (s, b), in whatever order these edges appear in s’s adjacency list. Let’s say (s, a) comes first, leading DFS to discover the vertex a and mark it as explored. The second iteration of DFS is where it diverges from BFS—rather than considering next s’s other layer-1 neighbor b, DFS immediately proceeds to exploring the neighbors of a. (It will eventually get back to exploring (s, b).) Perhaps from a it checks s first (which is already marked as explored) and then discovers the vertex c, which is where it travels next:
 
-the frontier
 
 \#2
 
@@ -1644,99 +1636,98 @@ the frontier
 
 \#1 \#3 *s* *c*
 
-![](media/index-54_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_1.jpg)
 
  
 
 *b* *d*
 
-![](media/index-54_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_2.jpg)
 
  
 
 Then DFS examines in some order the neighbors of c, the most recently discovered vertex. To keep things interesting, let’s say that DFS discovers d next, followed by e:
 
-![](media/index-54_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_3.jpg)
 
 \#2 \#5
 
-![](media/index-54_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_4.jpg)
 
 *a* *e*
 
-![](media/index-54_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_5.jpg)
 
 \#1 \#3
 
-![](media/index-54_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_6.jpg)
 
 need to
 
-![](media/index-54_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_7.jpg)
 
 *s* *c* backtrack
 
-![](media/index-54_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_8.jpg)
 
 from here
 
-![](media/index-54_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_9.jpg)
 
 *b* *d* \#4
 
-![](media/index-54_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_10.jpg)
 
-the frontier
 
-![](media/index-54_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_11.jpg)
 
  
 
 From e, DFS has nowhere to go—both of e’s neighbors are already marked as explored. DFS is forced to retreat to the previous vertex, namely d, and resume exploring the rest of its neighbors. From d, DFS will discover the final vertex b (perhaps after checking c and finding it marked as explored). Once at b, the dominoes fall quickly. DFS 42 Graph Search and Its Applications
 
-![](media/index-54_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_12.jpg)
 
-![](media/index-54_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_13.jpg)
 
-![](media/index-54_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_14.jpg)
 
-![](media/index-54_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_15.jpg)
 
-![](media/index-54_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_16.jpg)
 
-![](media/index-54_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_17.jpg)
 
-![](media/index-54_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_18.jpg)
 
-![](media/index-54_19.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_19.jpg)
 
-![](media/index-54_20.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_20.jpg)
 
-![](media/index-54_21.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_21.jpg)
 
-![](media/index-54_22.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_22.jpg)
 
-![](media/index-54_23.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_23.jpg)
 
-![](media/index-54_24.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_24.jpg)
 
-![](media/index-54_25.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_25.jpg)
 
-![](media/index-54_26.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_26.jpg)
 
-![](media/index-54_27.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_27.jpg)
 
-![](media/index-54_28.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_28.jpg)
 
-![](media/index-54_29.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_29.jpg)
 
-![](media/index-54_30.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_30.jpg)
 
-![](media/index-54_31.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_31.jpg)
 
-![](media/index-54_32.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_32.jpg)
 
-![](media/index-54_33.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-54_33.jpg)
 
  
 
@@ -1756,7 +1747,6 @@ DFS (Iterative Version)
 
 Input: graph G = (V, E) in adjacency-list
 
-representation, and a vertex s 2 V .
 
 Postcondition: a vertex is reachable from s if and
 
@@ -1800,7 +1790,6 @@ DFS (Recursive Version)
 
 Input: graph G = (V, E) in adjacency-list
 
-representation, and a vertex s 2 V .
 
 Postcondition: a vertex is reachable from s if and
 
@@ -1902,29 +1891,29 @@ How many different topological orderings does the following graph have? Use only
 
 ### *v* 
 
-![](media/index-58_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-58_1.jpg)
 
  
 
 *s* *t*
 
-![](media/index-58_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-58_2.jpg)
 
  
 
 *w* 46 Graph Search and Its Applications
 
-![](media/index-58_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-58_3.jpg)
 
-![](media/index-58_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-58_4.jpg)
 
-![](media/index-58_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-58_5.jpg)
 
-![](media/index-58_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-58_6.jpg)
 
-![](media/index-58_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-58_7.jpg)
 
-![](media/index-58_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-58_8.jpg)
 
  
 
@@ -1944,63 +1933,63 @@ graph are directed from left to right. Figure 8.10 plots the topological
 
 orderings identified in the solution to Quiz 8.3.
 
-![](media/index-59_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-59_1.jpg)
 
  
 
 *s* *v* *w* *t* *s* *w* *v* *t*
 
-![](media/index-59_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-59_2.jpg)
 
 1 3 2 3 2 4 1 4
 
-![](media/index-59_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-59_3.jpg)
 
 (a) One topological ordering. . . (b) . . . and another one
 
-![](media/index-59_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-59_4.jpg)
 
 Figure 8.10: A topological ordering effectively plots the vertices of a graph on a line, with all edges going from left to right.
 
-![](media/index-59_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-59_5.jpg)
 
  
 
 When the vertices of a graph represent tasks and the directed edges represent precedence constraints, topological orderings correspond exactly to the different ways to sequence the tasks while respecting the precedence constraints.
 
-![](media/index-59_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-59_6.jpg)
 
 8.5.2 When Does a Topological Ordering Exist?
 
-![](media/index-59_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-59_7.jpg)
 
 Does every graph have a topological ordering? No way. Think about
 
-![](media/index-59_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-59_8.jpg)
 
 a graph consisting solely of a directed cycle (Figure 8.11(a)). No matter what vertex ordering you choose, traversing the edges of the cycle takes you back to the starting point, which is possible only if
 
-![](media/index-59_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-59_9.jpg)
 
 some edges go backward in the ordering (Figure 8.11(b)).
 
-![](media/index-59_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-59_10.jpg)
 
 More generally, it is impossible to topologically order the vertices of a graph that contains a directed cycle. Equivalently, it is impossible to sequence a set of tasks when their dependencies are circular.
 
-![](media/index-59_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-59_11.jpg)
 
 Happily, directed cycles are the only obstruction to topological orderings. A directed graph without any directed cycles is called— 8.5 Topological Sort 47
 
-![](media/index-59_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-59_12.jpg)
 
-![](media/index-59_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-59_13.jpg)
 
-![](media/index-59_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-59_14.jpg)
 
-![](media/index-59_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-59_15.jpg)
 
-![](media/index-59_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-59_16.jpg)
 
  
 
@@ -2008,93 +1997,93 @@ Happily, directed cycles are the only obstruction to topological orderings. A di
 
 *v* *x*
 
-![](media/index-60_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-60_1.jpg)
 
  
 
 *u* *y*
 
-![](media/index-60_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-60_2.jpg)
 
 *u* *v* *w* *x* *y* *z*
 
-![](media/index-60_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-60_3.jpg)
 
 *z*
 
-![](media/index-60_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-60_4.jpg)
 
 1 2 3 4 5 6
 
-![](media/index-60_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-60_5.jpg)
 
 (a) A directed cycle (b) A non-topological ordering
 
-![](media/index-60_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-60_6.jpg)
 
 Figure 8.11: Only a graph without directed cycles can have a topological ordering.
 
-![](media/index-60_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-60_7.jpg)
 
  
 
 wait for it—a directed acyclic graph, or simply a DAG. For example,
 
-![](media/index-60_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-60_8.jpg)
 
 the graph in Figure 8.10 is directed acyclic; the graph in Figure 8.11 is not.
 
-![](media/index-60_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-60_9.jpg)
 
 Theorem 8.6 (Every DAG Has a Topological Ordering) Every directed acyclic graph has at least one topological ordering.
 
-![](media/index-60_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-60_10.jpg)
 
 To prove this theorem, we’ll need the following lemma about
 
-![](media/index-60_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-60_11.jpg)
 
 source vertices. A source vertex of a directed graph is a vertex with no incoming edges. (Analogously, a sink vertex is one with no outgoing edges.) For example, s is the unique source vertex in the graph in
 
-![](media/index-60_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-60_12.jpg)
 
 Figure 8.10; the directed cycle in Figure 8.11 does not have any source vertices.
 
-![](media/index-60_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-60_13.jpg)
 
 Lemma 8.7 (Every DAG Has a Source) Every directed acyclic graph has at least one source vertex.
 
-![](media/index-60_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-60_14.jpg)
 
 Lemma 8.7 is true because if you keep following incoming edges
 
-![](media/index-60_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-60_15.jpg)
 
 backward out of an arbitrary vertex of a directed acyclic graph, you’re bound to eventually reach a source vertex. (Otherwise, you would
 
-![](media/index-60_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-60_16.jpg)
 
 produce a cycle, which is impossible.) See also Figure 8.12.28
 
-![](media/index-60_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-60_17.jpg)
 
 28 More formally, pick a vertex v of a directed acyclic graph G; if it’s a source 0
 
-![](media/index-60_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-60_18.jpg)
 
 vertex, we’re done. If not, it has at least one incoming edge (v1, v0 ). If v1 is a source vertex, we’re done. Otherwise, there is an incoming edge of the form (v2, v1) and we can iterate again. After iterating up to n times, where n is the number of vertices, we either find a source vertex or produce a sequence of n edges (vn, vn 1), (vn 1 , vn 2), . . . , (v1 , v0). Because there are only n vertices, there’s at 48 Graph Search and Its Applications
 
-![](media/index-60_19.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-60_19.jpg)
 
-![](media/index-60_20.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-60_20.jpg)
 
-![](media/index-60_21.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-60_21.jpg)
 
-![](media/index-60_22.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-60_22.jpg)
 
-![](media/index-60_23.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-60_23.jpg)
 
-![](media/index-60_24.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-60_24.jpg)
 
  
 
@@ -2102,69 +2091,69 @@ vertex, we’re done. If not, it has at least one incoming edge (v1, v0 ). If v1
 
 *v* *4* *v* *2* *v* *0*
 
-![](media/index-61_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-61_1.jpg)
 
  
 
 *v* *5* *v* *7*
 
-![](media/index-61_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-61_2.jpg)
 
 *v**6*
 
-![](media/index-61_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-61_3.jpg)
 
 Figure 8.12: Tracing incoming edges back from a vertex fails to find a source vertex only if the graph contains a directed cycle.
 
-![](media/index-61_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-61_4.jpg)
 
  
 
 We can prove Theorem 8.6 by populating a topological ordering
 
-![](media/index-61_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-61_5.jpg)
 
 from left to right with successively extracted source vertices.29
 
-![](media/index-61_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-61_6.jpg)
 
 Proof of Theorem 8.6: Let G be a directed acyclic graph with n vertices. The plan is to assign f-values to vertices in increasing order, from 1 to n. Which vertex has earned the right to wear 1 as its f-value? It had better be a source vertex—if a vertex with an incoming edge was assigned the first position, the incoming edge would go backward in the ordering. So, let v1 be a source vertex of G—one
 
-![](media/index-61_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-61_7.jpg)
 
 exists by Lemma 8.7—and assign f (v1) = 1. If there are multiple source vertices, pick one arbitrarily.
 
-![](media/index-61_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-61_8.jpg)
 
 Next, obtain the graph 0 G from G by removing v1 and all its edges. Because 0 G is directed acyclic, so is G—deleting stuff can’t create new cycles. We can therefore recursively compute a topological ordering of 0 G, using the labels 0 { 2 , 3 , 4 , . . . , n } , with every edge in G traveling forward in the ordering. (Since each recursive call is on a smaller graph, the recursion eventually stops.) The only edges in G that are not also in 0 G are the (outgoing) edges of v1; as f (v1 ) = 1, these also
 
-![](media/index-61_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-61_9.jpg)
 
 travel forward in the ordering. 30 QE D
 
-![](media/index-61_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-61_10.jpg)
 
 least one repeat vertex in the sequence vn, vn 1, . . . , v0. But if vj = vi with j \> i, then the edges (vj, vj 1), . . . , (vi+1, vi) form a directed cycle, contradicting the
 
-![](media/index-61_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-61_11.jpg)
 
 assumption that G is directed acyclic. (In Figure 8.12, i = 2 and j = 8.)
 
-![](media/index-61_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-61_12.jpg)
 
 29 Alternatively, following outgoing edges rather than incoming edges in the
 
-![](media/index-61_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-61_13.jpg)
 
 proof of Lemma 8.7 shows that every DAG has at least one sink vertex, and we can populate a topological ordering from right to left with successively extracted
 
-![](media/index-61_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-61_14.jpg)
 
 sink vertices. 30 If you prefer a formal proof of correctness, proceed in the privacy of your 8.5 Topological Sort 49
 
-![](media/index-61_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-61_15.jpg)
 
-![](media/index-61_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-61_16.jpg)
 
  
 
@@ -2232,7 +2221,6 @@ DFS-Topo
 
 Input: graph G = (V, E) in adjacency-list
 
-representation, and a vertex s 2 V .
 
 Postcondition: every vertex reachable from s is
 
@@ -2318,27 +2306,27 @@ produce a directed cycle (Figure 8.13). Thus, the call to DFS-Topo starting at w
 
 *G*
 
-![](media/index-66_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-66_1.jpg)
 
 *v* *w*
 
-![](media/index-66_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-66_2.jpg)
 
  
 
 Figure 8.13: A directed acyclic graph cannot contain both an edge (v, w) and a path from w back to v.
 
-![](media/index-66_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-66_3.jpg)
 
  
 
 8.5.7 Solution to Quizzes 8.3–8.4
 
-![](media/index-66_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-66_4.jpg)
 
 Solution to Quiz 8.3
 
-![](media/index-66_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-66_5.jpg)
 
 Correct answer: (c). Figure 8.14 shows two different topological orderings of the graph—you should check that these are the only ones.
 
@@ -2348,57 +2336,57 @@ Correct answer: (c). Figure 8.14 shows two different topological orderings of th
 
 *f*(*s*) = 1 *f*(*t*) = 4 *f*(*s*) = 1 *f*(*t*) = 4
 
-![](media/index-66_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-66_6.jpg)
 
 *s* *t* *s* *t*
 
-![](media/index-66_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-66_7.jpg)
 
 *w* *w*
 
-![](media/index-66_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-66_8.jpg)
 
 *f*(*w*) = 3 *f*(*w*) = 2
 
-![](media/index-66_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-66_9.jpg)
 
 (a) One topological ordering. . . (b) . . . and another one
 
-![](media/index-66_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-66_10.jpg)
 
 Figure 8.14: Two topological orderings of the graph in Quiz 8.3.
 
-![](media/index-66_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-66_11.jpg)
 
  
 
 Solution to Quiz 8.4
 
-![](media/index-66_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-66_12.jpg)
 
 Correct answer: (d). The algorithm always halts: There are only \|V \| iterations of the outer loop, and each iteration either does nothing or invokes depth-first search (with minor additional bookkeep-ing). Depth-first search always halts, whether or not the input graph
 
-![](media/index-66_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-66_13.jpg)
 
 is directed acyclic (Theorem 8.5), and so TopoSort does as well. Any chance it halts with a topological ordering? No way—it is impossible to topologically sort the vertices of any graph with a directed cycle
 
-![](media/index-66_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-66_14.jpg)
 
 (recall Section 8.5.2).
 
-![](media/index-66_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-66_15.jpg)
 
-![](media/index-66_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-66_16.jpg)
 
-![](media/index-66_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-66_17.jpg)
 
-![](media/index-66_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-66_18.jpg)
 
-![](media/index-66_19.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-66_19.jpg)
 
-![](media/index-66_20.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-66_20.jpg)
 
-![](media/index-66_21.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-66_21.jpg)
 
 54 Graph Search and Its Applications
 
@@ -2424,43 +2412,43 @@ in Figure 8.15 have?
 
 2
 
-![](media/index-67_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-67_1.jpg)
 
  
 
 1 4
 
-![](media/index-67_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-67_2.jpg)
 
  
 
 3
 
-![](media/index-67_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-67_3.jpg)
 
  
 
 Figure 8.15: How many connected components?
 
-![](media/index-67_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-67_4.jpg)
 
  
 
 It’s tempting to say that this graph has one connected component— if it were a physical object, with the edges corresponding to strings tying the vertices together, we could pick it up and it would hang together in one piece. But remember how we defined connected
 
-![](media/index-67_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-67_5.jpg)
 
 components in the undirected case (Section 8.3), as maximal regions within which you can get from anywhere to anywhere else. There is
 
-![](media/index-67_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-67_6.jpg)
 
 no way to “move to the left” in the graph in Figure 8.15, so it’s not the case that you can get from anywhere to anywhere else.
 
-![](media/index-67_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-67_7.jpg)
 
 34 Starred sections like this one are the more difficult sections; they can be
 
-![](media/index-67_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-67_8.jpg)
 
 skipped on a first reading.
 
@@ -2486,105 +2474,105 @@ SCC#1 SCC#2 SCC#4
 
 11
 
-![](media/index-68_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_1.jpg)
 
 1 3
 
 8 10
 
-![](media/index-68_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_2.jpg)
 
 5
 
-![](media/index-68_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_3.jpg)
 
 9
 
-![](media/index-68_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_4.jpg)
 
 2
 
-![](media/index-68_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_5.jpg)
 
  
 
 SCC#3 7
 
-![](media/index-68_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_6.jpg)
 
 4
 
-![](media/index-68_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_7.jpg)
 
  
 
 Figure 8.16: A graph with vertex set {1, 2, 3, . . . , 11} and four strongly connected components.
 
-![](media/index-68_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_8.jpg)
 
  
 
 The relationships between the four SCCs of the graph in Fig-
 
-![](media/index-68_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_9.jpg)
 
 ure 8.16 mirror those between the four vertices in the graph in Fig-
 
-![](media/index-68_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_10.jpg)
 
 ure 8.15. More generally, if you squint, every directed graph can be viewed as a directed acyclic graph built up from its SCCs.
 
-![](media/index-68_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_11.jpg)
 
 Proposition 8.9 (The SCC Meta-Graph Is Directed Acyclic) Let G = (V, E) be a directed graph. Define the corresponding meta-graph H = (X, F ) with one meta-vertex x 2 X per SCC of G and a
 
-![](media/index-68_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_12.jpg)
 
 36 As with connected components in undirected graphs (footnote 18), the strongly connected components of a directed graph G are precisely the equivalence classes of an equivalence relation ⇠G, where v ⇠G w if and only if there are directed paths from v to w and from w to v in G. The proof that ⇠G is an
 
-![](media/index-68_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_13.jpg)
 
 equivalence relation mirrors that in the undirected case (footnote 18).
 
-![](media/index-68_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_14.jpg)
 
-![](media/index-68_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_15.jpg)
 
-![](media/index-68_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_16.jpg)
 
-![](media/index-68_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_17.jpg)
 
-![](media/index-68_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_18.jpg)
 
-![](media/index-68_19.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_19.jpg)
 
-![](media/index-68_20.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_20.jpg)
 
-![](media/index-68_21.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_21.jpg)
 
-![](media/index-68_22.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_22.jpg)
 
-![](media/index-68_23.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_23.jpg)
 
-![](media/index-68_24.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_24.jpg)
 
-![](media/index-68_25.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_25.jpg)
 
-![](media/index-68_26.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_26.jpg)
 
-![](media/index-68_27.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_27.jpg)
 
-![](media/index-68_28.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_28.jpg)
 
-![](media/index-68_29.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_29.jpg)
 
-![](media/index-68_30.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_30.jpg)
 
-![](media/index-68_31.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_31.jpg)
 
-![](media/index-68_32.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_32.jpg)
 
-![](media/index-68_33.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-68_33.jpg)
 
 56 Graph Search and Its Applications
 
@@ -2706,163 +2694,163 @@ Suppose further that depth-first search traverses edge (3, 5) before (3, 11), (5
 
 *f* *f*(11)=3 6 (1)=1 *f* (3)=2 11 1 3
 
-![](media/index-72_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_1.jpg)
 
 *f*(8)=9 8 10 *f*(10)=8
 
-![](media/index-72_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_2.jpg)
 
 *f*(5)=4 5 *f*(9)=6
 
-![](media/index-72_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_3.jpg)
 
 9
 
-![](media/index-72_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_4.jpg)
 
 2 *f*(2)=7
 
-![](media/index-72_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_5.jpg)
 
 7
 
-![](media/index-72_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_6.jpg)
 
 *f*(7)=5 4 *f*(4)=11
 
-![](media/index-72_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_7.jpg)
 
  
 
 Against our wishes, the vertex in the last position (vertex 4) does not belong to the sink SCC. The one piece of good news is that the vertex in the first position (vertex 1) belongs to a source SCC (meaning an SCC with no incoming edges).
 
-![](media/index-72_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_8.jpg)
 
 What if we instead process the vertices in descending order? If
 
-![](media/index-72_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_9.jpg)
 
 depth-first search traverses edge (11, 6) before (11, 8) and edge (9, 2) before (9, 4), then (as you should check) the vertex positions are:
 
-![](media/index-72_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_10.jpg)
 
 *f*(6)=9
 
-![](media/index-72_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_11.jpg)
 
  
 
 *f* *f*(11)=8 6 (1)=2 *f* (3)=3 11 1 3
 
-![](media/index-72_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_12.jpg)
 
 *f*(8)=11 8 10 *f*(10)=10
 
-![](media/index-72_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_13.jpg)
 
 *f*(5)=1 5 *f*(9)=4
 
-![](media/index-72_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_14.jpg)
 
 9
 
-![](media/index-72_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_15.jpg)
 
 2 *f*(2)=5
 
-![](media/index-72_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_16.jpg)
 
 7
 
-![](media/index-72_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_17.jpg)
 
 *f*(7)=7 4 *f*(4)=6
 
-![](media/index-72_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_18.jpg)
 
  
 
 This time, the vertex in the last position is in the sink SCC, but we know this doesn’t happen in general. More intriguingly, the vertex in the first position belongs to the source SCC, albeit a different vertex from this SCC than last time. Could this be true in general?
 
-![](media/index-72_19.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_19.jpg)
 
-![](media/index-72_20.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_20.jpg)
 
-![](media/index-72_21.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_21.jpg)
 
-![](media/index-72_22.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_22.jpg)
 
-![](media/index-72_23.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_23.jpg)
 
-![](media/index-72_24.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_24.jpg)
 
-![](media/index-72_25.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_25.jpg)
 
-![](media/index-72_26.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_26.jpg)
 
-![](media/index-72_27.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_27.jpg)
 
-![](media/index-72_28.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_28.jpg)
 
-![](media/index-72_29.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_29.jpg)
 
-![](media/index-72_30.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_30.jpg)
 
-![](media/index-72_31.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_31.jpg)
 
-![](media/index-72_32.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_32.jpg)
 
-![](media/index-72_33.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_33.jpg)
 
-![](media/index-72_34.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_34.jpg)
 
-![](media/index-72_35.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_35.jpg)
 
-![](media/index-72_36.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_36.jpg)
 
-![](media/index-72_37.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_37.jpg)
 
-![](media/index-72_38.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_38.jpg)
 
-![](media/index-72_39.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_39.jpg)
 
-![](media/index-72_40.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_40.jpg)
 
-![](media/index-72_41.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_41.jpg)
 
-![](media/index-72_42.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_42.jpg)
 
-![](media/index-72_43.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_43.jpg)
 
-![](media/index-72_44.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_44.jpg)
 
-![](media/index-72_45.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_45.jpg)
 
-![](media/index-72_46.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_46.jpg)
 
-![](media/index-72_47.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_47.jpg)
 
-![](media/index-72_48.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_48.jpg)
 
-![](media/index-72_49.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_49.jpg)
 
-![](media/index-72_50.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_50.jpg)
 
-![](media/index-72_51.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_51.jpg)
 
-![](media/index-72_52.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_52.jpg)
 
-![](media/index-72_53.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_53.jpg)
 
-![](media/index-72_54.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_54.jpg)
 
-![](media/index-72_55.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_55.jpg)
 
-![](media/index-72_56.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_56.jpg)
 
-![](media/index-72_57.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_57.jpg)
 
-![](media/index-72_58.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-72_58.jpg)
 
 60 Graph Search and Its Applications
 
@@ -3008,7 +2996,6 @@ DFS-SCC
 
 Input: directed graph G = (V, E) in adjacency-list
 
-representation, and a vertex s 2 V .
 
 Postcondition: every vertex reachable from s is
 
@@ -3042,89 +3029,89 @@ of the input graph. We computed in Section 8.6.3 two ways in which the TopoSort 
 
 *f* *f*(11)=3 6 (1)=1 *f* (3)=2 11 1 3
 
-![](media/index-77_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-77_1.jpg)
 
  
 
 *f*(8)=9 8 10 *f*(10)=8
 
-![](media/index-77_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-77_2.jpg)
 
 *f*(5)=4 5 *f*(9)=6
 
-![](media/index-77_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-77_3.jpg)
 
 9
 
-![](media/index-77_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-77_4.jpg)
 
 2 *f*(2)=7
 
-![](media/index-77_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-77_5.jpg)
 
 7
 
-![](media/index-77_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-77_6.jpg)
 
 *f*(7)=5 4 *f*(4)=11
 
-![](media/index-77_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-77_7.jpg)
 
  
 
 The second pass iterates through the vertices in increasing order of vertex position. Thus, the first call to DFS-SCC is initiated at the vertex in the first position (which happens to be vertex 1); it discovers the vertices 1, 3, and 5 and marks them as the vertices of the first SCC. The algorithm proceeds to consider the vertex in the second position (vertex 3); it was already explored by the first call to DFS-SCC and is skipped. The vertex in the third position (vertex 11) has not yet been discovered and is the next starting point for DFS-SCC. The only outgoing edge of this vertex travels to an already-explored vertex (vertex 3), so 11 is the only member of the second SCC. The algorithm skips the vertex in the fourth position (vertex 5, already explored) and next initiates DFS-SCC from vertex 7, the vertex in the fifth position. This search discovers the vertices 2, 4, 7, and 9 (the other outgoing edges are to the already-explored vertex 5) and classifies them as the third SCC. The algorithm skips vertex 9 and then vertex 2, and finally invokes DFS-SCC from vertex 10 to discover the final SCC (comprising the vertices 6, 8, and 10).
 
-![](media/index-77_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-77_8.jpg)
 
  
 
 8.6.6 Correctness and Running Time
 
-![](media/index-77_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-77_9.jpg)
 
 The Kosaraju algorithm is correct and blazingly fast for every directed graph, not merely for our running example.
 
-![](media/index-77_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-77_10.jpg)
 
 Theorem 8.12 (Properties of Kosaraju) For every directed graph G = (V, E) in adjacency-list representation: \*8.6 Computing Strongly Connected Components 65
 
-![](media/index-77_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-77_11.jpg)
 
-![](media/index-77_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-77_12.jpg)
 
-![](media/index-77_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-77_13.jpg)
 
-![](media/index-77_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-77_14.jpg)
 
-![](media/index-77_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-77_15.jpg)
 
-![](media/index-77_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-77_16.jpg)
 
-![](media/index-77_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-77_17.jpg)
 
-![](media/index-77_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-77_18.jpg)
 
-![](media/index-77_19.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-77_19.jpg)
 
-![](media/index-77_20.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-77_20.jpg)
 
-![](media/index-77_21.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-77_21.jpg)
 
-![](media/index-77_22.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-77_22.jpg)
 
-![](media/index-77_23.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-77_23.jpg)
 
-![](media/index-77_24.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-77_24.jpg)
 
-![](media/index-77_25.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-77_25.jpg)
 
-![](media/index-77_26.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-77_26.jpg)
 
-![](media/index-77_27.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-77_27.jpg)
 
-![](media/index-77_28.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-77_28.jpg)
 
-![](media/index-77_29.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-77_29.jpg)
 
  
 
@@ -3176,161 +3163,161 @@ SCC SCC SCC SCC SCC SCC
 
 1 11 11 3 1 3
 
-![](media/index-79_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_1.jpg)
 
 8 10 8 10
 
-![](media/index-79_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_2.jpg)
 
 5 5
 
-![](media/index-79_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_3.jpg)
 
 9 9
 
-![](media/index-79_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_4.jpg)
 
 2 2
 
-![](media/index-79_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_5.jpg)
 
 SCC 7 7 SCC 4 4
 
-![](media/index-79_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_6.jpg)
 
 (a) Original graph (b) Reversed graph
 
-![](media/index-79_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_7.jpg)
 
 Figure 8.17: A graph and its reversal have the same strongly connected components.
 
-![](media/index-79_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_8.jpg)
 
  
 
 8.7 The Structure of the Web
 
-![](media/index-79_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_9.jpg)
 
 You now know a collection of for-free graph primitives. If you have graph data, you can apply these blazingly fast algorithms even if you’re not sure how you’ll use the results. For example, with a directed graph, why not compute its strongly connected components to get a sense of what it looks like? Next, we explore this idea in a huge and hugely interesting directed graph, the Web graph.
 
-![](media/index-79_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_10.jpg)
 
 41 rev In other words, the meta-graph of G (Proposition 8.9) is simply the
 
-![](media/index-79_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_11.jpg)
 
 meta-graph of G with every edge reversed. 8.7 The Structure of the Web 67
 
-![](media/index-79_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_12.jpg)
 
-![](media/index-79_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_13.jpg)
 
-![](media/index-79_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_14.jpg)
 
-![](media/index-79_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_15.jpg)
 
-![](media/index-79_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_16.jpg)
 
-![](media/index-79_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_17.jpg)
 
-![](media/index-79_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_18.jpg)
 
-![](media/index-79_19.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_19.jpg)
 
-![](media/index-79_20.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_20.jpg)
 
-![](media/index-79_21.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_21.jpg)
 
-![](media/index-79_22.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_22.jpg)
 
-![](media/index-79_23.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_23.jpg)
 
-![](media/index-79_24.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_24.jpg)
 
-![](media/index-79_25.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_25.jpg)
 
-![](media/index-79_26.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_26.jpg)
 
-![](media/index-79_27.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_27.jpg)
 
-![](media/index-79_28.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_28.jpg)
 
-![](media/index-79_29.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_29.jpg)
 
-![](media/index-79_30.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_30.jpg)
 
-![](media/index-79_31.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_31.jpg)
 
-![](media/index-79_32.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_32.jpg)
 
-![](media/index-79_33.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_33.jpg)
 
-![](media/index-79_34.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_34.jpg)
 
-![](media/index-79_35.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_35.jpg)
 
-![](media/index-79_36.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_36.jpg)
 
-![](media/index-79_37.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_37.jpg)
 
-![](media/index-79_38.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_38.jpg)
 
-![](media/index-79_39.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_39.jpg)
 
-![](media/index-79_40.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_40.jpg)
 
-![](media/index-79_41.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_41.jpg)
 
-![](media/index-79_42.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_42.jpg)
 
-![](media/index-79_43.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_43.jpg)
 
-![](media/index-79_44.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_44.jpg)
 
-![](media/index-79_45.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_45.jpg)
 
-![](media/index-79_46.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_46.jpg)
 
-![](media/index-79_47.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_47.jpg)
 
-![](media/index-79_48.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_48.jpg)
 
-![](media/index-79_49.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_49.jpg)
 
-![](media/index-79_50.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_50.jpg)
 
-![](media/index-79_51.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_51.jpg)
 
-![](media/index-79_52.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_52.jpg)
 
-![](media/index-79_53.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_53.jpg)
 
-![](media/index-79_54.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_54.jpg)
 
-![](media/index-79_55.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_55.jpg)
 
-![](media/index-79_56.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_56.jpg)
 
-![](media/index-79_57.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_57.jpg)
 
-![](media/index-79_58.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_58.jpg)
 
-![](media/index-79_59.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_59.jpg)
 
-![](media/index-79_60.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_60.jpg)
 
-![](media/index-79_61.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_61.jpg)
 
-![](media/index-79_62.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_62.jpg)
 
-![](media/index-79_63.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_63.jpg)
 
-![](media/index-79_64.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_64.jpg)
 
-![](media/index-79_65.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_65.jpg)
 
-![](media/index-79_66.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-79_66.jpg)
 
  
 
@@ -3348,7 +3335,7 @@ a courses
 
 co-author
 
-![](media/index-80_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-80_1.jpg)
 
 Tim’s
 
@@ -3358,47 +3345,47 @@ home
 
 books
 
-![](media/index-80_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-80_2.jpg)
 
 page
 
-![](media/index-80_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-80_3.jpg)
 
 online
 
-![](media/index-80_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-80_4.jpg)
 
 course Aquarius
 
-![](media/index-80_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-80_5.jpg)
 
 list Records
 
-![](media/index-80_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-80_6.jpg)
 
 (R.I.P.)
 
-![](media/index-80_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-80_7.jpg)
 
  
 
 Figure 8.18: A minuscule piece of the Web graph.
 
-![](media/index-80_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-80_8.jpg)
 
  
 
 While the Web’s origins date back to roughly 1990, the Web really
 
-![](media/index-80_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-80_9.jpg)
 
 started to explode about five years later. By 2000 (still the Stone Age in Internet years), the Web graph was already so big as to defy imagination, and researchers were keenly interested in understanding
 
-![](media/index-80_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-80_10.jpg)
 
 its structure.42 This section describes a famous study from that
 
-![](media/index-80_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-80_11.jpg)
 
 time that explored the structure of the Web graph by computing
 
@@ -3422,129 +3409,129 @@ tubes
 
 IN OUT
 
-![](media/index-81_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_1.jpg)
 
 giant
 
-![](media/index-81_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_2.jpg)
 
 SCC
 
-![](media/index-81_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_3.jpg)
 
  
 
 tendrils islands
 
-![](media/index-81_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_4.jpg)
 
 Figure 8.19: Visualizing the Web graph as a “bow tie.” Roughly the same number of Web pages belong to the giant SCC, to IN, to OUT, and to the rest of the graph.
 
-![](media/index-81_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_5.jpg)
 
  
 
 8.7.2 The Bow Tie
 
-![](media/index-81_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_6.jpg)
 
 The Broder et al. study computed the strongly connected components of the Web graph, and explained its findings using the “bow tie”
 
-![](media/index-81_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_7.jpg)
 
 depicted in Figure 8.19. The knot of the bow tie is the biggest strongly connected component of the graph, comprising roughly 28% of its vertices. The title “giant” is well earned by this SCC, as the
 
-![](media/index-81_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_8.jpg)
 
 next-largest SCC was over two orders of magnitude smaller.45 The giant SCC can be interpreted as the core of the Web, with every page reachable from every other page by a sequence of hyperlinks.
 
-![](media/index-81_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_9.jpg)
 
 The smaller SCCs can be placed into a few categories. From some, it’s possible to reach the giant SCC (but not vice versa); this is the left (“IN”) part of the bow tie. For example, a newly created Web page with a link to some page in the giant SCC would appear in this part. Symmetrically, the “OUT” part is all the SCCs reachable from the
 
-![](media/index-81_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_10.jpg)
 
 44 The study pre-dates modern massive data processing frameworks like MapRe-
 
-![](media/index-81_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_11.jpg)
 
 duce and Hadoop, and this was an intimidating input size at the time. 45 Remember that all it takes to collapse two SCCs into one is one edge in each direction. Intuitively, it would be pretty weird if there were two massive SCCs, with no edge going between them in at least one direction.
 
-![](media/index-81_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_12.jpg)
 
-![](media/index-81_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_13.jpg)
 
-![](media/index-81_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_14.jpg)
 
-![](media/index-81_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_15.jpg)
 
-![](media/index-81_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_16.jpg)
 
-![](media/index-81_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_17.jpg)
 
-![](media/index-81_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_18.jpg)
 
-![](media/index-81_19.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_19.jpg)
 
-![](media/index-81_20.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_20.jpg)
 
-![](media/index-81_21.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_21.jpg)
 
-![](media/index-81_22.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_22.jpg)
 
-![](media/index-81_23.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_23.jpg)
 
-![](media/index-81_24.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_24.jpg)
 
-![](media/index-81_25.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_25.jpg)
 
-![](media/index-81_26.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_26.jpg)
 
-![](media/index-81_27.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_27.jpg)
 
-![](media/index-81_28.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_28.jpg)
 
-![](media/index-81_29.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_29.jpg)
 
-![](media/index-81_30.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_30.jpg)
 
-![](media/index-81_31.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_31.jpg)
 
-![](media/index-81_32.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_32.jpg)
 
-![](media/index-81_33.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_33.jpg)
 
-![](media/index-81_34.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_34.jpg)
 
-![](media/index-81_35.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_35.jpg)
 
-![](media/index-81_36.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_36.jpg)
 
-![](media/index-81_37.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_37.jpg)
 
-![](media/index-81_38.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_38.jpg)
 
-![](media/index-81_39.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_39.jpg)
 
-![](media/index-81_40.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_40.jpg)
 
-![](media/index-81_41.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_41.jpg)
 
-![](media/index-81_42.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_42.jpg)
 
-![](media/index-81_43.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_43.jpg)
 
-![](media/index-81_44.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_44.jpg)
 
-![](media/index-81_45.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_45.jpg)
 
-![](media/index-81_46.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_46.jpg)
 
-![](media/index-81_47.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_47.jpg)
 
-![](media/index-81_48.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_48.jpg)
 
-![](media/index-81_49.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-81_49.jpg)
 
 8.7 The Structure of the Web 69
 
@@ -3742,51 +3729,51 @@ that minimizes the number of backward edges if and only if the input graph is a 
 
 ### *v* 
 
-![](media/index-86_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-86_1.jpg)
 
  
 
 *s* *t*
 
-![](media/index-86_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-86_2.jpg)
 
  
 
 *w*
 
-![](media/index-86_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-86_3.jpg)
 
  
 
 Figure 8.20: A graph with no topological ordering. In the ordering s, v, w, t, the only backward edge is (t, s).
 
-![](media/index-86_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-86_4.jpg)
 
  
 
 Problem 8.6 If you add one new edge to a directed graph G, then the number of strongly connected components. . . (Choose all that apply.)
 
-![](media/index-86_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-86_5.jpg)
 
 a\) . . . might or might not remain the same (depending on G and
 
-![](media/index-86_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-86_6.jpg)
 
 the new edge).
 
-![](media/index-86_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-86_7.jpg)
 
 b\) . . . cannot decrease.
 
-![](media/index-86_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-86_8.jpg)
 
 c\) . . . cannot increase.
 
-![](media/index-86_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-86_9.jpg)
 
 d\) . . . cannot decrease by more than 1.
 
-![](media/index-86_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-86_10.jpg)
 
 Problem 8.7 (S) Recall the Kosaraju algorithm from Section 8.6, which uses two passes of depth-first search to compute the strongly connected components of a directed graph. Which of the following statements are true? (Choose all that apply.)
 

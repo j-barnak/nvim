@@ -1,27 +1,3 @@
-together, our revised program is
-
-\#include \<stdio.h\>
-
-\#include \<time.h\>
-
-int main() {
-
-time_t biggest = 0x7FFFFFFF;
-
-printf("biggest = %s \n", asctime(gmtime(&biggest)) ); return 0;
-
-}
-
-This gives a result of:
-
-biggest = Tue Jan 19 03:14:07 2038
-
-There! Squeezed another eight hours out of it!
-
-But we're *still* not done. If you use the locale for New Zealand, you can get 13 more hours, assuming they use daylight savings time in the year 2038. They are on DST in January because they are in the southern hemisphere. New Zealand, because of its easternmost position with respect to time zones, holds the unhappy distinction of being the first country to encounter bugs triggered by particular dates.
-
-Even simple-looking things can sometimes have a surprising twist in software. And anyone who thinks programming dates is easy to get right the first time probably hasn't done much of it.
-
 **Chapter 1. C Through the Mists of Time**
 
 *C is quirky, flawed, and an enormous success.*
@@ -32,7 +8,7 @@ the prehistory of C…the golden rule for compiler-writers… early experiences 
 
 The story of C begins, paradoxically, with a failure. In 1969 the great Multics project—a joint venture between General Electric, MIT, and Bell Laboratories to build an operating system—was clearly in trouble. It was not only failing to deliver the promised fast and convenient on-line system, it was failing to deliver anything usable at all. Though the development team eventually got Multics creaking into action, they had fallen into the same tarpit that caught IBM with OS/360. They were trying to create an operating system that was much too big and to do it on hardware that was much too small.
 
-![Image 6](media/index-8_1.png)
+![Image 6](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-8_1.png)
 
 Multics is a treasure house of solved engineering problems, but it also paved the way for C to show that small is beautiful.
 
@@ -48,7 +24,7 @@ JOSS was an earlier language, also not noted for simplicity.
 
 \[2\] "BCPL: A Tool for Compiler Writing and System Programming," Martin Richards, Proc. AFIPS Spring Joint Computer Conference, 34 (1969), pp. 557-566. BCPL is not an acronym for the "Before C Programming
 
-![Image 7](media/index-9_1.png)
+![Image 7](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-9_1.png)
 
 Language", though the name *is* a happy coincidence. It is the "Basic Combined Programming Lan-guage"—
 
@@ -132,7 +108,7 @@ The C preprocessor, also added about this time at the suggestion of Alan Snyder,
 
 • String replacement, of the form "change all *foo* to *baz*", often to provide a symbolic name for a constant.
 
-![Image 8](media/index-12_1.png)
+![Image 8](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-12_1.png)
 
 • Source file inclusion (as pioneered in BCPL). Common declarations could be separated out into a header file, and made available to a range of source files. Though the ".h" convention was adopted for the extension of header files, unhappily no convention arose for relating the header file to the object library that contained the corresponding code.
 
@@ -242,9 +218,9 @@ This Algol-68 dialect achieved legendary status as the Bourne shell permeated fa
 
 I've got a special reason to grouse about the Bourne shell—it's my desk that the bugs reported against it land on! Then I assign them to Sam! And we do see our share of bugs:
 
-![Image 9](media/index-14_1.png)
+![Image 9](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-14_1.png)
 
-![Image 10](media/index-14_2.png)
+![Image 10](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-14_2.png)
 
 the shell doesn't use malloc, but rather does its own heap storage management using sbrk.
 
@@ -308,7 +284,7 @@ In 1978 the classic C bible, *The C Programming Language,* was published. By pop
 
 ***Figure 1-3. Like Elvis, C is Everywhere***
 
-![Image 11](media/index-16_1.png)
+![Image 11](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-16_1.png)
 
 **The Present Day: ANSI C**
 
@@ -330,9 +306,9 @@ Most of the process revolved around identifying common features, but there were 
 
 **Handy Heuristic**
 
-![Image 12](media/index-17_1.png)
+![Image 12](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-17_1.png)
 
-![Image 13](media/index-17_2.png)
+![Image 13](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-17_2.png)
 
 **Which Version of C to Use?**
 
@@ -404,11 +380,11 @@ Example: whether the sign bit is propagated, when shifting an int right.
 
 Example: the order of argument evaluation.
 
-![Image 14](media/index-19_1.png)
+![Image 14](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-19_1.png)
 
-![Image 15](media/index-19_2.png)
+![Image 15](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-19_2.png)
 
-![Image 16](media/index-19_3.png)
+![Image 16](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-19_3.png)
 
 **Bad Code:**
 
@@ -512,7 +488,7 @@ Translator lower limits and character set information are also given.
 
 ***Figure 1-4. How a Paragraph in the ANSI C Standard Looks***
 
-![Image 17](media/index-22_1.png)
+![Image 17](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-22_1.png)
 
 The original Appendix is only 40 pages, while this section of the standard is twice as long.
 
@@ -528,9 +504,9 @@ The ANSI C standard also features some useful appendices:
 
 **Appendix G:** **Portability issues.** Some general advice on portability, collected into one place from throughout the standard. It includes information on behavior that is unspecified, undefined, and implementation-defined.
 
-![Image 18](media/index-23_1.png)
+![Image 18](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-23_1.png)
 
-![Image 19](media/index-23_2.png)
+![Image 19](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-23_2.png)
 
 **Software Dogma**
 
@@ -560,7 +536,7 @@ Rest assured that if you know K&R C, then you already know 90% of ANSI C. The di
 
 1\. The first category contains things that are new, very different, and important. The only feature in this class is the prototype—writing the parameter types as part of
 
-![Image 20](media/index-24_1.png)
+![Image 20](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-24_1.png)
 
 the function declaration. Prototypes make it easy for a compiler to check function use with definition.
 
@@ -670,7 +646,7 @@ Note that the assignment cannot be made the other way around. Try it if you don'
 
 cp = ccp; /\* results in a compilation warning \*/
 
-![Image 21](media/index-27_1.png)
+![Image 21](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-27_1.png)
 
 Does Section 6.3.16.1 also make a call with a char \*\* argument corresponding to a const char \*\* parameter legal? It does not.
 
@@ -770,7 +746,7 @@ In English (complete with loopholes and lack of precision), the ANSI C version w
 
 Operands with different types get converted when you do arithmetic. Everything is converted to the type of the floatiest, longest operand, signed if possible without losing bits.
 
-![Image 22](media/index-30_1.png)
+![Image 22](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-30_1.png)
 
 The *unsigned preserving* approach (K&R C) says that when an unsigned type mixes with an int or smaller signed type, the result is an unsigned type. This is a simple rule, independent of hardware, but, as in the example below, it does sometimes force a negative result to lose its sign!
 
@@ -820,7 +796,7 @@ x = array\[d+1\];
 
 /\* ... \*/
 
-![Image 23](media/index-31_1.png)
+![Image 23](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-31_1.png)
 
 }
 
@@ -877,3 +853,49 @@ compiler family. gcc is a robust, aggressive optimizing compiler, available for 
 When the ANSI C standard was under development, the pragma directive was introduced.
 
 Borrowed from Ada, \#pragma is used to convey hints to the compiler, such as the desire to expand a particular function in-line or suppress range checks. Not previously seen in C, pragma met with some initial resistance from a gcc implementor, who took the "implementation-defined" effect very literally—in gcc version 1.34, the use of pragma causes the compiler to stop compiling and launch a computer game instead! The gcc manual contained the following:
+
+The "#pragma" command is specified in the ANSI standard to have an arbitrary implementation-defined effect. In the GNU C preprocessor, "#pragma" first attempts to run the game "rogue"; if that fails, it tries to run the game "hack"; if that fails, it tries to run GNU Emacs displaying the Tower of Hanoi; if that fails, it reports a fatal error. In any case, preprocessing does not continue.
+
+—Manual for version 1.34 of the GNU C compiler
+
+And the corresponding source code in the preprocessor part of the compiler was:
+
+/\*
+
+\* the behavior of the \#pragma directive is implementation
+
+defined.
+
+\* this implementation defines it as follows.
+
+\*/
+
+do_pragma ()
+
+{
+
+close (0);
+
+if (open ("/dev/tty", O_RDONLY, 0666) != 0)
+
+goto nope;
+
+close (1);
+
+if (open ("/dev/tty", O_WRONLY, 0666) != 1)
+
+goto nope;
+
+execl ("/usr/games/hack", "#pragma", 0);
+
+execl ("/usr/games/rogue", "#pragma", 0);
+
+execl ("/usr/new/emacs", "-f", "hanoi", "9", "-kill", 0); execl ("/usr/local/emacs", "-f", "hanoi", "9", "-kill", 0); nope:
+
+fatal ("You are in a maze of twisty compiler features, all different");
+
+}
+
+Especially droll is the fact that the description in the user manual is wrong, in that the code shows that
+
+"hack" is tried before "rogue".

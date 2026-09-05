@@ -1,21 +1,19 @@
-*preface*
-
-No one knows whether reading a technical book is going to be worth the effort. These books can be expensive, dull, and poorly written. Even worse, there’s a good chance that you won’t learn anything. Luckily, this book is written by someone who understands that.
-
-This book’s first aim is to teach you Rust. *Rust in Action* presents large, working projects to promote your learning. Over the course of the book, you’ll write a database, a CPU emulator, an operating system kernel, and several other interesting projects. You’ll even dabble with generative art. Each project is designed to enable you to explore the Rust programming language at your own pace. For those readers who know little Rust, there are many opportunities to expand the projects in whatever direction you choose.
-
-There is more to learning a programming language than studying its syntax and semantics, however. You are also joining a community. Unfortunately, established communities can create invisible barriers for new entrants because of their shared knowledge, jargon, and practices.
-
-One such barrier for many new Rust programmers is the concept of systems programming. Lots of programmers come to Rust without a background in that area.
-
-To compensate for this, *Rust in Action* has a second aim—to teach you systems programming. And, among other topics, you’ll learn about how memory, digital timekeeping, and device drivers work in the book’s 12 chapters. I hope this enables you to feel more comfortable when becoming a member of the Rust community. And we need you!
-
-**xv**
-
-**xvi**
-
 PREFACE
 
 Our societies depend on software, yet critical security holes are accepted as normal and, perhaps, inevitable. Rust demonstrates that these are neither. Moreover, our computers are filled with bloated, energy-intensive applications. Rust provides a viable alternative for developing software that is less demanding on these finite resources.
 
 *Rust in Action* is about empowerment. This book’s ultimate objective is to convince you of that. Rust is not reserved for a select group of experts. It is a tool that’s available for everyone. Well done for making it this far through your learning journey; it’s my pleasure to take you a few more steps.
+
+*acknowledgments*
+
+Thank you to Katie for preventing me from collapsing and for picking me up when I fell down anyway. Thanks also to Florence and Octavia for your hugs and smiles, even when Dad was unable to play because he was writing.
+
+I’m indebted to so many that it feels unfair to list only a select few. There are many members of the Rust community who have supported the book’s development. Thousands of readers submitted corrections, questions, and suggestions via the liveBook during the book’s development. Every contribution has helped me refine the text.
+
+Thank you.
+
+I’m especially grateful to a small number of readers, many of whom have become friends. To Aï Maiga, Ana Hobden, Andrew Meredith, Andréy Lesnikóv, Andy Grove, Arturo J. Pérez, Bruce Mitchener, Cecile Tonglet, Daniel Carosone, Eric Ridge, Esteban Kuber, Florian Gilcher, Ian Battersby, Jane Lusby, Javier Viola, Jonathan Turner, Lachezar Lechev, Luciano Mammino, Luke Jones, Natalie Bloomfield, Oleksandr Kaleniuk, Olivia Ifrim, Paul Faria, Paul J. Symonds, Philipp Gniewosz, Rod Elias, Stephen Oates, Steve Klabnik, Tannr Allard, Thomas Lockney, and William Brown; interacting with you over the last four years has been a special privilege.
+
+To the book’s reviewers, I extend my warm thanks to Afshin Mehrabani, Alastair Smith, Bryce Darling, Christoffer Fink, Christopher Haupt, Damian Esteban, Federico Hernandez, Geert Van Laethem, Jeff Lim, Johan Liseborn, Josh Cohen, Konark Modi, Marc Cooper, Morgan Nelson, Ramnivas Laddad, Riccardo Moschetti, Sanket Naik, Sumant Tambe, Tim van Deurzen, Tom Barber, Wade Johnson, William Brown, William Wheeler, and Yves Dorfsman. All of your comments were read. Many of the **xvii**
+
+**xviii**

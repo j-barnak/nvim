@@ -196,7 +196,7 @@ std::cout \<\< "Hello World!";
 
 You can click on the link in the title, and then it should open the website of a given online compiler (in the above case, it’s Compiler Explorer). You can compile the sample, see the output, and experiment with the code directly in your browser. Here’s a basic overview of Compiler Explorer:
 
-![](media/index-11_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-11_1.png)
 
  
 
@@ -242,11 +242,11 @@ Other issues for C++ and Pygments: [C++ Issues · github/pygments/pygments⁵](h
 
 Throughout the book, you can also see the following sections:
 
-![](media/index-12_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-12_1.png)
 
 This is an Information Box with extra notes related to the current section.
 
-![](media/index-12_2.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-12_2.png)
 
  
 

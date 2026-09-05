@@ -14,19 +14,15 @@ Each number in the sequence can only be used at most once in the expression, and
 
 For example, suppose that we are given the sequence 1, 3, 7, 10, 25, 50, and the target 765. Then one possible solution is given by the expression (1+50)∗(25–10), as verified by the following simple calculation:
 
+``` haskell
 (1 + 50) ∗ (25 – 10)
-
 ={ applying + }
-
 51 ∗ (25 – 10)
-
 ={ applying – }
-
 51 ∗ 15
-
 ={ applying ∗ }
-
 765
+```
 
 In fact, for this example it can be shown that there are 780 different solutions. On the other hand, keeping the same sequence but changing the target to 831 gives an example that can be shown to have no solutions.
 
@@ -36,41 +32,29 @@ In the television version of the problem, a number of additional rules are adopt
 
 We start by declaring a type for the four arithmetic operators, and making values of this type showable using a simple instance declaration:
 
-data Op = Add \| Sub \| Mul \| Div  
-  
-
+``` haskell
+data Op = Add | Sub | Mul | Div
 instance Show Op where
-
 show Add = "+"
-
 show Sub = "-"
-
-show Mul = "\*"
-
+show Mul = "*"
 show Div = "/"
+```
 
 In turn, we define a function valid that decides if the application of an operator to two positive naturals gives another positive natural, and a function apply that actually performs such a valid application:
 
-valid :: Op -\> Int -\> Int -\> Bool
-
-valid Add \_ \_ = True
-
-valid Sub x y = x \> y
-
-valid Mul \_ \_ = True
-
-valid Div x y = x ‘mod‘ y == 0  
-  
-
-apply :: Op -\> Int -\> Int -\> Int
-
+``` haskell
+valid :: Op -> Int -> Int -> Bool
+valid Add _ _ = True
+valid Sub x y = x > y
+valid Mul _ _ = True
+valid Div x y = x ‘mod‘ y == 0
+apply :: Op -> Int -> Int -> Int
 apply Add x y = x + y
-
 apply Sub x y = x - y
-
-apply Mul x y = x \* y
-
+apply Mul x y = x * y
 apply Div x y = x ‘div‘ y
+```
 
 For example, the application Sub 2 3 is invalid because 2 – 3 is negative, while Div 2 3 is invalid because 2 ÷ 3 is a rational number.
 
@@ -78,28 +62,29 @@ For example, the application Sub 2 3 is invalid because 2 – 3 is negative, whi
 
 We now declare a type for numeric expressions, which can either be an integer value or the application of an operator to two argument expressions, together with a simple pretty-printer for expressions:
 
-![image](media/Images/Chapter_9_image_3_23.png)
+``` haskell
+```
 
 For example, 1 + (2 ∗ 3) can be represented as a value of type Expr and then shown in more readable form as a string as follows:
 
-\> show (App Add (Val 1) (App Mul (Val 2) (Val 3)))
-
-"1+(2\*3)”
+``` haskell
+> show (App Add (Val 1) (App Mul (Val 2) (Val 3)))
+"1+(2*3)”
+```
 
 Using this type, we define a function that returns the list of values in an expression, and a function eval that returns the overall value of an expression, provided that this value is a positive natural number:
 
-![image](media/Images/Chapter_9_image_3_24.png)
+``` haskell
+```
 
 Note that the possibility of failure within eval is handled by returning a list of results, with the convention that a singleton list denotes success, and the empty list denotes failure. For example, for 2 + 3 and 2 – 3, we have:
 
-\> eval (App Add (Val 2) (Val 3))
-
-\[5\]  
-  
-
-\> eval (App Sub (Val 2) (Val 3))
-
-\[\]
+``` haskell
+> eval (App Add (Val 2) (Val 3))
+[5]
+> eval (App Sub (Val 2) (Val 3))
+[]
+```
 
 Failure within eval could also be handled by using the Maybe type, but we prefer to use the list type because the comprehension notation then provides a convenient way to define the eval function.
 
@@ -107,53 +92,51 @@ Failure within eval could also be handled by using the Maybe type, but we prefer
 
 We now define a number of useful combinatorial functions that return all possible lists that satisfy certain properties. The function subs returns all subsequences of a list, which are given by all possible combinations of excluding or including each element of the list, interleave returns all possible ways of inserting a new element into a list, and finally, perms returns all permutations of a list, which are given by all possible reorderings of the elements:
 
-![image](media/Images/Chapter_9_image_4_26.png)
+``` haskell
+```
 
 For example:
 
-\> subs \[1,2,3\]
-
-\[\[\],\[3\],\[2\],\[2,3\],\[1\],\[1,3\],\[1,2\],\[1,2,3\]\]  
-  
-
-\> interleave 1 \[2,3,4\]
-
-\[\[1,2,3,4\],\[2,1,3,4\],\[2,3,1,4\],\[2,3,4,1\]\]  
-  
-
-\> perms \[1,2,3\]
-
-\[\[1,2,3\],\[2,1,3\],\[2,3,1\],\[1,3,2\],\[3,1,2\],\[3,2,1\]\]
+``` haskell
+> subs [1,2,3]
+[[],[3],[2],[2,3],[1],[1,3],[1,2],[1,2,3]]
+> interleave 1 [2,3,4]
+[[1,2,3,4],[2,1,3,4],[2,3,1,4],[2,3,4,1]]
+> perms [1,2,3]
+[[1,2,3],[2,1,3],[2,3,1],[1,3,2],[3,1,2],[3,2,1]]
+```
 
 In turn, a function that returns all choices from a list, which are given by all possible ways of selecting zero or more elements in any order, can then be defined simply by considering all permutations of all subsequences:
 
-choices :: \[a\] -\> \[\[a\]\]
-
+``` haskell
+choices :: [a] -> [[a]]
 choices = concat . map perms . subs
+```
 
 For example:
 
-\> choices \[1,2,3\]
-
-\[\[\],\[3\],\[2\],\[2,3\],\[3,2\],\[1\],\[1,3\],\[3,1\],\[1,2\],\[2,1\],
-
-\[1,2,3\],\[2,1,3\],\[2,3,1\],\[1,3,2\],\[3,1,2\],\[3,2,1\]\]
+``` haskell
+> choices [1,2,3]
+[[],[3],[2],[2,3],[3,2],[1],[1,3],[3,1],[1,2],[2,1],
+[1,2,3],[2,1,3],[2,3,1],[1,3,2],[3,1,2],[3,2,1]]
+```
 
 ### **9.5Formalising the problem**
 
 Finally, we can now define a function solution that formalises what it means to solve an instance of the countdown problem:
 
-solution :: Expr -\> \[Int\] -\> Int -\> Bool
-
+``` haskell
+solution :: Expr -> [Int] -> Int -> Bool
 solution e ns n =
-
-elem (values e) (choices ns) && eval e == \[n\]
+elem (values e) (choices ns) && eval e == [n]
+```
 
 That is, an expression is a solution for a given list of numbers and a target if the list of values in the expression is chosen from the list of numbers, and the expression successfully evaluates to give the target. For example, if e :: Expr represents the expression (1 + 50) ∗ (25 – 10), then we have:
 
-\> solution e \[1,3,7,10,25,50\] 765
-
+``` haskell
+> solution e [1,3,7,10,25,50] 765
 True
+```
 
 The efficiency of solution could be improved by using a function isChoice that decides directly if one list is chosen from another, rather than doing so indirectly using the function choices that returns all possible choices from a list. However, efficiency is not important at this stage, and choices itself is used to define a number of other functions in this chapter.
 
@@ -161,58 +144,61 @@ The efficiency of solution could be improved by using a function isChoice that d
 
 Our first approach to solving the countdown problem is by brute force, using the idea of generating all possible expressions over the given list of numbers. We start by defining a function split that returns all possible ways of splitting a list into two non-empty lists that append to give the original list:
 
-![image](media/Images/Chapter_9_image_5_26.png)
+``` haskell
+```
 
 For example:
 
-\> split \[1,2,3,4\]
-
-\[(\[1\],\[2,3,4\]),(\[1,2\],\[3,4\]),(\[1,2,3\],\[4\])\]
+``` haskell
+> split [1,2,3,4]
+[([1],[2,3,4]),([1,2],[3,4]),([1,2,3],[4])]
+```
 
 Using split we can then define the key function, exprs, which returns all possible expressions whose list of values is precisely a given list:
 
-![image](media/Images/Chapter_9_image_5_27.png)
+``` haskell
+```
 
 That is, for the empty list of numbers there are no possible expressions, while for a single number there is a single expression comprising that number. Otherwise, for a list of two or more numbers we first produce all splittings of the list, then recursively calculate all possible expressions for each of these lists, and, finally, combine each pair of expressions using each of the four numeric operators, using an auxiliary function that is defined as follows:
 
-combine :: Expr -\> Expr -\> \[Expr\]
-
-combine l r = \[App o l r \| o \<- ops\]  
-  
-
-ops :: \[Op\]
-
-ops = \[Add,Sub,Mul,Div\]
+``` haskell
+combine :: Expr -> Expr -> [Expr]
+combine l r = [App o l r | o <- ops]
+ops :: [Op]
+ops = [Add,Sub,Mul,Div]
+```
 
 In conclusion, we can now define a function solutions that returns all possible expressions that solve an instance of the countdown problem, by first generating all expressions over each choice from the given list of numbers, and then selecting those expressions that successfully evaluate to give the target:
 
-solutions :: \[Int\] -\> Int -\> \[Expr\]
-
+``` haskell
+solutions :: [Int] -> Int -> [Expr]
 solutions ns n =
-
-\[e \| ns’ \<- choices ns, e \<- exprs ns’, eval e == \[n\]\]
+[e | ns’ <- choices ns, e <- exprs ns’, eval e == [n]]
+```
 
 ### **9.7Performance testing**
 
 For the purposes of testing our countdown programs in this chapter, the performance of the GHCi interpreter is somewhat limited, so instead we use the GHC compiler. The first step is to put all the necessary definitions into a script called countdown.hs, together with a top-level definition main that applies the function solutions to an example and displays the result:
 
+``` haskell
 main :: IO ()
-
-main = print (solutions \[1,3,7,10,25,50\] 765)
+main = print (solutions [1,3,7,10,25,50] 765)
+```
 
 (The library function print writes a value of a showable type to the screen, and the type for main will be explained in further detail in chapter 10.) The compiler itself can then be executed from the command prompt simply by typing ghc, and using the -O2 flag to turn on compiler optimisations:
 
-\$ ghc -O2 countdown.hs
-
-\[1 of 1\] Compiling Main
-
+``` haskell
+$ ghc -O2 countdown.hs
+[1 of 1] Compiling Main
 Linking countdown ...
+```
 
 Finally, the resulting executable file can then be run:
 
-\$ ./countdown
-
-\[3\*((7\*(50-10))-25), ((7\*(50-10))-25)\*3, ...\]
+``` haskell
+$ ./countdown
+[3*((7*(50-10))-25), ((7*(50-10))-25)*3, ...]
+```
 
 For example, running some simple performance tests using GHC version 7.10.2 on a 2.8GHz Intel Core 2 Duo with 4GB of RAM, this example returns the first solution to the problem in 0.108 seconds, and all 780 solutions in 12.224 seconds, while if the target is changed to 831, the empty list of solutions is returned in 12.802 seconds. More generally, our brute force program already performs well enough to solve countdown problems from the television show within the 30 second time limit. But surely we can do better than this?
 
@@ -222,27 +208,30 @@ The function solutions generates all possible expressions over the given numbers
 
 Based upon this observation, our second approach to solving the countdown problem is to improve our brute force program by combining the generation of expressions with their evaluation, such that both tasks are performed simultaneously. In this way, expressions that fail to evaluate are rejected at an earlier stage, and, more importantly, are not used to generate further expressions that will fail to evaluate. We start by declaring a type Result of expressions that evaluate successfully paired with their overall values:
 
+``` haskell
 type Result = (Expr,Int)
+```
 
 Using this type, we then define a function results that returns all possible results comprising expressions whose list of values is precisely a given list:
 
-![image](media/Images/Chapter_9_image_7_16.png)
+``` haskell
+```
 
 That is, for the empty list there are no possible results, while for a single number there is a single result formed from that number, provided that the number itself is a positive natural number. Otherwise, for two or more numbers we first produce all splittings of the list, then recursively calculate all possible results for each of these lists, and, finally, combine each pair of results using each of the four numeric operators that are valid, by means of the following auxiliary function:
 
-combine’ :: Result -\> Result -\> \[Result\]
-
+``` haskell
+combine’ :: Result -> Result -> [Result]
 combine’ (l,x) (r,y) =
-
-\[(App o l r, apply o x y) \| o \<- ops, valid o x y\]
+[(App o l r, apply o x y) | o <- ops, valid o x y]
+```
 
 Using results we can now define a new function solutions’ that returns all possible expressions that solve an instance of the countdown problem, by first generating all results over each choice from the given numbers, and then selecting those expressions whose value is the target:
 
-solutions’ :: \[Int\] -\> Int -\> \[Expr\]
-
+``` haskell
+solutions’ :: [Int] -> Int -> [Expr]
 solutions’ ns n =
-
-\[e \| ns’ \<- choices ns, (e,m) \<- results ns’, m == n\]
+[e | ns’ <- choices ns, (e,m) <- results ns’, m == n]
+```
 
 In terms of performance, solutions’ \[1,3,7,10,25,50\] 765 returns the first solution in 0.014 seconds (7 times faster than solutions) and all solutions in 1.312 seconds (9 times faster), while if the target is changed to 831, the empty list is returned in 1.134 seconds (11 times faster). That is, our new program is approximately 10 times faster than the original version. But we can still do better, by using some simple high-school algebra.
 
@@ -252,29 +241,26 @@ The function solutions’ generates all possible expressions over the given numb
 
 Based upon this observation, our final approach to solving the countdown problem is to improve our second program by exploiting such algebraic properties to reduce the number of generated expressions. In particular, we exploit the following five commutativity and identity properties:
 
-![image](media/Images/Chapter_9_image_8_21.png)
+![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_9_image_8_21.png)
 
 We start by recalling the function valid that decides if the application of an operator to two positive naturals gives another such:
 
-valid :: Op -\> Int -\> Int -\> Bool
-
-valid Add \_ \_ = True
-
-valid Sub x y = x \> y
-
-valid Mul \_ \_ = True
-
+``` haskell
+valid :: Op -> Int -> Int -> Bool
+valid Add _ _ = True
+valid Sub x y = x > y
+valid Mul _ _ = True
 valid Div x y = x ‘mod‘ y == 0
+```
 
-This definition can be modified to exploit the commutativity of addition and multiplication simply by requiring that their arguments are in numeric order ![image](media/Images/Chapter_9_image_9_17.png) and the identity properties of multiplication and division simply by requiring that the appropriate arguments are non-unitary (≠ 1):
+This definition can be modified to exploit the commutativity of addition and multiplication simply by requiring that their arguments are in numeric order ![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_9_image_9_17.png) and the identity properties of multiplication and division simply by requiring that the appropriate arguments are non-unitary (≠ 1):
 
-valid Add x y = x \<= y
-
-valid Sub x y = x \> y
-
-valid Mul x y = x /= 1 && y /= 1 && x \<= y
-
+``` haskell
+valid Add x y = x <= y
+valid Sub x y = x > y
+valid Mul x y = x /= 1 && y /= 1 && x <= y
 valid Div x y = y /= 1 && x ‘mod‘ y == 0
+```
 
 For example, using this new definition, Add 3 2 is now invalid because it is essentially the same as Add 2 3 using the commutativity property for addition, while Div 2 1 is now invalid because it is essentially the same as the number 2 on its own using the identity property for division.
 

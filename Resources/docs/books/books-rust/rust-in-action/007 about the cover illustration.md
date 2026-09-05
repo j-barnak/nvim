@@ -7,3 +7,7 @@ Dress codes have changed since then and the diversity by region, so rich at the 
 At a time when it is hard to tell one computer book from another, Manning cele-brates the inventiveness and initiative of the computer business with book covers based on the rich diversity of regional life of two centuries ago, brought back to life by pictures from collections such as this one.
 
 **xxiii**
+
+*Introducing Rust*
+
+***This chapter covers***

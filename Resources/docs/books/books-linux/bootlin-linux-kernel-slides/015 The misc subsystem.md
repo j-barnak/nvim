@@ -1,5 +1,3 @@
-![](media/index-312_1.jpg)
-
 The misc subsystem
 
  
@@ -124,11 +122,11 @@ Practical lab - Output-only serial port driver
 
 ▶ Extend the driver started in the previous lab by
 
-![](media/index-318_1.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-318_1.png)
 
 registering it into the *misc* subsystem.
 
-![](media/index-318_2.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-318_2.png)
 
 ▶ Implement serial output functionality through
 
@@ -139,3 +137,5 @@ the *misc* subsystem.
  
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 304/436
+
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-319_1.jpg)

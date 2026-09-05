@@ -56,7 +56,7 @@ DOI 10.1515/9781501505690-012
 
 **158** \| Chapter 10 – Platform Security and Trust
 
-![](media/index-177_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-177_1.png)
 
  
 
@@ -78,7 +78,7 @@ delve too deeply into this layer. The firmware layer is highlighted to show that
 
 Trust Overview \| **159**
 
-![](media/index-178_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-178_1.png)
 
  
 
@@ -90,7 +90,7 @@ In fact, the scope of this chapter largely addresses firmware. Some description 
 
 hardware elements and interaction are provided. Figure 10.3 highlights the area that this chapter discusses in more depth.
 
-![](media/index-178_2.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-178_2.png)
 
  
 
@@ -174,7 +174,7 @@ Client working group describes the memory-mapped I/O interfaces; the TIS is just
 
 that a TPM must carry out in service of the host. Figure 10.4 shows some of the speci-fications that describe the TPM and its integration into the platform.
 
-![](media/index-180_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-180_1.png)
 
  
 
@@ -192,7 +192,7 @@ stances of this technology with the ability to differentiate their implementatio
 
 **162** \| Chapter 10 – Platform Security and Trust
 
-![](media/index-181_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-181_1.png)
 
  
 
@@ -216,13 +216,13 @@ files, conformance tests, and so on.
 
 Trusted Platform Module (TPM) and Measured Boot \| **163**
 
-![](media/index-182_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-182_1.png)
 
  
 
 **Figure 10.6:** TPM Block Diagram
 
-![](media/index-182_2.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-182_2.png)
 
  
 
@@ -330,7 +330,7 @@ and root of trust for reporting (RTR). The former is the use of the storage root
 
 Trusted Platform Module (TPM) and Measured Boot \| **165**
 
-![](media/index-184_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-184_1.png)
 
  
 
@@ -346,7 +346,7 @@ The definition of the SRTM for UEFI is defined in the UEFI TCG Protocol Specifi-
 
 ating system is shown in Figure 10.8.
 
-![](media/index-184_2.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-184_2.png)
 
  
 
@@ -360,7 +360,7 @@ a secret, and perform other TPM actions prior to the availability of the OS TPM 
 
 In addition, this API can be installed at the beginning of DXE to enable measurement of the DXE and UEFI images. Figure 10.9 shows where the UEFI TCG APIs would ap-pear relative to the other interfaces.
 
-![](media/index-185_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-185_1.png)
 
  
 
@@ -378,7 +378,7 @@ The UEFI TCG Platform specification describes which objects to measure in an UEF
 
 Trusted Platform Module (TPM) and Measured Boot \| **167**
 
-![](media/index-186_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-186_1.png)
 
  
 
@@ -392,7 +392,7 @@ In these phases the CRTM is mapped to the PEI phase and what is thought of as BI
 
 face, or PPI) to allow for fine-grain measurement in that phase of execution, too. Fig-ure 10.11 shows one possible PEI-based CRTM and the flow into the operating system.
 
-![](media/index-186_2.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-186_2.png)
 
  
 
@@ -442,7 +442,7 @@ be found in the UEFI 2.0 specification.
 
 UEFI Secure Boot \| **169**
 
-![](media/index-188_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-188_1.png)
 
  
 
@@ -476,7 +476,7 @@ this chapter exist, namely in the UEFI Services and boot manager.
 
 **170** \| Chapter 10 – Platform Security and Trust
 
-![](media/index-189_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-189_1.png)
 
  
 
@@ -520,7 +520,7 @@ Figure 10.14 shows the steps necessary for signing of UEFI images. The signing c
 
 rity hash algorithm family.
 
-![](media/index-190_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-190_1.png)
 
  
 
@@ -538,7 +538,7 @@ work, from a host-bus adapter card, or via the UEFI system partition, the UEFI 2
 
 **172** \| Chapter 10 – Platform Security and Trust
 
-![](media/index-191_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-191_1.png)
 
  
 
@@ -620,7 +620,7 @@ Figure 10.17 shows the EFI IPsec implementation using the UEFI IPsec protocol an
 
 **174** \| Chapter 10 – Platform Security and Trust
 
-![](media/index-193_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-193_1.png)
 
  
 
@@ -632,7 +632,7 @@ IPsec in the platform will allow for performing both an IPV4 and IPV6-based ISCS
 
 work stack, for example.
 
-![](media/index-193_2.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-193_2.png)
 
  
 
@@ -754,7 +754,7 @@ This can include limiting service access for certain users. Figure 10.21 shows t
 
 Hardware Evolution: SRTM-to-DRTM \| **177**
 
-![](media/index-196_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-196_1.png)
 
  
 
@@ -780,13 +780,13 @@ Figure 10.22 compares the two RTMs and their temporal evolution and features.
 
 **178** \| Chapter 10 – Platform Security and Trust
 
-![](media/index-197_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-197_1.png)
 
  
 
 **Figure 10.22:** DRTM Boot Flow
 
-![](media/index-197_2.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-197_2.png)
 
  
 
@@ -820,7 +820,7 @@ third party can replace or impersonate a PI module without the PM’s knowledge,
 
 Platform Manufacturer \| **179**
 
-![](media/index-198_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-198_1.png)
 
  
 
@@ -910,7 +910,7 @@ tion of the variable services, and the variable itself could include the EFI_VAR
 
 Summary \| **181**
 
-![](media/index-200_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-200_1.png)
 
  
 

@@ -1,5 +1,3 @@
-**CHAPTER 3**
-
 **Moving to Modern C++**
 
 When it comes to big-name features, C++11 and C++14 have a lot to boast of. auto, smart pointers, move semantics, lambdas, concurrency—each is so important, I devote a chapter to it. It’s essential to master those features, but becoming an effective modern C++ programmer requires a series of smaller steps, too. Each step answers specific questions that arise during the journey from C++98 to modern C++. When should you use braces instead of parentheses for object creation? Why are alias declarations better than typedefs? How does constexpr differ from const? What’s the relationship between const member functions and thread safety? The list goes on and on. And one by one, this chapter provides the answers.
@@ -40,11 +38,9 @@ std::vector\<int\> v**{** 1, 3, 5 **}**; // v's initial content is 1, 3, 5
 
 Braces can also be used to specify default initialization values for non-static data members. This capability—new to C++11—is shared with the “=” initialization syntax, but not with parentheses:
 
-class Widget {
 
 …
 
-private:
 
 int x**{** 0 **}**; // fine, x's default value is 0
 
@@ -106,7 +102,6 @@ Their interactions can lead to code that seems like it should do one thing, but 
 
 In constructor calls, parentheses and braces have the same meaning as long as std::initializer_list parameters are not involved:
 
-class Widget {
 
 public:
 
@@ -128,7 +123,6 @@ Widget w4**{**10, 5.0**}**; // also calls second ctor
 
 If, however, one or more constructors declare a parameter of type std::initial izer_list, calls using the braced initialization syntax strongly prefer the overloads taking std::initializer_lists. *Strongly*. If there’s *any way* for compilers to con-strue a call using a braced initializer to be to a constructor taking a std::initial izer_list, compilers will employ that interpretation. If the Widget class above is augmented with a constructor taking a std::initializer_list\<long double\>, for example,
 
-class Widget {
 
 public:
 
@@ -170,7 +164,6 @@ Widget w4**{**10, 5.0**}**; // uses braces, but *now calls*
 
 Even what would normally be copy and move construction can be hijacked by std::initializer_list constructors:
 
-class Widget {
 
 public:
 
@@ -204,7 +197,6 @@ Widget w7**(**std::move(w4)**)**; // uses parens, *calls move ctor* Widget w8**{
 
 Compilers’ determination to match braced initializers with constructors taking std::initializer_lists is so strong, it prevails even if the best-match std::ini tializer_list constructor can’t be called. For example:
 
-class Widget {
 
 public:
 
@@ -224,7 +216,6 @@ Widget w**{10, 5.0}**; // error! requires narrowing conversions Here, compilers 
 
 Only if there’s no way to convert the types of the arguments in a braced initializer to the type in a std::initializer_list do compilers fall back on normal overload resolution. For example, if we replace the std::initializer_list\<bool\> constructor with one taking a std::initializer_list\<std::string\>, the non-std::initializer_list constructors become candidates again, because there is no way to convert ints and bools to std::strings:
 
-class Widget {
 
 public:
 
@@ -244,7 +235,6 @@ Widget(std::initializer_list\< **std::string**\> il);
 
 The rule is that you get default construction. Empty braces mean no arguments, not an empty std::initializer_list:
 
-class Widget {
 
 public:
 
@@ -616,9 +606,7 @@ template\<typename T\>
 
 using MyAllocList = std::list\<T, MyAlloc\<T\>\>; // as before template\<typename T\>
 
-class Widget {
 
-private:
 
 **MyAllocList\<T\>** list; // no "typename",
 
@@ -638,7 +626,6 @@ template\<\> // MyAllocList specialization
 
 class MyAllocList\<Wine\> { // for when T is Wine
 
-private:
 
 enum class WineType // see Item 10 for info on
 
@@ -1164,7 +1151,6 @@ Interestingly, if you have a function template inside a class, and you’d like 
 
 different access level from that of the main template. If processPointer were a member function template inside Widget, for example, and you wanted to disable calls for void\* pointers, this would be the C++98 approach, though it would not compile:
 
-class Widget {
 
 public:
 
@@ -1176,7 +1162,6 @@ void processPointer(T\* ptr)
 
 { … }
 
-private:
 
 template\<\> // error!
 
@@ -1186,7 +1171,6 @@ void processPointer\<void\>(void\*);
 
 The problem is that template specializations must be written at namespace scope, not class scope. This issue doesn’t arise for deleted functions, because they don’t need a different access level. They can be deleted outside the class (hence at namespace scope):
 
-class Widget {
 
 public:
 
@@ -1276,7 +1260,6 @@ To these constraints, which were also part of C++98, C++11 adds one more:
 
 • The functions’ *reference qualifiers* must be identical. Member function reference qualifiers are one of C++11’s less-publicized features, so don’t be surprised if you’ve never heard of them. They make it possible to limit use of a member function to lvalues only or to rvalues only. Member functions need not be virtual to use them:
 
-class Widget {
 
 public:
 
@@ -1434,7 +1417,6 @@ The need for reference-qualified member functions is not common, but it can aris
 
 For example, suppose our Widget class has a std::vector data member, and we offer an accessor function that gives clients direct access to it:
 
-class Widget {
 
 public:
 
@@ -1450,7 +1432,6 @@ DataType& data() { return values; }
 
 …
 
-private:
 
 DataType values;
 
@@ -1484,7 +1465,6 @@ What’s needed is a way to specify that when data is invoked on an rvalue Widge
 
 **84 \| Item 12**
 
-class Widget {
 
 public:
 
@@ -1502,7 +1482,6 @@ DataType data() **&&** // for rvalue Widgets,
 
 …
 
-private:
 
 DataType values;
 
@@ -1956,7 +1935,6 @@ void setX(double newX) noexcept { x = newX; }
 
 void setY(double newY) noexcept { y = newY; }
 
-private:
 
 double x, y;
 
@@ -2112,7 +2090,6 @@ return rootVals;
 
 }
 
-private:
 
 mutable bool rootsAreValid{ false }; // see Item 7 for info mutable RootsType rootVals{}; // on initializers
 
@@ -2160,7 +2137,6 @@ return rootVals;
 
 } // *unlock mutex*
 
-private:
 
 **mutable std::mutex m;**
 
@@ -2196,7 +2172,6 @@ return std::sqrt((x \* x) + (y \* y));
 
 }
 
-private:
 
 **mutable std::atomic\<unsigned\> callCount{ 0 };**
 
@@ -2208,7 +2183,6 @@ Like std::mutexes, std::atomics are move-only types, so the existence of call Co
 
 Because operations on std::atomic variables are often less expensive than mutex acquisition and release, you may be tempted to lean on std::atomics more heavily than you should. For example, in a class caching an expensive-to-compute int, you might try to use a pair of std::atomic variables instead of a mutex:
 
-class Widget {
 
 public:
 
@@ -2236,7 +2210,6 @@ return cachedValue;
 
 }
 
-private:
 
 **106 \| Item 16**
 
@@ -2252,7 +2225,6 @@ This will work, but sometimes it will work a lot harder than it should. Consider
 
 Such behavior is contrary to the goal of caching. Reversing the order of the assignments to cachedValue and CacheValid eliminates that problem, but the result is even worse:
 
-class Widget {
 
 public:
 
@@ -2292,7 +2264,6 @@ thread has not yet made an assignment to it. The returned value is therefore inc
 
 There’s a lesson here. For a single variable or memory location requiring synchronization, use of a std::atomic is adequate, but once you get to two or more variables or memory locations that require manipulation as a unit, you should reach for a mutex. For Widget::magicValue, that would look like this:
 
-class Widget {
 
 public:
 
@@ -2324,7 +2295,6 @@ return cachedValue;
 
 …
 
-private:
 
 **mutable std::mutex m;**
 
@@ -2356,7 +2326,6 @@ But you already know these things. Yes, yes, ancient history: Mesopotamia, the S
 
 As of C++11, the special member functions club has two more inductees: the move constructor and the move assignment operator. Their signatures are:
 
-class Widget {
 
 public:
 
@@ -2416,7 +2385,6 @@ At some point, analogous rules may be extended to the copy operations, because C
 
 Provided the behavior of the compiler-generated functions is correct (i.e, if memberwise copying of the class’s non-static data members is what you want), your job is easy, because C++11’s “= default” lets you say that explicitly:
 
-class Widget {
 
 public:
 
@@ -2462,7 +2430,6 @@ StringTable() {}
 
 // etc., but no copy/move/dtor functionality
 
-private:
 
 std::map\<int, std::string\> values;
 
@@ -2488,7 +2455,6 @@ StringTable()
 
 **Item 17 \| 113**
 
-private:
 
 std::map\<int, std::string\> values; // as before
 
@@ -2524,7 +2490,6 @@ Generation of this function in a class with a user-declared copy assignment oper
 
 Note that there’s nothing in the rules about the existence of a member function *template* preventing compilers from generating the special member functions. That means that if Widget looks like this,
 
-class Widget {
 
 …
 
@@ -2559,3 +2524,5 @@ The copy assignment operator is generated only for classes lacking an explicitly
 • Member function templates never suppress generation of special member functions.
 
 **Item 17 \| 115**
+
+**CHAPTER 4**

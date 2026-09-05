@@ -24,7 +24,7 @@ In statically typed object-oriented languages, a subclass is also often a subtyp
 
 Think of a type as the set of all values of that type. The set of all Doughnut instances contains the set of all BostonCream instances since every BostonCream is also a Doughnut. So BostonCream is a subclass, and a subtype, and its instances are a subset. It all lines up.
 
-![Boston cream \<: doughnut.](media/image/inheritance/doughnuts.png)
+![Boston cream \<: doughnut.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/inheritance/doughnuts.png)
 
 Our first step towards supporting inheritance in Lox is a way to specify a superclass when declaring a class. There’s a lot of variety in syntax for this. C++ and C# place a `:` after the subclass’s name, followed by the superclass name. Java uses `extends` instead of the colon. Python puts the superclass(es) in parentheses after the class name. Simula puts the superclass’s name *before* the `class` keyword.
 
@@ -402,7 +402,7 @@ Translate this program to Java, C#, or C++ and it will print “A method”, whi
 
 Instead, lookup should start on the superclass of *the class containing the `super` expression*. In this case, since `test()` is defined inside B, the `super` expression inside it should start the lookup on *B*’s superclass—A.
 
-![The call chain flowing through the classes.](media/image/inheritance/classes.png)
+![The call chain flowing through the classes.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/inheritance/classes.png)
 
 The execution flow looks something like this:
 
@@ -424,11 +424,11 @@ One important difference is that we bound `this` when the method was *accessed*.
 
 That means we can create the environment for the superclass once, when the class definition is executed. Immediately before we define the methods, we make a new environment to bind the class’s superclass to the name `super`.
 
-![The superclass environment.](media/image/inheritance/superclass.png)
+![The superclass environment.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/inheritance/superclass.png)
 
 When we create the LoxFunction runtime representation for each method, that is the environment they will capture in their closure. Later, when a method is invoked and `this` is bound, the superclass environment becomes the parent for the method’s environment, like so:
 
-![The environment chain including the superclass environment.](media/image/inheritance/environments.png)
+![The environment chain including the superclass environment.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/inheritance/environments.png)
 
 That’s a lot of machinery, but we’ll get through it a step at a time. Before we can get to creating the environment at runtime, we need to handle the corresponding scope chain in the resolver.
 
@@ -709,7 +709,7 @@ We made it! That final bit of error handling is the last chunk of code needed to
 - methods, and finally,
 - inheritance.
 
-![You, being your bad self.](media/image/inheritance/superhero.png)
+![You, being your bad self.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/inheritance/superhero.png)
 
 We did all of that from scratch, with no external dependencies or magic tools. Just you and I, our respective text editors, a couple of collection classes in the Java standard library, and the JVM runtime.
 

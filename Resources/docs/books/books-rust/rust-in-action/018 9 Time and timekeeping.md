@@ -1,31 +1,3 @@
-*Time and timekeeping*
-
-***This chapter covers***
-
- Understanding how a computer keeps time
-
- How operating systems represent timestamps
-
- Synchronizing atomic clocks with the Network
-
-Time Protocol (NTP)
-
-In this chapter, you’ll produce an NTP (Network Time Protocol) client that requests the current time from the world’s network of public time servers. It’s a fully functioning client that can be included in your own computer’s boot process to keep it in sync with the world.
-
-Understanding how time works within computers supports your efforts to build resilient applications. The system clock jumps both backwards and forwards in time.
-
-Knowing why this happens allows you to anticipate and prepare for that eventuality.
-
-Your computer also contains multiple physical and virtual clocks. It takes some knowledge to understand the limitations of each and when these are appropriate.
-
-Understanding the limitations of each should foster a healthy skepticism about micro benchmarks and other time-sensitive code.
-
-Some of the hardest software engineering involves distributed systems that need to agree on what the time is. If you have the resources of Google, then **293**
-
-**294**
-
-CHAPTER 9
-
 ***Time and timekeeping***
 
 you’re able to maintain a network atomic clock that provides a worldwide time synchronization of 7 ms. The closest open source alternative is CockroachDB ([https://](https://www.cockroachlabs.com/)
@@ -58,21 +30,21 @@ seconds apart. By 2016, they had drifted to 36 seconds apart.
 
 In addition to the issues with earth’s fickle rotational speed, the physics of your own computer make it challenging to keep accurate time. There are also (at least) two clocks running on your system. One is a battery-powered device, called the *real-time* *clock*. The other one is known as *system time*. System time increments itself based on hardware interrupts provided by the computer’s motherboard. Somewhere in your system, a quartz crystal is oscillating rapidly.
 
-![](media/index-321_1.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-321_1.png)
 
-![](media/index-321_2.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-321_2.png)
 
-![](media/index-321_3.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-321_3.png)
 
-![](media/index-321_4.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-321_4.png)
 
-![](media/index-321_5.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-321_5.png)
 
-![](media/index-321_6.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-321_6.png)
 
-![](media/index-321_7.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-321_7.png)
 
-![](media/index-321_8.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-321_8.png)
 
 ***Background***
 
@@ -100,7 +72,6 @@ Real-time clock chip
 
 **296**
 
-CHAPTER 9
 
 ***Time and timekeeping***
 
@@ -184,7 +155,6 @@ The starting point is arbitrary. The most common epoch in UNIX-based systems is 
 
 **298**
 
-CHAPTER 9
 
 ***Time and timekeeping***
 
@@ -342,7 +312,6 @@ warning: associated function is never used: \`set\`
 
 **300**
 
-CHAPTER 9
 
 ***Time and timekeeping***
 
@@ -466,7 +435,6 @@ Listing 9.5 is an excerpt from listing 9.7. It demonstrates how to implement the
 
 **302**
 
-CHAPTER 9
 
 ***Time and timekeeping***
 
@@ -690,7 +658,6 @@ Creating the project step by step takes slightly more work. As clock v0.1.1 is a
 
 **304**
 
-CHAPTER 9
 
 ***Time and timekeeping***
 
@@ -898,7 +865,6 @@ Setting the time is complicated because each OS has its own mechanism for doing 
 
 **306**
 
-CHAPTER 9
 
 ***Time and timekeeping***
 
@@ -1056,7 +1022,6 @@ Setting the time in a libc environment
 
 **308**
 
-CHAPTER 9
 
 ***Time and timekeeping***
 
@@ -1286,7 +1251,6 @@ Setting the time using the Windows kernel32.dll API
 
 **310**
 
-CHAPTER 9
 
 ***Time and timekeeping***
 
@@ -1498,7 +1462,6 @@ Cross-portable code for setting the system time
 
 **312**
 
-CHAPTER 9
 
 ***Time and timekeeping***
 
@@ -1686,7 +1649,6 @@ After calls to Clock::set(t), Rust happily talks to the OS via std::io::Error::l
 
 **314**
 
-CHAPTER 9
 
 ***Time and timekeeping***
 
@@ -1888,7 +1850,6 @@ Defining a function that sends NTP messages
 
 **316**
 
-CHAPTER 9
 
 ***Time and timekeeping***
 
@@ -2106,7 +2067,6 @@ Adjusting the time according to the responses
 
 **318**
 
-CHAPTER 9
 
 ***Time and timekeeping***
 
@@ -2306,7 +2266,6 @@ Full listing for the command-line NTP client, clock
 
 **320**
 
-CHAPTER 9
 
 ***Time and timekeeping***
 
@@ -2572,7 +2531,6 @@ CHAPTER 9
 
 **322**
 
-CHAPTER 9
 
 ***Time and timekeeping***
 
@@ -2794,7 +2752,6 @@ CHAPTER 9
 
 **324**
 
-CHAPTER 9
 
 ***Time and timekeeping***
 
@@ -3008,7 +2965,6 @@ CHAPTER 9
 
 **326**
 
-CHAPTER 9
 
 ***Time and timekeeping***
 
@@ -3087,3 +3043,75 @@ CHAPTER 9
  Be precise when making assumptions about the meaning of terms such as epoch and time zone. There is often hidden context lurking beneath the surface.
 
  Time can go backwards. Never write an application that relies on monotonically increasing time without ensuring that it requests a monotonically increasing clock from the OS.
+
+*Processes, threads,*
+
+*and containers*
+
+***This chapter covers***
+
+ Concurrent programming in Rust
+
+ How to distinguish processes, threads,
+
+and containers
+
+ Channels and message passing
+
+ Task queues
+
+So far this book has almost completely avoided two fundamental terms of systems programming: threads and processes. Instead, the book has used the single term: program. This chapter expands our vocabulary.
+
+Processes, threads, and containers are abstractions created to enable multiple tasks to be carried out at the same time. This enables *concurrency*. Its peer term, *parallelism*, means to make use of multiple physical CPU cores at the same time.
+
+Counterintuitively, it is possible to have a concurrent system on a single CPU
+
+core. Because accessing data from memory and I/O take a long time, threads requesting data can be set to a *blocked* state. Blocked threads are rescheduled when their data is available.
+
+Concurrency, or doing multiple things at the same time, is difficult to introduce into a computer program. Employing concurrency effectively involves both new concepts and new syntax.
+
+**328**
+
+***Anonymous functions***
+
+**329**
+
+The aim of this chapter is to give you the confidence to explore more advanced material. You will have a solid understanding of the different tools that are available to you as an applications programmer. This chapter exposes you to the standard library and the well engineered crates crossbeam and rayon. It will enable you to use them, though it won’t give you sufficient background to be able to implement your own concurrency crates. The chapter follows the following structure:
+
+ *It introduces you to Rust’s closure syntax in section 10.1.* Closures are also known as anonymous functions and lambda functions. The syntax is important because the standard library and many (perhaps all) external crates rely on that syntax to provide support for Rust’s concurrency model.
+
+ *It provides a quick lesson on spawning threads in section 10.2.* You’ll learn what a thread is and how to create (spawn) those. You’ll also encounter a discussion of why programmers are warned against spawning tens of thousands of threads.
+
+ *It distinguishes between functions and closures in section 10.3.* Conflating these two concepts can be a source of confusion for programmers new to Rust as these are often indistinguishable in other languages.
+
+ *It follows with a large project in section 10.4.* You’ll implement a multithreaded parser and a code generator using multiple strategies. As a nice aside, you get to create procedural art along the way.
+
+ *The chapter concludes with an overview of other forms of concurrency.* This includes processes and containers.
+
+***10.1***
+
+***Anonymous functions***
+
+This chapter is fairly dense, so let’s get some points on the board quickly with some basic syntax and practical examples. We’ll circle back to fill in a lot of the conceptual and theoretical material.
+
+Threads and other forms of code that can run concurrently use a form of function definition that we’ve avoided for the bulk of the book. Taking a look at it now, defining a function looks like this:
+
+fn add(a: i32, b: i32) -\> i32 {
+
+a + b
+
+}
+
+The (loosely) equivalent lambda function is
+
+let add = \|a,b\| { a + b };
+
+Lambda functions are denoted by the pair of vertical bars (\|…\|) followed by curly brackets ({…}). The pair of vertical bars lets you define arguments. Lambda functions in Rust can read variables from within their scope. These are *closures*.
+
+Unlike regular functions, lambda functions cannot be defined in global scope.
+
+The following listing gets around this by defining one within its main(). It defines two
+
+**330**
+
+CHAPTER 10

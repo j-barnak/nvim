@@ -1,7 +1,3 @@
-**Expert C Programming: Deep C Secrets**
-
-By Peter van der Linden
-
 **Introduction**
 
 *C code. C code run. Run code run…please!*
@@ -30,9 +26,9 @@ Once experienced, this painful error (doing an assignment where comparison was i
 
 "attempted assignment to literal." This won't protect you when comparing two variables, but every little bit helps.
 
-![Image 2](media/index-3_1.png)
+![Image 2](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-3_1.png)
 
-![Image 3](media/index-3_2.png)
+![Image 3](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-3_2.png)
 
 **The \$20 Million Bug**
 
@@ -90,7 +86,7 @@ Readers can use this book as a source of ideas, as a collection of C tips and id
 
 Some aspects of C and UNIX are occasionally quite lighthearted. There's nothing wrong with well-placed whimsy. The IBM/Motorola/Apple PowerPC architecture has an E.I.E.I.O. instruction \[1\] that stands for "Enforce In-order Execution of I/O". In a similar spirit, there is a UNIX command,
 
-![Image 4](media/index-5_1.png)
+![Image 4](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-5_1.png)
 
 tunefs, that sophisticated system administrators use to change the dynamic parameters of a filesystem and improve the block layout on disk.
 
@@ -138,7 +134,7 @@ Write a program to find out.
 
 2\. Code a program to place the highest value into a variable of type time_t, then pass it to ctime() to convert it into an ASCII string. Print the string. Note that ctime has nothing to do with the language C, it just means "convert time."
 
-![Image 5](media/index-6_1.png)
+![Image 5](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-6_1.png)
 
 For how many years into the future does the anonymous technical writer who removed the comment have to worry about being dogged by a UNIX daemon? Amend your program to find out.
 
@@ -177,3 +173,27 @@ biggest = Mon Jan 18 19:14:07 2038
 However, this is not the correct answer! The function ctime() converts its argument into *local* time, which will vary from Coordinated Universal Time (also known as Greenwich Mean Time), depending on where you are on the globe. California, where this book was written, is eight hours behind London, and several years ahead.
 
 We should really use the gmtime() function to obtain the largest UTC time value. This function doesn't return a printable string, so we call asctime()to get this. Putting it all
+
+together, our revised program is
+
+\#include \<stdio.h\>
+
+\#include \<time.h\>
+
+int main() {
+
+time_t biggest = 0x7FFFFFFF;
+
+printf("biggest = %s \n", asctime(gmtime(&biggest)) ); return 0;
+
+}
+
+This gives a result of:
+
+biggest = Tue Jan 19 03:14:07 2038
+
+There! Squeezed another eight hours out of it!
+
+But we're *still* not done. If you use the locale for New Zealand, you can get 13 more hours, assuming they use daylight savings time in the year 2038. They are on DST in January because they are in the southern hemisphere. New Zealand, because of its easternmost position with respect to time zones, holds the unhappy distinction of being the first country to encounter bugs triggered by particular dates.
+
+Even simple-looking things can sometimes have a surprising twist in software. And anyone who thinks programming dates is easy to get right the first time probably hasn't done much of it.

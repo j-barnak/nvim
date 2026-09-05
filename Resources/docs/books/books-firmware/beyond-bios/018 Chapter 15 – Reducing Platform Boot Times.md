@@ -786,7 +786,7 @@ boot the target.
 
 **Figure 15.5:** Architectural Boot Flow Comparison
 
-![](media/index-267_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-267_1.png)
 
  
 
@@ -808,7 +808,7 @@ drivers to all devices recursively, such as BdsConnectAll(), and instead only Ad
 
 connect the devices directly associated with the boot target. Figure 15.7 illustrates an example of that logic.
 
-![](media/index-268_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-268_1.png)
 
  
 

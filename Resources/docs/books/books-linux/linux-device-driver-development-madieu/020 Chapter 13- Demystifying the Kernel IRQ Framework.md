@@ -15,7 +15,7 @@ To summarize, in this chapter, the following topics will be covered:
 
 On many platforms, a special device is responsible for managing IRQ lines. That device is the interrupt controller and it stands between the CPU and the interrupt lines it manages. The following is a diagram that shows the interactions that take place:
 
-![Figure 13.1 – Interrupt controller and IRQ lines ](media/image/B17934_13_001.jpg)
+![Figure 13.1 – Interrupt controller and IRQ lines ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_13_001.jpg)
 
 Figure 13.1 – Interrupt controller and IRQ lines
 
@@ -61,61 +61,36 @@ IRQ management and interrupt controller drivers both rely on the concept of the 
 
 All the preceding data structures are part of the IRQ domain API. An interrupt controller is represented in the kernel by an instance of the **struct irq_chip** structure, which describes the actual hardware device, and some methods used by the IRQ core. The following code block shows its definition:
 
+``` c
 struct irq_chip {
-
-    struct device    \*parent_device;
-
-    const char       \*name;
-
-    void   (\*irq_enable)(struct irq_data \*data);
-
-    void   (\*irq_disable)(struct irq_data \*data);
-
-    void   (\*irq_ack)(struct irq_data \*data);
-
-    void   (\*irq_mask)(struct irq_data \*data);
-
-    void   (\*irq_unmask)(struct irq_data \*data);
-
-    void   (\*irq_eoi)(struct irq_data \*data);
-
-    int    (\*irq_set_affinity)(struct irq_data \*data,
-
-                const struct cpumask \*dest, bool force);
-
-    int    (\*irq_retrigger)(struct irq_data \*data);
-
-    int    (\*irq_set_type)(struct irq_data \*data,
-
-                           unsigned int flow_type);
-
-    int    (\*irq_set_wake)(struct irq_data \*data,
-
-                           unsigned int on);
-
-    void   (\*irq_bus_lock)(struct irq_data \*data);
-
-    void   (\*irq_bus_sync_unlock)(struct irq_data \*data);
-
-    int   (\*irq_get_irqchip_state)(struct irq_data \*data,
-
-               enum irqchip_irq_state which, bool \*state);
-
-    int   (\*irq_set_irqchip_state)(struct irq_data \*data,
-
-               enum irqchip_irq_state which, bool state);
-
-    void  (\*ipi_send_single)(struct irq_data \*data,
-
-                              unsigned int cpu);
-
-   void   (\*ipi_send_mask)(struct irq_data \*data,
-
-                           const struct cpumask \*dest);
-
-    unsigned long    flags;
-
+    struct device    *parent_device;
+    const char       *name;
+    void   (*irq_enable)(struct irq_data *data);
+    void   (*irq_disable)(struct irq_data *data);
+    void   (*irq_ack)(struct irq_data *data);
+    void   (*irq_mask)(struct irq_data *data);
+    void   (*irq_unmask)(struct irq_data *data);
+    void   (*irq_eoi)(struct irq_data *data);
+    int    (*irq_set_affinity)(struct irq_data *data,
+                const struct cpumask *dest, bool force);
+    int    (*irq_retrigger)(struct irq_data *data);
+    int    (*irq_set_type)(struct irq_data *data,
+                           unsigned int flow_type);
+    int    (*irq_set_wake)(struct irq_data *data,
+                           unsigned int on);
+    void   (*irq_bus_lock)(struct irq_data *data);
+    void   (*irq_bus_sync_unlock)(struct irq_data *data);
+    int   (*irq_get_irqchip_state)(struct irq_data *data,
+               enum irqchip_irq_state which, bool *state);
+    int   (*irq_set_irqchip_state)(struct irq_data *data,
+               enum irqchip_irq_state which, bool state);
+    void  (*ipi_send_single)(struct irq_data *data,
+                              unsigned int cpu);
+   void   (*ipi_send_mask)(struct irq_data *data,
+                           const struct cpumask *dest);
+    unsigned long    flags;
 };
+```
 
 The following list explains the meanings of the elements in the structure:
 
@@ -138,25 +113,18 @@ The following list explains the meanings of the elements in the structure:
 
 Each interrupt controller is given a domain, which is to the controller what an address space is to a process (see *Chapter 10*, *Understanding the Linux Kernel Memory Allocation*). The interrupt controller domain is described in the kernel with a **struct irq_domain** structure. It manages mappings between hardware IRQ numbers and Linux IRQ numbers (that is, virtual IRQs). It is the hardware interrupt number translation object. The following code block shows its definition:
 
+``` c
 struct irq_domain {
-
-    const char \*name;
-
-    const struct irq_domain_ops \*ops;
-
-    void \*host_data;
-
-    unsigned int flags;
-
-    unsigned int mapcount;
-
-    /\* Optional data \*/
-
-    struct fwnode_handle \*fwnode;
-
-    \[...\]
-
+    const char *name;
+    const struct irq_domain_ops *ops;
+    void *host_data;
+    unsigned int flags;
+    unsigned int mapcount;
+    /* Optional data */
+    struct fwnode_handle *fwnode;
+    [...]
 };
+```
 
 For the sake of readability, only elements that are relevant to us have been listed. The following list tells us their meanings:
 
@@ -171,127 +139,96 @@ An interrupt controller driver creates and registers an IRQ domain by calling on
 
 - **irq_domain_add_linear()**: This uses a fixed-size table indexed by the **hwirq** number. When an **hwirq** number is mapped, an **irq_desc** object is allocated for this **hwirq** and the IRQ number is stored in the table. This linear mapping is suitable for controllers or domains that have a fixed and small number of **hwirq** (~ \< 256). The inconvenience of this mapping is the table size, being as large as the largest possible **hwirq** number. Therefore, the IRQ number lookup time is fixed, and IRQ descriptors are allocated for in-use IRQs only. Most drivers should use linear mapping. This function has the following prototype:
 
-  struct irq_domain \*irq_domain_add_linear(
-
-                     struct device_node \*of_node,
-
-                     unsigned int size,
-
-                     const struct irq_domain_ops \*ops,
-
-                     void \*host_data)
+  ``` c
+  struct irq_domain *irq_domain_add_linear(
+                     struct device_node *of_node,
+                     unsigned int size,
+                     const struct irq_domain_ops *ops,
+                     void *host_data)
+  ```
 
 - **irq_domain_add_tree()**: With this mapping, the IRQ domain maintains the mapping between **virqs** (Linux IRQ numbers) and **hwirsq** (Hardware interrupt numbers) in a radix tree. An **irq_desc** object is allocated when an **hwirq** is mapped, and this hardware IRQ number is used as the radix tree's lookup key. If the **hwirq** number can be very large, then the treemap is a viable solution because it does not require allocating a table as large as the largest **hwirq** number. The drawback is that the **hwirq**-to-IRQ-number lookup is affected by the number of entries in the table. Very few drivers should need this mapping. There are fewer than 10 users of this API in the kernel. It has the prototype shown in the following code block:
 
-  struct irq_domain \*irq_domain_add_tree(
-
-                    struct device_node \*of_node,
-
-                    const struct irq_domain_ops \*ops,
-
-                    void \*host_data)
+  ``` c
+  struct irq_domain *irq_domain_add_tree(
+                    struct device_node *of_node,
+                    const struct irq_domain_ops *ops,
+                    void *host_data)
+  ```
 
 - **irq_domain_add_nomap()**: You will probably never use this method. Nonetheless, its entire description is available in **Documentation/IRQ-domain.txt**, in the kernel source tree. Its prototype is shown in the following code block:
 
-  struct irq_domain \*irq_domain_add_nomap(
-
-                     struct device_node \*of_node,
-
-                     unsigned int max_irq,
-
-                     const struct irq_domain_ops \*ops,
-
-                     void \*host_data)
+  ``` c
+  struct irq_domain *irq_domain_add_nomap(
+                     struct device_node *of_node,
+                     unsigned int max_irq,
+                     const struct irq_domain_ops *ops,
+                     void *host_data)
+  ```
 
 In these functions, **of_node** is a pointer to the interrupt controller's DT node. **size** corresponds to the number of interrupts in the domain. **ops** represent map/unmap domain callbacks, and **host_data** is the controller's private data pointer.
 
 When it is initially created, the IRQ domain is empty (no mapping). A mapping is created and added as and when the IRQ chip driver calls **irq_create_mapping()**, which has the following prototype:
 
+``` c
 unsigned int irq_create_mapping(struct irq_domain
-
-              \*domain, irq_hw_number_t hwirq)
+              *domain, irq_hw_number_t hwirq)
+```
 
 In the preceding function, **domain** is the domain to which this hardware interrupt belongs, or **NULL** for the default domain; **hwirq** represents the hardware interrupt number in that domain space.
 
 If a mapping for the **hwirq** number doesn't already exist in the IRQ domain, the function will allocate a new Linux IRQ descriptor (**struct irq_desc**) structure, returning a virtual interrupt number at the same time. Then, it will associate it with the **hwirq** number (by means of the **irq_domain_associate()** function, which in turn invokes the **irq_domain_ops.map** callback so that the driver can perform any required hardware setup). To understand this paragraph, we need to describe the IRQ domain operation data structure (**struct irq_domain_ops**), which is defined in the following code block:
 
+``` c
 struct irq_domain_ops {
-
-    int (\*map)(struct irq_domain \*d, unsigned int virq,
-
-          irq_hw_number_t hw);
-
-    void (\*unmap)(struct irq_domain \*d,
-
-                   unsigned int virq);
-
-    int (\*xlate)(struct irq_domain \*d,
-
-                   struct device_node \*node,
-
-                   const u32 \*intspec,
-
-                   unsigned int intsize,
-
-                   unsigned long \*out_hwirq,
-
-                   unsigned int \*out_type);
-
-\[...\]
-
+    int (*map)(struct irq_domain *d, unsigned int virq,
+          irq_hw_number_t hw);
+    void (*unmap)(struct irq_domain *d,
+                   unsigned int virq);
+    int (*xlate)(struct irq_domain *d,
+                   struct device_node *node,
+                   const u32 *intspec,
+                   unsigned int intsize,
+                   unsigned long *out_hwirq,
+                   unsigned int *out_type);
+[...]
 };
+```
 
 Elements in the data structure have been limited to the scope of this chapter. Nonetheless, the complete data structure can be found in **include/linux/irqdomain.h** in the kernel source. The following list tells us the meanings of the elements we have enumerated:
 
 - **map**: This creates or updates mapping between a **virq** number and an **hwirq** number. This callback is invoked only once for a given mapping. It generally maps the **virq** number with a given handler using **irq_set_chip_and_handler()**, so that calling either **generic_handle_irq()** or **handle_nested_irq()** will trigger this handler. The function **irq_set_chip_and_handler()** is defined as in the following code block:
 
+  ``` c
   void irq_set_chip_and_handler(unsigned int irq,
-
-                            struct irq_chip \*chip,
-
-                            irq_flow_handler_t handle)
+                            struct irq_chip *chip,
+                            irq_flow_handler_t handle)
+  ```
 
 In this function, **irq** is the Linux IRQ given as a parameter to the **map()** function, and **chip** is your IRQ chip. There are, however, dummy controllers that need almost nothing in their **irq_chip** structure. In this case, the driver passes **dummy_irq_chip**, defined in **kernel/irq/dummychip.c**, which is a kernel-predefined **irq_chip** structure defined for such controllers. **handle** determines the interrupt flow handler, the one that calls the real handler registered using **request_irq()**. Its value depends on the IRQ being edge- or level-triggered. In either case, **handle** should be set to **handle_edge_irq** or **handle_level_irq**. Both are kernel helper functions that do some operations before and after calling the real IRQ handler. An example is shown in this code block:
 
+``` c
 static int ativic32_irq_domain_map(
-
-                struct irq_domain \*id,
-
-                unsigned int virq,
-
-                irq_hw_number_t hw)
-
+                struct irq_domain *id,
+                unsigned int virq,
+                irq_hw_number_t hw)
 {
-
-\[...\]
-
-    if (int_trigger_type & (BIT(hw))) {
-
-        irq_set_chip_and_handler(virq,
-
-                     &ativic32_chip,
-
-                     handle_edge_irq);
-
-        type = IRQ_TYPE_EDGE_RISING;
-
-    } else {
-
-        irq_set_chip_and_handler(virq,
-
-                     &ativic32_chip,
-
-                     handle_level_irq);
-
-        type = IRQ_TYPE_LEVEL_HIGH;
-
-    }
-
-    irqd_set_trigger_type(irq_data, type);
-
-    return 0;
-
+[...]
+    if (int_trigger_type & (BIT(hw))) {
+        irq_set_chip_and_handler(virq,
+                     &ativic32_chip,
+                     handle_edge_irq);
+        type = IRQ_TYPE_EDGE_RISING;
+    } else {
+        irq_set_chip_and_handler(virq,
+                     &ativic32_chip,
+                     handle_level_irq);
+        type = IRQ_TYPE_LEVEL_HIGH;
+    }
+    irqd_set_trigger_type(irq_data, type);
+    return 0;
 }
+```
 
 - **xlate**: Given a DT node with an interrupt specifier, this hook decodes the hardware interrupt number in that specifier along with its Linux interrupt type value. Depending on the **\#interrupt-cells** value specified in the DT controller node, the kernel provides generic translation functions:
   - **irq_domain_xlate_twocell()**: Generic translation function to be used for direct two-cell binding. It works with a device tree IRQ specifier with two-cell bindings where the cell values map directly to the **hwirq** number and Linux IRQ flags.
@@ -300,59 +237,39 @@ static int ativic32_irq_domain_map(
 
 An example of domain operation is given in the following code block:
 
+``` c
 static struct irq_domain_ops mcp23016_irq_domain_ops = {
-
-    .map    = mcp23016_irq_domain_map,
-
-    .xlate  = irq_domain_xlate_twocell,
-
+    .map    = mcp23016_irq_domain_map,
+    .xlate  = irq_domain_xlate_twocell,
 };
+```
 
 When an interrupt is received, the **irq_find_mapping()** function is used to find the Linux IRQ number from the **hwirq** number. Of course, the mapping must exist prior to being returned. A Linux IRQ number is always tied to a **struct irq_desc** structure, which is the structure by which Linux describes an IRQ and has the following definition:
 
+``` c
 struct irq_desc {
-
-    struct irq_data        irq_data;
-
-    unsigned int \_\_percpu  \*kstat_irqs;
-
-    irq_flow_handler_t     handle_irq;
-
-    struct irqaction       \*action;
-
-    unsigned int           irqs_unhandled;
-
-    raw_spinlock_t         lock;
-
-    struct cpumask         \*percpu_enabled;
-
-    atomic_t               threads_active;
-
-    wait_queue_head_t      wait_for_threads;
-
-\#ifdef CONFIG_PM_SLEEP
-
-    unsigned int           nr_actions;
-
-    unsigned int           no_suspend_depth;
-
-    unsigned int           force_resume_depth;
-
-\#endif
-
-\#ifdef CONFIG_PROC_FS
-
-    struct proc_dir_entry   \*dir;
-
-\#endif
-
-    Int               parent_irq;
-
-    struct module     \*owner;
-
-    const char        \*name;
-
+    struct irq_data        irq_data;
+    unsigned int __percpu  *kstat_irqs;
+    irq_flow_handler_t     handle_irq;
+    struct irqaction       *action;
+    unsigned int           irqs_unhandled;
+    raw_spinlock_t         lock;
+    struct cpumask         *percpu_enabled;
+    atomic_t               threads_active;
+    wait_queue_head_t      wait_for_threads;
+#ifdef CONFIG_PM_SLEEP
+    unsigned int           nr_actions;
+    unsigned int           no_suspend_depth;
+    unsigned int           force_resume_depth;
+#endif
+#ifdef CONFIG_PROC_FS
+    struct proc_dir_entry   *dir;
+#endif
+    Int               parent_irq;
+    struct module     *owner;
+    const char        *name;
 };
+```
 
 Some fields in this data structure are intentionally missing. For the remainder, the following list gives us their definitions:
 
@@ -370,33 +287,22 @@ Some fields in this data structure are intentionally missing. For the remainder,
 
 When registering an interrupt handler, this handler is added to the end of the **irq_desc.action** list associated with that interrupt line. For instance, each call to **request_irq()** (or the threaded version, **request_threaded_irq()**) creates and adds one **struct irqaction** structure to the end of the **irq_desc.action** list (knowing that **irq_desc** is the descriptor for this interrupt). For a shared interrupt, this field will contain as many **irqaction** objects as there are handlers registered. An IRQ action data structure has the following definition:
 
+``` c
 struct irqaction {
-
-    irq_handler_t     handler;
-
-    void              \*dev_id;
-
-    void \_\_percpu     \*percpu_dev_id;
-
-    struct irqaction  \*next;
-
-    irq_handler_t     thread_fn;
-
-    struct task_struct     \*thread;
-
-    unsigned int      irq;
-
-    unsigned int      flags;
-
-    unsigned long     thread_flags;
-
-    unsigned long     thread_mask;
-
-    const char        \*name;
-
-    struct proc_dir_entry   \*dir;
-
+    irq_handler_t     handler;
+    void              *dev_id;
+    void __percpu     *percpu_dev_id;
+    struct irqaction  *next;
+    irq_handler_t     thread_fn;
+    struct task_struct     *thread;
+    unsigned int      irq;
+    unsigned int      flags;
+    unsigned long     thread_flags;
+    unsigned long     thread_mask;
+    const char        *name;
+    struct proc_dir_entry   *dir;
 };
+```
 
 The meanings of each element in this data structure are as follows:
 
@@ -415,21 +321,16 @@ The meanings of each element in this data structure are as follows:
 
 The following is the definition of important fields in the **struct irq_data** structure, which is per-IRQ chip data passed down to chip functions:
 
+``` c
 struct irq_data {
-
-    \[...\]
-
-    unsigned int     irq;
-
-    unsigned long           hwirq;
-
-    struct irq_chip         \*chip;
-
-    struct irq_domain \*domain;
-
-    void              \*chip_data;
-
+    [...]
+    unsigned int     irq;
+    unsigned long           hwirq;
+    struct irq_chip         *chip;
+    struct irq_domain *domain;
+    void              *chip_data;
 };
+```
 
 The following list gives the meanings of elements in this data structure:
 
@@ -447,15 +348,13 @@ In *Chapter 3*, *Dealing with Kernel Core Helpers*, we introduced peripheral IRQ
 
 The problem with those approaches is that sometimes, drivers requesting an IRQ do not know about the nature of the interrupt controller that provides this IRQ line, especially when the interrupt controller is a discrete chip (typically a GPIO expander connected over SPI or I2C buses). Now comes the **request_any_context_irq()**function with which drivers requesting an IRQ know whether the handler will run in a thread context, and call **request_threaded_irq()** or **request_irq()** accordingly. This means that whether the IRQ associated with our device comes from an interrupt controller that may not sleep (memory-mapped one) or from one that can sleep (behind an I2C/SPI bus), there will be no need to change the code. Its prototype is shown in the following code block:
 
+``` c
 int request_any_context_irq(unsigned int irq,
-
-                            irq_handler_t handler,
-
-                            unsigned long flags,
-
-                            const char \* name,
-
-                            void \* dev_id);
+                            irq_handler_t handler,
+                            unsigned long flags,
+                            const char * name,
+                            void * dev_id);
+```
 
 Here are the meanings of each parameter in the function:
 
@@ -467,69 +366,40 @@ Here are the meanings of each parameter in the function:
 
 **request_any_context_irq()** means that you can either get a hard IRQ or a threaded one. It works in the same way as the usual **request_irq()**, except that it checks whether the IRQ is configured as nested or not, and calls the right backend. In other words, it selects either a hard IRQ or threaded handling method depending on the context. This function returns a negative value on failure. On success, it returns either **IRQC_IS_HARDIRQ** or **IRQC_IS_NESTED**. A use case is shown in the following code block:
 
+``` c
 static irqreturn_t packt_btn_interrupt(int irq,
-
-                                        void \*dev_id)
-
+                                        void *dev_id)
 {
-
-    struct btn_data \*priv = dev_id;
-
-    input_report_key(priv-\>i_dev, BTN_0,
-
-                   gpiod_get_value(priv-\>btn_gpiod) & 1);
-
-    input_sync(priv-\>i_dev);
-
-    return IRQ_HANDLED;
-
+    struct btn_data *priv = dev_id;
+    input_report_key(priv->i_dev, BTN_0,
+                   gpiod_get_value(priv->btn_gpiod) & 1);
+    input_sync(priv->i_dev);
+    return IRQ_HANDLED;
 }
-
-static int btn_probe(struct platform_device \*pdev)
-
+static int btn_probe(struct platform_device *pdev)
 {
-
-    struct gpio_desc \*gpiod;
-
-    int ret, irq;
-
-    \[...\]
-
-    gpiod = gpiod_get(&pdev-\>dev, "button", GPIOD_IN);
-
-    if (IS_ERR(gpiod))
-
-        return -ENODEV;
-
-    priv-\>irq = gpiod_to_irq(priv-\>btn_gpiod);
-
-    priv-\>btn_gpiod = gpiod;
-
-    \[...\]
-
-    ret = request_any_context_irq(
-
-            priv-\>irq,
-
-            packt_btn_interrupt,
-
-            (IRQF_TRIGGER_FALLING \| IRQF_TRIGGER_RISING),
-
-            "packt-input-button", priv);
-
-    if (ret \< 0) {
-
-        dev_err(&pdev-\>dev,
-
-           "Unable to request GPIO interrupt line\n");
-
-        goto err_btn;
-
-    }
-
-    return ret;
-
+    struct gpio_desc *gpiod;
+    int ret, irq;
+    [...]
+    gpiod = gpiod_get(&pdev->dev, "button", GPIOD_IN);
+    if (IS_ERR(gpiod))
+        return -ENODEV;
+    priv->irq = gpiod_to_irq(priv->btn_gpiod);
+    priv->btn_gpiod = gpiod;
+    [...]
+    ret = request_any_context_irq(
+            priv->irq,
+            packt_btn_interrupt,
+            (IRQF_TRIGGER_FALLING | IRQF_TRIGGER_RISING),
+            "packt-input-button", priv);
+    if (ret < 0) {
+        dev_err(&pdev->dev,
+           "Unable to request GPIO interrupt line\n");
+        goto err_btn;
+    }
+    return ret;
 }
+```
 
 The preceding code is an excerpt of the driver sample of an input device driver. The advantage of using **request_any_context_irq()** is that you do not need to care about what can be done in the IRQ handler, since the context in which the handler will run depends on the interrupt controller that provides the IRQ line. In our example, if the GPIO belongs to a controller sitting on an I2C or SPI bus, the handler will be threaded. Otherwise (memory mapped), the handler will run in a hard IRQ context.
 
@@ -537,43 +407,43 @@ The preceding code is an excerpt of the driver sample of an input device driver.
 
 Let's consider the following diagram with a GPIO controller whose interrupt line is connected to a native GPIO on the SoC:
 
-![Figure 13.2 – Interrupt propagation ](media/image/B17934_13_002.jpg)
+![Figure 13.2 – Interrupt propagation ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_13_002.jpg)
 
 Figure 13.2 – Interrupt propagation
 
 IRQs are always processed based on the Linux IRQ number (not **hwirq**). The general function to request an IRQ on a Linux system is **request_threaded_irq()**. **request_irq()** is a wrapper on **request_threaded_irq()** which just don't provide the bottom half. The following code block shows its prototype:
 
+``` c
 int request_threaded_irq(unsigned int irq,
-
-                  irq_handler_t handler,
-
-                  irq_handler_t thread_fn,
-
-                  unsigned long irqflags,
-
-                  const char \*devname, void \*dev_id)
+                  irq_handler_t handler,
+                  irq_handler_t thread_fn,
+                  unsigned long irqflags,
+                  const char *devname, void *dev_id)
+```
 
 When called, the function extracts **struct irq_desc** associated with the IRQ using the **irq_to_desc()** macro. It then allocates a new **struct irqaction** structure and sets it up, filling parameters such as handler and flags. The following code block is an excerpt:
 
-action-\>handler = handler;
-
-action-\>thread_fn = thread_fn;
-
-action-\>flags = irqflags;
-
-action-\>name = devname;
-
-action-\>dev_id = dev_id;
+``` c
+action->handler = handler;
+action->thread_fn = thread_fn;
+action->flags = irqflags;
+action->name = devname;
+action->dev_id = dev_id;
+```
 
 That same function finally inserts/registers the descriptor in the proper IRQ list by invoking the **\_\_setup_irq()** (by means of **setup_irq()**) function, defined in **kernel/irq/manage.c**.
 
 Now, when an IRQ is raised, the kernel executes some assembler code in order to save the current state and jumps to the arch-specific handler, **handle_arch_irq**. For ARM architectures, this handler is set with the value of the **handle_irq** field in **struct machine_desc** of the platform in the **setup_arch()** function implemented in **arch/arm/kernel/setup.c**. The assignation is done as follows:
 
-handle_arch_irq = mdesc-\>handle_irq
+``` c
+handle_arch_irq = mdesc->handle_irq
+```
 
 For SoCs that use the ARM **Generic Interrupt Controller** (**GIC**), the **handle_irq** callback is set with **gic_handle_irq**, in either **drivers/irqchip/irq-gic.c** or **drivers/irqchip/irq-gic-v3.c**:
 
+``` c
 set_handle_irq(gic_handle_irq);
+```
 
 **gic_handle_irq()** calls **handle_domain_irq()**, which executes **generic_handle_irq()**, in turn calling **generic_handle_irq_desc()**, which ends by calling **desc-\>handle_irq()**. The whole chain can be seen in **arch/arm/kernel/irq.c**. Now, **handle_irq** is the actual call for the flow handler, which we registered as **mcp23016_irq_handler** in the diagram.
 
@@ -618,155 +488,99 @@ Now that we are familiar with ARM GIC interrupt families, we can focus on the fa
 
 In ARM processors, there are 16 SGIs, numbered from 0 to 15, but the Linux kernel registers only a few of them: eight (from 0 to 7) to be precise. SGI8 to SGI15 are free for now. Registered SGIs are those defined in **enum ipi_msg_type**, which is defined as the following:
 
+``` c
 enum ipi_msg_type {
-
-    IPI_WAKEUP,
-
-    IPI_TIMER,
-
-    IPI_RESCHEDULE,
-
-    IPI_CALL_FUNC,
-
-    IPI_CPU_STOP,
-
-    IPI_IRQ_WORK,
-
-    IPI_COMPLETION,
-
-    NR_IPI,
-
-\[...\]
-
-    MAX_IPI
-
+    IPI_WAKEUP,
+    IPI_TIMER,
+    IPI_RESCHEDULE,
+    IPI_CALL_FUNC,
+    IPI_CPU_STOP,
+    IPI_IRQ_WORK,
+    IPI_COMPLETION,
+    NR_IPI,
+[...]
+    MAX_IPI
 };
+```
 
 Their respective descriptions can be found in an array of strings, or **ipi_types**, defined in the following code block:
 
-static const char \*ipi_types\[NR_IPI\] = {
-
-    \[IPI_WAKEUP\] = "CPU wakeup interrupts",
-
-    \[IPI_TIMER\] = "Timer broadcast interrupts",
-
-    \[IPI_RESCHEDULE\] = "Rescheduling interrupts",
-
-    \[IPI_CALL_FUNC\]  = "Function call interrupts",
-
-    \[IPI_CPU_STOP\]   = "CPU stop interrupts",
-
-    \[IPI_IRQ_WORK\]   = "IRQ work interrupts",
-
-    \[IPI_COMPLETION\] = "completion interrupts",
-
+``` c
+static const char *ipi_types[NR_IPI] = {
+    [IPI_WAKEUP] = "CPU wakeup interrupts",
+    [IPI_TIMER] = "Timer broadcast interrupts",
+    [IPI_RESCHEDULE] = "Rescheduling interrupts",
+    [IPI_CALL_FUNC]  = "Function call interrupts",
+    [IPI_CPU_STOP]   = "CPU stop interrupts",
+    [IPI_IRQ_WORK]   = "IRQ work interrupts",
+    [IPI_COMPLETION] = "completion interrupts",
 };
+```
 
 IPIs are registered in the **set_smp_ipi_range()** function, defined in the following code block:
 
-void \_\_init set_smp_ipi_range(int ipi_base, int n)
-
+``` c
+void __init set_smp_ipi_range(int ipi_base, int n)
 {
-
-    int i;
-
-    WARN_ON(n \< MAX_IPI);
-
-    nr_ipi = min(n, MAX_IPI);
-
-    for (i = 0; i \< nr_ipi; i++) {
-
-        int err;
-
-        err = request_percpu_irq(ipi_base + i,
-
-                 ipi_handler, "IPI", &irq_stat);
-
-        WARN_ON(err);
-
-        ipi_desc\[i\] = irq_to_desc(ipi_base + i);
-
-        irq_set_status_flags(ipi_base + i, IRQ_HIDDEN);
-
-    }
-
-    ipi_irq_base = ipi_base;
-
-    /\* Setup the boot CPU immediately \*/
-
-    ipi_setup(smp_processor_id());
-
+    int i;
+    WARN_ON(n < MAX_IPI);
+    nr_ipi = min(n, MAX_IPI);
+    for (i = 0; i < nr_ipi; i++) {
+        int err;
+        err = request_percpu_irq(ipi_base + i,
+                 ipi_handler, "IPI", &irq_stat);
+        WARN_ON(err);
+        ipi_desc[i] = irq_to_desc(ipi_base + i);
+        irq_set_status_flags(ipi_base + i, IRQ_HIDDEN);
+    }
+    ipi_irq_base = ipi_base;
+    /* Setup the boot CPU immediately */
+    ipi_setup(smp_processor_id());
 }
+```
 
 In the preceding code block, each IPI is registered with **request_percpu_irq()** on a per-CPU basis. We can see that IPIs have the same handler, **ipi_handler()**, defined as follows:
 
-static irqreturn_t ipi_handler(int irq, void \*data)
-
+``` c
+static irqreturn_t ipi_handler(int irq, void *data)
 {
-
-    do_handle_IPI(irq - ipi_irq_base);
-
-    return IRQ_HANDLED;
-
+    do_handle_IPI(irq - ipi_irq_base);
+    return IRQ_HANDLED;
 }
+```
 
 The underlying function executed in the handler is **do_handle_IPI()**, defined as follows:
 
+``` c
 static void do_handle_IPI(int ipinr)
-
 {
-
-    unsigned int cpu = smp_processor_id();
-
-    if ((unsigned)ipinr \< NR_IPI)
-
-        trace_ipi_entry_rcuidle(ipi_types\[ipinr\]);
-
-    switch (ipinr) {
-
-    case IPI_WAKEUP:
-
-        break;
-
-\#ifdef CONFIG_GENERIC_CLOCKEVENTS_BROADCAST
-
-    case IPI_TIMER:
-
-        tick_receive_broadcast();
-
-        break;
-
-\#endif
-
-    case IPI_RESCHEDULE:
-
-        scheduler_ipi();
-
-        break;
-
-    case IPI_CPU_STOP:
-
-        ipi_cpu_stop(cpu);
-
-        break;
-
-\[...\]
-
-    default:
-
-        pr_crit("CPU%u: Unknown IPI message 0x%x\n",
-
-                cpu, ipinr);
-
-        break;
-
-    }
-
-    if ((unsigned)ipinr \< NR_IPI)
-
-         trace_ipi_exit_rcuidle(ipi_types\[ipinr\]);
-
+    unsigned int cpu = smp_processor_id();
+    if ((unsigned)ipinr < NR_IPI)
+        trace_ipi_entry_rcuidle(ipi_types[ipinr]);
+    switch (ipinr) {
+    case IPI_WAKEUP:
+        break;
+#ifdef CONFIG_GENERIC_CLOCKEVENTS_BROADCAST
+    case IPI_TIMER:
+        tick_receive_broadcast();
+        break;
+#endif
+    case IPI_RESCHEDULE:
+        scheduler_ipi();
+        break;
+    case IPI_CPU_STOP:
+        ipi_cpu_stop(cpu);
+        break;
+[...]
+    default:
+        pr_crit("CPU%u: Unknown IPI message 0x%x\n",
+                cpu, ipinr);
+        break;
+    }
+    if ((unsigned)ipinr < NR_IPI)
+         trace_ipi_exit_rcuidle(ipi_types[ipinr]);
 }
+```
 
 From the preceding function,
 
@@ -779,21 +593,16 @@ From the preceding function,
 
 On a running system, you can look for available IPIs from the **/proc/interrupt** file, as shown in the following code block:
 
-root@udoo-labcsmart:~# cat /proc/interrupts \| grep IPI
-
-IPI0:          0          0  CPU wakeup interrupts
-
-IPI1:         29         22  Timer broadcast interrupts
-
-IPI2:      84306     322774  Rescheduling interrupts
-
-IPI3:        970       1264  Function call interruptsIPI4:          0          0  CPU stop interrupts
-
-IPI5:    2505436    4064821  IRQ work interrupts
-
-IPI6:          0          0  completion interrupts
-
+``` c
+root@udoo-labcsmart:~# cat /proc/interrupts | grep IPI
+IPI0:          0          0  CPU wakeup interrupts
+IPI1:         29         22  Timer broadcast interrupts
+IPI2:      84306     322774  Rescheduling interrupts
+IPI3:        970       1264  Function call interruptsIPI4:          0          0  CPU stop interrupts
+IPI5:    2505436    4064821  IRQ work interrupts
+IPI6:          0          0  completion interrupts
 root@udoo-labcsmart:~#
+```
 
 In the command output shown here, the first column is the IPI identifier and the last one is the description of the IPI. The columns in between are their respective numbers of executions on each CPU.
 

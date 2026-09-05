@@ -1,33 +1,3 @@
-*Kernel*
-
-***This chapter covers***
-
- Writing and compiling your own OS kernel
-
- Gaining a deeper understanding of the Rust
-
-compiler’s capabilities
-
- Extending cargo with custom subcommands
-
-Let’s build an operating system (OS). By the end of the chapter, you’ll be running your own OS (or, at least, a minimal subset of one). Not only that, but you will have compiled your own bootloader, your own kernel, and the Rust language directly for that new target (which doesn’t exist yet).
-
-This chapter covers many features of Rust that are important for programming without an OS. Accordingly, the chapter is important for programmers who intend to work with Rust on embedded devices.
-
-***11.1***
-
-***A fledgling operating system (FledgeOS)***
-
-In this section, we’ll implement an OS kernel. The OS kernel performs several important roles, such as interacting with hardware and memory management, and coordinating work. Typically, work is coordinated through processes and threads.
-
-We won’t be able to cover much of that in this chapter, but we will get off the ground. We’ll fledge, so let’s call the system we’re building *FledgeOS*.
-
-**365**
-
-**366**
-
-CHAPTER 11
-
 ***Kernel***
 
 ***11.1.1***
@@ -148,7 +118,6 @@ Creates a bootable disk image from a Rust kernel
 
 **368**
 
-CHAPTER 11
 
 ***Kernel***
 
@@ -224,7 +193,7 @@ Running: qemu-system-x86_64 -drive
 
 format=raw,file=target/fledge/debug/bootimage-fledgeos.bin
 
-![](media/index-395_1.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-395_1.png)
 
 ***Fledgeos-0: Getting something working***
 
@@ -260,7 +229,6 @@ Thankfully, the bootimage crate does all of this for us. With all of that fully 
 
 **370**
 
-CHAPTER 11
 
 ***Kernel***
 
@@ -436,7 +404,6 @@ ch11-fledgeos-0/fledge.json.
 
 **372**
 
-CHAPTER 11
 
 ***Kernel***
 
@@ -608,7 +575,6 @@ Symbol names are strings within the compiled binary. For multiple libraries to c
 
 **374**
 
-CHAPTER 11
 
 ***Kernel***
 
@@ -730,7 +696,6 @@ character: u8,
 
 **376**
 
-CHAPTER 11
 
 ***Kernel***
 
@@ -842,7 +807,6 @@ The halt instruction, referred to as HLT in the technical literature, notifies t
 
 **378**
 
-CHAPTER 11
 
 ***Kernel***
 
@@ -992,7 +956,6 @@ Minimalist exception-handling personality routine
 
 **380**
 
-CHAPTER 11
 
 ***Kernel***
 
@@ -1082,7 +1045,7 @@ Source code for fledgeos-2
 
 34 }
 
-![](media/index-407_1.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-407_1.png)
 
 ***fledgeos-3: Text output***
 
@@ -1140,7 +1103,6 @@ Representing related numeric constants as an enum
 
 **382**
 
-CHAPTER 11
 
 ***Kernel***
 
@@ -1310,7 +1272,6 @@ main.rs. To compile the project, repeat the instructions in section 11.2.1, repl
 
 **384**
 
-CHAPTER 11
 
 ***Kernel***
 
@@ -1508,11 +1469,10 @@ For the benefit of anyone doing embedded development or wanting to execute Rust 
 
 The output shown by figure 11.3 is produced by listing 11.17. panic() now goes through a two-stage process. In the first stage, panic() clears the screen. The second stage involves the core::write! macro. core::write! takes a destination object as its
 
-![](media/index-412_1.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-412_1.png)
 
 **386**
 
-CHAPTER 11
 
 ***Kernel***
 
@@ -1676,7 +1636,6 @@ Full code listing of FledgeOS with complete panic handling
 
 **388**
 
-CHAPTER 11
 
 ***Kernel***
 
@@ -1811,3 +1770,73 @@ When it’s practical to do so, use the offset() method to correctly calculate t
  To access raw machine instructions, such as HTL, you can use helper crates like x86_64 or rely on inline assembly.
 
  Don’t be afraid to experiment. With modern tools like QEMU, the worst that can happen is that your tiny OS crashes, and you’ll need to run it again instantly.
+
+*Signals, interrupts,*
+
+*and exceptions*
+
+***This chapter covers***
+
+ What interrupts, exceptions, traps, and faults are
+
+ How device drivers inform applications that data
+
+is ready
+
+ How to transmit signals between running
+
+applications
+
+This chapter describes the process by which the outside world communicates with your operating system (OS). The network constantly interrupts program execution when bytes are ready to be delivered. This means that after connecting to a database (or at any other time), the OS can demand that your application deal with a message.
+
+This chapter describes this process and how to prepare your programs for it.
+
+In chapter 9, you learned that a digital clock periodically notifies the OS that time has progressed. This chapter explains how those notifications occur. It also introduces the concept of multiple applications running at the same time via the concept of signals. Signals emerged as part of the UNIX OS tradition. These can be used to send messages between different running programs.
+
+We’ll address both concepts—signals and interrupts—together, as the programming models are similar. But it’s simpler to start with signals. Although this chapter **390**
+
+***Glossary***
+
+**391**
+
+focuses on the Linux OS running on x86 CPUs, that’s not to say that users of other operating systems won’t be able to follow along.
+
+***12.1***
+
+***Glossary***
+
+Learning how CPUs, device drivers, applications, and operating systems interact is difficult. There is a lot of jargon to take in. To make matters worse, the terms all look similar, and it certainly does not help that these are often used interchangeably. Here are some examples of the jargon that is used in this chapter. Figure 12.1 illustrates how these interrelate:
+
+ *Abort*—An unrecoverable exception. If an application triggers an abort, the application terminates.
+
+ *Fault*—A recoverable exception that is expected in routine operations such as a *page fault*. Page faults occur when a memory address is not available and data must be fetched from the main memory chip(s). This process is known as *virtual memory* and is explained in section 4 of chapter 6.
+
+ *Exception*—Exception is an umbrella term that incudes aborts, faults, and traps.
+
+Formally referred to as *synchronous interrupts*, exceptions are sometimes described as a form of an interrupt.
+
+ *Hardware interrupt*—An interrupt generated by a device such as a keyboard or hard disk controller. Typically used by devices to notify the CPU that data is available to be read from the device.
+
+ *Interrupt*—A hardware-level term that is used in two senses. It can refer only to *synchronous interrupts*, which include hardware and software interrupts. Depending on context, it can also include exceptions. Interrupts are usually handled by the OS.
+
+ *Signal*—An OS-level term for interruptions to an application’s control flow. Signals are handled by applications.
+
+ *Software interrupt*—An interrupt generated by a program. Within Intel’s x86
+
+CPU family, programs can trigger an interrupt with the INT instruction. Among other uses of this facility, debuggers use software interrupts to set breakpoints.
+
+ *Trap*—A recoverable exception such as an integer overflow detected by the CPU. Integer overflow is explained in section 5.2.
+
+NOTE
+
+The meaning of the term *exception* may differ from your previous programming experience. Programming languages often use the term exception to refer to any error, whereas the term has a specialized meaning when referring to CPUs.
+
+***12.1.1***
+
+***Signals vs. interrupts***
+
+The two concepts that are most important to distinguish between are signals and interrupts. A *signal* is a software-level abstraction that is associated with an OS. An *interrupt* is a CPU-related abstraction that is closely associated with the system’s hardware.
+
+**392**
+
+CHAPTER 12

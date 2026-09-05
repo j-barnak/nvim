@@ -372,47 +372,34 @@ Now, let’s see what has been installed in /tmp/alsa-utils/ (run tree /tmp/alsa
 
 \| \| \|-- de
 
-\| \| \| \`-- LC_MESSAGES
 
-\| \| \| \`-- alsa-utils.mo
 
 \| \| \|-- eu
 
-\| \| \| \`-- LC_MESSAGES
 
-\| \| \| \`-- alsa-utils.mo
 
 \| \| \|-- fr
 
-\| \| \| \`-- LC_MESSAGES
 
-\| \| \| \`-- alsa-utils.mo
 
 \| \| \|-- ja
 
-\| \| \| \`-- LC_MESSAGES
 
 \| \| \| \|-- alsaconf.mo
 
-\| \| \| \`-- alsa-utils.mo
 
 \| \| \|-- ka
 
-\| \| \| \`-- LC_MESSAGES
 
 \| \| \| \|-- alsaconf.mo
 
-\| \| \| \`-- alsa-utils.mo
 
 \| \| \|-- ko
 
-\| \| \| \`-- LC_MESSAGES
 
-\| \| \| \`-- alsa-utils.mo
 
 \| \| \|-- ru
 
-\| \| \| \`-- LC_MESSAGES
 
 \| \| \| \`-- alsaconf.mo
 

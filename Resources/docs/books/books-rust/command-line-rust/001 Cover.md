@@ -1,0 +1,1 @@
+![](/tmp/audit/iter1/epubregen/command-line-rust/media/assets/cover.png)

@@ -14,7 +14,7 @@ Specifically, you’re going to write Rust versions of core Unix command-line to
 
 [Rust](https://www.rust-lang.org) is “a language empowering everyone to build reliable and efficient software.” Rust was created by Graydon Hoare and many others around 2006, while Hoare was working at Mozilla Research. It gained enough interest and users that by 2010 Mozilla had sponsored the development effort. In the [2023 Stack Overflow Developer Survey](https://survey.stackoverflow.co/2023/), over 90,000 developers ranked Rust as the “most loved” language for the eighth year running.
 
-![clru 0001](media/assets/clru_0001.png)
+![clru 0001](/tmp/audit/iter1/epubregen/command-line-rust/media/assets/clru_0001.png)
 
 ###### Figure P-1. Here is a logo I made from an old Rush logo. As a kid playing the drums in the 1980s, I listened to a lot of Rush. Anyway, Rust is cool, and this logo proves it.
 

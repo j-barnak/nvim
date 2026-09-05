@@ -1,4 +1,4 @@
-![Image 175](media/index-290_1.jpg)
+![Image 175](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-290_1.jpg)
 
 # Document Outline
 

@@ -4,7 +4,7 @@ Everything you need to start with device driver development for Linux kernel and
 
 John Madieu
 
-![](media/image/Image85479.jpg)
+![](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/Image85479.jpg)
 
 BIRMINGHAM—MUMBAI
 

@@ -88,7 +88,7 @@ new objects
 
 declaration can occur multiple describes the type of an object; is used to refer to objects defined times
 
-![Image 46](media/index-88_1.png)
+![Image 46](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-88_1.png)
 
 elsewhere (e.g., in another file)
 
@@ -120,9 +120,9 @@ In this section we show the difference between a reference using an array and a 
 
 ***Address (r-value)***
 
-![Image 47](media/index-89_1.png)
+![Image 47](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-89_1.png)
 
-![Image 48](media/index-89_2.png)
+![Image 48](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-89_2.png)
 
 The symbol appearing on the left of an assignment is sometimes called an *l-value* (for "left-hand-side"
 
@@ -138,9 +138,9 @@ That's why you can equally write extern char a\[\]; as well as extern char a\[10
 
 Both declarations indicate that a is an array, namely a memory location where the characters in the array can be found. The compiler doesn't need to know how long the array is in total, as it merely generates address offsets from the start. To get a character from the array, you simply add the subscript to the address that the symbol table shows a has, and get what's at that location.
 
-![Image 49](media/index-90_1.png)
+![Image 49](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-90_1.png)
 
-![Image 50](media/index-90_2.png)
+![Image 50](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-90_2.png)
 
 In contrast, if you declare extern char \*p, it tells the compiler that p is a pointer (a four-byte object on many contemporary machines), and the object pointed to is a character. To get the char, you have to get whatever is at address p, *then* use *that* as an address and get whatever is there. Pointer accesses are more flexible, but at the cost of an extra fetch instruction, as shown in Diagram B.
 
@@ -274,7 +274,7 @@ Now people got seriously interested in palindromes about Panama! In fact Dan Hoe
 
 say, a jaw, a lay, a wet, a gallop, a tug, a trot, a trap, a tram, a torr, a caper, a top, a tonk, a toll, a ball, a fair, a sax, a minim, a tenor, a bass, a passer, a capital, a rut, an amen, a ted, a cabal, a tang, a sun, an ass, a maw, a sag, a jam, a dam, a sub, a salt, an axon, a sail, an ad, a wadi, a radian, a room, a rood, a rip, a tad, a pariah, a revel, a reel, a reed, a pool, a plug, a pin, a peek, a parabola, a dog, a pat, a cud, a nu, a fan, a pal, a rum, a nod, an eta, a lag, an eel, a batik, a mug, a mot, a nap, a maxim, a mood, a leek, a grub, a gob, a gel, a drab, a citadel, a total, a cedar, a tap, a gag, a rat, a manor, a bar, a gal, a cola, a pap, a yaw, a tab, a raj, a gab, a nag, a pagan, a bag, a jar, a bat, a way, a papa, a local, a gar, a baron, a mat, a rag, a gap, a tar, a decal, a tot, a led, a tic, a bard, a leg, a bog, a burg, a keel, a doom, a mix, a map, an atom, a gum, a kit, a baleen, a gala, a ten, a don, a mural, a pan, a faun, a ducat, a pagoda, a lob, a rap, a keep, a nip, a gulp, a loop, a deer, a leer, a lever, a hair, a pad, a tapir, a door, a moor, an aid, a raid, a wad, an alias, an ox, an atlas, a bus, a madam, a jag, a saw, a mass, an anus, a gnat, a lab, a cadet, an em, a natural, a tip, a caress, a pass, a baronet, a minimax, a sari, a fall, a ballot, a knot, a pot, a rep, a carrot, a mart, a part, a tort, a gut, a poll, a gateway, a law, a jay, a sap, a zag, a fat, a hall, a gamut, a dab, a can, a tabu, a day, a batt, a waterfall, a patina, a nut, a flow, a lass, a van, a mow, a nib, a draw, a regular, a call, a war, a stay, a gam, a yap, a cam, a ray, an ax, a tag, a wax, a paw, a cat, a valley, a drib, a lion, a saga, a plat, a catnip, a pooh, a rail, a calamus, a dairyman, a bater, a canal—Panama.
 
-![Image 51](media/index-95_1.png)
+![Image 51](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-95_1.png)
 
 A "catalpa" (in case you're wondering) is a native American word for a type of tree. You can look up axon and calamus for yourself. Dan commented that a little work on the search algorithm could make it several times as long.
 
@@ -321,3 +321,9 @@ The accepting states of the finite state machine are those where the unmatched p
 Dan used a small word list that only contained nouns. If you don't do this you get a lot of "a how, a running, a would, an expect, an and..." which is nonsensical. An alternative would be a real on-line dictionary (not just word list) that indicates which words are nouns. That way, a *really* big palindrome could be generated. But as Dan says, "if I got a 10,000 word palindrome, I wonder if anyone would want it. I like this one, because it's small enough to pass around. And I've already done the work." You can't argue with that!
 
 **Programming Challenge**
+
+**Write a Palindrome**
+
+Claim your 15 minutes of fame: write a C program to generate that 10,000-word palindrome. Really make yourself famous by posting it to rec.arts.startrek.misc on Usenet.
+
+They're fed up with discussing Captain Kirk's middle name, and they love to hear about new diversions.

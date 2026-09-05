@@ -1,5 +1,3 @@
-![](media/index-9_1.jpg)
-
 Generic course information
 
  
@@ -24,11 +22,11 @@ Corrections, suggestions, contributions and translations are welcome!
 
 BeagleBone Black or BeagleBone Black Wireless, from [BeagleBoard.org](https://beagleboard.org) ▶ Texas Instruments AM335x (ARM Cortex-A8 CPU) ▶ SoC with 3D acceleration, additional processors (PRUs) and lots of
 
-![](media/index-10_1.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-10_1.png)
 
 peripherals.
 
-![](media/index-10_2.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-10_2.png)
 
 ▶ 512 MB of RAM
 
@@ -46,13 +44,13 @@ and more)
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 10/436 Labs proposed on another platform
 
-![](media/index-11_1.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-11_1.png)
 
  
 
 You can also run the labs of this course on the Beagleplay board.
 
-![](media/index-11_2.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-11_2.png)
 
  
 
@@ -68,7 +66,7 @@ Lab instructions are available at
 
 Shopping list: hardware for this course
 
-![](media/index-12_1.jpg)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-12_1.jpg)
 
  
 
@@ -78,11 +76,11 @@ See <https://www.beagleboard.org/boards>.
 
 ▶ 1 USB Serial Cable - 3.3 V - Female ends (for serial console) ▶ 2 Nintendo Nunchuk with UEXT connector
 
-![](media/index-12_2.jpg)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-12_2.jpg)
 
 ▶ 3 Breadboard jumper wires - Male ends (to connect the Nunchuk) ▶ 4 USB Serial Cable - 3.3 V - Male ends (for serial labs, two if possible) ▶ Note that both USB serial cables are the same.
 
-![](media/index-12_3.jpg)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-12_3.jpg)
 
 Only the gender of their connector changes.
 
@@ -96,7 +94,7 @@ Only the gender of their connector changes.
 
 3
 
-![](media/index-12_4.jpg)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-12_4.jpg)
 
 <https://www.olimex.com/Products/Breadboarding/JUMPER-WIRES/JW-110x10/>
 
@@ -162,7 +160,7 @@ clarifying and make the session more interactive, enjoyable and useful for every
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 14/436 Collaborate!
 
-![](media/index-15_1.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-15_1.png)
 
  
 
@@ -190,16 +188,18 @@ of training hours, and after the course is over.
 
 Practical lab - Training Setup
 
-![](media/index-16_1.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-16_1.png)
 
  
 
 Prepare your lab environment
 
-![](media/index-16_2.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-16_2.png)
 
 ▶ Download and extract the lab archive
 
  
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 16/436
+
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-17_1.jpg)

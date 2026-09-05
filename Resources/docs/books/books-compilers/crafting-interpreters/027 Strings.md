@@ -12,7 +12,7 @@ Strings, unfortunately, are not so petite. There’s no maximum length for a str
 
 UCSD Pascal, one of the first implementations of Pascal, had this exact limit. Instead of using a terminating null byte to indicate the end of the string like C, Pascal strings started with a length value. Since UCSD used only a single byte to store the length, strings couldn’t be any longer than 255 characters.
 
-![The Pascal string 'hello' with a length byte of 5 preceding it.](media/image/strings/pstring.png)
+![The Pascal string 'hello' with a length byte of 5 preceding it.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/strings/pstring.png)
 
 We need a way to support values whose sizes vary, sometimes greatly. This is exactly what dynamic allocation on the heap is designed for. We can allocate as many bytes as we need. We get back a pointer that we’ll use to keep track of the value as it flows through the VM.
 
@@ -22,7 +22,7 @@ Using the heap for larger, variable-sized values and the stack for smaller, atom
 
 If the object is larger, its data lives on the heap. Then the Value’s payload is a *pointer* to that blob of memory. We’ll eventually have a handful of heap-allocated types in clox: strings, instances, functions, you get the idea. Each type has its own unique data, but there is also state they all share that our future garbage collector will use to manage their memory.
 
-![Field layout of number and obj values.](media/image/strings/value.png)
+![Field layout of number and obj values.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/strings/value.png)
 
 We’ll call this common representation “Obj”. Each Lox value whose state lives on the heap is an Obj. We can thus use a single new ValueType case to refer to all heap-allocated types.
 
@@ -228,7 +228,7 @@ A string object contains an array of characters. Those are stored in a separate,
 
 Because ObjString is an Obj, it also needs the state all Objs share. It accomplishes that by having its first field be an Obj. C specifies that struct fields are arranged in memory in the order that they are declared. Also, when you nest structs, the inner struct’s fields are expanded right in place. So the memory for Obj and for ObjString looks like this:
 
-![The memory layout for the fields in Obj and ObjString.](media/image/strings/obj.png)
+![The memory layout for the fields in Obj and ObjString.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/strings/obj.png)
 
 Note how the first bytes of ObjString exactly line up with Obj. This is not a coincidence—C mandates it. This is designed to enable a clever pattern: You can take a pointer to a struct and safely convert it to a pointer to its first field and back.
 
@@ -477,7 +477,7 @@ It allocates an object of the given size on the heap. Note that the size is *not
 
 Then it initializes the Obj state—right now, that’s just the type tag. This function returns to `allocateString()`, which finishes initializing the ObjString fields. *Voilà*, we can compile and execute string literals.
 
-![A viola.](media/image/strings/viola.png)
+![A viola.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/strings/viola.png)
 
 Don’t get “voilà” confused with “viola”. One means “there it is” and the other is a string instrument, the middle child between a violin and a cello. Yes, I did spend two hours drawing a viola just to mention that.
 
@@ -731,7 +731,7 @@ When the compiler chews through this, it allocates an ObjString for each of thos
 
 Here’s what the stack looks like after each instruction:
 
-![The state of the stack at each instruction.](media/image/strings/stack.png)
+![The state of the stack at each instruction.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/strings/stack.png)
 
     0000    OP_CONSTANT         0 "st"
     0002    OP_CONSTANT         1 "ri"

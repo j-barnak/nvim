@@ -1,6 +1,3 @@
-![](media/index-227_1.jpg)
-
-Kernel frameworks for device drivers
 
  
 
@@ -40,7 +37,6 @@ This section focuses on the *kernel frameworks*, while the *bus infrastructure* 
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 214/436
 
-Kernel frameworks for device drivers
 
  
 
@@ -178,7 +174,6 @@ links to devices.
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 220/436
 
-Kernel frameworks for device drivers
 
  
 
@@ -500,7 +495,6 @@ return 0;
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 233/436
 
-Kernel frameworks for device drivers
 
  
 
@@ -636,7 +630,6 @@ be used by user space applications with the generic framebuffer API.
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 239/436
 
-Kernel frameworks for device drivers
 
  
 
@@ -736,7 +729,6 @@ userspace device file is still open after remove. ▶ Be very careful when there
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 243/436
 
-Kernel frameworks for device drivers
 
  
 
@@ -999,3 +991,5 @@ rtl8150_t \*dev = usb_get_intfdata(intf);
 }
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 251/436
+
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-266_1.jpg)

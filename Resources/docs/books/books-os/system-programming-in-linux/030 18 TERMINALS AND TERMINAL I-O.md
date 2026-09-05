@@ -1,5 +1,3 @@
-![](media/index-1082_1.jpg)
-
 18 TERMINALS AND TERMINAL I/O
 
 This chapter sets the stage for the development of advanced interactive programs. It deals with terminals and their attributes. The programs in previous chapters haven’t manipulated the terminal except perhaps by
@@ -206,7 +204,7 @@ depicts the internal buffer of the terminal and the system buffer into which the
 
 transmitted.
 
-![](media/index-1087_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-1087_1.jpg)
 
 *Figure 18-1: A schematic representation of the processing of an edited input line* Imagine what it would be like if, when you entered text to a program
 
@@ -286,7 +284,7 @@ producer with respect to the input queue and the line discipline is a
 
 consumer. The opposite relationships are true of the output queue.
 
-![](media/index-1090_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-1090_1.jpg)
 
 *Figure 18-2: The Unix implementation of a terminal showing some of the internal queues of* *the terminal driver*
 
@@ -758,7 +756,6 @@ Mask
 
 name
 
-Description
 
 IGNBRK
 
@@ -898,7 +895,6 @@ Mask
 
 name
 
-Description
 
 ISIG
 
@@ -990,7 +986,6 @@ Subscript Name Initial
 
 value
 
-Description
 
 Flags
 
@@ -1064,7 +1059,6 @@ Subscript Name Initial
 
 value
 
-Description
 
 Flags
 
@@ -1282,7 +1276,6 @@ I’ll demonstrate making a small change with the program in Listing 18-
 
 \#include \<termios.h\> /\* Needed for all functions in termios API \*/
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -1388,7 +1381,6 @@ const char loginstr\[\] = "login: "; /\* Prompt for login \*/
 
 const char passwdstr\[\] = "password: "; /\* Prompt for password \*/
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -1612,7 +1604,6 @@ shown in Listing 18-3.
 
 *spl_stty.c* main()
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -1788,7 +1779,7 @@ Horizontal-tab delay type 2 \*/ \# define TAB3 0014000 /\* Expand tabs to spaces
 
 These are octal values. An expression such as tt.c_oflag & TABDLY zeroes out every bit except the bits in TABDLY that are 1s. If we shift this to the right by the number of zeros to the right of the rightmost 1 in TABDLY, we’ll get the numeric value of that selector. Figure 18-3 illustrates these bitwise operations.
 
-![](media/index-1120_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-1120_1.jpg)
 
 *Figure 18-3: The bitwise operations to extract the value of the tab delay from the* *c_oflag* *flagset of a* *termios* *structure*
 
@@ -2204,7 +2195,6 @@ Table 18-5: Some Commonly Used *ioctl* Operation Codes for Terminals *ioctl*
 
 Argument
 
-Description
 
 TCGETS
 
@@ -2276,7 +2266,6 @@ terminal of the calling process
 
 Argument
 
-Description
 
 TIOCGPGRP
 
@@ -2316,7 +2305,6 @@ system calls is omitted to save space.
 
 \#include \<sys/termios.h\>
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -2384,7 +2372,6 @@ Listing 18-7 monitors the size of the input queue of the terminal device given a
 
 \#include \<sys/ioctl.h\>
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -2428,7 +2415,6 @@ that reads can read one character at a time without needing terminating newline 
 
 \#include \<sys/ioctl.h\>
 
-int main(int argc, char \*argv\[\])
 
 {
 

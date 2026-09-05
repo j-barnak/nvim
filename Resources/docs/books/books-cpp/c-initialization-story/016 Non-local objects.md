@@ -92,7 +92,6 @@ Non-local objects 172
 
 **Ex 11.1. Static and automatic objects. Run** [**@Compiler Explorer**](https://godbolt.org/z/hc3rsn8d1)
 
-\#include \<iostream\>
 
 **struct Value** {
 
@@ -118,7 +117,6 @@ puts("main ends...");
 
 If we run the example, you’ll see the following output:
 
-Value(42)
 
 main starts...
 
@@ -144,7 +142,6 @@ Non-local objects 173
 
 // main.cpp
 
-\#include \<iostream\>
 
 \#include "value.h"
 
@@ -174,7 +171,6 @@ std::cout \<\< "in foo(): " \<\< &v \<\< '\n'; }
 
 If we run the code, you’ll see that the address of v is the same in both lines. For instance:
 
-Value(42)
 
 in main(): 0x404194
 
@@ -196,7 +192,6 @@ If you want two global variables visible as separate objects in each translation
 
 // main.cpp
 
-\#include \<iostream\>
 
 \#include "value.h"
 
@@ -226,7 +221,6 @@ std::cout \<\< "in foo(): " \<\< &v \<\< '\n'; }
 
 Now, you have two different objects which live in the static storage (outside main()):
 
-Value(42)
 
 Value(100)
 
@@ -260,7 +254,7 @@ Additionally, if you declare const Value v{42}; in one translation unit, then co
 
 **extern const** Value v; // declaration
 
-![](media/index-190_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-190_1.png)
 
  
 
@@ -286,7 +280,6 @@ Storage space ⁴. Each thread that uses this object creates a copy of it.
 
 **Ex 11.4. Example of thread_local variables. Run** [**@Compiler Explorer**](https://godbolt.org/z/o6TMv3zn7)
 
-\#include \<iostream\>
 
 \#include \<thread\>
 
@@ -340,7 +333,7 @@ From the example, we can also spot that across a single thread, thread_local in 
 
 **thread_local int** y; // means the same as above
 
-![](media/index-192_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-192_1.png)
 
  
 
@@ -366,7 +359,6 @@ Non-local objects 178
 
 **Ex 11.5. Begin and end of a thread-local variable. Run** [**@Compiler Explorer**](https://godbolt.org/z/7aEToMbT1)
 
-\#include \<iostream\>
 
 \#include \<thread\>
 
@@ -402,11 +394,9 @@ main 4154399168
 
 foo()
 
-Value(42)
 
 foo()
 
-Value(42)
 
 ~Value(~Value(100)
 
@@ -464,7 +454,7 @@ it manually.
 
 Non-local objects 180
 
-![](media/index-195_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-195_1.png)
 
 Dynamic memory management is very tricky, so it’s best to rely on RAII and smart pointers to clean the memory. The example above used raw new and delete only to show the basic usage, but in production code, try to avoid it. See more in
 
@@ -486,7 +476,6 @@ Consider the following code:
 
 **Ex 11.4. Static initialization. Run** [**@CompilerExplorer**](https://godbolt.org/z/x3Y6d1dse)
 
-\#include \<iostream\>
 
 **struct Value** { /\*as before\*/ };
 
@@ -526,7 +515,7 @@ a constant expression.
 
 **zero initialization**, which means they will take the value of zero (and then it’s converted to the appropriate type). Pointers are set to nullptr, arrays, trivial structs, and unions have their members initialized to a zero value.
 
-![](media/index-196_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-196_1.png)
 
 Don’t rely on zero initialization for static objects. Always try to assign some value to be sure of the outcome. In the book, I only showed it so you could see the whole picture.
 
@@ -534,7 +523,7 @@ Don’t rely on zero initialization for static objects. Always try to assign som
 
 Now, v global objects are initialized during so-called **dynamic initialization** of non-local variables”. It happens for objects that cannot be constant initialized or zero-initialized during static initialization at the program startup.
 
-![](media/index-196_2.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-196_2.png)
 
 In a single translation unit, the order of dynamic initialization of global variables (including static data members) is well defined. If you have multiple compilation units, then the order is unspecified. When a global object A defined in one compilation unit depends on another global object B defined in a different translation unit, you’ll have undefined behavior. Such a problem is called the
 
@@ -544,7 +533,7 @@ In a single translation unit, the order of dynamic initialization of global vari
 
 In short, each static non-local object has to be initialized at the program startup. However, the compiler tries to optimize this process and, if possible, do as much work at compile time. For example, for built-in types initialized from constant expressions, the value of the variable might be stored as a part of the binary and then only loaded during the program startup. If it’s not possible, then a dynamic initialization must happen, meaning that the value is computed once before the main() starts. Additionally, the compiler might even defer the dynamic initialization until the first use of the variable but must guarantee the program’s correctness. Since C++11, we can try to move dynamic initialization to the compile-time stage thanks to constexpr (allowing us to write custom types). Since C++20, we can use constinit to guarantee constant initialization.
 
-![](media/index-196_3.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-196_3.png)
 
 For more information, have a look at this good blog post for more information:
 
@@ -580,7 +569,6 @@ As we discussed in the previous section, it’s best to rely on constant initial
 
 // a.cpp
 
-\#include \<iostream\>
 
 \#include "point.h"
 
@@ -642,7 +630,7 @@ You’ll get the following:
 
 There’s a dependency of global variables: offset depends on center. If the compilation unit with center were compiled first, the dynamic initialization would be performed, and center would have 100, 200 assigned. Otherwise, it’s only zero-initialized, and thus offset has the value of 100, 200.
 
-![](media/index-198_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-198_1.png)
 
 This is only a toy example, but imagine a production code! In that case, you might have a hard-to-find bug that comes not from some incorrect computation logic but from the compilation order in the project!
 
@@ -694,7 +682,7 @@ std::cout \<\< global.first \<\< ", " \<\< global.second \<\< '\n';
 
 In the above example, I create a global std::pair object and force it to use constant initialization. I can do that on all types with constexpr constructors or trivial types. Notice that inside main(), I can change the value of my object, so it’s not const. For comparison, I also included the constG object, which is a constexpr variable. In that case, we’ll also force the compiler to use constant initialization, but this time the object cannot be changed later.
 
-![](media/index-199_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-199_1.png)
 
 While a constinit variable will be constant initialized, it cannot be later used in the initializer of another constinit variable. A constinit object, is not constexpr .
 
@@ -718,7 +706,6 @@ Above, the counter variable will be initialized and created when foo() is invoke
 
 **Ex 11.8. Counter as a local static variable. Run** [**@Compiler Explorer**](https://godbolt.org/z/sP91Eofqx)
 
-\#include \<iostream\>
 
 **int** foo() {
 
@@ -816,7 +803,6 @@ Consider the following example:
 
 **Ex 11.5. Simple** **static** **Data Member. Run** [**@Compiler Explorer**](https://godbolt.org/z/YsG3hK1qz)
 
-\#include \<iostream\>
 
 **struct Value** {
 
@@ -860,7 +846,7 @@ static int y declared in the scope of the Value class created a variable that is
 
 To be precise, Value::y has a static storage duration and external linkage.
 
-![](media/index-203_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-203_1.png)
 
 Local classes or unnamed classes cannot have static data members.
 
@@ -870,7 +856,6 @@ Here’s an example that illustrates the lifetime of a static data member:
 
 **Ex 11.6.** **static** **Data Member Lifetime. Run** [**@Compiler Explorer**](https://godbolt.org/z/v9Y34vYxd)
 
-\#include \<iostream\>
 
 **struct Value** {
 
@@ -924,7 +909,6 @@ puts("main ends...");
 
 The code has the Value structure that has two instances in the form of two static data members inside the Test class. Additionally, we have two other data members, w and z, which are built-in types. If we run the code, you’ll see the following output:
 
-Value(42)
 
 Value(24)
 
@@ -978,7 +962,7 @@ Non-local objects 190
 
 This time I used Wandbox online compiler - as it’s easy to create and compile multiple files:
 
-![](media/index-205_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-205_1.png)
 
  
 
@@ -986,7 +970,7 @@ As you can see above, classCounter is an int, and you have to write it twice: in
 
 Non-local objects 191
 
-![](media/index-206_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-206_1.png)
 
  
 
@@ -1034,7 +1018,6 @@ Based on the previous code, here’s the example with the Value class and multip
 
 // test.h
 
-\#include \<iostream\>
 
 **struct Value** {
 
@@ -1064,7 +1047,6 @@ Non-local objects 193
 
 // main.cpp
 
-\#include \<iostream\>
 
 \#include "test.h"
 
@@ -1114,7 +1096,6 @@ The output:
 
 Non-local objects 194
 
-Value(42)
 
 Value(24)
 
@@ -1172,7 +1153,6 @@ Non-local objects 195
 
 **Ex 11.10. Static inline member. Run** [**@Wandbox**](https://wandbox.org/permlink/RTnylPp77Vls1tjS)
 
-\#include \<iostream\>
 
 \#include "CountedType.h"
 
@@ -1194,13 +1174,13 @@ std::cout \<\< CountedType::classCounter \<\< '\n'; }
 
 The code above declares classCounter inside CountedType, which is a static data member. The class is defined in a separate header file. Thanks to C++17, we can declare the variable as inline. Then, there’s no need to write a corresponding definition later. Without inline, the code wouldn’t compile.
 
-![](media/index-210_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-210_1.png)
 
  
 
 In the main() function, the example creates two objects of CountedType. The static variable is incremented when there’s a call to the constructor. When an object is destroyed, the variable is decremented. We can output this value and see the current count of objects. Non-local objects 196
 
-![](media/index-211_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-211_1.png)
 
 The CountedType illustrates an interesting pattern, and we’ll extend it to be more
 
@@ -1234,7 +1214,6 @@ And you can now use those variables in the main():
 
 // main.cpp
 
-\#include \<iostream\>
 
 \#include "globals.h"
 

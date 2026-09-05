@@ -1,5 +1,3 @@
-![](media/index-92_1.jpg)
-
 Developing kernel modules
 
  
@@ -432,10 +430,12 @@ Practical lab - Writing modules
 
 ▶ Create, compile and load your first module ▶ Add module parameters ▶ Access kernel internals from your module
 
-![](media/index-108_1.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-108_1.png)
 
  
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 108/436
 
-![](media/index-108_2.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-108_2.png)
+
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-109_1.jpg)

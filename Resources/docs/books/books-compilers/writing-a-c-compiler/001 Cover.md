@@ -1,4 +1,4 @@
-![Cover: Writing A C Compiler, Build a Real Programming Language from Scratch by Nora Sandler](media/37c5d4495079f37c6cc6867ba86f5b428b662433.jpg)
+![Cover: Writing A C Compiler, Build a Real Programming Language from Scratch by Nora Sandler](/tmp/audit/iter1/epubregen/writing-a-c-compiler/media/37c5d4495079f37c6cc6867ba86f5b428b662433.jpg)
 
 # `CONTENTS IN DETAIL`
 

@@ -8,7 +8,7 @@
 
 This chapter is exciting for not one, not two, but *three* reasons. First, it provides the final segment of our VM’s execution pipeline. Once in place, we can plumb the user’s source code from scanning all the way through to executing it.
 
-![Lowering the 'compiler' section of pipe between 'scanner' and 'VM'.](media/image/compiling-expressions/pipeline.png)
+![Lowering the 'compiler' section of pipe between 'scanner' and 'VM'.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/compiling-expressions/pipeline.png)
 
 Second, we get to write an actual, honest-to-God *compiler*. It parses source code and outputs a low-level series of binary instructions. Sure, it’s bytecode and not some chip’s native instruction set, but it’s way closer to the metal than jlox was. We’re about to be real language hackers.
 
@@ -126,7 +126,7 @@ Single-pass compilers like we’re going to build don’t work well for all lang
 
 Not that this should come as much of a surprise. I did design the language specifically for this book after all.
 
-![Peering through a keyhole at 'var x;'](media/image/compiling-expressions/keyhole.png)
+![Peering through a keyhole at 'var x;'](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/compiling-expressions/keyhole.png)
 
 What this means in practical terms is that our “compiler” C module has functionality you’ll recognize from jlox for parsing—consuming tokens, matching expected token types, etc. And it also has functions for code gen—emitting bytecode and adding constants to the destination chunk. (And it means I’ll use “parsing” and “compiling” interchangeably throughout this and later chapters.)
 
@@ -469,7 +469,7 @@ Over time, we’ll have enough cases where we need to write an opcode followed b
 
 We’ve assembled our parsing and code generation utility functions. The missing piece is the code in the middle that connects those together.
 
-![Parsing functions on the left, bytecode emitting functions on the right. What goes in the middle?](media/image/compiling-expressions/mystery.png)
+![Parsing functions on the left, bytecode emitting functions on the right. What goes in the middle?](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/compiling-expressions/mystery.png)
 
 The only step in `compile()` that we have left to implement is this function:
 
@@ -977,9 +977,9 @@ If the next token is too low precedence, or isn’t an infix operator at all, we
 
 That’s a lot of prose, but if you really want to mind meld with Vaughan Pratt and fully understand the algorithm, step through the parser in your debugger as it works through some expressions. Maybe a picture will help. There’s only a handful of functions, but they are marvelously intertwined:
 
-![The various parsing functions and how they call each other.](media/image/compiling-expressions/connections.png)
+![The various parsing functions and how they call each other.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/compiling-expressions/connections.png)
 
-The ![A solid arrow.](media/image/compiling-expressions/calls.png) arrow connects a function to another function it directly calls. The ![An open arrow.](media/image/compiling-expressions/points-to.png) arrow shows the table’s pointers to the parsing functions.
+The ![A solid arrow.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/compiling-expressions/calls.png) arrow connects a function to another function it directly calls. The ![An open arrow.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/compiling-expressions/points-to.png) arrow shows the table’s pointers to the parsing functions.
 
 Later, we’ll need to tweak the code in this chapter to handle assignment. But, otherwise, what we wrote covers all of our expression compiling needs for the rest of the book. We’ll plug additional parsing functions into the table when we add new kinds of expressions, but `parsePrecedence()` is complete.
 

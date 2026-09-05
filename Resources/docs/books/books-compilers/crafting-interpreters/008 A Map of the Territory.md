@@ -24,11 +24,11 @@ I visualize the network of paths an implementation may choose as climbing a moun
 
 Eventually we reach the peak. We have a bird’s-eye view of the user’s program and can see what their code *means*. We begin our descent down the other side of the mountain. We transform this highest-level representation down to successively lower-level forms to get closer and closer to something we know how to make the CPU actually execute.
 
-![The branching paths a language may take over the mountain.](media/image/a-map-of-the-territory/mountain.png)
+![The branching paths a language may take over the mountain.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/a-map-of-the-territory/mountain.png)
 
 Let’s trace through each of those trails and points of interest. Our journey begins on the left with the bare text of the user’s source code:
 
-![var average = (min + max) / 2;](media/image/a-map-of-the-territory/string.png)
+![var average = (min + max) / 2;](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/a-map-of-the-territory/string.png)
 
 ### 2.1.1 Scanning
 
@@ -40,7 +40,7 @@ A **scanner** (or **lexer**) takes in the linear stream of characters and chunks
 
 Some characters in a source file don’t actually mean anything. Whitespace is often insignificant, and comments, by definition, are ignored by the language. The scanner usually discards these, leaving a clean sequence of meaningful tokens.
 
-![\[var\] \[average\] \[=\] \[(\] \[min\] \[+\] \[max\] \[)\] \[/\] \[2\] \[;\]](media/image/a-map-of-the-territory/tokens.png)
+![\[var\] \[average\] \[=\] \[(\] \[min\] \[+\] \[max\] \[)\] \[/\] \[2\] \[;\]](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/a-map-of-the-territory/tokens.png)
 
 ### 2.1.2 Parsing
 
@@ -48,7 +48,7 @@ The next step is **parsing**. This is where our syntax gets a **grammar**—the 
 
 A **parser** takes the flat sequence of tokens and builds a tree structure that mirrors the nested nature of the grammar. These trees have a couple of different names—**parse tree** or **abstract syntax tree**—depending on how close to the bare syntactic structure of the source language they are. In practice, language hackers usually call them **syntax trees**, **ASTs**, or often just **trees**.
 
-![An abstract syntax tree.](media/image/a-map-of-the-territory/ast.png)
+![An abstract syntax tree.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/a-map-of-the-territory/ast.png)
 
 Parsing has a long, rich history in computer science that is closely tied to the artificial intelligence community. Many of the techniques used today to parse programming languages were originally conceived to parse *human* languages by AI researchers who were trying to get computers to talk to us.
 
@@ -214,7 +214,7 @@ Now that I’ve stuffed your head with a dictionary’s worth of programming lan
 
 It turns out this is like asking the difference between a fruit and a vegetable. That seems like a binary either-or choice, but actually “fruit” is a *botanical* term and “vegetable” is *culinary*. One does not strictly imply the negation of the other. There are fruits that aren’t vegetables (apples) and vegetables that aren’t fruits (carrots), but also edible plants that are both fruits *and* vegetables, like tomatoes.
 
-![A Venn diagram of edible plants](media/image/a-map-of-the-territory/plants.png)
+![A Venn diagram of edible plants](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/a-map-of-the-territory/plants.png)
 
 Peanuts (which are not even nuts) and cereals like wheat are actually fruit, but I got this drawing wrong. What can I say, I’m a software engineer, not a botanist. I should probably erase the little peanut guy, but he’s so cute that I can’t bear to.
 
@@ -240,7 +240,7 @@ The [Go tool](https://golang.org/) is even more of a horticultural curiosity. If
 
 So `go` *is* a compiler (you can use it as a tool to compile code without running it), *is* an interpreter (you can invoke it to immediately run a program from source), and also *has* a compiler (when you use it as an interpreter, it is still compiling internally).
 
-![A Venn diagram of compilers and interpreters](media/image/a-map-of-the-territory/venn.png)
+![A Venn diagram of compilers and interpreters](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/a-map-of-the-territory/venn.png)
 
 That overlapping region in the center is where our second interpreter lives too, since it internally compiles to bytecode. So while this book is nominally about interpreters, we’ll cover some compilation too.
 

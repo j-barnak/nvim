@@ -1,7 +1,3 @@
-*Introducing Rust*
-
-***This chapter covers***
-
  Introducing Rust’s features and goals
 
  Exposing Rust’s syntax
@@ -28,7 +24,6 @@ When you begin to program in Rust, it’s likely that you will want to continue 
 
 **2**
 
-CHAPTER 1
 
 ***Introducing Rust***
 
@@ -134,7 +129,6 @@ See “HTTP code syntax highlighting server written in Rust,” [https://github.
 
 **4**
 
-CHAPTER 1
 
 ***Introducing Rust***
 
@@ -246,7 +240,6 @@ Compiling hello v0.1.0 (/tmp/hello)
 
 **6**
 
-CHAPTER 1
 
 ***Introducing Rust***
 
@@ -410,7 +403,6 @@ Listing 1.1
 
 **8**
 
-CHAPTER 1
 
 ***Introducing Rust***
 
@@ -610,7 +602,6 @@ Listing 1.2 might be confusing to some readers, especially those who have never 
 
 **10**
 
-CHAPTER 1
 
 ***Introducing Rust***
 
@@ -714,7 +705,6 @@ Rust’s distinguishing feature as a professional community is its willingness t
 
 **12**
 
-CHAPTER 1
 
 ***Introducing Rust***
 
@@ -866,7 +856,6 @@ Compiling ch1-cereals v0.1.0 (/rust-in-action/code/ch1/ch1-cereals) error\[E0382
 
 **14**
 
-CHAPTER 1
 
 ***Introducing Rust***
 
@@ -1044,7 +1033,6 @@ Attempting to modify an iterator while iterating over it
 
 **16**
 
-CHAPTER 1
 
 ***Introducing Rust***
 
@@ -1202,7 +1190,6 @@ When there is no other meaningful return value, expressions return (). As the fo
 
 **18**
 
-CHAPTER 1
 
 ***Introducing Rust***
 
@@ -1318,7 +1305,6 @@ The Rust community prefers a bigger language with a compiler that does more, rat
 
 **20**
 
-CHAPTER 1
 
 ***Introducing Rust***
 
@@ -1416,7 +1402,6 @@ Heartbleed, officially designated as CVE-2014-0160,16 was caused by re-using a b
 
 **22**
 
-CHAPTER 1
 
 ***Introducing Rust***
 
@@ -1580,7 +1565,6 @@ Rust offers three main advantages for programmers creating command-line utilitie
 
 **24**
 
-CHAPTER 1
 
 ***Introducing Rust***
 
@@ -1666,7 +1650,6 @@ Both platforms provide the ability for native applications to run on them. This 
 
 **26**
 
-CHAPTER 1
 
 ***Introducing Rust***
 
@@ -1745,3 +1728,5 @@ When you program in Rust, safety does not sacrifice speed.
  Rust projects are not immune from all bugs.
 
  Rust code is stable, fast, and light on resources.
+
+*Part 1*

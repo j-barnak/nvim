@@ -39,7 +39,7 @@ closure();
 
 The outer function `makeClosure()` declares a variable, `local`. It also creates an inner function, `closure()` that captures that variable. Then `makeClosure()` returns a reference to that function. Since the closure escapes while holding on to the local variable, `local` must outlive the function call where it was created.
 
-![A local variable flying away from the stack.](media/image/closures/flying.png)
+![A local variable flying away from the stack.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/closures/flying.png)
 
 Oh no, it’s escaping!
 
@@ -83,7 +83,7 @@ We’ll work our way up to capturing variables, but a good first step is definin
 
 The Lua implementation refers to the raw function object containing the bytecode as a “prototype”, which is a great word to describe this, except that word also gets overloaded to refer to [prototypal inheritance](https://en.wikipedia.org/wiki/Prototype-based_programming).
 
-![An ObjClosure with a reference to an ObjFunction.](media/image/closures/obj-closure.png)
+![An ObjClosure with a reference to an ObjFunction.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/closures/obj-closure.png)
 
 We’ll wrap every function in an ObjClosure, even if the function doesn’t actually close over and capture any surrounding local variables. This is a little wasteful, but it simplifies the VM because we can always assume that the function we’re calling is an ObjClosure. That new struct starts out like this:
 
@@ -499,7 +499,7 @@ For example, if we throw this program at clox,
 
 the compiler and runtime will conspire together to build up a set of objects in memory like this:
 
-![The object graph of the stack, ObjClosure, ObjFunction, and upvalue array.](media/image/closures/open-upvalue.png)
+![The object graph of the stack, ObjClosure, ObjFunction, and upvalue array.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/closures/open-upvalue.png)
 
 That might look overwhelming, but fear not. We’ll work our way through it. The important part is that upvalues serve as the layer of indirection needed to continue to find a captured local variable even after it moves off the stack. But before we get to all that, let’s focus on compiling captured variables.
 
@@ -755,7 +755,7 @@ I know, it’s convoluted. The important part is that `outer()`—where `x` is d
 
 Here, I traced out the execution flow for you:
 
-![Tracing through the previous example program.](media/image/closures/execution-flow.png)
+![Tracing through the previous example program.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/closures/execution-flow.png)
 
 See how `x` is popped ① before it is captured ② and then later accessed ③? We really have two problems:
 
@@ -767,7 +767,7 @@ Fortunately, we’re in the middle of adding upvalues to the VM, and upvalues ar
 
 The solution is to allow a closure to capture either a local variable or *an existing upvalue* in the immediately enclosing function. If a deeply nested function references a local variable declared several hops away, we’ll thread it through all of the intermediate functions by having each function capture an upvalue for the next function to grab.
 
-![An upvalue in inner() points to an upvalue in middle(), which points to a local variable in outer().](media/image/closures/linked-upvalues.png)
+![An upvalue in inner() points to an upvalue in middle(), which points to a local variable in outer().](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/closures/linked-upvalues.png)
 
 In the above example, `middle()` captures the local variable `x` in the immediately enclosing function `outer()` and stores it in its own upvalue. It does this even though `middle()` itself doesn’t reference `x`. Then, when the declaration of `inner()` executes, its closure grabs the *upvalue* from the ObjClosure for `middle()` that captured `x`. A function captures—either a local or upvalue—*only* from the immediately surrounding function, which is guaranteed to still be around at the point that the inner function declaration executes.
 
@@ -806,7 +806,7 @@ Each recursive call to `resolveUpvalue()` walks *out* one level of function nest
 
 It might help to walk through the original example when resolving `x`:
 
-![Tracing through a recursive call to resolveUpvalue().](media/image/closures/recursion.png)
+![Tracing through a recursive call to resolveUpvalue().](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/closures/recursion.png)
 
 Note that the new call to `addUpvalue()` passes `false` for the `isLocal` parameter. Now you see that that flag controls whether the closure captures a local variable or an upvalue from the surrounding function.
 
@@ -1520,7 +1520,7 @@ Starting with the first upvalue pointed to by the VM, each open upvalue points t
 
 should produce a series of linked upvalues like so:
 
-![Three upvalues in a linked list.](media/image/closures/linked-list.png)
+![Three upvalues in a linked list.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/closures/linked-list.png)
 
 Whenever we close over a local variable, before creating a new upvalue, we look for an existing one in the list.
 
@@ -1638,7 +1638,7 @@ But there is already a level of indirection in play—those instructions derefer
 
 I’m not praising myself here. This is all the Lua dev team’s innovation.
 
-![Moving a value from the stack to the upvalue's 'closed' field and then pointing the 'value' field to it.](media/image/closures/closing.png)
+![Moving a value from the stack to the upvalue's 'closed' field and then pointing the 'value' field to it.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/closures/closing.png)
 
 We don’t need to change how `OP_GET_UPVALUE` and `OP_SET_UPVALUE` are interpreted at all. That keeps them simple, which in turn keeps them fast. We do need to add the new field to ObjUpvalue, though.
 

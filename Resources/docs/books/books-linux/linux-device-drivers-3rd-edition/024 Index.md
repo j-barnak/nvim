@@ -746,7 +746,6 @@ scilluid, Restricting Access to a Single User at a Time
 
 sleeps, Manual sleeps
 
-test system setup, Setting Up Your Test System
 
 user space programming, User Space and Kernel Space, Doing It in User Space–Doing It in User Space
 
@@ -912,7 +911,6 @@ snull drivers, How snull Is Designed–The Physical Transport of Packets
 
 streaming DMA mappings, Setting up streaming DMA mappings
 
-test system setup, Setting Up Your Test System
 
 timeouts, Timeouts
 
@@ -1338,7 +1336,6 @@ kobjects, Kobjects, Ksets, and Subsystems–Subsystems
 
 lifecycles, Putting It All Together–Remove a Driver
 
-low-level sysfs operations, Low-Level Sysfs Operations–Symbolic Links
 
 methods, The Device Methods
 
@@ -2852,7 +2849,6 @@ I2O drivers, Classes of Devices and Modules
 
 IA-64 architecture, Platform Dependencies, The /proc Interface
 
-porting and, Platform Dependencies
 
 /proc/interrupts file, snapshot of, The /proc Interface
 
@@ -3412,7 +3408,6 @@ kobjects, Kobjects, Ksets, and Subsystems–Subsystems
 
 lifecycles, Putting It All Together–Remove a Driver
 
-low-level sysfs operations, Low-Level Sysfs Operations–Symbolic Links
 
 logical addresses, Address Types
 
@@ -3450,7 +3445,6 @@ system hangs, System Hangs
 
 tasklets, Tasklets–Tasklets, Tasklets
 
-test system setup, Setting Up Your Test System
 
 time, Measuring Time Lapses–Processor-Specific Registers, Knowing the Current Time–Knowing the Current Time, Timekeeping
 
@@ -3556,7 +3550,6 @@ kobjects, Kobjects, Ksets, and Subsystems–Subsystems, Release functions and ko
 
 hotplug event generation, Hotplug Event Generation
 
-low-level sysfs operations, Low-Level Sysfs Operations–Symbolic Links
 
 nondefault attributes, Nondefault Attributes
 
@@ -3654,7 +3647,6 @@ kobjects, Kobjects, Ksets, and Subsystems–Subsystems, Low-Level Sysfs Operatio
 
 hotplug events, Hotplug Event Generation
 
-low-level sysfs operations, Low-Level Sysfs Operations–Symbolic Links
 
 lifecycles, Putting It All Together–Remove a Driver
 
@@ -3770,7 +3762,6 @@ loops_per_jiffy value, Short Delays
 
 low memory, High and Low Memory
 
-low-level sysfs operations, Low-Level Sysfs Operations–Symbolic Links
 
 ls command, identifying device type, Major and Minor Numbers
 
@@ -4352,7 +4343,6 @@ MIPS processor, Processor-Specific Registers, Platform Dependencies
 
 inline assembly code and, Processor-Specific Registers
 
-porting and, Platform Dependencies
 
 misc-progs directory, Redirecting Console Messages, Testing the Scullpipe Driver
 
@@ -4394,7 +4384,6 @@ kobjects, Kobjects, Ksets, and Subsystems–Subsystems
 
 lifecycles, Putting It All Together–Remove a Driver
 
-low-level sysfs operations, Low-Level Sysfs Operations–Symbolic Links
 
 modes, Dynamic Allocation of Major Numbers, The file Structure, Kernel Timers, Tasklets–Tasklets
 
@@ -4478,7 +4467,6 @@ stacking, The Kernel Symbol Table, The Kernel Symbol Table
 
 symbols, The Kernel Symbol Table–The Kernel Symbol Table
 
-test system setup, Setting Up Your Test System
 
 unloading, Kernel Modules Versus Applications, Loading and Unloading Modules, Module Unloading
 
@@ -4654,7 +4642,6 @@ kobjects, Kobjects, Ksets, and Subsystems–Subsystems, Kobjects, Ksets, and Sub
 
 hotplug event generation, Hotplug Event Generation
 
-low-level sysfs operations, Low-Level Sysfs Operations–Symbolic Links
 
 lifecycles, The Linux Device Model
 
@@ -5038,7 +5025,6 @@ platform dependency, Version Numbering, Platform Dependency, Platform Dependency
 
 for modules, Platform Dependency
 
-porting and, Platform Dependencies
 
 /proc/stat file, The /proc Interface
 
@@ -5118,7 +5104,6 @@ populate method, The vm_area_struct structure
 
 portability, Platform Dependencies
 
-porting and, Platform Dependencies
 
 ports, I/O Ports and I/O Memory–isa_readb and Friends, Manipulating I/O ports, Platform Dependencies, An Overview of the Parallel Port–A Sample Driver, Quick Reference, Quick Reference, Quick Reference, Preparing the Parallel Port, Disabling a single interrupt
 
@@ -5276,7 +5261,6 @@ ISA, ISA Programming
 
 module requirements, Preliminaries
 
-test system setup, Setting Up Your Test System
 
 user space, User Space and Kernel Space, Doing It in User Space–Doing It in User Space
 
@@ -5622,7 +5606,6 @@ rwsems (reader/writer semaphores), Reader/Writer Semaphores
 
 S/390 architecture, Platform Dependencies, S/390 and zSeries
 
-porting and, Platform Dependencies
 
 SAK (secure attention key) function, System Hangs
 
@@ -6320,7 +6303,6 @@ terminals, selecting for messages, Redirecting Console Messages
 
 termios userspace functions, set_termios
 
-test system setup, Setting Up Your Test System
 
 testing, The Hello World Module, Playing with the New Devices, Testing the Scullpipe Driver, Initialization in sbull
 
@@ -7070,7 +7052,6 @@ x86 architecture, Platform Dependencies, The internals of interrupt handling on 
 
 interrupt handling on, The internals of interrupt handling on the x86
 
-porting and, Platform Dependencies
 
 xmit_lock function, Utility Fields
 

@@ -1,5 +1,3 @@
-![](media/index-32_1.jpg)
-
 PREFACE
 
 The story of this book can trace its origins to 1983. In that year, I was a graduate student in the Courant Institute of Mathematical Sciences at
@@ -85,3 +83,5 @@ and redistribute the programs. There is nothing like hands-on work to
 drive ideas home. This book is modeled on this principle. It is also
 
 modeled on my belief that a good teacher teaches students how to learn.
+
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-34_1.jpg)

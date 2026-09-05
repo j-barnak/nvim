@@ -8,31 +8,23 @@ In this chapter we introduce types and classes, two of the most fundamental conc
 
 A *type* is a collection of related values. For example, the type Bool contains the two logical values False and True, while the type Bool -\> Bool contains all functions that map arguments from Bool to results from Bool, such as the logical negation function not. We use the notation v :: T to mean that v is a value in the type T, and say that v *has type* T. For example:
 
-```cpp
+``` haskell
 False :: Bool
-
-
 True :: Bool
+not :: Bool -> Bool
 ```
-  
-
-not :: Bool -\> Bool
 
 More generally, the symbol :: can also be used with expressions that have not yet been evaluated, in which case the notation e :: T means that evaluation of the expression e will produce a value of type T. For example:
 
-```cpp
+``` haskell
 not False :: Bool
-
-
 not True :: Bool
-```
-  
-
 not (not False) :: Bool
+```
 
 In Haskell, every expression must have a type, which is calculated prior to evaluating the expression by a process called *type inference*. The key to this process is the following simple typing rule for function application, which states that if f is a function that maps arguments of type A to results of type B, and e is an expression of type A, then the application f e has type B:
 
-![image](media/Images/Chapter_3_image_2_17.png)
+![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Chapter_3_image_2_17.png)
 
 For example, the typing not False :: Bool can be inferred from this rule using the fact that not :: Bool -\> Bool and False :: Bool. On the other hand, the expression not 3 does not have a type under the above rule, because this would require that 3 :: Bool, which is not valid because 3 is not a logical value. Expressions such as not 3 that do not have a type are said to contain a *type error*, and are deemed to be invalid expressions.
 
@@ -42,19 +34,14 @@ The downside of type safety is that some expressions that evaluate successfully 
 
 In GHCi, the type of any expression can be displayed by preceding the expression by the command :type. For example:
 
-\> :type not
-
-not :: Bool -\> Bool  
-  
-
-\> :type False
-
-False :: Bool  
-  
-
-\> :type not False
-
+``` haskell
+> :type not
+not :: Bool -> Bool
+> :type False
+False :: Bool
+> :type not False
 not False :: Bool
+```
 
 ### **3.2Basic types**
 
@@ -96,21 +83,19 @@ We conclude this section by noting that a single number may have more than one n
 
 A *list* is a sequence of *elements* of the same type, with the elements being enclosed in square parentheses and separated by commas. We write \[T\] for the type of all lists whose elements have type T. For example:
 
-```cpp
+``` haskell
 [False,True,False] :: [Bool]
-
-
 [’a’,’b’,’c’,’d’] :: [Char]
+["One","Two","Three"] :: [String]
 ```
-  
-
-\["One","Two","Three"\] :: \[String\]
 
 The number of elements in a list is called its *length*. The list \[\] of length zero is called the empty list, while lists of length one, such as \[False\], \[’a’\], and \[\[\]\] are called singleton lists. Note that \[\[\]\] and \[\] are different lists, the former being a singleton list comprising the empty list as its only element, and the latter being simply the empty list that has no elements.
 
 There are three further points to note about list types. First of all, the type of a list conveys no information about its length. For example, the lists \[False,True\] and \[False,True,False\] both have type \[Bool\], even though they have different lengths. Secondly, there are no restrictions on the type of the elements of a list. At present we are limited in the range of examples that we can give because the only non-basic type that we have introduced at this point is list types, but we can have lists of lists, such as:
 
-\[\[’a’,’b’\],\[’c’,’d’,’e’\]\] :: \[\[Char\]\]
+``` haskell
+[[’a’,’b’],[’c’,’d’,’e’]] :: [[Char]]
+```
 
 Finally, there is no restriction that a list must have a finite length. In particular, due to the use of lazy evaluation in Haskell, lists with an infinite length are both natural and practical, as we shall see in chapter 15.
 
@@ -118,29 +103,21 @@ Finally, there is no restriction that a list must have a finite length. In parti
 
 A *tuple* is a finite sequence of *components* of possibly different types, with the components being enclosed in round parentheses and separated by commas. We write (T1,T2,...,Tn) for the type of all tuples whose ith components have type Ti for any i in the range 1 to n. For example:
 
-```cpp
+``` haskell
 (False,True) :: (Bool,Bool)
-
-
 (False,’a’,True) :: (Bool,Char,Bool)
-```
-  
-
 ("Yes",True,’a’) :: (String,Bool,Char)
+```
 
 The number of components in a tuple is called its *arity*. The tuple () of arity zero is called the empty tuple, tuples of arity two are called pairs, tuples of arity three are called triples, and so on. Tuples of arity one, such as (False), are not permitted because they would conflict with the use of parentheses to make the evaluation order explicit, such as in (1+2)\*3.
 
 In a similar manner to list types, there are three further points to note about tuple types. First of all, the type of a tuple conveys its arity. For example, the type (Bool,Char) contains all pairs comprising a first component of type Bool and a second component of type Char. Secondly, there are no restrictions on the types of the components of a tuple. For example, we can now have tuples of tuples, tuples of lists, and lists of tuples:
 
-```cpp
+``` haskell
 (’a’,(False,’b’)) :: (Char,(Bool,Char))
-
-
 ([’a’,’b’],[False,True]) :: ([Char],[Bool])
+[(’a’,False),(’b’,True)] :: [(Char,Bool)]
 ```
-  
-
-\[(’a’,False),(’b’,True)\] :: \[(Char,Bool)\]
 
 Finally, note that tuples must have a finite arity, in order to ensure that tuple types can always be inferred prior to evaluation.
 
@@ -148,52 +125,53 @@ Finally, note that tuples must have a finite arity, in order to ensure that tupl
 
 A *function* is a mapping from arguments of one type to results of another type. We write T1 -\> T2 for the type of all functions that map arguments of type T1 to results of type T2. For example, we have:
 
-not :: Bool -\> Bool  
-  
-
-even :: Int -\> Bool
+``` haskell
+not :: Bool -> Bool
+even :: Int -> Bool
+```
 
 (The library function even decides if an integer is even.) Because there are no restrictions on the types of the arguments and results of a function, the simple notion of a function with a single argument and a single result is already sufficient to handle the case of multiple arguments and results, by packaging multiple values using lists or tuples. For example, we can define a function add that calculates the sum of a pair of integers, and a function zeroto that returns the list of integers from zero to a given limit, as follows:
 
-add :: (Int,Int) -\> Int
-
-add (x,y) = x+y  
-  
-
-zeroto :: Int -\> \[Int\]
-
-zeroto n = \[0..n\]
+``` haskell
+add :: (Int,Int) -> Int
+add (x,y) = x+y
+zeroto :: Int -> [Int]
+zeroto n = [0..n]
+```
 
 In these examples we have followed the Haskell convention of preceding function definitions by their types, which serves as useful documentation. Any such types provided manually by the user are checked for consistency with the types calculated automatically using type inference.
 
 Note that there is no restriction that functions must be *total* on their argument type, in the sense that there may be some arguments for which the result is not defined. For example, the result of the library function head that selects the first element of a list is undefined if the list is empty:
 
-\> head \[\]
-
-\*\*\* Exception: Prelude.head: empty list
+``` haskell
+> head []
+*** Exception: Prelude.head: empty list
+```
 
 ### **3.6Curried functions**
 
 Functions with multiple arguments can also be handled in another, perhaps less obvious way, by exploiting the fact that functions are free to return functions as results. For example, consider the following definition:
 
-add’ :: Int -\> (Int -\> Int)
-
+``` haskell
+add’ :: Int -> (Int -> Int)
 add’ x y = x+y
+```
 
 The type states that add’ is a function that takes an argument of type Int, and returns a result that is a function of type Int -\> Int. The definition itself states that add’ takes an integer x followed by an integer y, and returns the result x+y. More precisely, add’ takes an integer x and returns a function, which in turn takes an integer y and returns the result x+y.
 
 Note that the function add’ produces the same final result as the function add from the previous section, but whereas add takes its two arguments at the same time packaged as a pair, add’ takes its two arguments one at a time, as reflected in the different types of the two functions:
 
-add :: (Int,Int) -\> Int  
-  
-
-add’ :: Int -\> (Int -\> Int)
+``` haskell
+add :: (Int,Int) -> Int
+add’ :: Int -> (Int -> Int)
+```
 
 Functions with more than two arguments can also be handled using the same technique, by returning functions that return functions, and so on. For example, a function mult that takes three integers x, y and z, one at a time, and returns their product, can be defined as follows:
 
-mult :: Int -\> (Int -\> (Int -\> Int))
-
-mult x y z = x\*y\*z
+``` haskell
+mult :: Int -> (Int -> (Int -> Int))
+mult x y z = x*y*z
+```
 
 This definition states that mult takes an integer x and returns a function, which in turn takes an integer y and returns another function, which finally takes an integer z and returns the result x\*y\*z.
 
@@ -201,19 +179,27 @@ Functions such as add’ and mult that take their arguments one at a time are ca
 
 To avoid excess parentheses when working with curried functions, two simple conventions are adopted. First of all, the function arrow -\> in types is assumed to associate to the right. For example, the type
 
-Int -\> Int -\> Int -\> Int
+``` haskell
+Int -> Int -> Int -> Int
+```
 
 means
 
-Int -\> (Int -\> (Int -\> Int))
+``` haskell
+Int -> (Int -> (Int -> Int))
+```
 
 Consequently, function application, which is denoted silently using spacing, is assumed to associate to the left. For example, the application
 
+``` haskell
 mult x y z
+```
 
 means
 
+``` haskell
 ((mult x) y) z
+```
 
 Unless tupling is explicitly required, all functions in Haskell with multiple arguments are normally defined as curried functions, and the two conventions above are used to reduce the number of parentheses that are required. In chapter 4 we will see how the meaning of curried function definitions can be formalised in a simple manner using the notion of lambda expressions.
 
@@ -221,41 +207,30 @@ Unless tupling is explicitly required, all functions in Haskell with multiple ar
 
 The library function length calculates the length of any list, irrespective of the type of the elements of the list. For example, it can be used to calculate the length of a list of integers, a list of strings, or even a list of functions:
 
-\> length \[1,3,5,7\]
-
-4  
-  
-
-\> length \["Yes","No"\]
-
-2  
-  
-
-\> length \[sin,cos,tan\]
-
+``` haskell
+> length [1,3,5,7]
+4
+> length ["Yes","No"]
+2
+> length [sin,cos,tan]
 3
+```
 
 The idea that length can be applied to lists whose elements have any type is made precise in its type by the inclusion of a *type variable*. Type variables must begin with a lower-case letter, and are usually simply named a, b, c, and so on. For example, the type of length is as follows:
 
-length :: \[a\] -\> Int
+``` haskell
+length :: [a] -> Int
+```
 
 That is, for any type a, the function length has type \[a\] -\> Int. A type that contains one or more type variables is called *polymorphic* (“of many forms”), as is an expression with such a type. Hence, \[a\] -\> Int is a polymorphic type and length is a polymorphic function. More generally, many of the functions provided in the standard prelude are polymorphic. For example:
 
-```cpp
+``` haskell
 fst :: (a,b) -> a
-
-
 head :: [a] -> a
-
-
 take :: Int -> [a] -> [a]
-
-
 zip :: [a] -> [b] -> [(a,b)]
+id :: a -> a
 ```
-  
-
-id :: a -\> a
 
 The type of a polymorphic function often gives a strong indication about the function’s behaviour. For example, from the type \[a\] -\> \[b\] -\> \[(a,b)\] we can conclude that zip pairs up elements from two lists, although the type on its own doesn’t capture the precise manner in which this is done.
 
@@ -263,32 +238,28 @@ The type of a polymorphic function often gives a strong indication about the fun
 
 The arithmetic operator + calculates the sum of any two numbers of the same numeric type. For example, it can be used to calculate the sum of two integers, or the sum of two floating-point numbers:
 
-\> 1 + 2
-
-3  
-  
-
-\> 1.0 + 2.0
-
+``` haskell
+> 1 + 2
+3
+> 1.0 + 2.0
 3.0
+```
 
 The idea that + can be applied to numbers of any numeric type is made precise in its type by the inclusion of a *class constraint*. Class constraints are written in the form C a, where C is the name of a class and a is a type variable. For example, the type of the addition operator + is as follows:
 
-(+) :: Num a =\> a -\> a -\> a
+``` haskell
+(+) :: Num a => a -> a -> a
+```
 
 That is, for any type a that is an *instance* of the class Num of numeric types, the function (+) has type a -\> a -\> a. (Parenthesising an operator converts it into a curried function, as we shall see in chapter 4.)
 
 A type that contains one or more class constraints is called *overloaded*, as is an expression with such a type. Hence, Num a =\> a -\> a -\> a is an overloaded type and (+) is an overloaded function. More generally, most of the numeric functions provided in the prelude are overloaded. For example:
 
-```cpp
+``` haskell
 (*) :: Num a => a -> a -> a
-
-
 negate :: Num a => a -> a
+abs :: Num a => a -> a
 ```
-  
-
-abs :: Num a =\> a -\> a
 
 Numbers themselves are also overloaded. For example, 3 :: Num a =\> a means that for any numeric type a, the value 3 has type a. In this manner, the value 3 could be an integer, a floating-point number, or more generally a value of any numeric type, depending on the context in which it is used.
 
@@ -300,36 +271,25 @@ Recall that a type is a collection of related values. Building upon this notion,
 
 This class contains types whose values can be compared for equality and inequality using the following two methods:
 
-(==) :: a -\> a -\> Bool  
-  
-
-(/=) :: a -\> a -\> Bool
+``` haskell
+(==) :: a -> a -> Bool
+(/=) :: a -> a -> Bool
+```
 
 All the basic types Bool, Char, String, Int, Integer, Float, and Double are instances of the Eq class, as are list and tuple types, provided that their element and component types are instances. For example:
 
-\> False == False
-
-True  
-  
-
-\> ’a’ == ’b’
-
-False  
-  
-
-\> "abc" == "abc"
-
-True  
-  
-
-\> \[1,2\] == \[1,2,3\]
-
-False  
-  
-
-\> (’a’,False) == (’a’,False)
-
+``` haskell
+> False == False
 True
+> ’a’ == ’b’
+False
+> "abc" == "abc"
+True
+> [1,2] == [1,2,3]
+False
+> (’a’,False) == (’a’,False)
+True
+```
 
 Note that function types are not in general instances of the Eq class, because it is not feasible in general to compare two functions for equality.
 
@@ -337,55 +297,31 @@ Note that function types are not in general instances of the Eq class, because i
 
 This class contains types that are instances of the equality class Eq, but in addition whose values are totally (linearly) ordered, and as such can be compared and processed using the following six methods:
 
-```cpp
+``` haskell
 (<) :: a -> a -> Bool
-
-
 (<=) :: a -> a -> Bool
-
-
 (>) :: a -> a -> Bool
-
-
 (>=) :: a -> a -> Bool
-
-
 min :: a -> a -> a
+max :: a -> a -> a
 ```
-  
-
-max :: a -\> a -\> a
 
 All the basic types Bool, Char, String, Int, Integer, Float, and Double are instances of the Ord class, as are list types and tuple types, provided that their element and component types are instances. For example:
 
-\> False \< True
-
-True  
-  
-
-\> min ’a’ ’b’
-
-’a’  
-  
-
-\> "elegant" \< "elephant"
-
-True  
-  
-
-\> \[1,2,3\] \< \[1,2\]
-
-False  
-  
-
-\> (’a’,2) \< (’b’,1)
-
-True  
-  
-
-\> (’a’,2) \< (’a’,1)
-
+``` haskell
+> False < True
+True
+> min ’a’ ’b’
+’a’
+> "elegant" < "elephant"
+True
+> [1,2,3] < [1,2]
 False
+> (’a’,2) < (’b’,1)
+True
+> (’a’,2) < (’a’,1)
+False
+```
 
 Note that strings, lists and tuples are ordered *lexicographically*; that is, in the same way as words in a dictionary. For example, two pairs of the same type are in order if their first components are in order, in which case their second components are not considered, or if their first components are equal, in which case their second components must be in order.
 
@@ -393,119 +329,83 @@ Note that strings, lists and tuples are ordered *lexicographically*; that is, in
 
 This class contains types whose values can be converted into strings of characters using the following method:
 
-show :: a -\> String
+``` haskell
+show :: a -> String
+```
 
 All the basic types Bool, Char, String, Int, Integer, Float, and Double are instances of the Show class, as are list types and tuple types, provided that their element and component types are instances. For example:
 
-\> show False
-
-"False"  
-  
-
-\> show ’a’
-
-"’a’"  
-  
-
-\> show 123
-
-"123"  
-  
-
-\> show \[1,2,3\]
-
-"\[1,2,3\]"  
-  
-
-\> show (’a’,False)
-
+``` haskell
+> show False
+"False"
+> show ’a’
+"’a’"
+> show 123
+"123"
+> show [1,2,3]
+"[1,2,3]"
+> show (’a’,False)
 "(’a’,False)"
+```
 
 ##### Read – readable types
 
 This class is dual to Show, and contains types whose values can be converted from strings of characters using the following method:
 
-read :: String -\> a
+``` haskell
+read :: String -> a
+```
 
 All the basic types Bool, Char, String, Int, Integer, Float, and Double are instances of the Read class, as are list types and tuple types, provided that their element and component types are instances. For example:
 
-\> read "False" :: Bool
-
-False  
-  
-
-\> read "’a’" :: Char
-
-’a’  
-  
-
-\> read "123" :: Int
-
-123  
-  
-
-\> read "\[1,2,3\]" :: \[Int\]
-
-\[1,2,3\]  
-  
-
-\> read "(’a’,False)" :: (Char,Bool)
-
+``` haskell
+> read "False" :: Bool
+False
+> read "’a’" :: Char
+’a’
+> read "123" :: Int
+123
+> read "[1,2,3]" :: [Int]
+[1,2,3]
+> read "(’a’,False)" :: (Char,Bool)
 (’a’,False)
+```
 
 The use of :: in these examples resolves the type of the result, which would otherwise not be able to be inferred by GHCi. In practice, however, the necessary type information can usually be inferred automatically from the context. For example, the expression not (read "False") requires no explicit type information, because the application of the logical negation function not implies that read "False" must have type Bool.
 
 Note that the result of read is undefined if its argument is not syntactically valid. For example, the expression not (read "abc") produces an error when evaluated, because "abc" cannot be read as a logical value:
 
-\> not (read "abc")
-
-\*\*\* Exception: Prelude.read: no parse
+``` haskell
+> not (read "abc")
+*** Exception: Prelude.read: no parse
+```
 
 ##### Num – numeric types
 
 This class contains types whose values are numeric, and as such can be processed using the following six methods:
 
-```cpp
+``` haskell
 (+) :: a -> a -> a
-
-
 (-) :: a -> a -> a
-
-
 (*) :: a -> a -> a
-
-
 negate :: a -> a
+abs :: a -> a signum :: a -> a
 ```
-  
-
-abs :: a -\> a signum :: a -\> a
 
 (The method negate returns the negation of a number, abs returns the absolute value, while signum returns the sign.) The basic types Int, Integer, Float, and Double are instances of the Num class. For example:
 
-\> 1 + 2
-
-3  
-  
-
-\> 1.0 + 2.0
-
-3.0  
-  
-
-\> negate 3.0
-
--3.0  
-  
-
-\> abs (-3)
-
-3  
-  
-
-\> signum (-3)
-
+``` haskell
+> 1 + 2
+3
+> 1.0 + 2.0
+3.0
+> negate 3.0
+-3.0
+> abs (-3)
+3
+> signum (-3)
 -1
+```
 
 As illustrated above, negative numbers must be parenthesised when used as arguments to functions, to ensure the correct interpretation of the minus sign. For example, abs -3 without parentheses means abs - 3, which is both the incorrect meaning here and an ill-typed expression.
 
@@ -515,21 +415,19 @@ Note that the Num class does not provide a division method, but as we shall now 
 
 This class contains types that are instances of the numeric class Num, but in addition whose values are integers, and as such support the methods of integer division and integer remainder:
 
-div :: a -\> a -\> a  
-  
-
-mod :: a -\> a -\> a
+``` haskell
+div :: a -> a -> a
+mod :: a -> a -> a
+```
 
 In practice, these two methods are often written between their two arguments by enclosing their names in single back quotes. The basic types Int and Integer are instances of the Integral class. For example:
 
-\> 7 ‘div‘ 2
-
-3  
-  
-
-\> 7 ‘mod‘ 2
-
+``` haskell
+> 7 ‘div‘ 2
+3
+> 7 ‘mod‘ 2
 1
+```
 
 For efficiency reasons, a number of prelude functions that involve both lists and integers (such as take and drop) are restricted to the type Int of finite-precision integers, rather than being applicable to any instance of the Integral class. If required, however, such generic versions of these functions are provided as part of an additional library file called Data.List.
 
@@ -537,21 +435,19 @@ For efficiency reasons, a number of prelude functions that involve both lists an
 
 This class contains types that are instances of the numeric class Num, but in addition whose values are non-integral, and as such support the methods of fractional division and fractional reciprocation:
 
-(/) :: a -\> a -\> a  
-  
-
-recip :: a -\> a
+``` haskell
+(/) :: a -> a -> a
+recip :: a -> a
+```
 
 The basic types Float and Double are instances. For example:
 
-\> 7.0 / 2.0
-
-3.5  
-  
-
-\> recip 2.0
-
+``` haskell
+> 7.0 / 2.0
+3.5
+> recip 2.0
 0.5
+```
 
 ### **3.10Chapter remarks**
 
@@ -561,60 +457,34 @@ The term Bool for the type of logical values celebrates the pioneering work of G
 
 1.What are the types of the following values?
 
-\[’a’,’b’,’c’\]  
-  
-
-```cpp
+``` haskell
+[’a’,’b’,’c’]
 (’a’,’b’,’c’)
-
-
 [(False,’O’),(True,’1’)]
-
-
 ([False,True],[’0’,’1’])
+[tail, init, reverse]
 ```
-  
-
-\[tail, init, reverse\]
 
 2.Write down definitions that have the following types; it does not matter what the definitions actually do as long as they are type correct.
 
-```cpp
+``` haskell
 bools :: [Bool]
-
-
 nums :: [[Int]]
-
-
 add :: Int -> Int -> Int -> Int
-
-
 copy :: a -> (a,a)
+apply :: (a -> b) -> a -> b
 ```
-  
-
-apply :: (a -\> b) -\> a -\> b
 
 3.What are the types of the following functions?
 
-```cpp
+``` haskell
 second xs = head (tail xs)
-
-
 swap (x,y) = (y,x)
-
-
 pair x y = (x,y)
-```
-  
-
-double x = x\*2  
-  
-
-palindrome xs = reverse xs == xs  
-  
-
+double x = x*2
+palindrome xs = reverse xs == xs
 twice f x = f (f x)
+```
 
 Hint: take care to include the necessary class constraints in the types if the functions are defined using overloaded operators.
 

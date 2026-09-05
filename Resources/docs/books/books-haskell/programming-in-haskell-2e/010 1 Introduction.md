@@ -10,69 +10,53 @@ In Haskell, a *function* is a mapping that takes one or more arguments and produ
 
 For example, a function double that takes a number x as its argument, and produces the result x + x, can be defined by the following equation:
 
+``` haskell
 double x = x + x
+```
 
 When a function is applied to actual arguments, the result is obtained by substituting these arguments into the body of the function in place of the argument names. This process may immediately produce a result that cannot be further simplified, such as a number. More commonly, however, the result will be an expression containing other function applications, which must then be processed in the same way to produce the final result.
 
 For example, the result of the application double 3 of the function double to the number 3 can be determined by the following calculation, in which each step is explained by a short comment in curly parentheses:
 
+``` haskell
 double 3
-
 ={ applying double }
-
 3 + 3
-
 ={ applying + }
-
 6
+```
 
 Similarly, the result of the nested application double (double 2) in which the function double is applied twice can be calculated as follows:
 
+``` haskell
 double (double 2)
-
 ={ applying the inner double }
-
 double (2 + 2)
-
 ={ applying + }
-
 double 4
-
 ={ applying double }
-
 4 + 4
-
 ={ applying + }
-
 8
+```
 
 Alternatively, the same result can also be calculated by starting with the outer application of the function double rather than the inner:
 
+``` haskell
 double (double 2)
-
 ={ applying the outer double }
-
 double 2 + double 2
-
 ={ applying the first double }
-
 (2 + 2) + double 2
-
 ={ applying the first + }
-
 4 + double 2
-
 ={ applying double }
-
 4 + (2 + 2)
-
 ={ applying the second + }
-
 4 + 4
-
 ={ applying + }
-
 8
+```
 
 However, this approach requires two more steps than our original version, because the expression double 2 is duplicated in the first step and hence simplified twice. In general, the order in which functions are applied in a calculation does not affect the value of the final result, but it may affect the number of steps required, and whether the calculation process terminates. These issues are explored in more detail when we consider how expressions are evaluated in chapter 15.
 
@@ -82,58 +66,48 @@ What is functional programming? Opinions differ, and it is difficult to give a p
 
 To illustrate these ideas, let us consider the task of computing the sum of the integers (whole numbers) between one and some larger number n. In many current programming languages, this would normally be achieved using two integer variables whose values can be changed over time by means of the assignment operator =, with one such variable used to accumulate the total, and the other used to count from 1 to n. For example, in Java the following program computes the required sum using this approach:
 
+``` haskell
 int total = 0;
-
-for (int count = 1; count \<= n; count++)  
-total = total + count;
+for (int count = 1; count <= n; count++)total = total + count;
+```
 
 That is, we first initialise an integer variable total to zero, and then enter a loop that ranges an integer variable count from 1 to n, adding the current value of the counter to the total each time round the loop.
 
 In the above program, the basic method of computation is *changing stored values*, in the sense that executing the program results in a sequence of assignments. For example, the case of n = 5 gives the following sequence, in which the final value assigned to the variable total is the required sum:
 
+``` haskell
 total = 0;
-
 count = 1;
-
 total = 1;
-
 count = 2;
-
 total = 3;
-
 count = 3;
-
 total = 6;
-
 count = 4;
-
 total = 10;
-
 count = 5;
-
 total = 15;
+```
 
 In general, programming languages such as Java in which the basic method of computation is changing stored values are called *imperative* languages, because programs in such languages are constructed from imperative instructions that specify precisely how the computation should proceed.
 
 Now let us consider computing the sum of the numbers between one and n using Haskell. This would normally be achieved using two library functions, one called \[..\] that is used to produce the list of numbers between 1 and n, and the other called sum that is used to produce the sum of this list:
 
-sum \[1..n\]
+``` haskell
+sum [1..n]
+```
 
 In this program, the basic method of computation is *applying functions to arguments*, in the sense that executing the program results in a sequence of applications. For example, the case of n = 5 gives the following sequence, in which the final value in the sequence is the required sum:
 
-sum \[1..5\]
-
-={ applying \[..\] }
-
-sum \[1,2,3,4,5\]
-
+``` haskell
+sum [1..5]
+={ applying [..] }
+sum [1,2,3,4,5]
 ={ applying sum }
-
 1 + 2 + 3 + 4 + 5
-
 ={ applying + }
-
 15
+```
 
 Most imperative languages provide some form of support for programming with functions, so the Haskell program sum \[1..n\] could be translated into such languages. However, many imperative languages do not *encourage* programming in the functional style. For example, many such languages discourage or prohibit functions from being stored in data structures such as lists, from constructing intermediate structures such as the list of numbers in the above example, from taking functions as arguments or producing functions as results, or from being defined in terms of themselves. In contrast, Haskell imposes no such restrictions on how functions can be used, and provides a range of features to make programming with functions both simple and powerful.
 
@@ -202,39 +176,34 @@ We conclude this chapter with three small examples that give a taste of programm
 
 Recall the function sum used earlier in this chapter, which produces the sum of a list of numbers. In Haskell, sum can be defined using two equations:
 
-sum \[\]= 0
-
+``` haskell
+sum []= 0
 sum (n:ns) = n + sum ns
+```
 
 The first equation states that the sum of the empty list is zero, while the second states that the sum of any non-empty list comprising a first number n and a remaining list of numbers ns is given by adding n and the sum of ns. For example, the result of sum \[1,2,3\] can be calculated as follows:
 
-sum \[1,2,3\]
-
+``` haskell
+sum [1,2,3]
 ={ applying sum }
-
-1 + sum \[2,3\]
-
+1 + sum [2,3]
 ={ applying sum }
-
-1 + (2 + sum \[3\])
-
+1 + (2 + sum [3])
 ={ applying sum }
-
-1 + (2 + (3 + sum \[\]))
-
+1 + (2 + (3 + sum []))
 ={ applying sum }
-
 1 + (2 + (3 + 0))
-
 ={ applying + }
-
 6
+```
 
 Note that even though the function sum is defined in terms of itself and is hence *recursive*, it does not loop forever. In particular, each application of sum reduces the length of the argument list by one, until the list eventually becomes empty, at which point the recursion stops and the additions are performed. Returning zero as the sum of the empty list is appropriate because zero is the *identity* for addition. That is, 0 + x = x and x + 0 = x for any number x.
 
 In Haskell, every function has a *type* that specifies the nature of its arguments and results, which is automatically inferred from the definition of the function. For example, the function sum defined above has the following type:
 
-Num a =\> \[a\] -\> a
+``` haskell
+Num a => [a] -> a
+```
 
 This type states that for any type a of numbers, sum is a function that maps a list of such numbers to a single such number. Haskell supports many different types of numbers, including integers such as 123, and floating-point numbers such as 3.14159. Hence, for example, sum could be applied to a list of integers, as in the calculation above, or to a list of floating-point numbers.
 
@@ -244,57 +213,47 @@ Types provide useful information about the nature of functions, but, more import
 
 Now let us consider a more sophisticated function concerning lists, which illustrates a number of other aspects of Haskell. Suppose that we define a function called qsort by the following two equations:
 
-![image](media/Images/Chapter_1_image_8_13.png)
+``` haskell
+```
 
 In this definition, ++ is an operator that appends two lists together; for example, \[1,2,3\] ++ \[4,5\] = \[1,2,3,4,5\]. In turn, where is a keyword that introduces local definitions, in this case a list smaller comprising all elements a from the list xs that are less than or equal to x, together with a list larger comprising all elements b from xs that are greater than x. For example, if x = 3 and xs = \[5,1,4,2\], then smaller = \[1,2\] and larger = \[5,4\].
 
 What does qsort actually do? First of all, we note that it has no effect on lists with a single element, in the sense that qsort \[x\] = \[x\] for any x. It is easy to verify this property using a simple calculation:
 
-qsort \[x\]
-
+``` haskell
+qsort [x]
 ={ applying qsort }
-
-qsort \[\] ++ \[x\] ++ qsort \[\]
-
+qsort [] ++ [x] ++ qsort []
 ={ applying qsort }
-
-\[\] ++ \[x\] ++ \[\]
-
+[] ++ [x] ++ []
 ={ applying ++ }
-
-\[x\]
+[x]
+```
 
 In turn, we now work through the application of qsort to an example list, using the above property to simplify the calculation:
 
-qsort \[3,5,1,4,2\]
-
+``` haskell
+qsort [3,5,1,4,2]
 ={ applying qsort }
-
-qsort \[1,2\] ++ \[3\] ++ qsort \[5,4\]
-
+qsort [1,2] ++ [3] ++ qsort [5,4]
 ={ applying qsort }
-
-(qsort \[\] ++ \[1\] ++ qsort \[2\]) ++ \[3\]
-
-++ (qsort \[4\] ++ \[5\] ++ qsort \[\])
-
+(qsort [] ++ [1] ++ qsort [2]) ++ [3]
+++ (qsort [4] ++ [5] ++ qsort [])
 ={ applying qsort, above property}
-
-(\[\] ++ \[1\] ++ \[2\]) ++ \[3\] ++ (\[4\] ++ \[5\] ++ \[\])
-
+([] ++ [1] ++ [2]) ++ [3] ++ ([4] ++ [5] ++ [])
 ={ applying ++ }
-
-\[1,2\] ++ \[3\] ++ \[4,5\]
-
+[1,2] ++ [3] ++ [4,5]
 ={ applying ++ }
-
-\[1,2,3,4,5\]
+[1,2,3,4,5]
+```
 
 In summary, qsort has sorted the example list into numerical order. More generally, this function produces a sorted version of any list of numbers. The first equation for qsort states that the empty list is already sorted, while the second states that any non-empty list can be sorted by inserting the first number between the two lists that result from sorting the remaining numbers that are smaller and larger than this number. This method of sorting is called *quicksort*, and is one of the best such methods known.
 
 The above implementation of quicksort is an excellent example of the power of Haskell, being both clear and concise. Moreover, the function qsort is also more general than might be expected, being applicable not just with numbers, but with any type of ordered values. More precisely, the type
 
-qsort :: Ord a =\> \[a\] -\> \[a\]
+``` haskell
+qsort :: Ord a => [a] -> [a]
+```
 
 states that, for any type a of ordered values, qsort is a function that maps between lists of such values. Haskell supports many different types of ordered values, including numbers, single characters such as ’a’, and strings of characters such as "abcde". Hence, for example, the function qsort could also be used to sort a list of characters, or a list of strings.
 
@@ -302,19 +261,24 @@ states that, for any type a of ordered values, qsort is a function that maps bet
 
 Our third and final example further emphasises the level of precision and generality that can be achieved in Haskell. Consider a function called seqn that takes a list of input/output actions, such as reading or writing a single character, performs each of these actions in sequence, and returns a list of resulting values. In Haskell, this function can be defined as follows:
 
-![image](media/Images/Chapter_1_image_10_15.png)
+``` haskell
+```
 
 These two equations state that if the list of actions is empty we return the empty list of results, otherwise we perform the first action in the list, then perform the remaining actions, and finally return the list of results that were produced. For example, the expression seqn \[getChar,getChar,getChar\] reads three characters from the keyboard using the action getChar that reads a single character, and returns a list containing the three characters.
 
 The interesting aspect of the function seqn is its type. One possible type that can inferred from the above definition is the following:
 
-seqn :: \[IO a\] -\> IO \[a\]
+``` haskell
+seqn :: [IO a] -> IO [a]
+```
 
 This type states that seqn maps a list of IO (input/output) actions that produce results of some type a to a single IO action that produces a list of such results, which captures the high-level behaviour of seqn in a clear and concise manner. More importantly, however, the type also makes explicit that the function seqn involves the *side effect* of performing input/output actions. Using types in this manner to keep a clear distinction between functions that are pure and those that involve side effects is a central aspect of Haskell, and brings important benefits in terms of both programming and reasoning.
 
 In fact, the function seqn is more general than it may initially appear. In particular, the manner in which the function is defined is not specific to the case of input/output actions, but is equally valid for other forms of effects too. For example, it can also be used to sequence actions that may change stored values, fail to succeed, write to a log file, and so on. This flexibility is captured in Haskell by means of the following more general type:
 
-seqn :: Monad m =\> \[m a\] -\> m \[a\]
+``` haskell
+seqn :: Monad m => [m a] -> m [a]
+```
 
 That is, for any *monadic* type m, of which IO is just one example, seqn maps a list of actions of type m a into a single action that returns a list of values of type a. Being able to define generic functions such as seqn that can be used with different kinds of effects is a key feature of Haskell.
 

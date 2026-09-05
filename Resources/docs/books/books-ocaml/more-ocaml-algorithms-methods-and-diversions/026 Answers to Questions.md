@@ -8,7 +8,7 @@ Hints may be found on page 309.
 
 This can be achieved by folding the subtraction operator over the deductions, with the starting accumulator set to the budget:
 
-> ![](media/images/00250.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00250.jpg)
 
 Partial application can be used, as in the second definition.
 
@@ -16,7 +16,7 @@ Partial application can be used, as in the second definition.
 
 We can use an accumulator starting at zero, and increment it once for each element processed:
 
-> ![](media/images/00026.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00026.jpg)
 
 Since we ignore the element itself, the function is polymorphic.
 
@@ -24,7 +24,7 @@ Since we ignore the element itself, the function is polymorphic.
 
 If the list is empty, we return `None`, otherwise we use a left fold which simply replaces the accumulator with each successive element from the list. We must initialize the accumulator, so we pick the first element for that (we have already eliminated the case where there are no elements, so `List.hd `will succeed).
 
-> ![](media/images/00134.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00134.jpg)
 
 Not quite idiomatic.
 
@@ -32,7 +32,7 @@ Not quite idiomatic.
 
 If we start from the left, consing each element to the accumulator (which is initially the empty list), the list will be reversed.
 
-> ![](media/images/00228.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00228.jpg)
 
 Since the accumulator is the empty list (which has type α list), the function remains polymorphic, having the type we would expect.
 
@@ -40,7 +40,7 @@ Since the accumulator is the empty list (which has type α list), the function r
 
 The accumulator begins set to `false`. For each element, we calculate the logical OR of the element tested for equality and the accumulator. If at least one `true `occurs, the result will be `true`.
 
-> ![](media/images/00036.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00036.jpg)
 
 Note that this is less efficient than `List.mem `because there is no early exit – the whole list is processed in every case.
 
@@ -55,7 +55,7 @@ This is a classic problem. We either need to
 
 With `fold_left `we can detect when we are at the first word, by inspecting the accumulator, and use the second method.
 
-> ![](media/images/00203.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00203.jpg)
 
 Note that the requirement that the words be non-empty is important here. The efficiency is poor, however, since each string concatenation builds a new string. The Standard Library Buffer module is a better approach here.
 
@@ -63,7 +63,7 @@ Note that the requirement that the words be non-empty is important here. The eff
 
 We can use the built-in `max `function to update the accumulator.
 
-> ![](media/images/00220.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00220.jpg)
 
 The current element is ignored.
 
@@ -73,7 +73,7 @@ We can compare the speed of `List.mem `and `member `with the help of the `Unix.g
 
 ------------------------------------------------------------------------
 
-> ![](media/images/00041.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00041.jpg)
 
  
 
@@ -92,7 +92,7 @@ There is a significant speed penalty in our version of the member function, at l
 
 This is similar to the `lseq `function in the text, but we double every time instead of adding one.
 
-> ![](media/images/00180.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00180.jpg)
 
 Having written the function which, given a number, doubles from that point, we then just code the list itself by starting at 1.
 
@@ -100,7 +100,7 @@ Having written the function which, given a number, doubles from that point, we t
 
 If we are asked to fetch the 0th element, we already have it – as the head of the lazy list. If not, we force evaluation of the tail, and recurse.
 
-> ![](media/images/00256.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00256.jpg)
 
 Of course, this does not terminate on bad inputs (when n \< 0). Error detection should be added.
 
@@ -108,7 +108,7 @@ Of course, this does not terminate on bad inputs (when n \< 0). Error detection 
 
 Below, the function `lrepeating_inner `takes the current list `c `and the original list `l`. Matching on `c`, we build the lazy list. If we reach the last element of the input list, we start again, with the original list, which is always retained.
 
-> ![](media/images/00064.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00064.jpg)
 
 Note that we cannot build from an empty list, since there could be no head.
 
@@ -116,13 +116,13 @@ Note that we cannot build from an empty list, since there could be no head.
 
 The first two fibonacci numbers are defined to be 0 and 1. Thereafter, we keep the current and previous number, and generate the lazy list.
 
-> ![](media/images/00003.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00003.jpg)
 
 5
 
 This is slightly delicate. We must force the tail twice, to reveal new elements for the heads of the two output lists, and the final tail for the next time each list is forced.
 
-> ![](media/images/00266.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00266.jpg)
 
 Note that we cannot hoist the calculation of `unleave t `into a `let `so as to do it once, since to do so would not delay evaluation.
 
@@ -130,7 +130,7 @@ Note that we cannot hoist the calculation of `unleave t `into a `let `so as to d
 
 If we write a function which, given a number, gives the correct string, then the lazy list itself is easy to build with `lmap `and `lseq`.
 
-> ![](media/images/00260.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00260.jpg)
 
 3 (Named Tuples with Records)
 
@@ -153,11 +153,11 @@ There is no reason to use this rather than `:= `of course.
 
 The function `Unix.time `returns the current time. The function `Unix.localtime `builds from this a record of type Unix.tm. First we will need two ancillary functions:
 
-> ![](media/images/00130.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00130.jpg)
 
 Now the main function, which both uses the shortened form of a record pattern, and names only the fields we need:
 
-> ![](media/images/00264.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00264.jpg)
 
 Note that the names bound by the pattern do not include the `Unix `prefix.
 
@@ -181,11 +181,11 @@ We can use multiple type parameters (which are written with parentheses and comm
 
 For the first part, we can use the function `Gc.stat `to return a Gc.stat record. Then we can write various components to the given file (here, we have chosen just a few):
 
-> ![](media/images/00110.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00110.jpg)
 
 For the second part, we define names for the magic numbers given in the documentation. We can then write a function `change_verbosity `which adds them up to make the new flags field, and uses `Gc.get `together with the `with `syntax to build a new record to be passed to `Gc.set`:
 
-> ![](media/images/00245.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00245.jpg)
 
 4 (Generalized Input/Output)
 
@@ -193,7 +193,7 @@ For the second part, we define names for the magic numbers given in the document
 
 This is a simple modification of `input_of_string `from the text, replacing string operators with array ones.
 
-> ![](media/images/00291.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00291.jpg)
 
 Note that an array of characters like this requires much more space as a string.
 
@@ -201,7 +201,7 @@ Note that an array of characters like this requires much more space as a string.
 
 We create a Buffer.t, attempt to read the specified number of characters, and then return the contents. If one of the calls to `i.input_char () `raises the `End_of_file `exception, we return the buffer contents anyway – it will contain the characters read so far.
 
-> ![](media/images/00224.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00224.jpg)
 
 3
 
@@ -216,11 +216,11 @@ We add a function of the expected type to the input. The option `None `will repr
 
 Now for a new `input_of_channel`. We try to build the `Some `option, returning `None `if the `End_of_file` exception is raised.
 
-> ![](media/images/00198.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00198.jpg)
 
 The `input_of_string `function is another similar modification. This time, there is no need for exception handling.
 
-> ![](media/images/00209.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00209.jpg)
 
 4
 
@@ -235,7 +235,7 @@ We add the function of type unit → int.
 
 Now, having defined as a convenience, the name `no_more `for the -1, we can modify `input_of_channel `and `input_of_string `easily:
 
-> ![](media/images/00052.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00052.jpg)
 
 These functions have none of the advantages of the exception-raising or option-returning ones, but they are very fast indeed.
 
@@ -243,7 +243,7 @@ These functions have none of the advantages of the exception-raising or option-r
 
 We alter `input_of_channel `to check for a newline and raise `End_of_file `in that case.
 
-> ![](media/images/00191.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00191.jpg)
 
 Now we can create one of these special inputs from standard input, and use our `input_string `function to build a string from the user’s input, ending when the return key is pressed. For example:
 
@@ -255,7 +255,7 @@ Now we can create one of these special inputs from standard input, and use our `
 
 Ideal functions to use when defining the new type already exist in the Buffer module. Then, we can build an example, where we give a name to the buffer, build an input from it and process it, retrieving its contents afterwards.
 
-> ![](media/images/00031.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00031.jpg)
 
 5 (Streams of Bits)
 
@@ -263,7 +263,7 @@ Ideal functions to use when defining the new type already exist in the Buffer mo
 
 We can read quickly if the number of bits wanted is 8 and we happen to be at the beginning of a byte. In this case we can call the underlying output’s `input_char `function directly.
 
-> ![](media/images/00172.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00172.jpg)
 
 If the conditions are not met, we fall back to the old `getval `function. This will be faster if we frequently read data aligned-byte-by-aligned-byte, but we still need the flexibility of a stream of bits when required.
 
@@ -271,13 +271,13 @@ If the conditions are not met, we fall back to the old `getval `function. This w
 
 We simply replace the int operators with those for Int32.t:
 
-> ![](media/images/00015.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00015.jpg)
 
 3
 
 Our precondition this time is that the number of bits to be written is 8 and the `obit `field is set to its initial value, 7. Then we can use the `output_char `function of the underlying output.
 
-> ![](media/images/00156.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00156.jpg)
 
 Otherwise, we fall back to the old `putval `function.
 
@@ -285,7 +285,7 @@ Otherwise, we fall back to the old `putval `function.
 
 The integer functions are replaced by ones from the Int32 module:
 
-> ![](media/images/00296.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00296.jpg)
 
 5
 
@@ -298,11 +298,11 @@ We add a field `rewind `which will move the position in the output backwards one
 
 Now we can rewrite, for example, `output_of_string `for this new type:
 
-> ![](media/images/00102.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00102.jpg)
 
 We alter `putbit `appropriately:
 
-> ![](media/images/00098.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00098.jpg)
 
 6 (Compressing Data)
 
@@ -314,27 +314,27 @@ We will need to look through the input list of integers (bytes), finding same an
 
 The `Same `case holds a (length, value) pair and `Diff `just a list of bytes. Now we can write a function `get_same` which, given the first value, the current count, and the list, returns a pair of the final count of like characters, and the remaining list:
 
-> ![](media/images/00230.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00230.jpg)
 
 Similarly, we can define a function to read a different run into an accumulator, returning the run and the remaining list. This function will be called only when `get_same `returned a run of length one.
 
-> ![](media/images/00078.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00078.jpg)
 
 Now we can write a function which uses both of these functions to get a single run, creating an instance of our new data type:
 
-> ![](media/images/00038.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00038.jpg)
 
 Now, we use the defined rules to build a function which makes a list of bytes from a run:
 
-> ![](media/images/00143.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00143.jpg)
 
 With all this done, it is easy to define the compression function itself, which accumulates runs, concatenating them when all the data has been processed. We must be sure to add the EOD marker at the end.
 
-> ![](media/images/00239.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00239.jpg)
 
 Decompression is rather simpler, making use of our `take `and `drop `functions from the Util module described on page xiii. We read each run and expand it to a list of bytes, accumulating them until end of data.
 
-> ![](media/images/00047.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00047.jpg)
 
 Note a little cheat – we use functions from the Array module to expand the `Same `run.
 
@@ -346,15 +346,15 @@ The tree carries no information in its branches (since no code can be a prefix o
 
 Now, we can define the function to add a code to an existing tree. For example, `add_elt Lf ([0; 1], 67)` adds the code `[0; 1] `for the run length 67. This will build the tree `Br (Br (Lf, Code 67), Lf)`. We match on the code, building the tree as we go left or right.
 
-> ![](media/images/00065.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00065.jpg)
 
 Now, to build the whole tree, we just use repeated insertion with `fold_left`, having built the (code, run length) pairs:
 
-> ![](media/images/00020.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00020.jpg)
 
 Now, for example, we can build the white terminating codes as a tree:
 
-> ![](media/images/00161.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00161.jpg)
 
 (`Util.from a b `gives the list of numbers starting at `a `and ending at `b `in ascending order). The function succeeds, verifying that there are no collisions, and yields:
 
@@ -402,15 +402,15 @@ If we try to re-compress this data, with `compress_string compressed 880 1`, the
 
 We can re-use the `read_up_to `function to build our histogram. Given white and black arrays, each of length 1792 and with elements initialized to zero, the input bits and the width and height, we can repeatedly call `read_up_to`. We must maintain a count of how many pixels are left to be read, and an additional count of how many are left in this line, so the correct width can be passed to the `read_up_to` function.
 
-> ![](media/images/00002.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00002.jpg)
 
 Now it is easy to build two histograms – one for white and one for black, and return them:
 
-> ![](media/images/00267.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00267.jpg)
 
 We can define a simple function to print the histogram, eliding any zero counts:
 
-> ![](media/images/00074.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00074.jpg)
 
 Here is the histogram for white runs on our example data:
 
@@ -463,7 +463,7 @@ And here is the histogram for black runs:
 
 If α is int then the first and second argument can be confused. We can fix this by adding labels and calling `Array.make`. Notice the use of punning here.
 
-> ![](media/images/00173.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00173.jpg)
 
 Now the function can be called without confusion:
 
@@ -478,7 +478,7 @@ Of course, it can still be called without labels.
 
 We can define separate types for the start and length so that their names must be mentioned when calling the function.
 
-> ![](media/images/00277.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00277.jpg)
 
 Not nearly as convenient as labels, though.
 
@@ -486,13 +486,13 @@ Not nearly as convenient as labels, though.
 
 There are three functions where confusion may arise, and we can label them with simple wrappers. They are the functions where multiple arguments have the same type, and so may be confused.
 
-> ![](media/images/00235.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00235.jpg)
 
 4
 
 We can make the accumulator an optional argument. Now the caller can call the function as if it were the same as `List.map`.
 
-> ![](media/images/00244.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00244.jpg)
 
 The optional argument must still appear in the interface, of course, so we might still prefer the old approach of wrapping it up and only exposing the wrapper.
 
@@ -502,13 +502,13 @@ The optional argument must still appear in the interface, of course, so we might
 
 We can use `Printf.bprintf `to accumulate the individual parts, making sure to deal with the final element specially. The outer function sets everything up.
 
-> ![](media/images/00091.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00091.jpg)
 
 2
 
 Again, `Printf.bprintf `is the key. This time, we can calculate the initial buffer size exactly.
 
-> ![](media/images/00223.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00223.jpg)
 
 We have used a width specifier of `2 `and the `0 `flag to make sure that characters with code 0..15 are padded with a zero.
 
@@ -530,7 +530,7 @@ So, the result is:
 
 We can use `List.iter `to print a table by applying this to each of a list of numbers in turn.
 
-> ![](media/images/00293.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00293.jpg)
 
 9 (Searching for Things)
 
@@ -538,21 +538,21 @@ We can use `List.iter `to print a table by applying this to each of a list of nu
 
 For the first part, where all matches are considered, we can rewrite `search `with an extra argument to count the matches, restructuring its logic so as not to finish upon the first match.
 
-> ![](media/images/00208.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00208.jpg)
 
 There is no need to rewrite the `at `function. Now, for the version which considers only non-overlapping matches, we just jump by the length of the pattern `ss `upon a match:
 
-> ![](media/images/00108.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00108.jpg)
 
 2
 
 It is simple to write a function which returns the length of the longest matching prefix at the beginning of a list:
 
-> ![](media/images/00190.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00190.jpg)
 
 Now, we can write a function which keeps track of the position and length of the longest prefix found, returning them when the whole list has been searched.
 
-> ![](media/images/00011.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00011.jpg)
 
 Here, `currpos `is the current position, `bestpos `the position of the longest matching prefix found so far, and `bestlen `the length of the longest prefix so far.
 
@@ -560,7 +560,7 @@ Here, `currpos `is the current position, `bestpos `the position of the longest m
 
 We can write a simple profiling function which, given a search function, measures its running time. This allows us to compare the naive and better versions of `search `we wrote for searching in strings:
 
-> ![](media/images/00171.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00171.jpg)
 
 Compiling with `ocamlc `on the Author’s machine:
 
@@ -590,7 +590,7 @@ We can add a case to the main search. We must check the character following the 
 
 The Standard Library function `String.uppercase `can be used, in conjunction with the optional boolean argument:
 
-> ![](media/images/00014.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00014.jpg)
 
 Both the pattern and string must be upper case, of course.
 
@@ -600,7 +600,7 @@ Both the pattern and string must be upper case, of course.
 
 The combinations of a list can be generated by calculating the combinations of the tail. Then consider two possibilities – the head is included in this combination, or it is not:
 
-> ![](media/images/00155.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00155.jpg)
 
 Note the base case is the list containing the empty list, not just the empty list.
 
@@ -608,7 +608,7 @@ Note the base case is the list containing the empty list, not just the empty lis
 
 We build this from `perms `and the `combinations `function we just wrote:
 
-> ![](media/images/00197.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00197.jpg)
 
 We used the tail-recursive version of `perms`, of course.
 
@@ -616,13 +616,13 @@ We used the tail-recursive version of `perms`, of course.
 
 This has roughly the same shape as `combinations`, with two differences: we keep a counter to make sure the computation ends, and we always add something to the list – either `true `or `false`.
 
-> ![](media/images/00139.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00139.jpg)
 
 4
 
 We repeatedly swap elements from opposite ends of the sub-array, given an array, offset and length:
 
-> ![](media/images/00276.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00276.jpg)
 
 It is important to make sure it works for the empty range, an even-length sub-array and an odd-length sub-array. You could add detection of invalid arguments to this function.
 
@@ -630,23 +630,23 @@ It is important to make sure it works for the empty range, an even-length sub-ar
 
 The two functions `first `and `last `turn out to be even more awkward than their imperative counterparts. The function `first`, given a list, returns a tuple of three things: the elements before the “first” item, the first item itself, and those afterward. This is done by reversing the input list and looking for the first appropriate item, since this is easier than looking for the last appropriate item in the original input:
 
-> ![](media/images/00122.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00122.jpg)
 
 The `last `function is still more verbose: we locate the correct item by sorting and finding the smallest item greater than `f`. Then we can call `split_at `to return the item before and after the instance of `f`.
 
-> ![](media/images/00154.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00154.jpg)
 
 Now, the `next_permutation `function calls `first `and `last`, and stitches everything together:
 
-> ![](media/images/00159.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00159.jpg)
 
 Here is the equivalent `non_increasing `function, which is simple:
 
-> ![](media/images/00164.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00164.jpg)
 
 The final `all_permutations `function is now easy.
 
-> ![](media/images/00167.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00167.jpg)
 
 Conclusion: converting an imperative algorithm mechanically to a functional style is not always useful.
 
@@ -656,7 +656,7 @@ Conclusion: converting an imperative algorithm mechanically to a functional styl
 
 It is not possible to measure directly the memory used by an OCaml data structure (though one could calculate it by reading the section in the OCaml manual about data representation), but we can use the Gc module to measure the number of words allocated whilst building the structure, by using the data in `Gc.counters `before and after building each structure, and the given formula “memory used since start of program = minor words + major words - promoted words”:
 
-![](media/images/00170.jpg)
+![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00170.jpg)
 
 Notice that a huge amount more is required for the tree structures, because every time a new element is inserted, part of the tree is rewritten. In the case of the Red-Black tree, rotations involve allocating new memory too.
 
@@ -664,7 +664,7 @@ Notice that a huge amount more is required for the tree structures, because ever
 
 We can add the type for the `union `function to our signature:
 
-> ![](media/images/00177.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00177.jpg)
 
 For lists, the `union `function is easy, we just insert each element of `b `into the list `a`. Duplicates will be removed correctly:
 
@@ -684,11 +684,11 @@ The built-in Set module, which is considered in Question 3, provides a particula
 
 We write a version of our set signature which is specialized to integers. Then, we use the syntax given in the question to build the module S. This contains the type S.t, the value `S.empty `and the functions `S.elements`, `S.add`, `S.mem`, and `S.cardinal`, which we can use to write the functions to match our signature.
 
-> ![](media/images/00183.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00183.jpg)
 
 Now the benchmarking for insertion and membership is simple:
 
-> ![](media/images/00186.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00186.jpg)
 
 Here is the output:
 
@@ -708,7 +708,7 @@ Now, the solutions are tedious to write out, but not difficult. The result is Fi
 
 ------------------------------------------------------------------------
 
-> ![](media/images/00298.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00298.jpg)
 
  
 
@@ -722,11 +722,11 @@ Now, the solutions are tedious to write out, but not difficult. The result is Fi
 
 We already know that O wins 131184 times. By a similar use of `num_wins `we find that X wins 77904 times. So, as expected, going first is an advantage. We must write another function to find how many draws there are. A board is drawn if it is full but does not contain a winning configuration of either X or O:
 
-> ![](media/images/00195.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00195.jpg)
 
 This tells us that there are 46080 drawn games. Since each game must be either won or drawn, the total number of possible games is 131184 + 77904 + 46080 = 255168. We can check this by writing a function to find the terminal nodes directly:
 
-> ![](media/images/00201.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00201.jpg)
 
 This gives 255168 too.
 
@@ -738,21 +738,21 @@ We need make only two small changes. Delaying evaluation in the type…
 
 …and altering `next_moves `to insert that delay:
 
-> ![](media/images/00204.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00204.jpg)
 
 Now, we can carefully write a function `select_case `which, given a starting board such as `[E; E; E; E; O;` `E; E; E; E] `and the game tree, returns the portion of the game tree matching that board. Due to laziness, the rest of the tree is now not explored.
 
 We can now alter `num_wins `easily for the delayed case, and write a function `pos_wins `which returns the number of wins starting from a position like `[E; E; E; E; O; E; E; E; E]`.
 
-> ![](media/images/00240.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00240.jpg)
 
 Similarly, we can modify the `drawn `function to work with the new lazy structure, and write a new function `draws `to count the drawn positions from a given starting board such as `[E; E; E; E; O; E; E; E;` `E]`:
 
-> ![](media/images/00213.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00213.jpg)
 
 Now we can define starting boards for the centre spot, the middle of a side, and a corner. We can now use `pos_wins `and `draws`, taking account of symmetry to enumerate all the cases:
 
-> ![](media/images/00216.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00216.jpg)
 
 This gives the following:
 
@@ -780,7 +780,7 @@ The strategy of using the magic square representation is to build a problem whic
 - `drawn `which, given the integer lists for X and O, works out if the game has been drawn; and
 - `possibles `which, given all the non-empty squares, lists the empty ones.
 
-> ![](media/images/00086.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00086.jpg)
 
 Now, the type contains a list of X positions, a list of O positions, and the list of child nodes:
 
@@ -788,11 +788,11 @@ Now, the type contains a list of X positions, a list of O positions, and the lis
 
 We do not need a type for the turn this time – we can just use a boolean. The function `next_moves `follows the usual pattern – if the game is won or drawn, the list of child nodes is empty. Otherwise, we build child nodes for each possible position the next player could place his piece.
 
-> ![](media/images/00219.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00219.jpg)
 
 ------------------------------------------------------------------------
 
-> ![](media/images/00229.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00229.jpg)
 
  
 
@@ -802,7 +802,7 @@ We do not need a type for the turn this time – we can just use a boolean. The 
 
 The game tree is shown in Figure A.3. We can write a simple `xwins `function to test our new function returns the same result as the original.
 
-> ![](media/images/00088.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00088.jpg)
 
 13 (Representing Documents)
 
@@ -856,7 +856,7 @@ To construct it from our data type in OCaml:
 
 We must search for dictionary entries inside `Pdf.Dictionary`, of course, but also inside `Pdf.Stream`, which contains a dictionary, and `Pdf.Array `which may do so too. Two mutually-recursive functions will do:
 
-> ![](media/images/00238.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00238.jpg)
 
 14 (Writing Documents)
 
@@ -866,7 +866,7 @@ We can alter the functions `string_of_array `and `string_of_dictionary `to simpl
 
 ------------------------------------------------------------------------
 
-> ![](media/images/00123.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00123.jpg)
 
  
 
@@ -896,67 +896,67 @@ The full code can be found in the online resources. See the hint for a little mo
 
 Since we are working with circles, let us define π:
 
-> ![](media/images/00249.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00249.jpg)
 
 We can write a simple function to return the point at a given angle, distance `r `from point (`x`, `y`):
 
-> ![](media/images/00255.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00255.jpg)
 
 Now, we can build a list of all these points, remembering to stop before we have been around the whole circle. The argument `step `is the angle between successive points.
 
-> ![](media/images/00259.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00259.jpg)
 
 Finally, we generate a `Move `to the first points, `Line`s to the rest, and a final `Close`.
 
-> ![](media/images/00150.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00150.jpg)
 
 For our example, we made a filled circle of radius 100 centred at (300, 300) with `Pdfpage.Fill`:
 
-![](media/images/00271.jpg)
+![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00271.jpg)
 
 2
 
 First, a function to build a pseudo-random circle somewhere on our page, making sure to overlap the edges:
 
-> ![](media/images/00275.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00275.jpg)
 
 Now, a little utility function to build a list of n things when given a function which generates them, such as `random_circle`:
 
-> ![](media/images/00280.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00280.jpg)
 
 Now it is simple to build a hundred random grey filled circles and append them all together with `List.concat`:
 
-> ![](media/images/00117.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00117.jpg)
 
-![](media/images/00289.jpg)
+![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00289.jpg)
 
 3
 
 We can add `FillColourRGB of float * float * float `and `StrokeColourRGB of float * float * float` to the data type and associated functions, and then modify our previous example:
 
-> ![](media/images/00295.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00295.jpg)
 
 If you are reading the PDF ebook version of this book, the following image is in colour:
 
-![](media/images/00058.jpg)
+![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00058.jpg)
 
 4
 
 We add `LineWidth of float `to the data type and associated functions. Now we set the line width and stroke colour and draw the large circle:
 
-> ![](media/images/00055.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00055.jpg)
 
-![](media/images/00039.jpg)
+![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00039.jpg)
 
 5
 
 We add `SetClip `to the data type and associated functions. Then we set the clip before stroking.
 
-> ![](media/images/00178.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00178.jpg)
 
 The single path is used both for clipping and for the stroke:
 
-![](media/images/00254.jpg)
+![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00254.jpg)
 
 16 (Adding Text)
 
@@ -989,7 +989,7 @@ We pass `max_chars `to `clean_lines `and alter our call to `downfrom`:
 
 Here is an example of the new program, with text typeset on a much smaller page (it runs off the bottom, of course):
 
-![](media/images/00062.jpg)
+![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00062.jpg)
 
 2
 
@@ -997,7 +997,7 @@ We can implement this by manually inserting space characters into the buffer in 
 
 ------------------------------------------------------------------------
 
-> ![](media/images/00115.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00115.jpg)
 
  
 
@@ -1013,7 +1013,7 @@ The result is shown in Figure A.6.
 
 ------------------------------------------------------------------------
 
-> ![](media/images/00288.jpg)  
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00288.jpg)  
 
 > Figure A.6:
 
@@ -1027,19 +1027,19 @@ The page height can be calculated easily:
 
 Now, we can use `Pdfpage.SetCharacterSpacing `in `typeset_line_at`, adding an extra argument for the spacing:
 
-> ![](media/images/00282.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00282.jpg)
 
 The spacing is calculated as prescribed, only for `Full `lines:
 
-> ![](media/images/00128.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00128.jpg)
 
 In a revised `typeset_page`, we can calculate the correct spacings, passing them to `typeset_line_at`:
 
-> ![](media/images/00262.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00262.jpg)
 
 Here is an example page. You can see that the lines are fully justified – flush to the left and right margins.
 
-![](media/images/00033.jpg)
+![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00033.jpg)
 
 4
 
@@ -1047,11 +1047,11 @@ The answer to this question is too long to be contained in the text. Consult the
 
 ------------------------------------------------------------------------
 
-![](media/images/00187.jpg)  ![](media/images/00290.jpg)
+![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00187.jpg)  ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00290.jpg)
 
-![](media/images/00097.jpg)  ![](media/images/00196.jpg)
+![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00097.jpg)  ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00196.jpg)
 
-![](media/images/00207.jpg)  
+![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00207.jpg)  
 
 > Figure A.7:
 

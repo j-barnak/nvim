@@ -1,5 +1,3 @@
-![](media/index-355_1.jpg)
-
 Concurrent Access to Resources: Locking
 
  
@@ -486,7 +484,7 @@ Use mutexes in code that is allowed to sleep nice illustration of synchronizatio
 
 ▶ and concurrency issues. Use spinlocks in code that is not allowed to sleep
 
-![](media/index-376_1.jpg)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-376_1.jpg)
 
 (interrupts) or for which sleeping would be too
 
@@ -506,16 +504,18 @@ Image source: [https://en.wikipedia.org/wiki/](https://en.wikipedia.org/wiki/Din
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 362/436 Practical lab - Locking
 
-![](media/index-377_1.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-377_1.png)
 
  
 
 ▶ Add locking to the driver to prevent concurrent
 
-![](media/index-377_2.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-377_2.png)
 
 accesses to shared resources
 
  
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 363/436
+
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-378_1.jpg)

@@ -1,5 +1,3 @@
-![](media/index-295_1.jpg)
-
 5 FILE I/O AND LOGIN ACCOUNTING
 
 In the preceding chapter, we learned the fundamental concepts of file
@@ -24,7 +22,7 @@ discover that there are parts of the kernel API that simplify access to particul
 
 choices in the programs we developed.
 
-![](media/index-296_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-296_1.jpg)
 
 Controlling the Position of I/O Operations
 
@@ -78,7 +76,7 @@ numbers, is the number of bytes to move the file offset. A positive value moves 
 
 Figure 5-2 illustrates how the file offset is adjusted based on the different parameter values.
 
-![](media/index-298_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-298_1.jpg)
 
 *Figure 5-2: The effect of the* *whence* *parameter on the movement of the file offset. In (a) it’s* *moved using* *whence = SEEK_SET, in (b) using* *whence = SEEK_CUR, and in (c) using* *whence*
 
@@ -112,7 +110,7 @@ Although we can’t move the file offset to a position preceding the start of th
 
 The read() system call doesn’t return an error when the file offset is inside a file hole. Instead, it treats the hole as a sequence of NULL bytes (bytes whose value is zero). To be precise, if the file offset is inside a file hole, the call read(fd, buffer, count) fills buffer with a NULL byte for every byte in the hole that it reads. Thus, if all count bytes are within the hole and the buffer is at least count bytes long, buffer\[0...count-1\] will be filled with zeros. If count is large enough that the file offset plus count contains data after the hole, then that data will be stored into buffer following the zeros. Figure 5-3 illustrates a file hole.
 
-![](media/index-300_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-300_1.jpg)
 
 *Figure 5-3: A file hole created by seeking past the end of a file and writing data there*
 
@@ -210,7 +208,7 @@ arguments. It also accepts a --block-size=1 option to show block size units of 1
 
 we use ls -l, it’s allocated only two disk blocks of 4KB each. Files are allocated storage in fixed-size blocks. A write of *N* ≤ 4096 bytes at the start of the file requires one 4KB block. Any remaining bytes of that
 
-![](media/index-302_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-302_1.jpg)
 
 block are filled with NULLs. Since we wrote the second string 1,000,010
 
@@ -396,7 +394,7 @@ record for a user, and since it’s sparse, we can infer that the file is like a
 
 Figure 5-5.
 
-![](media/index-307_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-307_1.jpg)
 
 *Figure 5-5: The structure of the* lastlog *file*
 
@@ -860,7 +858,7 @@ Some users may never have logged in and therefore would not have a
 
 record in the *lastlog* file. Our algorithm must detect this case. In addition, some user accounts could have been deleted even though there
 
-![](media/index-318_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-318_1.jpg)
 
 are valid login records for them in the file, and this loop would not find them.
 
@@ -1064,7 +1062,6 @@ time_t ll_time; /\* Lastlog time converted to time_t \*/
 
 struct tm \*bdtime; /\* Broken-down time \*/
 
-errno = 0;
 
 if ( (ll_fd = open(\_PATH_LASTLOG, O_RDONLY)) == -1 )
 
@@ -1100,7 +1097,6 @@ if ( lseek(ll_fd, uid \* ll_struct_size, SEEK_SET) == -1 )
 
 fatal_error(errno, "lseek");
 
-errno = 0;
 
 if ( (num_bytes = read(ll_fd, &ll_entry, ll_struct_size)) \<= 0 ) {
 
@@ -1910,7 +1906,6 @@ print_header_row();
 
 setutxent();
 
-errno = 0;
 
 while( (utmp_entry = getutxent()) != NULL )
 
@@ -2326,7 +2321,7 @@ The last problem is how to reposition the file offset to read the
 
 previous record each time. Figure 5-7 illustrates this.
 
-![](media/index-352_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-352_1.jpg)
 
 *Figure 5-7: Where the file offset has to be repositioned after a read when reading backward* *in the file*
 
@@ -2352,7 +2347,6 @@ offset to the last record in the file and save it in saved_offset. \*/
 
 if ( is_first ) {
 
-errno = 0;
 
 /\* Move to utsize bytes before end of file. \*/
 
@@ -2384,7 +2378,6 @@ return FALSE; /\* Return 0 to indicate no read took place. \*/
 
 /\* File offset is at the correct place to read. \*/
 
-errno = 0;
 
 nbytes_read = read(fd, ut, utsize);
 
@@ -2416,7 +2409,6 @@ if ( saved_offset \>= 0 ) {
 
 /\* Seek to preceding record to set up next read. \*/
 
-errno = 0;
 
 if ( -1 == lseek(fd, - (2\*utsize), SEEK_CUR) )
 
@@ -2662,7 +2654,6 @@ fatal_error(LOCALE_ERROR, "Could not set the given locale");
 
 /\* Read the first struct in the file to get the time of first entry. \*/
 
-errno = 0;
 
 if ( read(fd_utmp, &utmp_entry, utsize) != utsize )
 
@@ -2672,7 +2663,6 @@ start_time = utmp_entry.ut_tv.tv_sec;
 
 while ( !done ) {
 
-errno = 0;
 
 if ( get_prev_utrec(fd_utmp, &utmp_entry, &done) ) {
 

@@ -1,0 +1,1 @@
+![cover.png](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/cover.png)

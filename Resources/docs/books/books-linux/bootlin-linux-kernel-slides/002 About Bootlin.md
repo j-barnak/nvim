@@ -1,5 +1,3 @@
-![](media/index-3_1.jpg)
-
 About Bootlin
 
  
@@ -92,7 +90,7 @@ Bootlin on-line resources
 
 <https://bootlin.com>
 
-![](media/index-8_1.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-8_1.png)
 
 ▶ Engineering services:
 
@@ -113,3 +111,5 @@ Bootlin on-line resources
  
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 8/436
+
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-9_1.jpg)

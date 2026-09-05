@@ -1,5 +1,3 @@
-![](media/index-443_1.jpg)
-
 7 THE DIRECTORY HIERARCHY
 
 So far, we’ve concentrated on the programming interface related to
@@ -420,7 +418,6 @@ BOOL done = FALSE; /\* Flag to control loop execution \*/
 
 while ( !done ) {
 
-errno = 0;
 
 direntp = readdir(dirp); /\* Get next entry. \*/
 
@@ -442,7 +439,6 @@ printf("\n");
 
 }
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -452,7 +448,6 @@ int ls_flags = 0;
 
 if ( 1 == argc ) { /\* No arguments; use current working directory. \*/
 
-errno = 0;
 
 if ( (dirp = opendir(".")) == NULL )
 
@@ -466,7 +461,6 @@ else { /\* For each command-line argument, call opendir() on it. \*/
 
 for ( int i = 1; i \< argc; i++ ) {
 
-errno = 0;
 
 if ( (dirp = opendir(argv\[i\])) == NULL ) {
 
@@ -500,7 +494,7 @@ return 0;
 
 *Listing 7-1: A program that prints the contents of all directories in its argument list* To demonstrate the program’s behavior, I created a directory named *testing* containing a few files and directories and removed read permission from one of the directories to see whether the program would handle this error well. The directory is depicted in Figure 7-1.
 
-![](media/index-456_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-456_1.jpg)
 
 *Figure 7-1: The* testing *directory*
 
@@ -996,7 +990,6 @@ printf("\n");
 
 }
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -1052,7 +1045,7 @@ Processing the Directory Hierarchy
 
 In Chapter 1, I pointed out that the directory hierarchy is tree-like, but is not a tree. Let’s review why this is true. The first reason is that symbolic links can create cycles because a symbolic link can point back to an ancestor in the tree, as depicted in Figure 7-2. In the figure, directories are in bold, and the symbolic link is a dashed line.
 
-![](media/index-470_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-470_1.jpg)
 
 *Figure 7-2: A portion of the directory hierarchy with a symbolic link creating a cycle* If none of the symbolic links created cycles, the hierarchy still
 
@@ -1172,9 +1165,9 @@ the filesystem is *unmounted*, using the umount command (not unmount), the direc
 
 To illustrate, Figure 7-3 depicts a portion of the top of the directory hierarchy of a hypothetical Unix system.
 
-![](media/index-474_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-474_1.jpg)
 
-![](media/index-474_2.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-474_2.jpg)
 
 *Figure 7-3: The initial file hierarchy without any mounts*
 
@@ -1186,7 +1179,7 @@ Figure 7-4.
 
 The root of this filesystem has two subdirectories named *staff* and *students*, and *students* has the subdirectories *grad* and *undergrad*. Now suppose we mount this second filesystem on the directory */data/c* by entering (as superuser): \$ **mount /dev/hdb /data/c**
 
-![](media/index-475_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-475_1.jpg)
 
 If the mount is successful, then */data/c* becomes the mount point for the filesystem */dev/hdb*, and we say that */dev/hdb* is mounted on the directory *c*. The files *doc1* and *var* are hidden until the filesystem is unmounted, at which point they’ll reappear. The directory hierarchy after the mount is depicted in Figure 7-5.
 
@@ -1332,7 +1325,7 @@ subdirp = opendir(direntp-\>d_name); listdir(subdirp, flags);
 
 closedir(subdirp); }
 
-![](media/index-479_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-479_1.jpg)
 
 In other words, listdir() prints the entry’s filename and then checks if it’s a directory. If it is, it recursively calls listdir(). Unfortunately, this doesn’t work, for two reasons.
 
@@ -1384,7 +1377,6 @@ char \*name; /\* Directory entry name copy \*/
 
 while ( !done ) {
 
-errno = 0;
 
 direntp = readdir(dirp);
 
@@ -1408,7 +1400,6 @@ printf("%s\n", pathname);
 
 if ( isdir(direntp) ) {
 
-errno = 0;
 
 if ( (subdirp = opendir(pathname)) == NULL )
 
@@ -1432,7 +1423,6 @@ printf("\n");
 
 }
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -1442,7 +1432,6 @@ int ls_flags = 0;
 
 if ( 1 == argc ) {
 
-errno = 0;
 
 if ( (dirp = opendir(".")) == NULL )
 
@@ -1458,7 +1447,6 @@ else { /\* For each command line argument, call opendir() on it. \*/
 
 for ( int i = 1; i \< argc; i++ ) {
 
-errno = 0;
 
 if ( (dirp = opendir(argv\[i\])) == NULL ) {
 
@@ -1534,7 +1522,7 @@ accumulates the disk usage of every file in a directory and then prints the disk
 
 The default block size that it uses for reporting is 1024 bytes, but it depends on the environment variables of the user running it, as well as some system settings. Also by default, du doesn’t print the disk usage of
 
-![](media/index-484_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-484_1.jpg)
 
 ordinary files, even though they’re added into the directory totals. With the -a option, it prints the block counts for all files, not just directories.
 
@@ -1820,7 +1808,7 @@ Because the program has to do a postorder traversal of the tree, we’ll pass th
 
 Therefore, in the tree in Figure 7-8, the files are visited in the order *srcs*,
 
-![](media/index-493_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-493_1.jpg)
 
 *cpy*, *bin*, *pics*, *stuff*, *data*, *work*, *ideas, projects*, *file2*, *garbage*, *play*, and finally, *snw*.
 
@@ -2008,7 +1996,6 @@ return 0; /\* To tell nftw() to continue \*/
 
 }
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -2452,7 +2439,6 @@ structure (see Listing 7-9).
 
 *fts_demo.c* main()
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -2480,7 +2466,6 @@ if ( NULL == (tree = fts_open(dir, FTS_PHYSICAL , namecmp)) )
 
 fatal_error(errno, "fts_open");
 
-errno = 0;
 
 while ( (file = fts_read(tree)) ) {
 
@@ -2614,9 +2599,9 @@ reconstruct the file tree rooted at *scratch*. First, we’ll draw a tree whose 
 
 listing to assign filenames to those numbers. For example, from the last five lines of output, we see that node 728 has three children, 731, 748, and 729, and that its parent is 725, so our first subtree looks like this:
 
-![](media/index-512_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-512_1.jpg)
 
-![](media/index-512_2.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-512_2.jpg)
 
 Similarly, the preceding five lines show that node 727 has children
 
@@ -2632,9 +2617,9 @@ children with numbers 728, 729, and 753, we’ll create the new node,
 
 753, and attach it as a child of node 725:
 
-![](media/index-513_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-513_1.jpg)
 
-![](media/index-513_2.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-513_2.jpg)
 
 Looking at the resulting tree, we see that two of the inodes, 729 and
 
@@ -2830,7 +2815,7 @@ have to *prepend* it to the existing partially constructed pathname. Figure
 
 7-9 visualizes the steps to prepend the first directory name to an initially empty buffer of size PATH_MAX bytes storing the pathname. We’ve used the PATH_MAX macro before; it’s the largest allowable size of a pathname on the system, typically 4096 bytes.
 
-![](media/index-519_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-519_1.jpg)
 
 *Figure 7-9: The steps to build the pathname in a right-to-left direction by prepending each* *new parent directory*
 
@@ -2908,7 +2893,6 @@ void get_dev_ino(const char \*fname, dev_ino \*dev_inode);
 
 char \*get_filename(dev_ino child_entry);
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -3145,3 +3129,5 @@ version of find named findlinks that when run as \$ **./findlinks**
 ***dirpath pathname***
 
 searches in the directory tree rooted at *dirpath* for all filenames that are links to the same file as *pathname* and prints out their pathnames relative to *dirpath*.
+
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-527_1.jpg)

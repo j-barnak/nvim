@@ -1,0 +1,1 @@
+![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/44957c518355a2914342ebaadcd0de07e3105eae.svgz)

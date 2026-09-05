@@ -1,5 +1,3 @@
-![](media/index-34_1.jpg)
-
 INTRODUCTION
 
 I designed this book to help you learn how to write system and utility programs on Linux. Much of it applies to other Unix systems as well.
@@ -717,3 +715,5 @@ I hope that you learn a lot from this book. Even more important, I
 hope that it shows you how you can learn what it doesn’t cover on your own. Finally, I hope it’s enjoyable to read and that you gain an
 
 appreciation for the marvel and magic of Unix.
+
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-51_1.jpg)

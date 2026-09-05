@@ -1,1 +1,0 @@
-![](media/44957c518355a2914342ebaadcd0de07e3105eae.svgz)

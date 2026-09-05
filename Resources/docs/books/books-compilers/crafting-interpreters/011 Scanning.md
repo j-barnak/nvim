@@ -201,7 +201,7 @@ Here, `var` is the keyword for declaring a variable. That three-character sequen
 
 That’s what lexical analysis is about. Our job is to scan through the list of characters and group them together into the smallest sequences that still represent something. Each of these blobs of characters is called a **lexeme**. In that example line of code, the lexemes are:
 
-!['var', 'language', '=', 'lox', ';'](media/image/scanning/lexemes.png)
+!['var', 'language', '=', 'lox', ';'](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/scanning/lexemes.png)
 
 The lexemes are only the raw substrings of the source code. However, in the process of grouping character sequences into lexemes, we also stumble upon some other useful information. When we take the lexeme and bundle it together with that other data, the result is a token. It includes useful stuff like:
 
@@ -286,7 +286,7 @@ Now that we know what we’re trying to produce, let’s, well, produce it. The 
 
 Then it loops back and does it again, starting from the very next character in the source code. It keeps doing that, eating characters and occasionally, uh, excreting tokens, until it reaches the end of the input.
 
-![An alligator eating characters and, well, you don't want to know.](media/image/scanning/lexigator.png)
+![An alligator eating characters and, well, you don't want to know.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/scanning/lexigator.png)
 
 Lexical analygator.
 

@@ -1,35 +1,3 @@
-*Compound data types*
-
-***This chapter covers***
-
- Composing data with structs
-
- Creating enumerated data types
-
- Adding methods and handling errors in a type-
-
-safe manner
-
- Defining and implementing common behavior
-
-with traits
-
- Understanding how to keep implementation
-
-details private
-
- Using cargo to build documentation for your
-
-project
-
-Welcome to chapter 3. If we spent the last chapter looking at Rust’s atoms, this chapter is focused more on its molecules.
-
-This chapter focuses on two key building blocks for Rust programmers, struct and enum. Both are forms of *compound data types*. Together, struct and enum can compose other types to create something more useful than what those other types would be alone. Consider how a 2D point (x,y) is composed from two numbers, *x* and *y*. We wouldn’t want to maintain two variables, x and y, in our program. Instead, **77**
-
-**78**
-
-CHAPTER 3
-
 ***Compound data types***
 
 we would like to refer to the point as a whole entity. In this chapter, we also discuss how to add methods to types with impl blocks. Lastly, we take a deeper look at *traits*, Rust’s system for defining interfaces.
@@ -212,7 +180,6 @@ panic!("you have reached a dead end");
 
 **80**
 
-CHAPTER 3
 
 ***Compound data types***
 
@@ -396,7 +363,6 @@ Sometimes the type keyword is all that you need. But what about when you need th
 
 **82**
 
-CHAPTER 3
 
 ***Compound data types***
 
@@ -634,7 +600,6 @@ These last two points remain:
 
 **84**
 
-CHAPTER 3
 
 ***Compound data types***
 
@@ -816,7 +781,6 @@ File { name: "2.txt", data: \[114, 117, 115, 116, 33\] }
 
 **86**
 
-CHAPTER 3
 
 ***Compound data types***
 
@@ -1010,7 +974,6 @@ The specific values are arbitrary and defined per OS. With the Rust syntax, chec
 
 **88**
 
-CHAPTER 3
 
 ***Compound data types***
 
@@ -1174,7 +1137,6 @@ using global error codes
 
 **90**
 
-CHAPTER 3
 
 ***Compound data types***
 
@@ -1354,7 +1316,6 @@ At the level of the compiler, let relates more to aliasing than immutability. *A
 
 **92**
 
-CHAPTER 3
 
 ***Compound data types***
 
@@ -1532,7 +1493,6 @@ Using **Result** to mark functions liable to filesystem errors 1 use rand::prelu
 
 **94**
 
-CHAPTER 3
 
 ***Compound data types***
 
@@ -1758,7 +1718,6 @@ Defining an enum and using it to parse an event log
 
 **96**
 
-CHAPTER 3
 
 ***Compound data types***
 
@@ -1976,7 +1935,6 @@ An enum that represents a **File** being open or closed
 
 **98**
 
-CHAPTER 3
 
 ***Compound data types***
 
@@ -2142,7 +2100,6 @@ The println! macro and a number of others live within a family of macros that al
 
 **100**
 
-CHAPTER 3
 
 ***Compound data types***
 
@@ -2386,7 +2343,6 @@ Working code snippet to implement **Display**
 
 **102**
 
-CHAPTER 3
 
 ***Compound data types***
 
@@ -2598,7 +2554,6 @@ Adding doc comments to code
 
 **104**
 
-CHAPTER 3
 
 ***Compound data types***
 
@@ -2688,7 +2643,7 @@ src
 
 Now save the source code from listing 3.17 to filebasics/src/main.rs, overwriting the “Hello World!” boilerplate code that is already in the file.
 
-![](media/index-131_1.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-131_1.png)
 
 ***Creating inline documentation for your projects***
 
@@ -2722,7 +2677,6 @@ Rendered output of cargo doc
 
 **106**
 
-CHAPTER 3
 
 ***Compound data types***
 
@@ -2789,3 +2743,35 @@ Documenting Rust code with in-line comments
  Data and methods remain private until they are declared public with pub.
 
  You can use cargo to build the documentation for your crate and all of its dependencies.
+
+*Lifetimes, ownership,*
+
+*and borrowing*
+
+***This chapter covers***
+
+ Discovering what the term *lifetime* means in Rust
+
+programming
+
+ Working with the borrow checker rather than
+
+against it
+
+ Multiple tactics for dealing with issues when
+
+these crop up
+
+ Understanding the responsibilities of an owner
+
+ Learning how to borrow values that are owned
+
+elsewhere
+
+This chapter explains one of the concepts that trip up most newcomers to Rust—its borrow checker. The *borrow checker* checks that all access to data is legal, which allows Rust to prevent safety issues. Learning how this works will, at the very least, speed up your development time by helping you avoid run-ins with the compiler. More significantly though, learning to work with the borrow checker allows you to build larger software systems with confidence. It underpins the term *fearless concurrency*.
+
+This chapter will explain how this system operates and help you learn how to comply with it when an error is discovered. It uses the somewhat lofty example of **107**
+
+**108**
+
+CHAPTER 4

@@ -1,5 +1,3 @@
-![](media/index-205_1.jpg)
-
 Introduction to the I2C subsystem
 
  
@@ -576,11 +574,11 @@ How the functionality mechanism works
 
 devices available on the embedded hardware
 
-![](media/index-226_1.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-226_1.png)
 
 platform.
 
-![](media/index-226_2.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-226_2.png)
 
 ▶ Implement a driver that registers as an I2C
 
@@ -593,3 +591,5 @@ data from it.
  
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 212/436
+
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-227_1.jpg)

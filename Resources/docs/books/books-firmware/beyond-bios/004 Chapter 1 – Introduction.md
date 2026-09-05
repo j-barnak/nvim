@@ -40,7 +40,7 @@ DOI 10.1515/9781501505690-003
 
 **2** \| Chapter 1 – Introduction
 
-![](media/index-21_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-21_1.png)
 
  
 
@@ -54,7 +54,7 @@ tion that are irrelevant to those consumers. PI instead describes the phases of 
 
 ronment compatible with UEFI, as shown in Figure 1.2. In fact, the PI DXE component is the preferred UEFI core implementation.
 
-![](media/index-21_2.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-21_2.png)
 
  
 
@@ -200,13 +200,13 @@ peared in 2005. UEFI 2.0 was largely the same as EFI 1.0, but also included the 
 
 In Figure 1.3 we illustrate the evolution of the BIOS from its legacy days through 2016.
 
-![](media/index-24_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-24_1.png)
 
  
 
 **Figure 1.3:** BIOS Evolution Timeline **6** \| Chapter 1 – Introduction
 
-![](media/index-24_2.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-24_2.png)
 
  
 
@@ -262,13 +262,13 @@ roles.
 
 EFI Becomes UEFI—The UEFI Forum \| **7**
 
-![](media/index-26_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-26_1.png)
 
  
 
 **Figure 1.4:** Forum group hierarchy
 
-![](media/index-26_2.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-26_2.png)
 
  
 
@@ -340,7 +340,7 @@ Group (USWG) is the group that evolves the main UEFI specification. Figure 1.5 i
 
 trates the layers of the platform and what the scope that the USWG and PIWG cover.
 
-![](media/index-27_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-27_1.png)
 
  
 
@@ -478,7 +478,7 @@ described by the PI specifications. BDS, UEFI+OS Loader handshake, and RT are th
 
 province of the UEFI specification.
 
-![](media/index-29_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-29_1.png)
 
  
 
@@ -490,13 +490,13 @@ In addition, as time has elapsed, the specifications have evolved. Figure 1.7 is
 
 Platform Trust/Security \| **11**
 
-![](media/index-30_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-30_1.png)
 
  
 
 **Figure 1.7:** Specification and Codebase Timeline
 
-![](media/index-30_2.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-30_2.png)
 
  
 
@@ -534,13 +534,13 @@ bles.
 
 A fusion of these security elements in a PI implementation is shown in Figure 1.8.
 
-![](media/index-31_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-31_1.png)
 
  
 
 **Figure 1.8:** Trusted UEFI/PI stack
 
-![](media/index-31_2.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-31_2.png)
 
  
 

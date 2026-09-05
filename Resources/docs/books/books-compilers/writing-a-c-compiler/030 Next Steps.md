@@ -1,6 +1,6 @@
 # `NEXT STEPS`
 
-![](media/a26394c5fd9047c0974071f62d6ff4719089a6da.jpg)
+![](/tmp/audit/iter1/epubregen/writing-a-c-compiler/media/a26394c5fd9047c0974071f62d6ff4719089a6da.jpg)
 
 The world of programming languages is wide, and there’s a lot more for you to explore. Extending your compiler on your own is a great way to keep learning about the topics you’re most interested in.
 

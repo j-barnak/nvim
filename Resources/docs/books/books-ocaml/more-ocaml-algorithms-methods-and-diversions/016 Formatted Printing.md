@@ -3,15 +3,15 @@ Formatted Printing
 
 OCaml provides facilities for what is called formatted printing. Consider the following function, culled from Chapter 3:
 
-> ![](media/images/00174.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00174.jpg)
 
 Using the function `sprintf `(“`f`ormatted `print`ing to a `s`tring”) from the Standard Library module Printf we can build this string more easily:
 
-> ![](media/images/00179.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00179.jpg)
 
 In this example, the format string is `“%s = (%f, %f)”`. The conversion specifications `%s `and `%f `denote places for a string and the decimal representation of a floating-point number respectively to be substituted into the string. Other characters are simply reproduced from the format string to the output string. We have avoided the inefficient, repeated use of the `^ `operator for string concatenation, and our new example is both shorter and easier to read. Here is a subset of the many conversion specifications available:
 
-![](media/images/00184.jpg)
+![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00184.jpg)
 
 The `sprintf `function knows how to match up the conversion specification with the arguments following the format specification at compile time, so run-time errors are avoided:
 
@@ -41,7 +41,7 @@ For printing numbers, there are some additional pieces of information which can 
 
 Fields enclosed in angle brackets are optional. So far, we have only used the `% `character and the type field. The width field defines the width of the representation of the number, and can be used to line things up in columns, here of width six:
 
-> ![](media/images/00188.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00188.jpg)
 
 This will result in the following output from `print_nums data`:
 
@@ -54,11 +54,11 @@ This will result in the following output from `print_nums data`:
 
 Here are some possible values of the flags field:
 
-![](media/images/00193.jpg)
+![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00193.jpg)
 
 The optional precision field specifies the number of digits after the decimal point. For example, let us print some integers and floating-point numbers in columns with differing flags and precisions:
 
-> ![](media/images/00252.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00252.jpg)
 
 This will result in the following output from `print_nums data`:
 
@@ -73,11 +73,11 @@ Printing to other places
 
 Of course, once we have calculated a string using `sprintf`, we can do with it what we may – however, for convenience and efficiency, the Printf module provides several other functions:
 
-![](media/images/00100.jpg)
+![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00100.jpg)
 
 These all return unit. For example, to write a point to standard output, using the `%! `conversion specification to flush each time so screen update is immediate:
 
-> ![](media/images/00205.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00205.jpg)
 
 It might be argued, though, that it is better to keep `string_of_point `as the basic function, so it can be reused in other situations, writing the generated string to the screen from the calling function instead.
 

@@ -1,5 +1,3 @@
-![](media/index-109_1.jpg)
-
 Describing hardware devices
 
  
@@ -286,7 +284,6 @@ DT overall structure: simplified example
 
 / {
 
-\#address-cells = \<1\>;
 
 \#size-cells = \<1\>;
 
@@ -324,7 +321,6 @@ i2c0: i2c@40012000 { ... };
 
 cpus {
 
-\#address-cells = \<1\>;
 
 \#size-cells = \<0\>;
 
@@ -440,7 +436,6 @@ clocks = \<&l3_clkctrl AM3_L3_L3_MAIN_CLKCTRL 0\>;
 
 clock-names = "fck";
 
-\#address-cells = \<1\>;
 
 \#size-cells = \<1\>;
 
@@ -458,7 +453,6 @@ reg = \<0x44c00000 0x800\>, \<0x44c00800 0x800\>,
 
 reg-names = "ap", "la", "ia0", "ia1";
 
-\#address-cells = \<1\>;
 
 \#size-cells = \<1\>;
 
@@ -496,7 +490,6 @@ i2c0: i2c@40012000 {
 
 compatible = "ti,omap4-i2c";
 
-\#address-cells = \<1\>;
 
 \#size-cells = \<0\>;
 
@@ -974,7 +967,6 @@ just receives 4 independent cells
 
 module@a0000 {
 
-\#address-cells = \<1\>;
 
 \#size-cells = \<1\>;
 
@@ -1006,7 +998,6 @@ just receives 4 independent cells
 
 spi@300000 {
 
-\#address-cells = \<1\>;
 
 \#size-cells = \<0\>;
 
@@ -1126,7 +1117,7 @@ How to validate Device Tree content? 1/2
 
 ▶ **Device Tree Specifications** *→* base Device Tree
 
-![](media/index-149_1.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-149_1.png)
 
 syntax + number of standard properties.
 
@@ -1630,7 +1621,7 @@ Slides: [https://bootlin.com/blog/device-](https://bootlin.com/blog/device-tree-
 
 [tree-101-webinar-slides-and-videos/](https://bootlin.com/blog/device-tree-101-webinar-slides-and-videos/)
 
-![](media/index-164_1.jpg)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-164_1.jpg)
 
 Video: <https://youtu.be/a9CZ1Uk3OYQ>
 
@@ -1660,11 +1651,11 @@ Video: <https://youtu.be/a9CZ1Uk3OYQ>
 
 ▶ Browse and update Device Trees. ▶ Use GPIO LEDs. ▶ Modify the Device Tree to enable an I2C
 
-![](media/index-165_1.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-165_1.png)
 
 controller and describe an I2C device.
 
-![](media/index-165_2.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-165_2.png)
 
 ▶ Write a yaml binding to validate a device
 
@@ -1673,3 +1664,5 @@ description.
  
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 151/436
+
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-166_1.jpg)

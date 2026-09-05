@@ -3,7 +3,7 @@ Representing Documents
 
 In this chapter we will define a data type for representing a PDF document. PDF is a structured format for describing a wide variety of graphical and textual data. The PDF file format itself is large and complex, but we will introduce only the parts required for our examples. It is relatively easy to write PDF files but rather harder to read them, so we will concentrate on creating PDF data structures in memory, and then writing them to valid files. Here is an example PDF, as it might be displayed in a PDF viewer:
 
-![](media/images/00158.jpg)
+![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00158.jpg)
 
 Here is the corresponding code, which you would see if you opened the PDF file in a plain text editor:
 

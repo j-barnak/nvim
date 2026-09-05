@@ -7,7 +7,7 @@ Second printing
 ISBN-13: 978-1-7185-0042-6 (print)  
 ISBN-13: 978-1-7185-0043-3 (ebook)
 
-![](media/5bb94762f374c48042820d69d4a4c5edf2feaa0c.jpg)
+![](/tmp/audit/iter1/epubregen/writing-a-c-compiler/media/5bb94762f374c48042820d69d4a4c5edf2feaa0c.jpg)
 
 Published by No Starch Press^(®), Inc.  
 245 8th Street, San Francisco, CA 94103  

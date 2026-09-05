@@ -160,7 +160,7 @@ Ferrari, 2022 year, 2 seats, 670.511hp
 
 While I had to be more explicit and write the types, the code can be safer as it’s harder to type something accidentally.
 
-![](media/index-226_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-226_1.png)
 
 In C++11, you can also leverage user-defined literals to allow easier creation of objects. Especially useful for units, string, numerical types, time, and dates. For example, We could create a named literal \_m2 and then write 50.0_m2 to create an
 
@@ -168,7 +168,7 @@ instance rather than SqMeters{50.2}. See more at [C++Reference - User-defined](h
 
 [literals](https://en.cppreference.com/w/cpp/language/user_literal)¹.
 
-![](media/index-226_2.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-226_2.png)
 
  
 
@@ -336,7 +336,7 @@ All in all, passing by value and then moving from a string argument is the prefe
 
 As always, if your code needs maximum performance, then you have to measure all possible cases.
 
-![](media/index-230_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-230_1.png)
 
 **Other Types & Automation**
 
@@ -816,7 +816,7 @@ Wrappers: 1
 
 As you can see, we created two different template instantiations for InstanceCounter. There’s one for Value and the second for Wrapper. Now the counters are separate and show the expected values.
 
-![](media/index-241_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-241_1.png)
 
 Read more about this handy technique in [Curiously Recurring Template Pattern](https://en.cppreference.com/w/cpp/language/crtp)
 
@@ -1018,7 +1018,7 @@ windows.emplace_back(name, sizes\[r2 % sizes.size()\], sizes\[r % sizes.size()\]
 
 Later there’s another loop that prints all windows.
 
-![](media/index-244_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-244_1.png)
 
 In the code, I didn’t have to specify the full type for std::array\<Type, Count\> as the compiler could deduce everything for me! Thanks to Class Type Argument Deduction (CTAD) and Deduction guides from C++17, the compiler can help us
 
@@ -1076,7 +1076,7 @@ Meyer’s Singleton is often used as a way to ensure that a class has only one i
 
 static keyword to declare a local static variable within a function. This allows you to define a local variable that is initialized only once, in a threadsafe way.
 
-![](media/index-246_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-246_1.png)
 
 While Meyer’s Singleton is a very efficient way to implement this design pattern, singletons doesn’t have a good opinion in modern programming style. Singleton in fact is a global object, and it leads to few problems like testing, scalability, lack of explicit dependencies and few others. Please be careful when adding this pattern to your code.
 
@@ -1314,7 +1314,7 @@ But what about the first insertion? Can we be sure that the Map is created and r
 
 That’s why I impmeneted a special version of Map which have a constexpr constructor (implicit) and thanks to constinit will be initialized before s_registered is initialized (for some first registered class).
 
-![](media/index-250_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-250_1.png)
 
 My current implementation uses std::array which can be used in constant expressions. We could potentially use std::map but it would be at the edge of Undefined Baheviour so it’s not guarateed to work. In final code you can also experiment with std::vector which got constexpr support in C++20. Techniques and Use Cases 236
 
@@ -1376,7 +1376,7 @@ std::cout \<\< "Cannot find 7Z...**\n**";
 
 Techniques and Use Cases 237
 
-![](media/index-252_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-252_1.png)
 
 You can find more about this technique, including a topic about static libraries in
 

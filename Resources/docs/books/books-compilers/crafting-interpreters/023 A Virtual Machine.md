@@ -409,7 +409,7 @@ I think nailing down stuff like this is generally better for users. When express
 
 Here is the syntax tree for the `print` statement:
 
-![The AST for the example statement, with numbers marking the order that the nodes are evaluated.](media/image/a-virtual-machine/ast.png)
+![The AST for the example statement, with numbers marking the order that the nodes are evaluated.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/a-virtual-machine/ast.png)
 
 Given left-to-right evaluation, and the way the expressions are nested, any correct Lox implementation *must* print these numbers in this order:
 
@@ -431,7 +431,7 @@ Hint: it’s in the name of this section, and it’s how Java and C manage recur
 
 Let’s do a weird exercise. We’ll walk through the execution of the above program a step at a time:
 
-![The series of instructions with bars showing which numbers need to be preserved across which instructions.](media/image/a-virtual-machine/bars.png)
+![The series of instructions with bars showing which numbers need to be preserved across which instructions.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/a-virtual-machine/bars.png)
 
 On the left are the steps of code. On the right are the values we’re tracking. Each bar represents a number. It starts when the value is first produced—either a constant or the result of an addition. The length of the bar tracks when a previously produced value needs to be kept around, and it ends when that value finally gets consumed by an operation.
 
@@ -439,13 +439,13 @@ As you step through, you see values appear and then later get eaten. The longest
 
 In the above diagram, I gave each unique number its own visual column. Let’s be a little more parsimonious. Once a number is consumed, we allow its column to be reused for another later value. In other words, we take all of those gaps up there and fill them in, pushing in numbers from the right:
 
-![Like the previous diagram, but with number bars pushed to the left, forming a stack.](media/image/a-virtual-machine/bars-stacked.png)
+![Like the previous diagram, but with number bars pushed to the left, forming a stack.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/a-virtual-machine/bars-stacked.png)
 
 There’s some interesting stuff going on here. When we shift everything over, each number still manages to stay in a single column for its entire life. Also, there are no gaps left. In other words, whenever a number appears earlier than another, then it will live at least as long as that second one. The first number to appear is the last to be consumed. Hmm . . . last-in, first-out . . . why, that’s a stack!
 
 This is also a stack:
 
-![A stack... of pancakes.](media/image/a-virtual-machine/pancakes.png)
+![A stack... of pancakes.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/a-virtual-machine/pancakes.png)
 
 In the second diagram, each time we introduce a number, we push it onto the stack from the right. When numbers are consumed, they are always popped off from rightmost to left.
 
@@ -482,23 +482,23 @@ typedef struct {
 
 We implement the stack semantics ourselves on top of a raw C array. The bottom of the stack—the first value pushed and the last to be popped—is at element zero in the array, and later pushed values follow it. If we push the letters of “crepe”—my favorite stackable breakfast item—onto the stack, in order, the resulting C array looks like this:
 
-![An array containing the letters in 'crepe' in order starting at element 0.](media/image/a-virtual-machine/array.png)
+![An array containing the letters in 'crepe' in order starting at element 0.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/a-virtual-machine/array.png)
 
 Since the stack grows and shrinks as values are pushed and popped, we need to track where the top of the stack is in the array. As with `ip`, we use a direct pointer instead of an integer index since it’s faster to dereference the pointer than calculate the offset from the index each time we need it.
 
 The pointer points at the array element just *past* the element containing the top value on the stack. That seems a little odd, but almost every implementation does this. It means we can indicate that the stack is empty by pointing at element zero in the array.
 
-![An empty array with stackTop pointing at the first element.](media/image/a-virtual-machine/stack-empty.png)
+![An empty array with stackTop pointing at the first element.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/a-virtual-machine/stack-empty.png)
 
 If we pointed to the top element, then for an empty stack we’d need to point at element -1. That’s undefined in C. As we push values onto the stack . . . 
 
 What about when the stack is *full*, you ask, Clever Reader? The C standard is one step ahead of you. It *is* allowed and well-specified to have an array pointer that points just past the end of an array.
 
-![An array with 'c' at element zero.](media/image/a-virtual-machine/stack-c.png)
+![An array with 'c' at element zero.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/a-virtual-machine/stack-c.png)
 
  . . . `stackTop` always points just past the last item.
 
-![An array with 'c', 'r', 'e', 'p', and 'e' in the first five elements.](media/image/a-virtual-machine/stack-crepe.png)
+![An array with 'c', 'r', 'e', 'p', and 'e' in the first five elements.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/a-virtual-machine/stack-crepe.png)
 
 I remember it like this: `stackTop` points to where the next value to be pushed will go. The maximum number of values we can store on the stack (for now, at least) is:
 
@@ -860,7 +860,7 @@ Pay close attention to the *order* of the two pops. Note that we assign the firs
 
 For example, if we compile `3 - 1`, the data flow between the instructions looks like so:
 
-![A sequence of instructions with the stack for each showing how pushing and then popping values reverses their order.](media/image/a-virtual-machine/reverse.png)
+![A sequence of instructions with the stack for each showing how pushing and then popping values reverses their order.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/a-virtual-machine/reverse.png)
 
 As we did with the other macros inside `run()`, we clean up after ourselves at the end of the function.
 
@@ -906,7 +906,7 @@ The arithmetic instruction formats are simple, like `OP_RETURN`. Even though the
 
 Let’s put some of our new instructions through their paces by evaluating a larger expression:
 
-![The expression being evaluated: -((1.2 + 3.4) / 5.6)](media/image/a-virtual-machine/chunk.png)
+![The expression being evaluated: -((1.2 + 3.4) / 5.6)](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/a-virtual-machine/chunk.png)
 
 Building on our existing example chunk, here’s the additional instructions we need to hand-compile that AST to bytecode.
 

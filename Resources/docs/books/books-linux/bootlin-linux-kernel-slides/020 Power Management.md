@@ -1,5 +1,3 @@
-![](media/index-422_1.jpg)
-
 Power Management
 
  
@@ -417,3 +415,5 @@ Théo Lebrun (Embedded Linux Conference Europe 2024)
  
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 426/436
+
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-441_1.jpg)

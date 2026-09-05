@@ -63,7 +63,7 @@ class Cruller < Doughnut {
 
 The result is this bytecode:
 
-![The series of bytecode instructions for a Cruller class inheriting from Doughnut.](media/image/superclasses/inherit-stack.png)
+![The series of bytecode instructions for a Cruller class inheriting from Doughnut.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/superclasses/inherit-stack.png)
 
 Before we implement the new `OP_INHERIT` instruction, we have an edge case to detect.
 
@@ -149,13 +149,13 @@ From the top of the stack down, we have the subclass then the superclass. We gra
 
 For example, calling `cook()` on an instance of Cruller sends jlox on this journey:
 
-![Resolving a call to cook() in an instance of Cruller means walking the superclass chain.](media/image/superclasses/jlox-resolve.png)
+![Resolving a call to cook() in an instance of Cruller means walking the superclass chain.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/superclasses/jlox-resolve.png)
 
 That’s a lot of work to perform during method *invocation* time. It’s slow, and worse, the farther an inherited method is up the ancestor chain, the slower it gets. Not a great performance story.
 
 The new approach is much faster. When the subclass is declared, we copy all of the inherited class’s methods down into the subclass’s own method table. Later, when *calling* a method, any method inherited from a superclass will be found right in the subclass’s own method table. There is no extra runtime work needed for inheritance at all. By the time the class is declared, the work is done. This means inherited method calls are exactly as fast as normal method calls—a single hash table lookup.
 
-![Resolving a call to cook() in an instance of Cruller which has the method in its own method table.](media/image/superclasses/clox-resolve.png)
+![Resolving a call to cook() in an instance of Cruller which has the method in its own method table.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/superclasses/clox-resolve.png)
 
 Well, two hash table lookups, I guess. Because first we have to make sure a field on the instance doesn’t shadow the method.
 
@@ -167,7 +167,7 @@ As you can imagine, changing the set of methods a class defines imperatively at 
 
 Those who find this tool maybe a little *too* dangerous gave it the unbecoming name “monkey patching”, or the even less decorous “duck punching”.
 
-![A monkey with an eyepatch, naturally.](media/image/superclasses/monkey.png)
+![A monkey with an eyepatch, naturally.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/superclasses/monkey.png)
 
 Fortunately for us (but not for users who like the feature, I guess), Lox doesn’t let you patch monkeys or punch ducks, so we can safely apply this optimization.
 
@@ -475,7 +475,7 @@ class Cruller < Doughnut {
 
 The bytecode emitted for the `super.finish("icing")` expression looks and works like this:
 
-![The series of bytecode instructions for calling super.finish().](media/image/superclasses/super-instructions.png)
+![The series of bytecode instructions for calling super.finish().](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/superclasses/super-instructions.png)
 
 The first three instructions give the runtime access to the three pieces of information it needs to perform the super access:
 
@@ -679,7 +679,7 @@ This handful of code is basically our implementation of `OP_INVOKE` mixed togeth
 
 With our optimized instructions, things are shuffled a bit:
 
-![The series of bytecode instructions for calling super.finish() using OP_SUPER_INVOKE.](media/image/superclasses/super-invoke.png)
+![The series of bytecode instructions for calling super.finish() using OP_SUPER_INVOKE.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/superclasses/super-invoke.png)
 
 Now resolving the superclass method is part of the *invocation*, so the arguments need to already be on the stack at the point that we look up the method. This means the superclass object is on top of the arguments.
 

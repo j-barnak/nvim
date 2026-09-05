@@ -16,7 +16,7 @@ printing solutions), industrial control, residential or premise service gateways
 
 physical security/digital security and surveillance (video analytics systems and IP cameras).
 
-![](media/index-272_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-272_1.png)
 
  
 
@@ -132,7 +132,7 @@ to function effectively. For example: the fast splash screen needs to provide a 
 
 in firmware before a handoff to IPL.
 
-![](media/index-274_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-274_1.png)
 
  
 
@@ -158,7 +158,7 @@ the IVI platform is the sub-second cold boot time, which helps facilitate the us
 
 perience when the ignition key/button is turned on. The typical boot latency require-ments are as illustrated in Figure 16.3.
 
-![](media/index-275_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-275_1.png)
 
  
 
@@ -346,7 +346,7 @@ ital Input Output (SDIO) managed NAND.
 
 Figure 16.4 illustrates the common initialization flows encountered in a typical plat-form initialization.
 
-![](media/index-278_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-278_1.png)
 
  
 
@@ -558,19 +558,19 @@ Boot Partition Boot Partition Boot Partition Boot Partition
 
 (NOR Latencies) (NOR Latencies) (NOR Latencies) (NOR Latencies)
 
-![](media/index-281_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-281_1.png)
 
 CRT CRT CRT CRT
 
-![](media/index-281_2.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-281_2.png)
 
 M M
 
-![](media/index-281_3.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-281_3.png)
 
 Boot FW Boot FW Boot FW Boot FW
 
-![](media/index-281_4.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-281_4.png)
 
 CMC CMC CMC CMC
 
@@ -776,7 +776,7 @@ must assure the integrity of such firmware and make it part of the overall trust
 
 CE device.
 
-![](media/index-284_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-284_1.png)
 
  
 

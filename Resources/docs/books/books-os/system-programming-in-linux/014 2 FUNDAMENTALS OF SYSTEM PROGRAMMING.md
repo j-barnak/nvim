@@ -1,4 +1,4 @@
-![](media/index-118_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-118_1.jpg)
 
 2 FUNDAMENTALS OF SYSTEM
 
@@ -92,7 +92,7 @@ functions so that programs can call them easily. Libraries aren’t stand-alone 
 
 definitions and constants needed by those functions or by code that calls them. Figure 2-1 depicts a hypothetical library named *libsnw.a*.
 
-![](media/index-121_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-121_1.jpg)
 
 *Figure 2-1: A small object library with three modules and an index that serves as a table of* *contents*
 
@@ -514,7 +514,7 @@ address in system space of the actual kernel code for that call.
 
 5\. The actual call code is executed, and it passes the return value back to the system call handler.
 
-![](media/index-132_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-132_1.jpg)
 
 6\. The handler passes the return value to the wrapper; the return
 
@@ -552,9 +552,7 @@ which returns the caller’s thread ID. (A wrapper was added to *glibc* starting
 
 \#include \<sys/types.h\>
 
-\#include \<stdio.h\>
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -562,7 +560,6 @@ printf("Thread id %ld\n", syscall(SYS_gettid));
 
 /\* Could also pass \_\_NR_gettid \*/
 
-return 0;
 
 }
 
@@ -582,7 +579,7 @@ In rare cases, using syscall() to make a system call
 
 Figure 2-3 illustrates these various paths to the kernel.
 
-![](media/index-134_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-134_1.jpg)
 
 *Figure 2-3: The different control paths for obtaining services, showing the relationship* *between library function calls and system calls*
 
@@ -766,7 +763,6 @@ message. Usually you pass it the name of the function as the string, as shown in
 
 \#include \<unistd.h\>
 
-\#include \<stdio.h\>
 
 void main()
 
@@ -1246,7 +1242,7 @@ identifiers you choose. It’s a convention to use the names argc and argv, but 
 
 programming style. Figure 2-4 illustrates how the arguments are made available to the program.
 
-![](media/index-149_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-149_1.jpg)
 
 *Figure 2-4: How command line arguments are passed to a program*
 
@@ -1258,9 +1254,7 @@ Listing 2-4 is a simple program, *printargs1.c*, that shows one way for a progra
 
 *printargs1.c*
 
-\#include \<stdio.h\>
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -1270,7 +1264,6 @@ for ( int i = 1; i \< argc; i++ )
 
 printf("%d: %s\n", i, argv\[i\]);
 
-return 0;
 
 }
 
@@ -1284,7 +1277,6 @@ Notice that the last argument is in argv\[argc-1\], not argv\[argc\]. Because th
 
 *printargs2.c*
 
-\#include \<stdio.h\>
 
 int main(int argc, char \*argv\[\]) {
 
@@ -1296,7 +1288,6 @@ while ( argv\[i\] != NULL )
 
 printf("%d: %s\n", i, argv\[i++\]);
 
-return 0;
 
 }
 
@@ -1328,7 +1319,6 @@ which case it prints an error message.
 
 \#include \<stdlib.h\>
 
-\#include \<stdio.h\>
 
 int main()
 
@@ -1346,7 +1336,6 @@ else
 
 printf("HOME=%s\n", path_to_home);
 
-return 0;
 
 }
 
@@ -1370,7 +1359,7 @@ Instead, you could use a string copying function such as strncpy() to copy the r
 
 getenv("HOME"), sizeof(home));
 
-![](media/index-152_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-152_1.jpg)
 
 If you do this, make sure to include the *string.h* header file, since the declarations of the string copying functions are there.
 
@@ -1396,7 +1385,6 @@ demonstrates how to use environ to print the values of all environment variables
 
 \#include \<stdlib.h\>
 
-\#include \<stdio.h\>
 
 extern char \*\*environ; /\* environ is declared extern because it \*/
 
@@ -1416,7 +1404,6 @@ envp++;
 
 }
 
-return 0;
 
 }
 
@@ -1482,11 +1469,9 @@ demonstrates how to check for correct usage properly.
 
 *usagecheck_demo.c*
 
-\#include \<stdio.h\>
 
 \#include \<stdlib.h\>
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -1502,7 +1487,6 @@ printf("About to copy from %s to %s\n", argv\[1\], argv\[2\]);
 
 /\* But no code for copying just yet \*/
 
-return 0;
 
 }
 
@@ -1552,11 +1536,9 @@ a slash causes most shells to report an error. Listing 2-9 demonstrates this met
 
 *progname_demo.c*
 
-\#include \<stdio.h\>
 
 \#include \<string.h\>
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -1582,7 +1564,6 @@ else
 
 printf("Program name is %s\n", suffixptr);
 
-return 0;
 
 }
 
@@ -1618,11 +1599,9 @@ before including any header files. Listing 2-10 shows the program.
 
 \#define \_GNU_SOURCE
 
-\#include \<stdio.h\>
 
 \#include \<string.h\>
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -1632,7 +1611,6 @@ progname = basename(argv\[0\]);
 
 printf("Program name is %s\n", progname);
 
-return 0;
 
 }
 
@@ -1810,7 +1788,6 @@ other than print a list of the options that it finds as well as its arguments, b
 
 \#define FALSE 0
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -1926,7 +1903,6 @@ printf("\n");
 
 }
 
-return 0;
 
 }
 
@@ -2018,7 +1994,6 @@ strtol(const char \*nptr, char \*\*endptr,
 
 long int
 
-Sets errno on
 
 int base)
 
@@ -2028,7 +2003,6 @@ strtoll(const char \*nptr, char
 
 long long int
 
-Sets errno on
 
 \*\*endptr, int base)
 
@@ -2038,7 +2012,6 @@ strtof(const char \*nptr, char \*\*endptr)
 
 float
 
-Sets errno on
 
 error
 
@@ -2046,7 +2019,6 @@ strtod(const char \*nptr, char \*\*endptr)
 
 double
 
-Sets errno on
 
 error
 
@@ -2054,7 +2026,6 @@ strtold(const char \*nptr, char
 
 long double
 
-Sets errno on
 
 \*\*endptr)
 
@@ -2064,7 +2035,6 @@ strtoul(const char \*nptr, char
 
 unsigned long int
 
-Sets errno on
 
 \*\*endptr, int base)
 
@@ -2074,7 +2044,6 @@ strtoull(const char \*nptr, char
 
 unsigned long
 
-Sets errno on
 
 \*\*endptr, int base)
 
@@ -2108,11 +2077,9 @@ numerals.
 
 \#include \<stdlib.h\>
 
-\#include \<stdio.h\>
 
 \#include \<errno.h\>
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -2210,13 +2177,11 @@ Listing 2-13 shows how to do this.
 
 *str2int.c*
 
-\#include \<stdio.h\>
 
 \#include \<stdlib.h\>
 
 \#include \<string.h\>
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -2234,7 +2199,6 @@ sscanf(argv\[1\], " %d", &x);
 
 printf("The number is %d\n", x);
 
-return 0;
 
 }
 
@@ -2329,3 +2293,5 @@ so that this error cannot occur.
 any arguments are missing, if they are not two integers such that
 
 the first is less than or equal to the second, it should print an error message.
+
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-171_1.jpg)

@@ -1,4 +1,4 @@
-![image](media/Images/Copyright.png)
+![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Copyright.png)
 
 University Printing House, Cambridge CB2 8BS, United Kingdom
 

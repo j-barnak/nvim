@@ -6,4 +6,4 @@ GRAHAM HUTTON
 
 University of Nottingham
 
-![CAMBRIDGE UNIVERSITY PRESS](media/Images/Logo.png)
+![CAMBRIDGE UNIVERSITY PRESS](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Logo.png)

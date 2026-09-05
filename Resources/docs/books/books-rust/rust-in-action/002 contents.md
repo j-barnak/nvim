@@ -1,100 +1,3 @@
-*contents*
-
-*preface*
-
-*xv*
-
-*acknowledgments*
-
-*xvii*
-
-*about this book*
-
-*xix*
-
-*about the author*
-
-*xxii*
-
-*about the cover illustration*
-
-*xxiii*
-
-*1 **Introducing Rust 1***
-
-1.1
-
-Where is Rust used?
-
-2
-
-1.2
-
-Advocating for Rust at work
-
-3
-
-1.3
-
-A taste of the language
-
-4
-
-*Cheating your way to “Hello, world!”*
-
-*5* ■ *Your first Rust*
-
-*program*
-
-*7*
-
-1.4
-
-Downloading the book’s source code
-
-8
-
-1.5
-
-What does Rust look and feel like?
-
-8
-
-1.6
-
-What is Rust?
-
-11
-
-*Goal of Rust: Safety*
-
-*12* ■ *Goal of Rust: Productivity*
-
-*16*
-
-*Goal of Rust: Control*
-
-*18*
-
-1.7
-
-Rust’s big features
-
-19
-
-*Performance*
-
-*19* ■ *Concurrency*
-
-*20* ■ *Memory efficiency*
-
-*20*
-
-**vii**
-
-**viii**
-
-CONTENTS
 
 1.8
 
@@ -278,7 +181,6 @@ Project: Rendering the Mandelbrot set
 
 54
 
-CONTENTS
 
 **ix**
 
@@ -454,7 +356,6 @@ Implementing a mock CubeSat ground station
 
 **x**
 
-CONTENTS
 
 4.2
 
@@ -626,7 +527,6 @@ Providing programs with memory for their data
 
 *199*
 
-CONTENTS
 
 **xi**
 
@@ -788,7 +688,6 @@ Generating an HTTP GET request with reqwest
 
 **xii**
 
-CONTENTS
 
 8.3
 
@@ -958,7 +857,6 @@ Improving error handling
 
 313
 
-CONTENTS
 
 **xiii**
 
@@ -1144,7 +1042,6 @@ fledgeos-2: Custom exception handling
 
 **xiv**
 
-CONTENTS
 
 11.5
 
@@ -1307,3 +1204,19 @@ Revising exceptions
 *index*
 
 *419*
+
+*preface*
+
+No one knows whether reading a technical book is going to be worth the effort. These books can be expensive, dull, and poorly written. Even worse, there’s a good chance that you won’t learn anything. Luckily, this book is written by someone who understands that.
+
+This book’s first aim is to teach you Rust. *Rust in Action* presents large, working projects to promote your learning. Over the course of the book, you’ll write a database, a CPU emulator, an operating system kernel, and several other interesting projects. You’ll even dabble with generative art. Each project is designed to enable you to explore the Rust programming language at your own pace. For those readers who know little Rust, there are many opportunities to expand the projects in whatever direction you choose.
+
+There is more to learning a programming language than studying its syntax and semantics, however. You are also joining a community. Unfortunately, established communities can create invisible barriers for new entrants because of their shared knowledge, jargon, and practices.
+
+One such barrier for many new Rust programmers is the concept of systems programming. Lots of programmers come to Rust without a background in that area.
+
+To compensate for this, *Rust in Action* has a second aim—to teach you systems programming. And, among other topics, you’ll learn about how memory, digital timekeeping, and device drivers work in the book’s 12 chapters. I hope this enables you to feel more comfortable when becoming a member of the Rust community. And we need you!
+
+**xv**
+
+**xvi**

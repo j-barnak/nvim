@@ -32,7 +32,7 @@ These are now considered the “computable functions”. Turing’s system is ca
 
 Turing called his inventions “a-machines” for “automatic”. He wasn’t so self-aggrandizing as to put his *own* name on them. Later mathematicians did that for him. That’s how you get famous while still retaining some modesty.
 
-![A Turing machine.](media/image/control-flow/turing-machine.png)
+![A Turing machine.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/control-flow/turing-machine.png)
 
 Turing machines have better name recognition—there’s no Hollywood film about Alonzo Church yet—but the two formalisms are [equivalent in power](https://en.wikipedia.org/wiki/Church%E2%80%93Turing_thesis). In fact, any programming language with some minimal level of expressiveness is powerful enough to compute *any* computable function.
 
@@ -141,7 +141,7 @@ Here’s the riddle: Which `if` statement does that else clause belong to? This 
 
 Since else clauses are optional, and there is no explicit delimiter marking the end of the `if` statement, the grammar is ambiguous when you nest `if`s in this way. This classic pitfall of syntax is called the **[dangling else](https://en.wikipedia.org/wiki/Dangling_else)** problem.
 
-![Two ways the else can be interpreted.](media/image/control-flow/dangling-else.png)
+![Two ways the else can be interpreted.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/control-flow/dangling-else.png)
 
 Here, formatting highlights the two ways the else could be parsed. But note that since whitespace characters are ignored by the parser, this is only a guide to the human reader.
 
@@ -421,7 +421,7 @@ In other words, Lox doesn’t *need* `for` loops, they just make some common cod
 
 This delightful turn of phrase was coined by Peter J. Landin in 1964 to describe how some of the nice expression forms supported by languages like ALGOL were a sweetener sprinkled over the more fundamental—but presumably less palatable—lambda calculus underneath.
 
-![Slightly more than a spoonful of sugar.](media/image/control-flow/sugar.png)
+![Slightly more than a spoonful of sugar.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/control-flow/sugar.png)
 
     {
       var i = 0;

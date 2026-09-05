@@ -614,7 +614,7 @@ Startup Authenticate Authenticate
 
 **Figure 12.3:** Intel® Itanium® Architecture Resets
 
-![](media/index-223_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-223_1.png)
 
  
 

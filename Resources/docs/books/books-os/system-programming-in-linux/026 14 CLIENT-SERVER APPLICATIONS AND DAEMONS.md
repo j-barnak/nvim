@@ -1,4 +1,4 @@
-![](media/index-884_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-884_1.jpg)
 
 14 CLIENT-SERVER APPLICATIONS AND
 
@@ -424,7 +424,7 @@ server to process.
 
 Figure 14-1 depicts the relationship between the clients and the server with respect to the shared pipes.
 
-![](media/index-895_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-895_1.jpg)
 
 *Figure 14-1: The FIFOs used in the iterative server*
 
@@ -720,7 +720,6 @@ close(publicfd);
 
 unlink(msg.fifo_name);
 
-exit(EXIT_SUCCESS);
 
 }
 
@@ -884,7 +883,6 @@ write(fileno(stderr), WARNING, sizeof(WARNING));
 
 }
 
-exit(EXIT_SUCCESS);
 
 }
 
@@ -1038,7 +1036,7 @@ Figure 14-2 shows how the client processes and the server parent and child proce
 
 1.
 
-![](media/index-909_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-909_1.jpg)
 
 *Figure 14-2: Concurrent server and client communication*
 
@@ -1120,7 +1118,6 @@ unlink(msg.upcased_fifo);
 
 unlink(msg.raw_text_fifo);
 
-exit(EXIT_SUCCESS);
 
 }
 
@@ -1274,7 +1271,6 @@ upcased_fd = -1;
 
 clean_up();
 
-exit(EXIT_SUCCESS);
 
 }
 
@@ -1450,7 +1446,6 @@ memset(buffer, 0, PIPE_BUF);
 
 }
 
-exit(EXIT_SUCCESS);
 
 }
 
@@ -1518,7 +1513,6 @@ if ( getpid() == server_pid )
 
 unlink(PUBLIC);
 
-exit(EXIT_SUCCESS);
 
 }
 
@@ -1595,3 +1589,5 @@ page.
 6\. Add a -d option to *calc_server.c* that, when present, turns it into a daemon, and when not, requires the user to run it in the
 
 background.
+
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-921_1.jpg)

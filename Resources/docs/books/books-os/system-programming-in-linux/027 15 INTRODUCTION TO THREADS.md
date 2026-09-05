@@ -1,5 +1,3 @@
-![](media/index-921_1.jpg)
-
 15 INTRODUCTION TO THREADS
 
 The first chapter of the book introduced the concept of threads and
@@ -268,7 +266,7 @@ resource, their pointers point to the same resource structure instance. If a par
 
 Figure 15-1 is a schematic representation of the task_struct showing some parts that are linked into it and parts that are embedded in it.
 
-![](media/index-928_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-928_1.jpg)
 
 *Figure 15-1: A schematic representation of how the process descriptors of two threads that* *are part of the same process facilitate sharing of memory, open files, and other shared data* *of the parent process*
 
@@ -276,7 +274,7 @@ The substructures of the parent process descriptor, such as the
 
 mm_struct containing the memory maps and the files_struct that contains
 
-![](media/index-929_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-929_1.jpg)
 
 a pointer to all open files, are shared by the process’s threads. In
 
@@ -668,7 +666,7 @@ void \*start_function(void \*arg)
 
 }
 
-![](media/index-938_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-938_1.jpg)
 
 Using global, shared variables inside threads invites race conditions, and if there’s a way to avoid doing so, we should. The third idea is to pack a data structure with everything each thread needs and pass a
 
@@ -1679,3 +1677,5 @@ the processor count.
 6\. Write a multithreaded version of *spl_du1.c* (from Chapter 7) that creates a separate thread for each directory command line
 
 argument. (The nftw() function is thread-safe provided that the FTW_CHDIR is not passed to it.)
+
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-961_1.jpg)

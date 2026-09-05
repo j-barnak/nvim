@@ -15,7 +15,7 @@ For example, consider the text “`((5.000000, 4.583333), (4.500000,5.000000))`�
 
 ------------------------------------------------------------------------
 
-> ![](media/images/00043.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00043.jpg)
 
  
 
@@ -25,31 +25,31 @@ For example, consider the text “`((5.000000, 4.583333), (4.500000,5.000000))`�
 
 Let us begin with two utility functions to allow us to convert between strings and lists of integers – this will make it easier to understand our examples when we evaluate them in OCaml’s top level:
 
-> ![](media/images/00046.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00046.jpg)
 
 Note the use of the Standard Library function `List.iteri `which is like `List.iter`, but it passes an additional integer to the function each time, representing the position in the list, starting at 0. Note also that we use `downto `in `int_list_of_string `to avoid a list reversal.
 
 Now, we shall build a little abstraction to allow our compression and decompression functions to share a common basis. Our `compress `and `decompress `function will need to read from any input, and write to any output. However, for our little tests, we shall be reading from and writing to strings. Since we do not know the size of the compressed or decompressed output in advance, we cannot allocate an appropriately sized string. So, let us build an output from a Buffer.t. This way, we can write a function `process `which, given a compression or decompression function, creates a buffer, builds an output from it, calls the function to process the data, and then extracts the final string from the buffer.
 
-> ![](media/images/00051.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00051.jpg)
 
 Now, given some suitable function `decompress`, say, we can call `process `giving the function and a string, and get a new string back.
 
 Decompression in this scheme, as is often the case, is simpler than compression, so we shall address it first. The whole thing is wrapped in a loop which terminates only upon an exception. If the input data is well-formed, that exception will be `EOD`, which we have defined for this purpose. Inside the loop, we read a byte from the input. It is either in the range 0...127, in which case it is a “different” run, and we copy some bytes from input to output. Or, it is in the range 129...255, in which case it is a “same” run, and we output a number of copies of the next byte. Otherwise, the byte must have value 128, and we raise the `EOD` exception. The `decompress_string `function is as simple as we claimed it would be, because we wrote `process`.
 
-> ![](media/images/00057.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00057.jpg)
 
 For compression, we will first write functions to recognise a “same” run and a “different” run in the input, and then a main function which uses them as appropriate. The function `get_same `returns the first character, and an integer representing the number (one or more) of “same” characters starting with the first one. It leaves the input pointing at the last “same” character. If 128 same characters have been found, we must stop early. If we are at the end of input when the function is called, `End_of_file `is raised as usual.
 
-> ![](media/images/00063.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00063.jpg)
 
 The `get_different `function is rather more awkward. It will return the non-empty list of “different” characters starting at the current position. We must stop as soon as we notice two like characters, rewinding twice and removing a character from our accumulator. So, for example, if we are reading “`An Accumulation`” we want to return `['A'; 'n'; ' '; 'A'] `but we do not know this until we read the second `'c'`. Again, we must stop after 128 differing characters. As before, `End_of_file `is raised if we are at the end of the input on the initial call.
 
-> ![](media/images/00090.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00090.jpg)
 
 The compression function is now relatively simple. We repeatedly call `get_same`. If it indicates a run of length one, we call `get_different `instead. In each case we write appropriate data. Then, on `End_of_file`, we write the EOD marker. The `compress_string `function is built just like `decompress_string`.
 
-> ![](media/images/00071.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00071.jpg)
 
 Let us try with our sample data:
 
@@ -80,7 +80,7 @@ A bit-by-bit compression scheme
 
 Our previous method required whole bytes to be equal to one another to compress well. Now we consider compression bit-by-bit, but on the same principle – encoding the lengths of runs of data. We will build a compressor and decompressor for the CCITT Group 3 compression scheme. This is the basic scheme used by the fax machines since the 1970s, and for 1 bit-per-pixel TIFF files. It is also used in the PDF format, as we shall see later in the book. Here is our example data, an 80x21, one-bit-per-pixel image of a scanned word from printed paper:
 
-![](media/images/00153.jpg)
+![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00153.jpg)
 
 We can put it into our source file using the characters `0 `and `1 `to ease readability. A string can run over several lines if a backslash is added at the end of each line. Spaces at the beginning of the next line are also skipped, so we can line it up nicely:
 
@@ -113,11 +113,11 @@ Preliminaries
 
 First, we had better define a function to convert the string of zeros and ones to a string containing the actual binary data. We can do this by building an output_bits with an output built from a buffer. Then, after flushing, we can use `Buffer.contents `to extract the data we have written.
 
-> ![](media/images/00181.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00181.jpg)
 
 Note that, since the string will always be a whole number of bytes (possibly padded with zeros by `flush`) we must remember the width and height of our image (80 and 21 here) and pass one or both of them to some of our other functions. For example, we can write a function to print one of these packed binary strings. This needs the width of the image to know when to print newlines:
 
-> ![](media/images/00087.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00087.jpg)
 
 For simplicity here, we do not worry about padding at the end (in our example, since the width is 80, it will consist of whole bytes anyway).
 
@@ -127,7 +127,7 @@ We have said that the compression will proceed by encoding the lengths of the ru
 
 ------------------------------------------------------------------------
 
-> ![](media/images/00232.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00232.jpg)
 
  
 
@@ -139,7 +139,7 @@ Notice that no white symbol is a prefix of another white symbol, and no black sy
 
 ------------------------------------------------------------------------
 
-> ![](media/images/00096.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00096.jpg)
 
  
 
@@ -155,7 +155,7 @@ The reason for distinguishing between white and black codes is to do with error 
 
 We have the following:
 
-![](media/images/00294.jpg)
+![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00294.jpg)
 
 We have reduced the data from 240 bits to 64 bits, a reduction of about three quarters.
 
@@ -165,7 +165,7 @@ First, we need to encode the terminating and make-up codes. We will use arrays f
 
 ------------------------------------------------------------------------
 
-> ![](media/images/00021.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00021.jpg)
 
  
 
@@ -173,19 +173,19 @@ First, we need to encode the terminating and make-up codes. We will use arrays f
 
 ------------------------------------------------------------------------
 
-> ![](media/images/00050.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00050.jpg)
 
 Now, a function which, given the current colour, an input_bits, the current number of like bits read, and the width of the image, returns a pair of the number of like bits, and the colour:
 
-> ![](media/images/00081.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00081.jpg)
 
 For example, the first call to `read_up_to `will calculate (80, 0). Now we can write the main function. Given an input_bits and output_bits, and the width and height of the image, for each line we check if a zero-width white run needs to be added, and then call `encode_fax_line`.
 
-> ![](media/images/00109.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00109.jpg)
 
 Now we can write a function `process`, just like we did in the byte-by-byte example, but for `input_bits `and `output_bits`. We must be sure to flush the output. The main `compress_string_ccitt `function is then simple:
 
-> ![](media/images/00137.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00137.jpg)
 
 For our full input data, the input string is 80 × 21 = 1680 bits long, and the compressed string is 960 bits long, a compression ratio of 7:4.
 
@@ -193,11 +193,11 @@ Decompressing fax data
 
 For decompression, we will write two functions for reading white and black codes. It is easiest to directly encode the decision tree:
 
-> ![](media/images/00162.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00162.jpg)
 
 Now, decoding is relatively simple. We decode runs for each line, until the width is all used up, and do this for each line. We read white and black codes alternately – each line begins on white. We can use `process` again:
 
-> ![](media/images/00189.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00189.jpg)
 
 We can verify our code by evaluating `s = decompress_string_ccitt (compress_string_ccitt s) `for our example data.
 

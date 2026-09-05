@@ -1,21 +1,3 @@
-Although a brilliant theoretician, Turing was often hopeless when it came to practical matters. His impracticality showed itself in unusual ways: at his office, he chained his mug to the radiator to prevent his colleagues from using it. They naturally regarded this as a challenge, picked the lock, and drank from it wilfully. He routinely ran a dozen or more miles to distant appointments, arriving sticky and exhausted, rather than use public transport. When war broke out in Europe in 1939, Turing converted his savings into two silver ingots which he buried in the countryside for safety; by the end of the war he was unable to remember where he cached them. Turing eventually committed suicide in a characteristically impractical fashion: he ate an apple that he had injected with cyanide. And the test which bears his name is a triumph of theory over practical experience. The difference between theory and practice is a lot bigger in practice than in theory.
-
-**Postscript**
-
-Turing also wrote that he believed that "at the end of the century the use of words and general educated opinion would have altered so much that one will be able to speak of machines thinking without expecting to be contradicted." That actually happened much sooner than Turing reckoned.
-
-Programmers habitually explain a computer 's quirks in terms of thought processes: "You haven't pressed carriage return so the machine thinks that there's more input coming, and it's waiting for it."
-
-However, this is because the term "think" has become debased, rather than because machines have acquired consciousness, as Turing predicted.
-
-Alan Turing was rightly recognized as one of the great theoretical pioneers in computing. The Association for Computing Machinery established its highest annual prize, the Turing Award, in his memory. In 1983, the Turing Award was given to Dennis Ritchie and Ken Thompson in recognition of their work on UNIX and C.
-
-**Further Reading**
-
-If you are interested in learning more about the advances and limitations of artificial intelligence, a good book to read is *What Computers Still Can't Do: A Critique of Artificial Reason* by Hubert L.
-
-Dreyfus, published by the MIT Press, Boston, 1992.
-
 **Chapter 6. Poetry in Motion: Runtime Data Structures**
 
 *\#41: The Enterprise meets God, and it's a child, a computer, or a C program.*
@@ -146,9 +128,9 @@ Figure 6-1 shows what the compiler/linker puts in each segment:
 
 ***Figure 6-1. What Kinds of C Statements End Up in Which Segments?***
 
-![Image 62](media/index-123_1.png)
+![Image 62](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-123_1.png)
 
-![Image 63](media/index-123_2.png)
+![Image 63](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-123_2.png)
 
 The BSS segment gets its name from abbreviating "Block Started by Symbol"—a pseudo-op from the old IBM 704 assembler, carried over into UNIX, and there ever since. Some people like to remember it as "Better Save Space." Since the BSS segment only holds variables that don't have any value yet, it doesn't actually need to store the image of these variables. The size that BSS will require at runtime is recorded in the object file, but BSS (unlike the data segment) doesn't take up any actual space in the object file.
 
@@ -166,7 +148,7 @@ The BSS segment gets its name from abbreviating "Block Started by Symbol"—a ps
 
 5\. What changes occur to file and segment sizes if you compile for debugging? For maximum optimization?
 
-![Image 64](media/index-124_1.png)
+![Image 64](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-124_1.png)
 
 Analyze the results of the above "Programming Challenge" to convince yourself that:
 
@@ -202,7 +184,7 @@ When you take shared libraries into account, a process address space appears, as
 
 ***Figure 6-3. Virtual Address Space Layout, Showing Shared Libraries***
 
-![Image 65](media/index-126_1.png)
+![Image 65](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-126_1.png)
 
 **What the C Runtime Does with Your a.out**
 
@@ -214,7 +196,7 @@ The stack segment contains a single data structure, the stack. A classic compute
 
 Compiler-writers take a slightly more flexible approach. We add or delete plates only from the top, but we can also change values that are on a plate in the middle of the stack. A function can access
 
-![Image 66](media/index-127_1.png)
+![Image 66](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-127_1.png)
 
 variables local to its calling function via parameters or global pointers. The runtime maintains a pointer, often in a register and usually called sp, that indicates the current top of the stack. The stack segment has three major uses, two concerned with functions and one with expression evaluation:
 
@@ -246,7 +228,7 @@ return 0;
 
 Discover the data and text segment locations, and the heap within the data segment, by declaring variables that will be placed in those segments and printing their addresses. Make
 
-![Image 67](media/index-128_1.png)
+![Image 67](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-128_1.png)
 
 the stack grow by calling a function, and declaring some large local arrays.
 
@@ -274,7 +256,7 @@ The description of the contents of activation records is illustrative. The exact
 
 /usr/include/sys/frame.h, shows how a stack frame looks on your UNIX system. On SPARC, a stack frame is large—several dozen words in size—because it provides room to save register windows. On the x86 architecture, the frame is somewhat smaller. The runtime maintains a
 
-![Image 68](media/index-129_1.png)
+![Image 68](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-129_1.png)
 
 pointer, often in a register and usually called fp, which indicates the active stack frame. This will be the stack frame nearest to or at the top of the stack.
 
@@ -298,7 +280,7 @@ The code example below will be used to show the activation records on the stack 
 
 1 a (int i) {
 
-![Image 69](media/index-130_1.png)
+![Image 69](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-130_1.png)
 
 2 if (i\>0)
 
@@ -330,7 +312,7 @@ Compiler-writers will try to speed up programs by not storing information that w
 
 **Programming Challenge**
 
-![Image 70](media/index-131_1.png)
+![Image 70](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-131_1.png)
 
 **The Stack Frame**
 
@@ -450,7 +432,7 @@ in banana()
 
 back in main
 
-![Image 71](media/index-134_1.png)
+![Image 71](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-134_1.png)
 
 Point to watch: the only reliable way to ensure that a local variable retains the value that it had at the time of the longjmp is to declare it volatile. (This is for variables whose value changes between the execution of setjmp and the return of longjmp.)
 
@@ -576,7 +558,6 @@ the compiler
 
 sccs
 
-/usr/ccs/bin
 
 A source code version control system.
 
@@ -598,13 +579,11 @@ Doctors can use x-rays, sonograms, arthroscopes, and exploratory operations to l
 
 dis
 
-/usr/ccs/bin
 
 Object code disassembler
 
 dump -
 
-/usr/ccs/bin
 
 Prints dynamic linking information
 
@@ -618,7 +597,6 @@ Prints the dynamic libraries this file needs
 
 nm
 
-/usr/ccs/bin
 
 Prints the symbol table of an object file
 
@@ -634,7 +612,7 @@ Prints checksum and block count for a file. An-swers questions like: "Are two ex
 
 ***Table 6-3. Tools to Help with Debugging***
 
-![Image 72](media/index-137_1.png)
+![Image 72](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-137_1.png)
 
 **Tool Where**
 
@@ -698,7 +676,6 @@ debugger
 
 gprof
 
-/usr/ccs/bin
 
 Displays the call-graph profile data (identifies the compute-
 
@@ -706,7 +683,6 @@ intensive functions).
 
 prof
 
-/usr/ccs/bin
 
 Displays the percentage of time spent in each routi ne.
 
@@ -828,7 +804,7 @@ The ethernet address is built into the
 
 machine
 
-![Image 73](media/index-139_1.png)
+![Image 73](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-139_1.png)
 
 IP address
 
@@ -891,3 +867,21 @@ No prizes were awarded, no punishments were handed down, and the results stuck. 
 **For Advanced Students Only**
 
 A word to the wise: it's possible to embed assembler code in C source. This is usually only done for the most machine-specific things in the depths of the OS kernel, like setting specific registers on changing from supervisor mode to user mode. Here's how we plant a no-op (or other instruction) in a C function using a SunPro SPARCompiler:
+
+banana() { asm("nop"); }
+
+Here's how you embed assembly language instructions using Microsoft C on a PC: \_\_asm mov ah, 2
+
+\_\_asm mov dl, 43h
+
+You can also prefix the assembler code with the keyword "\_ \_asm". You can also use the keyword once, and put all the assembler code in a pair of braces, like this: \_\_asm {
+
+mov ah, 2
+
+mov dl, 43h
+
+int 21h
+
+}
+
+Little checking is done for you, and it's easy to create programs that bomb out. But it's a good way to experiment with and learn the instruction set of a machine. Take a look at the SPARC architecture manual, the assembler manual (which mostly talks about syntax and directives), and a databook from one of the SPARC vendors, such as Cypress Semiconductor's "SPARC RISC User's Guide."

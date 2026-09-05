@@ -1,21 +1,3 @@
-![Image 132](media/index-224_1.png)
-
-addr (ca\[1\]) = 0x20901
-
-++ca = 0x20901
-
-addr of ptr param = 0xeffffa14
-
-addr (pa\[0\]) = 0x20900
-
-addr (pa\[1\]) = 0x20901
-
-++pa = 0x20901
-
-It looks a little weird at first sight, to see the address of an array parameter not equal to the address of the first element of the array parameter, but it's true enough.
-
-You can win a lot of money-making bets with novice C programmers about what the sizeof operator will produce in this circumstance.
-
 **Chapter 10. More About Pointers**
 
 *Never forget that when you point the finger at someone, three of your own fingers are pointing back at* *you…*
@@ -34,9 +16,9 @@ some people think of the two-dimensional array having its individual rows laid o
 
 ***Figure 10-1. Presumed Memory Layout of a Two-dimensional Array***
 
-![Image 133](media/index-225_1.png)
+![Image 133](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-225_1.png)
 
-![Image 134](media/index-225_2.png)
+![Image 134](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-225_2.png)
 
 Never allow a programmer like this to park your car. The storage and a reference to an individual element are actually laid out in linear memory as shown in Figure 10-2.
 
@@ -66,9 +48,9 @@ char \* pea\[4\];
 
 Note that char \*turnip\[23\] declares "turnip" to be a 23-element array, each element of which is a pointer to a character (or a character-string—there's no way to distinguish from
 
-![Image 135](media/index-226_1.png)
+![Image 135](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-226_1.png)
 
-![Image 136](media/index-226_2.png)
+![Image 136](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-226_2.png)
 
 the declaration). Think of it as parenthesized—(char \*) turnip\[23\]. It is not what it appears to be if you read it from left to right: a pointer to a 23-element array of characters.
 
@@ -168,9 +150,9 @@ Iliffe vectors are an old compiler-writing technique, first used in Algol-60. Th
 
 characters, you could declare the following two-dimensional array:
 
-![Image 137](media/index-229_1.png)
+![Image 137](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-229_1.png)
 
-![Image 138](media/index-229_2.png)
+![Image 138](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-229_2.png)
 
 char carrot\[50\]\[256\];
 
@@ -268,7 +250,7 @@ my_function_1( p );
 
 my_function_2( p );
 
-![Image 139](media/index-231_1.png)
+![Image 139](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-231_1.png)
 
 my_function_3( p );
 
@@ -300,7 +282,7 @@ You now need two conventions, one to indicate the end of an individual row, and 
 
 **Using Pointers to Pass a Multidimensional Array to a Function** The problem of marking the extent of the array would be solvable with the ugly methods described above. But we also have the problem of declaring the two-dimensional array argument inside the function, and that's where the real trouble lies. C has no way to express the concept "the bounds of this array can vary from call to call." The C compiler insists on knowing the bounds in order to generate the correct code for indexing. It is technically feasible to handle this at runtime, and plenty of other languages do, but this is not the C philosophy.
 
-![Image 140](media/index-232_1.png)
+![Image 140](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-232_1.png)
 
 About the best we can do is to give up on two-dimensional arrays and change array\[x\]\[y\] into a one-dimensional array\[x+1\] of pointers to array\[y\]. This reduces the problem to one we have already solved, and we can store a null pointer in the highest element array\[x+1\] to indicate the end of the pointers.
 
@@ -334,7 +316,7 @@ The most obvious way is to declare a function prototype like this: **Attempt 1**
 
 my_function( int my_array \[10\]\[20\] );
 
-![Image 141](media/index-233_1.png)
+![Image 141](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-233_1.png)
 
 Although this is the simplest way, it is also the least useful, as it forces the function to process only arrays of exactly size 10 by 20 integers. What we really want is a means of specifying a more general multidimensional array parameter, such that the function can operate on arrays of any size. Note that the size of the most significant dimension does not have to be specified. All the function has to know is the sizes of all the other dimensions, and the base address of the array. This provides enough information to "step over" a complete row and reach the next one.
 
@@ -426,7 +408,7 @@ return pear;
 
 You would call the function like this:
 
-![Image 142](media/index-236_1.png)
+![Image 142](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-236_1.png)
 
 int (\*result)\[20\]; /\* declare a pointer to 20-int
 
@@ -504,9 +486,9 @@ It would actually have simplified the definition by removing an artificial restr
 
 Because of the strong desire to adhere to the original simple design goals of C, this was not done.
 
-![Image 143](media/index-238_1.png)
+![Image 143](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-238_1.png)
 
-![Image 144](media/index-238_2.png)
+![Image 144](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-238_2.png)
 
 Fortunately, it is possible to get the effect of dynamic arrays (at the expense of doing some pointer manipulation ourselves).
 
@@ -578,7 +560,7 @@ int size;
 
 char \*dynamic;
 
-![Image 145](media/index-240_1.png)
+![Image 145](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-240_1.png)
 
 char input\[10\];
 
@@ -654,7 +636,7 @@ In practice, don't assign the return value from **realloc()** directly to the ch
 
 **Programming Challenge**
 
-![Image 146](media/index-242_1.png)
+![Image 146](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-242_1.png)
 
 **Dynamically Growing Your Arrays**
 
@@ -770,7 +752,7 @@ f3(a) = \*b, and f3(b) = \*a...
 
 Not only did the proof have two errors, but the C program that he "verified" was not in fact correct to start with! It is a quite well known result in C that it is impossible to swap two values (in the general case) without the use of a temporary. In this case, if a and b point to overlapping objects, the algorithm fails. Additionally, the algorithm can't even be applied if one of the values to be swapped is in a
 
-![Image 147](media/index-245_1.png)
+![Image 147](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-245_1.png)
 
 register or is a bitfield, since you can't take the address of a bitfield or a register. The algorithm doesn't work if \*a or \*b are of different-sized types, or if either of them points to an array.
 
@@ -795,3 +777,5 @@ For more detail on the problems with program verification, there's a very readab
 **Programming Solution**
 
 **Answer to Change in Program Proof**
+
+OK, I confess. I didn't change anything in the proof. But how can anyone reviewing that complicated text be sure one way or the other? Program proofs are not practical because most programmers find them too inaccessible.

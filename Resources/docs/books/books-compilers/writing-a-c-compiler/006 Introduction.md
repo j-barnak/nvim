@@ -1,6 +1,6 @@
 # `INTRODUCTION`
 
-![](media/a26394c5fd9047c0974071f62d6ff4719089a6da.jpg)
+![](/tmp/audit/iter1/epubregen/writing-a-c-compiler/media/a26394c5fd9047c0974071f62d6ff4719089a6da.jpg)
 
 When we talk about how programming languages work, we tend to borrow metaphors from fantasy novels: compilers are magic, and the people who work on them are wizards. Dragons may be involved somehow. But in the day-to-day lives of most programmers, compilers behave less like magical artifacts and more like those universal translator earpieces from science fiction. They aren’t flashy or dramatic; they don’t demand a lot of attention. They just hum along in the background, translating a language you speak (or type) fluently into the alien language of machines.
 
@@ -32,7 +32,7 @@ The processor doesn’t understand text, so it can’t run our assembly code as 
 
 Aside from the compiler, assembler, and linker, compiling a C program requires yet another tool: the *preprocessor*, which runs right before the compiler. The preprocessor strips out comments, executes preprocessor directives like `#include`, and expands macros to produce preprocessed code that’s ready to be compiled. The whole process looks something like Figure 1.
 
-![](media/608c91cf87fbe52687e1f2786ea765cc99c1651c.jpg)
+![](/tmp/audit/iter1/epubregen/writing-a-c-compiler/media/608c91cf87fbe52687e1f2786ea765cc99c1651c.jpg)
 
 `Figure 1: Transforming a source file into an executable ``Description`
 

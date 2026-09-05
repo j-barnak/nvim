@@ -4,13 +4,15 @@
 
 The following diagram shows various devices (also known as slaves) connected to an I2C bus:
 
-![Figure 8.1 – I2C bus and device representation ](media/image/B17934_08.jpg)
+![Figure 8.1 – I2C bus and device representation ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_08.jpg)
 
 Figure 8.1 – I2C bus and device representation
 
 From the preceding diagram, we can represent the Linux kernel I2C framework as follows:
 
-CPU \<--platform bus--\>i2c adapter\<---i2c bus---\> i2c slave
+``` c
+CPU <--platform bus-->i2c adapter<---i2c bus---> i2c slave
+```
 
 The CPU is the master hosting the I2C controller, also known as the I2C adapter, which implements the I2C protocol and manages the bus segment that's hosting the I2C devices. In the kernel I2C framework, the adapter is managed by a platform driver while the slave is driven by an I2C driver. However, both drivers use APIs provided by the I2C core. In this chapter, we will be focusing on I2C (slave) device drivers, though references to the adapter will be mentioned if necessary.
 
@@ -38,15 +40,13 @@ Since the scope of this chapter is limited to slave device drivers, we will focu
 
 The kernel uses **struct i2c_adapter** to represent a physical I2C bus, along with the algorithms that are necessary to access it. It is defined as follows:
 
+``` c
 struct i2c_adapter {
-
-    struct module \*owner;
-
-    const struct i2c_algorithm \*algo;
-
-    \[...\]
-
+    struct module *owner;
+    const struct i2c_algorithm *algo;
+    [...]
 };
+```
 
 In the preceding data structure, we have the following:
 
@@ -55,27 +55,19 @@ In the preceding data structure, we have the following:
 
 The algorithm's data structure has the following definition:
 
+``` c
 struct i2c_algorithm {
-
-    int (\*master_xfer)(struct i2c_adapter \*adap,
-
-                       struct i2c_msg \*msgs, int num);
-
-    int (\*smbus_xfer)(struct i2c_adapter \*adap, u16 addr,
-
-              unsigned short flags, char read_write,
-
-              u8 command, int size,
-
-              union i2c_smbus_data \*data);
-
-    /\* To determine what the adapter supports \*/
-
-    u32 (\*functionality)(struct i2c_adapter \*adap);
-
-\[...\]
-
+    int (*master_xfer)(struct i2c_adapter *adap,
+                       struct i2c_msg *msgs, int num);
+    int (*smbus_xfer)(struct i2c_adapter *adap, u16 addr,
+              unsigned short flags, char read_write,
+              u8 command, int size,
+              union i2c_smbus_data *data);
+    /* To determine what the adapter supports */
+    u32 (*functionality)(struct i2c_adapter *adap);
+[...]
 };
+```
 
 In the preceding data structure, the unimportant fields have been omitted. Let's look at each element in the excerpt:
 
@@ -85,37 +77,24 @@ In the preceding data structure, the unimportant fields have been omitted. Let's
 
 In the preceding code, **functionality** is a sanity callback. Either the core or device drivers can invoke it (through **i2c_check_functionality()**) to check whether the given adapter can provide the I2C access we need before we initiate this access. For example, 10-bit addressing mode is not supported by all adapters. Thus, it is safe to call **i2c_check_functionality(client-\>adapter, I2C_FUNC_10BIT_ADDR)** in the chip driver to check whether it is supported by the adapter. All the flags are in the form of **I2C_FUNC_XXX**. Though each can be checked individually, the I2C core has split them into logical functions, as follows:
 
-\#define I2C_FUNC_I2C              0x00000001
-
-\#define I2C_FUNC_10BIT_ADDR       0x00000002
-
-\#define I2C_FUNC_SMBUS_BYTE   (I2C_FUNC_SMBUS_READ_BYTE \| \\
-
-                         I2C_FUNC_SMBUS_WRITE_BYTE)
-
-\#define I2C_FUNC_SMBUS_BYTE_DATA \\
-
-                      (I2C_FUNC_SMBUS_READ_BYTE_DATA \| \\
-
-                       I2C_FUNC_SMBUS_WRITE_BYTE_DATA)
-
-\#define I2C_FUNC_SMBUS_WORD_DATA \\
-
-                     (I2C_FUNC_SMBUS_READ_WORD_DATA \| \\
-
-                      I2C_FUNC_SMBUS_WRITE_WORD_DATA)
-
-\#define I2C_FUNC_SMBUS_BLOCK_DATA \\
-
-                     (I2C_FUNC_SMBUS_READ_BLOCK_DATA \| \\
-
-                      I2C_FUNC_SMBUS_WRITE_BLOCK_DATA)
-
-\#define I2C_FUNC_SMBUS_I2C_BLOCK \\
-
-                     (I2C_FUNC_SMBUS_READ_I2C_BLOCK \| \\
-
-                      I2C_FUNC_SMBUS_WRITE_I2C_BLOCK)
+``` c
+#define I2C_FUNC_I2C              0x00000001
+#define I2C_FUNC_10BIT_ADDR       0x00000002
+#define I2C_FUNC_SMBUS_BYTE   (I2C_FUNC_SMBUS_READ_BYTE | \
+                         I2C_FUNC_SMBUS_WRITE_BYTE)
+#define I2C_FUNC_SMBUS_BYTE_DATA \
+                      (I2C_FUNC_SMBUS_READ_BYTE_DATA | \
+                       I2C_FUNC_SMBUS_WRITE_BYTE_DATA)
+#define I2C_FUNC_SMBUS_WORD_DATA \
+                     (I2C_FUNC_SMBUS_READ_WORD_DATA | \
+                      I2C_FUNC_SMBUS_WRITE_WORD_DATA)
+#define I2C_FUNC_SMBUS_BLOCK_DATA \
+                     (I2C_FUNC_SMBUS_READ_BLOCK_DATA | \
+                      I2C_FUNC_SMBUS_WRITE_BLOCK_DATA)
+#define I2C_FUNC_SMBUS_I2C_BLOCK \
+                     (I2C_FUNC_SMBUS_READ_I2C_BLOCK | \
+                      I2C_FUNC_SMBUS_WRITE_I2C_BLOCK)
+```
 
 With the preceding code, you can check the **I2C_FUNC_SMBUS_BYTE** flag to make sure that the adapter supports SMBus byte-oriented commands.
 
@@ -125,47 +104,34 @@ This introduction to I2C controllers will be referenced in other sections as nee
 
 The first and most evident data structure is the **struct i2c_client** structure, which is declared like so:
 
+``` c
 struct i2c_client {
-
-    unsigned short flags;
-
-    unsigned short addr;
-
-    char name\[I2C_NAME_SIZE\];
-
-    struct i2c_adapter \*adapter;
-
-    struct device dev;
-
-    int irq;
-
+    unsigned short flags;
+    unsigned short addr;
+    char name[I2C_NAME_SIZE];
+    struct i2c_adapter *adapter;
+    struct device dev;
+    int irq;
 };
+```
 
 In the preceding data structure, which holds the properties of the I2C device, **flags** represents the device flags, the most important of which is the one telling us whether this is a 10-bit chip address. **addr** contains the chip address. In the case of a 7-bit address chip, it will be stored in the lower 7 bits. **name** contains the device name, which is limited to **I2C_NAME_SIZE** (set to **20** in **include/linux/mod_devicetable.h**) characters. **adapter** is the adapter (remember, it is the I2C bus) that this device sits on. **dev** is the underlying device structure for the device model, and **irq** is the interrupt line that's been assigned to the device.
 
 Now that we are familiar with the I2C device data structure, let's focus on its driver, which is abstracted by **struct i2c_driver**. It can be declared like so:
 
+``` c
 struct i2c_driver {
-
-    unsigned int class;
-
-    /\* Standard driver model interfaces \*/
-
-    int (\*probe)(struct i2c_client \*client,
-
-                  const struct i2c_device_id \*id);
-
-    int (\*remove)(struct i2c_client \*client);
-
-    int (\*probe_new)(struct i2c_client \*client);
-
-    void (\*shutdown)(struct i2c_client \*client);
-
-    struct device_driver driver;
-
-    const struct i2c_device_id \*id_table;
-
+    unsigned int class;
+    /* Standard driver model interfaces */
+    int (*probe)(struct i2c_client *client,
+                  const struct i2c_device_id *id);
+    int (*remove)(struct i2c_client *client);
+    int (*probe_new)(struct i2c_client *client);
+    void (*shutdown)(struct i2c_client *client);
+    struct device_driver driver;
+    const struct i2c_device_id *id_table;
 };
+```
 
 Let's look at each element in the data structure:
 
@@ -178,21 +144,16 @@ Let's look at each element in the data structure:
 
 The third and last data structure of this series is **struct i2c_msg**, which represents one operation of an I2C transaction. It is declared like so:
 
+``` c
 struct i2c_msg {
-
-    \_\_u16 addr;
-
-    \_\_u16 flags;
-
-\#define I2C_M_TEN 0x0010
-
-\#define I2C_M_RD 0x0001
-
-    \_\_u16 len;
-
-    \_\_u8 \* buf;
-
+    __u16 addr;
+    __u16 flags;
+#define I2C_M_TEN 0x0010
+#define I2C_M_RD 0x0001
+    __u16 len;
+    __u8 * buf;
 };
+```
 
 Each element in this data structure is self-explanatory. Let's look at them in more detail:
 
@@ -218,195 +179,120 @@ Once the driver and the data structure have been initialized, communication betw
 
 We will start from the lowest level – **i2c_transfer()** is the core function that's used to transfer I2C messages. Other APIs wrap this function, which is backed by **algo-\>master_xfer** of the adapter. The following is its prototype:
 
-int i2c_transfer(struct i2c_adapter \*adap,
-
-              struct i2c_msg \*msg, int num);
+``` c
+int i2c_transfer(struct i2c_adapter *adap,
+              struct i2c_msg *msg, int num);
+```
 
 With **i2c_transfer()**, no stop bit is sent between bytes in the same read/write operation of the same transaction. This is useful for devices that require no stop bit between address write and data read, for example. The following code shows how it can be used:
 
-static int i2c_read_bytes(struct i2c_client \*client,
-
-                          u8 cmd, u8 \*data, u8 data_len)
-
+``` c
+static int i2c_read_bytes(struct i2c_client *client,
+                          u8 cmd, u8 *data, u8 data_len)
 {
-
-    struct i2c_msg msgs\[2\];
-
-    int ret;
-
-    u8 \*buffer;
-
-    buffer = kzalloc(data_len, GFP_KERNEL);
-
-    if (!buffer)
-
-        return -ENOMEM;;
-
-    msgs\[0\].addr = client-\>addr;
-
-    msgs\[0\].flags = client-\>flags;
-
-    msgs\[0\].len = 1;
-
-    msgs\[0\].buf = &cmd;
-
-    msgs\[1\].addr = client-\>addr;
-
-    msgs\[1\].flags = client-\>flags \| I2C_M_RD;
-
-    msgs\[1\].len = data_len;
-
-    msgs\[1\].buf = buffer;
-
-    ret = i2c_transfer(client-\>adapter, msgs, 2);
-
-    if (ret \< 0)
-
-        dev_err(&client-\>adapter-\>dev,
-
-                 "i2c read failed\n");
-
-    else
-
-        memcpy(data, buffer, data_len);
-
-    kfree(buffer);
-
-    return ret;
-
+    struct i2c_msg msgs[2];
+    int ret;
+    u8 *buffer;
+    buffer = kzalloc(data_len, GFP_KERNEL);
+    if (!buffer)
+        return -ENOMEM;;
+    msgs[0].addr = client->addr;
+    msgs[0].flags = client->flags;
+    msgs[0].len = 1;
+    msgs[0].buf = &cmd;
+    msgs[1].addr = client->addr;
+    msgs[1].flags = client->flags | I2C_M_RD;
+    msgs[1].len = data_len;
+    msgs[1].buf = buffer;
+    ret = i2c_transfer(client->adapter, msgs, 2);
+    if (ret < 0)
+        dev_err(&client->adapter->dev,
+                 "i2c read failed\n");
+    else
+        memcpy(data, buffer, data_len);
+    kfree(buffer);
+    return ret;
 }
+```
 
 If the device requires a stop bit in the middle of a read sequence, you should split your transaction into two parts (two operations) – **i2c_transfer** for address write (a transaction with a single write operation), and another **i2c_transfer** for data read (a transaction with a single read operation), as shown here:
 
-static int i2c_read_bytes(struct i2c_client \*client,
-
-                          u8 cmd, u8 \*data, u8 data_len)
-
+``` c
+static int i2c_read_bytes(struct i2c_client *client,
+                          u8 cmd, u8 *data, u8 data_len)
 {
-
-    struct i2c_msg msgs\[2\];
-
-    int ret;
-
-    u8 \*buffer;
-
-    buffer = kzalloc(data_len, GFP_KERNEL);
-
-    if (!buffer)
-
-        return -ENOMEM;;
-
-    msgs\[0\].addr = client-\>addr;
-
-    msgs\[0\].flags = client-\>flags;
-
-    msgs\[0\].len = 1;
-
-    msgs\[0\].buf = &cmd;
-
-    ret = i2c_transfer(client-\>adapter, msgs, 1);
-
-    if (ret \< 0) {
-
-        dev_err(&client-\>adapter-\>dev,
-
-                "i2c read failed\n");
-
-        kfree(buffer);
-
-        return ret;
-
-    }
-
-    msgs\[1\].addr = client-\>addr;
-
-    msgs\[1\].flags = client-\>flags \| I2C_M_RD;
-
-    msgs\[1\].len = data_len;
-
-    msgs\[1\].buf = buffer;
-
-    ret = i2c_transfer(client-\>adapter, &msgs\[1\], 1);
-
-    if (ret \< 0)
-
-        dev_err(&client-\>adapter-\>dev,
-
-                "i2c read failed\n");
-
-    else
-
-        memcpy(data, buffer, data_len);
-
-    kfree(buffer);
-
-    return ret;
-
+    struct i2c_msg msgs[2];
+    int ret;
+    u8 *buffer;
+    buffer = kzalloc(data_len, GFP_KERNEL);
+    if (!buffer)
+        return -ENOMEM;;
+    msgs[0].addr = client->addr;
+    msgs[0].flags = client->flags;
+    msgs[0].len = 1;
+    msgs[0].buf = &cmd;
+    ret = i2c_transfer(client->adapter, msgs, 1);
+    if (ret < 0) {
+        dev_err(&client->adapter->dev,
+                "i2c read failed\n");
+        kfree(buffer);
+        return ret;
+    }
+    msgs[1].addr = client->addr;
+    msgs[1].flags = client->flags | I2C_M_RD;
+    msgs[1].len = data_len;
+    msgs[1].buf = buffer;
+    ret = i2c_transfer(client->adapter, &msgs[1], 1);
+    if (ret < 0)
+        dev_err(&client->adapter->dev,
+                "i2c read failed\n");
+    else
+        memcpy(data, buffer, data_len);
+    kfree(buffer);
+    return ret;
 }
+```
 
 Otherwise, you can use alternative APIs, such as **i2c_master_send** and **i2c_master_recv**, respectively:
 
-int i2c_master_send(struct i2c_client \*client,
-
-             const char \*buf, int count);
-
-int i2c_master_recv(struct i2c_client \*client,
-
-             char \*buf, int count);
+``` c
+int i2c_master_send(struct i2c_client *client,
+             const char *buf, int count);
+int i2c_master_recv(struct i2c_client *client,
+             char *buf, int count);
+```
 
 These APIs are both implemented on top of **i2c_transfer()**. **i2c_master_send()** actually implements an I2C transaction with a single write operation, while **i2c_master_recv()** does the same with a single read operation.
 
 The first argument is the I2C device to be accessed. The second parameter is the read/write buffer, while the third represents the number of bytes to read or write. The returned value is the number of bytes being read/written. The following code is a simplified version of our previous excerpt:
 
-static int i2c_read_bytes(struct i2c_client \*client,
-
-                          u8 cmd, u8 \*data, u8 data_len)
-
+``` c
+static int i2c_read_bytes(struct i2c_client *client,
+                          u8 cmd, u8 *data, u8 data_len)
 {
-
-    struct i2c_msg msgs\[2\];
-
-    int ret;
-
-    u8 \*buffer;
-
-    buffer = kzalloc(data_len, GFP_KERNEL);
-
-    if (!buffer)
-
-        return -ENOMEM;;
-
-    ret = i2c_master_send(client, &cmd, 1);
-
-    if (ret \< 0) {
-
-        dev_err(&client-\>adapter-\>dev,
-
-                "i2c read failed\n");
-
-        kfree(buffer);
-
-        return ret;
-
-    }
-
-    ret = i2c_master_recv(client, buffer, data_len);
-
-    if (ret \< 0)
-
-        dev_err(&client-\>adapter-\>dev,
-
-                "i2c read failed\n");
-
-    else
-
-        memcpy(data, buffer, data_len);
-
-    kfree(buffer);
-
-    return ret;
-
+    struct i2c_msg msgs[2];
+    int ret;
+    u8 *buffer;
+    buffer = kzalloc(data_len, GFP_KERNEL);
+    if (!buffer)
+        return -ENOMEM;;
+    ret = i2c_master_send(client, &cmd, 1);
+    if (ret < 0) {
+        dev_err(&client->adapter->dev,
+                "i2c read failed\n");
+        kfree(buffer);
+        return ret;
+    }
+    ret = i2c_master_recv(client, buffer, data_len);
+    if (ret < 0)
+        dev_err(&client->adapter->dev,
+                "i2c read failed\n");
+    else
+        memcpy(data, buffer, data_len);
+    kfree(buffer);
+    return ret;
 }
+```
 
 With that, we are familiar with how plain I2C APIs are implemented in the kernel. However, there is a category of devices we need to address – SMBus-compatible devices – which are not to be confused with I2C ones, even though they sit on the same physical bus.
 
@@ -416,83 +302,51 @@ SMBus is a two-wire bus developed by Intel and is very similar to I2C. Moreover,
 
 The following are some examples of SMBus APIs:
 
-s32 i2c_smbus_read_byte_data(struct i2c_client \*client,
-
-                             u8 command);
-
-s32 i2c_smbus_write_byte_data(struct i2c_client \*client,
-
-                               u8 command, u8 value);
-
-s32 i2c_smbus_read_word_data(struct i2c_client \*client,
-
-                             u8 command);
-
-s32 i2c_smbus_write_word_data(struct i2c_client \*client,
-
-                              u8 command, u16 value);
-
-s32 i2c_smbus_read_block_data(struct i2c_client \*client,
-
-                              u8 command, u8 \*values);
-
-s32 i2c_smbus_write_block_data(struct i2c_client \*client,
-
-                               u8 command, u8 length,
-
-                               const u8 \*values);
+``` c
+s32 i2c_smbus_read_byte_data(struct i2c_client *client,
+                             u8 command);
+s32 i2c_smbus_write_byte_data(struct i2c_client *client,
+                               u8 command, u8 value);
+s32 i2c_smbus_read_word_data(struct i2c_client *client,
+                             u8 command);
+s32 i2c_smbus_write_word_data(struct i2c_client *client,
+                              u8 command, u16 value);
+s32 i2c_smbus_read_block_data(struct i2c_client *client,
+                              u8 command, u8 *values);
+s32 i2c_smbus_write_block_data(struct i2c_client *client,
+                               u8 command, u8 length,
+                               const u8 *values);
+```
 
 A complete list of SMBus APIs is available in **include/linux/i2c.h** in the kernel sources. Each function is self-explanatory. The following example shows a simple read/write operation that's using SMBus-compatible APIs to access an I2C GPIO expander:
 
+``` c
 struct mcp23016 {
-
-    struct i2c_client   \*client;
-
-    struct gpio_chip    chip;
-
-    struct mutex        lock;
-
+    struct i2c_client   *client;
+    struct gpio_chip    chip;
+    struct mutex        lock;
 };
-
-\[...\]
-
-static int mcp23016_set(struct mcp23016 \*mcp,
-
-             unsigned offset, intval)
-
+[...]
+static int mcp23016_set(struct mcp23016 *mcp,
+             unsigned offset, intval)
 {
-
-    s32 value;
-
-    unsigned bank = offset / 8;
-
-    u8 reg_gpio = (bank == 0) ? GP0 : GP1;
-
-    unsigned bit = offset % 8;
-
-    value = i2c_smbus_read_byte_data(mcp-\>client,
-
-                                     reg_gpio);
-
-    if (value \>= 0) {
-
-        if (val)
-
-            value \|= 1 \<\< bit;
-
-        else
-
-            value &= ~(1 \<\< bit);
-
-        return i2c_smbus_write_byte_data(mcp-\>client,
-
-                                         reg_gpio, value);
-
-    } else
-
-        return value;
-
+    s32 value;
+    unsigned bank = offset / 8;
+    u8 reg_gpio = (bank == 0) ? GP0 : GP1;
+    unsigned bit = offset % 8;
+    value = i2c_smbus_read_byte_data(mcp->client,
+                                     reg_gpio);
+    if (value >= 0) {
+        if (val)
+            value |= 1 << bit;
+        else
+            value &= ~(1 << bit);
+        return i2c_smbus_write_byte_data(mcp->client,
+                                         reg_gpio, value);
+    } else
+        return value;
 }
+```
 
 The SMBus part is as simple as the list of APIs that are available. Now that we can access the device either using plain I2C functions or SMBus functions, we can start implementing the body of our I2C driver.
 
@@ -512,51 +366,40 @@ The **probe()** callback in the **struct i2c_driver** structure is invoked any t
 
 Formerly, the probing callback was assigned to the **probe** element of **struct i2c_driver** and had the following prototype:
 
-int foo_probe(struct i2c_client \*client,
-
-            const struct i2c_device_id \*id)
+``` c
+int foo_probe(struct i2c_client *client,
+            const struct i2c_device_id *id)
+```
 
 Because the second argument is rarely used, this callback has been deprecated in favor of **probe_new**, which has the following prototype:
 
-int probe(struct i2c_client \*client)
+``` c
+int probe(struct i2c_client *client)
+```
 
 In the preceding prototype, the **struct i2c_client** pointer represents the I2C device itself. This parameter is prebuilt and initialized by the core according to the device's description, which is done either in the device tree or in the board file.
 
 It is not recommended to access the device early in the **probe** method. Because each I2C adapter has different capabilities, it is better to request for it to know what capabilities it supports and adapt the driver's behavior accordingly:
 
-\#define CHIP_ID 0x13
-
-\#define DA311_REG_CHIP_ID  0x000f
-
-static int fake_i2c_probe(struct i2c_client \*client)
-
+``` c
+#define CHIP_ID 0x13
+#define DA311_REG_CHIP_ID  0x000f
+static int fake_i2c_probe(struct i2c_client *client)
 {
-
-    int err;
-
-    int ret;
-
-    if (!i2c_check_functionality(client-\>adapter,
-
-            I2C_FUNC_SMBUS_BYTE_DATA))
-
-        return -EIO;
-
-    /\* read family id \*/
-
-    ret = i2c_smbus_read_byte_data(client, REG_CHIP_ID);
-
-    if (ret != CHIP_ID)
-
-        return (ret \< 0) ? ret : -ENODEV;
-
-    /\* register with other frameworks \*/
-
-    \[...\]
-
-    return 0;
-
+    int err;
+    int ret;
+    if (!i2c_check_functionality(client->adapter,
+            I2C_FUNC_SMBUS_BYTE_DATA))
+        return -EIO;
+    /* read family id */
+    ret = i2c_smbus_read_byte_data(client, REG_CHIP_ID);
+    if (ret != CHIP_ID)
+        return (ret < 0) ? ret : -ENODEV;
+    /* register with other frameworks */
+    [...]
+    return 0;
 }
+```
 
 In the preceding example, we checked whether the underlying adapter supports the type/command the device needs. Only after a successful sanity check, we can safely access the device and go further by allocating resources of any kind and registering with other frameworks if necessary.
 
@@ -564,25 +407,22 @@ In the preceding example, we checked whether the underlying adapter supports the
 
 The **i2c_driver.remove** callback must undo what has been done in the **probe** function. It must unregister from each framework that was registered with **probe** and release each resource that was requested. This callback has the following prototype:
 
-static int remove(struct i2c_device \*client)
+``` c
+static int remove(struct i2c_device *client)
+```
 
 In the preceding line of code, **client** is the same I2C device data structure that was passed by the core to the **probe** method. This means that whatever data you have stored at probing time can be retrieved here. For example, you may need to process some cleaning or any other stuff based on the private data you set up in the **probe** function:
 
-static int mc9s08dz60_remove(struct i2c_client \*client)
-
+``` c
+static int mc9s08dz60_remove(struct i2c_client *client)
 {
-
-    struct mc9s08dz60 \*mc9s;
-
-    /\* We retrieve our private data \*/
-
-    mc9s = i2c_get_clientdata(client);
-
-   /\* Which hold gpiochip we want to work on \*/
-
-    return gpiochip_remove(&mc9s-\>chip);
-
+    struct mc9s08dz60 *mc9s;
+    /* We retrieve our private data */
+    mc9s = i2c_get_clientdata(client);
+   /* Which hold gpiochip we want to work on */
+    return gpiochip_remove(&mc9s->chip);
 }
+```
 
 The preceding example is simple and may represent most cases that you will see in drivers. Since this callback is supposed to return zero on success, the failure reasons may include that the device can't power down, is still in use, and so on. This means that there may be situations where you will want to consult the device and perform some additional operations in this callback function.
 
@@ -592,41 +432,35 @@ At this stage in the development process, all the callbacks have been prepared. 
 
 I2C drivers register and unregister themselves with the core using the **i2c_add_driver()** and **i2c_del_driver()** APIs, respectively. The former is a macro that's backed by the **i2c_register_driver()** function. The following code shows their respective prototypes:
 
-int i2c_add_driver(struct i2c_driver \*drv);
-
-void i2c_del_driver(struct i2c_driver \*drv);
+``` c
+int i2c_add_driver(struct i2c_driver *drv);
+void i2c_del_driver(struct i2c_driver *drv);
+```
 
 In both functions, **drv** is the I2C driver structure that had been set up previously. The registration API returns zero on success or a negative error code on failure.
 
 Driver registration mostly takes place in the module initialization while unregistering this driver is usually done in module exit method. The following is a typical demonstration of I2C driver registering:
 
-static int \_\_init foo_init(void)
-
+``` c
+static int __init foo_init(void)
 {
-
-    \[...\] /\*My init code \*/
-
-      return i2c_add_driver(&foo_driver);
-
+    [...] /*My init code */
+      return i2c_add_driver(&foo_driver);
 }
-
 module_init(foo_init);
-
-static void \_\_exit foo_cleanup(void)
-
+static void __exit foo_cleanup(void)
 {
-
-    \[...\] /\* My clean up code \*/
-
-      i2c_del_driver(&foo_driver);
-
+    [...] /* My clean up code */
+      i2c_del_driver(&foo_driver);
 }
-
 module_exit(foo_cleanup);
+```
 
 If the driver needs to do nothing else but register/unregister the driver during module initialization/cleanup, then the **module_i2c_driver()** macro can be used to reduce the preceding code, like so:
 
+``` c
 module_i2c_driver(foo_driver);
+```
 
 This macro will be expanded at build time to the appropriate initialization/exit methods in the module, which will take care of registering/unregistering the I2C driver.
 
@@ -634,83 +468,65 @@ This macro will be expanded at build time to the appropriate initialization/exit
 
 For the matching loop to be invoked with our I2C driver, the **i2c_driver.id_table** field must be set with a list of I2C device IDs, each described by an instance of the **struct i2c_device_id** data structure, which has the following definition:
 
+``` c
 struct i2c_device_id {
-
-   char name\[I2C_NAME_SIZE\];
-
-   kernel_ulong_t driver_data;
-
+   char name[I2C_NAME_SIZE];
+   kernel_ulong_t driver_data;
 };
+```
 
 In the preceding data structure, **name** is a descriptive name for the device, while **driver_data** is the driver state data, which is private to the driver. It can be set with a pointer to a per-device data structure, for example. Additionally, for device matching and module (auto)loading purposes, this same device ID array needs to be given to the **MODULE_DEVICE_TABLE** macro.
 
 However, this does not concern device tree matching. For a device node in the device tree to match our driver, the **i2c_driver.device.of_match_table** element of our driver must be set with a list of elements of the **struct of_device_id** type. Each entry in that list will describe an I2C device that can be matched from the device tree. The following is the definition of this data structure:
 
+``` c
 struct of_device_id {
-
-\[...\]
-
-    char  compatible\[128\];
-
-    const void \*data;
-
+[...]
+    char  compatible[128];
+    const void *data;
 };
+```
 
 In the preceding data structure, **compatible** is a quite descriptive string that can be used in the device tree to match this driver, while **data** can point to anything, such as a per-device resource. In the same way, for module (auto)loading due to a device tree match, this list must be given to the **MODULE_DEVICE_TABLE** macro.
 
 The following is an example:
 
-\#define ID_FOR_FOO_DEVICE  0
-
-\#define ID_FOR_BAR_DEVICE  1
-
-static struct i2c_device_id foo_idtable\[\] = {
-
-   { "foo", ID_FOR_FOO_DEVICE },
-
-   { "bar", ID_FOR_BAR_DEVICE },
-
-   { },
-
+``` c
+#define ID_FOR_FOO_DEVICE  0
+#define ID_FOR_BAR_DEVICE  1
+static struct i2c_device_id foo_idtable[] = {
+   { "foo", ID_FOR_FOO_DEVICE },
+   { "bar", ID_FOR_BAR_DEVICE },
+   { },
 };
-
 MODULE_DEVICE_TABLE(i2c, foo_idtable);
+```
 
 Now, for module loading after a device tree match, we need to do the following:
 
-static const struct of_device_id foobar_of_match\[\] = {
-
-        { .compatible = "packtpub,foobar-device" },
-
-        { .compatible = "packtpub,barfoo-device" },
-
-        {},
-
+``` c
+static const struct of_device_id foobar_of_match[] = {
+        { .compatible = "packtpub,foobar-device" },
+        { .compatible = "packtpub,barfoo-device" },
+        {},
 };
-
 MODULE_DEVICE_TABLE(of, foobar_of_match);
+```
 
 The excerpt shows the final content for **i2c_driver**, with the respective device table pointers set:
 
+``` c
 static struct i2c_driver foo_driver = {
-
-    .driver         = {
-
-        .name   = "foo",
-
-        /\* The below line adds Device Tree support \*/
-
-        .of_match_table = of_match_ptr(foobar_of_match),
-
-    },
-
-    .probe          = fake_i2c_probe,
-
-    .remove         = fake_i2c_remove,
-
-    .id_table       = foo_idtable,
-
+    .driver         = {
+        .name   = "foo",
+        /* The below line adds Device Tree support */
+        .of_match_table = of_match_ptr(foobar_of_match),
+    },
+    .probe          = fake_i2c_probe,
+    .remove         = fake_i2c_remove,
+    .id_table       = foo_idtable,
 };
+```
 
 In the preceding code, we can see what an I2C driver structure would look like once it has been set up.
 
@@ -723,25 +539,18 @@ We will be using the device tree declaration because the board file, though used
 
 The following is an example declaration of two I2C devices on the same adapter:
 
-&i2c2 { /\* Phandle of the bus node \*/
-
-    pcf8523: rtc@68 {
-
-        compatible = "nxp,pcf8523";
-
-        reg = \<0x68\>;
-
-    };
-
-    eeprom: ee24lc512@55 { /\* eeprom device \*/
-
-        compatible = "labcsmart,ee24lc512";
-
-        reg = \<0x55\>;
-
-    };
-
+``` c
+&i2c2 { /* Phandle of the bus node */
+    pcf8523: rtc@68 {
+        compatible = "nxp,pcf8523";
+        reg = <0x68>;
+    };
+    eeprom: ee24lc512@55 { /* eeprom device */
+        compatible = "labcsmart,ee24lc512";
+        reg = <0x55>;
+    };
 };
+```
 
 The preceding sample declares an RTC chip at address **0x68** and an EEPROM at address **0x55** on the same bus, which is the SoC's I2C bus number 2. The I2C core will rely on the **compatible** string property and the **i2c_device_id** table to bind devices and drivers. A first attempt is made to match the device by compatible string (the **OF** style, which is the device tree); if it fails, then the I2C core tries to match the device by the **id** table.
 
@@ -751,31 +560,26 @@ Deciding not to write the device driver consists of writing the appropriate user
 
 First, the required headers for dealing with I2C devices from the user space are as follows:
 
-\#include \<linux/i2c-dev.h\>
-
-\#include \<i2c/smbus.h\>
-
-\#include \<linux/i2c.h\>
+``` c
+#include <linux/i2c-dev.h>
+#include <i2c/smbus.h>
+#include <linux/i2c.h>
+```
 
 The following are the possible commands:
 
 - **ioctl(file, I2C_FUNCS, unsigned long \*funcs)**: This command is probably the first command you should issue. It is the equivalent of **i2c_check_functionality()** in the kernel, which returns the necessary adapter functionality (in the **\*funcs** argument). The returned flags are also in the form of **I2C_FUNC\_\***:
 
+  ``` c
   unsigned long funcs;
-
-  if (ioctl(file, I2C_FUNCS, &funcs) \< 0)
-
-          return -errno;
-
+  if (ioctl(file, I2C_FUNCS, &funcs) < 0)
+          return -errno;
   if (!(funcs & I2C_FUNC_SMBUS_QUICK)) {
-
-      /\* Oops, SMBus write_quick) not available! \*/
-
-      exit(1);
-
+      /* Oops, SMBus write_quick) not available! */
+      exit(1);
   }
-
-  /\* Now it is safe to use SMBus write_quick command \*/
+  /* Now it is safe to use SMBus write_quick command */
+  ```
 
 - **ioctl(file, I2C_TENBIT, long select)**: Here, you can select whether the slave you need to talk to is a 10-bit address chip (**select = 1**) or not (**select = 0**).
 
@@ -783,119 +587,82 @@ The following are the possible commands:
 
 - **ioctl(file, I2C_RDWR, struct i2c_rdwr_ioctl_data \*msgset)**: You can use this to perform combined plain I2C read/write transactions without stop bit in between. The structure of interest is **struct i2c_rdwr_ioctl_data**, which has the following definition:
 
+  ``` c
   struct i2c_rdwr_ioctl_data {
-
-    struct i2c_msg \*msgs; /\* ptr to array of messages \*/
-
-    int nmsgs; /\* number of messages to exchange \*/
-
+    struct i2c_msg *msgs; /* ptr to array of messages */
+    int nmsgs; /* number of messages to exchange */
   }
+  ```
 
 The following is an example of using this IOCTL:
 
-    int ret;
-
-    uint8_t buf \[5\] = {regaddr, '0x55', '0x65',
-
-                       '0x88', '0x14'};
-
-    struct i2c_msg messages\[\] = {
-
-        {
-
-            .addr = dev,
-
-            .buf = buf,
-
-            .len = 5, /\* buf size is 5 \*/
-
-        },
-
-    };
-
-    struct i2c_rdwr_ioctl_data payload = {
-
-        .msgs = messages,
-
-        .nmsgs = sizeof(messages)
-
-                 /sizeof(messages\[0\]),
-
-    };
-
-    ret = ioctl(file, I2C_RDWR, &payload);
+``` c
+    int ret;
+    uint8_t buf [5] = {regaddr, '0x55', '0x65',
+                       '0x88', '0x14'};
+    struct i2c_msg messages[] = {
+        {
+            .addr = dev,
+            .buf = buf,
+            .len = 5, /* buf size is 5 */
+        },
+    };
+    struct i2c_rdwr_ioctl_data payload = {
+        .msgs = messages,
+        .nmsgs = sizeof(messages)
+                 /sizeof(messages[0]),
+    };
+    ret = ioctl(file, I2C_RDWR, &payload);
+```
 
 You can also use the **read()** and **write()** calls to make plain I2C transactions (once the address has been set with **I2C_SLAVE**).
 
 - **ioctl(file, I2C_SMBUS, struct i2c_smbus_ioctl_data \*args)**: This command is used to issue an SMBus transfer. The main structure argument has the following prototype:
 
+  ``` c
   struct i2c_smbus_ioctl_data {
-
-      \_\_u8 read_write;
-
-      \_\_u8 command;
-
-      \_\_u32 size;
-
-      union i2c_smbus_data \_\_user \*data;
-
+      __u8 read_write;
+      __u8 command;
+      __u32 size;
+      union i2c_smbus_data __user *data;
   };
+  ```
 
 In the preceding data structure, **read_write** determines the direction of the transfer – **I2C_SMBUS_READ** to read and **I2C_SMBUS_WRITE** to write. **command** is a command that can be interpreted by the chip. It may be a register address, for example. **size** is the message's length, while **buf** is the message buffer. Note that standardized sizes are already exposed by the I2C core. These are **I2C_SMBUS_BYTE**, **I2C_SMBUS_BYTE_DATA**, **I2C_SMBUS_WORD_DATA**, **I2C_SMBUS_BLOCK_DATA**, and **I2C_SMBUS_I2C_BLOCK_DATA**, for 1, 2, 3, 5, and 8 bytes, respectively. The full list is available at **include/uapi/linux/i2c.h**. The following is an example that shows how to do an SMBus transfer in the user space:
 
-    uint8_t buf \[5\] = {'0x55', '0x65', '0x88'};
-
-    struct i2c_smbus_ioctl_data payload = {
-
-        .read_write = I2C_SMBUS_WRITE,
-
-        .size = I2C_SMBUS_WORD_DATA,
-
-        .command = regaddr,
-
-        .data = (void \*) buf,
-
-    };
-
-    ret = ioctl (fd, I2C_SLAVE_FORCE, dev);
-
-    if (ret \< 0)
-
-        /\* handle errors \*/
-
-    ret = ioctl (fd, I2C_SMBUS, &payload);
-
-    if (ret \< 0)
-
-        /\* handle errors \*/
+``` c
+    uint8_t buf [5] = {'0x55', '0x65', '0x88'};
+    struct i2c_smbus_ioctl_data payload = {
+        .read_write = I2C_SMBUS_WRITE,
+        .size = I2C_SMBUS_WORD_DATA,
+        .command = regaddr,
+        .data = (void *) buf,
+    };
+    ret = ioctl (fd, I2C_SLAVE_FORCE, dev);
+    if (ret < 0)
+        /* handle errors */
+    ret = ioctl (fd, I2C_SMBUS, &payload);
+    if (ret < 0)
+        /* handle errors */
+```
 
 Since you can use a simple **read()**/**write()** system call to do a plain I2C transfer (even though a stop bit is sent after each transfer), the I2C core provides the following APIs to perform an SMBus transfer:
 
-\_\_s32 i2c_smbus_write_quick(int file, \_\_u8 value);
-
-\_\_s32 i2c_smbus_read_byte(int file);
-
-\_\_s32 i2c_smbus_write_byte(int file, \_\_u8 value);
-
-\_\_s32 i2c_smbus_read_byte_data(int file, \_\_u8 command);
-
-\_\_s32 i2c_smbus_write_byte_data(int file, \_\_u8 command,
-
-                                 \_\_u8 value);
-
-\_\_s32 i2c_smbus_read_word_data(int file, \_\_u8 command);
-
-\_\_s32 i2c_smbus_write_word_data(int file, \_\_u8 command,
-
-                                 \_\_u16 value);
-
-\_\_s32 i2c_smbus_read_block_data(int file, \_\_u8 command,
-
-                                 \_\_u8 \*values);
-
-\_\_s32 i2c_smbus_write_block_data(int file, \_\_u8 command,
-
-                              \_\_u8 length, \_\_u8 \*values);
+``` c
+__s32 i2c_smbus_write_quick(int file, __u8 value);
+__s32 i2c_smbus_read_byte(int file);
+__s32 i2c_smbus_write_byte(int file, __u8 value);
+__s32 i2c_smbus_read_byte_data(int file, __u8 command);
+__s32 i2c_smbus_write_byte_data(int file, __u8 command,
+                                 __u8 value);
+__s32 i2c_smbus_read_word_data(int file, __u8 command);
+__s32 i2c_smbus_write_word_data(int file, __u8 command,
+                                 __u16 value);
+__s32 i2c_smbus_read_block_data(int file, __u8 command,
+                                 __u8 *values);
+__s32 i2c_smbus_write_block_data(int file, __u8 command,
+                              __u8 length, __u8 *values);
+```
 
 You are encouraged to use these functions instead of IOCTLs. If a failure occurs, all of these transactions will return **-1**; you can check **errno** for a better understanding of what went wrong. On success, the **\*\_write\_\*** transactions will return 0, while the **\*\_read\_\*** transactions will return the read value, except for **\*\_read_block\_\***, which will return the number of values that have been read. In block-oriented operations, buffers don't need to be longer than 32 bytes.
 

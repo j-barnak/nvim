@@ -1,1 +1,1 @@
-![Image](media/Images/9781316626221.png)
+![Image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/9781316626221.png)

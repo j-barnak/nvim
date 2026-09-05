@@ -52,17 +52,17 @@ The function `string_of_pdfobject `is best expressed as a set of mutually-recurs
 
 First, the main part. Given an object we wish to produce its string, assuming that `string_of_array`, `string_of_dictionary`, and `string_of_stream `exist:
 
-> ![](media/images/00185.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00185.jpg)
 
 The cases are all simple, except for the ones we have put aside to be implemented separately. Strings must be put between parentheses, indirect references are printed as `2 0 R `etc.
 
 To build a string from an `Array`, we need to start with an open square bracket, add the string for each Pdf.pdfobject in the array (which may be arbitrarily complex, of course), and put spaces between them. Then we end with a close square bracket:
 
-> ![](media/images/00233.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00233.jpg)
 
 It is natural to use the Buffer module from the Standard Library to collect these strings together. It is also more efficient than using string concatenation. Notice we do not add an initial space after the square bracket, but do before the closing square bracket, for symmetry. The `string_of_dictionary `function is somewhat similar:
 
-> ![](media/images/00237.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00237.jpg)
 
 Now for `string_of_stream`. A stream in PDF is written like this:
 
@@ -73,11 +73,11 @@ stream data
 
 This is simple with the Buffer module too:
 
-> ![](media/images/00270.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00270.jpg)
 
 ------------------------------------------------------------------------
 
-> ![](media/images/00060.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00060.jpg)
 
  
 
@@ -89,7 +89,7 @@ The code for these four functions is collected together in Figure 14.1. Now tha
 
 The PDF header consists of `%%PDF-`m`.`n where m and n are the major and minor version numbers. This is easy to build with `Printf.sprintf`:
 
-> ![](media/images/00199.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00199.jpg)
 
 The `write_objects `function, which is given a list of (int × Pdf.pdfobject) pairs, sorts the objects by their number, and then outputs each object using `string_of_pdfobject`. For example, the pair
 
@@ -105,7 +105,7 @@ will be written to file like this:
 
 The function collects and returns a list of the byte offsets of the objects written, since this will be needed to write the trailer section, which we shall describe in a moment.
 
-> ![](media/images/00147.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00147.jpg)
 
 Now, we can write the trailer. That is to say, this section:
 
@@ -124,16 +124,16 @@ Now, we can write the trailer. That is to say, this section:
 
 This consists largely of a list of the byte offsets of the four objects in the file (15, 230, 279, 338), the trailer dictionary, and so on. It is not necessary to understand it in detail. This is the first section which would be read by a PDF reader, to find the actual objects in the file.
 
-> ![](media/images/00085.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00085.jpg)
 
 Now the main function is simple. We open the file, write the header, objects, and trailer, and close the file. In the event of an exception, we close the file to clean up, and re-raise it.
 
-> ![](media/images/00114.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00114.jpg)
 
 This code goes into `pdfwrite.ml`. The interface `pdfwrite.mli `is very simple. We expose only  
 `pdf_to_file`:
 
-> ![](media/images/00141.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00141.jpg)
 
 Here is the output of our program on the example Pdfhello.hello:
 

@@ -1,5 +1,3 @@
-![](media/index-448_1.jpg)
-
 Last slides
 
  

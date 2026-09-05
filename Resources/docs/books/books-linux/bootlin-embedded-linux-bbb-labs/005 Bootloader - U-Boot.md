@@ -30,7 +30,7 @@ RX 2 ) and 5 (board TX ).
 
 You always should make sure that you connect the TX pin of the cable to the RX pin of the board, and vice versa, whatever the board and cables that you use.
 
-![](media/index-8_1.jpg)
+![](/tmp/audit/iter1/epubregen/bootlin-embedded-linux-bbb-labs/media/index-8_1.jpg)
 
  
 

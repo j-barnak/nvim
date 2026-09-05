@@ -133,3 +133,5 @@ Item 42: Consider emplacement instead of insertion. 292
 **Index. . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . . 303**
 
 **Table of Contents \| ix**
+
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-13_1.png)

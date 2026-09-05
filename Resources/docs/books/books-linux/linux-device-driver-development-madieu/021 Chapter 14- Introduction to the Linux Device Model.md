@@ -23,41 +23,26 @@ The Linux device model introduced device hierarchy. It is built on top of a few 
 
 A bus is a channel link between devices and the processor. The hardware entity that manages the bus and exports its protocol to devices is called the bus controller. For example, the USB controller provides USB support, while the I2C controller provides I2C bus support. However, the bus controller, being a device on its own, must be registered like any device. It will be the parent of the devices that need to sit on this bus. In other words, every device sitting on the bus must have its parent field pointing to the bus device. A bus is represented in the kernel by the **struct bus_type** structure, which has the following definition:
 
+``` c
 struct bus_type {
-
-    const char        \*name;
-
-    const char        \*dev_name;
-
-    struct device     \*dev_root;
-
-    const struct attribute_group \*\*bus_groups;
-
-    const struct attribute_group \*\*dev_groups;
-
-    const struct attribute_group \*\*drv_groups;
-
-    int (\*match)(struct device \*dev,
-
-                 struct device_driver \*drv);
-
-    int (\*probe)(struct device \*dev);
-
-    void (\*sync_state)(struct device \*dev);
-
-    int (\*remove)(struct device \*dev);
-
-    void (\*shutdown)(struct device \*dev);
-
-    int (\*suspend)(struct device \*dev, pm_message_t state);
-
-    int (\*resume)(struct device \*dev);
-
-    const struct dev_pm_ops \*pm;
-
-\[...\]
-
+    const char        *name;
+    const char        *dev_name;
+    struct device     *dev_root;
+    const struct attribute_group **bus_groups;
+    const struct attribute_group **dev_groups;
+    const struct attribute_group **drv_groups;
+    int (*match)(struct device *dev,
+                 struct device_driver *drv);
+    int (*probe)(struct device *dev);
+    void (*sync_state)(struct device *dev);
+    int (*remove)(struct device *dev);
+    void (*shutdown)(struct device *dev);
+    int (*suspend)(struct device *dev, pm_message_t state);
+    int (*resume)(struct device *dev);
+    const struct dev_pm_ops *pm;
+[...]
 };
+```
 
 Only the elements that are relevant to this book have been listed here; let's take a look at them in more detail:
 
@@ -77,171 +62,103 @@ Each bus internally manages two important lists: the list of devices that have b
 
 Now, let's start writing a new bus infrastructure called **PACKT**. **PACKT** is going to be our bus; the devices that will be sitting on this bus will be **PACKT** devices, while their drivers will be **PACKT** drivers. Let's start writing the helpers that will allow us to register the **PACKT** devices and drivers:
 
-/\*
-
-\* Let's write and export symbols that people
-
-\* writing drivers for packt devices must use.
-
-\*/
-
-int packt_register_driver(struct packt_driver \*driver)
-
-{    
-
-    driver-\>driver.bus = &packt_bus_type;
-
-    return driver_register(&driver-\>driver);
-
+``` c
+/*
+ * Let's write and export symbols that people
+ * writing drivers for packt devices must use.
+ */
+int packt_register_driver(struct packt_driver *driver)
+{
+    driver->driver.bus = &packt_bus_type;
+    return driver_register(&driver->driver);
 }
-
 EXPORT_SYMBOL(packt_register_driver);
-
-void packt_unregister_driver(struct packt_driver \*driver)
-
+void packt_unregister_driver(struct packt_driver *driver)
 {
-
-    driver_unregister(&driver-\>driver);
-
+    driver_unregister(&driver->driver);
 }
-
 EXPORT_SYMBOL(packt_unregister_driver);
-
-int packt_register_device(struct packt_device \*packt)
-
+int packt_register_device(struct packt_device *packt)
 {
-
-    packt-\>dev.bus = &packt_bus_type;
-
-    return device_register(&packt-\>dev);
-
+    packt->dev.bus = &packt_bus_type;
+    return device_register(&packt->dev);
 }
-
 EXPORT_SYMBOL(packt_device_register);
-
-void packt_unregister_device(struct packt_device \*packt)
-
+void packt_unregister_device(struct packt_device *packt)
 {
-
-    device_unregister(&packt-\>dev);
-
+    device_unregister(&packt->dev);
 }
-
 EXPORT_SYMBOL(packt_unregister_device);
+```
 
 Now that we've created the registration helpers, let's write the only function that allows us to allocate a new **PACKT** device and register this device with the **PACKT** core:
 
-struct packt_device \* packt_device_alloc(const char \*name,
-
-                                          int id)
-
+``` c
+struct packt_device * packt_device_alloc(const char *name,
+                                          int id)
 {
-
-    struct packt_device    \*packt_dev;
-
-    int                    status;
-
-    packt_dev = kzalloc(sizeof(\*packt_dev), GFP_KERNEL);
-
-    if (!packt_dev)
-
-        return NULL;
-
-    /\* devices on the bus are children of the bus device \*/
-
-    strcpy(packt_dev-\>name, name);
-
-    packt_dev-\>dev.id = id;
-
-    dev_dbg(&packt_dev-\>dev,
-
-      "device \[%s\] registered with PACKT bus\n",
-
-       packt_dev-\>name);
-
-    return packt_dev;
-
+    struct packt_device    *packt_dev;
+    int                    status;
+    packt_dev = kzalloc(sizeof(*packt_dev), GFP_KERNEL);
+    if (!packt_dev)
+        return NULL;
+    /* devices on the bus are children of the bus device */
+    strcpy(packt_dev->name, name);
+    packt_dev->dev.id = id;
+    dev_dbg(&packt_dev->dev,
+      "device [%s] registered with PACKT bus\n",
+       packt_dev->name);
+    return packt_dev;
 }
-
 EXPORT_SYMBOL_GPL(packt_device_alloc);
+```
 
 The **packt_device_alloc()** function allocates a bus-specific device structure that must be used to register a **PACKT** device with the bus. At this stage, we should expose the helpers that allow us to allocate a **PACKT** controller device and register it – that is, register a new **PACKT** bus. To do this, we must define the **PACKT** controller data structure, like so:
 
+``` c
 struct packt_controller {
-
-    char name\[48\];
-
-    struct device dev;    /\* the controller device \*/
-
-    struct list_head  list;
-
-    int (\*send_msg) (stuct packt_device \*pdev,
-
-                       const char \*msg, int count);
-
-    int (\*recv_msg) (stuct packt_device \*pdev,
-
-                        char \*dest, int count);
-
+    char name[48];
+    struct device dev;    /* the controller device */
+    struct list_head  list;
+    int (*send_msg) (stuct packt_device *pdev,
+                       const char *msg, int count);
+    int (*recv_msg) (stuct packt_device *pdev,
+                        char *dest, int count);
 };
+```
 
 In the preceding data structure, **name** represents the controller's name, **dev** represents the underlying struct device associated with this controller, **list** is used to insert this controller into the system's global list of **PACKT** controllers, and **send_msg** and **recv_msg** are hooks that must be provided by the controller to access the **PACKT** devices that are sitting on it:
 
-/\* system global list of controllers \*/
-
+``` c
+/* system global list of controllers */
 static LIST_HEAD(packt_controller_list);
-
 struct packt_controller
-
-    \*packt_alloc_controller(struct device \*dev)
-
+    *packt_alloc_controller(struct device *dev)
 {
-
-    struct packt_controller \*ctlr;
-
-    if (!dev)
-
-        return NULL;
-
-    ctlr = kzalloc(sizeof(packt_controller), GFP_KERNEL);
-
-    if (!ctlr)
-
-        return NULL;
-
-    device_initialize(&ctlr-\>dev);
-
-    \[...\]
-
-    return ctlr;
-
+    struct packt_controller *ctlr;
+    if (!dev)
+        return NULL;
+    ctlr = kzalloc(sizeof(packt_controller), GFP_KERNEL);
+    if (!ctlr)
+        return NULL;
+    device_initialize(&ctlr->dev);
+    [...]
+    return ctlr;
 }
-
 EXPORT_SYMBOL_GPL(packt_alloc_controller);
-
 int packt_register_controller(
-
-                           struct packt_controller \*ctlr)
-
+                           struct packt_controller *ctlr)
 {
-
-    /\* must provide at least on hook \*/
-
-if (!ctlr-\>send_msg && !ctlr-\>recv_msg){
-
-        pr_err("Registering PACKT controller failure\n");
-
-    }
-
-    device_add(&ctlr-\>dev);
-
-    \[...\] /\* other sanity check \*/
-
-    list_add_tail(&ctlr-\>list, &packt_controller_list);
-
+    /* must provide at least on hook */
+if (!ctlr->send_msg && !ctlr->recv_msg){
+        pr_err("Registering PACKT controller failure\n");
+    }
+    device_add(&ctlr->dev);
+    [...] /* other sanity check */
+    list_add_tail(&ctlr->list, &packt_controller_list);
 }
-
 EXPORT_SYMBOL_GPL(packt_register_controller);
+```
 
 In these two functions, we have demonstrated what the controller allocation and registration operations look like. The allocation method allocates memory and does some basic initialization, leaving room for the driver to do the rest. Note that after registering a controller, it will appear under **/sys/devices** in sysfs. Any devices that are added to this bus will appear under **/sys/devices/packt-0/**.
 
@@ -249,69 +166,48 @@ In these two functions, we have demonstrated what the controller allocation and 
 
 The bus controller is a device itself, and in most cases, buses are memory-mapped platform devices (even buses are, which support device enumeration). For example, the PCI controller is a platform device and so is its respective driver. We should use the **bus_register(struct \*bus_type)** function to register a bus with the kernel. The **PACKT** bus structure looks as follows:
 
-/\* This is our bus structure \*/
-
+``` c
+/* This is our bus structure */
 struct bus_type packt_bus_type = {
-
-    .name     = "packt",
-
-    .match    = packt_device_match,
-
-    .probe    = packt_device_probe,
-
-    .remove   = packt_device_remove,
-
-    .shutdown = packt_device_shutdown,
-
+    .name     = "packt",
+    .match    = packt_device_match,
+    .probe    = packt_device_probe,
+    .remove   = packt_device_remove,
+    .shutdown = packt_device_shutdown,
 };
+```
 
 Now that the basic bus operations have been defined, we need to register the **PACKT** bus framework and make it available for both the controller and slave drivers. The bus controller is a device itself; it must be registered with the kernel and will be used as the parent of the device that's sitting on the bus. This is done in the bus controller's probe or **init** function. In the case of the **PACKT** bus, the code would be as follows:
 
-static int \_\_init packt_init(void)
-
+``` c
+static int __init packt_init(void)
 {
-
-    int status;
-
-    status = bus_register(&packt_bus_type);
-
-    if (status \< 0)
-
-        goto err0;
-
-    status = class_register(&packt_master_class);
-
-    if (status \< 0)
-
-        goto err1;
-
-    return 0;
-
+    int status;
+    status = bus_register(&packt_bus_type);
+    if (status < 0)
+        goto err0;
+    status = class_register(&packt_master_class);
+    if (status < 0)
+        goto err1;
+    return 0;
 err1:
-
-    bus_unregister(&packt_bus_type);
-
+    bus_unregister(&packt_bus_type);
 err0:
-
-    return status;
-
+    return status;
 }
-
 postcore_initcall(packt_init);
+```
 
 When a device is registered by the bus controller driver, the **parent** member of the device must point to the bus controller device (this should be done by the device driver) and its **bus** property must point to the **PACKT** bus type (this is done by the core) to build the physical device tree. To register a **PACKT** device, you must call **packt_device_register()**, which should take as an argument a **PACKT** device allocated with **packt_device_alloc()**:
 
-int packt_device_register(struct packt_device \*packt)
-
+``` c
+int packt_device_register(struct packt_device *packt)
 {
-
-    packt-\>dev.bus = &packt_bus_type;
-
-    return device_register(&packt-\>dev);
-
+    packt->dev.bus = &packt_bus_type;
+    return device_register(&packt->dev);
 }
-
 EXPORT_SYMBOL(packt_device_register);
+```
 
 Now that we are done with bus registration, let's look at the driver's infrastructure and see how it is designed.
 
@@ -321,35 +217,23 @@ A driver is a set of methods that allow us to drive a given device. A global dev
 
 Each device driver is represented as an instance of **struct device_driver**, which is defined like so:
 
+``` c
 struct device_driver {
-
-    const char        \*name;
-
-    struct bus_type   \*bus;
-
-    struct module     \*owner;
-
-    const struct of_device_id   \*of_match_table;
-
-    const struct acpi_device_id  \*acpi_match_table;
-
-    int (\*probe) (struct device \*dev);
-
-    int (\*remove) (struct device \*dev);
-
-    void (\*shutdown) (struct device \*dev);
-
-    int (\*suspend) (struct device \*dev,
-
-                    pm_message_t state);
-
-    int (\*resume) (struct device \*dev);
-
-    const struct attribute_group \*\*groups;
-
-    const struct dev_pm_ops \*pm;
-
+    const char        *name;
+    struct bus_type   *bus;
+    struct module     *owner;
+    const struct of_device_id   *of_match_table;
+    const struct acpi_device_id  *acpi_match_table;
+    int (*probe) (struct device *dev);
+    int (*remove) (struct device *dev);
+    void (*shutdown) (struct device *dev);
+    int (*suspend) (struct device *dev,
+                    pm_message_t state);
+    int (*resume) (struct device *dev);
+    const struct attribute_group **groups;
+    const struct dev_pm_ops *pm;
 };
+```
 
 Let's look at the elements in this data structure:
 
@@ -361,13 +245,12 @@ Let's look at the elements in this data structure:
 
 - **of_match_table** is a pointer to the array of **struct of_device_id**. The **struct of_device_id** structure is used to perform open firmware matches through a special file called the device tree, which is passed to the kernel during the boot process:
 
+  ``` c
   struct of_device_id {
-
-      char       compatible\[128\];
-
-      const void \*data;
-
+      char       compatible[128];
+      const void *data;
   };
+  ```
 
 - **suspend** and **resume** are power management callbacks that are invoked to put the device to sleep or wake it up from a sleep state, respectively. The **remove** callback is called when the device is physically removed from the system or when its reference count reaches **0**. The **remove** callback is also called during system reboot.
 
@@ -383,59 +266,45 @@ The low-level **driver_register()** function is used to register a device driver
 
 The following is the declaration of our driver infrastructure:
 
-/\*
-
-\* Bus specific driver structure
-
-\* You should provide your device's probe
-
-\* and remove functions.
-
-\*/
-
+``` c
+/*
+ * Bus specific driver structure
+ * You should provide your device's probe
+ * and remove functions.
+ */
 struct packt_driver {
-
-    int     (\*probe)(struct packt_device \*packt);
-
-    int     (\*remove)(struct packt_device \*packt);
-
-    void    (\*shutdown)(struct packt_device \*packt);
-
-    struct device_driver driver;
-
-    const struct i2c_device_id \*id_table;
-
+    int     (*probe)(struct packt_device *packt);
+    int     (*remove)(struct packt_device *packt);
+    void    (*shutdown)(struct packt_device *packt);
+    struct device_driver driver;
+    const struct i2c_device_id *id_table;
 };
-
-\#define to_packt_driver(d) \\
-
-        container_of(d, struct packt_driver, driver)
-
-\#define to_packt_device(d) container_of(d, \\
-
-                             struct packt_device, dev)
+#define to_packt_driver(d) \
+        container_of(d, struct packt_driver, driver)
+#define to_packt_device(d) container_of(d, \
+                             struct packt_device, dev)
+```
 
 In our example, there are two helper macros to get the **PACKT** device and the **PACKT** driver, given a generic **struct device** or **struct driver**.
 
 Then comes the structure that's used to identify a **PACKT** device, which is defined as follows:
 
+``` c
 struct packt_device_id {
-
-    char name\[PACKT_NAME_SIZE\];
-
-    kernel_ulong_t driver_data;   /\* Data private to the driver \*/
-
+    char name[PACKT_NAME_SIZE];
+    kernel_ulong_t driver_data;   /* Data private to the driver */
 };
+```
 
 The device and the device driver are bound together when they match. Binding is the process of associating a device with a device driver, and it is performed by the bus framework.
 
 Now, let's get back to registering our drivers with our **PACKT** bus. The drivers must use **packt_register_driver(struct packt_driver \*driver)**, which is a wrapper around **driver_register()**. The **driver** parameter must have been filled in before registering the **PACKT** driver. The LDM core provides helper functions for iterating over the list of drivers that have been registered with the bus:
 
-int bus_for_each_drv(struct bus_type \* bus,
-
-                struct device_driver \* start, void \* data,
-
-                int (\*fn)(struct device_driver \*, void \*));
+``` c
+int bus_for_each_drv(struct bus_type * bus,
+                struct device_driver * start, void * data,
+                int (*fn)(struct device_driver *, void *));
+```
 
 This helper iterates over the bus's list of drivers and calls the **fn** callback for each driver in the list.
 
@@ -443,33 +312,22 @@ This helper iterates over the bus's list of drivers and calls the **fn** callbac
 
 **struct device** is the generic data structure that's used to describe and characterize each device on the system, whether it is physical or not. It contains details about the physical attributes of the device and provides proper linkage information to help build suitable device trees and reference counting:
 
+``` c
 struct device {
-
-    struct device \*parent;
-
-    struct kobject kobj;
-
-    const struct device_type \*type;
-
-    struct bus_type      \*bus;
-
-    struct device_driver \*driver;
-
-    void    \*platform_data;
-
-    void    \*driver_data;
-
-    struct device_node      \*of_node;
-
-    struct class \*class;
-
-    const struct attribute_group \*\*groups;
-
-    void    (\*release)(struct device \*dev);
-
-\[...\]
-
+    struct device *parent;
+    struct kobject kobj;
+    const struct device_type *type;
+    struct bus_type      *bus;
+    struct device_driver *driver;
+    void    *platform_data;
+    void    *driver_data;
+    struct device_node      *of_node;
+    struct class *class;
+    const struct attribute_group **groups;
+    void    (*release)(struct device *dev);
+[...]
 };
+```
 
 The preceding data structure has been shortened for the sake of readability. That said, let's take a look at the elements that have been provided:
 
@@ -490,55 +348,42 @@ Now that we have described the device's structure, let's learn how to make it pa
 
 **device_register()** is a function that's provided by the LDM core to register a device with the bus. After this call, the bus's list of drivers is iterated over to find the driver that supports this device; then, this device is added to the bus's device list. **device_register()** internally calls **device_add()**:
 
-int device_add(struct device \*dev)
-
+``` c
+int device_add(struct device *dev)
 {
-
-    \[...\]
-
-    bus_probe_device(dev);
-
-        if (parent)
-
-                klist_add_tail(&dev-\>p-\>knode_parent,
-
-                            &parent-\>p-\>klist_children);
-
-    \[...\]
-
+    [...]
+    bus_probe_device(dev);
+        if (parent)
+                klist_add_tail(&dev->p->knode_parent,
+                            &parent->p->klist_children);
+    [...]
 }
+```
 
 The helper function that's provided by the kernel to iterate over the bus's device list is **bus_for_each_dev**. It's defined as follows:
 
-int bus_for_each_dev(struct bus_type \* bus,
-
-                    struct device \* start, void \* data,
-
-                    int (\*fn)(struct device \*, void \*));
+``` c
+int bus_for_each_dev(struct bus_type * bus,
+                    struct device * start, void * data,
+                    int (*fn)(struct device *, void *));
+```
 
 Whenever a device is added, the core invokes the matching method of the bus driver (**bus_type-\>match**). If the matching function succeeds, the core will invoke the probing function of the bus driver (**bus_type-\>probe**), given that both the device and driver matched as parameters. Then, it is up to the bus driver to invoke the probing method of the device's driver (that is, **driver-\>probe**). For our **PACKT** bus driver, the function that's used to register a device is **packt_device_register(struct packt_device \*packt)**, which internally calls **device_register()**. Here, the parameter is a **PACKT** device that's been allocated with **packt_device_alloc()**.
 
 The bus-specific device data structure is then defined as follows:
 
-/\*
-
-\* Bus specific device structure
-
-\* This is what a PACKT device structure looks like
-
-\*/
-
+``` c
+/*
+ * Bus specific device structure
+ * This is what a PACKT device structure looks like
+ */
 struct packt_device {
-
-    struct module        \*owner;
-
-    unsigned char        name\[30\];
-
-    unsigned long        price;
-
-    struct device        dev;
-
+    struct module        *owner;
+    unsigned char        name[30];
+    unsigned long        price;
+    struct device        dev;
 };
+```
 
 In the preceding code, **dev** is the underlying **struct device** structure for the device model, while **name** is the name of the device.
 
@@ -559,25 +404,18 @@ In this section, we will learn how each of these structures is involved in the d
 
 **struct kobject**, which means kernel object (also abbreviated as **kobject** throughout this chapter) is the core data structure of the device model as it is the core of the concepts behind the sysfs. For each directory that's found in sysfs, there is a **struct kobject** wandering around somewhere within the kernel. Additionally, a kobject can export one or more attributes, which appear in that Kobject's sysfs directory as files. Now, let's get back to the code – **struct kobject** is defined in the kernel like so:
 
+``` c
 struct kobject {
-
-    const char              \*name;
-
-    struct list_head        entry;
-
-    struct kobject          \*parent;
-
-    struct kset             \*kset;
-
-    struct kobj_type        \*ktype;
-
-    struct sysfs_dirent     \*sd;
-
-    struct kref             kref;
-
-\[...\]
-
+    const char              *name;
+    struct list_head        entry;
+    struct kobject          *parent;
+    struct kset             *kset;
+    struct kobj_type        *ktype;
+    struct sysfs_dirent     *sd;
+    struct kref             kref;
+[...]
 };
+```
 
 In the preceding data structure, only the main elements have been listed. Let's take a look at them in more detail:
 
@@ -590,37 +428,38 @@ In the preceding data structure, only the main elements have been listed. Let's 
 
 Before a kobject can be used, it must be (exclusively) dynamically allocated and then initialized. To do so, drivers can use the **kzalloc()** (or **kmalloc()**) or **kobject_create()** function. With **kzalloc()**, the object is allocated and empty and must be initialized using another API, **kobject_init()**. With **kobject_create()**, allocation and initialization are implicit. These APIs are defined as follows:
 
-void kobject_init(struct kobject \*kobj,
-
-                  struct kobj_type \*ktype)
-
-struct kobject \*kobject_create(void)
+``` c
+void kobject_init(struct kobject *kobj,
+                  struct kobj_type *ktype)
+struct kobject *kobject_create(void)
+```
 
 In the preceding code, **kobject_init()** expects, in its first parameter, a kobject that has been initially allocated, via **kzalloc()** for example. The second parameter, **ktype**, is mandatory, so it can't be **NULL**; otherwise, the kernel will complain (**dump_stack()**). **kobject_create()**, on the other hand, expects nothing; it does allocation and initialization implicitly (it calls **kzalloc()** and **kobject_init()** internally). On success, it returns a freshly initialized kobject object.
 
 Once a kobject has been initialized, the driver can use **kobject_add()** to link this object with the system, creating a sysfs directory entry for this kobject. Where this directory will be created depends on the parent element of the kobject being set or not. That said, if this parent is not set, it can be specified while adding the kobject to the system using **kobject_add()**, which is defined as follows:
 
-int kobject_add(struct kobject \*kobj, struct kobject \*parent,
-
-                const char \*fmt, ...);
+``` c
+int kobject_add(struct kobject *kobj, struct kobject *parent,
+                const char *fmt, ...);
+```
 
 In the preceding function, **kobj** is the kernel object to be added to the system and **parent** is its parent. The **kobject** directory will be created as a sub-directory of its parent. If **parent** is **NULL**, the directory will be created under **/sys/** directly.
 
 Instead of using **kobject_init()** or **kobject_create()** and then **kobject_add()** individually, it is possible to use **kobject_init_and_add()**, which groups their actions. It's defined like so:
 
-int kobject_init_and_add(struct kobject \*kobj,
-
-                         struct kobj_type \*ktype,
-
-                         struct kobject \*parent,
-
-                         const char \*fmt, ...);
+``` c
+int kobject_init_and_add(struct kobject *kobj,
+                         struct kobj_type *ktype,
+                         struct kobject *parent,
+                         const char *fmt, ...);
+```
 
 In the preceding interface, the object needs to be allocated first. There is another helper that will implicitly allocate, initialize, and add the kobject with the system. This function is **kobject_create_and_add()** and it's defined as follows:
 
-struct kobject \* kobject_create_and_add(const char \*name,
-
-                                     struct kobject \*parent);
+``` c
+struct kobject * kobject_create_and_add(const char *name,
+                                     struct kobject *parent);
+```
 
 The preceding function takes the name of the kobject that will be used as the directory name, as well as a parent kobject whose created directory will be a sub-directory. Passing **NULL** as the second parameter will result in the directory being created under **/sys/** directly.
 
@@ -637,63 +476,46 @@ Once you're done with a kobject, the driver should release it. The low-level fun
 
 These APIs have the following prototypes:
 
-void kobject_put(struct kobject \* kobj);
-
-struct kobject \*kobject_get(struct kobject \*kobj);
+``` c
+void kobject_put(struct kobject * kobj);
+struct kobject *kobject_get(struct kobject *kobj);
+```
 
 In the preceding code, **kobject_get()** takes the kobject to increase the reference counter as a parameter and returns this same kobject once the parameter has been initialized. **kobject_put()** will decrement 1 from the reference counter and, if the new value is **0**, **kobject_release()** will be automatically called on the object, which will release it.
 
 The following code shows how to combine **kobject_create()**, **kobject_init()**, and **kobject_add()** to create and add a kernel object to the system:
 
-/\* Somewhere \*/
-
-static struct kobject \*mykobj;
-
-\[...\]
-
+``` c
+/* Somewhere */
+static struct kobject *mykobj;
+[...]
 mykobj = kobject_create();
-
 if (!mykobj)
-
-    return -ENOMEM;
-
+    return -ENOMEM;
 kobject_init(mykobj, &my_ktype);
-
 if (kobject_add(mykobj, NULL, "%s", "hello")) {
-
-    pr_info("ldm: kobject_add() failed\n");
-
-    kobject_put(mykobj);
-
-    mykobj = NULL;
-
-    return -1;
-
+    pr_info("ldm: kobject_add() failed\n");
+    kobject_put(mykobj);
+    mykobj = NULL;
+    return -1;
 }
+```
 
 As we can see, we could use an all-in-one function, such as **kobject_create_and_add()**, which internally calls **kobject_create()** and **kobject_add()**. The following excerpt from **drivers/base/core.c** shows how to use it:
 
-static struct kobject \* class_kobj   = NULL;
-
-static struct kobject \* devices_kobj = NULL;
-
-/\* Create /sys/class \*/
-
+``` c
+static struct kobject * class_kobj   = NULL;
+static struct kobject * devices_kobj = NULL;
+/* Create /sys/class */
 class_kobj = kobject_create_and_add("class", NULL);
-
 if (!class_kobj)
-
-    return -ENOMEM;
-
-\[...\]
-
-/\* Create /sys/devices \*/
-
+    return -ENOMEM;
+[...]
+/* Create /sys/devices */
 devices_kobj = kobject_create_and_add("devices", NULL);
-
 if (!devices_kobj)
-
-    return -ENOMEM;
+    return -ENOMEM;
+```
 
 Keep in mind that for each **struct kobject**, the corresponding kobject directory can be found in **/sys/**, and the upper directory is pointed out by **kobj-\>parent**.
 
@@ -707,33 +529,27 @@ A **struct kobj_type** structure, which means kernel object type, is a data stru
 
 Because most devices of the same type have the same attributes, these attributes are isolated and stored in the **ktype** element. This allows them to be managed flexibly. Every kobject must have an associated **kobj_type** structure. Its data structure is defined as follows:
 
+``` c
 struct kobj_type {
-
-    void (\*release)(struct kobject \*);
-
-    const struct sysfs_ops sysfs_ops;
-
-    struct attribute \*\*default_attrs;
-
+    void (*release)(struct kobject *);
+    const struct sysfs_ops sysfs_ops;
+    struct attribute **default_attrs;
 };
+```
 
 In the preceding data structure, **release** is a callback that's called on the release path of the kobject to give drivers a chance to release resources that have been allocated for the kobject. This callback is implicitly run when **kobject_put()** is about to free the kobject. **default_attrs** is an array of pointers to **attribute** structures. This field lists the attributes to be created for every kobject of this type, while **sysfs_ops** provides a set of methods that allow you to access those attributes.
 
 The following code shows the definition of the **struct sysfs_ops** data structure in the kernel:
 
+``` c
 struct sysfs_ops {
-
-    ssize_t (\*show)(struct kobject \*kobj,
-
-                   struct attribute \*attr, char \*buf);
-
-    ssize_t (\*store)(struct kobject \*kobj,
-
-                   struct attribute \*attr, const char \*buf,
-
-                   size_t size);
-
+    ssize_t (*show)(struct kobject *kobj,
+                   struct attribute *attr, char *buf);
+    ssize_t (*store)(struct kobject *kobj,
+                   struct attribute *attr, const char *buf,
+                   size_t size);
 };
+```
 
 In the preceding code, **show** is the callback that's invoked in response to a read operation of an attribute being exposed by this **kobj_type** – that is, whenever an attribute is read from the user space. **buf** is the output buffer. The buffer's size is fixed and is **PAGE_SIZE** in length. The data that must be exposed must be put inside **buf**, preferably using **scnprintf()**. Finally, if the callback succeeds, it must return the size (in bytes) of the data that was written into the buffer, or a negative error if it fails. Each attribute should contain/provide a single, human-readable value or property, according to the sysfs rules; if you have a lot of data to return, you should consider breaking it into numerous attributes.
 
@@ -747,61 +563,51 @@ The purpose of **struct kset** is mainly to group related kernel objects togethe
 
 The **kset** data structure is defined in the kernel like so:
 
+``` c
 struct kset {
-
-    struct list_head list;
-
-    spinlock_t list_lock;
-
-    struct kobject kobj;
-
-};
+    struct list_head list;
+    spinlock_t list_lock;
+    struct kobject kobj;
+ };
+```
 
 All the elements in the data structure are quite self-explanatory. Simply put, **list** is a linked list of all kobjects in **kset**, **list_lock** is a spinlock that protects linked list access (while adding or removing kobject elements in **kset**), and **kobj** represents the base class kobject for the set. This kobject will be used as the default parent of kobjects to be added in the set with a **NULL** parent.
 
 Each registered **kset** corresponds to a sysfs directory that's created on behalf of its **kobj** element. A **kset** can be created and added using the **kset_create_and_add()** function and removed with **kset_unregister()**. The following code shows the definitions for both:
 
-struct kset \* kset_create_and_add(const char \*name,
-
-                      const struct kset_uevent_ops \*u,
-
-                      struct kobject \*parent_kobj);
-
-void kset_unregister (struct kset \* k);
+``` c
+struct kset * kset_create_and_add(const char *name,
+                      const struct kset_uevent_ops *u,
+                      struct kobject *parent_kobj);
+void kset_unregister (struct kset * k);
+```
 
 In the preceding APIs, **name** is the name of **kset**, which is also used as the name of the directory that will be created for **kset**. The **u** parameter is a pointer to a **struct uevent_ops**, which represents a set of **user event** (**uevent**) operations that are called whenever a change is made to **kset** so that, for example, it can add new environment variables or filter out the uevents if so desired. This parameter can be (and most of the time is) **NULL**. Finally, **parent_kobj** is the parent kobject of **kset**.
 
 Adding a kobject to the set is as simple as specifying its **.kset** field for the right **kset**:
 
+``` c
 static struct kobject foo_kobj, bar_kobj;
-
-\[...\]
-
+[...]
 example_kset = kset_create_and_add("kset_example",
-
-                           NULL, kernel_kobj);
-
-/\* since we have a kset for this kobject,
-
-  \* we need to set it before calling into the kobject core.
-
-  \*/
-
+                           NULL, kernel_kobj);
+ /* since we have a kset for this kobject,
+  * we need to set it before calling into the kobject core.
+  */
 foo_kobj.kset = example_kset;
-
 bar_kobj.kset = example_kset;
 
 retval = kobject_init_and_add(&foo_kobj, &foo_ktype,
-
-                              NULL, "foo_name");
-
+                              NULL, "foo_name");
 retval = kobject_init_and_add(&bar_kobj, &bar_ktype,
-
-                              NULL, "bar_name");
+                              NULL, "bar_name");
+```
 
 Once you're done with your **kset**, it can be released with **kset_unregister()**, after which it will be dynamically deallocated when it is no longer in use. The following code will release our example's **kset**:
 
+``` c
 kset_unregister(example_kset);
+```
 
 Now that we are familiar with kobjects and type structures, let's learn how to deal with non-default sysfs attributes.
 
@@ -811,15 +617,13 @@ Attributes are sysfs files that are exported to the user space via kobjects. Whi
 
 An attribute definition looks as follows:
 
+``` c
 struct attribute {
-
-        char              \*name;
-
-        struct module     \*owner;
-
-        umode_t           mode;
-
+        char              *name;
+        struct module     *owner;
+        umode_t           mode;
 };
+```
 
 In the attribute data structure, **name** is the name of the attribute, which is also the name of the corresponding file entry. **owner** is the attribute owner – most of the time, this is **THIS_MODULE** – and **mode** specifies the read/write permissions for this attribute in **user-group-other** (**ugo**) format.
 
@@ -827,21 +631,16 @@ Default attributes are very convenient to use but are not flexible enough. Moreo
 
 **struct kobj_attribute** (defined in **include/linux/kobject.h**) looks as follows:
 
+``` c
 struct kobj_attribute {
-
-struct attribute attr;
-
-ssize_t (\*show)(struct kobject \*kobj,
-
-                 struct kobj_attribute \*attr, char \*buf);
-
-ssize_t (\*store)(struct kobject \*kobj,
-
-                 struct kobj_attribute \*attr,
-
-                 const char \*buf, size_t count);
-
+ struct attribute attr;
+ ssize_t (*show)(struct kobject *kobj,
+                 struct kobj_attribute *attr, char *buf);
+ ssize_t (*store)(struct kobject *kobj,
+                 struct kobj_attribute *attr,
+                 const char *buf, size_t count);
 };
+```
 
 In this data structure, **attr** is the attribute representing the file to be created, **show** is a pointer to a function that will be called when the file is read from the user space, and **store** is a pointer to a function that will be called when the file is written, again from the user space.
 
@@ -849,129 +648,90 @@ Using the enclosing **kobj_attribute** structure makes developments more generic
 
 The following is an excerpt from **lib/kobject.c** that demonstrates this generic mechanism in both the **show** and **store** methods of a kernel-provided sysfs operations element: **kobj_sysfs_ops**. This element is also the sysfs operations data structure (the **kobj_type-\>sysfs_ops** element) that's used by **dynamic_kobj_ktype**:
 
-static ssize_t kobj_attr_show(struct kobject \*kobj,
-
-                     struct attribute \*attr, char \*buf)
-
+``` c
+static ssize_t kobj_attr_show(struct kobject *kobj,
+                     struct attribute *attr, char *buf)
 {
-
-   struct kobj_attribute \*kattr;
-
-   ssize_t ret = -EIO;
-
-   kattr = container_of(attr, struct kobj_attribute, attr);
-
-   if (kattr-\>show)
-
-       ret = kattr-\>show(kobj, kattr, buf);
-
-   return ret;
-
+   struct kobj_attribute *kattr;
+   ssize_t ret = -EIO;
+   kattr = container_of(attr, struct kobj_attribute, attr);
+   if (kattr->show)
+       ret = kattr->show(kobj, kattr, buf);
+   return ret;
 }
-
-static ssize_t kobj_attr_store(struct kobject \*kobj,
-
-                          struct attribute \*attr,
-
-                          const char \*buf, size_t count)
-
+static ssize_t kobj_attr_store(struct kobject *kobj,
+                          struct attribute *attr,
+                          const char *buf, size_t count)
 {
-
-   struct kobj_attribute \*kattr;
-
-   ssize_t ret = -EIO;
-
-   kattr = container_of(attr, struct kobj_attribute, attr);
-
-   if (kattr-\>store)
-
-       ret = kattr-\>store(kobj, kattr, buf, count);
-
-   return ret;
-
+   struct kobj_attribute *kattr;
+   ssize_t ret = -EIO;
+   kattr = container_of(attr, struct kobj_attribute, attr);
+   if (kattr->store)
+       ret = kattr->store(kobj, kattr, buf, count);
+   return ret;
 }
-
 const struct sysfs_ops kobj_sysfs_ops = {
-
-   .show  = kobj_attr_show,
-
-   .store = kobj_attr_store,
-
+   .show  = kobj_attr_show,
+   .store = kobj_attr_store,
 };
+```
 
 In the preceding code, the **container_of** macro does everything. This also reassures us that with this approach, we remain compatible with all the bus-, device-, class-, and driver-related kobject implementations, as we will see in the next section.
 
 Let's go back to the APIs. You will probably always know which attributes you wish to expose in advance; thus, the attributes will almost always be declared statically. To help with this, the kernel provides the **\_\_ATTR** macro for initializing **kobj_attribute**. This macro is defined as follows:
 
-\#define \_\_ATTR(\_name, \_mode, \_show, \_store) {         \\
-
-    .attr = {.name = \_\_stringify(\_name),              \\
-
-           .mode = VERIFY_OCTAL_PERMISSIONS(\_mode) },\\
-
-     .show   = \_show,                              \\
-
-     .store = \_store,                               \\
-
+``` c
+#define __ATTR(_name, _mode, _show, _store) {         \
+    .attr = {.name = __stringify(_name),              \
+           .mode = VERIFY_OCTAL_PERMISSIONS(_mode) },\
+     .show   = _show,                              \
+     .store = _store,                               \
 }
+```
 
 In the preceding macro definition, **\_name** will be stringified and used as the attribute name, **\_mode** represents the attribute mode, and **\_show** and **\_store** are pointers to the attribute's **show** and **store** methods, respectively.
 
 The following is an example of two attribute's declarations, **bar** and **foo** (this example will be used as a base later in this section):
 
+``` c
 static struct kobj_attribute foo_attr =
-
-    \_\_ATTR(foo, 0660, attr_show, attr_store);
-
+    __ATTR(foo, 0660, attr_show, attr_store);
 static struct kobj_attribute bar_attr =
-
-    \_\_ATTR(bar, 0660, attr_show, attr_store);
+    __ATTR(bar, 0660, attr_show, attr_store);
+```
 
 In the preceding example, we have two attributes with the **0660** permission. The first attribute is named **foo**, the second one is named **bar**, and both use the same **show** and **store** methods.
 
 Now, we must create the underlying file. The low-level kernel APIs that are used to add/remove attributes from the sysfs filesystem are **sysfs_create_file()** and **sysfs_remove_file()**, respectively. They are defined as follows:
 
-int sysfs_create_file(struct kobject \* kobj,
-
-                      const struct attribute \* attr);
-
-void sysfs_remove_file(struct kobject \* kobj,
-
-                        const struct attribute \* attr);
+``` c
+int sysfs_create_file(struct kobject * kobj,
+                      const struct attribute * attr);
+void sysfs_remove_file(struct kobject * kobj,
+                        const struct attribute * attr);
+```
 
 **sysfs_create_file()** returns 0 on success or a negative error on failure. **sysfs_remove_file()** must be given the same parameters to remove the file attributes.
 
 Let's use these APIs to add our **bar** and **foo** attributes to the system:
 
-struct kobject \*demo_kobj;
-
+``` c
+struct kobject *demo_kobj;
 int err;
-
 demo_kobj = kobject_create_and_add("demo", kernel_kobj);
-
 if (!demo_kobj) {
-
-    pr_err("demo: demo_kobj registration failed.\n");
-
-    return -ENOMEM;
-
+    pr_err("demo: demo_kobj registration failed.\n");
+    return -ENOMEM;
 }
-
 err = sysfs_create_file(demo_kobj, &foo_attr.attr);
-
 if (err)
-
-    pr_err("unable to create foo attribute\n");
-
+    pr_err("unable to create foo attribute\n");
 err = sysfs_create_file(demo_kobj, &bar_attr.attr);
-
 if (err){
-
-    sysfs_remove_file(demo_kobj, &foo_attr.attr);
-
-    pr_err("unable to create bar attribute\n");
-
+    sysfs_remove_file(demo_kobj, &foo_attr.attr);
+    pr_err("unable to create bar attribute\n");
 }
+```
 
 Once the preceding code has been executed, the **bar** and **foo** files will be visible in sysfs, in the **/sys/demo** directory. In our example, we used the **\_\_ATTR** macro to define our attributes. We had to specify the name, the mode, and the **show**/**store** methods. The kernel provides convenience macros for the most frequent cases to make specifying attributes and writing code more succinct, readable, and easier. These macros are as follows:
 
@@ -982,21 +742,20 @@ Once the preceding code has been executed, the **bar** and **foo** files will be
 
 All these macros only expect the name of the attribute as a parameter. The difference with these macros is that unlike **\_\_ATTR**, whose **store**/**show** function names can be arbitrary, the attributes here are built under the assumption that the **show** and **store** methods are named **\<attribute_name\>\_show** and **\<attribute_name\>\_store**, respectively. The following code demonstrates this with the **\_\_ATTR_RW_MODE** macro, which is defined as follows:
 
-\#define \_\_ATTR_RW_MODE(\_name, \_mode) {                 \\
-
-    .attr = { .name = \_\_stringify(\_name),              \\
-
-          .mode = VERIFY_OCTAL_PERMISSIONS(\_mode) },\\
-
-    .show   = \_name##\_show,                            \\
-
-    .store  = \_name##\_store,                          \\
-
+``` c
+#define __ATTR_RW_MODE(_name, _mode) {                 \
+    .attr = { .name = __stringify(_name),              \
+          .mode = VERIFY_OCTAL_PERMISSIONS(_mode) },\
+    .show   = _name##_show,                            \
+    .store  = _name##_store,                          \
 }
+```
 
 As we can see, the **.show** and **.store** fields are set with their attribute names suffixed with **\_show** and **\_store**, respectively. Let's take a look at the following example:
 
-static struct kobj_attribute attr_foo = \_\_ATTR_RW(foo);
+``` c
+static struct kobj_attribute attr_foo = __ATTR_RW(foo);
+```
 
 The preceding attribute declaration assumes that the **show** and **store** methods are defined as **foo_show** and **foo_store**, respectively.
 
@@ -1006,55 +765,33 @@ If you need to provide a single store/show operation pair for all the attributes
 
 The following code shows the implementation of the show/store function for our previously defined **foo** and **bar** attributes:
 
-static ssize_t attr_store(struct kobject \*kobj,
-
-                      struct kobj_attribute \*attr,
-
-                      const char \*buf, size_t count)
-
+``` c
+static ssize_t attr_store(struct kobject *kobj,
+                      struct kobj_attribute *attr,
+                      const char *buf, size_t count)
 {
-
-    int value, ret;
-
-    ret = kstrtoint(buf, 10, &value);
-
-    if (ret \< 0)
-
-        return ret;
-
-    if (strcmp(attr-\>attr.name, "foo") == 0)
-
-        foo = value;
-
-    else /\* if (strcmp(attr-\>attr.name, "bar") == 0) \*/
-
-        bar = value;
-
-    return count;
-
+    int value, ret;
+    ret = kstrtoint(buf, 10, &value);
+    if (ret < 0)
+        return ret;
+    if (strcmp(attr->attr.name, "foo") == 0)
+        foo = value;
+    else /* if (strcmp(attr->attr.name, "bar") == 0) */
+        bar = value;
+    return count;
 }
-
-static ssize_t attr_show(struct kobject \*kobj,
-
-                      struct kobj_attribute \*attr,
-
-                    char \*buf)
-
+static ssize_t attr_show(struct kobject *kobj,
+                      struct kobj_attribute *attr,
+                    char *buf)
 {
-
-    int value;
-
-    if (strcmp(attr-\>attr.name, "foo") == 0)
-
-        value = foo;
-
-    else
-
-        value = bar;
-
-     return sprintf(buf, "%d\n", value);
-
+    int value;
+    if (strcmp(attr->attr.name, "foo") == 0)
+        value = foo;
+    else
+        value = bar;
+     return sprintf(buf, "%d\n", value);
 }
+```
 
 In the preceding code, instead of providing a pair of show/store operations per attribute, we have used the same function pair for all the attributes, and we differentiated the attributes by their respective names. This is a common practice when you're using the generic **kobject_attribute** instead of framework-specific attributes. This is because they sometimes impose different show/store function names for each attribute since they do not rely on the **\_\_ATTR** macro for defining attributes.
 
@@ -1066,39 +803,25 @@ To cover those cases, the sysfs framework provides binary attributes. Note that 
 
 Now, let's get back to the code A binary attribute is represented using a **struct bin_attribute** and is defined as follows:
 
+``` c
 struct bin_attribute {
-
-    struct attribute attr;
-
-    size_t     size;
-
-    void             \*private;
-
-    ssize_t (\*read)(struct file \*filp,
-
-              struct kobject \*kobj,
-
-              struct bin_attribute \*attr,
-
-              char \*buffer, loff_t off, size_t count);
-
-    ssize_t (\*write)(struct file \*filp,
-
-             struct kobject \*kobj,
-
-             struct bin_attribute \*attr,
-
-             const char \*buffer,
-
-             loff_t off, size_t count);
-
-    int (\*mmap)(struct file \*filp, struct kobject \*kobj,
-
-                  struct bin_attribute \*attr,
-
-                  struct vm_area_struct \*vma);
-
+    struct attribute attr;
+    size_t     size;
+    void             *private;
+    ssize_t (*read)(struct file *filp,
+              struct kobject *kobj,
+              struct bin_attribute *attr,
+              char *buffer, loff_t off, size_t count);
+    ssize_t (*write)(struct file *filp,
+             struct kobject *kobj,
+             struct bin_attribute *attr,
+             const char *buffer,
+             loff_t off, size_t count);
+    int (*mmap)(struct file *filp, struct kobject *kobj,
+                  struct bin_attribute *attr,
+                  struct vm_area_struct *vma);
 };
+```
 
 In the preceding code, **attr** is the underlying classic attribute for this binary attribute and holds the name, owner, and permissions for the binary attribute. **size** represents the maximum size of the binary attribute (or zero if there is no maximum limit). **private** is a field that can be used for any convenience. Most of the time, it is assigned the buffer of the binary attribute. The **read()**, **write()**, and **mmap()** functions are optional and work similarly to the normal **char** driver equivalents. In their parameters, **filp** is an opened file pointer instance that's associated with the attribute and **kobj** is the underlying **kobject** associated with this this binary attribute. **buffer** is the output or input buffer for read or write operations, respectively. **off** is the same offset argument that's found in all read or write methods for all types of files. It refers to the offset from the start of the file – that is, offset into the binary data. Finally, **count** is the number of bytes to read or write.
 
@@ -1108,187 +831,137 @@ Though binary attributes may not have size limitations, larger data is always re
 
 For a binary attribute to be created, it must be allocated and initialized. Like classic attributes, there are two ways to allocate binary attributes – either statically or dynamically. For static allocation, the framework provides the low-level **\_\_BIN_ATTR** macro, which is defined as follows:
 
-\#define \_\_BIN_ATTR(\_name, \_mode, \_read, \_write, \_size) {  \\
-
-   .attr = { .name = \_\_stringify(\_name), .mode = \_mode }, \\
-
-   .read    = \_read,                        \\
-
-   .write   = \_write,                       \\
-
-    .size      = \_size,                          \\
+``` c
+#define __BIN_ATTR(_name, _mode, _read, _write, _size) {  \
+   .attr = { .name = __stringify(_name), .mode = _mode }, \
+   .read    = _read,                        \
+   .write   = _write,                       \
+    .size      = _size,                          \
+```
 
 It works similarly to the **\_\_ATTR** macro. In terms of parameters, **\_name** is the binary attribute name, **\_mode** represents its permissions, **\_read** and **\_write** are the read and write functions, respectively, and **\_size** is the size of the binary attribute.
 
 Like classic attributes, binary attributes have their own high-level helper macros to ease the process of defining them. Some of these macros are as follows:
 
+``` c
 BIN_ATTR_RO(name, size)
-
 BIN_ATTR_WO(name, size)
-
 BIN_ATTR_RW(name, size)
+```
 
 These macros declare a single instance of **struct bin_attribute**, whose corresponding variable is named **bin_attribute\_\<name\>**, as shown in the following **BIN_ATTR** definition:
 
-\#define BIN_ATTR_RW(\_name, \_size)         \\
-
-struct bin_attribute bin_attr\_##\_name =   \\
-
-                \_\_BIN_ATTR_RW(\_name, \_size)
+``` c
+#define BIN_ATTR_RW(_name, _size)         \
+struct bin_attribute bin_attr_##_name =   \
+                __BIN_ATTR_RW(_name, _size)
+```
 
 Moreover, like classic attributes, these high-level macros expect the read/write methods to be named **\<attribute_name\>\_read** and **\<attribute_name\>\_write**, respectively, as shown in the following **\_\_BIN_ATTR_RW** definition:
 
-\#define \_\_BIN_ATTR_RW(\_name, \_size) \\
-
-\_\_BIN_ATTR(\_name, 0644, \_name##\_read, \_name##\_write, \\
-
-             \_size)
+``` c
+#define __BIN_ATTR_RW(_name, _size) \
+ __BIN_ATTR(_name, 0644, _name##_read, _name##_write, \
+             _size)
+```
 
 For dynamic allocation, a simple **kzalloc()** is enough. However, dynamically allocated binary attributes must be initialized using **sysfs_bin_attr_init()**, as shown here:
 
-void sysfs_bin_attr_init(strict bin_attribute \*bin_attr)
+``` c
+void sysfs_bin_attr_init(strict bin_attribute *bin_attr)
+```
 
 After this, the driver must set other properties, such as the underlying attribute's mode, name, and permission, and optionally the read/write/map functions.
 
 Unlike classic attributes, which can be set up as default attributes, binary attributes must be created explicitly. This can be done using **sysfs_create_bin_file()**, as follows:
 
-int sysfs_create_bin_file(struct kobject \*kobj,
-
-                          struct bin_attribute \*attr);
+``` c
+int sysfs_create_bin_file(struct kobject *kobj,
+                          struct bin_attribute *attr);
+```
 
 This function returns **0** on success or a negative error on failure. Once you're done with a binary attribute, it can be removed with **sysfs_remove_bin_file()**, which is defined as follows:
 
-int sysfs_remove_bin_file(struct kobject \*kobj,
-
-                          struct bin_attribute \*attr);
+``` c
+int sysfs_remove_bin_file(struct kobject *kobj,
+                          struct bin_attribute *attr);
+```
 
 The following is an excerpt (whose full version can be found in **drivers/i2c/i2c-slave-eeprom.c**) of a concrete example highlighting the use of a binary attribute that's been allocated and initialized dynamically:
 
+``` c
 struct eeprom_data {
-
-\[...\]
-
-    struct bin_attribute bin;
-
-    u8 buffer\[\];
-
+[...]
+    struct bin_attribute bin;
+    u8 buffer[];
 };
-
 static int i2c_slave_eeprom_probe(
-
-                             struct i2c_client \*client)
-
+                             struct i2c_client *client)
 {
-
-    struct eeprom_data \*eeprom;
-
-    int ret;
-
-    unsigned int size = FIELD_GET(I2C_SLAVE_BYTELEN,
-
-                                  id-\>driver_data) + 1;
-
-    eeprom = devm_kzalloc(&client-\>dev,
-
-                sizeof(struct eeprom_data) + size,
-
-                GFP_KERNEL);
-
-    if (!eeprom)
-
-        return -ENOMEM;
-
-    \[...\]
-
-    sysfs_bin_attr_init(&eeprom-\>bin);
-
-    eeprom-\>bin.attr.name = "slave-eeprom";
-
-    eeprom-\>bin.attr.mode = S_IRUSR \| S_IWUSR;
-
-    eeprom-\>bin.read = i2c_slave_eeprom_bin_read;
-
-    eeprom-\>bin.write = i2c_slave_eeprom_bin_write;
-
-    eeprom-\>bin.size = size;
-
-    ret = sysfs_create_bin_file(&client-\>dev.kobj,
-
-                                  &eeprom-\>bin);
-
-    if (ret)
-
-        return ret;
-
-    \[...\]
-
-    return 0;
-
+    struct eeprom_data *eeprom;
+    int ret;
+    unsigned int size = FIELD_GET(I2C_SLAVE_BYTELEN,
+                                  id->driver_data) + 1;
+    eeprom = devm_kzalloc(&client->dev,
+                sizeof(struct eeprom_data) + size,
+                GFP_KERNEL);
+    if (!eeprom)
+        return -ENOMEM;
+    [...]
+    sysfs_bin_attr_init(&eeprom->bin);
+    eeprom->bin.attr.name = "slave-eeprom";
+    eeprom->bin.attr.mode = S_IRUSR | S_IWUSR;
+    eeprom->bin.read = i2c_slave_eeprom_bin_read;
+    eeprom->bin.write = i2c_slave_eeprom_bin_write;
+    eeprom->bin.size = size;
+    ret = sysfs_create_bin_file(&client->dev.kobj,
+                                  &eeprom->bin);
+    if (ret)
+        return ret;
+    [...]
+    return 0;
 };
+```
 
 Upon unloading the path of the module or when the device leaves, the associated binary file is removed, as follows:
 
-static int i2c_slave_eeprom_remove(struct i2c_client \*client)
-
+``` c
+static int i2c_slave_eeprom_remove(struct i2c_client *client)
 {
-
-   struct eeprom_data \*eeprom = i2c_get_clientdata(client);
-
-   sysfs_remove_bin_file(&client-\>dev.kobj, &eeprom-\>bin);
-
-\[...\]
-
-   return 0;
-
+   struct eeprom_data *eeprom = i2c_get_clientdata(client);
+   sysfs_remove_bin_file(&client->dev.kobj, &eeprom->bin);
+[...]
+   return 0;
 }
+```
 
 Then, when it comes to implementing the read/write function, data can be moved back and forth using **memcpy()**, as shown here:
 
-static ssize_t i2c_slave_eeprom_bin_read(struct file \*filp,
-
-          struct kobject \*kobj, struct bin_attribute \*attr,
-
-          char \*buf, loff_t off, size_t count)
-
+``` c
+static ssize_t i2c_slave_eeprom_bin_read(struct file *filp,
+          struct kobject *kobj, struct bin_attribute *attr,
+          char *buf, loff_t off, size_t count)
 {
-
-    struct eeprom_data \*eeprom;
-
-    eeprom = dev_get_drvdata(kobj_to_dev(kobj));
-
-\[...\]
-
-    memcpy(buf, &eeprom-\>buffer\[off\], count);
-
-\[...\]
-
-    return count;
-
+    struct eeprom_data *eeprom;
+    eeprom = dev_get_drvdata(kobj_to_dev(kobj));
+[...]
+    memcpy(buf, &eeprom->buffer[off], count);
+[...]
+    return count;
 }
-
 static ssize_t i2c_slave_eeprom_bin_write(
-
-         struct file \*filp, struct kobject \*kobj,
-
-         struct bin_attribute \*attr,
-
-         char \*buf, loff_t off, size_t count)
-
+         struct file *filp, struct kobject *kobj,
+         struct bin_attribute *attr,
+         char *buf, loff_t off, size_t count)
 {
-
-     struct eeprom_data \*eeprom;
-
-     eeprom = dev_get_drvdata(kobj_to_dev(kobj));
-
-\[...\]
-
-     memcpy(&eeprom-\>buffer\[off\], buf, count);
-
-\[...\]
-
-    return count;
-
+     struct eeprom_data *eeprom;
+     eeprom = dev_get_drvdata(kobj_to_dev(kobj));
+[...]
+     memcpy(&eeprom->buffer[off], buf, count);
+[...]
+    return count;
 }
+```
 
 In the preceding excerpt, the offset (the **off** parameter) points to where the data should be read/written, and **count** determines the size of this data.
 
@@ -1296,83 +969,60 @@ In the preceding excerpt, the offset (the **off** parameter) points to where the
 
 So far, we have learned how to individually add (binary) attributes by calling the **sysfs_create_file()** or **sysfs_create_bin_file()** function. While this is enough if we have a few attributes to add, it may become painful as the number of attributes grows, either upon adding or removing them. The driver will have to loop over the attributes to create each of them or invoke **sysfs_create_file()** as many times as there are attributes. Here is where the attribute group comes in. It relies on the **struct attribute_group** structure, which is defined as follows:
 
+``` c
 struct attribute_group {
-
-    const char        \*name;
-
-    umode_t           (\*is_visible)(struct kobject \*,
-
-                         struct attribute \*, int);
-
-    umode_t           (\*is_bin_visible)(struct kobject \*,
-
-                         struct bin_attribute \*, int);
-
-    struct attribute  \*\*attrs;
-
-    struct bin_attribute   \*\*bin_attrs;
-
+    const char        *name;
+    umode_t           (*is_visible)(struct kobject *,
+                         struct attribute *, int);
+    umode_t           (*is_bin_visible)(struct kobject *,
+                         struct bin_attribute *, int);
+    struct attribute  **attrs;
+    struct bin_attribute   **bin_attrs;
 };
+```
 
 If it is unnamed, an attribute group will place all the attributes directly in the kobject's directory when defining a group of attributes. If, however, a **name** is supplied, a subdirectory will be created for the attributes, with the directory's name being the name of the attribute group. **is_visible()** is an optional callback that intends to return the permissions associated with a specific attribute in the group. It will be called repeatedly for each (non-binary) attribute in the group. This callback must then return the read/write permission of the attribute, or **0** if the attribute is not supposed to be accessed at all. **is_bin_visible()** is the counterpart of **is_visible()** for binary attributes. The returned value/permission will replace the static permissions that have been defined in **struct attribute**. The **attrs** element is a pointer to a **NULL** terminated list of attributes, while **bin_attrs** is its counterpart for binary attributes.
 
 The kernel functions that are used to add/remove group attributes to/from the filesystem are as follows:
 
-int sysfs_create_group(struct kobject \*kobj,
-
-                       const struct attribute_group \*grp)
-
-void sysfs_remove_group(struct kobject \* kobj,
-
-                        const struct attribute_group \* grp)
+``` c
+int sysfs_create_group(struct kobject *kobj,
+                       const struct attribute_group *grp)
+void sysfs_remove_group(struct kobject * kobj,
+                        const struct attribute_group * grp)
+```
 
 Back to our demo example with standard attributes, the two **bar** and **foo** attributes can be embedded into a **struct attribute_group**. This will allow us adding these to the system in a single shot, using one function call as follows:
 
+``` c
 static struct kobj_attribute foo_attr =
-
-    \_\_ATTR(foo, 0660, attr_show, attr_store);
-
+    __ATTR(foo, 0660, attr_show, attr_store);
 static struct kobj_attribute bar_attr =
-
-    \_\_ATTR(bar, 0660, attr_show, attr_store);
-
-/\* attrs is aa array of pointers to attributes \*/
-
-static struct attribute \*demo_attrs\[\] = {
-
-    &bar_foo_attr.attr,
-
-    &bar_attr.attr,
-
-    NULL,
-
+    __ATTR(bar, 0660, attr_show, attr_store);
+/* attrs is aa array of pointers to attributes */
+static struct attribute *demo_attrs[] = {
+    &bar_foo_attr.attr,
+    &bar_attr.attr,
+    NULL,
 };
-
 static struct attribute_group my_attr_group = {
-
-    .attrs = demo_attrs,
-
-    /\*.bin_attrs = demo_bin_attrs,\*/
-
+    .attrs = demo_attrs,
+    /*.bin_attrs = demo_bin_attrs,*/
 };
+```
 
 Finally, to create the attributes in a single shot, we need to use **sysfs_create_group()**, as shown in the following code:
 
-struct kobject \*demo_kobj;
-
+``` c
+struct kobject *demo_kobj;
 int err;
-
 demo_kobj = kobject_create_and_add("demo", kernel_kobj);
-
 if (!demo_kobj) {
-
-    pr_err("demo: demo_kobj registration failed.\n");
-
-    return -ENOMEM;
-
+    pr_err("demo: demo_kobj registration failed.\n");
+    return -ENOMEM;
 }
-
 err = sysfs_create_group(demo_kobj, &foo_attr.attr);
+```
 
 Here, we have demonstrated the importance of creating a group of attributes and how easy it is to use their APIs. While we have been generic so far, in the next section, we'll learn how to create framework-specific attributes.
 
@@ -1380,11 +1030,11 @@ Here, we have demonstrated the importance of creating a group of attributes and 
 
 Drivers can create/remove symbolic links on existing kobjects (directories) using **sysfs\_{create\|remove}\_link()** functions, as shown here:
 
-int sysfs_create_link(struct kobject \* kobj,
-
-                     struct kobject \* target, char \* name);
-
-void sysfs_remove_link(struct kobject \* kobj, char \* name);
+``` c
+int sysfs_create_link(struct kobject * kobj,
+                     struct kobject * target, char * name);
+void sysfs_remove_link(struct kobject * kobj, char * name);
+```
 
 This allows an object to exist in more than one place or even create a shortcut. The **create** function will create a symbolic link called **name** that points to the remote **target** kobject's sysfs entry. The link will be created in the **kobj** kobject directory. A well-known example is devices appearing in both **/sys/bus** and **/sys/devices** since a bus controller is first a device on its own before exposing a bus. However, note that any symbolic links that are created will be persistent (unless the system is rebooted), even after target removal. Thus, the driver must consider that when the associated device leaves the system or when the module is unloaded.
 
@@ -1396,29 +1046,20 @@ If any registered kobject creates a directory in sysfs, where the directory is c
 
 These top-level sysfs directories can be found in the **/sys/** directory, as follows:
 
-/sys\$ tree -L 1
-
+``` c
+/sys$ tree -L 1
 ├── block
-
 ├── bus
-
 ├── class
-
 ├── dev
-
 ├── devices
-
 ├── firmware
-
 ├── fs
-
 ├── hypervisor
-
 ├── kernel
-
 ├── module
-
 └── power
+```
 
 **block** contains a directory per block device on the system. Each of these contains subdirectories for partitions on the device. **bus** contains the registered bus on the system. **dev** contains the registered device nodes in a raw way (no hierarchy), with each being a symbolic link to the real device in the **/sys/devices** directory. The **devices** directory gives the real view of the topology of devices in the system. **firmware** shows a system-specific tree of low-level subsystems such as ACPI, EFI, and OF (device tree). **fs** lists the filesystems that are used on the system. **kernel** holds the kernel configuration options and status information. Finally, **module** is a list of loaded modules and **power** is the system power management control interface from the user space.
 
@@ -1440,71 +1081,53 @@ To do so, each framework provides a framework-specific attribute data structure 
 
 - Devices have the following attribute data structure:
 
+  ``` c
   struct driver_attribute {
-
-      struct attribute attr;
-
-      ssize_t (\*show)(struct device_driver \*driver,
-
-                  char \*buf);
-
-      ssize_t (\*store)(struct device_driver \*driver,
-
-                  const char \*buf, size_t count);
-
+      struct attribute attr;
+      ssize_t (*show)(struct device_driver *driver,
+                  char *buf);
+      ssize_t (*store)(struct device_driver *driver,
+                  const char *buf, size_t count);
   };
+  ```
 
 - Classes have the following attribute data structure:
 
+  ``` c
   struct class_attribute {
-
-      struct attribute attr;
-
-      ssize_t (\*show)(struct class \*class,
-
-               struct class_attribute \*attr, char \*buf);
-
-      ssize_t (\*store)(struct class \*class,
-
-               struct class_attribute \*attr,
-
-               const char \*buf, size_t count);
-
+      struct attribute attr;
+      ssize_t (*show)(struct class *class,
+               struct class_attribute *attr, char *buf);
+      ssize_t (*store)(struct class *class,
+               struct class_attribute *attr,
+               const char *buf, size_t count);
   };
+  ```
 
 - The bus framework has the following attribute data structure:
 
+  ``` c
   struct bus_attribute {
-
-      struct attribute  attr;
-
-      ssize_t (\*show)(struct bus_type \*bus, char \*buf);
-
-      ssize_t (\*store)(struct bus_type \*bus,
-
-                   const char \*buf, size_t count);
-
+      struct attribute  attr;
+      ssize_t (*show)(struct bus_type *bus, char *buf);
+      ssize_t (*store)(struct bus_type *bus,
+                   const char *buf, size_t count);
   };
+  ```
 
 - Devices have the following attribute data structure:
 
+  ``` c
   struct device_attribute {
-
-      struct attribute  attr;
-
-      ssize_t (\*show)(struct device \*dev,
-
-                   struct device_attribute \*attr,
-
-                   char \*buf);
-
-      ssize_t (\*store)(struct device \*dev,
-
-                         struct device_attribute \*attr,
-
-                         const char \*buf, size_t count);
-
+      struct attribute  attr;
+      ssize_t (*show)(struct device *dev,
+                   struct device_attribute *attr,
+                   char *buf);
+      ssize_t (*store)(struct device *dev,
+                         struct device_attribute *attr,
+                         const char *buf, size_t count);
   };
+  ```
 
 The preceding device-specific data structure's **show** function takes an additional **count** parameter, whereas the others do not.
 
@@ -1512,43 +1135,42 @@ They can be dynamically allocated with **kzalloc()** and initialized by setting 
 
 - The bus infrastructure provides the following macros:
 
-  BUS_ATTR_RW(\_name)
-
-  BUS_ATTR_RO(\_name)
-
-  BUS_ATTR_WO(\_name)
+  ``` c
+  BUS_ATTR_RW(_name)
+  BUS_ATTR_RO(_name)
+  BUS_ATTR_WO(_name)
+  ```
 
 With these bus framework-specific macros, the resulting bus attribute variable is named **bus_attr\_\<\_name\>**. For example, the variable name that results from **BUS_ATTR_RW(foo)** will be **bus_attr_foo** and will be of the **struct bus_attribute** type.
 
 - For drivers, the following macros are provided:
 
-  DRIVER_ATTR_RW(\_name)
-
-  DRIVER_ATTR_RO(\_name)
-
-  DRIVER_ATTR_WO(\_name)
+  ``` c
+  DRIVER_ATTR_RW(_name)
+  DRIVER_ATTR_RO(_name)
+  DRIVER_ATTR_WO(_name)
+  ```
 
 These driver-specific attribute definition macros will name the resulting variable using the **driver_attr\_\<\_name\>** pattern. Therefore, the variable that results from **DRIVER_ATTR_RW(foo)** will be of the **struct driver_attribute** type and will be named **driver_attr_foo**.
 
 - The class framework works with the following macros:
 
-  CLASS_ATTR_RW(\_name)
-
-  CLASS_ATTR_RO(\_name)
-
-  CLASS_ATTR_WO(\_name)
+  ``` c
+  CLASS_ATTR_RW(_name)
+  CLASS_ATTR_RO(_name)
+  CLASS_ATTR_WO(_name)
+  ```
 
 Using these class-specific macros, the resulting variable will be of the **struct class_atribute** type and will be named based on the **class_attr\_\<\_name\>** pattern. Thus, the resulting variable name of **CLASS_ATTR_RW(foo)** will be **class_attr_foo**.
 
 - Finally, device-specific attributes can be statically allocated and initialized using the following macros:
 
-  DEVICE_ATTR(\_name, \_mode, \_show, \_store)
-
-  DEVICE_ATTR_RW(\_name)
-
-  DEVICE_ATTR_RO(\_name)
-
-  DEVICE_ATTR_WO(\_name)
+  ``` c
+  DEVICE_ATTR(_name, _mode, _show, _store)
+  DEVICE_ATTR_RW(_name)
+  DEVICE_ATTR_RO(_name)
+  DEVICE_ATTR_WO(_name)
+  ```
 
 Device-specific attributes definition macros use their own pattern for variable names, which is **dev_attr\_\<\_name\>**. Thus, for example, **DEVICE_ATTR_RO(foo)** will result in a **struct device_attribute** object named **dev_attr_foo**.
 
@@ -1556,115 +1178,80 @@ Because all these macros are built on top of **\_\_ATTR_RW**, **\_\_ATTR_RO**, a
 
 As we have seen, all these framework-specific macros use a predefined prefix to name the resulting framework-specific attribute object variable. Let's take a look at the following class attribute:
 
+``` c
 static CLASS_ATTR_RW(foo);
+```
 
 This will create a static variable of the **struct class_attribute** type named **class_attr_foo** and will assume that its show and store functions are named **foo_show** and **foo_store**, respectively. This can be referenced in a group using its inner attribute element, as shown here:
 
-static struct attribute \*fake_class_attrs\[\] = {
-
-    &class_attr_foo.attr,
-
-    \[...\]
-
-    NULL,
-
+``` c
+static struct attribute *fake_class_attrs[] = {
+    &class_attr_foo.attr,
+    [...]
+    NULL,
 };
-
 static struct attribute_group fake_attr_group = {
-
-    .attrs = fake_class_attrs,
-
+    .attrs = fake_class_attrs,
 };
+```
 
 The most important thing when it comes to creating the respective files is that the driver can select the appropriate API from the following list:
 
-int device_create_file(struct device \*device,
-
-            const struct device_attribute \*entry);
-
-int driver_create_file(struct device_driver \*driver,
-
-            const struct driver_attribute \*attr);
-
-int bus_create_file(struct bus_type \*bus,
-
-            struct bus_attribute \*);
-
-int class_create_file(struct class \*class,
-
-            const struct class_attribute \*attr)
+``` c
+int device_create_file(struct device *device,
+            const struct device_attribute *entry);
+int driver_create_file(struct device_driver *driver,
+            const struct driver_attribute *attr);
+int bus_create_file(struct bus_type *bus,
+            struct bus_attribute *);
+int class_create_file(struct class *class,
+            const struct class_attribute *attr)
+```
 
 Here, the **device**, **driver**, **bus**, and **class** arguments are the respective device, driver, bus, and class entities that the attribute must be added to. Moreover, the attribute will be created in the directory that corresponds to the inner kobject of each entity, as shown in the following code:
 
-int device_create_file(struct device \*dev,
-
-                   const struct device_attribute \*attr)
-
+``` c
+int device_create_file(struct device *dev,
+                   const struct device_attribute *attr)
 {
-
-    \[...\]
-
-    error = sysfs_create_file(&dev-\>kobj, &attr-\>attr);
-
-    \[...\]
-
+    [...]
+    error = sysfs_create_file(&dev->kobj, &attr->attr);
+    [...]
 }
-
-int class_create_file(struct class \*cls,
-
-                    const struct class_attribute \*attr)
-
+int class_create_file(struct class *cls,
+                    const struct class_attribute *attr)
 {
-
-    \[...\]
-
-    error =
-
-        sysfs_create_file(&cls-\>p-\>class_subsys.kobj,
-
-                          &attr-\>attr);
-
-    return error;
-
+    [...]
+    error =
+        sysfs_create_file(&cls->p->class_subsys.kobj,
+                          &attr->attr);
+    return error;
 }
-
-int bus_create_file(struct bus_type \*bus,
-
-                   struct bus_attribute \*attr)
-
+int bus_create_file(struct bus_type *bus,
+                   struct bus_attribute *attr)
 {
-
-    \[...\]
-
-    error =
-
-        sysfs_create_file(&bus-\>p-\>subsys.kobj,
-
-                           &attr-\>attr);
-
-    \[...\]
-
+    [...]
+    error =
+        sysfs_create_file(&bus->p->subsys.kobj,
+                           &attr->attr);
+    [...]
 }
+```
 
 To kill two birds with one stone, the preceding code also shows that **device_create_file()**, **bus_create_file()**, **driver_create_file()** and **class_create_file()** all make an internal call to **sysfs_create_file()**.
 
 Once you're done with each respective attribute object, the appropriate removal method must be invoked. The following code shows the possible options:
 
-void device_remove_file(struct device \*device,
-
-             const struct device_attribute \*entry);
-
-void driver_remove_file(struct device_driver \*driver,
-
-                const struct driver_attribute \*attr);
-
-void bus_remove_file(struct bus_type \*,
-
-                struct bus_attribute \*);
-
-void class_remove_file(struct class \*class,
-
-                       const struct class_attribute \*attr);
+``` c
+void device_remove_file(struct device *device,
+             const struct device_attribute *entry);
+void driver_remove_file(struct device_driver *driver,
+                const struct driver_attribute *attr);
+void bus_remove_file(struct bus_type *,
+                struct bus_attribute *);
+void class_remove_file(struct class *class,
+                       const struct class_attribute *attr);
+```
 
 Each of these APIs expects the same arguments as those that are passed when the attributes are created.
 
@@ -1674,73 +1261,46 @@ Let's have a look at the device's implementation. The device framework has an in
 
 The following is an excerpt from **drivers/base/core.c** that shows the device-specific **sysfs_ops** implementation:
 
-static ssize_t dev_attr_show(struct kobject \*kobj,
-
-                            struct attribute \*attr,
-
-                            char \*buf)
-
+``` c
+static ssize_t dev_attr_show(struct kobject *kobj,
+                            struct attribute *attr,
+                            char *buf)
 {
-
-    struct device_attribute \*dev_attr = to_dev_attr(attr);
-
-    struct device \*dev = kobj_to_dev(kobj);
-
-    ssize_t ret = -EIO;
-
-    if (dev_attr-\>show)
-
-          ret = dev_attr-\>show(dev, dev_attr, buf);
-
-    if (ret \>= (ssize_t)PAGE_SIZE) {
-
-        print_symbol("dev_attr_show:
-
-                        %s returned bad count\n",
-
-                    (unsigned long)dev_attr-\>show);
-
-    }
-
-    return ret;
-
+    struct device_attribute *dev_attr = to_dev_attr(attr);
+    struct device *dev = kobj_to_dev(kobj);
+    ssize_t ret = -EIO;
+    if (dev_attr->show)
+          ret = dev_attr->show(dev, dev_attr, buf);
+    if (ret >= (ssize_t)PAGE_SIZE) {
+        print_symbol("dev_attr_show:
+                        %s returned bad count\n",
+                    (unsigned long)dev_attr->show);
+    }
+    return ret;
 }
-
-static ssize_t dev_attr_store(struct kobject \*kobj,
-
-                      struct attribute \*attr,
-
-                      const char \*buf, size_t count)
-
+static ssize_t dev_attr_store(struct kobject *kobj,
+                      struct attribute *attr,
+                      const char *buf, size_t count)
 {
-
-    struct device_attribute \*dev_attr = to_dev_attr(attr);
-
-    struct device \*dev = kobj_to_dev(kobj);
-
-    ssize_t ret = -EIO;
-
-    if (dev_attr-\>store)
-
-        ret = dev_attr-\>store(dev, dev_attr, buf, count);
-
-    return ret;
-
+    struct device_attribute *dev_attr = to_dev_attr(attr);
+    struct device *dev = kobj_to_dev(kobj);
+    ssize_t ret = -EIO;
+    if (dev_attr->store)
+        ret = dev_attr->store(dev, dev_attr, buf, count);
+    return ret;
 }
-
 static const struct sysfs_ops dev_sysfs_ops = {
-
-    .show     = dev_attr_show,
-
-    .store    = dev_attr_store,
-
+    .show     = dev_attr_show,
+    .store    = dev_attr_store,
 };
+```
 
 Note that in the preceding code, **to_dev_attr()**, which is the macro that makes use of **container_of**, is defined as follows:
 
-\#define to_dev_attr(\_attr) \\
-
-       container_of(\_attr, struct device_attribute, attr)
+``` c
+#define to_dev_attr(_attr) \
+       container_of(_attr, struct device_attribute, attr)
+```
 
 The principle is the same for the bus (in **drivers/base/bus.c**), driver (in **drivers/base/bus.c**), and class (in **drivers/base/class.c**) attributes.
 
@@ -1750,9 +1310,10 @@ Though this is not a requirement for dealing with sysfs attributes, the main ide
 
 This notification API is defined as follows:
 
-void sysfs_notify(struct kobject \*kobj, const char \*dir,
-
-                  const char \*attr)
+``` c
+void sysfs_notify(struct kobject *kobj, const char *dir,
+                  const char *attr)
+```
 
 If the **dir** parameter is not **NULL**, it is used to find a subdirectory from within the directory of **kobj**, which contains the attribute (presumably created by **sysfs_create_group**). This call will cause any polling process to wake up and process the event (which might be reading the new value, handling the alarm, and so on).
 
@@ -1762,43 +1323,27 @@ There will be no notifications without this function call; therefore, any pollin
 
 The following code, which shows the **store()** function of an attribute, is provided with this book:
 
-static ssize_t store(struct kobject \*kobj,
-
-                     struct attribute \*attr,
-
-                     const char \*buf, size_t len)
-
+``` c
+static ssize_t store(struct kobject *kobj,
+                     struct attribute *attr,
+                     const char *buf, size_t len)
 {
-
-    struct d_attr \*da = container_of(attr, struct d_attr,
-
-                                      attr);
-
-    sscanf(buf, "%d", &da-\>value);
-
-    pr_info("sysfs_foo store %s = %d\n",
-
-             a-\>attr.name, a-\>value);
-
-    if (strcmp(a-\>attr.name, "foo") == 0){
-
-        foo.value = a-\>value;
-
-        sysfs_notify(mykobj, NULL, "foo");
-
-    }
-
-    else if(strcmp(a-\>attr.name, "bar") == 0){
-
-        bar.value = a-\>value;
-
-        sysfs_notify(mykobj, NULL, "bar");
-
-    }
-
-    return sizeof(int);
-
+    struct d_attr *da = container_of(attr, struct d_attr,
+                                      attr);
+    sscanf(buf, "%d", &da->value);
+    pr_info("sysfs_foo store %s = %d\n",
+             a->attr.name, a->value);
+    if (strcmp(a->attr.name, "foo") == 0){
+        foo.value = a->value;
+        sysfs_notify(mykobj, NULL, "foo");
+    }
+    else if(strcmp(a->attr.name, "bar") == 0){
+        bar.value = a->value;
+        sysfs_notify(mykobj, NULL, "bar");
+    }
+    return sizeof(int);
 }
+```
 
 In the preceding code, it makes sense to call **sysfs_notify()** once the value has been updated so that the user code can read the accurate value.
 

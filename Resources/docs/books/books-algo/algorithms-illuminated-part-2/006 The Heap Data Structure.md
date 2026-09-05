@@ -382,59 +382,59 @@ heap *H**1* 6 heap *H**2* heap *H**1* rebalance heap *H**2* insert
 
 1 5 5 6 3 1 3
 
-![](media/index-119_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-119_1.jpg)
 
 2 4 2 4
 
-![](media/index-119_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-119_2.jpg)
 
 (a) Insertion can cause imbalance (b) Rebalancing
 
-![](media/index-119_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-119_3.jpg)
 
 Figure 10.1: When inserting a new element causes the heap H2 to have two more elements than H1, the smallest element in H2 is extracted and re-inserted into H1 to restore balance.
 
-![](media/index-119_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-119_4.jpg)
 
  
 
 10.4 Speeding Up Dijkstra’s Algorithm
 
-![](media/index-119_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-119_5.jpg)
 
 Our final and most sophisticated application of heaps is a near linear-time implementation of Dijkstra’s algorithm for the single-source
 
-![](media/index-119_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-119_6.jpg)
 
 shortest path problem (Chapter 9). This application vividly illustrates the beautiful interplay between the design of algorithms and the design of data structures.
 
-![](media/index-119_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-119_7.jpg)
 
 10.4.1 Why Heaps?
 
-![](media/index-119_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-119_8.jpg)
 
 We saw in Proposition 9.2 that the straightforward implementation of Dijkstra’s algorithm requires O(mn) time, where m is the number of edges and n is the number of vertices. This is fast enough to process medium-size graphs (with thousands of vertices and edges) but not big graphs (with millions of vertices and edges). Can we do better? Heaps enable a blazingly fast, near-linear-time implementation of Dijkstra’s algorithm.
 
-![](media/index-119_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-119_9.jpg)
 
 Theorem 10.4 (Dijkstra Running Time (Heap-Based)) For every directed graph G = (V, E), every starting vertex s, and every choice of nonnegative edge lengths, the heap-based implementation of Dijkstra runs in O((m + n) log n) time, where m = \|E\| and n = \|V \|.
 
-![](media/index-119_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-119_10.jpg)
 
 While not quite as fast as our linear-time graph search algorithms, O((m + n) log n) is still a fantastic running time—comparable to our best sorting algorithms, and good enough to qualify as a for-free primitive.
 
-![](media/index-119_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-119_11.jpg)
 
 Let’s remember how Dijkstra’s algorithm works (Section 9.2). The algorithm maintains a subset X ✓ V of vertices to which it 10.4 Speeding Up Dijkstra’s Algorithm 107
 
-![](media/index-119_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-119_12.jpg)
 
-![](media/index-119_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-119_13.jpg)
 
-![](media/index-119_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-119_14.jpg)
 
-![](media/index-119_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-119_15.jpg)
 
  
 
@@ -480,47 +480,47 @@ X score = 7
 
 score = 3
 
-![](media/index-121_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-121_1.jpg)
 
 *s*
 
-![](media/index-121_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-121_2.jpg)
 
 score = 5 key(*w*) = 5 *w*
 
-![](media/index-121_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-121_3.jpg)
 
 key(*z*) = +∞
 
-![](media/index-121_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-121_4.jpg)
 
 *z*
 
-![](media/index-121_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-121_5.jpg)
 
  
 
 Figure 10.2: The key of a vertex w 2 V X is defined as the minimum Dijkstra score of an edge with head w and tail in X.
 
-![](media/index-121_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-121_6.jpg)
 
  
 
 What’s going on? Imagine that we use a two-round knockout tournament to identify the edge (v, w) with v 2 X and w / 2 X with the minimum Dijkstra score. The first round comprises a local tournament for each vertex w 2 V X, where the participants are the edges (v, w) with v 2 X and head w, and the first-round winner is the participant with the smallest Dijkstra score (if any). The first-round winners (at most one per vertex w 2 V X) proceed to the second round, and the final champion is the first-round winner with the lowest Dijkstra score. This champion is the same edge that would be identified by exhaustive search.
 
-![](media/index-121_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-121_7.jpg)
 
 The value of the key (10.1) of a vertex w 2 V X is exactly the winning Dijkstra score in the local tournament at w, so our invariant effectively implements all the first-round competitions. Extracting the vertex with the minimum key then implements the second round of the tournament, and returns on a silver platter the next vertex to process, namely the head of the crossing edge with the smallest Dijkstra score. The point is, as long as we maintain our invariant, we can implement each iteration of Dijkstra’s algorithm with a single heap operation.
 
-![](media/index-121_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-121_8.jpg)
 
-![](media/index-121_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-121_9.jpg)
 
-![](media/index-121_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-121_10.jpg)
 
-![](media/index-121_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-121_11.jpg)
 
-![](media/index-121_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-121_12.jpg)
 
 10.4 Speeding Up Dijkstra’s Algorithm 109
 
@@ -590,75 +590,75 @@ processed not-yet-processed processed not-yet-processed
 
 *s* X *v* X *v* V-X V-X
 
-![](media/index-123_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-123_1.jpg)
 
 *s*
 
-![](media/index-123_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-123_2.jpg)
 
 *w* *w*
 
-![](media/index-123_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-123_3.jpg)
 
 *z* *z*
 
-![](media/index-123_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-123_4.jpg)
 
 (a) Before (b) After
 
-![](media/index-123_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-123_5.jpg)
 
 Figure 10.3: When a new vertex v is moved from V X to X, edges going out of v can become crossing edges.
 
-![](media/index-123_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-123_6.jpg)
 
  
 
 Every time we extract a vertex ⇤ w from the heap, moving it from V X to X, we might need to decrease the key of some of the vertices remaining in V X to reflect the new crossing edges. Because all the new crossing edges emanate from ⇤ w, we need only iterate through ⇤ w’s list of outgoing edges and check the vertices y 2 V X with an edge ⇤ ( w, y). For each such vertex y, there are two candidates for the first-round winner in y’s local tournament: either it is the same as before, or it is the new entrant ⇤ ( w, y). Thus, the new value of y’s key should be either its old value or the Dijkstra score ⇤ len ( w) + \` ⇤ wy of the new crossing edge, whichever is smaller.
 
-![](media/index-123_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-123_7.jpg)
 
 How can we decrease the key of an object in a heap? One easy way
 
-![](media/index-123_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-123_8.jpg)
 
 is to remove it, using the Delete operation described in Section 10.2.2,
 
-![](media/index-123_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-123_9.jpg)
 
 update its key, and use Insert 15 to add it back into the heap. This
 
-![](media/index-123_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-123_10.jpg)
 
 15 Some heap implementations export a DecreaseKey operation, running in 10.4 Speeding Up Dijkstra’s Algorithm 111
 
-![](media/index-123_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-123_11.jpg)
 
-![](media/index-123_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-123_12.jpg)
 
-![](media/index-123_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-123_13.jpg)
 
-![](media/index-123_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-123_14.jpg)
 
-![](media/index-123_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-123_15.jpg)
 
-![](media/index-123_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-123_16.jpg)
 
-![](media/index-123_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-123_17.jpg)
 
-![](media/index-123_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-123_18.jpg)
 
-![](media/index-123_19.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-123_19.jpg)
 
-![](media/index-123_20.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-123_20.jpg)
 
-![](media/index-123_21.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-123_21.jpg)
 
-![](media/index-123_22.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-123_22.jpg)
 
-![](media/index-123_23.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-123_23.jpg)
 
-![](media/index-123_24.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-123_24.jpg)
 
  
 
@@ -734,203 +734,202 @@ A heap manages objects associated with keys so that the following heap property 
 
 17 For some reason, computer scientists seem to think that trees grow downward. \*10.5 Implementation Details 113
 
-![](media/index-126_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_1.jpg)
 
  
 
 (a) (b) (c)
 
-![](media/index-126_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_2.jpg)
 
 Figure 10.4: Full binary trees with 7, 15, and 9 nodes.
 
-![](media/index-126_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_3.jpg)
 
  
 
 The Heap Property
 
-![](media/index-126_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_4.jpg)
 
 For every object x, the key of x is less than or equal to the keys of its children.
 
-![](media/index-126_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_5.jpg)
 
  
 
 Duplicate keys are allowed. For example, here’s a valid heap containing
 
-![](media/index-126_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_6.jpg)
 
 nine objects:18
 
-![](media/index-126_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_7.jpg)
 
 4
 
-![](media/index-126_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_8.jpg)
 
  
 
 4 8
 
-![](media/index-126_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_9.jpg)
 
  
 
-9 4 12 9
 
-![](media/index-126_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_10.jpg)
 
  
 
 11 13
 
-![](media/index-126_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_11.jpg)
 
  
 
 For every parent-child pair, the parent’s key is at most that of the
 
-![](media/index-126_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_12.jpg)
 
 child.19
 
-![](media/index-126_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_13.jpg)
 
 There’s more than one way to arrange objects so that the heap
 
-![](media/index-126_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_14.jpg)
 
 property holds. Here’s another heap, with the same set of keys:
 
-![](media/index-126_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_15.jpg)
 
 18 When we draw a heap, we show only the objects’ keys. Don’t forget that what a heap really stores is objects (or pointers to objects). Each object is associated with a key and possibly lots of other data.
 
-![](media/index-126_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_16.jpg)
 
 19 Applying the heap property iteratively to an object’s children, its children’s children, and so on shows that the key of each object is less than or equal to those of all of its direct descendants. The example above illustrates that the heap property implies nothing about the relative order of keys in different subtrees—just like in real family trees!
 
-![](media/index-126_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_17.jpg)
 
-![](media/index-126_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_18.jpg)
 
-![](media/index-126_19.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_19.jpg)
 
-![](media/index-126_20.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_20.jpg)
 
-![](media/index-126_21.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_21.jpg)
 
-![](media/index-126_22.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_22.jpg)
 
-![](media/index-126_23.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_23.jpg)
 
-![](media/index-126_24.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_24.jpg)
 
-![](media/index-126_25.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_25.jpg)
 
-![](media/index-126_26.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_26.jpg)
 
-![](media/index-126_27.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_27.jpg)
 
-![](media/index-126_28.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_28.jpg)
 
-![](media/index-126_29.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_29.jpg)
 
-![](media/index-126_30.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_30.jpg)
 
-![](media/index-126_31.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_31.jpg)
 
-![](media/index-126_32.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_32.jpg)
 
-![](media/index-126_33.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_33.jpg)
 
-![](media/index-126_34.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_34.jpg)
 
-![](media/index-126_35.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_35.jpg)
 
-![](media/index-126_36.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_36.jpg)
 
-![](media/index-126_37.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_37.jpg)
 
-![](media/index-126_38.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_38.jpg)
 
-![](media/index-126_39.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_39.jpg)
 
-![](media/index-126_40.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_40.jpg)
 
-![](media/index-126_41.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_41.jpg)
 
-![](media/index-126_42.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_42.jpg)
 
-![](media/index-126_43.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_43.jpg)
 
-![](media/index-126_44.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_44.jpg)
 
-![](media/index-126_45.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_45.jpg)
 
-![](media/index-126_46.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_46.jpg)
 
-![](media/index-126_47.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_47.jpg)
 
-![](media/index-126_48.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_48.jpg)
 
-![](media/index-126_49.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_49.jpg)
 
-![](media/index-126_50.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_50.jpg)
 
-![](media/index-126_51.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_51.jpg)
 
-![](media/index-126_52.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_52.jpg)
 
-![](media/index-126_53.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_53.jpg)
 
-![](media/index-126_54.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_54.jpg)
 
-![](media/index-126_55.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_55.jpg)
 
-![](media/index-126_56.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_56.jpg)
 
-![](media/index-126_57.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_57.jpg)
 
-![](media/index-126_58.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_58.jpg)
 
-![](media/index-126_59.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_59.jpg)
 
-![](media/index-126_60.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_60.jpg)
 
-![](media/index-126_61.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_61.jpg)
 
-![](media/index-126_62.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_62.jpg)
 
-![](media/index-126_63.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_63.jpg)
 
-![](media/index-126_64.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_64.jpg)
 
-![](media/index-126_65.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_65.jpg)
 
-![](media/index-126_66.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_66.jpg)
 
-![](media/index-126_67.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_67.jpg)
 
-![](media/index-126_68.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_68.jpg)
 
-![](media/index-126_69.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_69.jpg)
 
-![](media/index-126_70.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_70.jpg)
 
-![](media/index-126_71.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_71.jpg)
 
-![](media/index-126_72.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_72.jpg)
 
-![](media/index-126_73.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_73.jpg)
 
-![](media/index-126_74.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_74.jpg)
 
-![](media/index-126_75.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_75.jpg)
 
-![](media/index-126_76.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-126_76.jpg)
 
 114 The Heap Data Structure
 
@@ -938,133 +937,132 @@ property holds. Here’s another heap, with the same set of keys:
 
 4
 
-![](media/index-127_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_1.jpg)
 
  
 
 4 4
 
-![](media/index-127_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_2.jpg)
 
  
 
 9 11 13 8
 
-![](media/index-127_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_3.jpg)
 
  
 
 12 9
 
-![](media/index-127_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_4.jpg)
 
  
 
 Both heaps have a “4” at the root, which is also (tied for) the smallest of all the keys. This is not an accident: because keys only decrease as you traverse a heap upward, the root’s key is as small as it gets. This should sound encouraging, given that the raison d’être of a heap is fast minimum computations.
 
-![](media/index-127_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_5.jpg)
 
 10.5.2 Heaps as Arrays
 
-![](media/index-127_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_6.jpg)
 
 In our minds we visualize a heap as a tree, but in an implementation we use an array with length equal to the maximum number of objects we expect to store. The first element of the array corresponds to the tree’s root, the next two elements to the next level of the tree (in the
 
-![](media/index-127_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_7.jpg)
 
 same order), and so on (Figure 10.5).
 
-![](media/index-127_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_8.jpg)
 
 4 layer 0
 
-![](media/index-127_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_9.jpg)
 
 4 8 layer 1
 
-![](media/index-127_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_10.jpg)
 
 layer 2
 
-![](media/index-127_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_11.jpg)
 
-9 4 12 9
 
-![](media/index-127_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_12.jpg)
 
 4 4 8 9 4 12 9 11 13
 
-![](media/index-127_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_13.jpg)
 
 11 layer 0 layer 1 13 layer 3 layer 2 layer 3
 
-![](media/index-127_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_14.jpg)
 
 (a) Tree representation (b) Array representation
 
-![](media/index-127_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_15.jpg)
 
 Figure 10.5: Mapping the tree representation of a heap to its array representation.
 
-![](media/index-127_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_16.jpg)
 
  
 
 Parent-child relationships in the tree translate nicely to the array
 
-![](media/index-127_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_17.jpg)
 
 (Table 10.2). Assuming the array positions are labeled 1, 2, . . . , n, where n is the number of objects, the children of the object in position i \*10.5 Implementation Details 115
 
-![](media/index-127_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_18.jpg)
 
-![](media/index-127_19.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_19.jpg)
 
-![](media/index-127_20.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_20.jpg)
 
-![](media/index-127_21.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_21.jpg)
 
-![](media/index-127_22.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_22.jpg)
 
-![](media/index-127_23.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_23.jpg)
 
-![](media/index-127_24.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_24.jpg)
 
-![](media/index-127_25.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_25.jpg)
 
-![](media/index-127_26.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_26.jpg)
 
-![](media/index-127_27.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_27.jpg)
 
-![](media/index-127_28.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_28.jpg)
 
-![](media/index-127_29.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_29.jpg)
 
-![](media/index-127_30.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_30.jpg)
 
-![](media/index-127_31.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_31.jpg)
 
-![](media/index-127_32.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_32.jpg)
 
-![](media/index-127_33.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_33.jpg)
 
-![](media/index-127_34.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_34.jpg)
 
-![](media/index-127_35.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_35.jpg)
 
-![](media/index-127_36.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_36.jpg)
 
-![](media/index-127_37.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_37.jpg)
 
-![](media/index-127_38.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_38.jpg)
 
-![](media/index-127_39.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_39.jpg)
 
-![](media/index-127_40.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_40.jpg)
 
-![](media/index-127_41.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_41.jpg)
 
-![](media/index-127_42.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-127_42.jpg)
 
  
 
@@ -1122,111 +1120,109 @@ Let’s start with our running example:
 
 4
 
-![](media/index-129_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_1.jpg)
 
  
 
 4 8
 
-![](media/index-129_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_2.jpg)
 
  
 
-9 4 12 9
 
-![](media/index-129_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_3.jpg)
 
  
 
 11 13
 
-![](media/index-129_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_4.jpg)
 
  
 
 When a new object is inserted, the most obvious way to keep the tree full is to tack the new object onto the end of the array, or equivalently to the last level of the tree. (If the last level is already full, the object becomes the first at a new level.) As long as the implementation keeps track of the number n of objects (which is easy to do), this step takes constant time. For example, if we insert an object with key 7 into our running example, we obtain:
 
-![](media/index-129_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_5.jpg)
 
 4
 
-![](media/index-129_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_6.jpg)
 
  
 
 4 8
 
-![](media/index-129_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_7.jpg)
 
  
 
-9 4 12 9
 
-![](media/index-129_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_8.jpg)
 
  
 
 11 13 7
 
-![](media/index-129_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_9.jpg)
 
  
 
 We have a full binary tree, but does the heap property hold? There’s only one place it might fail—the one new parent-child pair (the 4 and \*10.5 Implementation Details 117
 
-![](media/index-129_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_10.jpg)
 
-![](media/index-129_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_11.jpg)
 
-![](media/index-129_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_12.jpg)
 
-![](media/index-129_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_13.jpg)
 
-![](media/index-129_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_14.jpg)
 
-![](media/index-129_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_15.jpg)
 
-![](media/index-129_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_16.jpg)
 
-![](media/index-129_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_17.jpg)
 
-![](media/index-129_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_18.jpg)
 
-![](media/index-129_19.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_19.jpg)
 
-![](media/index-129_20.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_20.jpg)
 
-![](media/index-129_21.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_21.jpg)
 
-![](media/index-129_22.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_22.jpg)
 
-![](media/index-129_23.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_23.jpg)
 
-![](media/index-129_24.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_24.jpg)
 
-![](media/index-129_25.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_25.jpg)
 
-![](media/index-129_26.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_26.jpg)
 
-![](media/index-129_27.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_27.jpg)
 
-![](media/index-129_28.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_28.jpg)
 
-![](media/index-129_29.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_29.jpg)
 
-![](media/index-129_30.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_30.jpg)
 
-![](media/index-129_31.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_31.jpg)
 
-![](media/index-129_32.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_32.jpg)
 
-![](media/index-129_33.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_33.jpg)
 
-![](media/index-129_34.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_34.jpg)
 
-![](media/index-129_35.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_35.jpg)
 
-![](media/index-129_36.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-129_36.jpg)
 
  
 
@@ -1234,191 +1230,189 @@ the 7). In this case we got lucky, and the new pair doesn’t violate the heap p
 
 4
 
-![](media/index-130_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_1.jpg)
 
  
 
 4 8
 
-![](media/index-130_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_2.jpg)
 
  
 
-9 4 12 9
 
-![](media/index-130_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_3.jpg)
 
  
 
 11 13 7 10
 
-![](media/index-130_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_4.jpg)
 
 But suppose we now insert an object with key 5. After tacking it on at the end, our tree is:
 
-![](media/index-130_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_5.jpg)
 
 4
 
-![](media/index-130_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_6.jpg)
 
  
 
 4 8
 
-![](media/index-130_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_7.jpg)
 
  
 
-9 4 12 9
 
-![](media/index-130_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_8.jpg)
 
 heap
 
-![](media/index-130_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_9.jpg)
 
 violation!
 
-![](media/index-130_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_10.jpg)
 
 11 13 7 10 5
 
-![](media/index-130_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_11.jpg)
 
 Now we have a problem: The new parent-child pair (the 12 and the 5) violates the heap property. What can we do about it? We can at least fix the problem locally by swapping the two nodes in the violating pair:
 
-![](media/index-130_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_12.jpg)
 
 4
 
-![](media/index-130_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_13.jpg)
 
  
 
 4 8
 
-![](media/index-130_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_14.jpg)
 
 heap
 
-![](media/index-130_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_15.jpg)
 
 violation!
 
-![](media/index-130_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_16.jpg)
 
 9 4 5 9
 
-![](media/index-130_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_17.jpg)
 
  
 
 11 13 7 10 12 118 The Heap Data Structure
 
-![](media/index-130_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_18.jpg)
 
-![](media/index-130_19.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_19.jpg)
 
-![](media/index-130_20.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_20.jpg)
 
-![](media/index-130_21.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_21.jpg)
 
-![](media/index-130_22.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_22.jpg)
 
-![](media/index-130_23.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_23.jpg)
 
-![](media/index-130_24.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_24.jpg)
 
-![](media/index-130_25.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_25.jpg)
 
-![](media/index-130_26.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_26.jpg)
 
-![](media/index-130_27.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_27.jpg)
 
-![](media/index-130_28.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_28.jpg)
 
-![](media/index-130_29.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_29.jpg)
 
-![](media/index-130_30.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_30.jpg)
 
-![](media/index-130_31.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_31.jpg)
 
-![](media/index-130_32.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_32.jpg)
 
-![](media/index-130_33.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_33.jpg)
 
-![](media/index-130_34.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_34.jpg)
 
-![](media/index-130_35.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_35.jpg)
 
-![](media/index-130_36.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_36.jpg)
 
-![](media/index-130_37.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_37.jpg)
 
-![](media/index-130_38.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_38.jpg)
 
-![](media/index-130_39.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_39.jpg)
 
-![](media/index-130_40.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_40.jpg)
 
-![](media/index-130_41.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_41.jpg)
 
-![](media/index-130_42.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_42.jpg)
 
-![](media/index-130_43.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_43.jpg)
 
-![](media/index-130_44.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_44.jpg)
 
-![](media/index-130_45.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_45.jpg)
 
-![](media/index-130_46.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_46.jpg)
 
-![](media/index-130_47.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_47.jpg)
 
-![](media/index-130_48.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_48.jpg)
 
-![](media/index-130_49.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_49.jpg)
 
-![](media/index-130_50.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_50.jpg)
 
-![](media/index-130_51.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_51.jpg)
 
-![](media/index-130_52.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_52.jpg)
 
-![](media/index-130_53.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_53.jpg)
 
-![](media/index-130_54.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_54.jpg)
 
-![](media/index-130_55.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_55.jpg)
 
-![](media/index-130_56.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_56.jpg)
 
-![](media/index-130_57.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_57.jpg)
 
-![](media/index-130_58.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_58.jpg)
 
-![](media/index-130_59.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_59.jpg)
 
-![](media/index-130_60.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_60.jpg)
 
-![](media/index-130_61.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_61.jpg)
 
-![](media/index-130_62.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_62.jpg)
 
-![](media/index-130_63.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_63.jpg)
 
-![](media/index-130_64.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_64.jpg)
 
-![](media/index-130_65.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_65.jpg)
 
-![](media/index-130_66.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_66.jpg)
 
-![](media/index-130_67.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_67.jpg)
 
-![](media/index-130_68.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_68.jpg)
 
-![](media/index-130_69.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-130_69.jpg)
 
  
 
@@ -1428,77 +1422,77 @@ This fixes the violating parent-child pair. We’re not out of the woods yet, ho
 
 4
 
-![](media/index-131_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-131_1.jpg)
 
  
 
 4 5
 
-![](media/index-131_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-131_2.jpg)
 
  
 
 9 4 8 9
 
-![](media/index-131_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-131_3.jpg)
 
  
 
 11 13 7 10 12
 
-![](media/index-131_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-131_4.jpg)
 
  
 
 This explicitly fixes the violating pair. We’ve seen that such a swap has the potential to push the violation of the heap property upward, but here it doesn’t happen—the 4 and 5 are already in the correct order. You might worry that a swap could also push the violation downward. But this also doesn’t happen—the 8 and 12 are already in the correct order. With the heap property restored, the insertion is complete.
 
-![](media/index-131_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-131_5.jpg)
 
 In general, the Insert operation tacks the new object on to the
 
-![](media/index-131_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-131_6.jpg)
 
 end of the heap, and repeatedly swaps the nodes of a violating pair.24 At all times, there is at most one violating parent-child pair—the pair
 
-![](media/index-131_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-131_7.jpg)
 
 in which the new object is the child.25 Each swap pushes the violating parent-child pair up one level in the tree. This process cannot go on forever—if the new object makes it to the root, it has no parent and there can be no violating parent-child pair.
 
-![](media/index-131_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-131_8.jpg)
 
 24 This swapping subroutine goes by a number of names, including Bubble-Up,
 
-![](media/index-131_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-131_9.jpg)
 
 Sift-Up, Heapify-Up, and more. 25 At no point are there any heap violations between the new object and its children. It has no children initially, and after a swap its children comprise the node it replaced (which has a larger key, as otherwise we wouldn’t have swapped) and a previous child of that node (which, by the heap property, can have only a still larger key). Every parent-child pair not involving the new object appeared in the original heap, and hence does not violate the heap property. For instance, after two swaps in our example, the 8 and 12 are once again in a parent-child relationship, just like in the original heap.
 
-![](media/index-131_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-131_10.jpg)
 
-![](media/index-131_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-131_11.jpg)
 
-![](media/index-131_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-131_12.jpg)
 
-![](media/index-131_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-131_13.jpg)
 
-![](media/index-131_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-131_14.jpg)
 
-![](media/index-131_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-131_15.jpg)
 
-![](media/index-131_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-131_16.jpg)
 
-![](media/index-131_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-131_17.jpg)
 
-![](media/index-131_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-131_18.jpg)
 
-![](media/index-131_19.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-131_19.jpg)
 
-![](media/index-131_20.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-131_20.jpg)
 
-![](media/index-131_21.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-131_21.jpg)
 
-![](media/index-131_22.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-131_22.jpg)
 
-![](media/index-131_23.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-131_23.jpg)
 
 \*10.5 Implementation Details 119
 
@@ -1534,51 +1528,50 @@ Insert in reverse, we know that the last node of the tree must go elsewhere. But
 
 4
 
-![](media/index-132_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-132_1.jpg)
 
  
 
 4 8
 
-![](media/index-132_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-132_2.jpg)
 
  
 
-9 4 12 9
 
-![](media/index-132_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-132_3.jpg)
 
  
 
 11 13
 
-![](media/index-132_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-132_4.jpg)
 
-![](media/index-132_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-132_5.jpg)
 
-![](media/index-132_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-132_6.jpg)
 
-![](media/index-132_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-132_7.jpg)
 
-![](media/index-132_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-132_8.jpg)
 
-![](media/index-132_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-132_9.jpg)
 
-![](media/index-132_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-132_10.jpg)
 
-![](media/index-132_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-132_11.jpg)
 
-![](media/index-132_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-132_12.jpg)
 
-![](media/index-132_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-132_13.jpg)
 
-![](media/index-132_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-132_14.jpg)
 
-![](media/index-132_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-132_15.jpg)
 
-![](media/index-132_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-132_16.jpg)
 
-![](media/index-132_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-132_17.jpg)
 
 120 The Heap Data Structure
 
@@ -1588,115 +1581,114 @@ the resulting tree looks like
 
 13
 
-![](media/index-133_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_1.jpg)
 
 heap
 
-![](media/index-133_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_2.jpg)
 
 4 violations! 8
 
-![](media/index-133_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_3.jpg)
 
  
 
-9 4 12 9
 
-![](media/index-133_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_4.jpg)
 
  
 
 11
 
-![](media/index-133_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_5.jpg)
 
  
 
 The good news is that we’ve restored the full binary tree property. The bad news is that the massive promotion granted to the object with key 13 has created two violating parent-child pairs (the 13 and 4 and the 13 and 8). Do we need two swaps to correct them?
 
-![](media/index-133_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_6.jpg)
 
 The key idea is to swap the root node with the smaller of its two children:
 
-![](media/index-133_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_7.jpg)
 
 4
 
-![](media/index-133_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_8.jpg)
 
  
 
 13 8
 
-![](media/index-133_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_9.jpg)
 
 heap
 
-![](media/index-133_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_10.jpg)
 
 9 violations! 4 12 9
 
-![](media/index-133_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_11.jpg)
 
  
 
 11
 
-![](media/index-133_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_12.jpg)
 
  
 
 There are no longer any heap violations involving the root—the new root node is smaller than both the node it replaced (that’s why we
 
-![](media/index-133_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_13.jpg)
 
 swapped) and its other child (as we swapped the smaller child).26 The heap violations migrate downward, again involving the object with key 13 and its two (new) children. So we do it again, and swap the 13 with its smaller child:
 
-![](media/index-133_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_14.jpg)
 
 26 Swapping the 13 with the 8 would fail to vaccinate the left subtree from heap
 
-![](media/index-133_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_15.jpg)
 
 violations (with violating pair 8 and 4) while allowing the disease to spread to the right subtree (with violating pairs 13 and 12, and 13 and 9).
 
-![](media/index-133_16.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_16.jpg)
 
-![](media/index-133_17.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_17.jpg)
 
-![](media/index-133_18.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_18.jpg)
 
-![](media/index-133_19.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_19.jpg)
 
-![](media/index-133_20.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_20.jpg)
 
-![](media/index-133_21.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_21.jpg)
 
-![](media/index-133_22.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_22.jpg)
 
-![](media/index-133_23.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_23.jpg)
 
-![](media/index-133_24.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_24.jpg)
 
-![](media/index-133_25.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_25.jpg)
 
-![](media/index-133_26.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_26.jpg)
 
-![](media/index-133_27.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_27.jpg)
 
-![](media/index-133_28.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_28.jpg)
 
-![](media/index-133_29.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_29.jpg)
 
-![](media/index-133_30.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_30.jpg)
 
-![](media/index-133_31.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_31.jpg)
 
-![](media/index-133_32.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_32.jpg)
 
-![](media/index-133_33.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_33.jpg)
 
-![](media/index-133_34.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-133_34.jpg)
 
 \*10.5 Implementation Details 121
 
@@ -1704,73 +1696,73 @@ violations (with violating pair 8 and 4) while allowing the disease to spread to
 
 4
 
-![](media/index-134_1.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-134_1.jpg)
 
  
 
 4 8
 
-![](media/index-134_2.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-134_2.jpg)
 
  
 
 9 13 12 9
 
-![](media/index-134_3.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-134_3.jpg)
 
  
 
 11
 
-![](media/index-134_4.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-134_4.jpg)
 
  
 
 The heap property is restored at last, and now the extraction is complete.
 
-![](media/index-134_5.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-134_5.jpg)
 
 In general, the ExtractMin operation moves the last object
 
-![](media/index-134_6.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-134_6.jpg)
 
 of a heap to the root node (by overwriting the previous root), and
 
-![](media/index-134_7.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-134_7.jpg)
 
 repeatedly swaps this object with its smaller child.27 At all times, there are at most two violating parent-child pairs—the two pairs in
 
-![](media/index-134_8.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-134_8.jpg)
 
 which the formerly-last object is the parent.28 Because each swap pushes this object down one level in the tree, this process cannot go on forever—it stops once the new object belongs to the last level, if not earlier.
 
-![](media/index-134_9.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-134_9.jpg)
 
 ExtractMin
 
-![](media/index-134_10.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-134_10.jpg)
 
 1\. Overwrite the root with the last object x in the heap,
 
-![](media/index-134_11.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-134_11.jpg)
 
 and decrement the heap size.
 
-![](media/index-134_12.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-134_12.jpg)
 
 2\. Repeatedly swap x with its smaller child until the
 
-![](media/index-134_13.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-134_13.jpg)
 
 heap property is restored.
 
-![](media/index-134_14.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-134_14.jpg)
 
  
 
 The number of swaps is at most the number of levels, and only a constant amount of work is required per swap. Because there are ⇡ log n 2 levels, we conclude that the worst-case running time of the ExtractMin operation is O(log n), where n is the number of objects in the heap.
 
-![](media/index-134_15.jpg)
+![](/tmp/audit/iter1/epubregen/algorithms-illuminated-part-2/media/index-134_15.jpg)
 
 27 This swapping subroutine is called, among other things, Bubble-Down.
 

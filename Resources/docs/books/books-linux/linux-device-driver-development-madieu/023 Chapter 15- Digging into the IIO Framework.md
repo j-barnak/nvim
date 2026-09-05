@@ -16,7 +16,7 @@ These are the two ways to interact with an IIO device from user space:
 
 As a picture is worth a thousand words, the following is a figure showing an overview of the IIO framework:
 
-![Figure 15.1 – IIO framework overview ](media/image/B17934_15_001.jpg)
+![Figure 15.1 – IIO framework overview ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_15_001.jpg)
 
 Figure 15.1 – IIO framework overview
 
@@ -24,25 +24,18 @@ The preceding figure shows how the IIO framework is organized between the kernel
 
 IIO APIs are spread over several header files, as follows:
 
-/\* mandatory, the core \*/
-
-\#include \<linux/iio/iio.h\>
-
-/\* mandatory since sysfs is used \*/
-
-\#include \<linux/iio/sysfs.h\>
-
-/\* Optional. Advanced feature, to manage iio events \*/
-
-\#include \<linux/iio/events.h\>
-
-/\* mandatory for triggered buffers \*/
-
-\#include \<linux/iio/buffer.h\>
-
-/\* rarely used. Only if the driver implements a trigger \*/
-
-\#include \<linux/iio/trigger.h\>
+``` c
+/* mandatory, the core */
+#include <linux/iio/iio.h>
+/* mandatory since sysfs is used */
+#include <linux/iio/sysfs.h>
+/* Optional. Advanced feature, to manage iio events */
+#include <linux/iio/events.h>
+/* mandatory for triggered buffers */
+#include <linux/iio/buffer.h>
+/* rarely used. Only if the driver implements a trigger */
+#include <linux/iio/trigger.h>
+```
 
 In this chapter, we will describe and handle every concept of the IIO framework, such as walking through its data structure (devices, channels, and so on), dealing with triggered buffer support and continuous capture, along with its sysfs interface, exploring existing IIO triggers, learning how to capture data in either one-shot mode or continuous mode, and listing tools that can help the developer in testing their devices.
 
@@ -64,43 +57,27 @@ The **struct iio_dev** structure represents the IIO device, describing the devic
 
 This data structure has the following definition:
 
+``` c
 struct iio_dev {
-
-    \[...\]
-
-    int             modes;
-
-    int             currentmode;
-
-    struct device   dev;
-
-    struct iio_buffer           \*buffer;
-
-    int                         scan_bytes;
-
-    const unsigned long         \*available_scan_masks;
-
-    const unsigned long         \*active_scan_mask;
-
-    bool                        scan_timestamp;
-
-    struct iio_trigger          \*trig;
-
-    struct iio_poll_func        \*pollfunc;
-
-    struct iio_chan_spec const  \*channels;
-
-    int                         num_channels;
-
-    const char                  \*name;
-
-    const struct iio_info       \*info;
-
-    const struct iio_buffer_setup_ops   \*setup_ops;
-
-    struct cdev                 chrdev;
-
+    [...]
+    int             modes;
+    int             currentmode;
+    struct device   dev;
+    struct iio_buffer           *buffer;
+    int                         scan_bytes;
+    const unsigned long         *available_scan_masks;
+    const unsigned long         *active_scan_mask;
+    bool                        scan_timestamp;
+    struct iio_trigger          *trig;
+    struct iio_poll_func        *pollfunc;
+    struct iio_chan_spec const  *channels;
+    int                         num_channels;
+    const char                  *name;
+    const struct iio_info       *info;
+    const struct iio_buffer_setup_ops   *setup_ops;
+    struct cdev                 chrdev;
 };
+```
 
 For the sake of readability, only relevant elements for us have been listed in the preceding excerpt. The complete structure definition lies in **include/linux/iio/iio.h**. The following are the meanings of the elements in the data structure:
 
@@ -124,19 +101,15 @@ For the sake of readability, only relevant elements for us have been listed in t
 
 - **available_scan_masks**: This is an optional array of allowed bitmasks. When using a triggered buffer, you can enable channels to be captured and fed into the IIO buffer. If you do not want to allow some channels to be enabled, you should fill this array with only allowed ones. An example of an accelerometer (with X, Y, and Z channels) is as follows:
 
-  /\*
-
-  \* Bitmasks 0x7 (0b111) and 0 (0b000) are allowed.
-
-  \* It means one can enable none or all of them.
-
-  \* You can't for example enable only channel X and Y
-
-  \*/
-
-  static const unsigned long my_scan_masks\[\] = {0x7, 0};
-
-  indio_dev-\>available_scan_masks = my_scan_masks;
+  ``` c
+  /*
+   * Bitmasks 0x7 (0b111) and 0 (0b000) are allowed.
+   * It means one can enable none or all of them.
+   * You can't for example enable only channel X and Y
+   */
+  static const unsigned long my_scan_masks[] = {0x7, 0};
+  indio_dev->available_scan_masks = my_scan_masks;
+  ```
 
 - **active_scan_mask**: This is a bitmask of enabled channels. Only the data from those channels should be pushed into the buffer. For example, for an eight-channel ADC converter, if you only enable the first (index 0), the third (index 2), and the last (index 7) channels, the bitmask would be **0b10000101** (**0x85**). **active_scan_mask** will be set to **0x85**. The driver can then use the **for_each_set_bit** macro to walk through each set bit, fetch the data from the corresponding channels, and fill the buffer.
 
@@ -156,23 +129,17 @@ For the sake of readability, only relevant elements for us have been listed in t
 
 - **setup_ops**: A set of callback functions to call before and after the buffer is enabled/disabled. This structure is defined in **include/linux/iio/iio.h**, as follows:
 
+  ``` c
   struct iio_buffer_setup_ops {
-
-      int (\* preenable) (struct iio_dev \*);
-
-      int (\* postenable) (struct iio_dev \*);
-
-      int (\* predisable) (struct iio_dev \*);
-
-      int (\* postdisable) (struct iio_dev \*);
-
-      bool (\* validate_scan_mask) (
-
-                       struct iio_dev \*indio_dev,
-
-                       const unsigned long \*scan_mask);
-
+      int (* preenable) (struct iio_dev *);
+      int (* postenable) (struct iio_dev *);
+      int (* predisable) (struct iio_dev *);
+      int (* postdisable) (struct iio_dev *);
+      bool (* validate_scan_mask) (
+                       struct iio_dev *indio_dev,
+                       const unsigned long *scan_mask);
   };
+  ```
 
 Note that each callback in this data structure is optional.
 
@@ -180,71 +147,59 @@ Note that each callback in this data structure is optional.
 
 Now that we are familiar with the IIO device structure, the next step is to allocate memory for it. The appropriate function to achieve that is **devm_iio_device_alloc()**, which is the managed version for **iio_device_alloc()** and has the following definition:
 
-struct iio_dev \*devm_iio_device_alloc(struct device \*dev,
-
-                                       int sizeof_priv)
+``` c
+struct iio_dev *devm_iio_device_alloc(struct device *dev,
+                                       int sizeof_priv)
+```
 
 It is recommended to use the managed version in a new driver as the **devres** core takes care of freeing the memory when it is no longer needed. In the preceding function prototype, **dev** is the device to allocate **iio_dev** for and **sizeof_priv** is the extra memory space to allocate for any private data structure. The function returns **NULL** if the allocation fails.
 
 After the IIO device memory has been allocated, the next step is to initialize different fields. Once done, the device must be registered with the IIO subsystem using the **devm_iio_device_register()** function, the prototype of which is the following:
 
-int devm_iio_device_register(struct device \*dev,
-
-                             struct iio_dev \*indio_dev);
+``` c
+int devm_iio_device_register(struct device *dev,
+                             struct iio_dev *indio_dev);
+```
 
 This function is the managed version of **iio_device_register()** and takes care of unregistering the IIO device on driver detach. In its parameters, **dev** is the same device as the one for which the IIO device has been allocated, and **indio_dev** is the IIO device previously initialized. The device will be ready to accept requests from the user space after this function succeeds (returns **0**). The following is an example showing how to register an IIO device:
 
-static int ad7476_probe(struct spi_device \*spi)
-
+``` c
+static int ad7476_probe(struct spi_device *spi)
 {
-
-    struct ad7476_state \*st;
-
-    struct iio_dev \*indio_dev;
-
-    int ret;
-
-    indio_dev = devm_iio_device_alloc(&spi-\>dev,
-
-                                        sizeof(\*st));
-
-    if (!indio_dev)
-
-         return -ENOMEM;
-
-    /\* st is given the address of reserved memory for
-
-    \* private data
-
-    \*/
-
-    st = iio_priv(indio_dev);
-
-    \[...\]
-
-    /\* iio device setup \*/
-
-    indio_dev-\>name = spi_get_device_id(spi)-\>name;
-
-    indio_dev-\>modes = INDIO_DIRECT_MODE;
-
-    indio_dev-\>num_channels = 2;
-
-    \[...\]
-
-    return devm_iio_device_register(&spi-\>dev, indio_dev);
-
+    struct ad7476_state *st;
+    struct iio_dev *indio_dev;
+    int ret;
+    indio_dev = devm_iio_device_alloc(&spi->dev,
+                                        sizeof(*st));
+    if (!indio_dev)
+         return -ENOMEM;
+    /* st is given the address of reserved memory for
+    * private data
+    */
+    st = iio_priv(indio_dev);
+    [...]
+    /* iio device setup */
+    indio_dev->name = spi_get_device_id(spi)->name;
+    indio_dev->modes = INDIO_DIRECT_MODE;
+    indio_dev->num_channels = 2;
+    [...]
+    return devm_iio_device_register(&spi->dev, indio_dev);
 }
+```
 
 If an error occurs, **devm_iio_device_register()** will return a negative error code. The reverse operation for the non-managed variant (usually done in the release function) is **iio_device_unregister()**, which has the following declaration:
 
-void iio_device_unregister(struct iio_dev \*indio_dev)
+``` c
+void iio_device_unregister(struct iio_dev *indio_dev)
+```
 
 However, managed registration takes care of unregistering the device on driver detach or when the device leaves the system. Moreover, because we used a managed allocation variant, there is no need to free the memory as this will be internal to the core.
 
 You might have also noticed we used a new function in the excerpt, **iio_priv()**. This accessor returns the address of the private data allocated with the IIO device. It is recommended to use this function instead of doing a direct dereference. As an example, given an IIO device, the corresponding private data can be retrieved as follows:
 
-struct my_private_data \*the_data = iio_priv(indio_dev);
+``` c
+struct my_private_data *the_data = iio_priv(indio_dev);
+```
 
 The IIO device is useless on its own. Now that we are done with the main IIO device data structure, we have to add a set of hooks allowing us to interact with the device.
 
@@ -252,25 +207,18 @@ The IIO device is useless on its own. Now that we are done with the main IIO dev
 
 The **struct iio_info** structure is used to declare the hooks used by the IIO core to read/write channel/attribute values. The following is part of its declaration:
 
+``` c
 struct iio_info {
-
-    const struct attribute_group  \*attrs;
-
-    int (\*read_raw)(struct iio_dev \*indio_dev,
-
-            struct iio_chan_spec const \*chan,
-
-            int \*val, int \*val2, long mask);
-
-    int (\*write_raw)(struct iio_dev \*indio_dev,
-
-             struct iio_chan_spec const \*chan,
-
-             int val, int val2, long mask);
-
-    \[...\]
-
+    const struct attribute_group  *attrs;
+    int (*read_raw)(struct iio_dev *indio_dev,
+            struct iio_chan_spec const *chan,
+            int *val, int *val2, long mask);
+    int (*write_raw)(struct iio_dev *indio_dev,
+             struct iio_chan_spec const *chan,
+             int val, int val2, long mask);
+    [...]
 };
+```
 
 Again, the full definition of this data structure can be found in **/include/linux/iio/iio.h**. For the enumerated elements in the preceding structure excerpt, the following are their meanings:
 
@@ -294,25 +242,18 @@ All the preceding does not change the fact that, in case of an error, the callba
 
 An example of setting up the **struct iio_info** structure is the following:
 
+``` c
 static const struct iio_info iio_dummy_info = {
-
-    .read_raw = &iio_dummy_read_raw,
-
-    .write_raw = &iio_dummy_write_raw,
-
-    \[...\]
-
+    .read_raw = &iio_dummy_read_raw,
+    .write_raw = &iio_dummy_write_raw,
+    [...]
 };
-
-/\*
-
-\* Provide device type specific interface functions and
-
-\* constant data.
-
-\*/
-
-indio_dev-\>info = &iio_dummy_info;
+/*
+ * Provide device type specific interface functions and
+ * constant data.
+ */
+indio_dev->info = &iio_dummy_info;
+```
 
 You must not confuse this **struct iio_info** with the user-space **iio_info** tool, which is part of the **libiio** package.
 
@@ -320,61 +261,36 @@ You must not confuse this **struct iio_info** with the user-space **iio_info** t
 
 In IIO terminology, a channel represents a single acquisition line of a sensor. This means each data mesurement entity a sensor can provide/sense is called a **channel**. For example, an accelerometer will have three channels (X, Y, and Z), since each axis represents a single acquisition line. **struct iio_chan_spec** is the structure that represents and describes a single channel in the kernel, as follows:
 
+``` c
 struct iio_chan_spec {
-
-    enum iio_chan_type    type;
-
-    int               channel;
-
-    int               channel2;
-
-    unsigned long     address;
-
-    int               scan_index;
-
-    struct {
-
-        char sign;
-
-        u8   realbits;
-
-        u8   storagebits;
-
-        u8   shift;
-
-        u8   repeat;
-
-        enum iio_endian endianness;
-
-    } scan_type;
-
-    long              info_mask_separate;
-
-    long              info_mask_shared_by_type;
-
-    long              info_mask_shared_by_dir;
-
-    long              info_mask_shared_by_all;
-
-    const struct iio_event_spec \*event_spec;
-
-    unsigned int      num_event_specs;
-
-    const struct iio_chan_spec_ext_info \*ext_info;
-
-    const char        \*extend_name;
-
-    const char        \*datasheet_name;
-
-    unsigned          modified:1;
-
-    unsigned          indexed:1;
-
-    unsigned          output:1;
-
-    unsigned          differential:1;
-
+    enum iio_chan_type    type;
+    int               channel;
+    int               channel2;
+    unsigned long     address;
+    int               scan_index;
+    struct {
+        char sign;
+        u8   realbits;
+        u8   storagebits;
+        u8   shift;
+        u8   repeat;
+        enum iio_endian endianness;
+    } scan_type;
+    long              info_mask_separate;
+    long              info_mask_shared_by_type;
+    long              info_mask_shared_by_dir;
+    long              info_mask_shared_by_all;
+    const struct iio_event_spec *event_spec;
+    unsigned int      num_event_specs;
+    const struct iio_chan_spec_ext_info *ext_info;
+    const char        *extend_name;
+    const char        *datasheet_name;
+    unsigned          modified:1;
+    unsigned          indexed:1;
+    unsigned          output:1;
+    unsigned          differential:1;
 };
+```
 
 The following are the meanings of elements in the data structure:
 
@@ -397,39 +313,29 @@ The following are the meanings of elements in the data structure:
 
 **iio_chan_spec.info_mask\_\*** elements are masks used to specify channel sysfs attributes exposed to user space depending on their shared information. Therefore, masks must be set by ORing one or more bitmasks, all of which are defined in **include/linux/iio/types.h**, as follows:
 
+``` c
 enum iio_chan_info_enum {
-
-    IIO_CHAN_INFO_RAW = 0,
-
-    IIO_CHAN_INFO_PROCESSED,
-
-    IIO_CHAN_INFO_SCALE,
-
-    IIO_CHAN_INFO_OFFSET,
-
-    IIO_CHAN_INFO_CALIBSCALE,
-
-    \[...\]
-
-    IIO_CHAN_INFO_SAMP_FREQ,
-
-    IIO_CHAN_INFO_FREQUENCY,
-
-    IIO_CHAN_INFO_PHASE,
-
-    IIO_CHAN_INFO_HARDWAREGAIN,
-
-    IIO_CHAN_INFO_HYSTERESIS,
-
-    \[...\]
-
+    IIO_CHAN_INFO_RAW = 0,
+    IIO_CHAN_INFO_PROCESSED,
+    IIO_CHAN_INFO_SCALE,
+    IIO_CHAN_INFO_OFFSET,
+    IIO_CHAN_INFO_CALIBSCALE,
+    [...]
+    IIO_CHAN_INFO_SAMP_FREQ,
+    IIO_CHAN_INFO_FREQUENCY,
+    IIO_CHAN_INFO_PHASE,
+    IIO_CHAN_INFO_HARDWAREGAIN,
+    IIO_CHAN_INFO_HYSTERESIS,
+    [...]
 };
+```
 
 The following is an example of specifying a mask for a given channel:
 
-iio_chan-\>info_mask_separate = BIT(IIO_CHAN_INFO_RAW) \|
-
-                    BIT(IIO_CHAN_INFO_PROCESSED);
+``` c
+iio_chan->info_mask_separate = BIT(IIO_CHAN_INFO_RAW) |
+                    BIT(IIO_CHAN_INFO_PROCESSED);
+```
 
 This means raw and processed attributes are specific to the channel.
 
@@ -445,93 +351,66 @@ An attribute's name is automatically generated by the IIO core following a prede
 
 - **{direction}** corresponds to the attribute direction, according to the **struct iio_direction** structure in **drivers/iio/industrialio-core.c**:
 
-  static const char \* const iio_direction\[\] = {
-
-      \[0\] = "in",
-
-      \[1\] = "out",
-
+  ``` c
+  static const char * const iio_direction[] = {
+      [0] = "in",
+      [1] = "out",
   };
+  ```
 
 Do note that an input channel is a channel that can generate samples (such channels are handled in the read method, for instance, an ADC channel). On the other hand, an output channel is a channel that can receive samples (such channels are handled in the write method, for instance, a DAC channel).
 
 - **{type}** corresponds to the channel type string, according to the constant **iio_chan_type_name_spec** char array (indexed by the channel type of type **enum iio_chan_type**) defined in **drivers/iio/industrialio-core.c**, as follows:
 
-  static const char \* const iio_chan_type_name_spec\[\] = {
-
-      \[IIO_VOLTAGE\] = "voltage",
-
-      \[IIO_CURRENT\] = "current",
-
-      \[IIO_POWER\] = "power",
-
-      \[IIO_ACCEL\] = "accel",
-
-      \[...\]
-
-      \[IIO_UVINDEX\] = "uvindex",
-
-      \[IIO_ELECTRICALCONDUCTIVITY\] =
-
-                    "electricalconductivity",
-
-      \[IIO_COUNT\] = "count",
-
-      \[IIO_INDEX\] = "index",
-
-      \[IIO_GRAVITY\] = "gravity",
-
+  ``` c
+  static const char * const iio_chan_type_name_spec[] = {
+      [IIO_VOLTAGE] = "voltage",
+      [IIO_CURRENT] = "current",
+      [IIO_POWER] = "power",
+      [IIO_ACCEL] = "accel",
+      [...]
+      [IIO_UVINDEX] = "uvindex",
+      [IIO_ELECTRICALCONDUCTIVITY] =
+                    "electricalconductivity",
+      [IIO_COUNT] = "count",
+      [IIO_INDEX] = "index",
+      [IIO_GRAVITY] = "gravity",
   };
+  ```
 
 - **{index}** depends on the channel **.indexed** field being set or not. If set, the index will be taken from the **.channel** field in order to replace the **{index}** pattern.
 
 - The **{modifier}** pattern depends on the channel **.modified** field being set or not. If set, the modifier will be taken from the **.channel2** field, and the **{modifier}** field in the pattern will be replaced according to the **char** array **struct iio_modifier_names** structure:
 
-  static const char \* const iio_modifier_names\[\] = {
-
-      \[IIO_MOD_X\] = "x",
-
-      \[IIO_MOD_Y\] = "y",
-
-      \[IIO_MOD_Z\] = "z",
-
-      \[IIO_MOD_X_AND_Y\] = "x&y",
-
-      \[IIO_MOD_X_AND_Z\] = "x&z",
-
-      \[IIO_MOD_Y_AND_Z\] = "y&z",
-
-      \[...\]
-
-      \[IIO_MOD_CO2\] = "co2",
-
-      \[IIO_MOD_VOC\] = "voc",
-
+  ``` c
+  static const char * const iio_modifier_names[] = {
+      [IIO_MOD_X] = "x",
+      [IIO_MOD_Y] = "y",
+      [IIO_MOD_Z] = "z",
+      [IIO_MOD_X_AND_Y] = "x&y",
+      [IIO_MOD_X_AND_Z] = "x&z",
+      [IIO_MOD_Y_AND_Z] = "y&z",
+      [...]
+      [IIO_MOD_CO2] = "co2",
+      [IIO_MOD_VOC] = "voc",
   };
+  ```
 
 - **{info_mask}** depends on the channel info mask, private or shared, indexing the value in the **iio_chan_info_postfix** char array, defined as the following:
 
-  /\* relies on pairs of these shared then separate \*/
-
-  static const char \* const iio_chan_info_postfix\[\] = {
-
-       \[IIO_CHAN_INFO_RAW\] = "raw",
-
-       \[IIO_CHAN_INFO_PROCESSED\] = "input",
-
-       \[IIO_CHAN_INFO_SCALE\] = "scale",
-
-       \[IIO_CHAN_INFO_CALIBBIAS\] = "calibbias",
-
-       \[...\]
-
-       \[IIO_CHAN_INFO_SAMP_FREQ\] = "sampling_frequency",
-
-       \[IIO_CHAN_INFO_FREQUENCY\] = "frequency",
-
-       \[...\]
-
+  ``` c
+  /* relies on pairs of these shared then separate */
+  static const char * const iio_chan_info_postfix[] = {
+       [IIO_CHAN_INFO_RAW] = "raw",
+       [IIO_CHAN_INFO_PROCESSED] = "input",
+       [IIO_CHAN_INFO_SCALE] = "scale",
+       [IIO_CHAN_INFO_CALIBBIAS] = "calibbias",
+       [...]
+       [IIO_CHAN_INFO_SAMP_FREQ] = "sampling_frequency",
+       [IIO_CHAN_INFO_FREQUENCY] = "frequency",
+       [...]
   };
+  ```
 
 Channel naming convention should have no more secrets for us now. Now that we are familiar with the naming, let's learn how to precisely identify channels.
 
@@ -547,83 +426,56 @@ You may face some difficulties when there are multiple data channels of the same
 
 Given an ADC device with one channel line, indexing is not needed. Its channel definition would be as follows:
 
-static const struct iio_chan_spec adc_channels\[\] = {
-
-        {
-
-             .type = IIO_VOLTAGE,
-
-             .info_mask_separate = BIT(IIO_CHAN_INFO_RAW),
-
-        },
-
+``` c
+static const struct iio_chan_spec adc_channels[] = {
+        {
+             .type = IIO_VOLTAGE,
+             .info_mask_separate = BIT(IIO_CHAN_INFO_RAW),
+        },
 }
+```
 
 Given the preceding excerpt, the attribute name will be **in_voltage_raw**, and its absolute sysfs path will be **/sys/bus/iio/iio:deviceX/in_voltage_raw**.
 
 Now let's say the ADC has four or even eight channels. How do we identify each of them? The solution is to use indexes. Setting the **.indexed** field to **1** will modify the channel attribute name with the **.channel** value, replacing **{index}** in the naming pattern:
 
-static const struct iio_chan_spec adc_channels\[\] = {
-
-    {
-
-        .type = IIO_VOLTAGE,
-
-        .indexed = 1,
-
-        .channel = 0,
-
-        .info_mask_separate = BIT(IIO_CHAN_INFO_RAW),
-
-    },
-
-    {
-
-        .type = IIO_VOLTAGE,
-
-        .indexed = 1,
-
-        .channel = 1,
-
-        .info_mask_separate = BIT(IIO_CHAN_INFO_RAW),
-
-    },
-
-    {
-
-        .type = IIO_VOLTAGE,
-
-        .indexed = 1,
-
-        .channel = 2,
-
-        .info_mask_separate = BIT(IIO_CHAN_INFO_RAW),
-
-    },
-
-    {
-
-        .type = IIO_VOLTAGE,
-
-        .indexed = 1,
-
-        .channel = 3,
-
-        .info_mask_separate = BIT(IIO_CHAN_INFO_RAW),
-
-    },
-
+``` c
+static const struct iio_chan_spec adc_channels[] = {
+    {
+        .type = IIO_VOLTAGE,
+        .indexed = 1,
+        .channel = 0,
+        .info_mask_separate = BIT(IIO_CHAN_INFO_RAW),
+    },
+    {
+        .type = IIO_VOLTAGE,
+        .indexed = 1,
+        .channel = 1,
+        .info_mask_separate = BIT(IIO_CHAN_INFO_RAW),
+    },
+    {
+        .type = IIO_VOLTAGE,
+        .indexed = 1,
+        .channel = 2,
+        .info_mask_separate = BIT(IIO_CHAN_INFO_RAW),
+    },
+    {
+        .type = IIO_VOLTAGE,
+        .indexed = 1,
+        .channel = 3,
+        .info_mask_separate = BIT(IIO_CHAN_INFO_RAW),
+    },
 }
+```
 
 The following are the full sysfs paths of the resulting channel attributes:
 
+``` c
 /sys/bus/iio/iio:deviceX/in_voltage0_raw
-
 /sys/bus/iio/iio:deviceX/in_voltage1_raw
-
 /sys/bus/iio/iio:deviceX/in_voltage2_raw
-
 /sys/bus/iio/iio:deviceX/in_voltage3_raw
+```
 
 As we can see, even if they all have the same type, they are differentiated by their index.
 
@@ -631,47 +483,29 @@ As we can see, even if they all have the same type, they are differentiated by t
 
 To highlight the concept of modifiers, let's consider a light sensor with two channels – one for infrared light and the other for both infrared and visible light. Without an index or a modifier, an attribute name would be **in_intensity_raw**. Using indexes here can be error-prone because it makes no sense to have **in_intensity0_ir_raw** and **in_intensity1_ir_raw** as it would mean they are channels of the same type. Using a modifier will help us to have meaningful attribute names. The channel definition could look as follows:
 
-static const struct iio_chan_spec mylight_channels\[\] = {
-
-    {
-
-        .type = IIO_INTENSITY,
-
-        .modified = 1,
-
-        .channel2 = IIO_MOD_LIGHT_IR,
-
-        .info_mask_separate = BIT(IIO_CHAN_INFO_RAW),
-
-        .info_mask_shared = BIT(IIO_CHAN_INFO_SAMP_FREQ),
-
-    },
-
-    {
-
-        .type = IIO_INTENSITY,
-
-        .modified = 1,
-
-        .channel2 = IIO_MOD_LIGHT_BOTH,
-
-        .info_mask_separate = BIT(IIO_CHAN_INFO_RAW),
-
-        .info_mask_shared = BIT(IIO_CHAN_INFO_SAMP_FREQ),
-
-    },
-
-    {
-
-        .type = IIO_LIGHT,
-
-        .info_mask_separate = BIT(IIO_CHAN_INFO_PROCESSED),
-
-        .info_mask_shared = BIT(IIO_CHAN_INFO_SAMP_FREQ),
-
-    },
-
+``` c
+static const struct iio_chan_spec mylight_channels[] = {
+    {
+        .type = IIO_INTENSITY,
+        .modified = 1,
+        .channel2 = IIO_MOD_LIGHT_IR,
+        .info_mask_separate = BIT(IIO_CHAN_INFO_RAW),
+        .info_mask_shared = BIT(IIO_CHAN_INFO_SAMP_FREQ),
+    },
+    {
+        .type = IIO_INTENSITY,
+        .modified = 1,
+        .channel2 = IIO_MOD_LIGHT_BOTH,
+        .info_mask_separate = BIT(IIO_CHAN_INFO_RAW),
+        .info_mask_shared = BIT(IIO_CHAN_INFO_SAMP_FREQ),
+    },
+    {
+        .type = IIO_LIGHT,
+        .info_mask_separate = BIT(IIO_CHAN_INFO_PROCESSED),
+        .info_mask_shared = BIT(IIO_CHAN_INFO_SAMP_FREQ),
+    },
 }
+```
 
 The resulting attributes would be as follows:
 
@@ -688,201 +522,135 @@ Let's summarize what we have seen so far with a simple dummy driver, which will 
 
 First, let's define the headers we'll need for the development:
 
-\#include \<linux/init.h\>
-
-\#include \<linux/module.h\>
-
-\#include \<linux/kernel.h\>
-
-\#include \<linux/platform_device.h\>
-
-\#include \<linux/interrupt.h\>
-
-\#include \<linux/of.h\>
-
-\#include \<linux/iio/iio.h\>
+``` c
+#include <linux/init.h>
+#include <linux/module.h>
+#include <linux/kernel.h>
+#include <linux/platform_device.h>
+#include <linux/interrupt.h>
+#include <linux/of.h>
+#include <linux/iio/iio.h>
+```
 
 Then, because channel description is a generic and repetitive operation, let's define a macro that will populate the channel description for us, as follows:
 
-\#define FAKE_VOLTAGE_CHANNEL(num)                \\
-
-  {                                              \\
-
-     .type = IIO_VOLTAGE,                        \\
-
-     .indexed = 1,                               \\
-
-     .channel = (num),                           \\
-
-     .address = (num),                           \\
-
-     .info_mask_separate = BIT(IIO_CHAN_INFO_RAW),        \\
-
-     .info_mask_shared_by_type = BIT(IIO_CHAN_INFO_SCALE) \\
-
-  }
+``` c
+#define FAKE_VOLTAGE_CHANNEL(num)                \
+  {                                              \
+     .type = IIO_VOLTAGE,                        \
+     .indexed = 1,                               \
+     .channel = (num),                           \
+     .address = (num),                           \
+     .info_mask_separate = BIT(IIO_CHAN_INFO_RAW),        \
+     .info_mask_shared_by_type = BIT(IIO_CHAN_INFO_SCALE) \
+  }
+```
 
 After the channel population macro has been defined, let's define our driver state data structure, as follows:
 
+``` c
 struct my_private_data {
-
-    int foo;
-
-    int bar;
-
-    struct mutex lock;
-
+    int foo;
+    int bar;
+    struct mutex lock;
 };
+```
 
 The data structure defined previously is useless. It is there just to show the concept. Then, since we do not need read or write operations in this dummy driver example, let's create empty read and write functions that just return **0** (meaning that everything went successfully):
 
-static int fake_read_raw(struct iio_dev \*indio_dev,
-
-    struct iio_chan_spec const \*channel, int \*val,
-
-    int \*val2, long mask)
-
+``` c
+static int fake_read_raw(struct iio_dev *indio_dev,
+    struct iio_chan_spec const *channel, int *val,
+    int *val2, long mask)
 {
-
-    return 0;
-
+    return 0;
 }
-
-static int fake_write_raw(struct iio_dev \*indio_dev,
-
-                     struct iio_chan_spec const \*chan,
-
-                     int val, int val2, long mask)
-
+static int fake_write_raw(struct iio_dev *indio_dev,
+                     struct iio_chan_spec const *chan,
+                     int val, int val2, long mask)
 {
-
-    return 0;
-
+    return 0;
 }
+```
 
 We can now declare our IIO channels using the macro we defined earlier. Moreover, we can set up our **iio_info** data structure as follows, assigned at the same time as the fake read and write operations:
 
-static const struct iio_chan_spec fake_channels\[\] = {
-
-     FAKE_VOLTAGE_CHANNEL(0),
-
-     FAKE_VOLTAGE_CHANNEL(1),
-
-     FAKE_VOLTAGE_CHANNEL(2),
-
-     FAKE_VOLTAGE_CHANNEL(3),
-
+``` c
+static const struct iio_chan_spec fake_channels[] = {
+     FAKE_VOLTAGE_CHANNEL(0),
+     FAKE_VOLTAGE_CHANNEL(1),
+     FAKE_VOLTAGE_CHANNEL(2),
+     FAKE_VOLTAGE_CHANNEL(3),
 };
-
 static const struct iio_info fake_iio_info = {
-
-     .read_raw  = fake_read_raw,
-
-     .write_raw = fake_write_raw,
-
-     .driver_module = THIS_MODULE,
-
+     .read_raw  = fake_read_raw,
+     .write_raw = fake_write_raw,
+     .driver_module = THIS_MODULE,
 };
+```
 
 Now that all the necessary IIO data structures have been set up, we can switch to platform driver-related data structures and implementing its methods, as follows:
 
-static const struct of_device_id iio_dummy_ids\[\] = {
-
-    { .compatible = "packt,iio-dummy-random", },
-
-    { /\* sentinel \*/ }
-
+``` c
+static const struct of_device_id iio_dummy_ids[] = {
+    { .compatible = "packt,iio-dummy-random", },
+    { /* sentinel */ }
 };
-
-static int my_pdrv_probe (struct platform_device \*pdev)
-
+static int my_pdrv_probe (struct platform_device *pdev)
 {
-
-     struct iio_dev \*indio_dev;
-
-     struct my_private_data \*data;
-
-     indio_dev = devm_iio_device_alloc(&pdev-\>dev,
-
-                                      sizeof(\*data));
-
-     if (!indio_dev) {
-
-        dev_err(&pdev-\>dev, "iio allocation failed!\n");
-
-        return -ENOMEM;
-
-     }
-
-    data = iio_priv(indio_dev);
-
-    mutex_init(&data-\>lock);
-
-    indio_dev-\>dev.parent = &pdev-\>dev;
-
-    indio_dev-\>info = &fake_iio_info;
-
-    indio_dev-\>name = KBUILD_MODNAME;
-
-    indio_dev-\>modes = INDIO_DIRECT_MODE;
-
-    indio_dev-\>channels = fake_channels;
-
-    indio_dev-\>num_channels = ARRAY_SIZE(fake_channels);
-
-    indio_dev-\>available_scan_masks = 0xF;
-
-    devm_iio_device_register(&pdev-\>dev, indio_dev);
-
-    platform_set_drvdata(pdev, indio_dev);
-
-    return 0;
-
+     struct iio_dev *indio_dev;
+     struct my_private_data *data;
+     indio_dev = devm_iio_device_alloc(&pdev->dev,
+                                      sizeof(*data));
+     if (!indio_dev) {
+        dev_err(&pdev->dev, "iio allocation failed!\n");
+        return -ENOMEM;
+     }
+    data = iio_priv(indio_dev);
+    mutex_init(&data->lock);
+    indio_dev->dev.parent = &pdev->dev;
+    indio_dev->info = &fake_iio_info;
+    indio_dev->name = KBUILD_MODNAME;
+    indio_dev->modes = INDIO_DIRECT_MODE;
+    indio_dev->channels = fake_channels;
+    indio_dev->num_channels = ARRAY_SIZE(fake_channels);
+    indio_dev->available_scan_masks = 0xF;
+    devm_iio_device_register(&pdev->dev, indio_dev);
+    platform_set_drvdata(pdev, indio_dev);
+    return 0;
 }
+```
 
 In the preceding probing method, we have exclusively used resource-managed APIs for allocation and registering. This significantly simplifies the code and gets rid of the driver's **remove** method. The driver declaration and registering would then look like the following:
 
+``` c
 static struct platform_driver my_iio_pdrv = {
-
-    .probe      = my_pdrv_probe,
-
-    .driver     = {
-
-        .name     = "iio-dummy-random",
-
-        .of_match_table = of_match_ptr(iio_dummy_ids),  
-
-        .owner    = THIS_MODULE,
-
-    },
-
+    .probe      = my_pdrv_probe,
+    .driver     = {
+        .name     = "iio-dummy-random",
+        .of_match_table = of_match_ptr(iio_dummy_ids),
+        .owner    = THIS_MODULE,
+    },
 };
-
 module_platform_driver(my_iio_pdrv);
-
-MODULE_AUTHOR("John Madieu \<john.madieu@labcsmart.com\>");
-
+MODULE_AUTHOR("John Madieu <john.madieu@labcsmart.com>");
 MODULE_LICENSE("GPL");
+```
 
 After loading the preceding module, you will have the following output while listing available IIO devices on the system:
 
+``` c
 ~# ls -l /sys/bus/iio/devices/
+lrwxrwxrwx    1 root     root             0 Jul 31 20:26 iio:device0 -> ../../../devices/platform/iio-dummy-random.0/iio:device0
+lrwxrwxrwx    1 root     root             0 Jul 31 20:23 iio_sysfs_trigger -> ../../../devices/iio_sysfs_trigger
 
-lrwxrwxrwx    1 root     root             0 Jul 31 20:26 iio:device0 -\> ../../../devices/platform/iio-dummy-random.0/iio:device0
-
-lrwxrwxrwx    1 root     root             0 Jul 31 20:23 iio_sysfs_trigger -\> ../../../devices/iio_sysfs_trigger
-
-~# ls /sys/bus/iio/devices/iio\\device0/
-
-dev                              in_voltage2_raw        name                uevent
-
-in_voltage0_raw        in_voltage3_raw        power
-
-in_voltage1_raw        in_voltage_scale        subsystem
-
+~# ls /sys/bus/iio/devices/iio\:device0/
+dev                              in_voltage2_raw        name                uevent
+in_voltage0_raw        in_voltage3_raw        power
+in_voltage1_raw        in_voltage_scale        subsystem
 ~# cat /sys/bus/iio/devices/iio:device0/name
-
 iio_dummy_random
+```
 
 Note
 
@@ -919,137 +687,96 @@ The IIO core provides a set of helper functions to set up triggered buffers, whi
 
 1.  Fill an **iio_buffer_setup_ops** structure if needed:
 
+    ``` c
     const struct iio_buffer_setup_ops sensor_buffer_setup_ops = {
-
-      .preenable    = my_sensor_buffer_preenable,
-
-      .postenable   = my_sensor_buffer_postenable,
-
-      .postdisable  = my_sensor_buffer_postdisable,
-
-      .predisable   = my_sensor_buffer_predisable,
-
+      .preenable    = my_sensor_buffer_preenable,
+      .postenable   = my_sensor_buffer_postenable,
+      .postdisable  = my_sensor_buffer_postdisable,
+      .predisable   = my_sensor_buffer_predisable,
     };
+    ```
 
 2.  Write the top half associated with the trigger. In 99% of cases, you just have to feed the timestamp associated with the capture:
 
-    irqreturn_t sensor_iio_pollfunc(int irq, void \*p)
-
+    ``` c
+    irqreturn_t sensor_iio_pollfunc(int irq, void *p)
     {
-
-        pf-\>timestamp = iio_get_time_ns(
-
-                           (struct indio_dev \*)p);
-
-        return IRQ_WAKE_THREAD;
-
+        pf->timestamp = iio_get_time_ns(
+                           (struct indio_dev *)p);
+        return IRQ_WAKE_THREAD;
     }
+    ```
 
 We then return a special value so the kernel knows it must schedule the bottom half, which will run in a threaded context.
 
 1.  Write the trigger bottom half, which will fetch data from each enabled channel and feed it into the buffer:
 
-    irqreturn_t sensor_trigger_handler(int irq, void \*p)
-
+    ``` c
+    irqreturn_t sensor_trigger_handler(int irq, void *p)
     {
-
-        u16 buf\[8\];
-
-        int bit, i = 0;
-
-        struct iio_poll_func \*pf = p;
-
-        struct iio_dev \*indio_dev = pf-\>indio_dev;
-
-        /\* one can use lock here to protect the buffer \*/
-
-        /\* mutex_lock(&my_mutex); \*/
-
-        /\* read data for each active channel \*/
-
-        for_each_set_bit(bit, indio_dev-\>active_scan_mask,
-
-                         indio_dev-\>masklength)
-
-            buf\[i++\] = sensor_get_data(bit);
-
-        /\*
-
-         \* If iio_dev.scan_timestamp = true, the capture
-
-         \* timestamp will be pushed and stored too,
-
-         \* as the last element in the sample data buffer
-
-         \* before pushing it to the device buffers.
-
-         \*/
-
-        iio_push_to_buffers_with_timestamp(indio_dev, buf,
-
-                                            timestamp);
-
-        /\* Please unlock any lock \*/
-
-        /\* mutex_unlock(&my_mutex); \*/
-
-        /\* Notify trigger \*/
-
-        iio_trigger_notify_done(indio_dev-\>trig);
-
-        return IRQ_HANDLED;
-
+        u16 buf[8];
+        int bit, i = 0;
+        struct iio_poll_func *pf = p;
+        struct iio_dev *indio_dev = pf->indio_dev;
+        /* one can use lock here to protect the buffer */
+        /* mutex_lock(&my_mutex); */
+        /* read data for each active channel */
+        for_each_set_bit(bit, indio_dev->active_scan_mask,
+                         indio_dev->masklength)
+            buf[i++] = sensor_get_data(bit);
+        /*
+         * If iio_dev.scan_timestamp = true, the capture
+         * timestamp will be pushed and stored too,
+         * as the last element in the sample data buffer
+         * before pushing it to the device buffers.
+         */
+        iio_push_to_buffers_with_timestamp(indio_dev, buf,
+                                            timestamp);
+        /* Please unlock any lock */
+        /* mutex_unlock(&my_mutex); */
+        /* Notify trigger */
+        iio_trigger_notify_done(indio_dev->trig);
+        return IRQ_HANDLED;
     }
+    ```
 
 2.  Finally, in the probe function, you have to set up the buffer itself, prior to registering the device:
 
+    ``` c
     iio_triggered_buffer_setup(
-
-        indio_dev, sensor_iio_pollfunc,
-
-        sensor_trigger_handler,
-
-        sensor_buffer_setup_ops);
+        indio_dev, sensor_iio_pollfunc,
+        sensor_trigger_handler,
+        sensor_buffer_setup_ops);
+    ```
 
 The magic function here is **iio_triggered_buffer_setup()**. It will also give the **INDIO_BUFFER_TRIGGERED** capability to the device, meaning that a polled ring buffer is possible.
 
 When a trigger is assigned (from user space) to the device, the driver has no way of knowing when the capture will be fired. This is the reason why, while continuous buffered capture is active, you should prevent (by returning an error) the driver from handling sysfs per-channel data capture (performed by the **read_raw()** hook) in order to avoid undetermined behavior, since both the trigger handler and the **read_raw()** hook will try to access the device at the same time. The function used to check whether buffered mode is currently enabled is **iio_buffer_enabled()**. The hook will look as follows:
 
-static int my_read_raw(struct iio_dev \*indio_dev,
-
-               const struct iio_chan_spec \*chan,
-
-               int \*val, int \*val2, long mask)
-
+``` c
+static int my_read_raw(struct iio_dev *indio_dev,
+               const struct iio_chan_spec *chan,
+               int *val, int *val2, long mask)
 {
-
-    \[...\]
-
-    switch (mask) {
-
-    case IIO_CHAN_INFO_RAW:
-
-        if (iio_buffer_enabled(indio_dev))
-
-            return -EBUSY;
-
-    \[...\]    
-
+    [...]
+    switch (mask) {
+    case IIO_CHAN_INFO_RAW:
+        if (iio_buffer_enabled(indio_dev))
+            return -EBUSY;
+    [...]
 }
+```
 
 The **iio_buffer_enabled()** function simply tests whether the device's current mode corresponds to one of the IIO buffered modes. This function is defined as the following in **include/linux/iio/iio.h**:
 
-static bool iio_buffer_enabled(struct iio_dev \*indio_dev)
-
+``` c
+static bool iio_buffer_enabled(struct iio_dev *indio_dev)
 {
-
-   return indio_dev-\>currentmode
-
-       & (INDIO_BUFFER_TRIGGERED \| INDIO_BUFFER_HARDWARE \|
-
-           INDIO_BUFFER_SOFTWARE);
-
+   return indio_dev->currentmode
+       & (INDIO_BUFFER_TRIGGERED | INDIO_BUFFER_HARDWARE |
+           INDIO_BUFFER_SOFTWARE);
 }
+```
 
 Let's now describe some important things used in the preceding code:
 
@@ -1082,7 +809,9 @@ A sysfs trigger is enabled in the kernel with the **CONFIG_IIO_SYSFS_TRIGGER=y**
 
 - **remove_trigger**: Used to remove a trigger. The following command will be sufficient to remove the previously created trigger:
 
-  **echo 2 \> remove_trigger**
+  ``` c
+  echo 2 > remove_trigger
+  ```
 
 As you can see, the value used in **add_trigger** while creating the trigger must be the same value you use when removing the trigger.
 
@@ -1096,13 +825,16 @@ Now we are done with the trigger setup, this trigger must be assigned to a devic
 
 Associating a device with a given trigger consists of writing the name of the trigger to the **current_trigger** file available under the device's trigger directory. For example, let's say we need to tie a device with the trigger that has index **2**:
 
-\# set trigger2 as current trigger for device0
-
-echo sysfstrig2 \> /sys/bus/iio/devices/iio:device0/trigger/current_trigger
+``` c
+# set trigger2 as current trigger for device0
+echo sysfstrig2 > /sys/bus/iio/devices/iio:device0/trigger/current_trigger
+```
 
 To detach the trigger from the device, you should write an empty string to the **current_trigger** file of the device trigger directory, as follows:
 
-echo "" \> iio:device0/trigger/current_trigger
+``` c
+echo "" > iio:device0/trigger/current_trigger
+```
 
 We will see later in the chapter (in the *Capturing data using a sysfs trigger* section) a practical example dealing with sysfs triggers for data capture.
 
@@ -1110,55 +842,46 @@ We will see later in the chapter (in the *Capturing data using a sysfs trigger* 
 
 Say we have the following sample:
 
-static struct resource iio_irq_trigger_resources\[\] = {
-
-    \[0\] = {
-
-        .start = IRQ_NR_FOR_YOUR_IRQ,
-
-        .flags = IORESOURCE_IRQ \| IORESOURCE_IRQ_LOWEDGE,
-
-    },
-
+``` c
+static struct resource iio_irq_trigger_resources[] = {
+    [0] = {
+        .start = IRQ_NR_FOR_YOUR_IRQ,
+        .flags = IORESOURCE_IRQ | IORESOURCE_IRQ_LOWEDGE,
+    },
 };
-
 static struct platform_device iio_irq_trigger = {
-
-    .name = "iio_interrupt_trigger",
-
-    .num_resources = ARRAY_SIZE(iio_irq_trigger_resources),
-
-    .resource = iio_irq_trigger_resources,
-
+    .name = "iio_interrupt_trigger",
+    .num_resources = ARRAY_SIZE(iio_irq_trigger_resources),
+    .resource = iio_irq_trigger_resources,
 };
-
 platform_device_register(&iio_irq_trigger);
+```
 
 In this sample, we declare our IRQ- (that the IIO interrupt trigger will register using **request_irq()**) based trigger as a platform device. It will result in the IRQ trigger standalone module (whose source file is **drivers/iio/trigger/iio-trig-interrupt.c**) being loaded. After the probing succeeds, there will be a directory corresponding to the trigger. IRQ trigger names have the form **irqtrigX**, where **X** corresponds to the IRQ we just passed. This name is the one you will see in **/proc/interrupt**:
 
-\$ cd /sys/bus/iio/devices/trigger0/
-
-\$ cat name
-
-    irqtrig85
+``` c
+$ cd /sys/bus/iio/devices/trigger0/
+$ cat name
+    irqtrig85
+```
 
 As we have done with other triggers, you just have to assign that trigger to your device, by writing its name into your device's **current_trigger** file:
 
-echo "irqtrig85" \> /sys/bus/iio/devices/iio:device0/trigger/current_trigger
+``` c
+echo "irqtrig85" > /sys/bus/iio/devices/iio:device0/trigger/current_trigger
+```
 
 Now, every time the interrupt fires, device data will be captured.
 
 The IRQ trigger driver is implemented in **drivers/iio/trigger/iio-trig-interrupt.c**. Since the driver requires a resource, we can use a device tree without any code change, with the only condition to respect the **compatible** property, as follows:
 
+``` c
 mylabel: my_trigger@0{
-
-    compatible = "iio_interrupt_trigger";
-
-    interrupt-parent = \<&gpio4\>;
-
-    interrupts = \<30 0x0\>;
-
+    compatible = "iio_interrupt_trigger";
+    interrupt-parent = <&gpio4>;
+    interrupts = <30 0x0>;
 };
+```
 
 The example assumes the IRQ line is **GPIO#30**, which belongs to the **gpio4** GPIO controller node. This consists of using a GPIO as an interrupt source, so that whenever the GPIO changes to a given state, the interrupt is raised, thus triggering the capture.
 
@@ -1166,19 +889,19 @@ The example assumes the IRQ line is **GPIO#30**, which belongs to the **gpio4** 
 
 **hrtimer trigger** is implemented in **drivers/iio/trigger/iio-trig-hrtimer.c** and relies on the **configfs** filesystem (see **Documentation/iio/iio_configfs.txt** in kernel sources), which can be enabled via the **CONFIG_IIO_CONFIGFS** config option and mounted on our system (usually under the **/config** directory):
 
-\$ mkdir /config
-
-\$ mount -t configfs none /config
+``` c
+$ mkdir /config
+$ mount -t configfs none /config
+```
 
 Now, loading the **iio-trig-hrtimer** module will create IIO groups accessible under **/config/iio**, allowing users to create **hrtimer** triggers under **/config/iio/triggers/hrtimer**. The following is an example:
 
-\# create a hrtimer trigger
-
-\$ mkdir /config/iio/triggers/hrtimer/my_trigger_name
-
-\# remove the trigger
-
-\$ rmdir /config/iio/triggers/hrtimer/my_trigger_name
+``` c
+# create a hrtimer trigger
+$ mkdir /config/iio/triggers/hrtimer/my_trigger_name
+# remove the trigger
+$ rmdir /config/iio/triggers/hrtimer/my_trigger_name
+```
 
 Each **hrtimer** trigger contains a single **sampling_frequency** attribute in the trigger directory. A full and working example is provided later in the chapter in the *Data capture using an hrtimer trigger* section.
 
@@ -1211,55 +934,42 @@ A channel whose data is to be read and pushed into the buffer is called a **scan
 
 The best way to explain this section is by providing an excerpt of the kernel docs, which you can find here: <https://www.kernel.org/doc/html/latest/driver-api/iio/buffers.html>. Let's consider a driver for a 3-axis accelerometer with 12-bit resolution where data is stored in two 8-bit (thus 16 bits) registers, as follows:
 
-   7   6   5   4   3   2   1   0
-
-+---+---+---+---+---+---+---+---+
-
-\|D3 \|D2 \|D1 \|D0 \| X \| X \| X \| X \| (LOW byte, address 0x06)
-
-+---+---+---+---+---+---+---+---+
-
-   7   6   5   4   3   2   1   0
-
-+---+---+---+---+---+---+---+---+
-
-\|D11\|D10\|D9 \|D8 \|D7 \|D6 \|D5 \|D4 \|(HIGH byte, address 0x07)
-
-+---+---+---+---+---+---+---+---+
+``` c
+   7   6   5   4   3   2   1   0
+ +---+---+---+---+---+---+---+---+
+ |D3 |D2 |D1 |D0 | X | X | X | X | (LOW byte, address 0x06)
+ +---+---+---+---+---+---+---+---+
+   7   6   5   4   3   2   1   0
+ +---+---+---+---+---+---+---+---+
+ |D11|D10|D9 |D8 |D7 |D6 |D5 |D4 |(HIGH byte, address 0x07)
+ +---+---+---+---+---+---+---+---+
+```
 
 According to the preceding description, each axis will have the following scan element:
 
-\$ cat  /sys/bus/iio/devices/iio:device0/scan_elements/in_accel_y_type
-
-le:s12/16\>\>4
+``` c
+$ cat  /sys/bus/iio/devices/iio:device0/scan_elements/in_accel_y_type
+le:s12/16>>4
+```
 
 You should interpret this as being little-endian signed data, 16 bits in size, which needs to be shifted right by 4 bits before masking out the 12 valid bits of data.
 
 The element of **struct iio_chan_spec** responsible for determining how a channel's value should be stored in a buffer is **scant_type**:
 
+``` c
 struct iio_chan_spec {
-
-    \[...\]
-
-    struct {
-
-        char sign; /\* either u or s as explained above \*/
-
-        u8 realbits;
-
-        u8 storagebits;
-
-        u8 shift;
-
-        u8 repeat;
-
-        enum iio_endian endianness;
-
-    } scan_type;
-
-    \[...\]
-
+    [...]
+    struct {
+        char sign; /* either u or s as explained above */
+        u8 realbits;
+        u8 storagebits;
+        u8 shift;
+        u8 repeat;
+        enum iio_endian endianness;
+    } scan_type;
+    [...]
 };
+```
 
 This structure absolutely matches **\[be\|le\]:\[s\|u\]bits/storagebitsXrepeat\[\>\>shift\]**, which was the pattern described previously. Let's have a look at each part of the structure:
 
@@ -1271,45 +981,28 @@ This structure absolutely matches **\[be\|le\]:\[s\|u\]bits/storagebitsXrepeat\[
 
 At this point, we should be able to implement the IIO channel structure that corresponds to the type explained previously:
 
-struct struct iio_chan_spec accel_channels\[\] = {
-
-    {
-
-        .type = IIO_ACCEL,
-
-        .modified = 1,
-
-        .channel2 = IIO_MOD_X,
-
-        /\* other stuff here \*/
-
-        .scan_index = 0,
-
-        .scan_type = {
-
-            .sign = 's',
-
-            .realbits = 12,
-
-            .storagebits = 16,
-
-            .shift = 4,
-
-            .endianness = IIO_LE,
-
-            },
-
-    }
-
-    /\* similar for Y (with channel2 = IIO_MOD_Y,
-
-     \* scan_index = 1) and Z (with channel2
-
-     \* = IIO_MOD_Z, scan_index = 2) axis
-
-     \*/
-
+``` c
+struct struct iio_chan_spec accel_channels[] = {
+    {
+        .type = IIO_ACCEL,
+        .modified = 1,
+        .channel2 = IIO_MOD_X,
+        /* other stuff here */
+        .scan_index = 0,
+        .scan_type = {
+            .sign = 's',
+            .realbits = 12,
+            .storagebits = 16,
+            .shift = 4,
+            .endianness = IIO_LE,
+            },
+    }
+    /* similar for Y (with channel2 = IIO_MOD_Y,
+     * scan_index = 1) and Z (with channel2
+     * = IIO_MOD_Z, scan_index = 2) axis
+     */
 }
+```
 
 Buffer and trigger support are the last concepts in our learning process of the IIO framework. Now that we are familiar with that, we can put everything together and summarize the knowledge we have acquired with a concrete, lite example.
 
@@ -1319,389 +1012,231 @@ Let's have a closer look at the BMA220 digital triaxial acceleration sensor from
 
 We first declare our channels using **struct iio_chan_spec**. If the triggered buffer will be used, then we need to fill in the **scan_index** and **scan_type** fields. The following code excerpt shows the declaration of our channels:
 
-\#define BMA220_DATA_SHIFT        2
-
-\#define BMA220_DEVICE_NAME       "bma220"
-
-\#define BMA220_SCALE_AVAILABLE   "0.623 1.248 2.491 4.983"
-
-\#define BMA220_ACCEL_CHANNEL(index, reg, axis) {    \\
-
-    .type = IIO_ACCEL,                            \\
-
-    .address = reg,                               \\
-
-    .modified = 1,                                \\
-
-    .channel2 = IIO_MOD\_##axis,                   \\
-
-    .info_mask_separate = BIT(IIO_CHAN_INFO_RAW), \\
-
-    .info_mask_shared_by_type = BIT(IIO_CHAN_INFO_SCALE),\\
-
-    .scan_index = index,                          \\
-
-    .scan_type = {                                \\
-
-         .sign = 's',                             \\
-
-         .realbits = 6,                           \\
-
-         .storagebits = 8,                        \\
-
-         .shift = BMA220_DATA_SHIFT,              \\
-
-         .endianness = IIO_CPU,                   \\
-
-    },                                            \\
-
+``` c
+#define BMA220_DATA_SHIFT        2
+#define BMA220_DEVICE_NAME       "bma220"
+#define BMA220_SCALE_AVAILABLE   "0.623 1.248 2.491 4.983"
+#define BMA220_ACCEL_CHANNEL(index, reg, axis) {    \
+    .type = IIO_ACCEL,                            \
+    .address = reg,                               \
+    .modified = 1,                                \
+    .channel2 = IIO_MOD_##axis,                   \
+    .info_mask_separate = BIT(IIO_CHAN_INFO_RAW), \
+    .info_mask_shared_by_type = BIT(IIO_CHAN_INFO_SCALE),\
+    .scan_index = index,                          \
+    .scan_type = {                                \
+         .sign = 's',                             \
+         .realbits = 6,                           \
+         .storagebits = 8,                        \
+         .shift = BMA220_DATA_SHIFT,              \
+         .endianness = IIO_CPU,                   \
+    },                                            \
 }
-
-static const struct iio_chan_spec bma220_channels\[\] = {
-
-    BMA220_ACCEL_CHANNEL(0, BMA220_REG_ACCEL_X, X),
-
-    BMA220_ACCEL_CHANNEL(1, BMA220_REG_ACCEL_Y, Y),
-
-    BMA220_ACCEL_CHANNEL(2, BMA220_REG_ACCEL_Z, Z),
-
+static const struct iio_chan_spec bma220_channels[] = {
+    BMA220_ACCEL_CHANNEL(0, BMA220_REG_ACCEL_X, X),
+    BMA220_ACCEL_CHANNEL(1, BMA220_REG_ACCEL_Y, Y),
+    BMA220_ACCEL_CHANNEL(2, BMA220_REG_ACCEL_Z, Z),
 };
+```
 
 **.info_mask_separate = BIT(IIO_CHAN_INFO_RAW)** means there will be a **\*\_raw** sysfs entry (attribute) for each channel, and **.info_mask_shared_by_type = BIT(IIO_CHAN_INFO_SCALE)** says that there is only a **\*\_scale** sysfs entry for all channels of the same type:
 
-jma@jma:~\$ ls -l /sys/bus/iio/devices/iio:device0/
-
+``` c
+jma@jma:~$ ls -l /sys/bus/iio/devices/iio:device0/
 (...)
-
-\# without modifier, a channel name would have in_accel_raw (bad)
-
+# without modifier, a channel name would have in_accel_raw (bad)
 -rw-r--r-- 1 root root 4096 jul 20 14:13 in_accel_scale
-
 -rw-r--r-- 1 root root 4096 jul 20 14:13 in_accel_x_raw
-
 -rw-r--r-- 1 root root 4096 jul 20 14:13 in_accel_y_raw
-
 -rw-r--r-- 1 root root 4096 jul 20 14:13 in_accel_z_raw
-
 (...)
+```
 
 Reading **in_accel_scale** calls the **read_raw()** hook with the mask set to **IIO_CHAN_INFO_SCALE**. Reading **in_accel_x_raw** calls the **read_raw()** hook with the mask set to **IIO_CHAN_INFO_RAW**. The real value is then **raw_value x scale**.
 
 What **.scan_type** says is that each channel's return value is signed, 8 bits in size (will occupy 8 bits in the buffer), but the useful payload only occupies 6 bits, and data must be right-shifted twice prior to masking out unused bits. Any scan element type will look as follows:
 
-\$ cat /sys/bus/iio/devices/iio:device0/scan_elements/in_accel_x_type
-
-le:s6/8\>\>2
+``` c
+$ cat /sys/bus/iio/devices/iio:device0/scan_elements/in_accel_x_type
+le:s6/8>>2
+```
 
 The following is our **pullfunc** (actually, it is the bottom half), which reads a sample from the device and pushes read values into the buffer (**iio_push_to_buffers_with_timestamp()**). Once done, we inform the core (**iio_trigger_notify_done()**):
 
-static irqreturn_t bma220_trigger_handler(int irq, void \*p)
-
+``` c
+static irqreturn_t bma220_trigger_handler(int irq, void *p)
 {
-
-    int ret;
-
-    struct iio_poll_func \*pf = p;
-
-    struct iio_dev \*indio_dev = pf-\>indio_dev;
-
-    struct bma220_data \*data = iio_priv(indio_dev);
-
-    struct spi_device \*spi = data-\>spi_device;
-
-    mutex_lock(&data-\>lock);
-
-    data-\>tx_buf\[0\] =
-
-                BMA220_REG_ACCEL_X \| BMA220_READ_MASK;
-
-    ret = spi_write_then_read(spi, data-\>tx_buf,
-
-                       1, data-\>buffer,
-
-             ARRAY_SIZE(bma220_channels) - 1);
-
-    if (ret \< 0)
-
-         goto err;
-
-    iio_push_to_buffers_with_timestamp(indio_dev,
-
-                           data-\>buffer, pf-\>timestamp);
-
+    int ret;
+    struct iio_poll_func *pf = p;
+    struct iio_dev *indio_dev = pf->indio_dev;
+    struct bma220_data *data = iio_priv(indio_dev);
+    struct spi_device *spi = data->spi_device;
+    mutex_lock(&data->lock);
+    data->tx_buf[0] =
+                BMA220_REG_ACCEL_X | BMA220_READ_MASK;
+    ret = spi_write_then_read(spi, data->tx_buf,
+                       1, data->buffer,
+             ARRAY_SIZE(bma220_channels) - 1);
+    if (ret < 0)
+         goto err;
+    iio_push_to_buffers_with_timestamp(indio_dev,
+                           data->buffer, pf->timestamp);
 err:
-
-    mutex_unlock(&data-\>lock);
-
-    iio_trigger_notify_done(indio_dev-\>trig);
-
-    return IRQ_HANDLED;
-
+    mutex_unlock(&data->lock);
+    iio_trigger_notify_done(indio_dev->trig);
+    return IRQ_HANDLED;
 }
+```
 
 The following is the read function. It is a hook called every time you read a sysfs entry of the device:
 
-static int bma220_read_raw(struct iio_dev \*indio_dev,
-
-            struct iio_chan_spec const \*chan,
-
-            int \*val, int \*val2, long mask)
-
+``` c
+static int bma220_read_raw(struct iio_dev *indio_dev,
+            struct iio_chan_spec const *chan,
+            int *val, int *val2, long mask)
 {
-
-    int ret;
-
-    u8 range_idx;
-
-    struct bma220_data \*data = iio_priv(indio_dev);
-
-    switch (mask) {
-
-     case IIO_CHAN_INFO_RAW:
-
-           /\* do not process single-channel read
-
-            \* if buffer mode is enabled
-
-            \*/
-
-           if (iio_buffer_enabled(indio_dev))
-
-                  return -EBUSY;
-
-           /\* Else we read the channel \*/
-
-            ret = bma220_read_reg(data-\>spi_device,
-
-                                    chan-\>address);
-
-            if (ret \< 0)
-
-                     return -EINVAL;
-
-             \*val = sign_extend32(ret \>\> BMA220_DATA_SHIFT,
-
-                                   5);
-
-             return IIO_VAL_INT;
-
-     case IIO_CHAN_INFO_SCALE:
-
-             ret = bma220_read_reg(data-\>spi_device,
-
-                                    BMA220_REG_RANGE);
-
-            if (ret \< 0)
-
-                     return ret;
-
-             range_idx = ret & BMA220_RANGE_MASK;
-
-             \*val = bma220_scale_table\[range_idx\]\[0\];
-
-             \*val2 = bma220_scale_table\[range_idx\]\[1\];
-
-             return IIO_VAL_INT_PLUS_MICRO;
-
-    }
-
-    return -EINVAL;
-
+    int ret;
+    u8 range_idx;
+    struct bma220_data *data = iio_priv(indio_dev);
+    switch (mask) {
+     case IIO_CHAN_INFO_RAW:
+           /* do not process single-channel read
+            * if buffer mode is enabled
+            */
+           if (iio_buffer_enabled(indio_dev))
+                  return -EBUSY;
+           /* Else we read the channel */
+            ret = bma220_read_reg(data->spi_device,
+                                    chan->address);
+            if (ret < 0)
+                     return -EINVAL;
+             *val = sign_extend32(ret >> BMA220_DATA_SHIFT,
+                                   5);
+             return IIO_VAL_INT;
+     case IIO_CHAN_INFO_SCALE:
+             ret = bma220_read_reg(data->spi_device,
+                                    BMA220_REG_RANGE);
+            if (ret < 0)
+                     return ret;
+             range_idx = ret & BMA220_RANGE_MASK;
+             *val = bma220_scale_table[range_idx][0];
+             *val2 = bma220_scale_table[range_idx][1];
+             return IIO_VAL_INT_PLUS_MICRO;
+    }
+    return -EINVAL;
 }
+```
 
 When you read a **\*raw** sysfs file, the hook is called given **IIO_CHAN_INFO_RAW** in the **mask** parameter and the corresponding channel in the **\*chan** parameter. **\*val** and **\*val2** are actually output parameters that must be set with the raw value (read from the device). Any read performed on the **\*scale** sysfs file will call the hook with **IIO_CHAN_INFO_SCALE** in the **mask** parameter, and so on for each attribute mask.
 
 The same principle applies in the write function, used to write a value to the device. There is an 80% chance your driver does not require a **write** operation. In the following example, the **write** hook lets the user change the device's scale, though other parameters can be changed, such as sampling frequency or digital-to-analog raw value:
 
-static int bma220_write_raw(struct iio_dev \*indio_dev,
-
-                  struct iio_chan_spec const \*chan,
-
-                  int val, int val2, long mask)
-
+``` c
+static int bma220_write_raw(struct iio_dev *indio_dev,
+                  struct iio_chan_spec const *chan,
+                  int val, int val2, long mask)
 {
-
-     int i;
-
-     int ret;
-
-     int index = -1;
-
-     struct bma220_data \*data = iio_priv(indio_dev);
-
-     switch (mask) {
-
-     case IIO_CHAN_INFO_SCALE:
-
-      for (i = 0; i \< ARRAY_SIZE(bma220_scale_table); i++)
-
-      if (val == bma220_scale_table\[i\]\[0\] &&
-
-             val2 == bma220_scale_table\[i\]\[1\]) {
-
-                 index = i;
-
-                 break;
-
-             }
-
-      if (index \< 0)
-
-        return -EINVAL;
-
-      mutex_lock(&data-\>lock);
-
-      data-\>tx_buf\[0\] = BMA220_REG_RANGE;
-
-      data-\>tx_buf\[1\] = index;
-
-      ret = spi_write(data-\>spi_device, data-\>tx_buf,
-
-            sizeof(data-\>tx_buf));
-
-      if (ret \< 0)
-
-           dev_err(&data-\>spi_device-\>dev,
-
-               "failed to set measurement range\n");
-
-       mutex_unlock(&data-\>lock);
-
-      return 0;
-
-    }
-
-    return -EINVAL;
-
+     int i;
+     int ret;
+     int index = -1;
+     struct bma220_data *data = iio_priv(indio_dev);
+     switch (mask) {
+     case IIO_CHAN_INFO_SCALE:
+      for (i = 0; i < ARRAY_SIZE(bma220_scale_table); i++)
+      if (val == bma220_scale_table[i][0] &&
+             val2 == bma220_scale_table[i][1]) {
+                 index = i;
+                 break;
+             }
+      if (index < 0)
+        return -EINVAL;
+      mutex_lock(&data->lock);
+      data->tx_buf[0] = BMA220_REG_RANGE;
+      data->tx_buf[1] = index;
+      ret = spi_write(data->spi_device, data->tx_buf,
+            sizeof(data->tx_buf));
+      if (ret < 0)
+           dev_err(&data->spi_device->dev,
+               "failed to set measurement range\n");
+       mutex_unlock(&data->lock);
+      return 0;
+    }
+    return -EINVAL;
 }
+```
 
 This function is called whenever you write a value to the device, and only supports scaling value change. An example of usage in user space could be **echo \$desired_scale \> /sys/bus/iio/devices/iio:devices0/in_accel_scale**.
 
 Now it comes time to fill a **struct iio_info** structure to be given to our **iio_device**:
 
+``` c
 static const struct iio_info bma220_info = {
-
-    .driver_module    = THIS_MODULE,
-
-    .read_raw         = bma220_read_raw,
-
-    .write_raw      = bma220_write_raw,
-
-      /\* Only if your needed \*/
-
+    .driver_module    = THIS_MODULE,
+    .read_raw         = bma220_read_raw,
+    .write_raw      = bma220_write_raw,
+      /* Only if your needed */
 };
+```
 
 In the **probe** function, we allocate and set up a **struct iio_dev iio** device. Memory for private data is reserved too:
 
-/\*
-
-\* We only provide two mask possibilities,
-
-\* allowing to select none or all channels.
-
-\*/
-
-static const unsigned long bma220_accel_scan_masks\[\] = {
-
-    BIT(AXIS_X) \| BIT(AXIS_Y) \| BIT(AXIS_Z),
-
-    0
-
+``` c
+/*
+ * We only provide two mask possibilities,
+ * allowing to select none or all channels.
+ */
+static const unsigned long bma220_accel_scan_masks[] = {
+    BIT(AXIS_X) | BIT(AXIS_Y) | BIT(AXIS_Z),
+    0
 };
-
-static int bma220_probe(struct spi_device \*spi)
-
+static int bma220_probe(struct spi_device *spi)
 {
-
-    int ret;
-
-    struct iio_dev \*indio_dev;
-
-    struct bma220_data \*data;
-
-    indio_dev = devm_iio_device_alloc(&spi-\>dev,
-
-                                        sizeof(\*data));
-
-    if (!indio_dev) {
-
-        dev_err(&spi-\>dev, "iio allocation failed!\n");
-
-         return -ENOMEM;
-
-    }
-
-    data = iio_priv(indio_dev);
-
-    data-\>spi_device = spi;
-
-    spi_set_drvdata(spi, indio_dev);
-
-    mutex_init(&data-\>lock);
-
-     indio_dev-\>dev.parent = &spi-\>dev;
-
-     indio_dev-\>info = &bma220_info;
-
-     indio_dev-\>name = BMA220_DEVICE_NAME;
-
-     indio_dev-\>modes = INDIO_DIRECT_MODE;
-
-     indio_dev-\>channels = bma220_channels;
-
-     indio_dev-\>num_channels = ARRAY_SIZE(bma220_channels);
-
-     indio_dev-\>available_scan_masks =
-
-                                 bma220_accel_scan_masks;
-
-    ret = bma220_init(data-\>spi_device);
-
-    if (ret \< 0)
-
-        return ret;
-
-    /\* this will enable trigger buffer
-
-     \* support for the device \*/
-
-    ret = iio_triggered_buffer_setup(indio_dev,
-
-                            iio_pollfunc_store_time,
-
-                            bma220_trigger_handler, NULL);
-
-    if (ret \< 0) {
-
-        dev_err(&spi-\>dev,
-
-                    "iio triggered buffer setup failed\n");
-
-        goto err_suspend;
-
-    }
-
-    ret = devm_iio_device_register(&spi-\>dev, indio_dev);
-
-    if (ret \< 0) {
-
-        dev_err(&spi-\>dev, "iio_device_register
-
-                              failed\n");
-
-        iio_triggered_buffer_cleanup(indio_dev);
-
-        goto err_suspend;
-
-    }
-
-     return 0;
-
+    int ret;
+    struct iio_dev *indio_dev;
+    struct bma220_data *data;
+    indio_dev = devm_iio_device_alloc(&spi->dev,
+                                        sizeof(*data));
+    if (!indio_dev) {
+        dev_err(&spi->dev, "iio allocation failed!\n");
+         return -ENOMEM;
+    }
+    data = iio_priv(indio_dev);
+    data->spi_device = spi;
+    spi_set_drvdata(spi, indio_dev);
+    mutex_init(&data->lock);
+     indio_dev->dev.parent = &spi->dev;
+     indio_dev->info = &bma220_info;
+     indio_dev->name = BMA220_DEVICE_NAME;
+     indio_dev->modes = INDIO_DIRECT_MODE;
+     indio_dev->channels = bma220_channels;
+     indio_dev->num_channels = ARRAY_SIZE(bma220_channels);
+     indio_dev->available_scan_masks =
+                                 bma220_accel_scan_masks;
+    ret = bma220_init(data->spi_device);
+    if (ret < 0)
+        return ret;
+    /* this will enable trigger buffer
+     * support for the device */
+    ret = iio_triggered_buffer_setup(indio_dev,
+                            iio_pollfunc_store_time,
+                            bma220_trigger_handler, NULL);
+    if (ret < 0) {
+        dev_err(&spi->dev,
+                    "iio triggered buffer setup failed\n");
+        goto err_suspend;
+    }
+    ret = devm_iio_device_register(&spi->dev, indio_dev);
+    if (ret < 0) {
+        dev_err(&spi->dev, "iio_device_register
+                              failed\n");
+        iio_triggered_buffer_cleanup(indio_dev);
+        goto err_suspend;
+    }
+     return 0;
 err_suspend:
-
-    return bma220_deinit(spi);
-
+    return bma220_deinit(spi);
 }
+```
 
 You can enable this driver by means of the **CONFIG_BMA220** kernel option. That says, *this is available only from v4.8 in the kernel*. The closest device you can use on older kernel versions is BMA180, which you can enable using the **CONFIG_BMA180** option.
 
@@ -1719,15 +1254,13 @@ You may have guessed, there are only two ways to access data with the IIO framew
 
 Single-shot data capture is done through the sysfs interface. By reading the sysfs entry that corresponds to a channel, you'll capture only the data specific to that channel. Say we have a temperature sensor with two channels: one for the ambient temperature and the other for the thermocouple temperature:
 
-\# cd /sys/bus/iio/devices/iio:device0
-
-\# cat in_voltage3_raw
-
+``` c
+# cd /sys/bus/iio/devices/iio:device0
+# cat in_voltage3_raw
 6646
-
-\# cat in_voltage_scale
-
+# cat in_voltage_scale
 0.305175781
+```
 
 The processed value is obtained by multiplying the scale by the raw value:
 
@@ -1745,61 +1278,79 @@ Data capture using sysfs triggers consists of sending a set of commands and a fe
 
 1.  **Creating the trigger**: Before the trigger can be assigned to any device, it should be created:
 
-    **echo 0 \> /sys/devices/iio_sysfs_trigger/add_trigger**
+    ``` c
+    echo 0 > /sys/devices/iio_sysfs_trigger/add_trigger
+    ```
 
 In the preceding command, **0** corresponds to the index we need to assign to the trigger. After this command, the trigger directory will be available under **/sys/bus/iio/devices/** as **trigger0**. The trigger's full patch will be **/sys/bus/iio/devices/trigger0**.
 
 1.  **Assigning the trigger to the device**: A trigger is uniquely identified by its name, which you can use in order to tie the device to the trigger. Since we used **0** as the index, the trigger will be named **sysfstrig0**:
 
-    **echo sysfstrig0 \>**
-
-    **/sys/bus/iio/devices/iio:device0/trigger/current_trigger**
+    ``` c
+    echo sysfstrig0 >
+    /sys/bus/iio/devices/iio:device0/trigger/current_trigger
+    ```
 
 We could have used this command too:
 
-**cat /sys/bus/iio/devices/trigger0/name \> /sys/bus/iio/devices/iio:device0/trigger/current_trigger.**
+``` c
+cat /sys/bus/iio/devices/trigger0/name > /sys/bus/iio/devices/iio:device0/trigger/current_trigger.
+```
 
 However, if the value you have written does not correspond to an existing trigger name, nothing will happen. To make sure the trigger has been defined successfully, you can use the following command:
 
-**cat /sys/bus/iio/devices/iio:device0/trigger/current_trigger**
+``` c
+cat /sys/bus/iio/devices/iio:device0/trigger/current_trigger
+```
 
 1.  **Enabling some scan elements**: This step consists of choosing which channels should have their data value pushed into the buffer. You should pay attention to **available_scan_masks** in the driver:
 
-    **echo 1 \> /sys/bus/iio/devices/iio:device0/scan_elements/in_voltage4_en**
-
-    **echo 1 \> /sys/bus/iio/devices/iio:device0/scan_elements/in_voltage5_en**
-
-    **echo 1 \> /sys/bus/iio/devices/iio:device0/scan_elements/in_voltage6_en**
-
-    **echo 1 \> /sys/bus/iio/devices/iio:device0/scan_elements/in_voltage7_en**
+    ``` c
+    echo 1 > /sys/bus/iio/devices/iio:device0/scan_elements/in_voltage4_en
+    echo 1 > /sys/bus/iio/devices/iio:device0/scan_elements/in_voltage5_en
+    echo 1 > /sys/bus/iio/devices/iio:device0/scan_elements/in_voltage6_en
+    echo 1 > /sys/bus/iio/devices/iio:device0/scan_elements/in_voltage7_en
+    ```
 
 2.  **Setting up the buffer size**: Here, you should set the number of sample sets that may be held by the buffer:
 
-    **echo 100 \> /sys/bus/iio/devices/iio:device0/buffer/length**
+    ``` c
+    echo 100 > /sys/bus/iio/devices/iio:device0/buffer/length
+    ```
 
 3.  **Enabling the buffer**: This step consists of marking the buffer as being ready to receive pushed data:
 
-    **echo 1 \> /sys/bus/iio/devices/iio:device0/buffer/enable**
+    ``` c
+    echo 1 > /sys/bus/iio/devices/iio:device0/buffer/enable
+    ```
 
 To stop the capture, we'll have to write **0** in the same file.
 
 1.  **Firing the trigger**: Launch acquisition. This must be done as many times as data sample counts are needed in the buffer, in a loop, for example:
 
-    **echo 1 \> /sys/bus/iio/devices/trigger0/trigger_now**
+    ``` c
+    echo 1 > /sys/bus/iio/devices/trigger0/trigger_now
+    ```
 
 Now that acquisition is done, you can do the following.
 
 1.  Disable the buffer:
 
-    **echo 0 \> /sys/bus/iio/devices/iio:device0/buffer/enable**
+    ``` c
+    echo 0 > /sys/bus/iio/devices/iio:device0/buffer/enable
+    ```
 
 2.  Detach the trigger:
 
-    **echo "" \> /sys/bus/iio/devices/iio:device0/trigger/current_trigger**
+    ``` c
+    echo "" > /sys/bus/iio/devices/iio:device0/trigger/current_trigger
+    ```
 
 3.  Dump the contents of our IIO character device:
 
-    **cat /dev/iio\\device0 \| xxd –**
+    ``` c
+    cat /dev/iio\:device0 | xxd –
+    ```
 
 Now that we have learned how to use sysfs triggers, it will be easier to deal with hrtimer-based ones as they kind of use the same theoretical principle.
 
@@ -1809,33 +1360,40 @@ hrtimers are high-resolution kernel timers with up to nanosecond granularity whe
 
 1.  Create the hrtimer-based trigger:
 
-    **mkdir /sys/kernel/config/iio/triggers/hrtimer/trigger0**
+    ``` c
+    mkdir /sys/kernel/config/iio/triggers/hrtimer/trigger0
+    ```
 
 The preceding command will create a trigger named **trigger0**. This name will be used to assign this trigger to a device.
 
 1.  Define the sampling frequency:
 
-    **echo 50 \> /sys/bus/iio/devices/trigger0/sampling_frequency**
+    ``` c
+    echo 50 > /sys/bus/iio/devices/trigger0/sampling_frequency
+    ```
 
 There is no configurable attribute in the **config** directory for the **hrtimer** trigger type. It introduces the **sampling_frequency** attribute to trigger directory. That attribute sets the polling frequency in Hz, with mHz precision. In the preceding example, we have defined a polling at 50 Hz (every 20 ms).
 
 1.  Link the trigger with the IIO device:
 
-    **echo trigger0 \> /sys/bus/iio/devices/iio:device0/trigger/current_trigger**
+    ``` c
+    echo trigger0 > /sys/bus/iio/devices/iio:device0/trigger/current_trigger
+    ```
 
 2.  Choose on which channels data must be captured and pushed into the buffer:
 
-    **\# echo 1 \> /sys/bus/iio/devices/iio:device0/scan_elements/in_voltage4_en**
-
-    **\# echo 1 \> /sys/bus/iio/devices/iio:device0/scan_elements/in_voltage5_en**
-
-    **\# echo 1 \> /sys/bus/iio/devices/iio:device0/scan_elements/in_voltage6_en**
-
-    **\# echo 1 \> /sys/bus/iio/devices/iio:device0/scan_elements/in_voltage7_en**
+    ``` c
+    # echo 1 > /sys/bus/iio/devices/iio:device0/scan_elements/in_voltage4_en
+    # echo 1 > /sys/bus/iio/devices/iio:device0/scan_elements/in_voltage5_en
+    # echo 1 > /sys/bus/iio/devices/iio:device0/scan_elements/in_voltage6_en
+    # echo 1 > /sys/bus/iio/devices/iio:device0/scan_elements/in_voltage7_en
+    ```
 
 3.  Start the hrtimer capture, which will perform periodic data capture at the frequency we defined earlier and on channels that have been enabled previously:
 
-    **echo 1 \> /sys/bus/iio/devices/iio:device0/buffer/enable**
+    ``` c
+    echo 1 > /sys/bus/iio/devices/iio:device0/buffer/enable
+    ```
 
 4.  Finally, data can be dumped using **cat /dev/iio\\device0 \| xxd –**. Because the trigger is an hrtimer, data will be captured and pushed at every hrtimer period interval.
 
@@ -1853,19 +1411,19 @@ We can notice how easy it is to set up either a simple sysfs trigger or an hrtim
 
 Now that everything has been set up, we can dump the data using the following command:
 
-\# cat /dev/iio:device0 \| xxd -
-
-0000000: 0188 1a30 0000 0000 8312 68a8 c24f 5a14  ...0......h..OZ.
-
-0000010: 0188 1a30 0000 0000 192d 98a9 c24f 5a14  ...0.....-...OZ.
-
-\[...\]
+``` c
+# cat /dev/iio:device0 | xxd -
+0000000: 0188 1a30 0000 0000 8312 68a8 c24f 5a14  ...0......h..OZ.
+0000010: 0188 1a30 0000 0000 192d 98a9 c24f 5a14  ...0.....-...OZ.
+[...]
+```
 
 The preceding command will dump raw data that would need more processing to obtain the real data. In order to be able to understand the data output and process it, we need to look at the channel type, as follows:
 
-\$ cat /sys/bus/iio/devices/iio:device0/scan_elements/in_voltage_type
-
-be:s14/16\>\>2
+``` c
+$ cat /sys/bus/iio/devices/iio:device0/scan_elements/in_voltage_type
+be:s14/16>>2
+```
 
 In the preceding, **be:s14/16\>\>2** means big-endian (**be:**) signed data (**s**) stored on 16 bits but whose real number of bits is 14. Moreover, it also means that the data must be shifted to the right two times (**\>\>2**) to obtain the real value. This means, for example, to obtain the voltage value in the first sample (**0x188**), this value must be right-shifted twice in order to mask unused bits: *0 x 188 \>\> 2 = 0 x 62 = 98*. Now, the real value is *98 \* 250 = 24500 = 24.5 V*. If there were an offset attribute, the real value would be **(raw + offset) \* scale**.
 
@@ -1877,15 +1435,13 @@ So far, we have dealt with the user-space consumer interface since data was cons
 
 IIO channel attribution is done in the device tree. From the producer side, only one thing must be done: specifying the **\#io-channel-cells** property according to the number of channels of the IIO device. Typically, it is **0** for nodes with a single IIO output and **1** for nodes with multiple IIO outputs. The following is an example:
 
+``` c
 adc: max1139@35 {
-
-    compatible = "maxim,max1139";
-
-    reg = \<0x35\>;
-
-    #io-channel-cells = \<1\>;
-
+    compatible = "maxim,max1139";
+    reg = <0x35>;
+    #io-channel-cells = <1>;
 };
+```
 
 On the consumer side, there are a few properties to provide. These are the following:
 
@@ -1894,27 +1450,24 @@ On the consumer side, there are a few properties to provide. These are the follo
 
 Take the following example:
 
+``` c
 device {
-
-    io-channels = \<&adc 1\>, \<&ref 0\>;
-
-    io-channel-names = "vcc", "vdd";
-
+    io-channels = <&adc 1>, <&ref 0>;
+    io-channel-names = "vcc", "vdd";
 };
+```
 
 The preceding node describes a device with two IIO resources, named **vcc** and **vdd**, respectively. The **vcc** channel originates from the **&adc** device output **1**, while the **vdd** channel comes from the **&ref** device output **0**.
 
 Another example consuming several channels of the same ADC is the following:
 
+``` c
 some_consumer {
-
-    compatible = "some-consumer";
-
-    io-channels = \<&adc 10\>, \<&adc 11\>;
-
-    io-channel-names = "adc1", "adc2";
-
+    compatible = "some-consumer";
+    io-channels = <&adc 10>, <&adc 11>;
+    io-channel-names = "adc1", "adc2";
 };
+```
 
 Now that we are familiar with IIO binding and channel hogging, we can see how to play with those channels using the kernel IIO consumer API.
 
@@ -1922,25 +1475,18 @@ Now that we are familiar with IIO binding and channel hogging, we can see how to
 
 The kernel IIO consumer interface relies on a few functions and data structures. The following is the main API:
 
-struct iio_channel \*devm_iio_channel_get(
-
-       struct device \*dev, const char \*consumer_channel);
-
-struct iio_channel \* devm_iio_channel_get_all(
-
-                                      struct device \*dev);
-
-int iio_get_channel_type(struct iio_channel \*channel,
-
-                     enum iio_chan_type \*type);
-
-int iio_read_channel_processed(struct iio_channel \*chan,
-
-                               int \*val);
-
-int iio_read_channel_raw(struct iio_channel \*chan,
-
-                         int \*val);
+``` c
+struct iio_channel *devm_iio_channel_get(
+       struct device *dev, const char *consumer_channel);
+struct iio_channel * devm_iio_channel_get_all(
+                                      struct device *dev);
+int iio_get_channel_type(struct iio_channel *channel,
+                     enum iio_chan_type *type);
+int iio_read_channel_processed(struct iio_channel *chan,
+                               int *val);
+int iio_read_channel_raw(struct iio_channel *chan,
+                         int *val);
+```
 
 The following are descriptions of each API:
 
@@ -1948,59 +1494,39 @@ The following are descriptions of each API:
 
 - **devm_iio_channel_get_all()**: Used to look up IIO channels. It returns a pointer to a negative error number if it is not able to get the IIO channel; otherwise, it returns an array of **iio_channel** structures terminated with 0 null **iio_dev** pointer. Say we have the following consumer node:
 
+  ``` c
   iio-hwmon {
-
-      compatible = "iio-hwmon";
-
-      io-channels = \<&adc 0\>, \<&adc 1\>, \<&adc 2\>,
-
-      \<&adc 3\>, \<&adc 4\>, \<&adc 5\>,
-
-      \<&adc 6\>, \<&adc 7\>, \<&adc 8\>,
-
-      \<&adc 9\>;
-
+      compatible = "iio-hwmon";
+      io-channels = <&adc 0>, <&adc 1>, <&adc 2>,
+      <&adc 3>, <&adc 4>, <&adc 5>,
+      <&adc 6>, <&adc 7>, <&adc 8>,
+      <&adc 9>;
   };
+  ```
 
 The following code is an example of using **devm_iio_channel_get_all()** to get the IIO channels. This code also shows how to check for the last valid channel (the one with the null **iio_dev** pointer):
 
-    struct iio_channel \*channels;
-
-    struct device \*dev = &pdev-\>dev;
-
-    int num_adc_channels;
-
-    channels = devm_iio_channel_get_all(dev);
-
-    if (IS_ERR(channels)) {
-
-        if (PTR_ERR(channels) == -ENODEV)
-
-            return -EPROBE_DEFER;
-
-            return PTR_ERR(channels);
-
-    }
-
-    num_adc_channels = 0;
-
-    /\* count how many attributes we have \*/
-
-    while (channels\[num_adc_channels\].indio_dev)
-
-            num_adc_channels++;
-
-    if (num_adc_channels !=
-
-        EXPECTED_ADC_CHAN_COUNT) {
-
-            dev_err(dev,
-
-               "Inadequate ADC channels specified\n");
-
-           return -EINVAL;
-
-    }
+``` c
+    struct iio_channel *channels;
+    struct device *dev = &pdev->dev;
+    int num_adc_channels;
+    channels = devm_iio_channel_get_all(dev);
+    if (IS_ERR(channels)) {
+        if (PTR_ERR(channels) == -ENODEV)
+            return -EPROBE_DEFER;
+            return PTR_ERR(channels);
+    }
+    num_adc_channels = 0;
+    /* count how many attributes we have */
+    while (channels[num_adc_channels].indio_dev)
+            num_adc_channels++;
+    if (num_adc_channels !=
+        EXPECTED_ADC_CHAN_COUNT) {
+            dev_err(dev,
+               "Inadequate ADC channels specified\n");
+           return -EINVAL;
+    }
+```
 
 - **iio_get_channel_type()**: Returns the type of a channel, such as **IIO_VOLTAGE** or **IIO_TEMP**. This function fills **enum iio_chan_type** of the channel in the **type** output parameter. On error, the function returns a negative error number; otherwise, it returns **0**.
 - **iio_read_channel_processed()**: Reads the channel processed value in the correct unit, for example, in micro-volts for voltage and milli-degrees for temperature. **val** is the processed value read back. This function returns **0** on success or a negative value otherwise.
@@ -2008,15 +1534,13 @@ The following code is an example of using **devm_iio_channel_get_all()** to get 
 
 In the preceding APIs, **struct iio_channel** represents an IIO channel from the consumer point of view. It has the following declaration:
 
+``` c
 struct iio_channel {
-
-    struct iio_dev \*indio_dev;
-
-    const struct iio_chan_spec \*channel;
-
-    void \*data;
-
+    struct iio_dev *indio_dev;
+    const struct iio_chan_spec *channel;
+    void *data;
 };
+```
 
 In the preceding code, **iio_dev** is the IIO device to which the channel belongs, and **channel** is the underlying channel spec as seen by the provider.
 
@@ -2033,7 +1557,7 @@ In this section, we will be using version 0.21 of the library, whose documentati
 
 The following diagram summarizes the architecture:
 
-![Figure 15.2 – libiio overview ](media/image/B17934_15_002.jpg)
+![Figure 15.2 – libiio overview ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_15_002.jpg)
 
 Figure 15.2 – libiio overview
 
@@ -2065,45 +1589,46 @@ When creating a context, the library will identify the IIO devices (including tr
 
 A context can be created using one of the following APIs:
 
+``` c
 iio_create_local_context()
-
 iio_create_network_context()
-
 iio_create_context_from_uri()
-
-iio_context_clone(const struct iio_context \*ctx)
+iio_context_clone(const struct iio_context *ctx)
+```
 
 Each of these functions returns a valid context object on success and **NULL** otherwise, with **errno** set appropriately. That said, while they all return the same values, their arguments may vary, as described in the following:
 
 - **iio_create_local_context()**: Used to create a local context:
 
-  struct iio_context \* local_ctx;
-
+  ``` c
+  struct iio_context * local_ctx;
   local_ctx = iio_create_local_context();
+  ```
 
 Note that the local backend interfaces the Linux kernel through the sysfs virtual filesystem.
 
 - **iio_create_network_context()**: Creates a network context. It takes as a parameter a string representing the IPv4 or IPv6 network address of the remote target:
 
-  struct iio_context \* network_ctx;
-
+  ``` c
+  struct iio_context * network_ctx;
   network_ctx =
-
-        iio_create_network_context("192.168.100.15");
+        iio_create_network_context("192.168.100.15");
+  ```
 
 - USB context can be created using an URI-based API, **iio_create_context_from_uri()**. The argument is a string identifying the USB device using the following pattern – **usb:\[device:port:instance\]**:
 
-  struct iio_context \* usb_ctx;
-
+  ``` c
+  struct iio_context * usb_ctx;
   usb_ctx = iio_create_context_from_uri("usb:3.80.5");
+  ```
 
 - A serial context, like a USB context, uses a URI-based API. However, its URI must match the following pattern – **serial:\[port\]\[,baud\]\[,config\]**:
 
-  struct iio_context \* serial_ctx;
-
+  ``` c
+  struct iio_context * serial_ctx;
   serial_ctx = iio_create_context_from_uri(
-
-                     "serial:/dev/ttyUSB0,115200,8n1");
+                     "serial:/dev/ttyUSB0,115200,8n1");
+  ```
 
 - **iio_create_context_from_uri()** is a URI-based API, taking as a parameter a valid URI (starting with the backend to use). For local context, the URI must be **"local:"**. For a URI-based network context, the URI pattern must match **"ip:\<ipaddr\>"**, where **\<ipaddr\>** is the IPv4 or IPv6 of the remote target. More information on URI-based contexts can be found here: https://analogdevicesinc.github.io/libiio/v0.21/libiio/group\_\_Context.html#gafdcee40508700fa395370b6c636e16fe.
 
@@ -2117,131 +1642,81 @@ Before creating a context, the user might be interested in scanning the availabl
 
 The following is a demonstration of scanning available contexts and creating one:
 
+``` c
 int i;
-
 ssize_t nb_ctx;
-
-const char \*uri;
-
-struct iio_context \*ctx = NULL;
-
-\#ifdef CHECK_REMOTE
-
-struct iio_context_info \*\*info;
-
-struct iio_scan_context \*scan_ctx =
-
-                  iio_create_scan_context("usb:ip:", 0);
-
+const char *uri;
+struct iio_context *ctx = NULL;
+#ifdef CHECK_REMOTE
+struct iio_context_info **info;
+struct iio_scan_context *scan_ctx =
+                  iio_create_scan_context("usb:ip:", 0);
 if (!scan_ctx) {
-
-    printf("Unable to create scan context!\n");
-
-    return NULL;
-
+    printf("Unable to create scan context!\n");
+    return NULL;
 }
-
 nb_ctx = iio_scan_context_get_info_list(scan_ctx, &info);
-
-if (nb_ctx \< 0) {
-
-    printf("Unable to scan!\n");
-
-    iio_scan_context_destroy(scan_ctx);
-
-    return NULL;
-
+if (nb_ctx < 0) {
+    printf("Unable to scan!\n");
+    iio_scan_context_destroy(scan_ctx);
+    return NULL;
 }
-
-for (i = 0; i \< nb_ctx; i++) {
-
-    uri = iio_context_info_get_uri(info\[0\]);
-
-    if (strcmp ("usb:", uri) == 0) {
-
-        ctx = iio_create_context_from_uri(uri);
-
-        break;
-
-    }
-
-    if (strcmp ("ip:", uri) == 0) {
-
-        ctx =
-
-            iio_create_context_from_uri("ip:192.168.3.18");
-
-        break;
-
-    }
-
+for (i = 0; i < nb_ctx; i++) {
+    uri = iio_context_info_get_uri(info[0]);
+    if (strcmp ("usb:", uri) == 0) {
+        ctx = iio_create_context_from_uri(uri);
+        break;
+    }
+    if (strcmp ("ip:", uri) == 0) {
+        ctx =
+            iio_create_context_from_uri("ip:192.168.3.18");
+        break;
+    }
 }
-
 iio_context_info_list_free(info);
-
 iio_scan_context_destroy(scan_ctx);
-
-\#endif
-
+#endif
 if (!ctx) {
-
-    printf("creating local context\n");
-
-    ctx = iio_create_local_context();
-
-    if (!ctx) {
-
-       printf("unable to create local context\n");
-
-       goto err_free_info_list;
-
-    }
-
+    printf("creating local context\n");
+    ctx = iio_create_local_context();
+    if (!ctx) {
+       printf("unable to create local context\n");
+       goto err_free_info_list;
+    }
 }
-
 return ctx;
+```
 
 In the preceding code, if the **CHECK_REMOTE** macro is defined, the code will first scan for available contexts (that is, backends) by filtering USB and network ones. The code first looks for the USB context before looking for a network context. If none is available, it falls back to a local context.
 
 In addition, you can get some context-related information using the following APIs:
 
+``` c
 int iio_context_get_version (
-
-       const struct iio_context \* ctx,
-
-       unsigned int \*major, unsigned int \*minor,
-
-       char git_tag\[8\])
-
-const char \* iio_context_get_name(
-
-                      const struct iio_context \*ctx)
-
-const char \* iio_context_get_description(
-
-                      const struct iio_context \*ctx)
+       const struct iio_context * ctx,
+       unsigned int *major, unsigned int *minor,
+       char git_tag[8])
+const char * iio_context_get_name(
+                      const struct iio_context *ctx)
+const char * iio_context_get_description(
+                      const struct iio_context *ctx)
+```
 
 In the preceding APIs, **iio_context_get_version()** returns the version of the backend in use into **major**, **minor**, and **git_tag** output arguments, and **iio_context_get_name()** returns a pointer to a static **NULL**-terminated string corresponding to the backend name, which can be **local**, **xml**, or **network** when the context has been created with the local, XML, and network backends, respectively.
 
 The following is a demonstration:
 
+``` c
 unsigned int major, minor;
-
-char git_tag\[8\];
-
-struct iio_context \*ctx;
-
-\[...\] /\* the context must be created \*/
-
+char git_tag[8];
+struct iio_context *ctx;
+[...] /* the context must be created */
 iio_context_get_version(ctx, &major, &minor, git_tag);
-
 printf("Backend version: %u.%u (git tag: %s)\n",
-
-           major, minor, git_tag);
-
+           major, minor, git_tag);
 printf("Backend description string: %s\n",
-
-           iio_context_get_description(ctx));
+           iio_context_get_description(ctx));
+```
 
 Now that the context has been created, and we are able to read its information, the user might be interested in walking through it, that is, navigating the entities this context is made of, for instance, getting the number of IIO devices or getting an instance of a given device.
 
@@ -2253,17 +1728,14 @@ A context is a punctual and fixed view of IIO entities on the target. For instan
 
 The following are APIs to navigate through the devices in an IIO context:
 
+``` c
 unsigned int iio_context_get_devices_count(
-
-                            const struct iio_context \*ctx)
-
-struct iio_device \* iio_context_get_device(
-
-         const struct iio_context \*ctx, unsigned int index)
-
-struct iio_device \* iio_context_find_device(
-
-         const struct iio_context \*ctx, const char \*name)
+                            const struct iio_context *ctx)
+struct iio_device * iio_context_get_device(
+         const struct iio_context *ctx, unsigned int index)
+struct iio_device * iio_context_find_device(
+         const struct iio_context *ctx, const char *name)
+```
 
 From a context, **iio_context_get_devices_count()** returns the number of IIO devices in this context.
 
@@ -2271,33 +1743,26 @@ From a context, **iio_context_get_devices_count()** returns the number of IIO de
 
 **iio_context_find_device()** looks for an IIO device by its name. This name must correspond to the name specified in **iio_indev-\>name** specified in the driver. You can obtain this name either by using a dedicated **iio_device_get_name()** API or by reading the **name** attribute in this device's sysfs directory:
 
-root:/sys/bus/iio/devices/iio:device1\> cat name
-
+``` c
+root:/sys/bus/iio/devices/iio:device1> cat name
 ad9361-phy
+```
 
 The following is an example of going through all devices and printing their names and IDs:
 
-struct iio_context \* local_ctx;
-
+``` c
+struct iio_context * local_ctx;
 local_ctx = iio_create_local_context();
-
 int i;
-
-for (i = 0; i \< iio_context_get_devices_count(local_ctx);
-
-     ++i) {
-
-    struct iio_device \*dev =
-
-           iio_context_get_device(local_ctx, i);
-
-    const char \*name = iio_device_get_name(dev);
-
-    printf("\t%s: %s\r\n", iio_device_get_id(dev), name );
-
+for (i = 0; i < iio_context_get_devices_count(local_ctx);
+     ++i) {
+    struct iio_device *dev =
+           iio_context_get_device(local_ctx, i);
+    const char *name = iio_device_get_name(dev);
+    printf("\t%s: %s\r\n", iio_device_get_id(dev), name );
 }
-
 iio_context_destroy(ctx);
+```
 
 The preceding code example iterates over IIO devices present in the context (a local context) and prints their names and IDs.
 
@@ -2305,19 +1770,15 @@ The preceding code example iterates over IIO devices present in the context (a l
 
 The main channel management APIs are the following:
 
+``` c
 unsigned int iio_device_get_channels_count(
-
-                              const struct iio_device \*dev)
-
-struct iio_channel\* iio_device_get_channel(
-
-         const struct iio_device \*dev, unsigned int index)
-
-struct iio_channel\* iio_device_find_channel(
-
-                            const struct iio_device \*dev,
-
-                            const char \*name, bool output)
+                              const struct iio_device *dev)
+struct iio_channel* iio_device_get_channel(
+         const struct iio_device *dev, unsigned int index)
+struct iio_channel* iio_device_find_channel(
+                            const struct iio_device *dev,
+                            const char *name, bool output)
+```
 
 We can get the number of available channels from an **iio_device** object thanks to **iio_device_get_channels_count()**. Then, each **iio_channel** object can be accessed with **iio_device_get_channel()**, specifying the index of this channel. For example, on a three-axis (*x*, *y*, *z*) accelerometer, **iio_device_get_channel(iio_device, 0)** will correspond to getting channel 0, that is, **accel_x**. On an eight-channel ADC converter, **iio_device_get_channel(iio_device, 0)** will correspond to getting channel 0, that is, **voltage0**.
 
@@ -2325,61 +1786,41 @@ Alternatively, it is possible to look up a channel by its name using **iio_devic
 
 The following is an example of going through all devices and all channels of each device:
 
-struct iio_context \* local_ctx;
-
-struct iio_channel \*chan;
-
+``` c
+struct iio_context * local_ctx;
+struct iio_channel *chan;
 local_ctx = iio_create_local_context();
-
 int i, j;
-
-for (i = 0; i \< iio_context_get_devices_count(local_ctx);
-
-       ++i) {
-
-    struct iio_device \*dev =
-
-           iio_context_get_device(local_ctx, i);
-
-    printf("Device %d\n", i);
-
-    for (j = 0; j \< iio_device_get_channels_count(dev);
-
-            ++j) {
-
-        chan = iio_device_get_channel(dev, j);
-
-        const char \*name = iio_channel_get_name(ch) ? :
-
-                              iio_channel_get_id(ch);
-
-        printf("\tchannel %d: %s\n", j, name);
-
-    }
-
+for (i = 0; i < iio_context_get_devices_count(local_ctx);
+       ++i) {
+    struct iio_device *dev =
+           iio_context_get_device(local_ctx, i);
+    printf("Device %d\n", i);
+    for (j = 0; j < iio_device_get_channels_count(dev);
+            ++j) {
+        chan = iio_device_get_channel(dev, j);
+        const char *name = iio_channel_get_name(ch) ? :
+                              iio_channel_get_id(ch);
+        printf("\tchannel %d: %s\n", j, name);
+    }
 }
+```
 
 The preceding code creates a local context and walks through all the devices in this context. Then, for each device, it iterates over channels and prints their name.
 
 Additionally, there are miscellaneous APIs allowing us to obtain channel properties. These are the following:
 
-bool iio_channel_is_output(const struct iio_channel \*chn);
-
-const char\* iio_channel_get_id(
-
-                            const struct iio_channel \*chn);
-
+``` c
+bool iio_channel_is_output(const struct iio_channel *chn);
+const char* iio_channel_get_id(
+                            const struct iio_channel *chn);
 enum iio_modifier iio_channel_get_modifier(
-
-                            const struct iio_channel \*chn);
-
+                            const struct iio_channel *chn);
 enum iio_chan_type iio_channel_get_type(
-
-                            const struct iio_channel \*chn);
-
-const char\* iio_channel_get_name(
-
-                            const struct iio_channel \*chn);
+                            const struct iio_channel *chn);
+const char* iio_channel_get_name(
+                            const struct iio_channel *chn);
+```
 
 In the preceding APIs, the first one checks whether the IIO channel is output or not, and the others mainly return each of the elements the name pattern is made of.
 
@@ -2389,67 +1830,49 @@ In **libiio**, a trigger is assimilated to a device, as both are represented by 
 
 In order to do so, you must create the trigger yourself, as we saw in the *IIO trigger and sysfs (user space)* section. Then, to find this trigger from a context, as it is assimilated to a device, you can use one of the device-related lookup APIs that we described in the *Walking through and managing IIO devices* section. In this section, let's use **iio_context_find_device()**, which as you'll recall is defined as the following:
 
-struct iio_device\* iio_context_find_device(
-
-          const struct iio_context \*ctx, const char \*name)
+``` c
+struct iio_device* iio_context_find_device(
+          const struct iio_context *ctx, const char *name)
+```
 
 This function looks for a device by its name in the given context. This is the reason why the trigger must have been created before creating the context. In parameters, **ctx** is the context from where to look for the trigger and **name** is the name of the trigger, as you would have written it to the **current_trigger** sysfs file.
 
 Once the trigger found, it must be assigned to a device using **iio_device_set_trigger()**, defined as the following:
 
-int iio_device_set_trigger(const struct iio_device \*dev,
-
-                          const struct iio_device \*trig)
+``` c
+int iio_device_set_trigger(const struct iio_device *dev,
+                          const struct iio_device *trig)
+```
 
 This function associates the trigger, **trig**, to the device, **dev**, and returns **0** on success or a negative **errno** code on failure. If the **trig** parameter is **NULL**, then any trigger associated with the given device will be disassociated. In other words, to disassociate a trigger from the device, you should call **iio_device_set_trigger(dev, NULL)**.
 
 Let's see how trigger lookup and association work in a little example:
 
-struct iio_context \*ctx;
-
-struct iio_device \*trigger, \*dev;
-
-\[...\]
-
+``` c
+struct iio_context *ctx;
+struct iio_device *trigger, *dev;
+[...]
 ctx = iio_create_local_context();
-
-/\* at least 2 iio_device must exist:
-
-\* a trigger and a device \*/
-
-if (!(iio_context_get_devices_count(ctx) \> 1))
-
-    return -1;
-
+/* at least 2 iio_device must exist:
+ * a trigger and a device */
+if (!(iio_context_get_devices_count(ctx) > 1))
+    return -1;
 trigger = iio_context_find_device(ctx, "hrtimer-1");
-
 if (!trigger) {
-
-    printf("no trigger found\n");
-
-    return -1;
-
+    printf("no trigger found\n");
+    return -1;
 }
-
 dev = iio_context_find_device(ctx, "iio-device-dummy");
-
 if (!dev) {
-
-    printf("unable to find the IIO device\n");
-
-    return -1;
-
+    printf("unable to find the IIO device\n");
+    return -1;
 }
-
 printf("Enabling IIO buffer trigger\n");
-
 iio_device_set_trigger(dev, trigger);
-
-\[...\]
-
-/\* When done with the trigger \*/
-
+[...]
+/* When done with the trigger */
 iio_device_set_trigger(dev, NULL);
+```
 
 In the preceding example, we first create a local context, and we make sure this context contains at least two devices. Then, from this context, we look for a trigger named **hrtimer-1** and a device named **iio-device-dummy**. Once both are found, we associate the trigger to the device. Finally, when done with the trigger, it is disassociated from the device.
 
@@ -2457,65 +1880,65 @@ In the preceding example, we first create a local context, and we make sure this
 
 Note that channels we are interested in need to be enabled before creating the buffer. To do so, you can use the following APIs:
 
-void iio_channel_enable(struct iio_channel \* chn)
-
-bool iio_channel_is_enabled(struct iio_channel \* chn)
+``` c
+void iio_channel_enable(struct iio_channel * chn)
+bool iio_channel_is_enabled(struct iio_channel * chn)
+```
 
 The first function enables the channel so that its data will be captured and pushed in the buffer. The second one is a helper checking whether a channel has already been enabled or not.
 
 In order to disable a channel, you can use **iio_channel_disable()**, defined as the following:
 
-void iio_channel_disable(struct iio_channel \* chn)
+``` c
+void iio_channel_disable(struct iio_channel * chn)
+```
 
 Now that we are able to enable the channels, we need their data to be captured. We can create a buffer using **iio_device_create_buffer()**, defined as the following:
 
-struct iio_buffer \* iio_device_create_buffer(
-
-        const struct iio_device \*dev,
-
-        size_t samples_count, bool cyclic)
+``` c
+struct iio_buffer * iio_device_create_buffer(
+        const struct iio_device *dev,
+        size_t samples_count, bool cyclic)
+```
 
 This function configures and enables a buffer. In the preceding function, **samples_count** is the total number of data samples that can be stored by the buffer, whatever the number of enabled channels. It corresponds to the **length** attribute described in the *IIO buffer sysfs interface* section. **cyclic**, if **true**, enables cyclic mode. This mode makes sense for output devices only (such as DACs). However, in this section, we deal with input devices only (that is, ADCs).
 
 Once you are done with a buffer, you can call **iio_buffer_destroy()** on this buffer, which disables it (thus stopping the capture) and frees the data structure. This API is defined as the following:
 
-void  iio_buffer_destroy(struct iio_buffer \*buf)
+``` c
+void  iio_buffer_destroy(struct iio_buffer *buf)
+```
 
 Do note that capturing starts as soon as the buffer is created, that is, after **iio_device_create_buffer()** has succeeded. However, samples are only pushed into the kernel buffers. In order to fetch samples from the kernel buffer to the user-space buffer, we need to use **iio_buffer_refill()**. While **iio_device_create_buffer()** has to be called only once to create the buffer and start the in-kernel continuous capture, **iio_buffer_refill()** must be called every time we need to fetch samples from the kernel buffer. It could be used in the processing loop, for example. The following is its definition:
 
-ssize_t iio_buffer_refill (struct iio_buffer \*buf)
+``` c
+ssize_t iio_buffer_refill (struct iio_buffer *buf)
+```
 
 With **iio_device_create_buffer()**, with the low-speed interface, the kernel allocates a single underlying buffer block (whose size equals **samples_count \* nb_buffers \* sample_size**) to handle the captures and immediately starts feeding samples inside. This default block count is **4** by default, and can be changed with **iio_device_set_kernel_buffers_count()**, defined as the following:
 
+``` c
 int iio_device_set_kernel_buffers_count(
-
-                const struct iio_device \*dev,
-
-                unsigned int nb_buffers)
+                const struct iio_device *dev,
+                unsigned int nb_buffers)
+```
 
 In high-speed mode, the kernel allocates **nb_buffers** buffer blocks, managed with the FIFO concept of an input queue (empty buffers) and output queue (buffers containing samples) in a way that, upon creation, all the buffers are filled with samples and put in the outgoing queue. When **iio_buffer_refill()** is called, the first buffer's data in the output queue is pushed (or mapped) to user space and this buffer is put back in the input queue waiting to be filled again. At the next call to **iio_buffer_refill()**, the second one is used, and so on, over and over. It must be noted that small buffers result in less latency but more overhead, while large buffers result in less overhead but more latency. The application must make tradeoffs between latency and management overhead. When cyclic mode is **true**, only a single buffer will be created, whatever the number of blocks specified.
 
 In order to read the data samples, the following APIs can be used:
 
-void iio_buffer_destroy(struct iio_buffer \*buf)
-
-void\* iio_buffer_end(const struct iio_buffer \*cbuf)  
-
-void\* iio_buffer_start(const struct iio_buffer \*buf)
-
-ptrdiff_t iio_buffer_step(const struct iio_buffer \*buf)
-
-void\* iio_buffer_first(const struct iio_buffer \*buf,
-
-                         const struct iio_channel \*chn)
-
-ssize_t iio_buffer_foreach_sample(struct iio_buffer \*buf,
-
-          ssize_t(\*callback)(const struct iio_channel \*chn,
-
-                         void \*src, size_t bytes, void \*d),
-
-          void \*data)
+``` c
+void iio_buffer_destroy(struct iio_buffer *buf)
+void* iio_buffer_end(const struct iio_buffer *cbuf)
+void* iio_buffer_start(const struct iio_buffer *buf)
+ptrdiff_t iio_buffer_step(const struct iio_buffer *buf)
+void* iio_buffer_first(const struct iio_buffer *buf,
+                         const struct iio_channel *chn)
+ssize_t iio_buffer_foreach_sample(struct iio_buffer *buf,
+          ssize_t(*callback)(const struct iio_channel *chn,
+                         void *src, size_t bytes, void *d),
+          void *data)
+```
 
 The following are the meanings and usages of each API listed:
 
@@ -2531,75 +1954,48 @@ The preceding list of APIs can be split into three families, depending on how th
 
 In this read method, **iio_buffer_first()** is coupled with **iio_buffer_step()** and **iio_buffer_end()** in order to iterate on all the samples of a given channel present in the buffer. This can be achieved in the following manner:
 
-for (void \*ptr = iio_buffer_first(buffer, chan);
-
-           ptr \< iio_buffer_end(buffer);
-
-           ptr += iio_buffer_step(buffer)) {
-
-\[...\]
-
+``` c
+for (void *ptr = iio_buffer_first(buffer, chan);
+           ptr < iio_buffer_end(buffer);
+           ptr += iio_buffer_step(buffer)) {
+[...]
 }
+```
 
 In the preceding example, from within the loop, **ptr** will point to one sample of the channel we're interested in, that is, **chan**.
 
 The following is an example:
 
-const struct iio_data_format \*fmt;
-
+``` c
+const struct iio_data_format *fmt;
 unsigned int i, repeat;
-
-struct iio_channel \*channels\[8\] = {0};
-
+struct iio_channel *channels[8] = {0};
 ptrdiff_t p_inc;
-
-char \*p_dat;
-
-\[...\]
-
+char *p_dat;
+[...]
 IIOC_DBG("Enter buffer refill loop.\n");
-
 while (true) {
-
-    nbytes = iio_buffer_refill(buf);
-
-    p_inc = iio_buffer_step(buf);
-
-    p_end = iio_buffer_end(buf);
-
-    for (i = 0; i \< channel_count; ++i) {
-
-        fmt = iio_channel_get_data_format(channels\[i\]);
-
-        repeat = fmt-\>repeat ? : 1;
-
-        for (p_dat = iio_buffer_first(rxbuf, channels\[i\]);
-
-                     p_dat \< p_end; p_dat += p_inc) {
-
-            for (j = 0; j \< repeat; ++j) {
-
-                if (fmt-\>length/8 == sizeof(int16_t))
-
-                    printf("Read 16bit value: " "%" PRIi16,
-
-                            ((int16_t \*)p_dat)\[j\]);
-
-                else if (fmt-\>length/8 == sizeof(int64_t))
-
-                    printf("Read 64bit value: " "%" PRIi64,
-
-                           ((int64_t \*)p_dat)\[j\]);
-
-            }
-
-        }
-
-    }
-
-    printf("\n");
-
+    nbytes = iio_buffer_refill(buf);
+    p_inc = iio_buffer_step(buf);
+    p_end = iio_buffer_end(buf);
+    for (i = 0; i < channel_count; ++i) {
+        fmt = iio_channel_get_data_format(channels[i]);
+        repeat = fmt->repeat ? : 1;
+        for (p_dat = iio_buffer_first(rxbuf, channels[i]);
+                     p_dat < p_end; p_dat += p_inc) {
+            for (j = 0; j < repeat; ++j) {
+                if (fmt->length/8 == sizeof(int16_t))
+                    printf("Read 16bit value: " "%" PRIi16,
+                            ((int16_t *)p_dat)[j]);
+                else if (fmt->length/8 == sizeof(int64_t))
+                    printf("Read 64bit value: " "%" PRIi64,
+                           ((int64_t *)p_dat)[j]);
+            }
+        }
+    }
+    printf("\n");
 }
+```
 
 The preceding code reads the channel data format to check whether the value is repeated or not. This repeat corresponds to **iio_chan_spec.scan_type.repeat**. Then, assuming the code could work with two variants of a converter (the first one coding data on 16 bits and the second coding data on 64 bits), a check for the data length is performed to print in the appropriate format. This length corresponds to **iio_chan_spec.scan_type.storagebits**. Do note that **PRIi16** and **PRIi64** are the integer **printf** formats for **int16_t** and **int64_t**, respectively.
 
@@ -2607,19 +2003,19 @@ The preceding code reads the channel data format to check whether the value is r
 
 In callback-based sample reading, **iio_buffer_foreach_sample()** is at the heart of the reading logic. It has the following definition:
 
-ssize_t iio_buffer_foreach_sample(struct iio_buffer \*buf,
-
-            ssize_t(\*)(const struct iio_channel \*chn,
-
-                void \*src, size_t bytes, void \*d) callback,
-
-            void \*data)
+``` c
+ssize_t iio_buffer_foreach_sample(struct iio_buffer *buf,
+            ssize_t(*)(const struct iio_channel *chn,
+                void *src, size_t bytes, void *d) callback,
+            void *data)
+```
 
 This function calls the supplied callback for each sample found in a buffer. **data** is user data, which, if set, will be passed to the callback in the last argument. This function iterates over samples, and each sample is read and passed to a callback, along with the channel from where this sample originates. This callback has the following definition:
 
-ssize_t sample_cb(const struct iio_channel \*chn,
-
-              void \*src, size_t bytes, \_\_notused void \*d)
+``` c
+ssize_t sample_cb(const struct iio_channel *chn,
+              void *src, size_t bytes, __notused void *d)
+```
 
 The callback receives four arguments, as follows:
 
@@ -2632,69 +2028,44 @@ This method may be used to read from (in the case of input devices) or write to 
 
 The following is an example of this kind of callback implementation:
 
-static ssize_t sample_cb(const struct iio_channel \*chn,
-
-              void \*src, size_t bytes, \_\_notused void \*d)
-
+``` c
+static ssize_t sample_cb(const struct iio_channel *chn,
+              void *src, size_t bytes, __notused void *d)
 {
-
-    const struct iio_data_format \*fmt =
-
-                         iio_channel_get_data_format(chn);
-
-    unsigned int j, repeat = fmt-\>repeat ? : 1;
-
-    printf("%s ", iio_channel_get_id(chn));
-
-    for (j = 0; j \< repeat; ++j) {
-
-        if (bytes == sizeof(int16_t))
-
-            printf("Read 16bit value: " "%" PRIi16,
-
-                   ((int16_t \*)src)\[j\]);
-
-        else if (bytes == sizeof(int64_t))
-
-            printf("Read 64bit value: " "%" PRIi64,
-
-                   ((int64_t \*)src)\[j\]);
-
-    }
-
-    return bytes \* repeat;
-
+    const struct iio_data_format *fmt =
+                         iio_channel_get_data_format(chn);
+    unsigned int j, repeat = fmt->repeat ? : 1;
+    printf("%s ", iio_channel_get_id(chn));
+    for (j = 0; j < repeat; ++j) {
+        if (bytes == sizeof(int16_t))
+            printf("Read 16bit value: " "%" PRIi16,
+                   ((int16_t *)src)[j]);
+        else if (bytes == sizeof(int64_t))
+            printf("Read 64bit value: " "%" PRIi64,
+                   ((int64_t *)src)[j]);
+    }
+    return bytes * repeat;
 }
+```
 
 Then, in the main code, we loop and iterate over samples in the buffer, as follows:
 
+``` c
 int ret;
-
-\[...\]
-
+[...]
 IIOC_DBG("Enter buffer refill loop.\n");
-
 while (true) {
-
-    nbytes = iio_buffer_refill(buf);
-
-    ret = iio_buffer_foreach_sample(buf, sample_cb, NULL);
-
-    if (ret \< 0) {
-
-        char text\[256\];
-
-        iio_strerror(-ret, buf, sizeof(text));
-
-        printf("%s (%d) while processing buffer\n",
-
-                text, ret);
-
-    }
-
-    printf("\n");
-
+    nbytes = iio_buffer_refill(buf);
+    ret = iio_buffer_foreach_sample(buf, sample_cb, NULL);
+    if (ret < 0) {
+        char text[256];
+        iio_strerror(-ret, buf, sizeof(text));
+        printf("%s (%d) while processing buffer\n",
+                text, ret);
+    }
+    printf("\n");
 }
+```
 
 The preceding code, instead of playing with samples directly, delegates the job to a callback.
 
@@ -2702,25 +2073,18 @@ The preceding code, instead of playing with samples directly, delegates the job 
 
 The last method in this read series is to use one of the higher-level functions provided by the **iio_channel** class. These are **iio_channel_read_raw()**, **iio_channel_write_raw()**, **iio_channel_read()**, and **iio_channel_write()**, all defined as the following:
 
-size_t iio_channel_read_raw(const struct iio_channel \*chn,
-
-        struct iio_buffer \*buffer, void \*dst, size_t len)
-
-size_t iio_channel_read(onst struct iio_channel \*chn,
-
-        struct iio_buffer \*buffer, void \*dst, size_t len)
-
-size_t iio_channel_write_raw(const struct iio_channel \*chn,
-
-        struct iio_buffer \* buffer, const void \*src,
-
-        size_t len)
-
-size_t iio_channel_write(const struct iio_channel \*chn,
-
-        struct iio_buffer \*buffer, const void \*src,
-
-        size_t len)
+``` c
+size_t iio_channel_read_raw(const struct iio_channel *chn,
+        struct iio_buffer *buffer, void *dst, size_t len)
+size_t iio_channel_read(onst struct iio_channel *chn,
+        struct iio_buffer *buffer, void *dst, size_t len)
+size_t iio_channel_write_raw(const struct iio_channel *chn,
+        struct iio_buffer * buffer, const void *src,
+        size_t len)
+size_t iio_channel_write(const struct iio_channel *chn,
+        struct iio_buffer *buffer, const void *src,
+        size_t len)
+```
 
 The former two will basically copy the first **N** samples of a channel (**chan**) to a user-specified buffer (**dst**), which must have been allocated beforehand (**N** depending on the size of this buffer and a sample's storage size, that is, **iio_chan_spec.scan_type.storagebits / 8**). The difference between the two is that the **\_raw** variant won't convert the samples and the user buffer will contain raw data, while the other variant will convert each sample so that the user buffer will contain processed values. These functions kind of demultiplex (since they target one channel's samples among several ones) samples of a given channel.
 
@@ -2728,89 +2092,50 @@ On the other hand, **iio_channel_write_raw()** and **iio_channel_write()** will 
 
 Let's try to use the preceding APIs to read data from a device:
 
-\#define CBUF_LENGTH 2048 /\* the number of sample we need \*/
-
-\[...\]
-
-const struct iio_data_format \*fmt;
-
+``` c
+#define CBUF_LENGTH 2048 /* the number of sample we need */
+[...]
+const struct iio_data_format *fmt;
 unsigned int i, repeat;
-
-struct iio_channel \*chan\[8\] = {0};
-
-\[...\]
-
+struct iio_channel *chan[8] = {0};
+[...]
 IIOC_DBG("Enter buffer refill loop.\n");
-
 while (true) {
-
-    nbytes = iio_buffer_refill(buf);
-
-    for (i = 0; i \< channel_count; ++i) {
-
-        uint8_t \*c_buf;
-
-        size_t sample, bytes;
-
-        fmt = iio_channel_get_data_format(chan\[i\]);
-
-        repeat = fmt-\>repeat ? : 1;
-
-        size_t sample_size = fmt-\>length / 8 \* repeat;
-
-        c_buf = malloc(sample_size \* CBUF_LENGTH);
-
-        if (!c_buf) {
-
-            printf("No memory space for c_buf\n");
-
-            return -1;
-
-        }
-
-        if (buffer_read_method == CHANNEL_READ_RAW)
-
-            bytes = iio_channel_read_raw(chan\[i\], buf,
-
-                     c_buf, sample_size \* CBUF_LENGTH);
-
-        else
-
-            bytes = iio_channel_read(chan\[i\], buf, c_buf,
-
-                     sample_size \* CBUF_LENGTH);
-
-        printf("%s ", iio_channel_get_id(chan\[i\]));
-
-        for (sample = 0; sample \< bytes / sample_size;
-
-               ++sample) {
-
-            for (j = 0; j \< repeat; ++j) {
-
-               if (fmt-\>length / 8 == sizeof(int16_t))
-
-                   printf("%" PRIi16 " ",
-
-                           ((int16_t \*)buf)\[sample+j\]);
-
-               else if (fmt-\>length / 8 == sizeof(int64_t))
-
-                   printf("%" PRId64 " ",
-
-                          ((int64_t \*)buf)\[sample+j\]);
-
-            }
-
-        }
-
-        free(c_buf);
-
-    }
-
-    printf("\n");
-
+    nbytes = iio_buffer_refill(buf);
+    for (i = 0; i < channel_count; ++i) {
+        uint8_t *c_buf;
+        size_t sample, bytes;
+        fmt = iio_channel_get_data_format(chan[i]);
+        repeat = fmt->repeat ? : 1;
+        size_t sample_size = fmt->length / 8 * repeat;
+        c_buf = malloc(sample_size * CBUF_LENGTH);
+        if (!c_buf) {
+            printf("No memory space for c_buf\n");
+            return -1;
+        }
+        if (buffer_read_method == CHANNEL_READ_RAW)
+            bytes = iio_channel_read_raw(chan[i], buf,
+                     c_buf, sample_size * CBUF_LENGTH);
+        else
+            bytes = iio_channel_read(chan[i], buf, c_buf,
+                     sample_size * CBUF_LENGTH);
+        printf("%s ", iio_channel_get_id(chan[i]));
+        for (sample = 0; sample < bytes / sample_size;
+               ++sample) {
+            for (j = 0; j < repeat; ++j) {
+               if (fmt->length / 8 == sizeof(int16_t))
+                   printf("%" PRIi16 " ",
+                           ((int16_t *)buf)[sample+j]);
+               else if (fmt->length / 8 == sizeof(int64_t))
+                   printf("%" PRId64 " ",
+                          ((int64_t *)buf)[sample+j]);
+            }
+        }
+        free(c_buf);
+    }
+    printf("\n");
 }
+```
 
 In the preceding example, we first fetch data samples from the kernel using **iio_buffer_refill()**. Then, for each channel, we obtain the data format of this channel using **iio_channel_get_data_format()**, from which we grab the size of a sample for this channel. After that, we use this sample's size to compute the user buffer size to allocate for receiving this channel's samples. Obtaining a channel's sample size allows us to precisely determine the size of the user buffer to allocate.
 

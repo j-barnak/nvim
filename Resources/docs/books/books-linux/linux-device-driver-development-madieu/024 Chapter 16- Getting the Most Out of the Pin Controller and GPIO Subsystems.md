@@ -42,25 +42,18 @@ The pin controller allows gathering pins, the modes these pins should operate in
 
 The pin controller descriptor data structure is defined as follows:
 
+``` c
 struct pinctrl_desc {
-
-     const char \*name;
-
-     const struct pinctrl_pin_desc \*pins;
-
-     unsigned int npins;
-
-     const struct pinctrl_ops \*pctlops;
-
-     const struct pinmux_ops \*pmxops;
-
-     const struct pinconf_ops \*confops;
-
-     struct module \*owner;
-
-\[...\]
-
+     const char *name;
+     const struct pinctrl_pin_desc *pins;
+     unsigned int npins;
+     const struct pinctrl_ops *pctlops;
+     const struct pinmux_ops *pmxops;
+     const struct pinconf_ops *confops;
+     struct module *owner;
+[...]
 };
+```
 
 In that pin controller data structure, only relevant elements have been listed, and the following are their meanings:
 
@@ -68,15 +61,13 @@ In that pin controller data structure, only relevant elements have been listed, 
 
 - **pins**: An array of pin descriptors that describe all the pins that this controller can handle. It has to be noted that the controller side represents each pin/pad as an instance of **struct pinctrl_pin_desc**, defined as follows:
 
+  ``` c
   struct pinctrl_pin_desc {
-
-       unsigned number;
-
-       const char \*name;
-
-  \[...\]
-
+       unsigned number;
+       const char *name;
+  [...]
   };
+  ```
 
 In the preceding data structure, **number** represents the unique pin number from the global pin number space of the pin controller, and **name** is the name of this pin.
 
@@ -87,29 +78,29 @@ In the preceding data structure, **number** represents the unique pin number fro
 
 Once the appropriate callbacks are defined and this data structure has been initialized, it can be passed to **devm_pinctrl_register()**, defined as the following:
 
-struct pinctrl_dev \*devm_pinctrl_register(
-
-                      struct device \*dev,
-
-                      struct pinctrl_desc \*pctldesc,
-
-                      void \*driver_data);
+``` c
+struct pinctrl_dev *devm_pinctrl_register(
+                      struct device *dev,
+                      struct pinctrl_desc *pctldesc,
+                      void *driver_data);
+```
 
 The preceding function will register the pin controller with the system, returning in the meantime a pointer to an instance of **struct pinctrl_dev**, representing the pin controller device, passed as a parameter to most (if not all) of the callback operations exposed by the pin controller driver. On error, the function returns an error pointer, which can be handled with **PTR_ERR**.
 
 The controller's control, multiplexing, and configuration operation tables are to be set up according to the features supported by the underlying hardware. Their respective data structures are defined in the header files that must also be included in the driver, as follows:
 
-\#include \<linux/pinctrl/pinconf.h\>
-
-\#include \<linux/pinctrl/pinconf-generic.h\>
-
-\#include \<linux/pinctrl/pinctrl.h\>
-
-\#include \<linux/pinctrl/pinmux.h\>
+``` c
+#include <linux/pinctrl/pinconf.h>
+#include <linux/pinctrl/pinconf-generic.h>
+#include <linux/pinctrl/pinctrl.h>
+#include <linux/pinctrl/pinmux.h>
+```
 
 When it comes to the pin control consumer interface, the following header must be used instead:
 
-\#include \<linux/pinctrl/consumer.h\>
+``` c
+#include <linux/pinctrl/consumer.h>
+```
 
 Before being accessed by consumer drivers, pins must be assigned to the devices that need to control them. The recommended way to assign pins to devices is from the **device tree** (**DT**). How pins groups are assigned in the DT closely depends on the platform, thus the pin controller driver and its binding.
 
@@ -120,127 +111,83 @@ Every pin control state is assigned a contiguous integer ID that starts at 0. A 
 
 Here is an excerpt of the DT, showing some device nodes, along with their pin control nodes. Let's name this excerpt **pinctrl-excerpt**:
 
+``` c
 &usdhc4 {
-
-\[...\]
-
-     pinctrl-0 = \<&pinctrl_usdhc4_1\>;
-
-     pinctrl-names = "default";
-
+[...]
+     pinctrl-0 = <&pinctrl_usdhc4_1>;
+     pinctrl-names = "default";
 };
-
 gpio-keys {
-
-    compatible = "gpio-keys";
-
-    pinctrl-names = "default";
-
-    pinctrl-0 = \<&pinctrl_io_foo &pinctrl_io_bar\>;
-
+    compatible = "gpio-keys";
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_io_foo &pinctrl_io_bar>;
 };
-
-iomuxc@020e0000 { /\* Pin controller node \*/
-
-    compatible = "fsl,imx6q-iomuxc";
-
-    reg = \<0x020e0000 0x4000\>;
-
-    /\* shared pinctrl settings \*/
-
-    usdhc4 { /\* first node describing the function \*/
-
-        pinctrl_usdhc4_1: usdhc4grp-1 { /\* second node \*/
-
-            fsl,pins = \<
-
-                MX6QDL_PAD_SD4_CMD\_\_SD4_CMD    0x17059
-
-                MX6QDL_PAD_SD4_CLK\_\_SD4_CLK    0x10059
-
-                MX6QDL_PAD_SD4_DAT0\_\_SD4_DATA0 0x17059
-
-                MX6QDL_PAD_SD4_DAT1\_\_SD4_DATA1 0x17059
-
-                MX6QDL_PAD_SD4_DAT2\_\_SD4_DATA2 0x17059
-
-                MX6QDL_PAD_SD4_DAT3\_\_SD4_DATA3 0x17059
-
-                \[...\]
-
-            \>;
-
-        };
-
-    };
-
-    \[...\]
-
-    uart3 {
-
-        pinctrl_uart3_1: uart3grp-1 {
-
-            fsl,pins = \<
-
-                MX6QDL_PAD_EIM_D24\_\_UART3_TX_DATA 0x1b0b1
-
-                MX6QDL_PAD_EIM_D25\_\_UART3_RX_DATA 0x1b0b1
-
-            \>;
-
-        };
-
-    };
-
-    // GPIOs (Inputs)
-
-   gpios {
-
-        pinctrl_io_foo: pinctrl_io_foo {
-
-           fsl,pins = \<
-
-              MX6QDL_PAD_DISP0_DAT15\_\_GPIO5_IO09  0x1f059
-
-              MX6QDL_PAD_DISP0_DAT13\_\_GPIO5_IO07  0x1f059
-
-           \>;
-
-        };
-
-        pinctrl_io_bar: pinctrl_io_bar {
-
-           fsl,pins = \<
-
-              MX6QDL_PAD_DISP0_DAT11\_\_GPIO5_IO05  0x1f059
-
-              MX6QDL_PAD_DISP0_DAT9\_\_GPIO4_IO30   0x1f059
-
-              MX6QDL_PAD_DISP0_DAT7\_\_GPIO4_IO28   0x1f059
-
-           \>;
-
-        };
-
-    };
-
+iomuxc@020e0000 { /* Pin controller node */
+    compatible = "fsl,imx6q-iomuxc";
+    reg = <0x020e0000 0x4000>;
+    /* shared pinctrl settings */
+    usdhc4 { /* first node describing the function */
+        pinctrl_usdhc4_1: usdhc4grp-1 { /* second node */
+            fsl,pins = <
+                MX6QDL_PAD_SD4_CMD__SD4_CMD    0x17059
+                MX6QDL_PAD_SD4_CLK__SD4_CLK    0x10059
+                MX6QDL_PAD_SD4_DAT0__SD4_DATA0 0x17059
+                MX6QDL_PAD_SD4_DAT1__SD4_DATA1 0x17059
+                MX6QDL_PAD_SD4_DAT2__SD4_DATA2 0x17059
+                MX6QDL_PAD_SD4_DAT3__SD4_DATA3 0x17059
+                [...]
+            >;
+        };
+    };
+    [...]
+    uart3 {
+        pinctrl_uart3_1: uart3grp-1 {
+            fsl,pins = <
+                MX6QDL_PAD_EIM_D24__UART3_TX_DATA 0x1b0b1
+                MX6QDL_PAD_EIM_D25__UART3_RX_DATA 0x1b0b1
+            >;
+        };
+    };
+    // GPIOs (Inputs)
+   gpios {
+        pinctrl_io_foo: pinctrl_io_foo {
+           fsl,pins = <
+              MX6QDL_PAD_DISP0_DAT15__GPIO5_IO09  0x1f059
+              MX6QDL_PAD_DISP0_DAT13__GPIO5_IO07  0x1f059
+           >;
+        };
+        pinctrl_io_bar: pinctrl_io_bar {
+           fsl,pins = <
+              MX6QDL_PAD_DISP0_DAT11__GPIO5_IO05  0x1f059
+              MX6QDL_PAD_DISP0_DAT9__GPIO4_IO30   0x1f059
+              MX6QDL_PAD_DISP0_DAT7__GPIO4_IO28   0x1f059
+           >;
+        };
+    };
 };
+```
 
 In the preceding example, a pin configuration is given in the form **\<PIN_FUNCTION\> \<PIN_SETTING\>**, where **\<PIN_FUNCTION\>** can be seen as the pin function or pin mode, and **\<PIN_SETTING\>** represents the pin's electrical properties:
 
-MX6QDL_PAD_DISP0_DAT15\_\_GPIO5_IO09 0x80000000
+``` c
+MX6QDL_PAD_DISP0_DAT15__GPIO5_IO09 0x80000000
+```
 
 In the excerpt, **MX6QDL_PAD_DISP0_DAT15\_\_GPIO5_IO09** represents the pin function/mode, which is GPIO in this case, and **0x80000000** represents the pin settings or electrical properties.
 
 Let's consider another example as follows:
 
-MX6QDL_PAD_EIM_D25\_\_UART3_RX_DATA 0x1b0b1
+``` c
+MX6QDL_PAD_EIM_D25__UART3_RX_DATA 0x1b0b1
+```
 
 In that excerpt, **MX6QDL_PAD_EIM_D25\_\_UART3_RX_DATA** represents the pin function, which is the RX line of UART3, and **0x1b0b1** represents its electrical settings.
 
 The pin function is a macro whose value is meaningful for the pin controller driver only. These are generally defined in header files located in **arch/\<arch\>/boot/dts/**. If you use an UDOO quad, for example, which has an i.MX6 quad core (32-bit ARM), the pin function header would be **arch/arm/boot/dts/imx6q-pinfunc.h**. The following is the macro corresponding to the fifth line of the GPIO5 controller:
 
-\#define MX6QDL_PAD_DISP0_DAT11\_\_GPIO5_IO05 0x19c 0x4b0 0x000 0x5 0x0
+``` c
+#define MX6QDL_PAD_DISP0_DAT11__GPIO5_IO05 0x19c 0x4b0 0x000 0x5 0x0
+```
 
 **\<PIN_SETTING\>** can be used to set up things such as pull-ups, pull-downs, keepers, drive strength, and so on. How it should be specified depends on the pin controller binding, and the meaning of its value depends on the SoC datasheet, generally in the IOMUX section. On i.MX6 IOMUXC, only the lower 17 bits are used for this purpose.
 
@@ -248,39 +195,25 @@ Back to **pinctrl-excerpt**, prior to selecting a pin group and applying its con
 
 The following is an example that shows how to grab a pin control group and apply its default configuration:
 
-\#include \<linux/pinctrl/consumer.h\>
-
+``` c
+#include <linux/pinctrl/consumer.h>
 int ret;
-
-struct pinctrl_state \*s;
-
-struct pinctrl \*p;
-
+struct pinctrl_state *s;
+struct pinctrl *p;
 foo_probe()
-
 {
-
-    p = devm_pinctrl_get(dev);
-
-    if (IS_ERR(p))
-
-        return PTR_ERR(p);
-
-    s = pinctrl_lookup_state(p, name);
-
-    if (IS_ERR(s))
-
-        return PTR_ERR(s);
-
-    ret = pinctrl_select_state(p, s);
-
-    if (ret \< 0) // on error
-
-        return ret;
-
-\[...\]
-
+    p = devm_pinctrl_get(dev);
+    if (IS_ERR(p))
+        return PTR_ERR(p);
+    s = pinctrl_lookup_state(p, name);
+    if (IS_ERR(s))
+        return PTR_ERR(s);
+    ret = pinctrl_select_state(p, s);
+    if (ret < 0) // on error
+        return ret;
+[...]
 }
+```
 
 Like other resources (such as memory regions, clocks, and so on), it is a good practice to grab pins and apply their configuration from within the **probe()** function. However, this operation is so common that it has been integrated into the Linux device core as a step while probing devices. Thus, when a device is being probed, the device core will do the following:
 
@@ -298,21 +231,20 @@ Note
 
 The **pinctrl_put()** function can be used to release a pin control that has been requested using the non-managed API, that is, **pinctrl_get()**. That said, you can use **devm_pinctrl_get_select()**, given the name of the state to select, in order to configure pinmux in a single shot. This function is defined in **include/linux/pinctrl/consumer.h** as follows:
 
-static struct pinctrl \*devm_pinctrl_get_select(
-
-                  struct device \*dev, const char \*name)
+``` c
+static struct pinctrl *devm_pinctrl_get_select(
+                  struct device *dev, const char *name)
+```
 
 In the previous prototype, **name** is the name of the state as written in the **pinctrl-name** property. If the name of the state is **default**, the helper **devm_pinctr_get_select_default()** can be used, which is a wrapper around **devm_pinctl_get_select()** as follows:
 
-static struct pinctrl \* pinctrl_get_select_default(
-
-                                      struct device \*dev)
-
+``` c
+static struct pinctrl * pinctrl_get_select_default(
+                                      struct device *dev)
 {
-
-   return pinctrl_get_select(dev, PINCTRL_STATE_DEFAULT);
-
+   return pinctrl_get_select(dev, PINCTRL_STATE_DEFAULT);
 }
+```
 
 Now that we are familiar with the pin control subsystem (with both controller and consumer interfaces), we can learn how to deal with GPIO controllers, knowing that GPIO is an operating mode that a pin can work in.
 
@@ -322,135 +254,73 @@ The GPIO controller interface is designed around a single data structure, **stru
 
 Back to the code, a GPIO controller is represented as an instance of **struct gpio_chip**, defined in **\<linux/gpio/driver.h\>** as follows:
 
+``` c
 struct gpio_chip {
-
-     const char       \*label;
-
-     struct gpio_device    \*gpiodev;
-
-     struct device         \*parent;
-
-     struct module         \*owner;
-
-     int        (\*request)(struct gpio_chip \*gc,
-
-                           unsigned int offset);
-
-     void       (\*free)(struct gpio_chip \*gc,
-
-                           unsigned int offset);
-
-     int       (\*get_direction)(struct gpio_chip \*gc,
-
-                           unsigned int offset);
-
-     int       (\*direction_input)(struct gpio_chip \*gc,
-
-                           unsigned int offset);
-
-     int       (\*direction_output)(struct gpio_chip \*gc,
-
-                      unsigned int offset, int value);
-
-     int       (\*get)(struct gpio_chip \*gc,
-
-                           unsigned int offset);
-
-     int       (\*get_multiple)(struct gpio_chip \*gc,
-
-                           unsigned long \*mask,
-
-                           unsigned long \*bits);
-
-     void       (\*set)(struct gpio_chip \*gc,
-
-                      unsigned int offset, int value);
-
-     void       (\*set_multiple)(struct gpio_chip \*gc,
-
-                           unsigned long \*mask,
-
-                           unsigned long \*bits);
-
-     int        (\*set_config)(struct gpio_chip \*gc,
-
-                            unsigned int offset,
-
-                            unsigned long config);
-
-     int        (\*to_irq)(struct gpio_chip \*gc,
-
-                           unsigned int offset);
-
-     int       (\*init_valid_mask)(struct gpio_chip \*gc,
-
-                              unsigned long \*valid_mask,
-
-                              unsigned int ngpios);
-
-     int       (\*add_pin_ranges)(struct gpio_chip \*gc);
-
-     int        base;
-
-     u16        ngpio;
-
-     const char \*const \*names;
-
-     bool       can_sleep;
-
-\#if IS_ENABLED(CONFIG_GPIO_GENERIC)
-
-     unsigned long (\*read_reg)(void \_\_iomem \*reg);
-
-     void (\*write_reg)(void \_\_iomem \*reg, unsigned long data);
-
-     bool be_bits;
-
-     void \_\_iomem \*reg_dat;
-
-     void \_\_iomem \*reg_set;
-
-     void \_\_iomem \*reg_clr;
-
-     void \_\_iomem \*reg_dir_out;
-
-     void \_\_iomem \*reg_dir_in;
-
-     bool bgpio_dir_unreadable;
-
-     int bgpio_bits;
-
-     spinlock_t bgpio_lock;
-
-     unsigned long bgpio_data;
-
-     unsigned long bgpio_dir;
-
-\#endif /\* CONFIG_GPIO_GENERIC \*/
-
-\#ifdef CONFIG_GPIOLIB_IRQCHIP
-
-     struct gpio_irq_chip irq;
-
-\#endif /\* CONFIG_GPIOLIB_IRQCHIP \*/
-
-     unsigned long \*valid_mask;
-
-\#if defined(CONFIG_OF_GPIO)
-
-     struct device_node \*of_node;
-
-     unsigned int of_gpio_n_cells;
-
-     int (\*of_xlate)(struct gpio_chip \*gc,
-
-                const struct of_phandle_args \*gpiospec,
-
-                u32 \*flags);
-
-\#endif /\* CONFIG_OF_GPIO \*/
-
+     const char       *label;
+     struct gpio_device    *gpiodev;
+     struct device         *parent;
+     struct module         *owner;
+     int        (*request)(struct gpio_chip *gc,
+                           unsigned int offset);
+     void       (*free)(struct gpio_chip *gc,
+                           unsigned int offset);
+     int       (*get_direction)(struct gpio_chip *gc,
+                           unsigned int offset);
+     int       (*direction_input)(struct gpio_chip *gc,
+                           unsigned int offset);
+     int       (*direction_output)(struct gpio_chip *gc,
+                      unsigned int offset, int value);
+     int       (*get)(struct gpio_chip *gc,
+                           unsigned int offset);
+     int       (*get_multiple)(struct gpio_chip *gc,
+                           unsigned long *mask,
+                           unsigned long *bits);
+     void       (*set)(struct gpio_chip *gc,
+                      unsigned int offset, int value);
+     void       (*set_multiple)(struct gpio_chip *gc,
+                           unsigned long *mask,
+                           unsigned long *bits);
+     int        (*set_config)(struct gpio_chip *gc,
+                            unsigned int offset,
+                            unsigned long config);
+     int        (*to_irq)(struct gpio_chip *gc,
+                           unsigned int offset);
+     int       (*init_valid_mask)(struct gpio_chip *gc,
+                              unsigned long *valid_mask,
+                              unsigned int ngpios);
+     int       (*add_pin_ranges)(struct gpio_chip *gc);
+     int        base;
+     u16        ngpio;
+     const char *const *names;
+     bool       can_sleep;
+#if IS_ENABLED(CONFIG_GPIO_GENERIC)
+     unsigned long (*read_reg)(void __iomem *reg);
+     void (*write_reg)(void __iomem *reg, unsigned long data);
+     bool be_bits;
+     void __iomem *reg_dat;
+     void __iomem *reg_set;
+     void __iomem *reg_clr;
+     void __iomem *reg_dir_out;
+     void __iomem *reg_dir_in;
+     bool bgpio_dir_unreadable;
+     int bgpio_bits;
+     spinlock_t bgpio_lock;
+     unsigned long bgpio_data;
+     unsigned long bgpio_dir;
+#endif /* CONFIG_GPIO_GENERIC */
+#ifdef CONFIG_GPIOLIB_IRQCHIP
+     struct gpio_irq_chip irq;
+#endif /* CONFIG_GPIOLIB_IRQCHIP */
+     unsigned long *valid_mask;
+#if defined(CONFIG_OF_GPIO)
+     struct device_node *of_node;
+     unsigned int of_gpio_n_cells;
+     int (*of_xlate)(struct gpio_chip *gc,
+                const struct of_phandle_args *gpiospec,
+                u32 *flags);
+#endif /* CONFIG_OF_GPIO */
 };
+```
 
 The following are the meanings of each element in the structure:
 
@@ -472,39 +342,25 @@ The following are the meanings of each element in the structure:
 
 - **set_multiple** is called when you need to assign output values for multiple signals defined by **mask**. If not provided, the kernel will install a generic hook that will walk through mask bits and execute **chip-\>set(i)** on each bit set. See here how you can implement this function:
 
-  static void gpio_chip_set_multiple(
-
-                      struct gpio_chip \*chip,
-
-                      unsigned long \*mask,
-
-                      unsigned long \*bits)
-
+  ``` c
+   static void gpio_chip_set_multiple(
+                      struct gpio_chip *chip,
+                      unsigned long *mask,
+                      unsigned long *bits)
   {
-
-      if (chip-\>set_multiple) {
-
-          chip-\>set_multiple(chip, mask, bits);
-
-      } else {
-
-          unsigned int i;
-
-          /\*
-
-           \* set outputs if the corresponding
-
-           \* mask bit is set
-
-           \*/
-
-          for_each_set_bit(i, mask, chip-\>ngpio)
-
-              chip-\>set(chip, i, test_bit(i, bits));
-
-          }
-
+      if (chip->set_multiple) {
+          chip->set_multiple(chip, mask, bits);
+      } else {
+          unsigned int i;
+          /*
+           * set outputs if the corresponding
+           * mask bit is set
+           */
+          for_each_set_bit(i, mask, chip->ngpio)
+              chip->set(chip, i, test_bit(i, bits));
+          }
   }
+  ```
 
 - **set_debounce** if supported by the controller, this hook is an optional callback provided to set the debounce time for the specified GPIO.
 
@@ -536,11 +392,11 @@ Each GPIO controller exposes a number of signals that are identified in function
 
 A GPIO controller needs nothing but the set of callbacks that correspond to the features it supports. After every callback of interest has been defined and other fields set, the driver should call **devm_gpiochip_add_data()** on the configured **struct gpio_chip** structure in order to register the controller with the kernel. You have probably guessed that you'd better use the managed API (the **devm\_** prefix) since it takes care of chip removal when necessary and releasing resources. If, however, you used the classical method, you will have to use **gpiochip_remove()** to remove the chip if necessary:
 
-int gpiochip_add_data(struct gpio_chip \*gc, void \*data)
-
-int devm_gpiochip_add_data(struct device \*dev,
-
-                        struct gpio_chip \*gc, void \*data)
+``` c
+int gpiochip_add_data(struct gpio_chip *gc, void *data)
+int devm_gpiochip_add_data(struct device *dev,
+                        struct gpio_chip *gc, void *data)
+```
 
 In the preceding prototypes, **gc** is the chip to register and **data** is the driver's private data associated with this chip. They both return a negative error code if the chip can't be registered, such as because **gc-\>base** is invalid or already associated with a different chip. Otherwise, they return zero as a success code.
 
@@ -548,21 +404,16 @@ There are, however, pin controllers that are tightly coupled to the GPIO chip, a
 
 However, the driver must call **gpiochip_add_pin_range()** in order to be compatible with older, existing device tree files that don't set the **gpio-ranges** attribute or systems that use ACPI. The following is an example:
 
+``` c
 if (!of_find_property(np, "gpio-ranges", NULL)) {
-
-     ret = gpiochip_add_pin_range(chip,
-
-                   dev_name(hw-\>dev), 0, 0, chip-\>ngpio);
-
-     if (ret \< 0) {
-
-           gpiochip_remove(chip);
-
-           return ret;
-
-     }
-
+     ret = gpiochip_add_pin_range(chip,
+                   dev_name(hw->dev), 0, 0, chip->ngpio);
+     if (ret < 0) {
+           gpiochip_remove(chip);
+           return ret;
+     }
 }
+```
 
 Once more, it must be noted that the preceding is used just for backward compatibility for these old **pinctrl** nodes without the **gpio-ranges** property. Otherwise, calling **gpiochip_add_pin_range()** directly from a device tree-supported pin controller driver is deprecated. Please see *Section 2.1* of **Documentation/devicetree/bindings/gpio/gpio.txt** on how to bind pin controller and GPIO drivers via the **gpio-ranges** property.
 
@@ -570,79 +421,49 @@ We can see how easy it is to write a GPIO controller driver. In the book sources
 
 To write such drivers, the following header should be included:
 
-\#include \<linux/gpio.h\>
+``` c
+#include <linux/gpio.h>
+```
 
 Following is an excerpt from the driver we have written for our controller:
 
-\#define GPIO_NUM 16
-
+``` c
+#define GPIO_NUM 16
 struct mcp23016 {
-
-    struct i2c_client \*client;
-
-    struct gpio_chip gpiochip;
-
-    struct mutex lock;
-
+    struct i2c_client *client;
+    struct gpio_chip gpiochip;
+    struct mutex lock;
 };
-
-static int mcp23016_probe(struct i2c_client \*client)
-
+static int mcp23016_probe(struct i2c_client *client)
 {
+  struct mcp23016 *mcp;
 
-  struct mcp23016 \*mcp;
-
-  
-
-  if (!i2c_check_functionality(client-\>adapter,
-
-      I2C_FUNC_SMBUS_BYTE_DATA))
-
-    return -EIO;
-
-  mcp = devm_kzalloc(&client-\>dev, sizeof(\*mcp),
-
-                      GFP_KERNEL);
-
-  if (!mcp)
-
-    return -ENOMEM;
-
-  mcp-\>gpiochip.label = client-\>name;
-
-  mcp-\>gpiochip.base = -1;
-
-  mcp-\>gpiochip.dev = &client-\>dev;
-
-  mcp-\>gpiochip.owner = THIS_MODULE;
-
-  mcp-\>gpiochip.ngpio = GPIO_NUM; /\* 16 \*/
-
-  /\* may not be accessed from atomic context \*/
-
-  mcp-\>gpiochip.can_sleep = 1;
-
-  mcp-\>gpiochip.get = mcp23016_get_value;
-
-  mcp-\>gpiochip.set = mcp23016_set_value;
-
-  mcp-\>gpiochip.direction_output =
-
-                          mcp23016_direction_output;
-
-  mcp-\>gpiochip.direction_input =
-
-                          mcp23016_direction_input;
-
-  mcp-\>client = client;
-
-  i2c_set_clientdata(client, mcp);
-
-  return devm_gpiochip_add_data(&client-\>dev,
-
-                                &mcp-\>gpiochip, mcp);
-
+  if (!i2c_check_functionality(client->adapter,
+      I2C_FUNC_SMBUS_BYTE_DATA))
+    return -EIO;
+  mcp = devm_kzalloc(&client->dev, sizeof(*mcp),
+                      GFP_KERNEL);
+  if (!mcp)
+    return -ENOMEM;
+  mcp->gpiochip.label = client->name;
+  mcp->gpiochip.base = -1;
+  mcp->gpiochip.dev = &client->dev;
+  mcp->gpiochip.owner = THIS_MODULE;
+  mcp->gpiochip.ngpio = GPIO_NUM; /* 16 */
+  /* may not be accessed from atomic context */
+  mcp->gpiochip.can_sleep = 1;
+  mcp->gpiochip.get = mcp23016_get_value;
+  mcp->gpiochip.set = mcp23016_set_value;
+  mcp->gpiochip.direction_output =
+                          mcp23016_direction_output;
+  mcp->gpiochip.direction_input =
+                          mcp23016_direction_input;
+  mcp->client = client;
+  i2c_set_clientdata(client, mcp);
+  return devm_gpiochip_add_data(&client->dev,
+                                &mcp->gpiochip, mcp);
 }
+```
 
 In the preceding excerpt, the GPIO chip data structure has been set up before being passed to **devm_gpiochip_get_data()**, which is called to register the GPIO controller with the system. As a result, a GPIO character device node will appear under **/dev**.
 
@@ -650,59 +471,35 @@ In the preceding excerpt, the GPIO chip data structure has been set up before be
 
 IRQ chip support can be enabled in a GPIO controller by setting up the **struct gpio_irq_chip** structure embedded into this GPIO controller data structure. This **struct gpio_irq_chip** structure is used to group all fields related to interrupt handling in a GPIO chip and is defined as follows:
 
+``` c
 struct gpio_irq_chip {
-
-     struct irq_chip \*chip;
-
-     struct irq_domain \*domain;
-
-     const struct irq_domain_ops \*domain_ops;
-
-     irq_flow_handler_t handler;
-
-     unsigned int default_type;
-
-     irq_flow_handler_t parent_handler;
-
-     union {
-
-          void \*parent_handler_data;
-
-          void \*\*parent_handler_data_array;
-
-     };
-
-     unsigned int num_parents;
-
-     unsigned int \*parents;
-
-     unsigned int \*map;
-
-     bool threaded;
-
-     bool per_parent_data;
-
-     int (\*init_hw)(struct gpio_chip \*gc);
-
-     void (\*init_valid_mask)(struct gpio_chip \*gc,
-
-                      unsigned long \*valid_mask,
-
-                      unsigned int ngpios);
-
-     unsigned long \*valid_mask;
-
-     unsigned int first;
-
-     void       (\*irq_enable)(struct irq_data \*data);
-
-     void       (\*irq_disable)(struct irq_data \*data);
-
-     void       (\*irq_unmask)(struct irq_data \*data);
-
-     void       (\*irq_mask)(struct irq_data \*data);
-
+     struct irq_chip *chip;
+     struct irq_domain *domain;
+     const struct irq_domain_ops *domain_ops;
+     irq_flow_handler_t handler;
+     unsigned int default_type;
+     irq_flow_handler_t parent_handler;
+     union {
+          void *parent_handler_data;
+          void **parent_handler_data_array;
+     };
+     unsigned int num_parents;
+     unsigned int *parents;
+     unsigned int *map;
+     bool threaded;
+     bool per_parent_data;
+     int (*init_hw)(struct gpio_chip *gc);
+     void (*init_valid_mask)(struct gpio_chip *gc,
+                      unsigned long *valid_mask,
+                      unsigned int ngpios);
+     unsigned long *valid_mask;
+     unsigned int first;
+     void       (*irq_enable)(struct irq_data *data);
+     void       (*irq_disable)(struct irq_data *data);
+     void       (*irq_unmask)(struct irq_data *data);
+     void       (*irq_mask)(struct irq_data *data);
 };
+```
 
 There are architectures that may be multiple interrupt controllers involved in delivering an interrupt from the device to the target CPU. This feature is enabled in the kernel by setting the **CONFIG_IRQ_DOMAIN_HIERARCHY** config option.
 
@@ -737,69 +534,50 @@ Cascaded GPIO IRQ chips usually fall in one of three categories:
 
 - **Chained cascaded GPIO IRQ chips**: These are the types that are usually seen on SoCs. This means that the GPIOs have a fast IRQ flow handler that is called in a chain from the parent IRQ handler, which is usually the system interrupt controller. This means that the parent IRQ chip will immediately call the GPIO IRQ chip handler while holding the IRQs disabled. In its interrupt handler, the GPIO IRQ chip will then call something similar to this:
 
-    static irqreturn_t foo_gpio_irq(int irq, void \*data)
-
-        chained_irq_enter(...);
-
-        generic_handle_irq(...);
-
-        chained_irq_exit(...);
+  ``` c
+    static irqreturn_t foo_gpio_irq(int irq, void *data)
+        chained_irq_enter(...);
+        generic_handle_irq(...);
+        chained_irq_exit(...);
+  ```
 
 Because everything happens directly in the callback, chained GPIO IRQ chips cannot set the **.can_sleep** flag on **struct gpio_chip** to **true**. In this case, no slow bus traffic like I2C can be used.
 
 - **Generic chained GPIO IRQ chips**: These are the same as **CHAINED GPIO IRQCHIPS**, but they don't use chained IRQ handlers. GPIO IRQs are instead dispatched via a generic IRQ handler, which is specified using **request_irq()**. In this IRQ handler, the GPIO IRQ chip will then end up calling something similar to the following sequence:
 
+  ``` c
   static irqreturn_t gpio_rcar_irq_handler(int irq,
-
-                                      void \*dev_id)
-
-      /\* go through the entire GPIOs and handle
-
-       \* all interrupts
-
-       \*/
-
-      for each detected GPIO IRQ
-
-          generic_handle_irq(...);
+                                      void *dev_id)
+      /* go through the entire GPIOs and handle
+       * all interrupts
+       */
+      for each detected GPIO IRQ
+          generic_handle_irq(...);
+  ```
 
 - **Nested thread GPIO IRQ chips**: Off-chip GPIO expanders and any other GPIO IRQ chip sitting on a sleeping bus, such as I2C or SPI, fall under this category.
 
 Of course, such drivers who require sluggish bus traffic to read out IRQ status and other information, traffic which may result in further IRQs, cannot be accommodated in a rapid IRQ handler with IRQs disabled. Instead, they must create a thread and then mask the parent IRQ line until the interrupt is handled by the driver. This driver's distinguishing feature is that it calls something like the following in its interrupt handler:
 
+``` c
 static irqreturn_t pcf857x_irq(int irq,
-
-                               void \*data)
-
+                               void *data)
 {
-
-     struct pcf857x \*gpio = data;
-
-     unsigned long change, i, status;
-
-     status = gpio-\>read(gpio-\>client);
-
-     mutex_lock(&gpio-\>lock);
-
-     change = (gpio-\>status ^ status) &
-
-              gpio-\>irq_enabled;
-
-     gpio-\>status = status;
-
-     mutex_unlock(&gpio-\>lock);
-
-     for_each_set_bit(i, &change, gpio-\>chip.ngpio)
-
-      child_irq = irq_find_mapping(
-
-                     gpio-\>chip.irq.domain, i);
-
-        handle_nested_irq(child_irq);
-
-     return IRQ_HANDLED;
-
+     struct pcf857x *gpio = data;
+     unsigned long change, i, status;
+     status = gpio->read(gpio->client);
+     mutex_lock(&gpio->lock);
+     change = (gpio->status ^ status) &
+              gpio->irq_enabled;
+     gpio->status = status;
+     mutex_unlock(&gpio->lock);
+     for_each_set_bit(i, &change, gpio->chip.ngpio)
+      child_irq = irq_find_mapping(
+                     gpio->chip.irq.domain, i);
+        handle_nested_irq(child_irq);
+     return IRQ_HANDLED;
 }
+```
 
 Threaded GPIO IRQ chips are distinguished by the fact that they set the **.can_sleep** flag on **struct gpio_chip** to **true**, indicating that the chip can sleep when accessing the GPIOs.
 
@@ -817,7 +595,7 @@ In this section, we will demonstrate how to add the support of an IRQ chip into 
 
 Let's consider the following figure:
 
-![Figure 16.1 – Multiplexing IRQs ](media/image/B17934_16_001.jpg)
+![Figure 16.1 – Multiplexing IRQs ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_16_001.jpg)
 
 Figure 16.1 – Multiplexing IRQs
 
@@ -829,121 +607,76 @@ Now let's update the initial GPIO controller driver. It must be noted that becau
 
 We start by defining our IRQ chip data structure, with a set of callbacks that can be used by the IRQ core. The following is an excerpt:
 
+``` c
 static struct irq_chip mcp23016_irq_chip = {
-
-     .name = "gpio-mcp23016",
-
-     .irq_mask = mcp23016_irq_mask,
-
-     .irq_unmask = mcp23016_irq_unmask,
-
-     .irq_set_type = mcp23016_irq_set_type,
-
+     .name = "gpio-mcp23016",
+     .irq_mask = mcp23016_irq_mask,
+     .irq_unmask = mcp23016_irq_unmask,
+     .irq_set_type = mcp23016_irq_set_type,
 };
+```
 
 In the preceding, the callbacks that have been defined depend on the need. In our case, we have only implemented interrupt (un)masking related callbacks, as well as the callback allowing you to set the IRQ type. To see the full description of a **struct irq_chip** structure, you can refer to *Chapter 13*, *Demystifying the Kernel IRQ Framework*.
 
 Now that the IRQ chip data structure has been set up, we can modify the probe method as follows:
 
-static int mcp23016_probe(struct i2c_client \*client)
-
+``` c
+static int mcp23016_probe(struct i2c_client *client)
 {
+    struct gpio_irq_chip *girq;
+    struct irq_chip *irqc;
+[...]
+    girq = &mcp->gpiochip.irq;
+    girq->chip = &mcp23016_irq_chip;
+    /* This will let us handling the parent IRQ in the driver */
+    girq->parent_handler = NULL;
+    girq->num_parents = 0;
+    girq->parents = NULL;
+    girq->default_type = IRQ_TYPE_NONE;
+    girq->handler = handle_level_irq;
+    girq->threaded = true;
+[...]
+    /*
+     * Directly request the irq here instead of passing
+     * a flow-handler.
+     */
+    err = devm_request_threaded_irq(
+                      &client->dev,
+                      client->irq,
+                      NULL, mcp23016_irq,
+                      IRQF_TRIGGER_RISING | IRQF_ONESHOT,
+                      dev_name(&i2c->dev), mcp);
+[...]
 
-    struct gpio_irq_chip \*girq;
-
-    struct irq_chip \*irqc;
-
-\[...\]
-
-    girq = &mcp-\>gpiochip.irq;
-
-    girq-\>chip = &mcp23016_irq_chip;
-
-    /\* This will let us handling the parent IRQ in the driver \*/
-
-    girq-\>parent_handler = NULL;
-
-    girq-\>num_parents = 0;
-
-    girq-\>parents = NULL;
-
-    girq-\>default_type = IRQ_TYPE_NONE;
-
-    girq-\>handler = handle_level_irq;
-
-    girq-\>threaded = true;
-
-\[...\]
-
-    /\*
-
-     \* Directly request the irq here instead of passing
-
-     \* a flow-handler.
-
-     \*/
-
-    err = devm_request_threaded_irq(
-
-                      &client-\>dev,
-
-                      client-\>irq,
-
-                      NULL, mcp23016_irq,
-
-                      IRQF_TRIGGER_RISING \| IRQF_ONESHOT,
-
-                      dev_name(&i2c-\>dev), mcp);
-
-\[...\]
-
-    
-
-    return devm_gpiochip_add_data(&client-\>dev,
-
-                                &mcp-\>gpiochip, mcp);
-
+    return devm_gpiochip_add_data(&client->dev,
+                                &mcp->gpiochip, mcp);
 }
+```
 
 In the previous probe method update, we first initialized the **struct gpio_irq_chip** data structure embedded into **struct gpio_chip**, and then we registered an IRQ handler, which will act as the parent IRQ handler, responsible for enquiring the underlying GPIO chip for any IRQ-enabled GPIOs that have changed, and then running their IRQ handlers, if any.
 
 Finally, the following is our IRQ handler, which must have been implemented before the **probe** function:
 
-static irqreturn_t mcp23016_irq(int irq, void \*data)
-
+``` c
+static irqreturn_t mcp23016_irq(int irq, void *data)
 {
-
-    struct mcp23016 \*mcp = data;
-
-    unsigned long status, changes, child_irq, i;
-
-    status = read_gpio_status(mcp);
-
-    mutex_lock(&mcp-\>lock);
-
-    change = mcp-\>status ^ status;
-
-    mcp-\>status = status;
-
-    mutex_unlock(&mcp-\>lock);
-
-    /\* Do some stuff, may be adapting "change" according to level \*/
-
-    \[...\]
-
-    for_each_set_bit(i, &change, mcp-\>gpiochip.ngpio) {
-
-        child_irq =
-
-           irq_find_mapping(mcp-\>gpiochip.irq.domain, i);
-
-        handle_nested_irq(child_irq);
-
-    }
-
-    return IRQ_HANDLED;
-
+    struct mcp23016 *mcp = data;
+    unsigned long status, changes, child_irq, i;
+    status = read_gpio_status(mcp);
+    mutex_lock(&mcp->lock);
+    change = mcp->status ^ status;
+    mcp->status = status;
+    mutex_unlock(&mcp->lock);
+    /* Do some stuff, may be adapting "change" according to level */
+    [...]
+    for_each_set_bit(i, &change, mcp->gpiochip.ngpio) {
+        child_irq =
+           irq_find_mapping(mcp->gpiochip.irq.domain, i);
+        handle_nested_irq(child_irq);
+    }
+    return IRQ_HANDLED;
 }
+```
 
 In our interrupt handler, we simply read the current GPIO, and we compare it with the old status to determine GPIOs that have changes. All the tricks are handled by **handle_nested_irq()**, which is explained in *Chapter 13*, *Demystifying the Kernel IRQ Framework*, as well.
 
@@ -966,61 +699,40 @@ There are additional mandatory properties to define if the GPIO controller has I
 
 From the properties listed, we can declare our GPIO controller under its bus node, as follows:
 
+``` c
 &i2c1
-
-    expander: mcp23016@20 {
-
-        compatible = "microchip,mcp23016";
-
-        reg = \<0x20\>;
-
-        gpio-controller;
-
-        #gpio-cells = \<2\>;
-
-        interrupt-controller;
-
-        #interrupt-cells = \<2\>;
-
-        interrupt-parent = \<&gpio4\>;
-
-        interrupts = \<29 IRQ_TYPE_EDGE_FALLING\>;
-
-    };
-
+    expander: mcp23016@20 {
+        compatible = "microchip,mcp23016";
+        reg = <0x20>;
+        gpio-controller;
+        #gpio-cells = <2>;
+        interrupt-controller;
+        #interrupt-cells = <2>;
+        interrupt-parent = <&gpio4>;
+        interrupts = <29 IRQ_TYPE_EDGE_FALLING>;
+    };
 };
+```
 
 This is all for the controller side. In order to demonstrate how clients can consume resources provided by the MCP23016, let's consider the following scenario: we have two devices, device A, named **foo**, and device B, named **bar**. The **bar** device consumes two GPIO lines from our controller (they will be used in output mode), and the **foo** device would like to map a GPIO to IRQ. This configuration could be declared in the device tree as follows:
 
+``` c
 parent_node {
-
-    compatible = "simple-bus";
-
-    foo_device: foo_device@1c {
-
-        \[...\]
-
-        reg = \<0x1c\>;
-
-        interrupt-parent = \<&expander\>;
-
-        interrupts = \<2 IRQ_TYPE_EDGE_RISING\>;
-
-    };
-
-    bar_device {
-
-        \[...\]
-
-        reset-gpios = \<&expander 8 GPIO_ACTIVE_HIGH\>;
-
-        power-gpios = \<&expander 12 GPIO_ACTIVE_HIGH\>;
-
-        \[...\]
-
-    };
-
+    compatible = "simple-bus";
+    foo_device: foo_device@1c {
+        [...]
+        reg = <0x1c>;
+        interrupt-parent = <&expander>;
+        interrupts = <2 IRQ_TYPE_EDGE_RISING>;
+    };
+    bar_device {
+        [...]
+        reset-gpios = <&expander 8 GPIO_ACTIVE_HIGH>;
+        power-gpios = <&expander 12 GPIO_ACTIVE_HIGH>;
+        [...]
+    };
 };
+```
 
 In the preceding excerpt, **parent_node** is given **simple-bus** as a **compatible** string in order to instruct the device tree core and the platform core to instantiate two platform devices, which correspond to our nodes. In that excerpt, we have also demonstrated how GPIOs, as well as IRQs from our controller, are specified. The number of cells used for each property matches the declaration in the controller binding.
 
@@ -1032,7 +744,9 @@ It may then be useful to know which GPIOs correspond to which pins on which pin 
 
 The **gpio-ranges** format is the following:
 
-\<\[pin controller phandle\], \[GPIO controller offset\], \[pin controller offset\], \[number of pins\]\>;
+``` c
+<[pin controller phandle], [GPIO controller offset], [pin controller offset], [number of pins]>;
+```
 
 The GPIO controller offset refers to the GPIO controller node containing the range definition. The bindings defined in **Documentation/pinctrl/pinctrl-bindings.txt** must be followed by the pin controller node referenced by **phandle**.
 
@@ -1040,7 +754,9 @@ Each offset is a number between 0 and N. It is possible to stack any number of r
 
 The following is an example:
 
-gpio-ranges = \<&foo 0 20 10\>, \<&bar 10 50 20\>;
+``` c
+gpio-ranges = <&foo 0 20 10>, <&bar 10 50 20>;
+```
 
 This means the following:
 
@@ -1051,55 +767,46 @@ It must be noted that GPIOs have a global number space and the pin controller ha
 
 We want to map PIN **GPIO_5_29** with PIN number **89** in the pin controller number space. The following is the device tree property to define the mapping between the GPIO and pin control subsystem:
 
+``` c
 &gpio5 {
-
-    gpio-ranges = \<&pinctrl 29 89 1\> ;
-
+    gpio-ranges = <&pinctrl 29 89 1> ;
 }
+```
 
 In the previous excerpt, 1 GPIO line from the 29th GPIO line of GPIO bank5 will be mapped to pin ranges from 89 on pin controller **pinctrl**.
 
 To illustrate this on a real platform, let's consider the i.MX6 SoC, which has 32 GPIOs per bank. The following is an excerpt from the pin controller node of i.MX6 SoCs, declared in **arch/arm/boot/dts/imx6qdl.dtsi**, and whose driver is **drivers/pinctrl/freescale/pinctrl-imx6dl.c**:
 
+``` c
 iomuxc: pinctrl@20e0000 {
-
-    compatible = "fsl,imx6dl-iomuxc", "fsl,imx6q-iomuxc";
-
-    reg = \<0x20e0000 0x4000\>;
-
+    compatible = "fsl,imx6dl-iomuxc", "fsl,imx6q-iomuxc";
+    reg = <0x20e0000 0x4000>;
 };
+```
 
 Now that the pin controller has been declared, a GPIO controller (bank3) is declared in the same base device tree, **arch/arm/boot/dts/imx6qdl.dtsi**, as follows:
 
+``` c
 gpio3: gpio@20a4000 {
-
-    compatible = "fsl,imx6q-gpio", "fsl,imx35-gpio";
-
-    reg = \<0x020a4000 0x4000\>;
-
-    interrupts = \<0 70 IRQ_TYPE_LEVEL_HIGH\>,
-
-                 \<0 71 IRQ_TYPE_LEVEL_HIGH\>;
-
-    gpio-controller;
-
-    #gpio-cells = \<2\>;
-
-    interrupt-controller;
-
-    #interrupt-cells = \<2\>;
-
+    compatible = "fsl,imx6q-gpio", "fsl,imx35-gpio";
+    reg = <0x020a4000 0x4000>;
+    interrupts = <0 70 IRQ_TYPE_LEVEL_HIGH>,
+                 <0 71 IRQ_TYPE_LEVEL_HIGH>;
+    gpio-controller;
+    #gpio-cells = <2>;
+    interrupt-controller;
+    #interrupt-cells = <2>;
 };
+```
 
 For information, the driver of this GPIO controller is **drivers/gpio/gpio-mxc.c**. After the GPIO controller node has been declared in the base device tree, this same GPIO controller node is overridden in a SoC-specific base device tree, **arch/arm/boot/dts/imx6q.dtsi**, as follows:
 
+``` c
 &gpio3 {
-
-     gpio-ranges = \<&iomuxc 0 69 16\>, \<&iomuxc 16 36 8\>,
-
-                  \<&iomuxc 24 45 8\>;
-
+     gpio-ranges = <&iomuxc 0 69 16>, <&iomuxc 16 36 8>,
+                  <&iomuxc 24 45 8>;
 };
+```
 
 The preceding override of the GPIO controller node means the following:
 
@@ -1128,87 +835,53 @@ An optional property is **line-name**: the GPIO label name. If it's not present,
 
 The following is an excerpt, where we first declare (as GPIO) the pins we are interested in in the pin controller node:
 
+``` c
 &iomuxc {
-
-\[...\]
-
-    pinctrl_gpio3_hog: gpio3hoggrp {
-
-        fsl,pins = \<
-
-            MX6QDL_PAD_EIM_D19\_\_GPIO3_IO19      0x1b0b0
-
-            MX6QDL_PAD_EIM_D20\_\_GPIO3_IO20      0x1b0b0
-
-            MX6QDL_PAD_EIM_D22\_\_GPIO3_IO22      0x1b0b0
-
-            MX6QDL_PAD_EIM_D23\_\_GPIO3_IO23      0x1b0b0
-
-        \>;
-
-    };
-
-\[...\]
-
+[...]
+    pinctrl_gpio3_hog: gpio3hoggrp {
+        fsl,pins = <
+            MX6QDL_PAD_EIM_D19__GPIO3_IO19      0x1b0b0
+            MX6QDL_PAD_EIM_D20__GPIO3_IO20      0x1b0b0
+            MX6QDL_PAD_EIM_D22__GPIO3_IO22      0x1b0b0
+            MX6QDL_PAD_EIM_D23__GPIO3_IO23      0x1b0b0
+        >;
+    };
+[...]
 }
+```
 
 After the pins of interest are declared, we can hog each GPIO under the node of the GPIO controller this GPIO belongs to, as follows:
 
+``` c
 &gpio3 {
-
-    pinctrl-names = "default";
-
-    pinctrl-0 = \<&pinctrl_gpio3_hog\>;
-
-    usb-emulation-hog {
-
-        gpio-hog;
-
-        gpios = \<19 GPIO_ACTIVE_HIGH\>;
-
-        output-low;
-
-        line-name = "usb-emulation";
-
-    };
-
-    usb-mode1-hog {
-
-        gpio-hog;
-
-        gpios = \<20 GPIO_ACTIVE_HIGH\>;
-
-        output-high;
-
-        line-name = "usb-mode1";
-
-    };
-
-    usb-pwr-hog {
-
-        gpio-hog;
-
-        gpios = \<22 GPIO_ACTIVE_LOW\>;
-
-        output-high;
-
-       line-name = "usb-pwr-ctrl-en-n";
-
-    };
-
-    usb-mode2-hog {
-
-        gpio-hog;
-
-        gpios = \<23 GPIO_ACTIVE_HIGH\>;
-
-        output-high;
-
-        line-name = "usb-mode2";
-
-    };
-
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_gpio3_hog>;
+    usb-emulation-hog {
+        gpio-hog;
+        gpios = <19 GPIO_ACTIVE_HIGH>;
+        output-low;
+        line-name = "usb-emulation";
+    };
+    usb-mode1-hog {
+        gpio-hog;
+        gpios = <20 GPIO_ACTIVE_HIGH>;
+        output-high;
+        line-name = "usb-mode1";
+    };
+    usb-pwr-hog {
+        gpio-hog;
+        gpios = <22 GPIO_ACTIVE_LOW>;
+        output-high;
+       line-name = "usb-pwr-ctrl-en-n";
+    };
+    usb-mode2-hog {
+        gpio-hog;
+        gpios = <23 GPIO_ACTIVE_HIGH>;
+        output-high;
+        line-name = "usb-mode2";
+    };
 };
+```
 
 It must be noted that hogging pins should be used for those pins that are not controlled by any particular driver.
 
@@ -1237,29 +910,24 @@ While we will discuss the two approaches in this chapter, let's start with the l
 
 The integer-based interface is the most known usage of GPIOs in Linux systems, either in the kernel or in the user space. In this mode, the GPIO is identified by an integer, which is used for every operation that needs to be performed on this GPIO. The following is the header that contains the legacy GPIO access function:
 
-\#include \<linux/gpio.h\>
+``` c
+#include <linux/gpio.h>
+```
 
 The integer-based interface relies on a set of functions, defined as follows:
 
+``` c
 bool gpio_is_valid(int number);
-
-int  gpio_request(unsigned gpio, const char \*label);
-
-int  gpio_get_value_cansleep(unsigned gpio);
-
-int  gpio_direction_input(unsigned gpio);
-
-int  gpio_direction_output(unsigned gpio, int value);
-
+int  gpio_request(unsigned gpio, const char *label);
+int  gpio_get_value_cansleep(unsigned gpio);
+int  gpio_direction_input(unsigned gpio);
+int  gpio_direction_output(unsigned gpio, int value);
 void gpio_set_value(unsigned int gpio, int value);
-
-int  gpio_get_value(unsigned gpio);
-
+int  gpio_get_value(unsigned gpio);
 void gpio_set_value_cansleep(unsigned gpio, int value);
-
 int gpio_get_value_cansleep(unsigned gpio);
-
 void gpio_free(unsigned int gpio);
+```
 
 All the preceding functions are mapped to a set of callbacks provided by the GPIO controller through its **struct gpio_chip** structure, thanks to which it exposes a generic set of callback functions.
 
@@ -1289,85 +957,57 @@ If the IRQ has been specified in the device tree and the underlying device is an
 
 If, however, the driver is given a GPIO (from module parameters, for example) or specified from the device tree without being mapped to IRQ there, the driver must use **gpio_to_irq()** to map the given GPIO number to its IRQ number:
 
+``` c
 int gpio_to_irq(unsigned gpio)
+```
 
 This function returns the corresponding Linux IRQ number, which can be passed to **request_irq()** (or the threaded counterpart, **request_threaded_irq()**) to register a handler for this IRQ:
 
+``` c
 int request_threaded_irq (unsigned int irq,
-
-                   irq_handler_t handler,
-
-                   irq_handler_t thread_fn,
-
-                   unsigned long irqflags,
-
-                   const char \*devname,
-
-                   void \*dev_id);
-
+                   irq_handler_t handler,
+                   irq_handler_t thread_fn,
+                   unsigned long irqflags,
+                   const char *devname,
+                   void *dev_id);
 int request_any_context_irq (unsigned int irq,
-
-                       irq_handler_t handler,
-
-                       unsigned long flags,
-
-                       const char \* name,
-
-                       void \* dev_id);
+                       irq_handler_t handler,
+                       unsigned long flags,
+                       const char * name,
+                       void * dev_id);
+```
 
 **request_any_context_irq()** is smart enough to identify the underlying context supported by the IRQ chip integrated into the GPIO controller. If this controller's accessors can sleep, **request_any_context_irq()** will request a threaded IRQ, otherwise, it will request an atomic-context IRQ.
 
 The following is a short example demonstrating what we have discussed so far:
 
+``` c
 static irqreturn_t my_interrupt_handler(int irq,
-
-                                        void \*dev_id)
-
+                                        void *dev_id)
 {
-
-    \[...\]
-
-    return IRQ_HANDLED;
-
+    [...]
+    return IRQ_HANDLED;
 }
-
-static int foo_probe(struct i2c_client \*client)
-
+static int foo_probe(struct i2c_client *client)
 {
-
-    \[...\]
-
-    struct device_node \*np = client-\>dev.of_node;
-
-    int gpio_int = of_get_gpio(np, 0);
-
-    int irq_num = gpio_to_irq(gpio_int);
-
-    int error =
-
-        devm_request_threaded_irq(&client-\>dev, irq_num,
-
-               NULL, my_interrupt_handler,
-
-               IRQF_TRIGGER_RISING \| IRQF_ONESHOT,
-
-               input_dev-\>name, my_data_struct);
-
-    if (error) {
-
-        dev_err(&client-\>dev, "irq %d requested failed,
-
-                 %d\n", client-\>irq, error);
-
-        return error;
-
-    }
-
-    \[...\]
-
-    return 0;
-
+    [...]
+    struct device_node *np = client->dev.of_node;
+    int gpio_int = of_get_gpio(np, 0);
+    int irq_num = gpio_to_irq(gpio_int);
+    int error =
+        devm_request_threaded_irq(&client->dev, irq_num,
+               NULL, my_interrupt_handler,
+               IRQF_TRIGGER_RISING | IRQF_ONESHOT,
+               input_dev->name, my_data_struct);
+    if (error) {
+        dev_err(&client->dev, "irq %d requested failed,
+                 %d\n", client->irq, error);
+        return error;
+    }
+    [...]
+    return 0;
 }
+```
 
 In the previous excerpt, we have demonstrated how to use a legacy integer-based interface to grab a GPIO specified in the device tree, as well as the old API to translate this GPIO into a valid Linux IRQ number. These were the main points to highlight.
 
@@ -1377,19 +1017,19 @@ Though deprecated, we briefly introduced the legacy GPIO APIs. As is recommended
 
 With the new descriptor-based GPIO interface, the subsystem has been oriented to the producer/consumer. The header required for the descriptor-based GPIO interface is the following:
 
-\#include \<linux/gpio/consumer.h\>
+``` c
+#include <linux/gpio/consumer.h>
+```
 
 With the descriptor-based interface, a GPIO is described and characterized by a coherent data structure, **struct gpio_desc**, which is defined as follows:
 
+``` c
 struct gpio_desc {
-
-     struct gpio_chip \*chip;
-
-     unsigned long    flags;
-
-     const char       \*label;
-
+     struct gpio_chip *chip;
+     unsigned long    flags;
+     const char       *label;
 };
+```
 
 In the preceding data structure, **chip** is the controller providing this GPIO line; **flags** are the flags characterizing the GPIO and **label** is the name describing the GPIO.
 
@@ -1409,223 +1049,177 @@ GPIO descriptor mappings are defined in the device tree node of the consumer dev
 
 The reason is that descriptor-based GPIO lookup relies on the **gpio_suffixes\[\]** variable, a **gpiolib** variable defined in **drivers/gpio/gpiolib.h** as follows:
 
-static const char \* const gpio_suffixes\[\] =
-
-                          { "gpios", "gpio" };
+``` c
+static const char * const gpio_suffixes[] =
+                          { "gpios", "gpio" };
+```
 
 This variable is used in both device tree lookup and ACPI-based lookup. To see how it works, let's see how it is used in **of_find_gpio()**, the device tree's low-level GPIO lookup function defined as follows:
 
-static struct gpio_desc \*of_find_gpio(
-
-                           struct device \*dev,
-
-                           const char \*con_id,
-
-                           unsigned int idx,
-
-                           enum gpio_lookup_flags \*flags)
-
+``` c
+static struct gpio_desc *of_find_gpio(
+                           struct device *dev,
+                           const char *con_id,
+                           unsigned int idx,
+                           enum gpio_lookup_flags *flags)
 {
-
-    /\* 32 is max size of property name \*/
-
-    char prop_name\[32\];
-
-    enum of_gpio_flags of_flags;
-
-    struct gpio_desc \*desc;
-
-    unsigned int i;
-
-    /\* Try GPIO property "foo-gpios" and "foo-gpio" \*/
-
-    for (i = 0; i \< ARRAY_SIZE(gpio_suffixes); i++) {
-
-        if (con_id)
-
-            snprintf(prop_name, sizeof(prop_name),
-
-                      "%s-%s", con_id,
-
-                      gpio_suffixes\[i\]);
-
-        else
-
-            snprintf(prop_name, sizeof(prop_name), "%s",
-
-                       gpio_suffixes\[i\]);
-
-        desc = of_get_named_gpiod_flags(dev-\>of_node,
-
-                                      prop_name, idx,
-
-                                      &of_flags);
-
-        if (!IS_ERR(desc) \|\| PTR_ERR(desc) != -ENOENT)
-
-            break;
-
-\[...\]
-
+    /* 32 is max size of property name */
+    char prop_name[32];
+    enum of_gpio_flags of_flags;
+    struct gpio_desc *desc;
+    unsigned int i;
+    /* Try GPIO property "foo-gpios" and "foo-gpio" */
+    for (i = 0; i < ARRAY_SIZE(gpio_suffixes); i++) {
+        if (con_id)
+            snprintf(prop_name, sizeof(prop_name),
+                      "%s-%s", con_id,
+                      gpio_suffixes[i]);
+        else
+            snprintf(prop_name, sizeof(prop_name), "%s",
+                       gpio_suffixes[i]);
+        desc = of_get_named_gpiod_flags(dev->of_node,
+                                      prop_name, idx,
+                                      &of_flags);
+        if (!IS_ERR(desc) || PTR_ERR(desc) != -ENOENT)
+            break;
+[...]
 }
+```
 
 Now let's consider the following node, which is an excerpt of **Documentation/gpio/board.txt**:
 
+``` c
 foo_device {
-
-    compatible = "acme,foo";
-
-    \[...\]
-
-    led-gpios = \<&gpio 15 GPIO_ACTIVE_HIGH\>, /\* red \*/
-
-                \<&gpio 16 GPIO_ACTIVE_HIGH\>, /\* green \*/
-
-                \<&gpio 17 GPIO_ACTIVE_HIGH\>; /\* blue \*/
-
-    power-gpio = \<&gpio 1 GPIO_ACTIVE_LOW\>;
-
-    reset-gpio = \<&gpio 1 GPIO_ACTIVE_LOW\>;
-
+    compatible = "acme,foo";
+    [...]
+    led-gpios = <&gpio 15 GPIO_ACTIVE_HIGH>, /* red */
+                <&gpio 16 GPIO_ACTIVE_HIGH>, /* green */
+                <&gpio 17 GPIO_ACTIVE_HIGH>; /* blue */
+    power-gpio = <&gpio 1 GPIO_ACTIVE_LOW>;
+    reset-gpio = <&gpio 1 GPIO_ACTIVE_LOW>;
 };
+```
 
 This is what a mapping should look like, with meaningful names, corresponding to the functions assigned to the GPIOs. This excerpt will be used as the basis for the rest of this section to demonstrate the use of the descriptor-based GPIO interface.
 
 Now that the GPIOs have been specified in the device tree, the first thing to be done is to allocate GPIO descriptors and take the ownership of these GPIOs. This can be done using **gpiod_get()**, **gpiod_getindex()**, or **gpiod_get_optional()**, defined as follows:
 
-struct gpio_desc \*gpiod_get_index(struct device \*dev,
-
-                                 const char \*con_id,
-
-                                 unsigned int idx,
-
-                                 enum gpiod_flags flags)
-
-struct gpio_desc \*gpiod_get(struct device \*dev,
-
-                            const char \*con_id,
-
-                            enum gpiod_flags flags)
-
-struct gpio_desc \*gpiod_get_optional(struct device \*dev,
-
-                                     const char \*con_id,
-
-                                     enum gpiod_flags flags);
+``` c
+struct gpio_desc *gpiod_get_index(struct device *dev,
+                                 const char *con_id,
+                                 unsigned int idx,
+                                 enum gpiod_flags flags)
+struct gpio_desc *gpiod_get(struct device *dev,
+                            const char *con_id,
+                            enum gpiod_flags flags)
+struct gpio_desc *gpiod_get_optional(struct device *dev,
+                                     const char *con_id,
+                                     enum gpiod_flags flags);
+```
 
 It must be noted that we can also use the device-managed variant of these APIs, defined as follows:
 
-struct gpio_desc \*devm_gpiod_get_index(
-
-                                struct device \*dev,
-
-                                const char \*con_id,
-
-                                unsigned int idx,
-
-                                enum gpiod_flags flags);
-
-struct gpio_desc \*devm_gpiod_get(struct device \*dev,
-
-                               const char \*con_id,
-
-                               enum gpiod_flags flags);
-
-struct gpio_desc \*devm_gpiod_get_optional(
-
-                                struct device \*dev,
-
-                                const char \*con_id,
-
-                                enum gpiod_flags flags);
+``` c
+struct gpio_desc *devm_gpiod_get_index(
+                                struct device *dev,
+                                const char *con_id,
+                                unsigned int idx,
+                                enum gpiod_flags flags);
+struct gpio_desc *devm_gpiod_get(struct device *dev,
+                               const char *con_id,
+                               enum gpiod_flags flags);
+struct gpio_desc *devm_gpiod_get_optional(
+                                struct device *dev,
+                                const char *con_id,
+                                enum gpiod_flags flags);
+```
 
 Both non **\_optional** functions will return **-ENOENT** if no GPIO with the given function is assigned or a negative error if another error occurred. On success, the GPIO descriptor corresponding to the GPIO is returned. The first method returns the GPIO descriptor structure for the GPIO at a particular index (useful when the specifier is a list of GPIOs), whereas the second function always returns the GPIO at index **0** (single GPIO mapping). The **\_optional** variant is useful for drivers that need to deal with optional GPIOs; it's the same as **gpiod_get()**, except that it returns **NULL** when no GPIO has been assigned to the device (that is, specified in the device tree).
 
 In parameters, **dev** is the device to which the GPIO descriptor will belong. It is the underlying **device** structure the driver is responsible for; for example, **i2c_client.dev**, **spi_device.dev**, or **platform_device.dev**. **con_id** is the function of the GPIO within the consumer interface. It corresponds to the **\<name\>** prefix of the GPIO specifier property name in the device tree. **idx** is the index (starting from **0**) of the GPIO in case the specifier contains a list of GPIOs. **flags** is an optional parameter that determines the GPIO initialization flags, to configure the direction and/or the initial output value. It is an instance of **enum gpiod_flags**, defined in **include/linux/gpio/consumer.h** as follows:
 
+``` c
 enum gpiod_flags {
-
-    GPIOD_ASIS  = 0,
-
-    GPIOD_IN = GPIOD_FLAGS_BIT_DIR_SET,
-
-    GPIOD_OUT_LOW = GPIOD_FLAGS_BIT_DIR_SET \|
-
-                    GPIOD_FLAGS_BIT_DIR_OUT,
-
-    GPIOD_OUT_HIGH = GPIOD_FLAGS_BIT_DIR_SET \|
-
-                     GPIOD_FLAGS_BIT_DIR_OUT \|
-
-                     GPIOD_FLAGS_BIT_DIR_VAL,
-
+    GPIOD_ASIS  = 0,
+    GPIOD_IN = GPIOD_FLAGS_BIT_DIR_SET,
+    GPIOD_OUT_LOW = GPIOD_FLAGS_BIT_DIR_SET |
+                    GPIOD_FLAGS_BIT_DIR_OUT,
+    GPIOD_OUT_HIGH = GPIOD_FLAGS_BIT_DIR_SET |
+                     GPIOD_FLAGS_BIT_DIR_OUT |
+                     GPIOD_FLAGS_BIT_DIR_VAL,
 };
+```
 
 Let's demonstrate in the following how these APIs can be used in drivers:
 
-struct gpio_desc \*red, \*green, \*blue, \*power;
-
+``` c
+struct gpio_desc *red, *green, *blue, *power;
 red = gpiod_get_index(dev, "led", 0, GPIOD_OUT_HIGH);
-
 green = gpiod_get_index(dev, "led", 1, GPIOD_OUT_HIGH);
-
 blue = gpiod_get_index(dev, "led", 2, GPIOD_OUT_HIGH);
-
 power = gpiod_get(dev, "power", GPIOD_OUT_HIGH);
+```
 
 For the sake of readability, the preceding code does not perform error checking. The LED GPIOs will be active-high, but the power GPIO will be active-low (that is, **gpiod_is_active_low(power)** returns **true** in this case).
 
 Since the **flags** argument is optional, there might be situations where either the initial flags are not specified or when the initial function of the GPIO needs to be changed. To address this, drivers can use **gpiod_direction_input()** or **gpiod_direction_output()** to change the GPIO direction. These APIs are defined as follows:
 
-int gpiod_direction_input(struct gpio_desc \*desc);
-
-int gpiod_direction_output(struct gpio_desc \*desc,
-
-                           int value);
+``` c
+int gpiod_direction_input(struct gpio_desc *desc);
+int gpiod_direction_output(struct gpio_desc *desc,
+                           int value);
+```
 
 In the preceding APIs, **desc** is the GPIO descriptor of the GPIO of interest, and **value** is the initial value to apply to this GPIO when it is configured as output.
 
 It must be noted that the same attention must be paid as with the integer-based interface. In other words, the driver must take care of whether the underlying GPIO chip is memory-mapped (and thus can be accessed in any context) or sits on a slow bus (which would require accessing the chip in process or threaded context exclusively). This can be achieved using the **gpiod_cansleep()** function, defined as follows:
 
-int gpiod_cansleep(const struct gpio_desc \*desc);
+``` c
+int gpiod_cansleep(const struct gpio_desc *desc);
+```
 
 This function returns **true** if the underlying hardware can put the caller to sleep while it is accessed. In such cases, drivers should use dedicated APIs.
 
 The following are APIs to get or set the GPIO value on a controller that sits on a slow bus, that is, a GPIO descriptor for which **gpiod_cansleep()** returned **true**:
 
-int gpiod_get_value_cansleep(const struct gpio_desc \*desc);
-
-void gpiod_set_value_cansleep(struct gpio_desc \*desc,
-
-                              int value);
+``` c
+int gpiod_get_value_cansleep(const struct gpio_desc *desc);
+void gpiod_set_value_cansleep(struct gpio_desc *desc,
+                              int value);
+```
 
 If the underlying chip is memory mapped, the following APIs can be used instead:
 
-int gpiod_get_value(const struct gpio_desc \*desc);
-
-void gpiod_set_value(struct gpio_desc \*desc, int value);
+``` c
+int gpiod_get_value(const struct gpio_desc *desc);
+void gpiod_set_value(struct gpio_desc *desc, int value);
+```
 
 The context must be considered only if the driver is intended to access the GPIO(s) from within an interrupt handler or from within any other atomic context. Otherwise, you can just use the normal APIs, that is, the ones without the **\_cansleep** suffix.
 
 **gpiod_to_irq()** can be used to get the IRQ number that corresponds to a GPIO descriptor mapped to IRQ:
 
-int gpiod_to_irq(const struct gpio_desc \*desc);
+``` c
+int gpiod_to_irq(const struct gpio_desc *desc);
+```
 
 The resulting IRQ number can be used with the **request_irq()** function (or the threaded variant **request_threaded_irq()**). If the driver does not need to bother with the context supported by the underlying hardware chip, **request_any_context_irq()** can be used instead. That said, the driver can use the device managed variant of these functions, that is, **devm_request_irq()**, **devm_request_threaded_irq()**, or **devm_request_any_context_irq()**.
 
 If for any reason the module needs to switch back and forth between the descriptor-based interface and the legacy integer-based interface, the APIs **desc_to_gpio()** and **gpio_to_desc()** can be used for translations. They are defined as follows:
 
-/\* Convert between the old gpio\_ and new gpiod\_ interfaces \*/
-
-struct gpio_desc \*gpio_to_desc(unsigned gpio);
-
-int desc_to_gpio(const struct gpio_desc \*desc);
+``` c
+/* Convert between the old gpio_ and new gpiod_ interfaces */
+struct gpio_desc *gpio_to_desc(unsigned gpio);
+int desc_to_gpio(const struct gpio_desc *desc);
+```
 
 In the preceding, **gpio_to_desc()** takes a legacy GPIO number in the parameter and returns the associated GPIO descriptor, while **desc_to_gpio()** does the opposite.
 
 The advantage of using the device-managed APIs is that drivers need not care about releasing the GPIO at all, since it will be handled by the GPIO core. If, however, non-managed APIs were used to request a GPIO descriptor, this descriptor must explicitly be released with **gpiod_put()**, defined as follows:
 
-void gpiod_put(struct gpio_desc \*desc);
+``` c
+void gpiod_put(struct gpio_desc *desc);
+```
 
 Now that we are done with the consumer side's descriptor-based APIs, let's summarize what we have learned in a concrete example, from the mapping from the device tree to the consumer code based on consumer APIs.
 
@@ -1635,173 +1229,110 @@ The following driver summarizes the concepts introduced in the descriptor-based 
 
 To achieve that, let's consider the following mapping in the device tree:
 
+``` c
 foo_device {
-
-    compatible = "packt,gpio-descriptor-sample";
-
-    led-gpios = \<&gpio2 15 GPIO_ACTIVE_HIGH\>, // red
-
-                \<&gpio2 16 GPIO_ACTIVE_HIGH\>, // green
-
-    btn1-gpios = \<&gpio2 1 GPIO_ACTIVE_LOW\>;
-
-    btn2-gpios = \<&gpio2 31 GPIO_ACTIVE_LOW\>;
-
+    compatible = "packt,gpio-descriptor-sample";
+    led-gpios = <&gpio2 15 GPIO_ACTIVE_HIGH>, // red
+                <&gpio2 16 GPIO_ACTIVE_HIGH>, // green
+    btn1-gpios = <&gpio2 1 GPIO_ACTIVE_LOW>;
+    btn2-gpios = <&gpio2 31 GPIO_ACTIVE_LOW>;
 };
+```
 
 Now that the GPIOs have been mapped in the device tree, let's write the platform driver that will leverage these GPIOs:
 
-\#include \<linux/init.h\>
-
-\#include \<linux/module.h\>
-
-\#include \<linux/kernel.h\>
-
-\#include \<linux/platform_device.h\> /\* platform devices \*/
-
-\#include \<linux/gpio/consumer.h\>   /\* GPIO Descriptor \*/
-
-\#include \<linux/interrupt.h\>       /\* IRQ \*/
-
-\#include \<linux/of.h\>              /\* Device Tree \*/
-
-static struct gpio_desc \*red, \*green, \*btn1, \*btn2;
-
+``` c
+#include <linux/init.h>
+#include <linux/module.h>
+#include <linux/kernel.h>
+#include <linux/platform_device.h> /* platform devices */
+#include <linux/gpio/consumer.h>   /* GPIO Descriptor */
+#include <linux/interrupt.h>       /* IRQ */
+#include <linux/of.h>              /* Device Tree */
+static struct gpio_desc *red, *green, *btn1, *btn2;
 static unsigned int irq, led_state = 0;
-
 static irq_handler_t btn1_irq_handler(unsigned int irq,
-
-                                      void \*dev_id)
-
+                                      void *dev_id)
 {
-
-    unsigned int btn2_state;
-
-    btn2_state = gpiod_get_value(btn2);
-
-    if (btn2_state) {
-
-        led_state = 1 – led_state;
-
-        gpiod_set_value(red, led_state);
-
-        gpiod_set_value(green, led_state);
-
-    }
-
-    pr_info("btn1 interrupt: Interrupt! btn2 state is %d)\n",
-
-            led_state);
-
-    return IRQ_HANDLED;
-
+    unsigned int btn2_state;
+    btn2_state = gpiod_get_value(btn2);
+    if (btn2_state) {
+        led_state = 1 – led_state;
+        gpiod_set_value(red, led_state);
+        gpiod_set_value(green, led_state);
+    }
+    pr_info("btn1 interrupt: Interrupt! btn2 state is %d)\n",
+            led_state);
+    return IRQ_HANDLED;
 }
+```
 
 In the preceding, we have started with the IRQ handler. The toggling logic is implemented by **led_state = 1 – led_state**. Next, we implement the driver's **probe** method, as follows:
 
-static int my_pdrv_probe (struct platform_device \*pdev)
-
+``` c
+static int my_pdrv_probe (struct platform_device *pdev)
 {
-
-    int retval;
-
-    struct device \*dev = &pdev-\>dev;
-
-    red = devm_gpiod_get_index(dev, "led", 0,
-
-                               GPIOD_OUT_LOW);
-
-    green = devm_gpiod_get_index(dev, "led", 1,
-
-                                 GPIOD_OUT_LOW);
-
-    /\* Configure GPIO Buttons as input \*/
-
-    btn1 = devm_gpiod_get(dev, "led", 0, GPIOD_IN);
-
-    btn2 = devm_gpiod_get(dev, "led", 1, GPIOD_IN);
-
-    irq = gpiod_to_irq(btn1);
-
-    retval = devm_request_threaded_irq(dev, irq, NULL,
-
-                         btn1_pushed_irq_handler,
-
-                         IRQF_TRIGGER_LOW \| IRQF_ONESHOT,
-
-                         "gpio-descriptor-sample", NULL);
-
-    pr_info("Hello! device probed!\n");
-
-    return 0;
-
+    int retval;
+    struct device *dev = &pdev->dev;
+    red = devm_gpiod_get_index(dev, "led", 0,
+                               GPIOD_OUT_LOW);
+    green = devm_gpiod_get_index(dev, "led", 1,
+                                 GPIOD_OUT_LOW);
+    /* Configure GPIO Buttons as input */
+    btn1 = devm_gpiod_get(dev, "led", 0, GPIOD_IN);
+    btn2 = devm_gpiod_get(dev, "led", 1, GPIOD_IN);
+    irq = gpiod_to_irq(btn1);
+    retval = devm_request_threaded_irq(dev, irq, NULL,
+                         btn1_pushed_irq_handler,
+                         IRQF_TRIGGER_LOW | IRQF_ONESHOT,
+                         "gpio-descriptor-sample", NULL);
+    pr_info("Hello! device probed!\n");
+    return 0;
 }
+```
 
 The preceding probe method is quite simple. We first start requesting the GPIOs, then we translate the button 1 GPIO line into a valid IRQ number, and then we register a handler for this IRQ. You should pay attention to the fact that we have exclusively used device-managed APIs in that method.
 
 Finally, we set up a device ID table before filling and registering our platform device driver, as follows:
 
-static const struct of_device_id gpiod_dt_ids\[\] = {
-
-    { .compatible = "packt,gpio-descriptor-sample", },
-
-    { /\* sentinel \*/ }
-
+``` c
+static const struct of_device_id gpiod_dt_ids[] = {
+    { .compatible = "packt,gpio-descriptor-sample", },
+    { /* sentinel */ }
 };
-
 static struct platform_driver mypdrv = {
-
-    .probe      = my_pdrv_probe,
-
-    .driver     = {
-
-        .name     = "gpio_descriptor_sample",
-
-        .of_match_table = of_match_ptr(gpiod_dt_ids),  
-
-        .owner    = THIS_MODULE,
-
-    },
-
+    .probe      = my_pdrv_probe,
+    .driver     = {
+        .name     = "gpio_descriptor_sample",
+        .of_match_table = of_match_ptr(gpiod_dt_ids),
+        .owner    = THIS_MODULE,
+    },
 };
-
 module_platform_driver(mypdrv);
-
-MODULE_AUTHOR("John Madieu \<john.madieu@labcsmart.com\>");
-
+MODULE_AUTHOR("John Madieu <john.madieu@labcsmart.com>");
 MODULE_LICENSE("GPL");
+```
 
 We may wonder why neither GPIO descriptors nor interrupts were released. This is because we exclusively used device-managed APIs in the **probe** function. Thanks to these, we do not need to release anything explicitly, thus we can get rid of the **remove** method of the platform driver.
 
 If we use non-managed APIs, the **remove** method could look like the following:
 
-static void my_pdrv_remove(struct platform_device \*pdev)
-
+``` c
+static void my_pdrv_remove(struct platform_device *pdev)
 {
-
-    free_irq(irq, NULL);
-
-    gpiod_put(red);
-
-    gpiod_put(green);
-
-    gpiod_put(btn1);
-
-    gpiod_put(btn2);
-
-    pr_info("good bye reader!\n");
-
+    free_irq(irq, NULL);
+    gpiod_put(red);
+    gpiod_put(green);
+    gpiod_put(btn1);
+    gpiod_put(btn2);
+    pr_info("good bye reader!\n");
 }
-
 static struct platform_driver mypdrv = {
-
-    \[...\]
-
-    .remove     = my_pdrv_remove,
-
-    \[...\]
-
+    [...]
+    .remove     = my_pdrv_remove,
+    [...]
 };
+```
 
 In the preceding, we can notice the use of regular **gpiod_put()** and **free_irq()** APIs to release GPIO descriptors and the IRQ line.
 
@@ -1835,17 +1366,14 @@ On successful **gpio_chip** registration, a directory entry with a path such as 
 
 The following is a short sequence of commands demonstrating the use of the sysfs interface to drive GPIOs from the user space:
 
-\# echo 24 \> /sys/class/gpio/export
-
-\# echo out \> /sys/class/gpio/gpio24/direction
-
-\# echo 1 \> /sys/class/gpio/gpio24/value
-
-\# echo 0 \> /sys/class/gpio/gpio24/value
-
-\# echo high \> /sys/class/gpio/gpio24/direction \# shorthand for out/1
-
-\# echo low \> /sys/class/gpio/gpio24/direction \# shorthand for out/0
+``` c
+# echo 24 > /sys/class/gpio/export
+# echo out > /sys/class/gpio/gpio24/direction
+# echo 1 > /sys/class/gpio/gpio24/value
+# echo 0 > /sys/class/gpio/gpio24/value
+# echo high > /sys/class/gpio/gpio24/direction # shorthand for out/1
+# echo low > /sys/class/gpio/gpio24/direction # shorthand for out/0
+```
 
 Let's not spend more time on this legacy interface. Without delay, let's switch to what kernel developers have provided as a new GPIO management interface from the user space, the **Libgpiod** library.
 
@@ -1883,9 +1411,10 @@ To address the limits of the sysfs interface, a new GPIO interface has been deve
 
 There are sanity APIs it might worth mentioning, which are defined as follows:
 
-bool gpiod_line_is_free(struct gpiod_line \*line);
-
-bool gpiod_line_is_requested(struct gpiod_line \*line);
+``` c
+bool gpiod_line_is_free(struct gpiod_line *line);
+bool gpiod_line_is_requested(struct gpiod_line *line);
+```
 
 In the preceding APIs, **gpiod_line_is_requested()** can be used to check if the calling user owns this GPIO line. This function returns **true** if **line** was already requested, or **false** otherwise. It is different from **gpiod_line_is_free()**, which is used to check if the calling user has neither requested ownership **line** nor set up any event notifications on it. It returns **true** if **line** is free, and **false** otherwise.
 
@@ -1897,273 +1426,189 @@ Interrupt-driven GPIO handling consists of grabbing one (**struct gpiod_line**) 
 
 A GPIO line event is abstracted by a **struct gpiod_line_event** object, defined as follows:
 
+``` c
 struct gpiod_line_event {
-
-    struct timespec ts;
-
-    int event_type;
-
+    struct timespec ts;
+    int event_type;
 };
+```
 
 In the preceding data structure, **ts** is the time specifier data structure to represent the wait event timeout, and **event_type** is the type of event, which can be either **GPIOD_LINE_EVENT_RISING_EDGE** or **GPIOD_LINE_EVENT_FALLING_EDGE**, respectively for a rising edge event or a falling edge event.
 
 After the GPIO handle(s) has been obtained using **gpiod_chip_get_line()** or **gpiod_chip_get_lines()** or **gpiod_chip_get_all_lines()**, the user code should request events of interest on these GPIO handles using one of the following APIs:
 
+``` c
 int gpiod_line_request_rising_edge_events(
-
-                          struct gpiod_line \*line,
-
-                          const char \*consumer);
-
+                          struct gpiod_line *line,
+                          const char *consumer);
 int gpiod_line_request_bulk_rising_edge_events(
-
-                          struct gpiod_line_bulk \*bulk,
-
-                          const char \*consumer);
-
+                          struct gpiod_line_bulk *bulk,
+                          const char *consumer);
 int gpiod_line_request_falling_edge_events(
-
-                          struct gpiod_line \*line,
-
-                          const char \*consumer);
-
+                          struct gpiod_line *line,
+                          const char *consumer);
 int gpiod_line_request_bulk_falling_edge_events(
-
-                          struct gpiod_line_bulk \*bulk,
-
-                          const char \*consumer);
-
+                          struct gpiod_line_bulk *bulk,
+                          const char *consumer);
 int gpiod_line_request_both_edges_events(
-
-                          struct gpiod_line \*line,
-
-                          const char \*consumer);
-
+                          struct gpiod_line *line,
+                          const char *consumer);
 int gpiod_line_request_bulk_both_edges_events(
-
-                          struct gpiod_line_bulk \*bulk,
-
-                          const char \*consumer);
+                          struct gpiod_line_bulk *bulk,
+                          const char *consumer);
+```
 
 The preceding APIs request either rising edge, falling edge, or both edge events, respectively on a single GPIO line or on a set of GPIO (the bulk-related API).
 
 After the events have been requested, the user code can wait on the GPIO lines of interest, waiting for the requested events to occur using one of the following APIs:
 
-int gpiod_line_event_wait(struct gpiod_line \*line,
-
-                  const struct timespec \*timeout);
-
+``` c
+int gpiod_line_event_wait(struct gpiod_line *line,
+                  const struct timespec *timeout);
 int gpiod_line_event_wait_bulk(
-
-                  struct gpiod_line_bulk \*bulk,
-
-                  const struct timespec \*timeout,
-
-                  struct gpiod_line_bulk \*event_bulk);
+                  struct gpiod_line_bulk *bulk,
+                  const struct timespec *timeout,
+                  struct gpiod_line_bulk *event_bulk);
+```
 
 In the preceding, **gpiod_line_event_wait()** waits for event(s) on a single GPIO line, while **gpiod_line_event_wait_bulk()** will wait on a set of GPIOs. In parameters, **line** is the GPIO line on which to wait events in the case of single GPIO monitoring, while **bulk** is the set of GPIO lines in the case of bulk monitoring. Finally, **event_bulk** is an output parameter, holding the set of GPIO lines on which the GPIO events of interest have occurred. These are all blocking APIs, which will continue execution flow only after the events of interest have occurred or after a timeout.
 
 Once the blocking function returns, **gpiod_line_event_read()** must be used to read the events that occurred on the GPIO line(s) returned by the previously mentioned monitoring functions. This API has the following prototype:
 
-int gpiod_line_event_read(struct gpiod_line \*line,
-
-                         struct gpiod_line_event \*event);
+``` c
+int gpiod_line_event_read(struct gpiod_line *line,
+                         struct gpiod_line_event *event);
+```
 
 On error, this API returns **-1**, otherwise, it returns **0**. In parameters, **line** is the GPIO line to read the events on, and **event** is an output parameter, the event buffer to which the event data will be copied.
 
 The following is an example of requesting an event and reading and processing that event:
 
-char \*chipname = "gpiochip0";
-
+``` c
+char *chipname = "gpiochip0";
 int ret;
-
-struct gpiod_chip \*chip;
-
-struct gpiod_line \*input_line;
-
+struct gpiod_chip *chip;
+struct gpiod_line *input_line;
 struct gpiod_line_event event;
-
-unsigned int line_num = 25;  /\* GPIO Pin \#25 \*/
-
+unsigned int line_num = 25;  /* GPIO Pin #25 */
 chip = gpiod_chip_open_by_name(chipname);
-
 if (!chip) {
-
-     perror("Open chip failed\n");
-
-     return -1;
-
+     perror("Open chip failed\n");
+     return -1;
 }
-
 input_line = gpiod_chip_get_line(chip, line_num);
-
 if (!input_line) {
-
-     perror("Get line failed\n");
-
-     ret = -1;
-
-     goto close_chip;
-
+     perror("Get line failed\n");
+     ret = -1;
+     goto close_chip;
 }
-
 ret = gpiod_line_request_rising_edge_events(input_line,
-
-                                            "gpio-test");
-
-if (ret \< 0) {
-
-     perror("Request event notification failed\n");
-
-     ret = -1;
-
-     goto release_line;
-
+                                            "gpio-test");
+if (ret < 0) {
+     perror("Request event notification failed\n");
+     ret = -1;
+     goto release_line;
 }
-
 while (1) {
+  gpiod_line_event_wait(input_line, NULL); /* blocking */
+  if (gpiod_line_event_read(input_line, &event) != 0)
+        continue;
 
-  gpiod_line_event_wait(input_line, NULL); /\* blocking \*/
-
-  if (gpiod_line_event_read(input_line, &event) != 0)
-
-        continue;
-
-    /\* should always be a rising event in our example \*/
-
-    if (event.event_type != GPIOD_LINE_EVENT_RISING_EDGE)
-
-        continue;
-
-    \[...\]
-
+    /* should always be a rising event in our example */
+    if (event.event_type != GPIOD_LINE_EVENT_RISING_EDGE)
+        continue;
+    [...]
 }
-
 release_line:
-
-     gpiod_line_release(input_line);
-
+     gpiod_line_release(input_line);
 close_chip:
-
-     gpiod_chip_close(chip);
-
-     return ret;
+     gpiod_chip_close(chip);
+     return ret;
+```
 
 In the preceding snippet, we first look up the GPIO chip by its name and use the returned GPIO chip handle to grab a handle on GPIO line \#25. Next, we request a rising events notification (interrupt-driven) on the GPIO line. After that, we loop on waiting for events to happen, read which event it was, and validate that it's a rising event.
 
 Apart from the previous code example, let's now imagine a much complex example, where we monitor five GPIO lines, and let's start by feeding the required headers:
 
+``` c
 // file event-bulk.c
-
-\#include \<gpiod.h\>
-
-\#include \<error.h\>
-
-\#include \<stdlib.h\>
-
-\#include \<stdio.h\>
-
-\#include \<string.h\>
-
-\#include \<unistd.h\>
-
-\#include \<sys/time.h\>
+#include <gpiod.h>
+#include <error.h>
+#include <stdlib.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+#include <sys/time.h>
+```
 
 Then, let's provide the static variables we will use in the program:
 
-static struct gpiod_chip \*chip;
-
+``` c
+static struct gpiod_chip *chip;
 static struct gpiod_line_bulk gpio_lines;
-
 static struct gpiod_line_bulk gpio_events;
-
-/\* use GPIOs \#4, \#7, \#9, \#15, and \#31 as input \*/
-
-static unsigned int gpio_offsets\[\] = {4, 7, 9, 15, 31};
+/* use GPIOs #4, #7, #9, #15, and #31 as input */
+static unsigned int gpio_offsets[] = {4, 7, 9, 15, 31};
+```
 
 In the previous snippet, **chip** will hold the handle to the GPIO chip that we are interested in. **gpio_lines** will hold the handles of the event-driven GPIO lines, that is, the GPIO lines to be monitored. Finally, **gpio_events** will be given to the library so that upon monitoring, it is filled with the handles of GPIO lines on which events have occurred.
 
 Finally, let's start implementing our **main** method:
 
-int main(int argc, char \*argv\[\])
-
+``` c
+int main(int argc, char *argv[])
 {
-
-    int err;
-
-    int values\[5\] = {-1};
-
-    struct timespec timeout;
-
-    chip = gpiod_chip_open("/dev/gpiochip0");
-
-    if (!chip) {
-
-        perror("gpiod_chip_open");
-
-        goto cleanup;
-
-    }
+    int err;
+    int values[5] = {-1};
+    struct timespec timeout;
+    chip = gpiod_chip_open("/dev/gpiochip0");
+    if (!chip) {
+        perror("gpiod_chip_open");
+        goto cleanup;
+    }
+```
 
 In the previous snippet, we have simply opened the GPIO chip device and kept a pointer to it. Next, we will have to grab handles of the GPIO lines of interest and store them in **gpio_lines**:
 
-    err = gpiod_chip_get_lines(chip, gpio_offsets, 5,
-
-                               &gpio_lines);
-
-    if (err) {
-
-        perror("gpiod_chip_get_lines");
-
-        goto cleanup;
-
-    }
+``` c
+    err = gpiod_chip_get_lines(chip, gpio_offsets, 5,
+                               &gpio_lines);
+    if (err) {
+        perror("gpiod_chip_get_lines");
+        goto cleanup;
+    }
+```
 
 Then, we use these GPIO line handles to request event monitoring on their underlying GPIO lines. Because we are interested in more than one GPIO, we use the **bulk** API variant, as follows:
 
-    err = gpiod_line_request_bulk_rising_edge_events(
-
-                    &gpio_lines, "rising edge example");
-
-    if(err) {
-
-        perror(
-
-           "gpiod_line_request_bulk_rising_edge_events");
-
-        goto cleanup;
-
-    }
+``` c
+    err = gpiod_line_request_bulk_rising_edge_events(
+                    &gpio_lines, "rising edge example");
+    if(err) {
+        perror(
+           "gpiod_line_request_bulk_rising_edge_events");
+        goto cleanup;
+    }
+```
 
 In the previous snippet, **gpiod_line_request_bulk_rising_edge_events()** will request rising edge event notifications. Now that we have requested event-driven monitoring for our GPIO, we can call the blocking monitoring API on these GPIO lines, as follows:
 
-    /\* Timeout of 60 seconds, pass in NULL to wait forever \*/
-
-    timeout.tv_sec = 60;
-
-    timeout.tv_nsec = 0;
-
-    printf("waiting for rising edge event \n");
-
+``` c
+    /* Timeout of 60 seconds, pass in NULL to wait forever */
+    timeout.tv_sec = 60;
+    timeout.tv_nsec = 0;
+    printf("waiting for rising edge event \n");
 marker1:
-
-    err = gpiod_line_event_wait_bulk(&gpio_lines,
-
-                                     &timeout, &gpio_events);
-
-    if (err == -1) {
-
-        perror("gpiod_line_event_wait_bulk");
-
-        goto cleanup;
-
-    } else if (err == 0) {
-
-        fprintf(stderr, "wait timed out\n");
-
-        goto cleanup;
-
-    }
+    err = gpiod_line_event_wait_bulk(&gpio_lines,
+                                     &timeout, &gpio_events);
+    if (err == -1) {
+        perror("gpiod_line_event_wait_bulk");
+        goto cleanup;
+    } else if (err == 0) {
+        fprintf(stderr, "wait timed out\n");
+        goto cleanup;
+    }
+```
 
 In the previous excerpt, since we need time-bounded event polling, we set up a **struct timespec** data structure with the desired timeout and we pass it to **gpiod_line_event_wait_bulk()**.
 
@@ -2171,51 +1616,36 @@ That said, reaching this step (passing the polling function) would mean that eit
 
 If ever we are interested in reading the values of the GPIO lines on which events have occurred, we could do the following:
 
-    err = gpiod_line_get_value_bulk(&gpio_events, values);
-
-    if(err) {
-
-        perror("gpiod_line_get_value_bulk");
-
-        goto cleanup;
-
-    }
+``` c
+    err = gpiod_line_get_value_bulk(&gpio_events, values);
+    if(err) {
+        perror("gpiod_line_get_value_bulk");
+        goto cleanup;
+    }
+```
 
 If instead of reading the values of GPIO lines on which events occurred we needed to read the value of all the monitored GPIO lines, we would have replaced **gpio_events** with **gpio_lines** in the previous code.
 
 Next, if we are interested in the type of event that occurred on each GPIO line in **gpio_events**, we can do the following:
 
-    for (int i = 0;
-
-         i \< gpiod_line_bulk_num_lines(&gpio_events);
-
-         i++) {
-
-        struct gpiod_line\* line;
-
-        struct gpiod_line_event event;
-
-        line = gpiod_line_bulk_get_line(&gpio_events, i);
-
-        if(!line) {
-
-           fprintf(stderr, "unable to get line %d\n", i);
-
-           continue;
-
-        }
-
-        if (gpiod_line_event_read(line, &event) != 0)
-
-            continue;
-
-        printf("line %s, %d\n", gpiod_line_name(line),
-
-           gpiod_line_offset(line));
-
-    }
-
+``` c
+    for (int i = 0;
+         i < gpiod_line_bulk_num_lines(&gpio_events);
+         i++) {
+        struct gpiod_line* line;
+        struct gpiod_line_event event;
+        line = gpiod_line_bulk_get_line(&gpio_events, i);
+        if(!line) {
+           fprintf(stderr, "unable to get line %d\n", i);
+           continue;
+        }
+        if (gpiod_line_event_read(line, &event) != 0)
+            continue;
+        printf("line %s, %d\n", gpiod_line_name(line),
+           gpiod_line_offset(line));
+    }
 marker2:
+```
 
 In the preceding code, we iterate over each GPIO line in **gpio_events**, which represents the list of GPIO lines on which events have occurred. **gpiod_line_bulk_num_lines()** retrieves the number of GPIO lines held by the line bulk object, and **gpiod_line_bulk_get_line()** retrieves the line handle from a line bulk object at the given offset, local to this line bulk object. You should, however, note that to achieve the same goal, we could have used the **gpiod_line_bulk_foreach_line()** macro.
 
@@ -2225,15 +1655,13 @@ If we were interested in monitoring these GPIO lines infinitely or for a certain
 
 At the end of the execution flow, we do some cleaning, like the following:
 
+``` c
 cleanup:
-
-    gpiod_line_release_bulk(&gpio_lines);
-
-    gpiod_chip_close(chip);
-
-    return EXIT_SUCCESS;
-
+    gpiod_line_release_bulk(&gpio_lines);
+    gpiod_chip_close(chip);
+    return EXIT_SUCCESS;
 }
+```
 
 The previous cleaning code snippet first releases all the GPIO lines that we have requested, and then closes the associated GPIO chip.
 
@@ -2280,23 +1708,21 @@ This directory contains the followings attributes:
 
 The following is an example that instantiated a new GPIO aggregator by aggregating GPIO line 19 of **e6052000.gpio** and GPIO lines 20-21 of **e6050000.gpio** into a new **gpio_chip**:
 
-\# echo 'e6052000.gpio 19 e6050000.gpio 20-21' \> /sys/bus/platform/drivers/gpio-aggregator/new_device
-
-\# gpioinfo gpio-aggregator.0
-
-     gpiochip12 - 3 lines:
-
-     line 0: unnamed unused input active-high
-
-     line 1: unnamed unused input active-high
-
-     line 2: unnamed unused input active-high
-
-\# chown geert /dev/gpiochip12
+``` c
+# echo 'e6052000.gpio 19 e6050000.gpio 20-21' > /sys/bus/platform/drivers/gpio-aggregator/new_device
+# gpioinfo gpio-aggregator.0
+     gpiochip12 - 3 lines:
+     line 0: unnamed unused input active-high
+     line 1: unnamed unused input active-high
+     line 2: unnamed unused input active-high
+# chown geert /dev/gpiochip12
+```
 
 After use, the previously created aggregated GPIO controller can be destroyed using the following command, assuming it is named **gpio-aggregator.0**:
 
-\$ echo gpio-aggregator.0 \> delete_device
+``` c
+$ echo gpio-aggregator.0 > delete_device
+```
 
 From the previous example, the GPIO chip that resulted from the aggregation was **gpiochip12**, having three GPIO lines. Instead of **gpioinfo gpio-aggregator.0**, we could have used **gpioinfo gpiochip12**.
 
@@ -2306,117 +1732,85 @@ The device tree can also be used to aggregate GPIOs. To do so, simply define a n
 
 In the following, we will demonstrate the use of the GPIO aggregator with several GPIO lines from the device tree. First, we enumerate the pins we need to use GPIOs in our new GPIO chip. We do this under the pin controller node as follows:
 
+``` c
 &iomuxc {
-
-\[...\]
-
-   aggregator {
-
-      pinctrl_aggregator_pins: aggretatorgrp {
-
-         fsl,pins = \<
-
-           MX6QDL_PAD_EIM_D30\_\_GPIO3_IO30      0x80000000  
-
-           MX6QDL_PAD_EIM_D23\_\_GPIO3_IO23      0x80000000
-
-           MX6QDL_PAD_ENET_TXD1\_\_GPIO1_IO29    0x80000000
-
-           MX6QDL_PAD_ENET_RX_ER\_\_GPIO1_IO24   0x80000000
-
-           MX6QDL_PAD_EIM_D25\_\_GPIO3_IO25      0x80000000
-
-           MX6QDL_PAD_EIM_LBA\_\_GPIO2_IO27      0x80000000
-
-           MX6QDL_PAD_EIM_EB2\_\_GPIO2_IO30      0x80000000
-
-           MX6QDL_PAD_SD3_DAT4\_\_GPIO7_IO01     0x80000000
-
-         \>;
-
-      };
-
-   };
-
+[...]
+   aggregator {
+      pinctrl_aggregator_pins: aggretatorgrp {
+         fsl,pins = <
+           MX6QDL_PAD_EIM_D30__GPIO3_IO30      0x80000000
+           MX6QDL_PAD_EIM_D23__GPIO3_IO23      0x80000000
+           MX6QDL_PAD_ENET_TXD1__GPIO1_IO29    0x80000000
+           MX6QDL_PAD_ENET_RX_ER__GPIO1_IO24   0x80000000
+           MX6QDL_PAD_EIM_D25__GPIO3_IO25      0x80000000
+           MX6QDL_PAD_EIM_LBA__GPIO2_IO27      0x80000000
+           MX6QDL_PAD_EIM_EB2__GPIO2_IO30      0x80000000
+           MX6QDL_PAD_SD3_DAT4__GPIO7_IO01     0x80000000
+         >;
+      };
+   };
 }
+```
 
 Now that our pins have been configured, we can declare our GPIO aggregator as follows:
 
+``` c
 gpio-aggregator {
-
-    pinctrl-names = "default";
-
-    pinctrl-0 = \<&pinctrl_aggregator_pins\>;
-
-    compatible = "gpio-aggregator";
-
-    gpios = \<&gpio3 30 GPIO_ACTIVE_HIGH\>,
-
-            \<&gpio3 23 GPIO_ACTIVE_HIGH\>,
-
-            \<&gpio1 29 GPIO_ACTIVE_HIGH\>,
-
-            \<&gpio1 25 GPIO_ACTIVE_HIGH\>,
-
-            \<&gpio3 25 GPIO_ACTIVE_HIGH\>,
-
-            \<&gpio2 27 GPIO_ACTIVE_HIGH\>,
-
-            \<&gpio2 30 GPIO_ACTIVE_HIGH\>,
-
-            \<&gpio7 1 GPIO_ACTIVE_HIGH\>;
-
-    gpio-line-names = "line_a", "line_b", "line_c",
-
-            "line_d", "line_e", "line_f", "line_g",
-
-            "line_h";
-
+    pinctrl-names = "default";
+    pinctrl-0 = <&pinctrl_aggregator_pins>;
+    compatible = "gpio-aggregator";
+    gpios = <&gpio3 30 GPIO_ACTIVE_HIGH>,
+            <&gpio3 23 GPIO_ACTIVE_HIGH>,
+            <&gpio1 29 GPIO_ACTIVE_HIGH>,
+            <&gpio1 25 GPIO_ACTIVE_HIGH>,
+            <&gpio3 25 GPIO_ACTIVE_HIGH>,
+            <&gpio2 27 GPIO_ACTIVE_HIGH>,
+            <&gpio2 30 GPIO_ACTIVE_HIGH>,
+            <&gpio7 1 GPIO_ACTIVE_HIGH>;
+    gpio-line-names = "line_a", "line_b", "line_c",
+            "line_d", "line_e", "line_f", "line_g",
+            "line_h";
 };
+```
 
 In this example, **pinctrl_aggregator_pins** is the GPIO pin node, which must have been instantiated under the pin controller node. **gpios** contains the list of GPIO lines the new GPIO chip must be made of. At the end, the meaning of **gpio-line-names** is line 30 of GPIO controller **gpio3** is used and is named **line_a**, line 23 of GPIO controller **gpio3** is used and is named **line_b**, line 29 of GPIO controller **gpio1** is used and named **line_c**, and so on up to line 1 of GPIO controller **gpio7**, which is named **line_h**.
 
 From the user space, we can see the GPIO chip and its aggregated lines:
 
-\# gpioinfo
-
-\[...\]
-
+``` c
+# gpioinfo
+[...]
 gpiochip9 - 8 lines:
-
-    line 0: "line_a" unused input active-high
-
-    line 1: "line_b" unused input active-high
-
-\[...\]
-
-    line 7: "line_g" unused input active-high
-
-\[...\]
+    line 0: "line_a" unused input active-high
+    line 1: "line_b" unused input active-high
+[...]
+    line 7: "line_g" unused input active-high
+[...]
+```
 
 We can search a GPIO chip and a line number by the line name:
 
-\# gpiofind 'line_b'
-
+``` c
+# gpiofind 'line_b'
 gpiochip9 1
+```
 
 We can access a GPIO line by its name:
 
-\# gpioget \$(gpiofind 'line_b')
-
+``` c
+# gpioget $(gpiofind 'line_b')
 1
-
-\#
-
-\# gpioset \$(gpiofind 'line_h')=1
-
-\# gpioset \$(gpiofind 'line_h')=0
+#
+# gpioset $(gpiofind 'line_h')=1
+# gpioset $(gpiofind 'line_h')=0
+```
 
 We can change the GPIO chip device file ownership to allow user or group to access the attached lines:
 
-\# chown \$user:\$group /dev/gpiochip9
-
-\# chmod 660 /dev/gpiochip9
+``` c
+# chown $user:$group /dev/gpiochip9
+# chmod 660 /dev/gpiochip9
+```
 
 The GPIO chip created by the aggregator can be retrieved from sysfs in **/sys/bus/platform/devices/gpio-aggregator/**.
 
@@ -2428,17 +1822,14 @@ Before we go further, let's talk about the **driver_override** file; this file i
 
 For example, given a **door** device, which is a GPIO-operated device described in the device tree, use its own compatible value as follows:
 
+``` c
 door {
-
-     compatible = "myvendor,mydoor";
-
-     gpios = \<&gpio2 19 GPIO_ACTIVE_HIGH\>,
-
-           \<&gpio2 20 GPIO_ACTIVE_LOW\>;
-
-     gpio-line-names = "open", "lock";
-
+     compatible = "myvendor,mydoor";
+     gpios = <&gpio2 19 GPIO_ACTIVE_HIGH>,
+           <&gpio2 20 GPIO_ACTIVE_LOW>;
+     gpio-line-names = "open", "lock";
 };
+```
 
 It can be bound to the GPIO aggregator with either of the following methods:
 
@@ -2447,21 +1838,21 @@ It can be bound to the GPIO aggregator with either of the following methods:
 
 The first method is quite straightforward:
 
-\$ echo gpio-aggregator \> /sys/bus/platform/devices/door/driver_override
-
-\$ echo door \> /sys/bus/platform/drivers/gpio-aggregator/bind
+``` c
+$ echo gpio-aggregator > /sys/bus/platform/devices/door/driver_override
+$ echo door > /sys/bus/platform/drivers/gpio-aggregator/bind
+```
 
 In the previous commands, we have written the driver's name (**gpio-aggregator** in this case) in the **driver_override** file present in the device directory, **/sys/bus/platform/devices/\<device-name\>/**. After that, we have bound the device to the driver by writing the device name in the **bind** file present in the driver's directory, **/sys/bus/\<bus-name\>/drivers/\<driver-name\>/**. It has to be noted that **\<bus-name\>** corresponds to the bus framework the driver belongs to. It could be **i2c**, **spi**, **platform**, **pci**, **isa**, **usb**, and so on.
 
 After the binding, a new GPIO chip, **door**, will be created. Its information can then be carried out as follows:
 
-\$ gpioinfo door
-
+``` c
+$ gpioinfo door
 gpiochip12 - 2 lines:
-
-     line   0:       "open"       unused   input  active-high
-
-     line   1:       "lock"       unused   input  active-high
+     line   0:       "open"       unused   input  active-high
+     line   1:       "lock"       unused   input  active-high
+```
 
 Next, the library APIs can be used on this GPIO chip like any other normal (non-virtual) GPIO chip.
 

@@ -1,1 +1,1 @@
-![](media/25aab268128867706c67de1cdb7c0358216078a3.svgz)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/25aab268128867706c67de1cdb7c0358216078a3.svgz)

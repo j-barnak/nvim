@@ -1948,19 +1948,14 @@ A flow chart shows the steps of the compilation process.
 
 5\. The linker turns the object file and two other object files (binary) into an executable (also binary).
 
-Return to text
 
-A flow chart shows the stages of the compiler.
 
-1\. The lexer turns program.c into a token list.
 
-2\. The parser turns the token list into an abstract syntax tree.
 
 3\. Assembly generation turns the abstract syntax tree into assembly.
 
 4\. Code emission writes assembly to program.s.
 
-Return to text
 
 A tree diagram shows the AST.
 
@@ -1984,7 +1979,6 @@ A tree diagram shows the AST.
 
 ■ The "right" child is "Constant(2).”
 
-Return to text
 
 A tree diagram shows the AST. Each node has one child.
 
@@ -1996,27 +1990,19 @@ A tree diagram shows the AST. Each node has one child.
 
 ● The "exp" child is "Constant(2).”
 
-Return to text
 
-A flow chart shows the stages of the compiler.
 
-1\. The lexer turns program.c into a token list.
 
-2\. The parser turns the token list into an abstract syntax tree.
 
 3\. TACKY Generation (a new stage) turns the abstract syntax tree into TACKY.
 
 4\. Assembly generation turns TACKY into assembly. It has three steps (all new):
 
-a\. Converting TACKY to Assembly
 
-b\. Replacing Pseudoregisters
 
-c\. Instruction Fix-Up
 
 5\. Code emission writes assembly to program.s.
 
-Return to text
 
 The diagram shows the system state before and after the push instruction.
 
@@ -2042,7 +2028,6 @@ RSP holds the address 0x7ffeea685918 and points to "a".
 
 RSP holds the address 0x7ffeea685910 and points to 3.
 
-Return to text
 
 Four diagrams show the system state at the beginning of the function and after each instruction in the function prologue.
 
@@ -2076,7 +2061,6 @@ RSP holds address 0x7ffeea6858f8 and points to the start of the unused memory.
 
 RBP holds address 0x7ffeea685910 and points to the value just below the unused memory, 0x7ffeea685960.
 
-Return to text
 
 Three diagrams show the system state at the beginning of the function and after each instruction in the function prologue.
 
@@ -2102,9 +2086,7 @@ RSP and RBP both hold address 0x7ffeea685910 and point to the value 0x7ffeea6859
 
 · After popq %rbp, the caller stack frame starts at the top of the stack, at address 0x7ffeea685918, and extends to address 0x7ffeea685960. RSP holds address 0x7ffeea685918 and points to the top of the caller stack frame stack. RBP holds address 0x7ffeea685960 and points to the bottom of the caller stack frame.
 
-Return to text
 
-A flow chart shows the stages of the compiler.
 
 ● The lexer turns program.c into a token list.
 
@@ -2122,7 +2104,6 @@ A flow chart shows the stages of the compiler.
 
 ● Code emission writes assembly to program.s.
 
-Return to text
 
 A tree diagram shows the AST.
 
@@ -2136,7 +2117,6 @@ A tree diagram shows the AST.
 
 ● The second child is 3.
 
-Return to text
 
 A tree diagram shows the AST.
 
@@ -2150,105 +2130,66 @@ A tree diagram shows the AST.
 
 ● The root node’s second child is 3.
 
-Return to text
 
-A flow chart shows the stages of the compiler.
 
-1\. The lexer turns program.c into a token list.
 
-2\. The parser turns the token list into an abstract syntax tree.
 
 3\. TACKY Generation turns the abstract syntax tree into TACKY.
 
 4\. Assembly generation turns TACKY into assembly. It has three steps:
 
-a\. Converting TACKY to Assembly
 
-b\. Replacing Pseudoregisters
 
-c\. Instruction Fix-Up
 
 5\. Code emission writes assembly to program.s.
 
-Return to text
 
 A flow chart shows the stages of the compiler, including one new stage.
 
-1\. The lexer turns program.c into a token list.
 
-2\. The parser turns the token list into an abstract syntax tree.
 
 3\. Semantic analysis (a new stage) turns the AST into a transformed AST. It has one step:
 
 a\. Variable resolution
 
-4\. TACKY Generation turns the transformed AST into TACKY.
 
-5\. Assembly generation turns TACKY into assembly. It has three steps:
 
-a\. Converting TACKY to Assembly
 
-b\. Replacing Pseudoregisters
 
-c\. Instruction Fix-Up
 
-6\. Code emission writes assembly to program.s.
 
-Return to text
 
-A flow chart shows the stages of the compiler.
 
-1\. The lexer turns program.c into a token list.
 
-2\. The parser turns the token list into an abstract syntax tree.
 
 3\. Semantic analysis turns the AST into a transformed AST. It has one step:
 
 a\. Variable resolution
 
-4\. TACKY Generation turns the transformed AST into TACKY.
 
-5\. Assembly generation turns TACKY into assembly. It has three steps:
 
-a\. Converting TACKY to Assembly
 
-b\. Replacing Pseudoregisters
 
-c\. Instruction Fix-Up
 
-6\. Code emission writes assembly to program.s.
 
-Return to text
 
-A flow chart shows the stages of the compiler.
 
-1\. The lexer turns program.c into a token list.
 
-2\. The parser turns the token list into an abstract syntax tree.
 
 3\. Semantic analysis turns the AST into a transformed AST. It has one step:
 
 a\. Variable resolution
 
-4\. TACKY Generation turns the transformed AST into TACKY.
 
-5\. Assembly generation turns TACKY into assembly. It has three steps:
 
-a\. Converting TACKY to Assembly
 
-b\. Replacing Pseudoregisters
 
-c\. Instruction Fix-Up
 
-6\. Code emission writes assembly to program.s.
 
-Return to text
 
 A flow chart shows the stages of the compiler, including one new step in the semantic analysis stage.
 
-1\. The lexer turns program.c into a token list.
 
-2\. The parser turns the token list into an abstract syntax tree.
 
 3\. Semantic analysis turns the AST into a transformed AST. It has two steps:
 
@@ -2256,59 +2197,38 @@ a\. Variable resolution
 
 b\. Loop Labeling (a new step)
 
-4\. TACKY Generation turns the transformed AST into TACKY.
 
-5\. Assembly generation turns TACKY into assembly. It has three steps:
 
-a\. Converting TACKY to Assembly
 
-b\. Replacing Pseudoregisters
 
-c\. Instruction Fix-Up
 
-6\. Code emission writes assembly to program.s.
 
-Return to text
 
 A flow chart shows the stages of the compiler, including one new step in the semantic analysis stage.
 
-1\. The lexer turns program.c into a token list.
 
-2\. The parser turns the token list into an abstract syntax tree.
 
-3\. Semantic analysis turns the AST into a transformed AST. It has three steps:
 
-a\. Identifier resolution
 
 b\. Type checking (a new step)
 
-c\. Loop Labeling
 
-4\. TACKY Generation turns the transformed AST into TACKY.
 
-5\. Assembly generation turns TACKY into assembly. It has three steps:
 
-a\. Converting TACKY to Assembly
 
-b\. Replacing Pseudoregisters
 
-c\. Instruction Fix-Up
 
-6\. Code emission writes assembly to program.s.
 
-Return to text
 
 ● Left column: The registers and the stack are shown side by side. The value on top of the stack is the saved base address of the prior stack frame. The prior stack frame is immediately below this value.
 
 RSP and RBP point to the saved base address on top of the stack. RDI holds the value 15. RSI, RDX, RCX, R8, R9, and RAX are uninitialized.
 
-The contents of the stack are listed from top to bottom:
 
 ○ Value 0x7000000000160 is stored at address 0x7000000000110
 
 ○ The prior stack frame extends from address 0x7000000000118 to 0x7000000000160
 
-The contents of the registers are given in the following table.
 
 | Register | Contents        |
 |----------|-----------------|
@@ -2344,13 +2264,11 @@ The contents of the registers are given in the following table.
 | 0x1000000b            | addq \$24, %rsp |
 | 0x1000000c            | popq %rdi       |
 
-Return to text
 
 ● Left column: The registers and the stack are shown side by side, as in Figure 9-1. Four new items have been pushed onto the stack. These are, from top to bottom: the value 7, the value 8, padding, and the value 15. These are followed by the saved base address of the prior stack frame, then the prior stack frame, as before.
 
 RSP now points to the value 7 on top of the stack. RBP points to the saved base address of the prior stack frame, as before. RDI, RSI, RDX, RCX, R8, and R9 hold values 1 through 6, and RAX is uninitialized.
 
-The contents of the stack are listed from top to bottom:
 
 ○ Value 7 at address 0x70000000000f0
 
@@ -2364,7 +2282,6 @@ The contents of the stack are listed from top to bottom:
 
 ○ The prior stack frame, which extends from address 0x7000000000118 to 0x7000000000160
 
-The contents of the registers are given in the following table.
 
 | Register | Contents        |
 |----------|-----------------|
@@ -2398,11 +2315,9 @@ The contents of the registers are given in the following table.
 | 0x1000000b            | addq \$24, %rsp |
 | 0x1000000c            | popq %rdi       |
 
-Return to text
 
 ● Left column: The registers and the stack are shown side by side, as in Figure 9-2. One new value has been pushed onto the stack: 0x1000000b, the address of the assembly instruction just after the call instruction. RSP points to this new value. The remaining registers and stack contents are unchanged from Figure 9-2.
 
-The contents of the stack are listed from top to bottom:
 
 ○ Value 0x1000000b at address 0x70000000000e8
 
@@ -2418,7 +2333,6 @@ The contents of the stack are listed from top to bottom:
 
 ○ The prior stack frame, which extends from address 0x7000000000118 to 0x7000000000160
 
-The contents of the registers are given in the following table.
 
 | Register | Contents        |
 |----------|-----------------|
@@ -2470,7 +2384,6 @@ Instructions in the “fun” function and their addresses are given in the foll
 | 0x10000105            | popq %rbp           |
 | 0x10000106            | ret                 |
 
-Return to text
 
 ● Left column: The registers and the stack are shown side by side, as in Figure 9-3. One new value has been pushed onto the stack: 0x7000000000110, the previous value of RBP. RSP and RBP both point to this new value. The remaining registers and stack contents are unchanged from Figure 9-3.
 
@@ -2494,7 +2407,6 @@ The stack is shaded with three different background colors to indicate different
 
 ○ The dark gray region is the prior stack frame, which extends from address 0x7000000000118 to 0x7000000000160
 
-The contents of the registers are given in the following table.
 
 | Register | Contents        |
 |----------|-----------------|
@@ -2546,13 +2458,11 @@ Instructions in the “fun” function and their addresses are given in the foll
 | 0x10000105            | popq %rbp           |
 | 0x10000106            | ret                 |
 
-Return to text
 
 ● Left column: The registers and the stack are shown side by side, as in Figure 9-4. The saved value of RBP, 0x7000000000110, has been popped off the top of the stack. The stack contents are otherwise unchanged from Figure 9-4.
 
 RSP points to the value 0x1000000b, the return address, which is currently on top of the stack. RBP points to the saved base address of the prior stack frame, which is the sixth item from the top of the stack. RAX holds the value 9. The other registers are unchanged from Figure 9-4.
 
-The contents of the stack are listed from top to bottom:
 
 ○ Value 0x1000000b at address 0x70000000000e8
 
@@ -2568,7 +2478,6 @@ The contents of the stack are listed from top to bottom:
 
 ○ The prior stack frame, which extends from address 0x7000000000118 to 0x7000000000160
 
-The contents of the registers are given in the following table.
 
 | Register | Contents        |
 |----------|-----------------|
@@ -2620,13 +2529,11 @@ Instructions in the “fun” function and their addresses are given in the foll
 | 0x10000105            | popq %rbp           |
 | 0x10000106            | ret                 |
 
-Return to text
 
 ● Left column: The registers and the stack are shown side by side, as in Figure 9-5. The return address, 0x1000000b, has been popped off the top of the stack. The stack contents are otherwise unchanged from Figure 9-5.
 
 RSP points to the top of the stack, which is now the value 7. The other registers are unchanged from Figure 9-5.
 
-The contents of the stack are listed from top to bottom:
 
 ○ Value 7 at address 0x70000000000f0
 
@@ -2640,7 +2547,6 @@ The contents of the stack are listed from top to bottom:
 
 ○ The prior stack frame, which extends from address 0x7000000000118 to 0x7000000000160
 
-The contents of the registers are given in the following table.
 
 | Register | Contents        |
 |----------|-----------------|
@@ -2676,19 +2582,16 @@ Instructions to call fun and their addresses are given in the following table.
 | 0x1000000b            | addq \$24, %rsp |
 | 0x1000000c            | popq %rdi       |
 
-Return to text
 
 ● Left column: The registers and the stack are shown side by side, as in Figure 9-6. Four values have been removed from the top of the stack. The saved base address of the prior stack frame is now on top of the stack, and the prior stack frame is immediately below this value.
 
 RSP and RBP point to the saved base address on top of the stack. RDI holds the value 15. RAX holds the value 9 and the remaining registers hold the values 2 through 6, as in Figure 9-6.
 
-The contents of the stack are listed from top to bottom:
 
 ○ Value 0x7000000000160 at address 0x7000000000110
 
 ○ The prior stack frame, which extends from address 0x7000000000118 to 0x7000000000160
 
-The contents of the registers are given in the following table.
 
 | Register | Contents        |
 |----------|-----------------|
@@ -2725,119 +2628,62 @@ Instructions to call fun and their addresses are given in the following table.
 | 0x1000000c            | popq %rdi       |
 | 0x1000000d            | ...             |
 
-Return to text
 
-A flow chart shows the stages of the compiler.
 
-1\. The lexer turns program.c into a token list.
 
-2\. The parser turns the token list into an abstract syntax tree.
 
-3\. Semantic analysis turns the AST into a transformed AST. It has three steps:
 
-a\. Identifier resolution
 
-b\. Type checking
 
-c\. Loop Labeling
 
-4\. TACKY Generation turns the transformed AST into TACKY.
 
-5\. Assembly generation turns TACKY into assembly. It has three steps:
 
-a\. Converting TACKY to Assembly
 
-b\. Replacing Pseudoregisters
 
-c\. Instruction Fix-Up
 
-6\. Code emission writes assembly to program.s.
 
-Return to text
 
-A flow chart shows the stages of the compiler.
 
-1\. The lexer turns program.c into a token list.
 
-2\. The parser turns the token list into an abstract syntax tree.
 
-3\. Semantic analysis turns the AST into a transformed AST. It has three steps:
 
-a\. Identifier resolution
 
-b\. Type checking
 
-c\. Loop Labeling
 
-4\. TACKY Generation turns the transformed AST into TACKY.
 
-5\. Assembly generation turns TACKY into assembly. It has three steps:
 
-a\. Converting TACKY to Assembly
 
-b\. Replacing Pseudoregisters
 
-c\. Instruction Fix-Up
 
-6\. Code emission writes assembly to program.s.
 
-Return to text
 
-A flow chart shows the stages of the compiler.
 
-1\. The lexer turns program.c into a token list.
 
-2\. The parser turns the token list into an abstract syntax tree.
 
-3\. Semantic analysis turns the AST into a transformed AST. It has three steps:
 
-a\. Identifier resolution
 
-b\. Type checking
 
-c\. Loop Labeling
 
-4\. TACKY Generation turns the transformed AST into TACKY.
 
-5\. Assembly generation turns TACKY into assembly. It has three steps:
 
-a\. Converting TACKY to Assembly
 
-b\. Replacing Pseudoregisters
 
-c\. Instruction Fix-Up
 
-6\. Code emission writes assembly to program.s.
 
-Return to text
 
-A flow chart shows the stages of the compiler.
 
-1\. The lexer turns program.c into a token list.
 
-2\. The parser turns the token list into an abstract syntax tree.
 
-3\. Semantic analysis turns the AST into a transformed AST. It has three steps:
 
-a\. Identifier resolution
 
-b\. Type checking
 
-c\. Loop Labeling
 
-4\. TACKY Generation turns the transformed AST into TACKY.
 
-5\. Assembly generation turns TACKY into assembly. It has three steps:
 
-a\. Converting TACKY to Assembly
 
-b\. Replacing Pseudoregisters
 
-c\. Instruction Fix-Up
 
-6\. Code emission writes assembly to program.s.
 
-Return to text
 
 A diagram shows the three fields in the double-precision format.
 
@@ -2847,7 +2693,6 @@ A diagram shows the three fields in the double-precision format.
 
 ● The sign is 1 bit, bit 63.
 
-Return to text
 
 The diagram shows the contents of the general-purpose and floating-point registers. Here their contents are presented in two lists.
 
@@ -2875,7 +2720,6 @@ Floating-point registers:
 
 ● XMM3 through XMM7 are unused.
 
-Return to text
 
 The diagram shows the contents of the general-purpose registers, the floating-point registers, and the stack. Here their contents are presented in three lists.
 
@@ -2905,7 +2749,6 @@ Floating-point registers:
 
 ● XMM4 through XMM7 are unused.
 
-Stack contents, from top to bottom:
 
 ● i7
 
@@ -2915,7 +2758,6 @@ Stack contents, from top to bottom:
 
 RSP points to i7 at the top of the stack.
 
-Return to text
 
 The diagram shows the contents of the general-purpose registers, the floating-point registers, and the stack. Here their contents are presented in three lists.
 
@@ -2951,7 +2793,6 @@ Floating-point registers:
 
 ● XMM7: d8
 
-Stack contents, from top to bottom:
 
 ● d9
 
@@ -2969,7 +2810,6 @@ Stack contents, from top to bottom:
 
 RSP points to d9 at the top of the stack.
 
-Return to text
 
 A number line illustrates the correct and incorrect rounding of 4,611,686,018,427,388,416.5 to the nearest double. The number line includes four markings:
 
@@ -2985,7 +2825,6 @@ A dotted arrow goes from 4,611,686,018,427,388,416.5, the original value, up to 
 
 A solid arrow goes from 4,611,686,018,427,388,416.5 down to 4,611,686,018,427,388,416, and a second solid arrow goes from there down to 4,611,686,018,427,387,904.0.
 
-Return to text
 
 Four number lines show different cases of rounding to odd. Each number line starts at 4,611,686,018,427,387,904.0 and ends at 4,611,686,018,427,388,928.0. Each number line has labels at increments of 0.5 from 4,611,686,018,427,388,414.5 to 4,611,686,018,427,388,417.
 
@@ -2997,79 +2836,47 @@ Four number lines show different cases of rounding to odd. Each number line star
 
 ● In the fourth case, we round from 4,611,686,018,427,388,414.5 up to 4,611,686,018,427,388,415, then from there down to 4,611,686,018,427,387,904.0.
 
-Return to text
 
-A flow chart shows the stages of the compiler.
 
-1\. The lexer turns program.c into a token list.
 
-2\. The parser turns the token list into an abstract syntax tree.
 
-3\. Semantic analysis turns the AST into a transformed AST. It has three steps:
 
-a\. Identifier resolution
 
-b\. Type checking
 
-c\. Loop Labeling
 
-4\. TACKY Generation turns the transformed AST into TACKY.
 
-5\. Assembly generation turns TACKY into assembly. It has three steps:
 
-a\. Converting TACKY to Assembly
 
-b\. Replacing Pseudoregisters
 
-c\. Instruction Fix-Up
 
-6\. Code emission writes assembly to program.s.
 
-Return to text
 
-Stack contents, from top to bottom:
 
 ● Value 0 at address 0x7ffeee67b938 (variable x)
 
 ● Value 0x7ffeee67b938 at address 0x7ffeee67b940 (variable ptr)
 
-Return to text
 
-Stack contents, from top to bottom:
 
 ● Value 4 at address 0x7ffeee67b938 (variable x)
 
 ● Value 0x7ffeee67b938 at address 0x7ffeee67b940 (variable ptr)
 
-Return to text
 
-A flow chart shows the stages of the compiler.
 
-1\. The lexer turns program.c into a token list.
 
-2\. The parser turns the token list into an abstract syntax tree.
 
-3\. Semantic analysis turns the AST into a transformed AST. It has three steps:
 
-a\. Identifier resolution
 
-b\. Type checking
 
-c\. Loop Labeling
 
-4\. TACKY Generation turns the transformed AST into TACKY.
 
-5\. Assembly generation turns TACKY into assembly. It has three steps:
 
-a\. Converting TACKY to Assembly
 
 b\. Replacing Pseudo-operands
 
-c\. Instruction Fix-Up
 
-6\. Code emission writes assembly to program.s.
 
-Return to text
 
 The contents of memory are given in the following table.
 
@@ -3082,91 +2889,51 @@ The contents of memory are given in the following table.
 | 0x20           | 5               |
 | 0x24           | 6               |
 
-Return to text
 
-A flow chart shows the stages of the compiler.
 
-1\. The lexer turns program.c into a token list.
 
-2\. The parser turns the token list into an abstract syntax tree.
 
-3\. Semantic analysis turns the AST into a transformed AST. It has three steps:
 
-a\. Identifier resolution
 
-b\. Type checking
 
-c\. Loop Labeling
 
-4\. TACKY Generation turns the transformed AST into TACKY.
 
-5\. Assembly generation turns TACKY into assembly. It has three steps:
 
-a\. Converting TACKY to Assembly
 
 b\. Replacing Pseudo-operands
 
-c\. Instruction Fix-Up
 
-6\. Code emission writes assembly to program.s.
 
-Return to text
 
-A flow chart shows the stages of the compiler.
 
-1\. The lexer turns program.c into a token list.
 
-2\. The parser turns the token list into an abstract syntax tree.
 
-3\. Semantic analysis turns the AST into a transformed AST. It has three steps:
 
-a\. Identifier resolution
 
-b\. Type checking
 
-c\. Loop Labeling
 
-4\. TACKY Generation turns the transformed AST into TACKY.
 
-5\. Assembly generation turns TACKY into assembly. It has three steps:
 
-a\. Converting TACKY to Assembly
 
 b\. Replacing Pseudo-operands
 
-c\. Instruction Fix-Up
 
-6\. Code emission writes assembly to program.s.
 
-Return to text
 
-A flow chart shows the stages of the compiler.
 
-1\. The lexer turns program.c into a token list.
 
-2\. The parser turns the token list into an abstract syntax tree.
 
-3\. Semantic analysis turns the AST into a transformed AST. It has three steps:
 
-a\. Identifier resolution
 
-b\. Type checking
 
-c\. Loop Labeling
 
-4\. TACKY Generation turns the transformed AST into TACKY.
 
-5\. Assembly generation turns TACKY into assembly. It has three steps:
 
-a\. Converting TACKY to Assembly
 
 b\. Replacing Pseudo-operands
 
-c\. Instruction Fix-Up
 
-6\. Code emission writes assembly to program.s.
 
-Return to text
 
 The positions of the members and padding in the structure are given as a list.
 
@@ -3180,7 +2947,6 @@ The positions of the members and padding in the structure are given as a list.
 
 ● Bytes 19 through 23 contain padding.
 
-Return to text
 
 Bytes 0 through 7 are the first eightbyte. Bytes 8 through 11 are the second eightbyte. The positions of the members and padding in the structure are given as a list.
 
@@ -3188,7 +2954,6 @@ Bytes 0 through 7 are the first eightbyte. Bytes 8 through 11 are the second eig
 
 ● Bytes 4 through 11 contain arr. Byte 4 contains element 0 of arr, byte 5 contains element 1 of arr, and so on, up to byte 11, which contains element 7 of arr.
 
-Return to text
 
 Bytes 0 through 7 are the first eightbyte. Bytes 8 through 11 are the second eightbyte. The positions of the members and padding in the structure are given as a list.
 
@@ -3204,7 +2969,6 @@ Bytes 0 through 7 are the first eightbyte. Bytes 8 through 11 are the second eig
 
 ○ Bytes 9 through 11 contain padding.
 
-Return to text
 
 Four diagrams show the contents of the stack at different points in the function call from Listing 18-46. In these diagrams, the stack is shaded with different background colors to indicate three regions. First, the caller’s stack frame from before the function call. Second: values the caller pushes onto the stack during the function call. Third: the callee’s stack frame. In each diagram, the contents of the stack are listed from top to bottom, organized by region (not every region is present in every diagram).
 
@@ -3272,9 +3036,7 @@ The four diagrams are as follows:
 
 ■ The old value of RBP
 
-Return to text
 
-The contents of the stack are listed from top to bottom:
 
 ● 8 bytes of padding
 
@@ -3296,7 +3058,6 @@ The contents of the registers are summarized in the text below this figure. The 
 
 ● The remaining registers (RDX, RCX, R8, R9, and RAX) are uninitialized.
 
-Return to text
 
 The stack is shaded with different background colors to indicate different stack frames.
 
@@ -3348,7 +3109,6 @@ The contents of the registers are given in the following list:
 
 ● The remaining registers (RDX, RCX, R8, R9, and RAX) are uninitialized.
 
-Return to text
 
 Five diagrams show the contents of RDI at each step. Here each diagram is depicted as a table, where one cell contains one byte. Table headers indicate which register aliases contain each byte. Bytes are listed left to right from most to least significant.
 
@@ -3390,7 +3150,6 @@ Five diagrams show the contents of RDI at each step. Here each diagram is depict
 |-----|-------------|-------------------|-----|-----|-----|-----|-----|
 | 00  | 00          | 00                | 00  | 00  | 03  | 02  | 01  |
 
-Return to text
 
 The contents of memory are given in the following table.
 
@@ -3401,23 +3160,15 @@ The contents of memory are given in the following table.
 | -2(%rbp)       | 0x03            |
 | -1(%rbp)       | 0x00            |
 
-Return to text
 
 A flow chart shows the stages of the compiler, including a new optimization stage.
 
-1\. The lexer turns program.c into a token list.
 
-2\. The parser turns the token list into an abstract syntax tree.
 
-3\. Semantic analysis turns the AST into a transformed AST. It has three steps:
 
-a\. Identifier resolution
 
-b\. Type checking
 
-c\. Loop Labeling
 
-4\. TACKY Generation turns the transformed AST into TACKY.
 
 5\. Optimization (a new stage) turns TACKY into optimized TACKY. It has four steps:
 
@@ -3433,21 +3184,16 @@ An arrow leads from each step to the next. Another arrow leads from dead store e
 
 6\. Assembly generation turns optimized TACKY into assembly. It has three steps:
 
-a\. Converting TACKY to Assembly
 
 b\. Replacing Pseudo-operands
 
-c\. Instruction Fix-Up
 
 7\. Code emission writes assembly to program.s.
 
-Return to text
 
 Here the nodes in the control-flow graph are presented as a list. Basic blocks are labeled B0, B1, and so on. We give each node’s contents, then list its outgoing edges.
 
-1\. ENTRY
 
-Edge list:
 
 ● B0
 
@@ -3459,7 +3205,6 @@ input = get_input()
 
 JumpIfNotZero(input, ProcessIt)
 
-Edge list:
 
 ● B1
 
@@ -3469,7 +3214,6 @@ Edge list:
 
 Return (-1)
 
-Edge list:
 
 ● EXIT
 
@@ -3481,7 +3225,6 @@ done = process_input(input)
 
 JumpIfNotZero(done, LoopStart)
 
-Edge list:
 
 ● B0
 
@@ -3491,19 +3234,16 @@ Edge list:
 
 Return(0)
 
-Edge list:
 
 ● EXIT
 
 6\. EXIT. No outgoing edges.
 
-Return to text
 
 Here the nodes in the control-flow graph are presented as a list. We give each node’s contents, then list its outgoing edges.
 
 ● ENTRY
 
-Edge list:
 
 ○ B0
 
@@ -3513,7 +3253,6 @@ x = 5
 
 Jump(Target)
 
-Edge list:
 
 ○ B2
 
@@ -3521,7 +3260,6 @@ Edge list:
 
 x = my_function()
 
-Edge list:
 
 ○ B2
 
@@ -3529,21 +3267,16 @@ Edge list:
 
 Target:
 
-Return(x)
 
-Edge list:
 
 ● EXIT
 
 ● EXIT. No outgoing edges.
 
-Return to text
 
 Here the nodes in the control-flow graph are presented as a list. We give each node’s contents, then list its outgoing edges.
 
-1\. ENTRY
 
-Edge list:
 
 ● B0
 
@@ -3553,7 +3286,6 @@ x = foo()
 
 JumpIfNotZero(arg, End)
 
-Edge list:
 
 ● B1
 
@@ -3563,7 +3295,6 @@ Edge list:
 
 x = 2
 
-Edge list:
 
 ● B2
 
@@ -3571,21 +3302,16 @@ Edge list:
 
 End:
 
-Return(x)
 
-Edge list:
 
 ● EXIT
 
 5\. EXIT. No outgoing edges.
 
-Return to text
 
 Here the nodes in the control-flow graph are presented as a list. We give each node’s contents, then list its outgoing edges.
 
-1\. ENTRY
 
-Edge list:
 
 ● B0
 
@@ -3595,7 +3321,6 @@ x = 2
 
 JumpIfNotZero(arg, End)
 
-Edge list:
 
 ● B1
 
@@ -3605,7 +3330,6 @@ Edge list:
 
 do_something()
 
-Edge list:
 
 ● B2
 
@@ -3613,21 +3337,16 @@ Edge list:
 
 End:
 
-Return(x)
 
-Edge list:
 
 ● EXIT
 
 6\. EXIT. No outgoing edges.
 
-Return to text
 
 Here the nodes in the control-flow graph are presented as a list. We give each node’s contents, then list its outgoing edges.
 
-1\. ENTRY
 
-Edge list:
 
 ● B0
 
@@ -3635,7 +3354,6 @@ Edge list:
 
 JumpIfNotZero(arg, A)
 
-Edge list:
 
 ● B1
 
@@ -3649,7 +3367,6 @@ x = y
 
 Jump(End)
 
-Edge list:
 
 ● BL2\>B3
 
@@ -3661,7 +3378,6 @@ y = 100
 
 x = y
 
-Edge list:
 
 ● B3
 
@@ -3669,21 +3385,16 @@ Edge list:
 
 End:
 
-Return(x)
 
-Edge list:
 
 ● EXIT
 
 6\. EXIT. No outgoing edges.
 
-Return to text
 
 Here the nodes in the control-flow graph are presented as a list. We give each node’s contents, then list its outgoing edges.
 
-1\. ENTRY
 
-Edge list:
 
 ● B0
 
@@ -3695,7 +3406,6 @@ x = y
 
 JumpIfNotZero(arg, End)
 
-Edge list:
 
 ● B1
 
@@ -3705,7 +3415,6 @@ Edge list:
 
 y = 10
 
-Edge list:
 
 ● B2
 
@@ -3713,21 +3422,16 @@ Edge list:
 
 End:
 
-Return(x)
 
-Edge list:
 
 ● EXIT
 
 5\. EXIT. No outgoing edges.
 
-Return to text
 
 Here the nodes in the control-flow graph are presented as a list. We give each node’s contents, then list its outgoing edges.
 
-1\. ENTRY
 
-Edge list:
 
 ● B0
 
@@ -3735,7 +3439,6 @@ Edge list:
 
 y = 3
 
-Edge list:
 
 ● B1
 
@@ -3749,7 +3452,6 @@ y = 4
 
 JumpIfNotZero(x, Loop)
 
-Edge list:
 
 ● B1
 
@@ -3757,23 +3459,18 @@ Edge list:
 
 4\. B2
 
-Return(x)
 
-Edge list:
 
 ● EXIT
 
 5\. EXIT. No outgoing edges.
 
-Return to text
 
 Here the nodes in the control-flow graph are presented as a list. We give each node’s contents, then its annotation, and then list its outgoing edges.
 
-1\. ENTRY
 
 Annotation: empty set
 
-Edge list:
 
 ● B0
 
@@ -3783,7 +3480,6 @@ y = 3
 
 Annotation: { y = 3 }
 
-Edge list:
 
 ● B1
 
@@ -3799,7 +3495,6 @@ JumpIfNotZero(x, Loop)
 
 Annotation: { y = 3, y = 4 }
 
-Edge list:
 
 ● B1
 
@@ -3807,25 +3502,20 @@ Edge list:
 
 4\. B2
 
-Return(x)
 
 Annotation: { y = 3, y = 4 }
 
-Edge list:
 
 ● EXIT
 
 5\. EXIT. No annotation. No outgoing edges.
 
-Return to text
 
 Here the nodes in the control-flow graph are presented as a list. We give each node’s contents, then its annotation, and then list its outgoing edges.
 
-1\. ENTRY
 
 Annotation: empty set
 
-Edge list:
 
 ● B0
 
@@ -3835,7 +3525,6 @@ y = 3
 
 Annotation: { y = 3 }
 
-Edge list:
 
 ● B1
 
@@ -3851,7 +3540,6 @@ JumpIfNotZero(x, Loop)
 
 Annotation: { y = 4 }
 
-Edge list:
 
 ● B1
 
@@ -3859,23 +3547,18 @@ Edge list:
 
 4\. B2
 
-Return(x)
 
 Annotation: { y = 4 }
 
-Edge list:
 
 ● EXIT
 
 5\. EXIT. No annotation. No outgoing edges.
 
-Return to text
 
 Here the nodes in the control-flow graph are presented as a list. We give each node’s contents, then list its outgoing edges.
 
-1\. ENTRY
 
-Edge list:
 
 ● B0
 
@@ -3885,7 +3568,6 @@ x = 10
 
 JumpIfNotZero(arg, A)
 
-Edge list:
 
 ● B1
 
@@ -3895,7 +3577,6 @@ Edge list:
 
 Return(0)
 
-Edge list:
 
 ● EXIT
 
@@ -3903,21 +3584,16 @@ Edge list:
 
 A:
 
-Return(x)
 
-Edge list:
 
 ● EXIT
 
 5\. EXIT. No outgoing edges.
 
-Return to text
 
 Here the nodes in the control-flow graph are presented as a list. We give each node’s contents, then list its outgoing edges.
 
-1\. ENTRY
 
-Edge list:
 
 ● B0
 
@@ -3927,7 +3603,6 @@ x = 10
 
 JumpIfNotZero(arg, A)
 
-Edge list:
 
 ● B1
 
@@ -3937,9 +3612,7 @@ Edge list:
 
 x = f()
 
-Return(x)
 
-Edge list:
 
 ● EXIT
 
@@ -3949,31 +3622,21 @@ A:
 
 x = g()
 
-Return(x)
 
-Edge list:
 
 ● EXIT
 
 5\. EXIT. No outgoing edges.
 
-Return to text
 
 A flow chart shows the stages of the compiler, including one new step in the assembly generation stage.
 
-1\. The lexer turns program.c into a token list.
 
-2\. The parser turns the token list into an abstract syntax tree.
 
-3\. Semantic analysis turns the AST into a transformed AST. It has three steps:
 
-a\. Identifier resolution
 
-b\. Type checking
 
-c\. Loop Labeling
 
-4\. TACKY Generation turns the transformed AST into TACKY.
 
 5\. Optimization turns TACKY into optimized TACKY. It has four steps:
 
@@ -3989,7 +3652,6 @@ An arrow leads from each step to the next. Another arrow leads from dead store e
 
 6\. Assembly generation turns optimized TACKY into assembly. It has three steps:
 
-a\. Converting TACKY to Assembly
 
 b\. Register allocation (a new step)
 
@@ -3999,7 +3661,6 @@ d\. Instruction Fix-Up
 
 7\. Code emission writes assembly to program.s.
 
-Return to text
 
 An undirected graph with five nodes labeled A through E. Each one is colored black, white, or gray. C is in the center. A, B, D, and E are arranged around C. A on top, B to the left, D to the right, E on the bottom. The nodes around C are connected to form a diamond shape. All four are also connected to C. C is black. A and E are white. B and D are gray.
 
@@ -4047,7 +3708,6 @@ The graph is also presented here as a list of nodes. Each node’s neighbors and
 
 ○ D, gray
 
-Return to text
 
 An undirected graph with seven nodes. Four hard registers: EDI, ESI, EAX, and EDX. Three pseudoregisters: a, b, and tmp.
 
@@ -4055,7 +3715,6 @@ All nodes except tmp are arranged in a circle. a and b are on the right side of 
 
 Here the graph is presented as a list of nodes. Each node’s neighbors are listed beneath it.
 
-● EDI. Neighbors:
 
 ○ ESI
 
@@ -4063,7 +3722,6 @@ Here the graph is presented as a list of nodes. Each node’s neighbors are list
 
 ○ EDX
 
-● ESI. Neighbors:
 
 ○ EDI
 
@@ -4073,7 +3731,6 @@ Here the graph is presented as a list of nodes. Each node’s neighbors are list
 
 ○ a
 
-● EAX. Neighbors:
 
 ○ EDI
 
@@ -4093,7 +3750,6 @@ Here the graph is presented as a list of nodes. Each node’s neighbors are list
 
 ○ b
 
-● a. Neighbors:
 
 ○ ESI
 
@@ -4113,7 +3769,6 @@ Here the graph is presented as a list of nodes. Each node’s neighbors are list
 
 ○ b
 
-Return to text
 
 Three diagrams. Each shows the graph from Figure 20-2 with nodes colored. The colors are black, white, gray, and striped. For each graph, we summarize the nodes’ colors, then list each node, its color, and its neighbors’ colors.
 
@@ -4183,7 +3838,6 @@ Three diagrams. Each shows the graph from Figure 20-2 with nodes colored. The co
 
 ● ESI, gray
 
-● EAX, striped
 
 ● EDX, white
 
@@ -4191,7 +3845,6 @@ Three diagrams. Each shows the graph from Figure 20-2 with nodes colored. The co
 
 ● EDI, black
 
-● EAX, striped
 
 ● EDX, white
 
@@ -4213,7 +3866,6 @@ Three diagrams. Each shows the graph from Figure 20-2 with nodes colored. The co
 
 ● ESI, gray
 
-● EAX, striped
 
 ● b, gray
 
@@ -4225,7 +3877,6 @@ Three diagrams. Each shows the graph from Figure 20-2 with nodes colored. The co
 
 ○ b, gray. Neighbors:
 
-● EAX, striped
 
 ● EDX, white
 
@@ -4243,7 +3894,6 @@ Three diagrams. Each shows the graph from Figure 20-2 with nodes colored. The co
 
 ● ESI, white
 
-● EAX, striped
 
 ● EDX, black
 
@@ -4251,7 +3901,6 @@ Three diagrams. Each shows the graph from Figure 20-2 with nodes colored. The co
 
 ● EDI, gray
 
-● EAX, striped
 
 ● EDX, black
 
@@ -4273,7 +3922,6 @@ Three diagrams. Each shows the graph from Figure 20-2 with nodes colored. The co
 
 ● ESI, white
 
-● EAX, striped
 
 ● b, white
 
@@ -4285,7 +3933,6 @@ Three diagrams. Each shows the graph from Figure 20-2 with nodes colored. The co
 
 ○ b, white. Neighbors:
 
-● EAX, striped
 
 ● EDX, black
 
@@ -4297,7 +3944,6 @@ Three diagrams. Each shows the graph from Figure 20-2 with nodes colored. The co
 
 ● b, white
 
-Return to text
 
 An undirected graph with seven nodes. The four hard registers: EDI, ESI, EAX, and EDX. The three pseudoregisters: arg1, arg2, and tmp.
 
@@ -4307,7 +3953,6 @@ All four hard registers are neighbors. EAX and EDX both neighbor all three pseud
 
 The graph is also presented as a list of nodes.
 
-● EDI. Neighbors:
 
 ○ ESI
 
@@ -4315,7 +3960,6 @@ The graph is also presented as a list of nodes.
 
 ○ EDX
 
-● ESI. Neighbors:
 
 ○ EDI
 
@@ -4325,7 +3969,6 @@ The graph is also presented as a list of nodes.
 
 ○ arg1
 
-● EAX. Neighbors:
 
 ○ EDI
 
@@ -4385,7 +4028,6 @@ The graph is also presented as a list of nodes.
 
 ○ arg2
 
-Return to text
 
 The graph from Figure 20-4 with tmp removed. Each remaining node has a color. EDI and arg1 are white. ESI and arg2 are gray. EAX is black. EDX is striped.
 
@@ -4453,11 +4095,9 @@ The graph is also presented as a list of nodes.
 
 ○ arg1, white
 
-Return to text
 
 The graph has twelve nodes arranged in a circle, one for each register. Each register interferes with the other 11.
 
-Return to text
 
 The graph has eight nodes labeled A through H. They are arranged in order in three rows. The first row contains A and B, the second contains C, D, and E, and the third contains F, G, and H.
 
@@ -4527,7 +4167,6 @@ The graph is presented as a list of nodes.
 
 ○ G
 
-Return to text
 
 All nodes and edges in the graph are in the same position as Figure 20-7. Pruned nodes are circles with dashed borders. Edges where either endpoint has been pruned are dashed lines. Remaining nodes are circles with solid borders. Remaining edges are solid lines.
 
@@ -4541,21 +4180,17 @@ The complete graph, including pruned nodes, is presented as a list.
 
 ○ C, pruned
 
-○ D, remaining
 
-○ E, remaining
 
 ● B, pruned. Neighbors:
 
 ○ A, remaining
 
-○ E, remaining
 
 ● C, pruned. Neighbors:
 
 ○ A, remaining
 
-○ D, remaining
 
 ● D, remaining. Neighbors:
 
@@ -4563,7 +4198,6 @@ The complete graph, including pruned nodes, is presented as a list.
 
 ○ C, pruned
 
-○ E, remaining
 
 ○ F, pruned
 
@@ -4575,21 +4209,17 @@ The complete graph, including pruned nodes, is presented as a list.
 
 ○ B, pruned
 
-○ D, remaining
 
 ○ G, remaining
 
 ● F, pruned. Neighbors:
 
-○ D, remaining
 
 ○ G, remaining
 
 ● G, remaining. Neighbors:
 
-○ D, remaining
 
-○ E, remaining
 
 ○ F, pruned
 
@@ -4599,7 +4229,6 @@ The complete graph, including pruned nodes, is presented as a list.
 
 ○ G, remaining
 
-Stack contents, from top to bottom:
 
 ● H
 
@@ -4609,7 +4238,6 @@ Stack contents, from top to bottom:
 
 ● B
 
-Return to text
 
 All nodes and edges in the graph are in the same position as Figure 20-7. Pruned nodes have dashed borders. Edges where either endpoint has been pruned are dashed lines. Remaining nodes have solid borders. Remaining edges are solid lines.
 
@@ -4623,21 +4251,17 @@ The complete graph, including pruned nodes, is presented as a list.
 
 ○ C, pruned
 
-○ D, remaining
 
-○ E, remaining
 
 ● B, pruned. Neighbors:
 
 ○ A, pruned
 
-○ E, remaining
 
 ● C, pruned. Neighbors:
 
 ○ A, pruned
 
-○ D, remaining
 
 ● D, remaining. Neighbors:
 
@@ -4645,7 +4269,6 @@ The complete graph, including pruned nodes, is presented as a list.
 
 ○ C, pruned
 
-○ E, remaining
 
 ○ F, pruned
 
@@ -4657,21 +4280,17 @@ The complete graph, including pruned nodes, is presented as a list.
 
 ○ B, pruned
 
-○ D, remaining
 
 ○ G, pruned
 
 ● F, pruned. Neighbors:
 
-○ D, remaining
 
 ○ G, pruned
 
 ● G, pruned. Neighbors:
 
-○ D, remaining
 
-○ E, remaining
 
 ○ F, pruned
 
@@ -4681,7 +4300,6 @@ The complete graph, including pruned nodes, is presented as a list.
 
 ○ G, pruned
 
-Stack contents, from top to bottom:
 
 ● G
 
@@ -4695,11 +4313,9 @@ Stack contents, from top to bottom:
 
 ● B
 
-Return to text
 
 All nodes and edges in the graph are in the same position as Figure 20-7. All nodes have dashed borders and all edges are dashed lines, indicating that they have been pruned from the graph.
 
-Stack contents, from top to bottom:
 
 ● E
 
@@ -4717,7 +4333,6 @@ Stack contents, from top to bottom:
 
 ● B
 
-Return to text
 
 Nine diagrams are shown. Each shows the graph and the stack. In each diagram, all nodes and edges in the graph are in the same position as Figure 20-7. Pruned nodes have dashed borders. Edges where either endpoint has been pruned are dashed lines.
 
@@ -4725,7 +4340,6 @@ Nodes that have been put back are colored white, black, or gray, and have solid 
 
 ● First diagram. The graph is identical to Figure 20-10. All nodes have been pruned.
 
-Stack contents, from top to bottom:
 
 ○ E
 
@@ -4745,73 +4359,43 @@ Stack contents, from top to bottom:
 
 ● Second diagram. E is popped off the stack. E is the only node in the graph. It is white.
 
-Full graph, as a list:
 
-○ A, pruned. Neighbors:
 
-● B, pruned
 
-● C, pruned
 
-● D, pruned
 
-● E, white
 
-○ B, pruned. Neighbors:
 
-● A, pruned
 
-● E, white
 
-○ C, pruned. Neighbors:
 
-● A, pruned
 
-● D, pruned
 
 ○ D, pruned. Neighbors:
 
-● A, pruned
 
-● C, pruned
 
-● E, white
 
-● F, pruned
 
-● G, pruned
 
-○ E, white. Neighbors:
 
-● A, pruned
 
-● B, pruned
 
-● D, pruned
 
-● G, pruned
 
-○ F, pruned. Neighbors:
 
-● D, pruned
 
-● G, pruned
 
 ○ G, pruned. Neighbors:
 
-● D, pruned
 
-● E, white
 
-● F, pruned
 
 ● H, pruned
 
 ○ H, pruned. Neighbors:
 
-● G, pruned
 
-Stack contents, from top to bottom:
 
 ○ D
 
@@ -4829,73 +4413,42 @@ Stack contents, from top to bottom:
 
 ● Third diagram. D is popped off the stack. The graph has two nodes: D is gray and E is white. They are neighbors.
 
-Full graph, as a list:
 
-○ A, pruned. Neighbors:
 
-● B, pruned
 
-● C, pruned
 
-● D, gray
 
-● E, white
 
-○ B, pruned. Neighbors:
 
-● A, pruned
 
-● E, white
 
-○ C, pruned. Neighbors:
 
-● A, pruned
 
-● D, gray
 
-○ D, gray. Neighbors:
 
-● A, pruned
 
-● C, pruned
 
-● E, white
 
-● F, pruned
 
-● G, pruned
 
-○ E, white. Neighbors:
 
-● A, pruned
 
-● B, pruned
 
-● D, gray
 
-● G, pruned
 
-○ F, pruned. Neighbors:
 
-● D, gray
 
-● G, pruned
 
 ○ G, pruned. Neighbors:
 
-● D, gray
 
-● E, white
 
-● F, pruned
 
 ● H, pruned
 
 ○ H, pruned. Neighbors:
 
-● G, pruned
 
-Stack contents, from top to bottom:
 
 ○ G
 
@@ -4911,73 +4464,41 @@ Stack contents, from top to bottom:
 
 ● Fourth diagram. G is popped off the stack. The graph has three nodes: G is black, D is gray, and E is white. They are all neighbors.
 
-Full graph, as a list:
 
-○ A, pruned. Neighbors:
 
-● B, pruned
 
-● C, pruned
 
-● D, gray
 
-● E, white
 
-○ B, pruned. Neighbors:
 
-● A, pruned
 
-● E, white
 
-○ C, pruned. Neighbors:
 
-● A, pruned
 
-● D, gray
 
-○ D, gray. Neighbors:
 
-● A, pruned
 
-● C, pruned
 
-● E, white
 
-● F, pruned
 
-● G, black
 
-○ E, white. Neighbors:
 
-● A, pruned
 
-● B, pruned
 
-● D, gray
 
-● G, black
 
-○ F, pruned. Neighbors:
 
-● D, gray
 
-● G, black
 
-○ G, black. Neighbors:
 
-● D, gray
 
-● E, white
 
-● F, pruned
 
 ● H, pruned
 
 ○ H, pruned. Neighbors:
 
-● G, black
 
-Stack contents, from top to bottom:
 
 ○ A
 
@@ -4991,73 +4512,42 @@ Stack contents, from top to bottom:
 
 ● Fifth diagram. A is popped off the stack and added to the graph. A is black. It neighbors D, gray, and E, white. No other changes from the previous diagram.
 
-Full graph, as a list:
 
 ○ A, black. Neighbors:
 
-● B, pruned
 
-● C, pruned
 
-● D, gray
 
-● E, white
 
-○ B, pruned. Neighbors:
 
-● A, black
 
-● E, white
 
-○ C, pruned. Neighbors:
 
-● A, black
 
-● D, gray
 
-○ D, gray. Neighbors:
 
-● A, black
 
-● C, pruned
 
-● E, white
 
-● F, pruned
 
-● G, black
 
-○ E, white. Neighbors:
 
-● A, black
 
-● B, pruned
 
-● D, gray
 
-● G, black
 
-○ F, pruned. Neighbors:
 
-● D, gray
 
-● G, black
 
-○ G, black. Neighbors:
 
-● D, gray
 
-● E, white
 
-● F, pruned
 
 ● H, pruned
 
 ○ H, pruned. Neighbors:
 
-● G, black
 
-Stack contents, from top to bottom:
 
 ○ H
 
@@ -5069,73 +4559,42 @@ Stack contents, from top to bottom:
 
 ● Sixth diagram. H is popped off the stack and added to the graph. H is white. It neighbors G, black. No other changes from the previous diagram.
 
-Full graph, as a list:
 
 ○ A, black. Neighbors:
 
-● B, pruned
 
-● C, pruned
 
-● D, gray
 
-● E, white
 
-○ B, pruned. Neighbors:
 
-● A, black
 
-● E, white
 
-○ C, pruned. Neighbors:
 
-● A, black
 
-● D, gray
 
-○ D, gray. Neighbors:
 
-● A, black
 
-● C, pruned
 
-● E, white
 
-● F, pruned
 
-● G, black
 
-○ E, white. Neighbors:
 
-● A, black
 
-● B, pruned
 
-● D, gray
 
-● G, black
 
-○ F, pruned. Neighbors:
 
-● D, gray
 
-● G, black
 
-○ G, black. Neighbors:
 
-● D, gray
 
-● E, white
 
-● F, pruned
 
 ● H, white
 
 ○ H, white. Neighbors:
 
-● G, black
 
-Stack contents, from top to bottom:
 
 ○ F
 
@@ -5145,73 +4604,42 @@ Stack contents, from top to bottom:
 
 ● Seventh diagram. F is popped off the stack and added to the graph. It is white. Its neighbors are D, gray, and G, black. No other changes from the previous diagram.
 
-Full graph, as a list:
 
 ○ A, black. Neighbors:
 
-● B, pruned
 
-● C, pruned
 
-● D, gray
 
-● E, white
 
-○ B, pruned. Neighbors:
 
-● A, black
 
-● E, white
 
-○ C, pruned. Neighbors:
 
-● A, black
 
-● D, gray
 
-○ D, gray. Neighbors:
 
-● A, black
 
-● C, pruned
 
-● E, white
 
-● F, white
 
-● G, black
 
-○ E, white. Neighbors:
 
-● A, black
 
-● B, pruned
 
-● D, gray
 
-● G, black
 
-○ F, white. Neighbors:
 
-● D, gray
 
-● G, black
 
-○ G, black. Neighbors:
 
-● D, gray
 
-● E, white
 
-● F, white
 
 ● H, white
 
 ○ H, white. Neighbors:
 
-● G, black
 
-Stack contents, from top to bottom:
 
 ○ C
 
@@ -5219,71 +4647,44 @@ Stack contents, from top to bottom:
 
 ● Eighth diagram. C is popped off the stack and added to the graph. It is white. Its neighbors are A, black, and D, gray. No other changes from the previous diagram.
 
-Full graph, as a list:
 
 ○ A, black. Neighbors:
 
-● B, pruned
 
 ● C, white
 
-● D, gray
 
-● E, white
 
-○ B, pruned. Neighbors:
 
-● A, black
 
-● E, white
 
 ○ C, white. Neighbors:
 
-● A, black
 
-● D, gray
 
-○ D, gray. Neighbors:
 
-● A, black
 
 ● C, white
 
-● E, white
 
-● F, white
 
-● G, black
 
-○ E, white. Neighbors:
 
-● A, black
 
-● B, pruned
 
-● D, gray
 
-● G, black
 
-○ F, white. Neighbors:
 
-● D, gray
 
-● G, black
 
-○ G, black. Neighbors:
 
-● D, gray
 
-● E, white
 
-● F, white
 
 ● H, white
 
 ○ H, white. Neighbors:
 
-● G, black
 
 Stack contents:
 
@@ -5291,7 +4692,6 @@ Stack contents:
 
 ● Ninth diagram. B is popped off the stack and added to the graph. It is gray. Its neighbors are A, black, and E, white. No other changes from the previous diagram.
 
-Full graph, as a list:
 
 ○ A, black. Neighbors:
 
@@ -5299,73 +4699,48 @@ Full graph, as a list:
 
 ● C, white
 
-● D, gray
 
-● E, white
 
 ○ B, gray. Neighbors:
 
-● A, black
 
-● E, white
 
 ○ C, white. Neighbors:
 
-● A, black
 
-● D, gray
 
-○ D, gray. Neighbors:
 
-● A, black
 
 ● C, white
 
-● E, white
 
-● F, white
 
-● G, black
 
-○ E, white. Neighbors:
 
-● A, black
 
 ● B, gray
 
-● D, gray
 
-● G, black
 
-○ F, white. Neighbors:
 
-● D, gray
 
-● G, black
 
-○ G, black. Neighbors:
 
-● D, gray
 
-● E, white
 
-● F, white
 
 ● H, white
 
 ○ H, white. Neighbors:
 
-● G, black
 
 The stack is empty.
 
-Return to text
 
 An undirected graph with six nodes labeled A through F. A, B, D, and E are arranged around C.
 
 A on top, B to the left, D to the right, E on the bottom. F is below E. The four nodes around C are connected to form a diamond shape. All four are also connected to C. F is connected to B, D, and E.
 
-As a list of nodes:
 
 ● A. Neighbors:
 
@@ -5421,7 +4796,6 @@ As a list of nodes:
 
 ○ E
 
-Return to text
 
 Six diagrams are shown. Each shows the graph and the stack. In each diagram, all nodes and edges in the graph are in the same position as Figure 20-12.
 
@@ -5431,65 +4805,37 @@ For each diagram, we give a summary. Then we describe the full graph, including 
 
 ● First diagram. All nodes have dashed borders and all edges are dashed lines, indicating that they have been pruned from the graph.
 
-Full graph, as a list:
 
-○ A, pruned. Neighbors:
 
-● B, pruned
 
-● C, pruned
 
-● D, pruned
 
-○ B, pruned. Neighbors:
 
-● A, pruned
 
-● C, pruned
 
-● E, pruned
 
-● F, pruned
 
-○ C, pruned. Neighbors:
 
-● A, pruned
 
-● B, pruned
 
-● D, pruned
 
-● E, pruned
 
 ○ D, pruned. Neighbors:
 
-● A, pruned
 
-● C, pruned
 
-● E, pruned
 
-● F, pruned
 
 ○ E, pruned. Neighbors:
 
-● B, pruned
 
-● C, pruned
 
-● D, pruned
 
-● F, pruned
 
-○ F, pruned. Neighbors:
 
-● B, pruned
 
-● D, pruned
 
-● E, pruned
 
-Stack contents, from top to bottom:
 
 ○ F
 
@@ -5505,65 +4851,37 @@ Stack contents, from top to bottom:
 
 ● Second diagram. F is popped off the stack. It is the only node in the graph. It is white.
 
-Full graph, as a list:
 
-○ A, pruned. Neighbors:
 
-● B, pruned
 
-● C, pruned
 
-● D, pruned
 
-○ B, pruned. Neighbors:
 
-● A, pruned
 
-● C, pruned
 
-● E, pruned
 
-● F, white
 
-○ C, pruned. Neighbors:
 
-● A, pruned
 
-● B, pruned
 
-● D, pruned
 
-● E, pruned
 
 ○ D, pruned. Neighbors:
 
-● A, pruned
 
-● C, pruned
 
-● E, pruned
 
-● F, white
 
 ○ E, pruned. Neighbors:
 
-● B, pruned
 
-● C, pruned
 
-● D, pruned
 
-● F, white
 
-○ F, white. Neighbors:
 
-● B, pruned
 
-● D, pruned
 
-● E, pruned
 
-Stack contents, from top to bottom:
 
 ○ E
 
@@ -5577,65 +4895,36 @@ Stack contents, from top to bottom:
 
 ● Third diagram. E is popped off the stack. The graph has two nodes: E, gray, and F, white. They are neighbors.
 
-Full graph, as a list:
 
-○ A, pruned. Neighbors:
 
-● B, pruned
 
-● C, pruned
 
-● D, pruned
 
-○ B, pruned. Neighbors:
 
-● A, pruned
 
-● C, pruned
 
-● E, gray
 
-● F, white
 
-○ C, pruned. Neighbors:
 
-● A, pruned
 
-● B, pruned
 
-● D, pruned
 
-● E, gray
 
 ○ D, pruned. Neighbors:
 
-● A, pruned
 
-● C, pruned
 
-● E, gray
 
-● F, white
 
-○ E, gray. Neighbors:
 
-● B, pruned
 
-● C, pruned
 
-● D, pruned
 
-● F, white
 
-○ F, white. Neighbors:
 
-● B, pruned
 
-● D, pruned
 
-● E, gray
 
-Stack contents, from top to bottom:
 
 ○ D
 
@@ -5647,65 +4936,36 @@ Stack contents, from top to bottom:
 
 ● Fourth diagram. D is popped off the stack. The graph has three nodes: D, black, E, gray, and F, white. They are all neighbors.
 
-Full graph, as a list:
 
-○ A, pruned. Neighbors:
 
-● B, pruned
 
-● C, pruned
 
-● D, black
 
-○ B, pruned. Neighbors:
 
-● A, pruned
 
-● C, pruned
 
-● E, gray
 
-● F, white
 
-○ C, pruned. Neighbors:
 
-● A, pruned
 
-● B, pruned
 
-● D, black
 
-● E, gray
 
 ○ D, black. Neighbors:
 
-● A, pruned
 
-● C, pruned
 
-● E, gray
 
-● F, white
 
-○ E, gray. Neighbors:
 
-● B, pruned
 
-● C, pruned
 
-● D, black
 
-● F, white
 
-○ F, white. Neighbors:
 
-● B, pruned
 
-● D, black
 
-● E, gray
 
-Stack contents, from top to bottom:
 
 ○ B
 
@@ -5715,65 +4975,37 @@ Stack contents, from top to bottom:
 
 ● Fifth diagram. B is popped off the stack and added to the graph. It is black. It neighbors E, gray, and F, white. No other changes from the previous diagram.
 
-Full graph, as a list:
 
-○ A, pruned. Neighbors:
 
-● B, black
 
-● C, pruned
 
-● D, black
 
 ○ B, black. Neighbors:
 
-● A, pruned
 
-● C, pruned
 
-● E, gray
 
-● F, white
 
-○ C, pruned. Neighbors:
 
-● A, pruned
 
-● B, black
 
-● D, black
 
-● E, gray
 
 ○ D, black. Neighbors:
 
-● A, pruned
 
-● C, pruned
 
-● E, gray
 
-● F, white
 
-○ E, gray. Neighbors:
 
-● B, black
 
-● C, pruned
 
-● D, black
 
-● F, white
 
-○ F, white. Neighbors:
 
-● B, black
 
-● D, black
 
-● E, gray
 
-Stack contents, from top to bottom:
 
 ○ A
 
@@ -5781,69 +5013,45 @@ Stack contents, from top to bottom:
 
 ● Sixth diagram. A is popped off the stack and added to the graph. It is white. It neighbors B, black, and D, black. No other changes from the previous diagram.
 
-Full graph, as a list:
 
 ○ A, white. Neighbors:
 
-● B, black
 
-● C, pruned
 
-● D, black
 
 ○ B, black. Neighbors:
 
 ● A, white
 
-● C, pruned
 
-● E, gray
 
-● F, white
 
-○ C, pruned. Neighbors:
 
 ● A, white
 
-● B, black
 
-● D, black
 
-● E, gray
 
 ○ D, black. Neighbors:
 
 ● A, white
 
-● C, pruned
 
-● E, gray
 
-● F, white
 
-○ E, gray. Neighbors:
 
-● B, black
 
-● C, pruned
 
-● D, black
 
-● F, white
 
-○ F, white. Neighbors:
 
-● B, black
 
-● D, black
 
-● E, gray
 
 Stack contents:
 
 ○ C
 
-Return to text
 
 Seven diagrams are shown. Each shows the graph and the stack. In each graph, all nodes and edges are in the same position as in Figure 20-12.
 
@@ -5853,7 +5061,6 @@ For each diagram, we give a summary. Then we describe the full graph, including 
 
 ● First diagram. All nodes have dashed borders and all edges are dashed lines, indicating that they have been pruned from the graph.
 
-Stack contents, from top to bottom:
 
 ○ D
 
@@ -5869,65 +5076,36 @@ Stack contents, from top to bottom:
 
 ● Second diagram. D is popped off the stack. It is the only node in the graph. It is white.
 
-Full graph, as a list:
 
-○ A, pruned. Neighbors:
 
-● B, pruned
 
-● C, pruned
 
-● D, white
 
-○ B, pruned. Neighbors:
 
-● A, pruned
 
-● C, pruned
 
-● E, pruned
 
-● F, pruned
 
-○ C, pruned. Neighbors:
 
-● A, pruned
 
-● B, pruned
 
-● D, white
 
-● E, pruned
 
-○ D, white. Neighbors:
 
-● A, pruned
 
-● C, pruned
 
-● E, pruned
 
-● F, pruned
 
 ○ E, pruned. Neighbors:
 
-● B, pruned
 
-● C, pruned
 
-● D, white
 
-● F, pruned
 
-○ F, pruned. Neighbors:
 
-● B, pruned
 
-● D, white
 
-● E, pruned
 
-Stack contents, from top to bottom:
 
 ○ E
 
@@ -5941,65 +5119,35 @@ Stack contents, from top to bottom:
 
 ● Third diagram. E is popped off the stack. The graph has two nodes: E, gray, and D, white. They are neighbors.
 
-Full graph, as a list:
 
-○ A, pruned. Neighbors:
 
-● B, pruned
 
-● C, pruned
 
-● D, white
 
-○ B, pruned. Neighbors:
 
-● A, pruned
 
-● C, pruned
 
-● E, gray
 
-● F, pruned
 
-○ C, pruned. Neighbors:
 
-● A, pruned
 
-● B, pruned
 
-● D, white
 
-● E, gray
 
-○ D, white. Neighbors:
 
-● A, pruned
 
-● C, pruned
 
-● E, gray
 
-● F, pruned
 
-○ E, gray. Neighbors:
 
-● B, pruned
 
-● C, pruned
 
-● D, white
 
-● F, pruned
 
-○ F, pruned. Neighbors:
 
-● B, pruned
 
-● D, white
 
-● E, gray
 
-Stack contents, from top to bottom:
 
 ○ F
 
@@ -6011,65 +5159,36 @@ Stack contents, from top to bottom:
 
 ● Fourth diagram. F is popped off the stack. The graph has three nodes: F, black, E, gray, and D, white. They are all neighbors.
 
-Full graph, as a list:
 
-○ A, pruned. Neighbors:
 
-● B, pruned
 
-● C, pruned
 
-● D, white
 
-○ B, pruned. Neighbors:
 
-● A, pruned
 
-● C, pruned
 
-● E, gray
 
-● F, black
 
-○ C, pruned. Neighbors:
 
-● A, pruned
 
-● B, pruned
 
-● D, white
 
-● E, gray
 
-○ D, white. Neighbors:
 
-● A, pruned
 
-● C, pruned
 
-● E, gray
 
-● F, black
 
-○ E, gray. Neighbors:
 
-● B, pruned
 
-● C, pruned
 
-● D, white
 
-● F, black
 
 ○ F, black. Neighbors:
 
-● B, pruned
 
-● D, white
 
-● E, gray
 
-Stack contents, from top to bottom:
 
 ○ B
 
@@ -6079,65 +5198,37 @@ Stack contents, from top to bottom:
 
 ● Fifth diagram. B is popped off the stack and added to the graph. It is white. It neighbors E, gray, and F, black. No other changes from the previous diagram.
 
-Full graph, as a list:
 
-○ A, pruned. Neighbors:
 
-● B, white
 
-● C, pruned
 
-● D, white
 
 ○ B, white. Neighbors:
 
-● A, pruned
 
-● C, pruned
 
-● E, gray
 
-● F, black
 
-○ C, pruned. Neighbors:
 
-● A, pruned
 
-● B, white
 
-● D, white
 
-● E, gray
 
-○ D, white. Neighbors:
 
-● A, pruned
 
-● C, pruned
 
-● E, gray
 
-● F, black
 
-○ E, gray. Neighbors:
 
-● B, white
 
-● C, pruned
 
-● D, white
 
-● F, black
 
 ○ F, black. Neighbors:
 
-● B, white
 
-● D, white
 
-● E, gray
 
-Stack contents, from top to bottom:
 
 ○ A
 
@@ -6145,139 +5236,88 @@ Stack contents, from top to bottom:
 
 ● Sixth diagram. A is popped off the stack and added to the graph. It is gray. It neighbors B, white, and D, white. No other changes from the previous diagram.
 
-Full graph, as a list:
 
 ○ A, gray. Neighbors:
 
-● B, white
 
-● C, pruned
 
-● D, white
 
 ○ B, white. Neighbors:
 
-● A, gray
 
-● C, pruned
 
-● E, gray
 
-● F, black
 
-○ C, pruned. Neighbors:
 
-● A, gray
 
-● B, white
 
-● D, white
 
-● E, gray
 
-○ D, white. Neighbors:
 
-● A, gray
 
-● C, pruned
 
-● E, gray
 
-● F, black
 
-○ E, gray. Neighbors:
 
-● B, white
 
-● C, pruned
 
-● D, white
 
-● F, black
 
 ○ F, black. Neighbors:
 
-● B, white
 
-● D, white
 
-● E, gray
 
-Stack contents, from top to bottom:
 
 ○ C
 
 ● Seventh diagram. C is popped off the stack and added to the graph. It is black. It neighbors A (gray), B (white), D (white), and E (gray). No other changes from the previous diagram.
 
-Full graph, as a list:
 
 ○ A, gray. Neighbors:
 
-● B, white
 
 ● C, black
 
-● D, white
 
 ○ B, white. Neighbors:
 
-● A, gray
 
 ● C, black
 
-● E, gray
 
-● F, black
 
 ○ C, black. Neighbors:
 
-● A, gray
 
-● B, white
 
-● D, white
 
-● E, gray
 
-○ D, white. Neighbors:
 
-● A, gray
 
 ● C, black
 
-● E, gray
 
-● F, black
 
-○ E, gray. Neighbors:
 
-● B, white
 
 ● C, black
 
-● D, white
 
-● F, black
 
 ○ F, black. Neighbors:
 
-● B, white
 
-● D, white
 
-● E, gray
 
 The stack is empty.
 
-Return to text
 
 An undirected graph with four nodes: EDI, EAX, tmp, and arg. EDI neighbors EAX. EAX also neighbors tmp. tmp also neighbors arg.
 
-Return to text
 
 An undirected graph with three nodes: EDI, EAX, and tmp. All three nodes are neighbors.
 
-Return to text
 
 Two diagrams show the interference graph before and after coalescing.
 
@@ -6285,7 +5325,6 @@ Two diagrams show the interference graph before and after coalescing.
 
 On the left, EDI, ESI, and EAX are arranged in a triangle. To their right, tmp1, tmp2, tmp3, and tmp4 are arranged in a square. All three hard registers are neighbors. EDI also neighbors tmp1. tmp1 also neighbors tmp2. tmp2 also neighbors tmp3. tmp3 also neighbors tmp4.
 
-As a list of nodes:
 
 ○ EDI. Neighbors:
 
@@ -6373,13 +5412,11 @@ The graph is presented as a list:
 
 ● tmp3
 
-Return to text
 
 Two diagrams show the interference graph before and after coalescing.
 
 ● Original interference graph. An undirected graph with five nodes. Three hard registers: EDI, ESI, and EAX. Two pseudoregisters: tmp1 and tmp2. On the left, EDI, ESI, and EAX are arranged in a triangle. They are all neighbors. On the right, tmp1 is above tmp2. They are neighbors.
 
-As a list of nodes:
 
 ○ EDI. Neighbors:
 
@@ -6435,7 +5472,6 @@ The graph is presented as a list:
 
 ● EDI
 
-Return to text
 
 An undirected graph with seven nodes. Three hard registers: EDI, ESI, EAX. Four pseudoregisters: a, x, y, and z.
 
@@ -6443,9 +5479,7 @@ EAX, ESI, and EDI are arranged in a triangle. To their right, x, y and z are arr
 
 All three hard registers are neighbors. z neighbors x and y. y also neighbors EDI. x, ESI, and a are all neighbors.
 
-As a list of nodes:
 
-● EDI. Neighbors:
 
 ○ ESI
 
@@ -6453,7 +5487,6 @@ As a list of nodes:
 
 ○ y
 
-● ESI. Neighbors:
 
 ○ EDI
 
@@ -6463,13 +5496,11 @@ As a list of nodes:
 
 ○ x
 
-● EAX. Neighbors:
 
 ○ EDI
 
 ○ ESI
 
-● a. Neighbors:
 
 ○ ESI
 
@@ -6483,25 +5514,21 @@ As a list of nodes:
 
 ○ z
 
-● y. Neighbors:
 
 ○ EDI
 
 ○ z
 
-● z. Neighbors:
 
 ○ x
 
 ○ y
 
-Return to text
 
 The graph in Figure 20-19 with three changes. First, x has been removed. Second, an edge has been added from a to y. Third, an edge has been added from ESI to y.
 
 The graph is presented as a list of nodes.
 
-● EDI. Neighbors:
 
 ○ ESI
 
@@ -6509,7 +5536,6 @@ The graph is presented as a list of nodes.
 
 ○ y
 
-● ESI. Neighbors:
 
 ○ EDI
 
@@ -6519,19 +5545,16 @@ The graph is presented as a list of nodes.
 
 ○ y
 
-● EAX. Neighbors:
 
 ○ EDI
 
 ○ ESI
 
-● a. Neighbors:
 
 ○ ESI
 
 ○ y
 
-● y. Neighbors:
 
 ○ EDI
 
@@ -6541,15 +5564,12 @@ The graph is presented as a list of nodes.
 
 ○ z
 
-● z. Neighbors:
 
 ○ y
 
-Return to text
 
 The graph is presented as a list of nodes.
 
-● EDI. Neighbors:
 
 ○ ESI
 
@@ -6559,7 +5579,6 @@ The graph is presented as a list of nodes.
 
 ○ y
 
-● ESI. Neighbors:
 
 ○ EDI
 
@@ -6569,13 +5588,11 @@ The graph is presented as a list of nodes.
 
 ○ x
 
-● EAX. Neighbors:
 
 ○ EDI
 
 ○ ESI
 
-● a. Neighbors:
 
 ○ EDI
 
@@ -6591,25 +5608,21 @@ The graph is presented as a list of nodes.
 
 ○ z
 
-● y. Neighbors:
 
 ○ EDI
 
 ○ z
 
-● z. Neighbors:
 
 ○ x
 
 ○ y
 
-Return to text
 
 The graph from Figure 20-21 with three changes. First, x has been removed. Second, an edge has been added from a to y. Third, an edge has been added from ESI to y.
 
 The graph is presented as a list of nodes.
 
-● EDI. Neighbors:
 
 ○ ESI
 
@@ -6619,7 +5632,6 @@ The graph is presented as a list of nodes.
 
 ○ y
 
-● ESI. Neighbors:
 
 ○ EDI
 
@@ -6629,13 +5641,11 @@ The graph is presented as a list of nodes.
 
 ○ y
 
-● EAX. Neighbors:
 
 ○ EDI
 
 ○ ESI
 
-● a. Neighbors:
 
 ○ EDI
 
@@ -6643,7 +5653,6 @@ The graph is presented as a list of nodes.
 
 ○ y
 
-● y. Neighbors:
 
 ○ EDI
 
@@ -6653,17 +5662,13 @@ The graph is presented as a list of nodes.
 
 ○ z
 
-● z. Neighbors:
 
 ○ y
 
-Return to text
 
 An undirected graph with five nodes. Three hard registers: EDI, ESI, and EAX. Two pseudoregisters: tmp1 and tmp2. EDI, ESI, EAX, and tmp1 are all neighbors. tmp2 neighbors ESI and EAX.
 
-As a list of nodes:
 
-● EDI. Neighbors:
 
 ○ ESI
 
@@ -6671,7 +5676,6 @@ As a list of nodes:
 
 ○ tmp1
 
-● ESI. Neighbors:
 
 ○ EDI
 
@@ -6681,7 +5685,6 @@ As a list of nodes:
 
 ○ tmp2
 
-● EAX. Neighbors:
 
 ○ EDI
 
@@ -6705,7 +5708,6 @@ As a list of nodes:
 
 ○ EAX
 
-Return to text
 
 An undirected graph with ten nodes. Three hard registers: EDI, ESI, EAX. Seven pseudoregisters: a, b, c, d, x, y, and z.
 
@@ -6713,9 +5715,7 @@ EAX, ESI, and EDI are arranged in a triangle. To their right, x, y, and z are ar
 
 All three hard registers are neighbors. z neighbors x and y. y also neighbors EDI. x, ESI, and a are all neighbors. a also neighbors b, c, and d.
 
-As a list of nodes:
 
-● EDI. Neighbors:
 
 ○ ESI
 
@@ -6723,7 +5723,6 @@ As a list of nodes:
 
 ○ y
 
-● ESI. Neighbors:
 
 ○ EDI
 
@@ -6733,13 +5732,11 @@ As a list of nodes:
 
 ○ x
 
-● EAX. Neighbors:
 
 ○ EDI
 
 ○ ESI
 
-● a. Neighbors:
 
 ○ ESI
 
@@ -6771,25 +5768,21 @@ As a list of nodes:
 
 ○ z
 
-● y. Neighbors:
 
 ○ EDI
 
 ○ z
 
-● z. Neighbors:
 
 ○ x
 
 ○ y
 
-Return to text
 
 The previous graph with three changes. First, x has been removed. Second, an edge has been added from a to y. Third, an edge has been added from ESI to y.
 
 The graph is presented as a list of nodes.
 
-● EDI. Neighbors:
 
 ○ ESI
 
@@ -6797,7 +5790,6 @@ The graph is presented as a list of nodes.
 
 ○ y
 
-● ESI. Neighbors:
 
 ○ EDI
 
@@ -6807,13 +5799,11 @@ The graph is presented as a list of nodes.
 
 ○ y
 
-● EAX. Neighbors:
 
 ○ EDI
 
 ○ ESI
 
-● a. Neighbors:
 
 ○ ESI
 
@@ -6837,7 +5827,6 @@ The graph is presented as a list of nodes.
 
 ○ a
 
-● y. Neighbors:
 
 ○ EDI
 
@@ -6847,16 +5836,11 @@ The graph is presented as a list of nodes.
 
 ○ z
 
-● z. Neighbors:
 
 ○ y
 
-Return to text
 
 A screenshot of a terminal. The top window shows the message “Register Values Unavailable.” The middle window displays the first ten instructions from Listing A-1 and their memory addresses. The bottom window shows the “layout reg” command that was just entered.
 
-Return to text
 
 A screenshot of a terminal. The top window shows the values of the eight-byte general-purpose registers and a few other registers, displayed in decimal and hexadecimal. The middle window displays the first ten instructions from Listing A-1 and their memory addresses. The third instruction, “sub \$0x10, %rsp”, is highlighted. The bottom window shows the previous two commands and their output.
-
-Return to text

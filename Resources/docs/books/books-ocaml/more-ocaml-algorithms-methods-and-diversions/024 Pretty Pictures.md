@@ -7,11 +7,11 @@ We have not yet explained the structure of the code which put “Hello, World!�
 
 It is a list of operator-operand sequences. Each sequence consists of zero or more operands and one operator. The sequences in our example are:
 
-![](media/images/00166.jpg)
+![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00166.jpg)
 
 In this chapter we will introduce a few simple operators for drawing lines and filling shapes (in the next chapter we discuss adding text and build a basic typesetter). Here are the operators we will be using to start with:
 
-![](media/images/00194.jpg)
+![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00194.jpg)
 
 Here is a data type, which forms part of the new Pdfpage module, which encodes these operators. We will extend it with new operators when required.
 
@@ -26,37 +26,37 @@ Here is a data type, which forms part of the new Pdfpage module, which encodes t
 
 In order to put these into the PDF document, we will need to convert each set of operands and operator to a string. This is simple:
 
-> ![](media/images/00284.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00284.jpg)
 
 Now we can put them together into a single string by using functions from the Buffer module, putting a space character after each.
 
-> ![](media/images/00248.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00248.jpg)
 
 Here is a very simple example – we move to (100, 100), make three lines and close the path. Then we use the `Fill `operator. Coordinates in PDF have the origin at the bottom left of the page.
 
-> ![](media/images/00279.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00279.jpg)
 
 Our page looks like this:
 
-![](media/images/00007.jpg)
+![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00007.jpg)
 
 Not all sequences of operators are valid, and our data type makes no checks to ensure our list is correct. This could be solved by building a higher-level data type which would then be flattened down to a list of Pdfpage.t elements. In our examples, and in the questions at the end of the chapter, it is sufficient to stick to the pattern above – one `Move`, one or more `Line`s, a `Close `(if filling), and a `Fill `or `Stroke`.
 
 As an example, we will build a function to make a single line, and use it to build a function which, given the page dimensions, draws a page of graph paper. First, a function to build a single line from (x,y) to (x1,y1):
 
-> ![](media/images/00035.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00035.jpg)
 
 Now, a function to return a set of equally spaced floating-point values from 0…n given a step:
 
-> ![](media/images/00067.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00067.jpg)
 
 Note that we have been careful to avoid repeated addition of floating-point values – this can accumulate errors. We can build all the lines:
 
-> ![](media/images/00080.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00080.jpg)
 
 Here is the result of `graph_string 595.28 841.89 10. `on a page of A4 paper:
 
-![](media/images/00072.jpg)
+![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00072.jpg)
 
 Questions
 

@@ -1,35 +1,3 @@
-*Lifetimes, ownership,*
-
-*and borrowing*
-
-***This chapter covers***
-
- Discovering what the term *lifetime* means in Rust
-
-programming
-
- Working with the borrow checker rather than
-
-against it
-
- Multiple tactics for dealing with issues when
-
-these crop up
-
- Understanding the responsibilities of an owner
-
- Learning how to borrow values that are owned
-
-elsewhere
-
-This chapter explains one of the concepts that trip up most newcomers to Rust—its borrow checker. The *borrow checker* checks that all access to data is legal, which allows Rust to prevent safety issues. Learning how this works will, at the very least, speed up your development time by helping you avoid run-ins with the compiler. More significantly though, learning to work with the borrow checker allows you to build larger software systems with confidence. It underpins the term *fearless concurrency*.
-
-This chapter will explain how this system operates and help you learn how to comply with it when an error is discovered. It uses the somewhat lofty example of **107**
-
-**108**
-
-CHAPTER 4
-
 ***Lifetimes, ownership, and borrowing***
 
 simulating a satellite constellation to explain the trade-offs relating to different ways to provide shared access to data. The details of borrow checking are thoroughly explored within the chapter. However, a few points might be useful for readers wanting to quickly get the gist. Borrow checking relies on three interrelated concepts—
@@ -80,7 +48,6 @@ let sat_c = 2;
 
 To check on the status of each of our satellites, we’ll use a stub function and an enum to represent potential status messages:
 
-\#\[derive(Debug)\]
 
 enum StatusMessage {
 
@@ -162,7 +129,6 @@ Checking the status of our integer-based CubeSats
 
 **110**
 
-CHAPTER 4
 
 ***Lifetimes, ownership, and borrowing***
 
@@ -186,7 +152,6 @@ Listing 4.2
 
 Modeling a CubeSat as its own type
 
-\#\[derive(Debug)\]
 
 struct CubeSat {
 
@@ -324,7 +289,6 @@ Every value in Rust is *owned*. In both listings 4.1 and 4.3, sat_a, sat_b, and 
 
 **112**
 
-CHAPTER 4
 
 ***Lifetimes, ownership, and borrowing***
 
@@ -488,7 +452,6 @@ The copy semantics of Rust’s primitive types
 
 **114**
 
-CHAPTER 4
 
 ***Lifetimes, ownership, and borrowing***
 
@@ -674,7 +637,6 @@ Another possibility is that sat_a relinquishes its ownership to another variable
 
 **116**
 
-CHAPTER 4
 
 ***Lifetimes, ownership, and borrowing***
 
@@ -914,7 +876,6 @@ The ownership changes within listing 4.7
 
 **118**
 
-CHAPTER 4
 
 ***Lifetimes, ownership, and borrowing***
 
@@ -1046,7 +1007,6 @@ Ownership might be needed in advanced cases, such as when functions want to adju
 
 **120**
 
-CHAPTER 4
 
 ***Lifetimes, ownership, and borrowing***
 
@@ -1206,7 +1166,6 @@ ownership issues.
 
 **122**
 
-CHAPTER 4
 
 ***Lifetimes, ownership, and borrowing***
 
@@ -1380,7 +1339,6 @@ Now we are a bit closer to our intended outcome. Our main function looks like th
 
 **124**
 
-CHAPTER 4
 
 ***Lifetimes, ownership, and borrowing***
 
@@ -1492,7 +1450,6 @@ But there’s a problem. Our CubeSat instances die at the end of the for loop’
 
 Our message store will be a Vec\<Message\> (our Mailbox type defined in one of the first code examples of this chapter). We’ll change the Message struct to add a sender and recipient field, as the following code shows. That way our now-proxy CubeSat instances can match their IDs to receive messages:
 
-\#\[derive(Debug)\]
 
 struct Mailbox {
 
@@ -1500,7 +1457,6 @@ messages: Vec\<Message\>,
 
 }
 
-\#\[derive(Debug)\]
 
 struct Message {
 
@@ -1526,7 +1482,6 @@ Modifications to **Mailbox**
 
 **126**
 
-CHAPTER 4
 
 ***Lifetimes, ownership, and borrowing***
 
@@ -1764,7 +1719,6 @@ Implementing the short-lived variables strategy
 
 **128**
 
-CHAPTER 4
 
 ***Lifetimes, ownership, and borrowing***
 
@@ -1882,7 +1836,6 @@ IMPLEMENTING COPY
 
 Let’s go back to our original example (listing 4.3), which caused the original movement issue. Here it is replicated for convenience, with sat_b and sat_c removed for brevity:
 
-\#\[derive(Debug)\]
 
 struct CubeSat {
 
@@ -1890,7 +1843,6 @@ id: u64,
 
 }
 
-\#\[derive(Debug)\]
 
 enum StatusMessage {
 
@@ -1914,7 +1866,6 @@ println!("a: {:?}", a_status);
 
 **130**
 
-CHAPTER 4
 
 ***Lifetimes, ownership, and borrowing***
 
@@ -2094,7 +2045,6 @@ Wrapping T involves a calling Rc::new(). The following listing, at ch4/ch4-rc-gr
 
 **132**
 
-CHAPTER 4
 
 ***Lifetimes, ownership, and borrowing***
 

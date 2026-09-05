@@ -1,4 +1,4 @@
-![](media/index-784_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-784_1.jpg)
 
 12 INTRODUCTION TO INTERPROCESS
 
@@ -108,7 +108,7 @@ backed by a disk file.
 
 Figure 12-1 visualizes the differences.
 
-![](media/index-787_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-787_1.jpg)
 
 *Figure 12-1: Shared memory–based IPC in comparison to data transfer–based IPC*
 
@@ -426,7 +426,7 @@ processes unmap it.
 
 Figure 12-2 depicts the mapping by mmap() of a part of physical memory into the address space of the calling process.
 
-![](media/index-794_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-794_1.jpg)
 
 *Figure 12-2: The effect of* *mmap()* *on a shared memory object* A process that wants to share an existing shared memory object
 
@@ -670,7 +670,7 @@ program is not necessarily a valid address, and it certainly doesn’t
 
 contain the string "Hello". Figure 12-3 visualizes this particular shared memory mapping.
 
-![](media/index-801_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-801_1.jpg)
 
 *Figure 12-3: Two processes sharing a mapped memory region, showing that the starting* *address of the region is different in each process*
 
@@ -710,7 +710,7 @@ The last instruction stores the address of the start of this array, shmp-
 
 \>data, in the pointer shmp-\>ptr2 ➍. Figure 12-4 illustrates where the various objects reside in virtual memory.
 
-![](media/index-803_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-803_1.jpg)
 
 *Figure 12-4: The arrangement of data in the shared memory created by* shm_creator_demo2.c
 
@@ -952,7 +952,7 @@ semaphores. POSIX semaphores have a simple, well-designed interface.
 
 POSIX defines two types of semaphores, named and unnamed:
 
-![](media/index-809_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-809_1.jpg)
 
 Named semaphore Has a name of the form / *name*, in which *name* is a string of up to NAME_MAX-4 nonslash characters, similar to a shared
 
@@ -1054,7 +1054,6 @@ char \*shmpath = "/SHMDEMO"; /\* Shared memory object name \*/
 
 sharedmem \*shmp; /\* Pointer to shared memory \*/
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -1090,7 +1089,6 @@ sem_post(&shmp-\>sem);
 
 }
 
-exit(EXIT_SUCCESS);
 
 default: /\* Parent process \*/
 
@@ -1110,7 +1108,6 @@ printf("The final value of count, which should be 0, is %ld.\n", shmp-\>count);
 
 shm_unlink(shmpath); /\* Remove shared memory object. \*/
 
-exit(EXIT_SUCCESS);
 
 }
 
@@ -1308,7 +1305,6 @@ POST(sem);
 
 }
 
-exit(EXIT_SUCCESS);
 
 default:
 
@@ -1330,7 +1326,6 @@ fclose(fp);
 
 sem_unlink(SEMNAME);
 
-exit(EXIT_SUCCESS);
 
 }
 
@@ -1524,7 +1519,6 @@ void cleanup(int signo)
 
 *--snip--*
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -1582,7 +1576,6 @@ printf("%d\n", val);
 
 cleanup(1);
 
-exit(EXIT_SUCCESS);
 
 }
 
@@ -1602,7 +1595,6 @@ void add_next(sharedbuf \*bufpool, int data)
 
 *--snip--*
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -1640,7 +1632,6 @@ break;
 
 }
 
-exit(EXIT_SUCCESS);
 
 }
 
@@ -1892,7 +1883,6 @@ The receiving program is displayed in Listing 12-5.
 
 char \*mqname;
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -1950,7 +1940,6 @@ if ( -1 == mq_unlink(mqname) ) /\* Mark queue for destruction. \*/
 
 fatal_error(errno, "mq_unlink");
 
-exit(EXIT_SUCCESS);
 
 }
 
@@ -1964,7 +1953,6 @@ The sending program is displayed in Listing 12-6.
 
 \#include \<mqueue.h\>
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -2020,7 +2008,6 @@ free(msg_buffer);
 
 mq_close(mqdes);
 
-exit(EXIT_SUCCESS);
 
 }
 
@@ -2226,7 +2213,6 @@ Let’s take a look at its code in Listing 12-7.
 
 \#include "ulogger.h"
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -2280,7 +2266,6 @@ fatal_error(errno, "malloc");
 
 mq_close(mqdes);
 
-exit(EXIT_SUCCESS);
 
 }
 
@@ -2402,7 +2387,6 @@ program is available in the book’s source code distribution.
 
 *ulogger.c*
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -2617,3 +2601,5 @@ the free space in the memory object—if shmalloc() cannot find
 enough memory for a request, let it fail. You can use ftruncate() to
 
 help with this problem.
+
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-842_1.jpg)

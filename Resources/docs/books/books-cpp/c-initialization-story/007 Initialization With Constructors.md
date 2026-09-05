@@ -56,7 +56,7 @@ many codebases. See [Google C++ Style Guide](https://google.github.io/styleguide
 
 To keep things simple, I implemented the calcCheckSum function in terms of std::accumulate(), which is an algorithm from the C++ Standard Library. This code starts from 0 and adds numerical values of letters from the input std::string. Since C++23, we can use the 0UZ integer literal to represent the size_t so that it matches with the return type for the function; alternatively, we could use static_cast\<size_t\> or UL/ULL for 32/64-bit systems respectively. For example, for "HELLO", we’ll get the following computations:
 
-![](media/index-27_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-27_1.png)
 
  
 
@@ -70,7 +70,7 @@ of const instances. For more information, see this C++ core guideline: [Con.2: B
 
 [make member functions const](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#con2-by-default-make-member-functions-const)³.
 
-![](media/index-27_2.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-27_2.png)
 
 Member functions might also have noexcept specifier applied. However, this topic is outside the scope of the book and won’t be covered. You can find more
 
@@ -108,7 +108,7 @@ DataPacket packet;
 
 packet.serverId = 10; // error: 'size_t DataPacket::serverId' is private...
 
-![](media/index-28_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-28_1.png)
 
  
 
@@ -164,7 +164,7 @@ A constructor is a special member function that does not have a name, but we dec
 
 it using the enclosing class name⁸. You cannot invoke a constructor like other member functions. Instead, the compiler calls it when an object of its class is being initialized. It has the following basic syntax:
 
-![](media/index-29_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-29_1.png)
 
  
 
@@ -198,7 +198,7 @@ explicitly want to call,
 
 • {/\*body\*/}- a function body.
 
-![](media/index-30_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-30_1.png)
 
 You can also apply noexcept, \[\[attributes\]\], constexpr, and consteval on a constructor, but the full explanation of those additional properties goes beyond
 
@@ -616,7 +616,7 @@ Initialization With Constructors 24
 
 The above example shows a constructor that performs logging and basic parameter checking. It uses a LOWEST_ID_VALUE, a global constant marked with the constexpr keyword (the second time we used this keyword).
 
-![](media/index-39_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-39_1.png)
 
 The constexpr specifier has been available since C++11 and guarantees that a value is available at compile time for *constant expressions*. For example, you can use such a variable to set the number of elements in a C-style array. It’s often perceived as a “type-safe macro definition”. The keyword applies to all built-in trivial types like integral values, floating-point, or even character literals (in C++20, std::string might be used in the constexpr context but not for variables available at runtime); there’s also a way to declare custom constexpr-ready types. You can also create a function to be constexpr and possibly evaluate it at compile-time; however, we won’t cover such functions in this book. See more
 
@@ -802,7 +802,7 @@ CtorValue z{10}; // using custom ctor }
 
 As you can see above, the compiler will create an implicit default constructor for the Value class (since it has no other constructors), but it won’t generate a default constructor for the CtorValue class. Also, notice that Value::x will have an indeterminate value as a default constructor is empty and won’t set any value for x.
 
-![](media/index-42_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-42_1.png)
 
 Default constructors only default-initialize data members, so in the case of built-in types, it means indeterminate values!
 
@@ -866,7 +866,7 @@ includes references, const data members, unions, and others. See the complete li
 
 [@C++Reference](https://en.cppreference.com/w/cpp/language/default_constructor#Deleted_implicitly-declared_default_constructor)¹⁷.
 
-![](media/index-44_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-44_1.png)
 
 You may also ask what’s the difference between Value() = default and Value() { }; they are both “empty”. Still, according to the C++ Standard, the second constructor is considered *user-declared* or *user-provided* and has some consequences in the type characteristics. We’ll cover that later once we cover copy
 
@@ -982,7 +982,7 @@ The code generates errors about narrowing conversion ... from double to int. See
 
 the code [@Compiler Explorer¹⁹](https://godbolt.org/z/7Kab4eT5T).
 
-![](media/index-46_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-46_1.png)
 
 Constructors not declared with the explicit keyword, also called *converting* *constructors*. They take part in the implicit conversion sequence. In C++03, those constructors must also be callable with a single argument, but that limitation was lifted in C++11. More on the implicit conversion in a separate section in this chapter.
 
@@ -1096,7 +1096,7 @@ C.46. By default, declare single-argument constructors explicit
 
 **Reason**: To avoid unintended conversions.
 
-![](media/index-49_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-49_1.png)
 
  
 
@@ -1142,7 +1142,7 @@ Above, all of the expression uses copy initialization, and thus explicit constru
 
 foo(std::string{"Hello World"});
 
-![](media/index-50_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-50_1.png)
 
  
 
@@ -1202,7 +1202,7 @@ From [over.ics.user²⁶](https://timsong-cpp.github.io/cppwp/n4868/over.ics.use
 
 A user-defined conversion sequence consists of an initial standard conversion sequence followed by a user-defined conversion followed by a second standard conversion sequence.
 
-![](media/index-51_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-51_1.png)
 
  
 

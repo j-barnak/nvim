@@ -25,15 +25,13 @@ In this chapter, we will be using an x86 machine as the host, either to create a
 
 To quickly check this information, you can use the following command:
 
+``` c
 lsb_release -a
-
 Distributor ID: Ubuntu
-
-Description:    Ubuntu 18.04.5 LTS
-
-Release:    18.04
-
-Codename:   bionic
+Description:    Ubuntu 18.04.5 LTS
+Release:    18.04
+Codename:   bionic
+```
 
 My computer is an **ASUS RoG**, with a 16 core AMD Ryzen CPU (you can use the **lscpu** command to pull this information out), 16 GB of RAM, 256 GB of SSD, and a 1 TB magnetic hard drive (information that you can obtain using the **df -h** command). That said, a quad-core CPU and 4 or 8 GB of RAM could be enough, but at the cost of an increased build duration. My favorite editor is **Vim**, but you are free to use the one you are most comfortable with. If you are using a desktop machine, you could use **Visual Studio Code** (**VS Code**), which is becoming widely used.
 
@@ -45,13 +43,12 @@ Before you can start the development process, you need to set up an **environmen
 
 On the host machine, you need to install a few packages, as follows:
 
-\$ sudo apt update
-
-\$ sudo apt install gawk wget git diffstat unzip \\
-
-       texinfo gcc-multilib build-essential chrpath socat \\
-
-       libsdl1.2-dev xterm ncurses-dev lzop libelf-dev make
+``` c
+$ sudo apt update
+$ sudo apt install gawk wget git diffstat unzip \
+       texinfo gcc-multilib build-essential chrpath socat \
+       libsdl1.2-dev xterm ncurses-dev lzop libelf-dev make
+```
 
 In the preceding code, we installed a few development tools and some mandatory libraries so that we have a nice user interface when we're configuring the Linux kernel.
 
@@ -63,7 +60,9 @@ Before we can start compiling, we need to install the necessary packages and too
 
 For a native compilation, you can use the following toolchain installation command:
 
+``` c
 sudo apt install gcc binutils
+```
 
 When you need to cross-compile, you must identify and install the right toolchain. Compared to a native compiler, cross-compiler executables are prefixed by the name of the target operating system, architecture, and (sometimes) library. Thus, to identify architecture-specific toolchains, a naming convention has been defined: **arch\[-vendor\]\[-os\]-abi**. Let's look at what the fields in the pattern mean:
 
@@ -84,11 +83,15 @@ Now that we are familiar with toolchain naming conventions, we can determine whi
 
 To cross-compile for a 32-bit ARM machine, we would install the toolchain using the following command:
 
-\$ sudo apt install gcc-arm-linux-gnueabihf binutils-arm-linux-gnueabihf
+``` c
+$ sudo apt install gcc-arm-linux-gnueabihf binutils-arm-linux-gnueabihf
+```
 
 Note that the 64-bit ARM backend/support in the Linux tree and GCC is called **aarch64**. So, the cross-compiler must be called something like **gcc-aarch64-linux-gnu\***, while Binutils must be called something like **binutils-aarch64-linux-gnu\***. Thus, for a 64-bit ARM toolchain, we would use the following command:
 
-\$ sudo apt install make gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+``` c
+$ sudo apt install make gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu
+```
 
 Note
 
@@ -98,35 +101,35 @@ Note that not all versions of the compiler can compile a given Linux kernel vers
 
 For example, to install version 8 of GCC for aarch64, you can use the following command:
 
+``` c
 sudo apt install gcc-8-aarch64-linux-gnu
+```
 
 Now that our toolchain has been installed, we can look at the version that was picked by our distribution package manager. For example, to check which version of the aarch64 cross-compiler was installed, we can use the following command:
 
-\$ aarch64-linux-gnu-gcc --version
-
+``` c
+$ aarch64-linux-gnu-gcc --version
 aarch64-linux-gnu-gcc (Ubuntu/Linaro 7.5.0-3ubuntu1~18.04) 7.5.0
-
 Copyright (C) 2017 Free Software Foundation, Inc.
-
-\[...\]
+[...]
+```
 
 For the 32-bit ARM variant, we can use the following command:
 
-\$ arm-linux-gnueabihf-gcc --version
-
+``` c
+$ arm-linux-gnueabihf-gcc --version
 arm-linux-gnueabihf-gcc (Ubuntu/Linaro 7.5.0-3ubuntu1~18.04) 7.5.0
-
 Copyright (C) 2017 Free Software Foundation, Inc.
-
-\[...\]
+[...]
+```
 
 Finally, for the native version, we can use the following command:
 
-\$ gcc --version
-
+``` c
+$ gcc --version
 gcc (Ubuntu 7.5.0-3ubuntu1~18.04) 7.5.0
-
 Copyright (C) 2017 Free Software Foundation, Inc.
+```
 
 Now that we have set up our environment and made sure we are using the right tool versions, we can start downloading the Linux kernel sources and dig into them.
 
@@ -164,11 +167,11 @@ Every subsystem and kernel maintainer repository is hosted here: <https://git.ke
 
 In this book, we will be using Linus's tree, which can be downloaded using the following commands:
 
+``` c
 git clone https://git.kernel.org/pub/scm/linux/kernel/git/torvalds/linux.git --depth 1
-
 git checkout v5.10
-
 ls
+```
 
 In the preceding commands we used **--depth 1** to avoid downloading the history (or rather, picking only the last commit history), which may considerably reduce the download size and save time. Since Git supports branching and tagging, the **checkout** command allows you to switch to a specific tag or branch. In this example, we are switching to the **v5.10** tag.
 
@@ -216,17 +219,22 @@ Note that various assumptions are made and options/features/flags are enabled by
 
 Thus, a typical Linux configuration or build command would look as follows:
 
-ARCH=\<XXXX\> CROSS_COMPILE=\<YYYY\> make menuconfig
+``` c
+ARCH=<XXXX> CROSS_COMPILE=<YYYY> make menuconfig
+```
 
 It can also look as follows:
 
-ARCH=\<XXXX\> CROSS_COMPILE=\<YYYY\> make \<make-target\>
+``` c
+ARCH=<XXXX> CROSS_COMPILE=<YYYY> make <make-target>
+```
 
 If you don't wish to specify these environment variables when you launch a command, you can export them into your current shell. The following is an example:
 
+``` c
 export CROSS_COMPILE=aarch64-linux-gnu-
-
 export ARCH=aarch64
+```
 
 Remember that if these variables are not specified, the native host machine is going to be targeted; that is, if **CROSS_COMPILE** is omitted or not set, **\$(CROSS_COMPILE)gcc** will result in **gcc**, and it will be the same for other tools that will be invoked (for example, **\$(CROSS_COMPILE)ld** will result in **ld**).
 
@@ -238,7 +246,7 @@ As a result, you should leave **CROSS_COMPILE** and **ARCH** undefined to have t
 
 The Linux kernel is a *Makefile-based* project that contains thousands of options and drivers. Each option that's enabled can make another one available or can pull specific code into the build. To configure the kernel, you can use **make menuconfig** for a ncurses-based interface or **make xconfig** for an X-based interface. The ncurses-based interface looks as follows:
 
-![Figure 1.1 – Kernel configuration screen ](media/image/B17934_Fig_1.1.jpg)
+![Figure 1.1 – Kernel configuration screen ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_Fig_1.1.jpg)
 
 Figure 1.1 – Kernel configuration screen
 
@@ -256,29 +264,41 @@ The selected options will be stored in a **.config** file, at the root of the so
 
 It is very difficult to know which configuration is going to work on your platform. In most cases, there will be no need to start a configuration from scratch. There are default and functional configuration files available in each arch directory that you can use as a starting point (it is important to start with a configuration that already works):
 
-ls arch/\<your_arch\>/configs/
+``` c
+ls arch/<your_arch>/configs/
+```
 
 For 32-bit ARM-based CPUs, these config files can be found in **arch/arm/configs/**. In this architecture, there is usually one default configuration per CPU family. For instance, for i.MX6-7 processors, the default config file is **arch/arm/configs/imx_v6_v7_defconfig**. However, on ARM 64-bit CPUs, there is only one big default configuration to customize; it is located in **arch/arm64/configs/** and is called **defconfig**. Similarly, for x86 processors, we can find the files in **arch/x86/configs/**. There will be two default configuration files here – **i386_defconfig** and **x86_64_defconfig**, for 32- and 64-bit x86 architectures, respectively.
 
 The kernel configuration command, given a default configuration file, is as follows:
 
-make \<foo_defconfig\>
+``` c
+make <foo_defconfig>
+```
 
 This will generate a new **.config** file in the main (root) directory, while the old **.config** will be renamed **.config.old**. This can be useful to revert the previous configuration changes. Then, to customize the configuration, you can use the following command:
 
+``` c
 make menuconfig
+```
 
 Saving your changes will update your **.config** file. While you could share this config with your teammates, you are better off creating a default configuration file in the same minimal format as those shipped with the Linux kernel sources. To do that, you can use the following command:
 
+``` c
 make savedefconfig
+```
 
 This command will create a minimal (since it won't store non-default settings) configuration file. The generated default configuration file will be called **defconfig** and stored at the root of the source tree. You can store it in another location using the following command:
 
-mv defconfig arch/\<arch\>/configs/myown_defconfig
+``` c
+mv defconfig arch/<arch>/configs/myown_defconfig
+```
 
 This way, you can share a reference configuration inside the kernel sources and other developers can now get the same **.config** file as you by running the following command:
 
+``` c
 make myown_defconfig
+```
 
 Note
 
@@ -288,27 +308,32 @@ The followings are the various configuration commands you can use, depending on 
 
 - For a 64-bit x86 native compilation, it is quite straightforward (the compilation options can be omitted):
 
-  **make x86_64_defconfig**
-
-  **make menuconfig**
+  ``` c
+  make x86_64_defconfig
+  make menuconfig
+  ```
 
 - Given a 32-bit ARM i.MX6-based board, you can execute the following command:
 
-  **ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- make imx_v6_v7_defconfig**
-
-  **ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- make menuconfig**
+  ``` c
+  ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- make imx_v6_v7_defconfig
+  ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- make menuconfig
+  ```
 
 With the first command, you store the default options in the **.config** file, while with the latter, you can update (add/remove) various options, depending on your needs.
 
 - For 64-bit ARM boards, you can execute the following commands:
 
-  **ARCH=aarch64 CROSS_COMPILE=aarch64-linux-gnu- make defconfig**
-
-  **ARCH=aarch64 CROSS_COMPILE=aarch64-linux-gnu- make menuconfig**
+  ``` c
+  ARCH=aarch64 CROSS_COMPILE=aarch64-linux-gnu- make defconfig
+  ARCH=aarch64 CROSS_COMPILE=aarch64-linux-gnu- make menuconfig
+  ```
 
 You may run into a Qt4 error with **xconfig**. In such a case, you should just use the following command to install the missing packages:
 
+``` c
 sudo apt install qt4-dev-tools qt4-qmake
+```
 
 Note
 
@@ -316,7 +341,9 @@ You may be switching from an old kernel to a new one. Given the old **.config** 
 
 There may be a better option to find an initial configuration file, especially if your machine is already running. Debian and Ubuntu Linux distributions save the **.config** file in the **/boot** directory, so you can use the following command to copy this configuration file:
 
-cp /boot/config-\`uname -r\` .config
+``` c
+cp /boot/config-`uname -r` .config
+```
 
 The other distributions may not do this. So, I can recommend that you always enable the **IKCONFIG** and **IKCONFIG_PROC** kernel configuration options, which will enable access to **.config** through **/proc/configs.gz**. This is a standard method that also works with embedded distributions.
 
@@ -326,17 +353,14 @@ Now that we can configure the kernel, let's enumerate some useful configuration 
 
 - **IKCONFIG** and **IKCONFIG_PROC**: These are the most important to me. It makes your kernel configuration available at runtime, in **/proc/config.gz**. It can be useful either to reuse this config on another system or simply look for the enabled state of a particular feature; for example:
 
-  **\# zcat /proc/config.gz \| grep CONFIG_SOUND**
-
-  **CONFIG_SOUND=y**
-
-  **CONFIG_SOUND_OSS_CORE=y**
-
-  **CONFIG_SOUND_OSS_CORE_PRECLAIM=y**
-
-  **\# CONFIG_SOUNDWIRE is not set**
-
-  **\#  **
+  ``` c
+  # zcat /proc/config.gz | grep CONFIG_SOUND
+  CONFIG_SOUND=y
+  CONFIG_SOUND_OSS_CORE=y
+  CONFIG_SOUND_OSS_CORE_PRECLAIM=y
+  # CONFIG_SOUNDWIRE is not set
+  #
+  ```
 
 - **CMDLINE_EXTEND** and **CMDLINE**: The first option is a Boolean that allows you to extend the kernel command line from within the configuration, while the second option is a string containing the actual command-line extension value; for example, **CMDLINE="noinitrd usbcore.authorized_default=0"**.
 
@@ -373,7 +397,9 @@ In these targets, **bzImage** is an x86-specific make target that produces a bin
 
 While building, you can leverage the host's CPU performance by running multiple jobs in parallel thanks to the **-j** make options. The following is an example:
 
+``` c
 make -j16
+```
 
 Most people define their **-j** number as 1.5x the number of cores. In my case, I always use **ncpus \* 2**.
 
@@ -381,23 +407,33 @@ You can build the Linux kernel like so:
 
 - For a native compilation, use the following command:
 
-  **make -j16**
+  ``` c
+  make -j16
+  ```
 
 - For a 32-bit ARM cross-compilation, use the following command:
 
-  **ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- make -j16**
+  ``` c
+  ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- make -j16
+  ```
 
 Each make target can be invoked separately, like so:
 
+``` c
 ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- make dtbs
+```
 
 You can also do the following:
 
+``` c
 ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- make zImage -j16
+```
 
 Finally, you can also do the following:
 
+``` c
 make bzImage -j16
+```
 
 Note
 
@@ -405,39 +441,25 @@ I have used **-j16** in my commands because my host has an 8-core CPU. This numb
 
 At the end of your 32-bit ARM cross-compilation jobs, you will see something like the following:
 
-\[…\]
-
-  LZO     arch/arm/boot/compressed/piggy_data
-
-  CC      arch/arm/boot/compressed/misc.o
-
-  CC      arch/arm/boot/compressed/decompress.o
-
-  CC      arch/arm/boot/compressed/string.o
-
-  SHIPPED arch/arm/boot/compressed/hyp-stub.S
-
-  SHIPPED arch/arm/boot/compressed/lib1funcs.S
-
-  SHIPPED arch/arm/boot/compressed/ashldi3.S
-
-  SHIPPED arch/arm/boot/compressed/bswapsdi2.S
-
-  AS      arch/arm/boot/compressed/hyp-stub.o
-
-  AS      arch/arm/boot/compressed/lib1funcs.o
-
-  AS      arch/arm/boot/compressed/ashldi3.o
-
-  AS      arch/arm/boot/compressed/bswapsdi2.o
-
-  AS      arch/arm/boot/compressed/piggy.o
-
-  LD      arch/arm/boot/compressed/vmlinux
-
-  OBJCOPY arch/arm/boot/zImage
-
-  Kernel: arch/arm/boot/zImage is ready
+``` c
+[…]
+  LZO     arch/arm/boot/compressed/piggy_data
+  CC      arch/arm/boot/compressed/misc.o
+  CC      arch/arm/boot/compressed/decompress.o
+  CC      arch/arm/boot/compressed/string.o
+  SHIPPED arch/arm/boot/compressed/hyp-stub.S
+  SHIPPED arch/arm/boot/compressed/lib1funcs.S
+  SHIPPED arch/arm/boot/compressed/ashldi3.S
+  SHIPPED arch/arm/boot/compressed/bswapsdi2.S
+  AS      arch/arm/boot/compressed/hyp-stub.o
+  AS      arch/arm/boot/compressed/lib1funcs.o
+  AS      arch/arm/boot/compressed/ashldi3.o
+  AS      arch/arm/boot/compressed/bswapsdi2.o
+  AS      arch/arm/boot/compressed/piggy.o
+  LD      arch/arm/boot/compressed/vmlinux
+  OBJCOPY arch/arm/boot/zImage
+  Kernel: arch/arm/boot/zImage is ready
+```
 
 By using the default targets, various binaries will result from the build process, depending on the architecture. These are as follows:
 
@@ -469,17 +491,19 @@ Modules can be built separately using the **modules** target. You can install th
 
 - For a native build and installation, you can use the following commands:
 
-  **make modules**
-
-  **sudo make modules_install**
+  ``` c
+  make modules
+  sudo make modules_install
+  ```
 
 The resulting modules will be installed in **/lib/modules/\$(uname -r)/kernel/**, in the same directory structure as their corresponding source. A custom install path can be specified using the **INSTALL_MOD_PATH** environment variable.
 
 - When you're cross-compiling for embedded systems, as with all **make** commands, **ARCH** and **CROSS_COMPILE** must be specified. As it is not possible to install a directory in the target device filesystem, embedded Linux build systems (such as Yocto or Buildroot) set **INSTALL_MOD_PATH** to a path that corresponds to the target root filesystem so that the final root filesystem image contains the modules that have been built; otherwise, the modules will be installed on the host. The following is an example of a 32-bit ARM architecture:
 
-  **ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- make modules**
-
-  **ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- INSTALL_MOD_PATH=\<dir\> make modules_install**
+  ``` c
+  ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- make modules
+  ARCH=arm CROSS_COMPILE=arm-linux-gnueabihf- INSTALL_MOD_PATH=<dir> make modules_install
+  ```
 
 In addition to the **kernel** directory that is shipped with modules, the following files are installed in **/lib/modules/\<version\>** as well:
 

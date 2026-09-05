@@ -102,7 +102,7 @@ chitectural protocols abstract the hardware and are the only agents in the syste
 
 else in the system would communicate with a core service to communicate any sort of requests to the hardware. Figure 9.1 illustrates this high-level software handshake.
 
-![](media/index-151_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-151_1.png)
 
  
 
@@ -166,7 +166,6 @@ The CPU Architectural Protocol uses the following protocol definition:
 
  
 
-Protocol Interface Structure
 
 typedef struct \_EFI_CPU_ARCH_PROTOCOL {
 
@@ -296,7 +295,6 @@ driver, it is evident that this abstraction will not persist when the platform h
 
  
 
-Protocol Interface Structure
 
 typedef struct \_EFI_TIMER_ARCH_PROTOCOL { EFI_TIMER_REGISTER_HANDLER RegisterHandler; EFI_TIMER_SET_TIMER_PERIOD SetTimerPeriod; EFI_TIMER_GET_TIMER_PERIOD GetTimerPeriod; EFI_TIMER_GENERATE_SOFT_INTERRUPT GenerateSoftInterrupt;
 
@@ -362,7 +360,7 @@ If not enough drivers have been initialized when this protocol is used to access
 
 return control back to the dispatcher. Once the required boot devices are available, then the boot device can be used to load and invoke an OS or a system utility.
 
-![](media/index-156_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-156_1.png)
 
  
 
@@ -370,7 +368,6 @@ return control back to the dispatcher. Once the required boot devices are availa
 
  
 
-Protocol Interface Structure
 
 typedef struct \_EFI_BDS_ARCH_PROTOCOL { EFI_BDS_ENTRY Entry;
 
@@ -438,7 +435,6 @@ PCI Protocols \| **139**
 
  
 
-Protocol Interface Structure
 
 typedef struct \_EFI_WATCHDOG_TIMER_ARCH_PROTOCOL { EFI_WATCHDOG_TIMER_REGISTER_HANDLER RegisterHandler; EFI_WATCHDOG_TIMER_SET_TIMER_PERIOD SetTimerPeriod; EFI_WATCHDOG_TIMER_GET_TIMER_PERIOD GetTimerPeriod; } EFI_WATCHDOG_TIMER_ARCH_PROTOCOL;
 
@@ -492,7 +488,7 @@ troller contain a single instance of the PCI Host Bridge Allocation Protocol. Mo
 
 **140** \| Chapter 9 – Some Common UEFI and PI Functions
 
-![](media/index-159_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-159_1.png)
 
  
 
@@ -576,7 +572,7 @@ The firmware for this platform would produce the following: ■ One instance of 
 
 ■ One instance of PCI Root Bridge I/O Protocol
 
-![](media/index-160_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-160_1.png)
 
  
 
@@ -602,7 +598,7 @@ board or PCI slots. The firmware for this platform would produce the following: 
 
 ■ Four instances of the PCI Root Bridge I/O Protocol **142** \| Chapter 9 – Some Common UEFI and PI Functions
 
-![](media/index-161_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-161_1.png)
 
  
 
@@ -626,7 +622,7 @@ The firmware for this platform would produce the following: ■ One instance of 
 
 ■ Two instances of the PCI Root Bridge I/O Protocol
 
-![](media/index-161_2.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-161_2.png)
 
  
 
@@ -634,7 +630,7 @@ The firmware for this platform would produce the following: ■ One instance of 
 
 PCI Protocols \| **143**
 
-![](media/index-162_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-162_1.png)
 
  
 
@@ -688,7 +684,6 @@ UEFI driver that produces the handles that represent the PCI Root Bridges.
 
  
 
-Protocol Interface Structure
 
  
 
@@ -824,7 +819,6 @@ and common buffer DMA.
 
  
 
-Protocol Interface Structure
 
 typedef struct \_EFI_PCI_IO_PROTOCOL { EFI_PCI_IO_PROTOCOL_POLL_IO_MEM PollMem; EFI_PCI_IO_PROTOCOL_POLL_IO_MEM PollIo; EFI_PCI_IO_PROTOCOL_ACCESS Mem; EFI_PCI_IO_PROTOCOL_ACCESS Io; EFI_PCI_IO_PROTOCOL_CONFIG_ACCESS Pci; EFI_PCI_IO_PROTOCOL_COPY_MEM CopyMem; EFI_PCI_IO_PROTOCOL_MAP Map; EFI_PCI_IO_PROTOCOL_UNMAP Unmap; EFI_PCI_IO_PROTOCOL_ALLOCATE_BUFFER AllocateBuffer; EFI_PCI_IO_PROTOCOL_FREE_BUFFER FreeBuffer; EFI_PCI_IO_PROTOCOL_FLUSH Flush; EFI_PCI_IO_PROTOCOL_GET_LOCATION GetLocation; EFI_PCI_IO_PROTOCOL_ATTRIBUTES Attributes; EFI_PCI_IO_PROTOCOL_GET_BAR_ATTRIBUTES GetBarAttributes ;
 
@@ -916,7 +910,7 @@ location of the partition it is associated with.
 
 **148** \| Chapter 9 – Some Common UEFI and PI Functions
 
-![](media/index-167_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-167_1.png)
 
  
 
@@ -924,7 +918,6 @@ location of the partition it is associated with.
 
  
 
-Protocol Interface Structure
 
  
 
@@ -970,7 +963,6 @@ Disk I/O \| **149**
 
  
 
-Protocol Interface Structure
 
  
 
@@ -1038,7 +1030,6 @@ eral offset-length abstraction of the underlying Block I/O protocol.
 
  
 
-Protocol Interface Structure
 
  
 
@@ -1072,7 +1063,7 @@ used to open a device volume and return an EFI File Handle that provides interfa
 
 use exposes a secondary protocol that will directly act on the device on top of which the Simple File System was layered. Figure 9.10 illustrates this concept.
 
-![](media/index-169_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-169_1.png)
 
  
 
@@ -1082,7 +1073,6 @@ Simple File System \| **151**
 
  
 
-Protocol Interface Structure
 
 typedef struct {
 
@@ -1124,7 +1114,6 @@ provided that flushes all dirty data in the file system, relative to the request
 
 inform the device to flush as well.
 
-Protocol Interface Structure
 
 typedef struct \_EFI_FILE {
 
@@ -1328,7 +1317,7 @@ ant with the UEFI driver model, as the examples shown in Figure 9.11 and Figure 
 
 Since driver model compliance is very common (and highly recommended) for device drivers, several examples are shown below that describe in detail how such a driver would most effectively leverage the configuration infrastructure.
 
-![](media/index-173_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-173_1.png)
 
  
 
@@ -1358,7 +1347,7 @@ tem addresses (through the Configuration Access protocol) the configuration
 
 services associated with the device.
 
-![](media/index-174_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-174_1.png)
 
  
 
@@ -1402,13 +1391,13 @@ This kind of interaction could be used in the manufacturing environment to achie
 
 motely managing the platform and updating it.
 
-![](media/index-175_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-175_1.png)
 
  
 
 **Figure 9.13:** Remote Interaction Occurs with a Target System; the System in Turn Accesses the Con-figuration Abstractions Associated with a Device or Set of Devices
 
-![](media/index-175_2.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-175_2.png)
 
  
 

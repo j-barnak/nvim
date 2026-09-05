@@ -1,27 +1,3 @@
-*Networking*
-
-***This chapter covers***
-
- Implementing a networking stack
-
- Handling multiple error types within local scope
-
- When to use trait objects
-
- Implementing state machines in Rust
-
-This chapter describes how to make HTTP requests multiple times, stripping away a layer of abstraction each time. We start by using a user-friendly library, then boil that away until we’re left with manipulating raw TCP packets. When we’re finished, you’ll be able to distinguish an IP address from a MAC address. And you’ll learn why we went straight from IPv4 to IPv6.
-
-You’ll also learn lots of Rust in this chapter, most of it related to advanced error handling techniques that become essential for incorporating upstream crates. Several pages are devoted to error handling. This includes a thorough introduction to trait objects.
-
-Networking is a difficult subject to cover in a single chapter. Each layer is a fractal of complexity. Networking experts will hopefully overlook my lack of depth in treating such a diverse topic.
-
-**251**
-
-**252**
-
-CHAPTER 8
-
 ***Networking***
 
 Figure 8.1 provides an overview of the topics that the chapter covers. Some of the projects that we cover include implementing DNS resolution and generating standards-compliant MAC addresses, including multiple examples of generating HTTP requests.
@@ -480,7 +456,6 @@ Several layers of networking protocols involved with delivering content over the
 
 **254**
 
-CHAPTER 8
 
 ***Networking***
 
@@ -532,17 +507,12 @@ Listing 8.1
 
 Crate metadata for listing 8.2
 
-\[package\]
 
 name = "ch8-simple"
 
-version = "0.1.0"
 
-authors = \["Tim McNamara \<author@rustinaction.com\>"\]
 
-edition = "2018"
 
-\[dependencies\]
 
 reqwest = "0.9"
 
@@ -602,7 +572,6 @@ For example
 
 **256**
 
-CHAPTER 8
 
 ***Networking***
 
@@ -712,7 +681,6 @@ The following listing shows the metadata for our fantasy role-playing game. The 
 
 **258**
 
-CHAPTER 8
 
 ***Networking***
 
@@ -720,17 +688,12 @@ Listing 8.3
 
 Crate metadata for the rpg project
 
-\[package\]
 
 name = "rpg"
 
-version = "0.1.0"
 
-authors = \["Tim McNamara \<author@rustinaction.com\>"\]
 
-edition = "2018"
 
-\[dependencies\]
 
 rand = "0.7"
 
@@ -926,7 +889,6 @@ When used as a function argument and in similar places, the form &dyn Rng is a r
 
 **260**
 
-CHAPTER 8
 
 ***Networking***
 
@@ -972,17 +934,12 @@ Listing 8.5
 
 Project metadata for listing 8.6
 
-\[package\]
 
 name = "ch8-stdlib"
 
-version = "0.1.0"
 
-authors = \["Tim McNamara \<author@rustinaction.com\>"\]
 
-edition = "2018"
 
-\[dependencies\]
 
 The next listing shows how to use the Rust standard library to construct an HTTP GET
 
@@ -1092,7 +1049,6 @@ So far, we’ve provided the hostname www.rustinaction.com to Rust. But to send 
 
 **262**
 
-CHAPTER 8
 
 ***Networking***
 
@@ -1344,7 +1300,6 @@ transport protocols.
 
 **264**
 
-CHAPTER 8
 
 ***Networking***
 
@@ -1552,7 +1507,6 @@ ch8-resolve/src/main.rs.
 
 **266**
 
-CHAPTER 8
 
 ***Networking***
 
@@ -1576,17 +1530,12 @@ Listing 8.8
 
 Crate metadata for the resolve app
 
-\[package\]
 
 name = "resolve"
 
-version = "0.1.0"
 
-authors = \["Tim McNamara \<author@rustinaction.com\>"\]
 
-edition = "2018"
 
-\[dependencies\]
 
 rand = "0.6"
 
@@ -1810,7 +1759,6 @@ Listing 8.9 includes some business logic that deserves explaining. Lines 30–33
 
 **268**
 
-CHAPTER 8
 
 ***Networking***
 
@@ -1944,7 +1892,6 @@ To compile listing 8.11, enter the ch8/misc directory and use rustc. This produc
 
 **270**
 
-CHAPTER 8
 
 ***Networking***
 
@@ -2130,7 +2077,6 @@ Wrapping trait objects in Box is necessary because their size (in bytes on the s
 
 **272**
 
-CHAPTER 8
 
 ***Networking***
 
@@ -2280,7 +2226,6 @@ We’ll cheat slightly and implement Display by simply using Debug. We know that
 
 **274**
 
-CHAPTER 8
 
 ***Networking***
 
@@ -2454,7 +2399,6 @@ Wrapping upstream errors in our own type
 
 **276**
 
-CHAPTER 8
 
 ***Networking***
 
@@ -2614,7 +2558,6 @@ Several pages ago in listing 8.9, you implemented a DNS resolver. That enabled c
 
 **278**
 
-CHAPTER 8
 
 ***Networking***
 
@@ -2758,7 +2701,6 @@ When we begin talking about raw TCP in section 8.8, we’ll create a virtual har
 
 **280**
 
-CHAPTER 8
 
 ***Networking***
 
@@ -2770,17 +2712,12 @@ Listing 8.16
 
 Crate metadata for the macgen project
 
-\[package\]
 
 name = "ch8-macgen"
 
-version = "0.1.0"
 
-authors = \["Tim McNamara \<author@rustinaction.com\>"\]
 
-edition = "2018"
 
-\[dependencies\]
 
 rand = "0.7"
 
@@ -2960,7 +2897,6 @@ break;
 
 **282**
 
-CHAPTER 8
 
 ***Networking***
 
@@ -3114,7 +3050,6 @@ and converts between MAC address types (defined by the smoltcp crate) and our ow
 
 **284**
 
-CHAPTER 8
 
 ***Networking***
 
@@ -3196,21 +3131,16 @@ Listing 8.19
 
 Crate metadata for mget
 
-\[package\]
 
 name = "mget"
 
-version = "0.1.0"
 
-authors = \["Tim McNamara \<author@rustinaction.com\>"\]
 
-edition = "2018"
 
 **Provides**
 
 **command-line**
 
-\[dependencies\]
 
 **Selects a random**
 
@@ -3322,7 +3252,6 @@ mget command-line parsing and overall coordination
 
 **286**
 
-CHAPTER 8
 
 ***Networking***
 
@@ -3562,7 +3491,6 @@ Manually creating an HTTP request using TCP primitives
 
 **288**
 
-CHAPTER 8
 
 ***Networking***
 
@@ -3780,7 +3708,6 @@ CHAPTER 8
 
 **290**
 
-CHAPTER 8
 
 ***Networking***
 
@@ -4054,7 +3981,6 @@ Creating DNS queries to translate domain names to IP addresses
 
 **292**
 
-CHAPTER 8
 
 ***Networking***
 
@@ -4101,3 +4027,31 @@ Perhaps, surprisingly, there are several more networking layers to unwrap. Well 
  Finite state machines can be elegantly modeled in Rust with an enum and a loop. At each iteration, indicate the next state by returning the appropriate enum variant.
 
  To enable two-way communications in UDP, each side of the conversation must be able to act as a client and a server.
+
+*Time and timekeeping*
+
+***This chapter covers***
+
+ Understanding how a computer keeps time
+
+ How operating systems represent timestamps
+
+ Synchronizing atomic clocks with the Network
+
+Time Protocol (NTP)
+
+In this chapter, you’ll produce an NTP (Network Time Protocol) client that requests the current time from the world’s network of public time servers. It’s a fully functioning client that can be included in your own computer’s boot process to keep it in sync with the world.
+
+Understanding how time works within computers supports your efforts to build resilient applications. The system clock jumps both backwards and forwards in time.
+
+Knowing why this happens allows you to anticipate and prepare for that eventuality.
+
+Your computer also contains multiple physical and virtual clocks. It takes some knowledge to understand the limitations of each and when these are appropriate.
+
+Understanding the limitations of each should foster a healthy skepticism about micro benchmarks and other time-sensitive code.
+
+Some of the hardest software engineering involves distributed systems that need to agree on what the time is. If you have the resources of Google, then **293**
+
+**294**
+
+CHAPTER 9

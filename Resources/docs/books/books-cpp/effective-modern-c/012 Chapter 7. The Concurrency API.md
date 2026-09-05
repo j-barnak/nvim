@@ -1,5 +1,3 @@
-**CHAPTER 7**
-
 **The Concurrency API**
 
 One of C++11’s great triumphs is the incorporation of concurrency into the language and library. Programmers familiar with other threading APIs (e.g., pthreads or Windows threads) are sometimes surprised at the comparatively Spartan feature set that C++ offers, but that’s because a great deal of C++’s support for concurrency is in the form of constraints on compiler-writers. The resulting language assurances mean that for the first time in C++’s history, programmers can write multithreaded programs with standard behavior across all platforms. This establishes a solid foundation on which expressive libraries can be built, and the concurrency elements of the Standard Library (tasks, futures, threads, mutexes, condition variables, atomic objects, and more) are merely the beginning of what is sure to become an increasingly rich set of tools for the development of concurrent C++ software.
@@ -584,13 +582,13 @@ std::thread t;
 
 **Item 37 \| 257**
 
-![](media/index-276_1.jpg)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-276_1.jpg)
 
-![](media/index-276_2.png)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-276_2.png)
 
-![](media/index-276_3.jpg)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-276_3.jpg)
 
-![](media/index-276_4.png)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-276_4.png)
 
 **Item 38: Be aware of varying thread handle destructor**
 
@@ -624,17 +622,17 @@ Given that not all result types can be copied (i.e., move-only types) and that t
 
 **258 \| Item 38**
 
-![](media/index-277_1.jpg)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-277_1.jpg)
 
-![](media/index-277_2.png)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-277_2.png)
 
-![](media/index-277_3.jpg)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-277_3.jpg)
 
-![](media/index-277_4.png)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-277_4.png)
 
-![](media/index-277_5.jpg)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-277_5.jpg)
 
-![](media/index-277_6.png)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-277_6.png)
 
 must live at least as long as the last future referring to it, which of the potentially many futures corresponding to the callee should be the one to contain its result?
 
@@ -1349,3 +1347,5 @@ mutexes. It’s a tool for writing concurrent software.
 • volatile is for memory where reads and writes should not be optimized away. It’s a tool for working with special memory.
 
 **Item 40 \| 279**
+
+**CHAPTER 8**

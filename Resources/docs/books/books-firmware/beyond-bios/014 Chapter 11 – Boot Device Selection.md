@@ -46,59 +46,59 @@ trate. Figure 11.1 shows the software flow in an early firmware design environme
 
 **Boot Manager** **OS-Present** **App**
 
-![](media/index-202_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-202_1.png)
 
  
 
 **Boot Loader** **Final OS** **?** **Final OS**
 
-![](media/index-202_2.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-202_2.png)
 
 **Environment**
 
-![](media/index-202_3.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-202_3.png)
 
 **Boot Services API Availability**
 
 **Runtime Services API Availability**
 
-![](media/index-202_4.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-202_4.png)
 
 **Reset** **Early** **Launch** **Transient** **Run Time** **After** **Vector** **Platform** **EFI** **System Load** **(RT)** **Life**
 
-![](media/index-202_5.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-202_5.png)
 
 **Initialization** **Infrastructure** **(TSL)** **(AL)**
 
-![](media/index-202_6.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-202_6.png)
 
 **Power on** **\[ . . Platform initialization . . \]** **\[ . . . . OS boot . . . . \]** **Shutdown**
 
-![](media/index-202_7.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-202_7.png)
 
  
 
 **Figure 11.1:** Earlier Firmware Designs with a Boot Manager Component
 
-![](media/index-202_8.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-202_8.png)
 
  
 
 DOI 10.1515/9781501505690-013
 
-![](media/index-202_9.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-202_9.png)
 
-![](media/index-202_10.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-202_10.png)
 
-![](media/index-202_11.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-202_11.png)
 
-![](media/index-202_12.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-202_12.png)
 
-![](media/index-202_13.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-202_13.png)
 
 **184** \| Chapter 11 – Boot Device Selection
 
-![](media/index-203_1.png)
+![](/tmp/audit/iter1/epubregen/beyond-bios/media/index-203_1.png)
 
  
 

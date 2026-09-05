@@ -42,63 +42,59 @@ Not only do spinlocks take advantage of hardware atomic functions. In the Linux 
 
 A spinlock is created either statically using a **DEFINE_SPINLOCK** macro, as illustrated here, or dynamically by calling **spin_lock_init()** on an uninitialized spinlock:
 
+``` c
 static DEFINE_SPINLOCK(my_spinlock);
+```
 
 To understand how this works, we just must look at the definition of this macro in **include/linux/spinlock_types.h**, as follows:
 
-\#define DEFINE_SPINLOCK(x) spinlock_t x = \\
-
-                                 \_\_SPIN_LOCK_UNLOCKED(x)
+``` c
+#define DEFINE_SPINLOCK(x) spinlock_t x = \
+                                 __SPIN_LOCK_UNLOCKED(x)
+```
 
 This can be used as follows:
 
+``` c
 static DEFINE_SPINLOCK(foo_lock);
+```
 
 After this, the spinlock will be accessible through its name **foo_lock**, and its address would be **&foo_lock**.
 
 However, for dynamic (runtime) allocation, it's better to embed the spinlock into a bigger structure, allocating memory for this structure and then calling **spin_lock_init()** on the spinlock element, as illustrated in the following code snippet:
 
+``` c
 struct bigger_struct {
-
-    spinlock_t lock;
-
-    unsigned int foo;
-
-    \[...\]
-
+    spinlock_t lock;
+    unsigned int foo;
+    [...]
 };
-
-static struct bigger_struct \*fake_init_function()
-
+static struct bigger_struct *fake_init_function()
 {
-
-    struct bigger_struct \*bs;
-
-    bs = kmalloc(sizeof(struct bigger_struct), GFP_KERNEL);
-
-    if (!bs)
-
-        return -ENOMEM;
-
-    spin_lock_init(&bs-\>lock);
-
-    return bs;
-
+    struct bigger_struct *bs;
+    bs = kmalloc(sizeof(struct bigger_struct), GFP_KERNEL);
+    if (!bs)
+        return -ENOMEM;
+    spin_lock_init(&bs->lock);
+    return bs;
 }
+```
 
 It's better to use **DEFINE_SPINLOCK** whenever possible. This offers compile-time initialization and requires fewer lines of code, with no real drawback. In this step, we can lock/unlock the spinlock using **spin_lock()** and **spin_unlock()** inline functions, both defined in **include/linux/spinlock.h**, as follows:
 
-static \_\_always_inline void spin_unlock(spinlock_t \*lock)
-
-static \_\_always_inline void spin_lock(spinlock_t \*lock)
+``` c
+static __always_inline void spin_unlock(spinlock_t *lock)
+static __always_inline void spin_lock(spinlock_t *lock)
+```
 
 That said, there are some known limitations in using spinlocks this way. Though a spinlock prevents preemption on the local CPU, it does not prevent this CPU from being hogged by an interrupt (thus executing this interrupt's handler). Imagine a situation where the CPU holds a "spinlock" on behalf of task A in order to protect a given resource, and an interrupt occurs. The CPU will stop its current task and branch to this interrupt handler. So far, so good. Now, imagine if this IRQ handler needs to acquire this same spinlock (you probably already guessed that the resource is shared with the interrupt handler). It will infinitely spin in place, trying to acquire a lock already locked by a task that it has preempted. This situation will result in a deadlock, for sure.
 
 To address this issue, the Linux kernel provides **\_irq** variant functions for spinlocks, which, in addition to disabling/enabling preemption, also disable/enable interrupts on the local CPU. These functions are **spin_lock_irq()** and **spin_unlock_irq()**, defined as follows:
 
-static void spin_unlock_irq(spinlock_t \*lock)
-
-static void spin_lock_irq(spinlock_t \*lock)
+``` c
+static void spin_unlock_irq(spinlock_t *lock)
+static void spin_lock_irq(spinlock_t *lock)
+```
 
 We might think that this solution is sufficient, but it isn't. The **\_irq** variant partially solves the problem. Imagine interrupts are already disabled on the processor before your code starts locking; when you call **spin_unlock_irq()**, you will not just release the lock but enable interrupts also, but probably in an erroneous manner since there is no way for **spin_unlock_irq()** to know which interrupts were enabled before locking and which were not.
 
@@ -112,9 +108,10 @@ This makes **spin_lock_irq()** unsafe when called from IRQs off-context as its c
 
 Now, imagine if you save the interrupts' status in a variable before acquiring the lock and restore them exactly as they were while releasing—there would be no further issues at all. To achieve this, the kernel provides **\_irqsave** variant functions that behave exactly like the **\_irq** ones, with saving and restoring interrupts status features in addition. These are **spin_lock_irqsave()** and **spin_lock_irqrestore()**, defined as follows:
 
-spin_lock_irqsave(spinlock_t \*lock, unsigned long flags)
-
-spin_unlock_irqrestore(spinlock_t \*lock, unsigned long flags)
+``` c
+spin_lock_irqsave(spinlock_t *lock, unsigned long flags)
+spin_unlock_irqrestore(spinlock_t *lock, unsigned long flags)
+```
 
 Note
 
@@ -132,77 +129,70 @@ A mutex is the second and last locking primitive we will discuss in this chapter
 
 A mutex is a simple data structure that embeds a wait queue (to put contenders to sleep) and a spinlock to protect access to this wait queue, as illustrated in the following code snippet:
 
+``` c
 struct mutex {
-
-    atomic_long_t owner;
-
-    spinlock_t wait_lock;
-
-\#ifdef CONFIG_MUTEX_SPIN_ON_OWNER
-
-    struct optimistic_spin_queue osq; /\* Spinner MCS lock \*/
-
-\#endif
-
-    struct list_head wait_list;
-
-\[...\]
-
+    atomic_long_t owner;
+    spinlock_t wait_lock;
+#ifdef CONFIG_MUTEX_SPIN_ON_OWNER
+    struct optimistic_spin_queue osq; /* Spinner MCS lock */
+#endif
+    struct list_head wait_list;
+[...]
 };
+```
 
 In the preceding code snippet, elements used only in debugging mode have been removed for the sake of readability. However, as we can see, mutexes are built on top of spinlocks. **owner** represents the process that owns (holds) the lock. **wait_list** is the list in which the mutex's contenders are put to sleep. **wait_lock** is the spinlock that protects **wait_list** manipulation (removal or insertion of contenders to sleep in it). It helps to keep **wait_list** coherent on SMP systems.
 
 The mutex APIs can be found in the **include/linux/mutex.h** header file. Prior to acquiring and releasing a mutex, it must be initialized. As for other kernel core data structures, there is a static initialization, as shown here:
 
+``` c
 static DEFINE_MUTEX(my_mutex);
+```
 
 Here is a definition of the **DEFINE_MUTEX()** macro:
 
-\#define DEFINE_MUTEX(mutexname) \\
-
-struct mutex mutexname = \_\_MUTEX_INITIALIZER(mutexname)
+``` c
+#define DEFINE_MUTEX(mutexname) \
+struct mutex mutexname = __MUTEX_INITIALIZER(mutexname)
+```
 
 A second approach the kernel offers is dynamic initialization, possible thanks to a call to a **\_\_mutex_init()** low-level function, which is actually wrapped by a much more user-friendly macro, **mutex_init()**. You can see this in action in the following code snippet:
 
+``` c
 struct fake_data {
-
-    struct i2c_client \*client;
-
-    u16 reg_conf;
-
-    struct mutex mutex;
-
+    struct i2c_client *client;
+    u16 reg_conf;
+    struct mutex mutex;
 };
-
-static int fake_probe(struct i2c_client \*client)
-
+static int fake_probe(struct i2c_client *client)
 {
-
-\[...\]
-
-    mutex_init(&data-\>mutex);
-
-\[...\]
-
+[...]
+    mutex_init(&data->mutex);
+[...]
 }
+```
 
 Acquiring (aka locking) a mutex is as simple as calling one of the following three functions:
 
-void mutex_lock(struct mutex \*lock);
-
-int mutex_lock_interruptible(struct mutex \*lock);
-
-int mutex_lock_killable(struct mutex \*lock);
+``` c
+void mutex_lock(struct mutex *lock);
+int mutex_lock_interruptible(struct mutex *lock);
+int mutex_lock_killable(struct mutex *lock);
+```
 
 If the mutex is free (unlocked), your task will immediately acquire it without going to sleep. Otherwise, your task will be put to sleep in a manner that depends on the locking function you use. With **mutex_lock()**, your task will be put in an uninterruptible sleep state (**TASK_UNINTERRUPTIBLE**) while waiting for the mutex to be released (if it is held by another task). **mutex_lock_interruptible()** will put your task in an interruptible sleep state, in which the sleep can be interrupted by any signal. **mutex_lock_killable()** will allow your sleeping task to be interrupted only by signals that actually kill the task. Each of these functions returns **0** if the lock has been acquired successfully. Moreover, interruptible variants return **-EINTR** when the locking attempt was interrupted by a signal.
 
 Whichever locking function is used, the mutex owner (and only the owner) should release the mutex using **mutex_unlock()**, defined as follows:
 
-void mutex_unlock(struct mutex \*lock);
+``` c
+void mutex_unlock(struct mutex *lock);
+```
 
 If it is worth checking the status of the mutex, you can use **mutex_is_locked()**, as follows:
 
-static bool mutex_is_locked(struct mutex \*lock)
+``` c
+static bool mutex_is_locked(struct mutex *lock)
+```
 
 This function simply checks if the mutex owner is **NULL** and returns **true** if so or **false** otherwise.
 
@@ -232,83 +222,55 @@ There are cases where we may need to acquire the lock only if it is not already 
 
 Both spinlock and mutex APIs provide a trylock method. These are, respectively, **spin_trylock()** and **mutex_trylock()**, the latter of which you can see here. Both methods return 0 on failure (the lock is already locked) or 1 on success (lock acquired). Thus, it makes sense to use these functions along with an **if** statement:
 
-int mutex_trylock(struct mutex \*lock)
+``` c
+int mutex_trylock(struct mutex *lock)
+```
 
 **spin_trylock()** actually targets spinlocks. It will lock the spinlock if it is not already locked, just as the **spin_lock()** method does. However, it immediately returns **0** without spinning in cases where the spinlock is already locked. You can see it in action here:
 
+``` c
 static DEFINE_SPINLOCK(foo_lock);
-
-\[...\]
-
+[...]
 static void foo(void)
-
 {
-
-    \[...\]
-
-    if (!spin_trylock(&foo_lock)) {
-
-        /\* Failure! the spinlock is already locked \*/
-
-        \[...\]
-
-        return;
-
-    }
-
-    /\*
-
-    \* reaching this part of the code means that the
-
-    \* spinlock has been successfully locked
-
-    \*/
-
-    \[...\]
-
-    spin_unlock(&foo_lock);
-
-    \[...\]
-
+    [...]
+    if (!spin_trylock(&foo_lock)) {
+        /* Failure! the spinlock is already locked */
+        [...]
+        return;
+    }
+    /*
+    * reaching this part of the code means that the
+    * spinlock has been successfully locked
+    */
+    [...]
+    spin_unlock(&foo_lock);
+    [...]
 }
+```
 
 On the other hand, **mutex_trylock()** targets mutexes. It will lock the mutex if it is not already locked, just as the **mutex_lock()** method does. However, it immediately returns **0** without sleeping in cases where the mutex is already locked. You can see an example of this in the following code snippet:
 
+``` c
 static DEFINE_MUTEX(bar_mutex);
-
-\[...\]
-
+[...]
 static void bar (void)
-
 {
-
-    \[...\]
-
-    if (!mutex_trylock(&bar_mutex)){
-
-        /\* Failure! the mutex is already locked \*/
-
-        \[...\]
-
-        return;
-
-    }
-
-    /\*
-
-     \* reaching this part of the code means that the
-
-     \* mutex has been successfully acquired
-
-     \*/
-
-    \[...\]
-
-    mutex_unlock(&bar_mutex);
-
-    \[...\]
-
+    [...]
+    if (!mutex_trylock(&bar_mutex)){
+        /* Failure! the mutex is already locked */
+        [...]
+        return;
+    }
+    /*
+     * reaching this part of the code means that the
+     * mutex has been successfully acquired
+     */
+    [...]
+    mutex_unlock(&bar_mutex);
+    [...]
 }
+```
 
 In the preceding excerpt, **mutex_trylock()** is used along with an **if** statement so that the driver can adapt its behavior.
 
@@ -324,33 +286,35 @@ The kernel scheduler manages a list of tasks to run (tasks in a **TASK_RUNNING**
 
 Wait queues are a higher-level mechanism essentially used to process blocking **input/output** (**I/O**), to wait for a condition to be **true**, to wait for a given event to occur, or to sense data or resource availability. To understand how they work, let's have a look at the following structure in **include/linux/wait.h**:
 
+``` c
 struct wait_queue_head {
-
-    spinlock_t lock;
-
-    struct list_head head;
-
+    spinlock_t lock;
+    struct list_head head;
 };
+```
 
 A wait queue is nothing but a list (with sleeping processes in it waiting to be awakened) and a spinlock to protect access to this list. We can use a wait queue when more than one process wants to sleep, waiting for one or more events to occur in order to be awakened. The head member is actually a list of processes waiting for the event(s). Each process that wants to sleep while waiting for the event to occur puts itself it this list before going to sleep. While a process is in the list, it is called wait queue entry. When an event occurs, one or more processes on the list are woken up and moved off the list.
 
 We can declare and initialize a wait queue in two ways. The first method is to statically use **DECLARE_WAIT_QUEUE_HEAD**, as follows:
 
+``` c
 DECLARE_WAIT_QUEUE_HEAD(my_event);
+```
 
 Alternatively, we can dynamically use **init_waitqueue_head()**, as follows:
 
+``` c
 wait_queue_head_t my_event;
-
 init_waitqueue_head(&my_event);
+```
 
 Any process that wants to sleep while waiting for **my_event** to occur can invoke either **wait_event_interruptible()** or **wait_event()**. Most of the time, the event is just the fact that a resource becomes available, thus it makes sense for a process to go to sleep only after a first check of the availability of that resource. To make things easy, these functions both take an expression in place of the second argument so that the process is put to sleep only if the expression evaluates **false**, as illustrated in the following code snippet:
 
+``` c
 wait_event(&my_event, (event_occured == 1));
-
-/\* or \*/
-
+/* or */
 wait_event_interruptible(&my_event, (event_occured == 1));
+```
 
 **wait_event()** or **wait_event_interruptible()** simply evaluates the condition when called. If the condition is **false**, the process is put into either a **TASK_UNINTERRUPTIBLE** or a **TASK_INTERRUPTIBLE** (for the **\_interruptible** variant) state and removed from the runqueue.
 
@@ -360,7 +324,9 @@ Note
 
 There may be cases where you need not only the condition to be **true** but to time out after a certain waiting duration. You can address such cases using **wait_event_timeout()**, whose prototype is shown here:
 
+``` c
 wait_event_timeout(wq_head, condition, timeout)
+```
 
 This function has two behaviors, depending on the timeout having elapsed or not. These are outlined here:
 
@@ -369,115 +335,76 @@ This function has two behaviors, depending on the timeout having elapsed or not.
 
 The time unit for timeout is a jiffy. There are convenient APIs to convert convenient time units such as milliseconds and microseconds to jiffies, defined as follows:
 
+``` c
 unsigned long msecs_to_jiffies(const unsigned int m)
-
 unsigned long usecs_to_jiffies(const unsigned int u)
+```
 
 After a change on any variable that could affect the result of the wait condition, you must call the appropriate **wake_up\*** family function. That being said, in order to wake up a process sleeping on a wait queue, you should call either **wake_up()**, **wake_up_all()**, **wake_up_interruptible()**, or **wake_up_interruptible_all()**. Whenever you call any of these functions, the condition is re-evaluated again. If the condition is **true** at that time, then a process (or all processes for the **\_all()** variant) in the wait queue will be awakened, and its (their) state set to **TASK_RUNNING**; otherwise, (the condition is **false**), nothing happens. The following code snippet illustrates this concept:
 
+``` c
 wake_up(&my_event);
-
 wake_up_all(&my_event);
-
 wake_up_interruptible(&my_event);
-
 wake_up_interruptible_all(&my_event);
+```
 
 In the preceding code snippet, **wake_up()** will wake only one process from the wait queue, while **wake_up_all()** will wake all processes from the wait queue. On the other hand, **wake_up_interruptible()** will wake only one process from the wait queue that is in interruptible sleep, and **wake_up_interruptible_all()** will wake all processes from the wait queue that are in interruptible sleep.
 
 Because they can be interrupted by signals, you should check the return value of the **\_interruptible** variants. A nonzero value means your sleep has been interrupted by some sort of signal, and the driver should return **ERESTARTSYS**, as illustrated in the following code snippet:
 
-\#include \<linux/module.h\>
-
-\#include \<linux/init.h\>
-
-\#include \<linux/sched.h\>
-
-\#include \<linux/time.h\>
-
-\#include \<linux/delay.h\>
-
-\#include\<linux/workqueue.h\>
-
+``` c
+#include <linux/module.h>
+#include <linux/init.h>
+#include <linux/sched.h>
+#include <linux/time.h>
+#include <linux/delay.h>
+#include<linux/workqueue.h>
 static DECLARE_WAIT_QUEUE_HEAD(my_wq);
-
 static int condition = 0;
-
-/\* declare a work queue\*/
-
+/* declare a work queue*/
 static struct work_struct wrk;
-
-static void work_handler(struct work_struct \*work)
-
+static void work_handler(struct work_struct *work)
 {
-
-    pr_info("Waitqueue module handler %s\n", \_\_FUNCTION\_\_);
-
-    msleep(5000);
-
-    pr_info("Wake up the sleeping module\n");
-
-    condition = 1;
-
-    wake_up_interruptible(&my_wq);
-
+    pr_info("Waitqueue module handler %s\n", __FUNCTION__);
+    msleep(5000);
+    pr_info("Wake up the sleeping module\n");
+    condition = 1;
+    wake_up_interruptible(&my_wq);
 }
-
-static int \_\_init my_init(void)
-
+static int __init my_init(void)
 {
-
-    pr_info("Wait queue example\n");
-
-    INIT_WORK(&wrk, work_handler);
-
-    schedule_work(&wrk);
-
-    pr_info("Going to sleep %s\n", \_\_FUNCTION\_\_);
-
-    if (wait_event_interruptible(my_wq, condition != 0)) {
-
-        pr_info("Our sleep has been interrupted\n");
-
-        return -ERESTARTSYS;
-
-    }
-
-    pr_info("woken up by the work job\n");
-
-    return 0;
-
+    pr_info("Wait queue example\n");
+    INIT_WORK(&wrk, work_handler);
+    schedule_work(&wrk);
+    pr_info("Going to sleep %s\n", __FUNCTION__);
+    if (wait_event_interruptible(my_wq, condition != 0)) {
+        pr_info("Our sleep has been interrupted\n");
+        return -ERESTARTSYS;
+    }
+    pr_info("woken up by the work job\n");
+    return 0;
 }
-
 void my_exit(void)
-
 {
-
-    pr_info("waitqueue example cleanup\n");
-
+    pr_info("waitqueue example cleanup\n");
 }
-
 module_init(my_init)
-
 module_exit(my_exit);
-
-MODULE_AUTHOR("John Madieu \<john.madieu@gmail.com\>");
-
+MODULE_AUTHOR("John Madieu <john.madieu@gmail.com>");
 MODULE_LICENSE("GPL");
+```
 
 In the preceding example, we have used the **msleep()** API, which will be explained shortly. Back to the behavior of the code—the current process (actually, **insmod**) will be put to sleep in the wait queue for 5 seconds and woken up by the work handler. The **dmesg** output is shown here:
 
-\[342081.385491\] Wait queue example
-
-\[342081.385505\] Going to sleep my_init
-
-\[342081.385515\] Waitqueue module handler work_handler
-
-\[342086.387017\] Wake up the sleeping module
-
-\[342086.387096\] woken up by the work job
-
-\[342092.912033\] waitqueue example cleanup
+``` c
+[342081.385491] Wait queue example
+[342081.385505] Going to sleep my_init
+[342081.385515] Waitqueue module handler work_handler
+[342086.387017] Wake up the sleeping module
+[342086.387096] woken up by the work job
+[342092.912033] waitqueue example cleanup
+```
 
 Now that we are comfortable with the concept of wait queue, which allows us to put processes to sleep and wait for these to be awakened, let's learn another simple sleeping mechanism that simply consists of delaying the execution flow unconditionally.
 
@@ -485,13 +412,12 @@ Now that we are comfortable with the concept of wait queue, which allows us to p
 
 This simple sleeping can also be referred to as **passive delay** because the task sleeps (allowing the CPU to schedule another task) while waiting, in contrast to active delay, which is a busy wait as the task waits by wasting the CPU clock and thus consuming resources. Before using sleeping APIs, the driver must include **\#include \<linux/delay\>**, which would make the following function available:
 
+``` c
 usleep_range(unsigned long min, unsigned long max)
-
 msleep(unsigned long msecs)
-
 msleep(unsigned long msecs)
-
 msleep_interruptible(unsigned long msecs)
+```
 
 In the preceding APIs, **msecs** is the number of milliseconds of sleep. **min** and **max** are the minimum and upper bounds of sleeping in microseconds.
 
@@ -507,11 +433,11 @@ First, the term "delay" in this section can be considered as busy waiting as the
 
 Even for busy loop waiting, the driver must include **\#include \<linux/delay\>**, which would make the following APIs available as well:
 
+``` c
 ndelay(unsigned long nsecs)
-
 udelay(unsigned long usecs)
-
 mdelay(unsigned long msecs)
+```
 
 The advantage of such APIs is that they can be used in both atomic and non-atomic contexts.
 
@@ -550,7 +476,7 @@ In the kernel, there is a **clocksource_list** global list that tracks the clock
 
 On a running Linux system, the most intuitive way to list clock source devices that are registered with the framework is by looking for the word **clocksource** in the kernel log message buffer, as shown here:
 
-![Figure 3.1 – System clocksource list ](media/image/B17934_03_001.jpg)
+![Figure 3.1 – System clocksource list ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_03_001.jpg)
 
 Figure 3.1 – System clocksource list
 
@@ -560,45 +486,44 @@ In the preceding output logs (from a Pi 4), the **jiffies** clock source is a ji
 
 However, the preferred way (especially where the **dmesg** buffer has rotated or has been cleared) to enumerate the available clock source on a running Linux system is by reading the content of the **available_clocksource** file in **/sys/devices/system/clocksource/clocksource0/**, as shown in the following code snippet (on a Pi 4):
 
-root@raspberrypi4-64-d0:~# cat  /sys/devices/system/clocksource/clocksource0/available_clocksource
-
+``` c
+root@raspberrypi4-64-d0:~# cat  /sys/devices/system/clocksource/clocksource0/available_clocksource
 arch_sys_counter
-
 root@raspberrypi4-64-d0:~#
+```
 
 On an i.MX6 board, we have the following:
 
-root@udoo-labcsmart:~# cat  /sys/devices/system/clocksource/clocksource0/available_clocksource
-
+``` c
+root@udoo-labcsmart:~# cat  /sys/devices/system/clocksource/clocksource0/available_clocksource
 mxc_timer1
-
 root@udoo-labcsmart:~#
+```
 
 To check the currently used clock source, you can use the following code:
 
-root@raspberrypi4-64-d0:~# cat  /sys/devices/system/clocksource/clocksource0/current_clocksource
-
+``` c
+root@raspberrypi4-64-d0:~# cat  /sys/devices/system/clocksource/clocksource0/current_clocksource
 arch_sys_counter
-
 root@raspberrypi4-64-d0:~#
+```
 
 On my x86 machine, we have the following for both available clock sources and the currently used one:
 
-jma@labcsmart:~\$ cat /sys/devices/system/clocksource/clocksource0/available_clocksource
-
+``` c
+jma@labcsmart:~$ cat /sys/devices/system/clocksource/clocksource0/available_clocksource
 tsc hpet acpi_pm
-
-jma@labcsmart:~\$ cat /sys/devices/system/clocksource/clocksource0/current_clocksource
-
+jma@labcsmart:~$ cat /sys/devices/system/clocksource/clocksource0/current_clocksource
 tsc
-
-jma@labcsmart:~\$
+jma@labcsmart:~$
+```
 
 To change the current clock source, you can echo the name of one of the available clock sources into the **current_clocksource** file, like this:
 
-jma@labcsmart:~\$ echo acpi_pm \>  /sys/devices/system/clocksource/clocksource0/current_clocksource
-
-jma@labcsmart:~\$
+``` c
+jma@labcsmart:~$ echo acpi_pm >  /sys/devices/system/clocksource/clocksource0/current_clocksource
+jma@labcsmart:~$
+```
 
 Changing the current clock source must be done with caution since the current clock source selected by the kernel during the boot is always the best one.
 
@@ -606,7 +531,7 @@ Changing the current clock source must be done with caution since the current cl
 
 One of the main goals of the clock source device is feeding the timekeeper. There can be multiple clock sources in a system, but the timekeeper will choose the one with the highest precision to use. The timekeeper needs to obtain the value of the clock source periodically to update the system time, which is usually updated during the tick processing, as illustrated in the following diagram:
 
-![Figure 3.2 – Linux kernel timekeeper implementation ](media/image/B17934_03_002.jpg)
+![Figure 3.2 – Linux kernel timekeeper implementation ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_03_002.jpg)
 
 Figure 3.2 – Linux kernel timekeeper implementation
 
@@ -619,7 +544,7 @@ The timekeeper provides several types of time: **xtime**, **monotonic time**, **
 
 The following table shows the different types of time and their kernel getter functions:
 
-![Table 3.1 – Linux kernel timekeeping functions ](media/image/Table_01.jpg)
+![Table 3.1 – Linux kernel timekeeping functions ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/Table_01.jpg)
 
 Table 3.1 – Linux kernel timekeeping functions
 
@@ -635,29 +560,28 @@ Clock event devices are orthogonal to clock source devices. This is probably why
 
 On a running Linux system, the available clock event devices can by listed from the **/sys/devices/system/clockevents/** directory. Here is an example on a Pi 4:
 
-root@raspberrypi4-64-d0:~# ls /sys/devices/system/clockevents/         
-
-broadcast    clockevent1  clockevent3  uevent
-
-clockevent0  clockevent2  power
-
+``` c
+root@raspberrypi4-64-d0:~# ls /sys/devices/system/clockevents/
+broadcast    clockevent1  clockevent3  uevent
+clockevent0  clockevent2  power
 root@raspberrypi4-64-d0:~#
+```
 
 On a dual-core i.MX6 running system, we have the following:
 
+``` c
 root@udoo-labcsmart:~# ls /sys/devices/system/clockevents/
-
-broadcast    clockevent0  clockevent1  consumers    power        suppliers    uevent
-
+broadcast    clockevent0  clockevent1  consumers    power        suppliers    uevent
 root@empair-labcsmart:~#
+```
 
 And finally, on my height core machine, we have the following:
 
-jma@labcsmart:~\$ ls /sys/devices/system/clockevents/
-
-broadcast  clockevent0  clockevent1  clockevent2  clockevent3  clockevent4  clockevent5  clockevent6  clockevent7  power  uevent
-
-jma@labcsmart:~\$
+``` c
+jma@labcsmart:~$ ls /sys/devices/system/clockevents/
+broadcast  clockevent0  clockevent1  clockevent2  clockevent3  clockevent4  clockevent5  clockevent6  clockevent7  power  uevent
+jma@labcsmart:~$
+```
 
 From the preceding listings of available clock event devices on the system, we can say the following:
 
@@ -668,33 +592,30 @@ To know the underlying timer of a given clock event device, you can read the con
 
 On the i.MX 6 platform, we have the following:
 
+``` c
 root@udoo-labcsmart:~# cat /sys/devices/system/clockevents/clockevent0/current_device
-
 local_timer
-
 root@udoo-labcsmart:~# cat /sys/devices/system/clockevents/clockevent1/current_device
-
 local_timer
+```
 
 On the Pi 4, we have the following:
 
+``` c
 root@raspberrypi4-64-d0:~# cat /sys/devices/system/clockevents/clockevent2/current_device
-
 arch_sys_timer
-
 root@raspberrypi4-64-d0:~# cat /sys/devices/system/clockevents/clockevent3/current_device
-
 arch_sys_timer
+```
 
 On my x86 running machine, we have the following:
 
-jma@labcsmart:~\$ cat /sys/devices/system/clockevents/clockevent0/current_device
-
+``` c
+jma@labcsmart:~$ cat /sys/devices/system/clockevents/clockevent0/current_device
 lapic-deadline
-
-jma@labcsmart:~\$ cat /sys/devices/system/clockevents/clockevent1/current_device
-
+jma@labcsmart:~$ cat /sys/devices/system/clockevents/clockevent1/current_device
 lapic-deadline
+```
 
 For the sake of readability, the choice has been made to read two entries only, and from what we have read, we can conclude the following:
 
@@ -714,17 +635,16 @@ Tick devices are software extensions of clock event devices to provide a continu
 
 The definition of a tick-device data structure is shown in the following code snippet:
 
+``` c
 struct tick_device {
-
-    struct clock_event_device \*evtdev;
-
-    enum tick_device_mode mode;
-
+    struct clock_event_device *evtdev;
+    enum tick_device_mode mode;
 };
+```
 
 In this data structure, **evtdev** is the clock event device that is abstracted by the tick device. **mode** is used to track the working mode of the underlying clock event. Therefore, when a tick device is said to be in periodic mode, it also means that the underlying clock event device is configured to work in this mode. The following diagram illustrates this:
 
-![Figure 3.3 – Clockevent and tick-device correlation ](media/image/B17934_03_003.jpg)
+![Figure 3.3 – Clockevent and tick-device correlation ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_03_003.jpg)
 
 Figure 3.3 – Clockevent and tick-device correlation
 
@@ -744,19 +664,19 @@ From its interrupt routine, the driver of the underlying clock event device must
 
 A tick device can operate in either one-shot mode or periodic mode. In periodic mode, the framework uses a per-CPU hrtimer via a control structure to emulate the ticks so that the base code is still tick-driven, but the periodic tick interrupt is replaced by timers under hrtimers embedded in the control structure. This control structure is a **tick_sched** struct, defined as follows:
 
+``` c
 struct tick_sched {
-
-    struct hrtimer               sched_timer;
-
-    enum tick_nohz_mode          nohz_mode;
-
-\[...\]
-
+    struct hrtimer               sched_timer;
+    enum tick_nohz_mode          nohz_mode;
+[...]
 };
+```
 
 Then, a per-CPU instance of this control structure is declared, as follows:
 
+``` c
 static DEFINE_PER_CPU(struct tick_sched, tick_cpu_sched);
+```
 
 This per-CPU instance allows a per-CPU tick emulation, which will drive the low-res timer processing via the **sched_timer** element, periodically reprogrammed to the next-low-res-timer-expires interval. This seems, however, obvious since each CPU has its own runqueue and ready processes list to manage.
 
@@ -780,21 +700,24 @@ To see the underlying timer backing the broadcast device, you can read the **cur
 
 On the x86 platform, we have the following output:
 
-jma@labcsmart:~\$ cat /sys/devices/system/clockevents/broadcast/current_device
-
+``` c
+jma@labcsmart:~$ cat /sys/devices/system/clockevents/broadcast/current_device
 hpet
+```
 
 The Pi 4 output is shown here:
 
+``` c
 root@raspberrypi4-64-d0:~# cat /sys/devices/system/clockevents/broadcast/current_device
-
 bc_hrtimer
+```
 
 Finally, the i.MX 6 broadcast device is backed by the following timer:
 
+``` c
 root@udoo-labcsmart:~# cat /sys/devices/system/clockevents/broadcast/current_device
-
 mxc_timer1
+```
 
 From the preceding output showing the timer backing the broadcast device, we can conclude that clock source, clock event, and broadcast device timers are all different.
 
@@ -812,7 +735,9 @@ It goes without saying that having an always-on CPU has implications for power m
 
 **sched_clock()** is a kernel timekeeping and timestamping function that returns the number of nanoseconds since the system started. It is weakly defined (to allow its overriding by architecture or platform code) in **kernel/sched/clock.c**, as follows:
 
-unsigned long long \_\_weak sched_clock(void)
+``` c
+unsigned long long __weak sched_clock(void)
+```
 
 It is, for instance, the function that provides a timestamp to **printk()** or is invoked when using **ktime_get_boottime()** or related kernel APIs. It defaults to a jiffy-backed implementation (which could affect scheduling accuracy). If overridden, the new implementation must return a 64-bit monotonic timestamp in nanoseconds that represents the number of nanoseconds since the last reboot. Most platforms achieve this by directly reading the timer registers. On platforms that lack timers, this feature is implemented with the same timer as the one used to back the main clock source device. This is the case on Raspberry Pi, for example. When this is the case, the registers to read the main clock source device value and the registers from where the **sched_clock()** value comes are the same: see **drivers/clocksource/bcm2835_timer.c**.
 
@@ -850,19 +775,19 @@ Since the **jiffies** variable is incremented **HZ** times every second, if **HZ
 
 Here are different **HZ** values on two running systems:
 
-jma@labcsmart:~\$ grep ‘CONFIG_HZ=' /boot/config-\$(uname -r)
-
+``` c
+jma@labcsmart:~$ grep ‘CONFIG_HZ=' /boot/config-$(uname -r)
 CONFIG_HZ=250
-
-jma@labcsmart:~\$
+jma@labcsmart:~$
+```
 
 The preceding code has been executed on a running x86 machine. On an ARM running machine, we have the following:
 
-root@udoo-labcsmart:~# zcat /proc/config.gz \|grep CONFIG_HZ
-
+``` c
+root@udoo-labcsmart:~# zcat /proc/config.gz |grep CONFIG_HZ
 CONFIG_HZ_100=y
-
 root@udoo-labcsmart:~#
+```
 
 The preceding code says the current **HZ** value is **100**.
 
@@ -870,17 +795,14 @@ The preceding code says the current **HZ** value is **100**.
 
 A timer is represented in the kernel as an instance of **struct timer_list**, defined as follows:
 
+``` c
 struct timer_list {
-
-    struct hlist_node entry;
-
-    unsigned long expires;
-
-    void (\*function)(struct timer_list \*);
-
-    u32 flags;
-
+    struct hlist_node entry;
+    unsigned long expires;
+    void (*function)(struct timer_list *);
+    u32 flags;
 );
+```
 
 In the preceding data structure, **expires** is an absolute value in jiffies that defines when this timer will expire in the future. **entry** is internally used by the kernel to track this timer in a per-CPU global list of timers. **flags** are OR'ed bitmasks that represent the timer flags, such as the way the timer is managed and the CPU on which the callback will be scheduled, and **function** is the callback to be executed when this timer expires.
 
@@ -892,21 +814,20 @@ In Linux kernel versions prior to 4.15, **setup_timer()** was used as the dynami
 
 Here are the definitions of both macros:
 
-void timer_setup( struct timer_list \*timer,        \\
-
-           void (\*function)( struct timer_list \*), \\
-
-           unsigned int flags);
-
-\#define DEFINE_TIMER(\_name, \_function) \[...\]
+``` c
+void timer_setup( struct timer_list *timer,        \
+           void (*function)( struct timer_list *), \
+           unsigned int flags);
+#define DEFINE_TIMER(_name, _function) [...]
+```
 
 After the timer has been initialized, you must set its expiration delay before starting it using one of the following APIs:
 
-int mod_timer(struct timer_list \*timer,
-
-               unsigned long expires);
-
-void add_timer(struct timer_list \*timer)
+``` c
+int mod_timer(struct timer_list *timer,
+               unsigned long expires);
+void add_timer(struct timer_list *timer)
+```
 
 The **mod_timer()** function is used to either set an initial expiration delay or to update its value on an active timer, which means that calling this function on an inactive timer will activate this timer.
 
@@ -916,181 +837,144 @@ Activating a timer here means arming and queueing this timer. That said, when a 
 
 You should prefer this function over **add_timer()**, which is another function to start inactive timers exclusively. Before calling **add_timer()**, you must have set the timer expiration delay and the callback as follows:
 
-my_timer.expires = jiffies + ((12 \* HZ) / 10); /\* 1.2s \*/
-
+``` c
+my_timer.expires = jiffies + ((12 * HZ) / 10); /* 1.2s */
 add_timer(&my_timer);
+```
 
 The value **mod_timer()** returns depends on the state of the timer prior to it being invoked. Calling **mod_timer()** on an inactive timer returns **0** on success, while it returns **1** when successfully invoked on a pending timer or a timer whose callback function is being executed. This means it is totally safe to execute **mod_timer()** from the timer callback. When invoked on an active timer, it is equivalent to **del_timer(timer); timer-\>expires = expires; add_timer(timer);**.
 
 Once done with the timer, it can be released or cancelled using one of the following functions:
 
-int del_timer(struct timer_list \*timer);
-
-int del_timer_sync(struct timer_list \*timer);
+``` c
+int del_timer(struct timer_list *timer);
+int del_timer_sync(struct timer_list *timer);
+```
 
 **del_timer()** removes (dequeues) the **timer** object from the timer management queue. On success, it returns a different value depending on whether it is invoked on an inactive timer or on an active timer. In the first case, it returns **0**, while it returns **1** in the latter case, even if the function callback of this timer is currently being executed.
 
 Let's consider the following execution flow, where a timer is being deleted on a CPU while its callback is being executed on another CPU:
 
-mainline (CPUx)                  handler(CPUy)
-
-==============                   =============
-
-                                 enter xxx_timer()
-
+``` c
+mainline (CPUx)                  handler(CPUy)
+==============                   =============
+                                 enter xxx_timer()
 del_timer()
-
 kfree(some_resource)
-
-                                 access(some_resource)
+                                 access(some_resource)
+```
 
 In the preceding code snippet, using **del_timer()** does not guarantee that the callback is not running anymore. Here is another example:
 
-mainline (CPUx)            handler(CPUy)
-
-==============             =============
-
-                           enter xxx_timer()
-
-del_timer()
-
-kfree(timer)
-
-                           mod_timer(timer)
+``` c
+mainline (CPUx)            handler(CPUy)
+==============             =============
+                           enter xxx_timer()
+ del_timer()
+ kfree(timer)
+                           mod_timer(timer)
+```
 
 When **del_timer()** returns, it only guarantees that the timer is deactivated and unqueued, ensuring that it will not be executed in the future. However, on a multiprocessing machine, the timer function might already be executing on another processor. **del_timer_sync()** should be used in such cases, which will deactivate the timer and wait for any executing handler to exit before returning. This function will check each processor to make sure that the given timer is not currently running there. By using **del_timer_sync()** in the preceding race condition examples, **kfree()** could be invoked without worrying about the resource being used in the callback or not. You should almost always use **del_timer_sync()** instead of **del_timer()**. The driver must not hold a lock preventing the handler's completion; otherwise, it will result in a deadlock. This makes the **del_timer()** context agnostic as it is asynchronous, while **del_timer_sync()** is to be used in a non-atomic context exclusively.
 
 Moreover, for sanity purposes, we can independently check whether the timer is pending or not using the following API:
 
-int timer_pending(const struct timer_list \*timer);
+``` c
+int timer_pending(const struct timer_list *timer);
+```
 
 This function checks whether this timer is armed and pending.
 
 The following code snippet shows a basic usage of standard kernel timers:
 
-\#include \<linux/init.h\>
-
-\#include \<linux/kernel.h\>
-
-\#include \<linux/module.h\>
-
-\#include \<linux/timer.h\>
-
+``` c
+#include <linux/init.h>
+#include <linux/kernel.h>
+#include <linux/module.h>
+#include <linux/timer.h>
 static struct timer_list my_timer;
-
-void my_timer_callback(struct timer_list \*t)
-
+void my_timer_callback(struct timer_list *t)
 {
-
-    pr_info("Timer callback&; called\n");
-
+    pr_info("Timer callback&; called\n");
 }
 
-static int \_\_init my_init(void)
-
+static int __init my_init(void)
 {
+    int retval;
+    pr_info("Timer module loaded\n");
+    timer_setup(&my_timer, my_timer_callback, 0);
+    pr_info("Setup timer to fire in 500ms (%ld)\n",
+              jiffies);
+    retval = mod_timer(&my_timer,
+                        jiffies + msecs_to_jiffies(500));
+    if (retval)
+        pr_info("Timer firing failed\n");
 
-    int retval;
-
-    pr_info("Timer module loaded\n");
-
-    timer_setup(&my_timer, my_timer_callback, 0);
-
-    pr_info("Setup timer to fire in 500ms (%ld)\n",
-
-              jiffies);
-
-    retval = mod_timer(&my_timer,
-
-                        jiffies + msecs_to_jiffies(500));
-
-    if (retval)
-
-        pr_info("Timer firing failed\n");
-
-    return 0;
-
+    return 0;
 }
 
 static void my_exit(void)
-
 {
-
-    int retval;
-
-    retval = del_timer(&my_timer);
-
-    /\* Is timer still active (1) or no (0) \*/
-
-    if (retval)
-
-        pr_info("The timer is still in use...\n");
-
-    pr_info("Timer module unloaded\n");
-
+    int retval;
+    retval = del_timer(&my_timer);
+    /* Is timer still active (1) or no (0) */
+    if (retval)
+        pr_info("The timer is still in use...\n");
+    pr_info("Timer module unloaded\n");
 }
-
 module_init(my_init);
-
 module_exit(my_exit);
-
-MODULE_AUTHOR("John Madieu \<john.madieu@gmail.com\>");
-
+MODULE_AUTHOR("John Madieu <john.madieu@gmail.com>");
 MODULE_DESCRIPTION("Standard timer example");
-
 MODULE_LICENSE("GPL");
+```
 
 In the preceding example, we demonstrated a basic usage of standard timers. We request 500 milliseconds of timeout. That said, the unit of time of this kind of timer is a jiffy. So, in order to pass a timeout value in a human format (seconds or milliseconds), you must use conversion helpers. You can see some here:
 
+``` c
 unsigned long msecs_to_jiffies(const unsigned int m)
-
 unsigned long usecs_to_jiffies(const unsigned int u)
-
 unsigned long timespec64_to_jiffies(
-
-                  const struct timespec64 \*value);
+                  const struct timespec64 *value);
+```
 
 With the preceding helper functions, you should not expect any accuracy better than a jiffy. For example, using **usecs_to_jiffies(100)** will return a jiffy. The returned value is rounded up to the closest jiffy value.
 
 In order to pass additional arguments to the timer callback, the preferred way is to embed them as elements into a structure together with the timer and use the **from_timer()** macro on the element to retrieve the bigger structure, from which you can access each element. This macro is defined as follows:
 
-\#define from_timer(var, callback_timer, timer_fieldname) \\
-
-    container_of(callback_timer, typeof(\*var), timer_fieldname)
+``` c
+#define from_timer(var, callback_timer, timer_fieldname) \
+    container_of(callback_timer, typeof(*var), timer_fieldname)
+```
 
 As an example, let's consider we need to pass two elements to the timer callback: the first one is of type **struct sometype** and the second one is an integer. In order to pass arguments, we define an additional structure, as follows:
 
+``` c
 struct fake_data {
-
-    struct timer_list timer;
-
-    struct sometype foo;
-
-    int bar;
-
+    struct timer_list timer;
+    struct sometype foo;
+    int bar;
 };
+```
 
 After this, we pass the embedded timer to the setup function, as follows:
 
-struct fake_data \*fd = alloc_init_fake_data();
-
-timer_setup(&fd-\>timer, timer_callback, 0);
+``` c
+struct fake_data *fd = alloc_init_fake_data();
+timer_setup(&fd->timer, timer_callback, 0);
+```
 
 Later in the callback, you must use the **from_timer** variable to retrieve the bigger structure from which you can access arguments. Here is an example of this in use:
 
-void timer_callback(struct timer_list \*t)
-
+``` c
+void timer_callback(struct timer_list *t)
 {
-
-    struct fake_data \*fd = from_timer(fd, t, timer);
-
-    sometype data = fd-\>data;
-
-    int var = fd-\>bar;
-
-\[...\]
-
+    struct fake_data *fd = from_timer(fd, t, timer);
+    sometype data = fd->data;
+    int var = fd->bar;
+[...]
 }
+```
 
 In the preceding code snippet, we described how to pass data to the timer callback and how to get this data, using a container structure. By default, a pointer to **timer_list** is passed to the callback function, instead of the **unsigned long** data type in versions prior to 4.15.
 
@@ -1106,29 +990,25 @@ Prior to kernel 3.17, the **ktime_t** type was represented differently on 32- or
 
 Hrtimer APIs require a **\#include \<linux/hrtimer.h\>** header. That said, in the header file, the structure that characterizes a high-resolution timer is defined as follows:
 
+``` c
 struct hrtimer {
-
-    ktime_t                 \_softexpires;
-
-    enum hrtimer_restart    (\*function)(struct hrtimer \*);
-
-    struct hrtimer_clock_base    \*base;
-
-    u8                     state;
-
-\[...\]
-
+    ktime_t                 _softexpires;
+    enum hrtimer_restart    (*function)(struct hrtimer *);
+    struct hrtimer_clock_base    *base;
+    u8                     state;
+[...]
 };
+```
 
 The elements in the data structure have been shortened to the strict minimum to cover the needs of the book. For the rest, we'll now look at their meaning.
 
 Before using the hrtimer, it must be initialized with **hrtimer_init()**, defined as follows:
 
-void hrtimer_init(struct hrtimer \*timer,
-
-                  clockid_t which_clock,
-
-                  enum hrtimer_mode mode);
+``` c
+void hrtimer_init(struct hrtimer *timer,
+                  clockid_t which_clock,
+                  enum hrtimer_mode mode);
+```
 
 In the preceding function, **timer** is a pointer to the hrtimer to initialize. **clock_id** tells which type of clock must be used to feed this hrtimer. The following are common options:
 
@@ -1146,65 +1026,68 @@ In the preceding code snippet, the **mode** parameter tells how the hrtimer shou
 
 After the hrtimer has been initialized, it must be assigned a callback function that will be executed upon the timer expiration. The following code snippet shows the expected prototype:
 
-enum hrtimer_restart callback(struct hrtimer \*h);
+``` c
+enum hrtimer_restart callback(struct hrtimer *h);
+```
 
 **hrtimer_restart** is the type to be returned by the callback. It must be either **HRTIMER_NORESTART** to indicate that the timer must not be restarted (used to perform a one-shot operation) or **HRTIMER_RESTART** to indicate that the timer must be restarted (to simulate periodical mode). In the first case, when returning **HRTIMER_NORESTART**, the driver will have to explicitly restart the timer (using **hrtimer_start()**, for example) if need be. When returning **HRTIMER_RESTART**, the timer restart is implicit as it will be handled by the kernel. However, the driver needs to reset the timeout before returning from the callback. In order to do so, the driver can use **hrtimer_forward()**, defined as follows:
 
-u64 hrtimer_forward(struct hrtimer \*timer,
-
-                    ktime_t now, ktime_t interval)
+``` c
+u64 hrtimer_forward(struct hrtimer *timer,
+                    ktime_t now, ktime_t interval)
+```
 
 In the preceding code snippet, **timer** is the hrtimer to forward, **now** is the point from where the timer must be forwarded, and **interval** is how long in the future the timer must be forwarded. Do, however, note that this only updates the timer expiry value and does not requeue the timer.
 
 The **now** parameter can be obtained in different ways, either by using **ktime_get()**, which would return the current monotonic clock time or with **hrtimer_get_expires()**, which would return the time when the timer is supposed to expire before forwarding. This is illustrated in the following code snippet:
 
+``` c
 hrtimer_forward(hrtimer, ktime_get(), ms_to_ktime(500));
-
-/\* or \*/
-
+/* or */
 hrtimer_forward(handle, hrtimer_get_expires(handle),
-
-                 ns_to_ktime(450));
+                 ns_to_ktime(450));
+```
 
 In the first line of the preceding example, the hrtimer is forwarded 500 milliseconds from the current time, while in the second line, it is forwarded 450 nanoseconds from the time when it was supposed to expire. The first line in the example is equivalent to **hrtimer_forward_now()**, which forwards the hrtimer to a specified time from the current time (from now). It is declared as follows:
 
-u64 hrtimer_forward_now(struct hrtimer \*timer,
-
-                          ktime_t interval)
+``` c
+u64 hrtimer_forward_now(struct hrtimer *timer,
+                          ktime_t interval)
+```
 
 Now that the timer has been set up and its callback defined, it can be armed (started) using **hrtimer_start()**, which has the following prototype:
 
-int hrtimer_start(struct hrtimer \*timer, ktime_t time,
-
-                    const enum hrtimer_mode mode);
+``` c
+int hrtimer_start(struct hrtimer *timer, ktime_t time,
+                    const enum hrtimer_mode mode);
+```
 
 In the preceding code snippet, **mode** represents the timer expiry mode, and it should be either **HRTIMER_MODE_ABS** for an absolute time value or **HRTIMER_MODE_REL** for a time value relative to now. This parameter must be consistent with the initialization mode parameter. The **timer** parameter is a pointer to the initialized hrtimer. Finally, **time** is the expiry time of the hrtimer. Since it is of type **ktime_t**, various helper functions allow us to generate a **ktime_t** element from various input time units. These are shown here:
 
+``` c
 ktime_t ktime_set(const s64 secs,
-
-                  const unsigned long nsecs);
-
+                  const unsigned long nsecs);
 ktime_t ns_to_ktime(u64 ns);
-
 ktime_t ms_to_ktime(u64 ms);
+```
 
 In the preceding list, **ktime_set()** generates a **ktime_t** element from a given number of seconds and nanoseconds. **ns_to_ktime()** or **ms_to_ktime()** generate a **ktime_t** element from a given number of nanoseconds or milliseconds, respectively.
 
 You may also be interested in returning the number of nano-/microseconds, given a **ktime_t** input element using the following functions:
 
+``` c
 s64 ktime_to_ns(const ktime_t kt)
-
 s64 ktime_to_us(const ktime_t kt)
+```
 
 Moreover, given one or two **ktime_t** elements, you can perform some arithmetical operations using the following helpers:
 
+``` c
 ktime_t ktime_sub(const ktime_t lhs, const ktime_t rhs);
-
 ktime_t ktime_sub(const ktime_t lhs, const ktime_t rhs);
-
 ktime_t ktime_add(const ktime_t add1, const ktime_t add2);
-
 ktime_t ktime_add_ns(const ktime_t kt, u64 nsec);
+```
 
 To subtract or add **ktime** objects, you can use **ktime_sub()** and **ktime_add()**, respectively. **ktime_add_ns()** increments a **ktime_t** element by a specified number of nanoseconds. **ktime_add_us()** is another variant for microseconds. For subtraction, **ktime_sub_ns()** and **ktime_sub_us()** can be used.
 
@@ -1212,91 +1095,66 @@ After calling **hrtimer_start()**, the hrtimer will be armed (activated) and enq
 
 An enqueued hrtimer is always started. Once the timer expires, its callback is invoked, and depending on the return value, the hrtimer can be requeued or not. In order to cancel a timer, drivers can use **hrtimer_cancel()** or **hrtimer_try_to_cancel()**, declared as follows:
 
-int hrtimer_cancel(struct hrtimer \*timer);
-
-int hrtimer_try_to_cancel(struct hrtimer \*timer);
+``` c
+int hrtimer_cancel(struct hrtimer *timer);
+int hrtimer_try_to_cancel(struct hrtimer *timer);
+```
 
 Both functions return **0** when the timer is not active during the call. **hrtimer_try_to_cancel()** will return **1** if the timer is active (running but not executing the callback function) and has been successfully canceled or will fail, returning **-1** if the callback function is being executed. On the other hand, **hrtimer_cancel()** will cancel the timer if the callback function is not running yet or will wait for it to finish if it is being executed. When **hrtimer_cancel()** returns, the caller can be guaranteed that the timer is no longer active and that its expiration function is not running.
 
 Drivers can, however, independently check whether the hrtimer callback is still running with the following code:
 
-int hrtimer_callback_running(struct hrtimer \*timer);
+``` c
+int hrtimer_callback_running(struct hrtimer *timer);
+```
 
 For instance, **hrtimer_try_to_cancel()** internally calls **hrtimer_callback_running()** and returns **-1** if the callback is running.
 
 Let's write a module example to put our hrtimer knowledge into practice. We first start by writing the callback function, as follows:
 
-\#include \<linux/module.h\>
-
-\#include \<linux/kernel.h\>
-
-\#include \<linux/hrtimer.h\>
-
-\#include \<linux/ktime.h\>
-
+``` c
+#include <linux/module.h>
+#include <linux/kernel.h>
+#include <linux/hrtimer.h>
+#include <linux/ktime.h>
 static struct hrtimer hr_timer;
-
-static enum hrtimer_restart timer_callback(struct hrtimer \*timer)
-
+static enum hrtimer_restart timer_callback(struct hrtimer *timer)
 {
-
-    pr_info("Hello from timer!\n");
-
-\#ifdef PERIODIC_MS_500
-
-    hrtimer_forward_now(timer, ms_to_ktime(500));
-
-    return HRTIMER_RESTART;
-
-\#else
-
-    return HRTIMER_NORESTART;
-
-\#endif
-
+    pr_info("Hello from timer!\n");
+#ifdef PERIODIC_MS_500
+    hrtimer_forward_now(timer, ms_to_ktime(500));
+    return HRTIMER_RESTART;
+#else
+    return HRTIMER_NORESTART;
+#endif
 }
+```
 
 In the preceding hrtimer callback function, we can decide to run in one-shot mode or periodic mode. For periodic mode, the user must define **PERIODIC_MS_500**, in which case the timer will be forwarded 500 milliseconds in the future from the current hrtimer clock base time before being requeued.
 
 Then, the rest of the module implementation looks like this:
 
-static int \_\_init hrtimer_module_init(void)
-
+``` c
+static int __init hrtimer_module_init(void)
 {;
-
-    ktime_t init_time;
-
-    init_time = ktime_set(1, 1000);
-
-    hrtimer_init(&hr_timer, CLOCK_MONOTONIC,
-
-                   HRTIMER_MODE_REL);
-
-    hr_timer.function = &timer_callback;
-
-    hrtimer_start(&hr_timer, init_time, HRTIMER_MODE_REL);
-
-    return 0;
-
+    ktime_t init_time;
+    init_time = ktime_set(1, 1000);
+    hrtimer_init(&hr_timer, CLOCK_MONOTONIC,
+                   HRTIMER_MODE_REL);
+    hr_timer.function = &timer_callback;
+    hrtimer_start(&hr_timer, init_time, HRTIMER_MODE_REL);
+    return 0;
 }
-
-static void \_\_exit hrtimer_module_exit(void) {
-
-    int ret;
-
-    ret = hrtimer_cancel(&hr_timer);
-
-    if (ret)
-
-        pr_info("Our timer is still in use...\n");
-
-     pr_info("Uninstalling hrtimer module\n");
-
+static void __exit hrtimer_module_exit(void) {
+    int ret;
+    ret = hrtimer_cancel(&hr_timer);
+    if (ret)
+        pr_info("Our timer is still in use...\n");
+     pr_info("Uninstalling hrtimer module\n");
 }
-
 module_init(hrtimer_module_init);
-
 module_exit(hrtimer_module_exit);
+```
 
 In the preceding implementation, we generated an initial **ktime_t** element of 1 second and 1,000 nanoseconds—that is, 1 second and 1 millisecond, which is used as initial expiration duration. When the hrtimer expires for the first time, our callback is invoked. If **PERIODIC_MS_500** is defined, the hrtimer will be forwarded to 500 milliseconds later, and the callback will be periodically invoked (every 500 milliseconds) after the initial invocation; otherwise, it is a one-shot invocation.
 
@@ -1316,129 +1174,110 @@ As the name suggests, **softirq** stands for **software interrupt**. Such a hand
 
 Softirqs are represented by **struct softirq_action** structures and are defined as follows:
 
+``` c
 struct softirq_action {
-
-    void (\*action)(struct softirq_action \*);
-
+    void (*action)(struct softirq_action *);
 };
+```
 
 This structure embeds a pointer to the function to run when the softirq is raised. Thus, the prototype of your softirq handler should look like this:
 
-void softirq_handler(struct softirq_action \*h)
+``` c
+void softirq_handler(struct softirq_action *h)
+```
 
 Running a softirq handler results in executing this action function, which has only one parameter: a pointer to the corresponding **softirq_action** structure. You can register the softirq handler at runtime by means of the **open_softirq()** function, as illustrated here:
 
+``` c
 void open_softirq(int nr,
-
-                  void (\*action)(struct softirq_action \*))
+                  void (*action)(struct softirq_action *))
+```
 
 **nr** represents the softirq index, which is also considered as the softirq priority (where 0 is the highest). **action** is a pointer to the softirq handler. Possible indexes are enumerated in the following code snippet:
 
+``` c
 enum
-
 {
-
-    HI_SOFTIRQ=0,   /\* High-priority tasklets \*/
-
-    TIMER_SOFTIRQ,  /\* Timers \*/
-
-    NET_TX_SOFTIRQ, /\* Send network packets \*/
-
-    NET_RX_SOFTIRQ, /\* Receive network packets \*/
-
-    BLOCK_SOFTIRQ,  /\* Block devices \*/
-
-    BLOCK_IOPOLL_SOFTIRQ, /\* Block devices with I/O polling
-
-                           \* blocked on other CPUs \*/
-
-    TASKLET_SOFTIRQ,/\* Normal Priority tasklets \*/
-
-    SCHED_SOFTIRQ,  /\* Scheduler \*/
-
-    HRTIMER_SOFTIRQ,/\* High-resolution timers \*/
-
-    RCU_SOFTIRQ,    /\* RCU locking \*/
-
-    NR_SOFTIRQS     /\* This only represent the number
-
-                     \* of softirqs type, 10 actually \*/
-
+    HI_SOFTIRQ=0,   /* High-priority tasklets */
+    TIMER_SOFTIRQ,  /* Timers */
+    NET_TX_SOFTIRQ, /* Send network packets */
+    NET_RX_SOFTIRQ, /* Receive network packets */
+    BLOCK_SOFTIRQ,  /* Block devices */
+    BLOCK_IOPOLL_SOFTIRQ, /* Block devices with I/O polling
+                           * blocked on other CPUs */
+    TASKLET_SOFTIRQ,/* Normal Priority tasklets */
+    SCHED_SOFTIRQ,  /* Scheduler */
+    HRTIMER_SOFTIRQ,/* High-resolution timers */
+    RCU_SOFTIRQ,    /* RCU locking */
+    NR_SOFTIRQS     /* This only represent the number
+                     * of softirqs type, 10 actually */
 };
+```
 
 Softirqs with lower indexes (highest priority) run before those with higher indexes (lowest priority). The name of all the available softirqs in the kernel are listed in the following array:
 
-const char \* const softirq_to_name\[NR_SOFTIRQS\] = {
-
-    "HI", "TIMER", "NET_TX", "NET_RX", "BLOCK", "BLOCK_IOPOLL",
-
-    "TASKLET", "SCHED", "HRTIMER", "RCU"
-
+``` c
+const char * const softirq_to_name[NR_SOFTIRQS] = {
+    "HI", "TIMER", "NET_TX", "NET_RX", "BLOCK", "BLOCK_IOPOLL",
+    "TASKLET", "SCHED", "HRTIMER", "RCU"
 };
+```
 
 It's easy to check some in the output of the **/proc/softirqs** virtual file, as follows:
 
+``` c
 root@udoo-labcsmart:~# cat /proc/softirqs
-
-                    CPU0       CPU1       
-
-          HI:       3535          1
-
-       TIMER:    4211589    4748893
-
-      NET_TX:    1277827         39
-
-      NET_RX:    1665450          0
-
-       BLOCK:       1978        201
-
-    IRQ_POLL:          0          0
-
-     TASKLET:     455761         33
-
-       SCHED:    4212802    4750408
-
-     HRTIMER:          3          0
-
-         RCU:     438826     286874
-
+                    CPU0       CPU1
+          HI:       3535          1
+       TIMER:    4211589    4748893
+      NET_TX:    1277827         39
+      NET_RX:    1665450          0
+       BLOCK:       1978        201
+    IRQ_POLL:          0          0
+     TASKLET:     455761         33
+       SCHED:    4212802    4750408
+     HRTIMER:          3          0
+         RCU:     438826     286874
 root@udoo-labcsmart:~#
+```
 
 A **NR_SOFTIRQS**-entry array of **struct softirq_action** is declared in **kernel/softirq.c**, as follows:
 
-static struct softirq_action softirq_vec\[NR_SOFTIRQS\] ;
+``` c
+static struct softirq_action softirq_vec[NR_SOFTIRQS] ;
+```
 
 Each entry in this array may contain one—and only one—softirq. Consequently, there can be a maximum of **NR_SOFTIRQS** (actually, 10 in v5.10, the last stable version at the time of writing) registered softirqs. The following code snippet from **kernel/softirq.c** illustrates this:
 
+``` c
 void open_softirq(int nr,
-
-                  void (\*action)(struct softirq_action \*))
-
+                  void (*action)(struct softirq_action *))
 {
-
-    softirq_vec\[nr\].action = action;
-
+    softirq_vec[nr].action = action;
 }
+```
 
 A concrete example is the network subsystem, which registers the softirqs it needs (in **net/core/dev.c**), as follows:
 
+``` c
 open_softirq(NET_TX_SOFTIRQ, net_tx_action);
-
 open_softirq(NET_RX_SOFTIRQ, net_rx_action);
+```
 
 Before a registered softirq can execute, it should be activated/scheduled. In order to do so, you have to call **raise_softirq()** or **raise_softirq_irqoff()** (if interrupts are already off), as illustrated in the following code snippet:
 
-void \_\_raise_softirq_irqoff(unsigned int nr)
-
+``` c
+void __raise_softirq_irqoff(unsigned int nr)
 void raise_softirq_irqoff(unsigned int nr)
-
 void raise_softirq(unsigned int nr)
+```
 
 The first function simply sets the appropriate bit in the per-CPU softirq bitmap (the **\_\_softirq_pending** field in the **struct irq_cpustat_t** data structure allocated per CPU in **kernel/softirq.c**), as follows:
 
-irq_cpustat_t irq_stat\[NR_CPUS\] \_\_\_\_cacheline_aligned;
-
+``` c
+irq_cpustat_t irq_stat[NR_CPUS] ____cacheline_aligned;
 EXPORT_SYMBOL(irq_stat);
+```
 
 When the flag is checked, this allows it to run. This function is described here for study purposes and should not be used directly.
 
@@ -1474,21 +1313,16 @@ If one of the two aforementioned situations occurs, **\_\_do_softirq()** will br
 
 **ksoftirqd** is a per-CPU kernel thread raised to handle unserviced software interrupts. It is spawned early during the kernel boot process, as stated in **kernel/softirq.c** and shown here:
 
-static \_\_init int spawn_ksoftirqd(void)
-
+``` c
+static __init int spawn_ksoftirqd(void)
 {
-
-    cpuhp_setup_state_nocalls(CPUHP_SOFTIRQ_DEAD, "softirq:dead",
-
-                          NULL, takeover_tasklets);
-
-    BUG_ON(smpboot_register_percpu_thread(&softirq_threads));
-
-    return 0;
-
+    cpuhp_setup_state_nocalls(CPUHP_SOFTIRQ_DEAD, "softirq:dead",
+                          NULL, takeover_tasklets);
+    BUG_ON(smpboot_register_percpu_thread(&softirq_threads));
+    return 0;
 }
-
 early_initcall(spawn_ksoftirqd);
+```
 
 After running the top command in the preceding code snippet, we can see some **ksoftirqd/\<n\>** entries, where **\<n\>** is the logical CPU index of the CPU running the **ksoftirqd** thread. As **ksoftirqd** threads run in a process context, they are equal to classic processes/threads, so they compete for the CPU. **ksoftirqd** threads hogging CPUs for a long time may indicate a system under heavy load.
 
@@ -1500,69 +1334,57 @@ Tasklets are bottom halves that are built on top of **HI_SOFTIRQ** and **TASKLET
 
 Tasklets are represented by a **struct tasklet_struct** structure defined in **\<linux/interrupt.h\>**. Each instance of this structure represents a unique tasklet, as illustrated in the following code snippet:
 
+``` c
 struct tasklet_struct
-
 {
-
-struct tasklet_struct \*next;
-
-unsigned long state;
-
-atomic_t count;
-
-bool use_callback;
-
-union {
-
-void (\*func)(unsigned long data);
-
-void (\*callback)(struct tasklet_struct \*t);
-
+    struct tasklet_struct *next;
+    unsigned long state;
+    atomic_t count;
+    bool use_callback;
+    union {
+        void (*func)(unsigned long data);
+        void (*callback)(struct tasklet_struct *t);
+    };
+    unsigned long data;
 };
-
-unsigned long data;
-
-};
+```
 
 Though this API is scheduled for removal, it has been slightly modernized as compared to its legacy implementation. The callback function is stored in the **callback()** field rather than **func()**, which is kept for compatibility with the old implementation. This new callback simply takes a pointer to the **tasklet_struct** structure as its one argument. The handler will be executed by the underlying softirq. It is the equivalent of **action** to a softirq, with the same prototype and the same argument meaning. **data** will be passed as its sole argument.
 
 Whether **callback()** handler or **func()** handler is executed depends on the way the tasklet is initialized. A tasklet can be statically initialized using either **DECLARE_TASKLET()** macro or **DECLARE_TASKLET_OLD()** macro. These macros are defined as follows:
 
-\#define DECLARE_TASKLET_OLD(name, \_func)       \\
-
-    struct tasklet_struct name = {             \\
-
-    .count = ATOMIC_INIT(0),                \\
-
-    .func = \_func,                             \\
-
+``` c
+#define DECLARE_TASKLET_OLD(name, _func)       \
+    struct tasklet_struct name = {             \
+    .count = ATOMIC_INIT(0),                   \
+    .func = _func,                              \
 }
-
-\#define DECLARE_TASKLET(name, \_callback)       \\
-
-     struct tasklet_struct name = {            \\
-
-     .count = ATOMIC_INIT(0),                  \\
-
-     .callback = \_callback,                    \\
-
-     .use_callback = true,                     \\
-
+#define DECLARE_TASKLET(name, _callback)       \
+     struct tasklet_struct name = {            \
+     .count = ATOMIC_INIT(0),                  \
+     .callback = _callback,                    \
+     .use_callback = true,                     \
 }
+```
 
 From what we can see, by using **DECLARE_TASKLET_OLD()**, the legacy implementation is kept and **func()** is used as the callback. Therefore, the prototype of the provided handler must be as follows:
 
+``` c
 void foo(unsigned long data);
+```
 
 By using **DECLARE_TASKLET()**, the **callback** field is used as the handler and **use_callback** filed is set to **true** (this is because the tasklet core checks this value to determine the handler that must be invoked). In this case, the protype of the callback is as follows:
 
-void foo(struct tasklet_struct \*t)
+``` c
+void foo(struct tasklet_struct *t)
+```
 
 In the previous snipped, **t** pointer is passed by the tasklet core while invoking the handler. It will point to your tasklet. Since a pointer to the tasklet is passed as argument to the callback, it is common to embed the tasklet object within a larger, user-specific structure, the pointer to which can be obtained with the **container_of()** macro. In order to do so, you should rather use the dynamic initialization, which can be achieved thanks to **tasklet_setup()** function, defined as follows:
 
-void tasklet_setup(struct tasklet_struct \*t,
-
-     void (\*callback)(struct tasklet_struct \*));
+``` c
+void tasklet_setup(struct tasklet_struct *t,
+     void (*callback)(struct tasklet_struct *));
+```
 
 According to the previous prototype, we can guess that by using the dynamic initialization, we have no choice but to use the new implementation where **callback** field is used as the tasklet handler.
 
@@ -1570,89 +1392,60 @@ Using static or dynamic method depends on what you need to achieve, for example,
 
 By default, an initialized tasklet is runnable when it is scheduled: *it is said to be enabled*. **DECLARE_TASKLET_DISABLED** is an alternative to statically initialize default-disabled tasklets. There is no such alternative for a dynamically initialized tasklet, unless you invoke **tasklet_disable()** on this tasklet after it has been dynamically initialized. A disabled tasklet will require the **tasklet_enable()** function to be invoked to make this tasklet runnable. Tasklets are scheduled (similar to raising the softirq) via the **tasklet_schedule()** and **tasklet_hi_schedule()** functions. You can use **tasklet_disable()** API to disable a scheduled or running tasklet. This function disables the tasklet and returns only when the tasklet has terminated its execution (assuming it was running). After this, the tasklet can still be scheduled, but it will not run on the CPU until it is enabled again. The asynchronous variant **tasklet_disable_nosync()** can be used too, which returns immediately, even if the termination has not occurred. Moreover, a tasklet that has been disabled several times should be enabled the same number of times (this is enforced and verified by the kernel thanks to the **count** field in the **struct tasklet** object). The definition of the previously mentioned tasklet APIs is illustrated in the following snippet:
 
-DECLARE_TASKLET(name, \_callback)
-
-DECLARE_TASKLET_DISABLED(name, \_callback);
-
+``` c
+DECLARE_TASKLET(name, _callback)
+DECLARE_TASKLET_DISABLED(name, _callback);
 DECLARE_TASKLET_OLD(name, func);
-
-void tasklet_setup(struct tasklet_struct \*t,
-
-     void (\*callback)(struct tasklet_struct \*));
-
-void tasklet_enable(struct tasklet_struct \*t);
-
-void tasklet_disable(struct tasklet_struct \*t);
-
-void tasklet_schedule(struct tasklet_struct \*t);
-
-void tasklet_hi_schedule(struct tasklet_struct \*t);
+void tasklet_setup(struct tasklet_struct *t,
+     void (*callback)(struct tasklet_struct *));
+void tasklet_enable(struct tasklet_struct *t);
+void tasklet_disable(struct tasklet_struct *t);
+void tasklet_schedule(struct tasklet_struct *t);
+void tasklet_hi_schedule(struct tasklet_struct *t);
+```
 
 The kernel maintains normal-priority and high-priority tasklets in two per-CPU queues (each CPU maintains its low- and high-priority queue pair). **tasklet_schedule()** adds the tasklet into the normal priority list of the CPU on which it is invoked, scheduling the associated softirq with a **TASKLET_SOFTIRQ** flag. With **tasklet_hi_schedule()**, the tasklet is added into the high-priority list (still of the list on which it is invoked), scheduling the associated softirq with a **HI_SOFTIRQ** flag. When the tasklet is scheduled, its **TASKLET_STATE_SCHED** flag is set, and the tasklet is queued for execution. At the time of execution, a **TASKLET_STATE_RUN** flag is set, and the **TASKLET_STATE_SCHED** state is removed, thus making the tasklet re-schedulable during its execution, either by the tasklet itself or from within an interrupt handler.
 
 **High priority tasklets** are meant to be used for soft interrupt handlers with low latency requirements. Calling **tasklet_schedule()** on a tasklet already scheduled and whose execution has not started yet will do nothing, resulting in the tasklet being executed only once. A tasklet can reschedule itself, and you can safely call **tasklet_schedule()** in a tasklet. High priority tasklets are always executed before normal ones and should then be used carefully, else you may increase system latency. Stopping a tasklet is as simple as calling **tasklet_kill()**, as illustrated in the following code snippet, which will prevent the tasklet from running again, or waiting for its completion before killing it if the tasklet is currently scheduled to run. If a tasklet re-schedules itself, you should first prevent the tasklet from re-scheduling itself prior to calling this function:
 
-void tasklet_kill(struct tasklet_struct \*t);
+``` c
+void tasklet_kill(struct tasklet_struct *t);
+```
 
 ### Writing your tasklet handler
 
 All that being said, let's see some use cases, as follows:
 
-\# \#include \<linux/init.h\>
-
-\#include \<linux/module.h\>
-
-\#include \<linux/kernel.h\>
-
-\#include \<linux/interrupt.h\>    /\* for tasklets api \*/
-
-/\* Tasklet handler, that just prints the handler name \*/
-
-void tasklet_function(struct tasklet_struct \*t)
-
+``` c
+# #include <linux/init.h>
+#include <linux/module.h>
+#include <linux/kernel.h>
+#include <linux/interrupt.h>    /* for tasklets api */
+/* Tasklet handler, that just prints the handler name */
+void tasklet_function(struct tasklet_struct *t)
 {
-
-    pr_info("running %s\n", \_\_func\_\_);
-
+    pr_info("running %s\n", __func__);
 }
-
 DECLARE_TASKLET(my_tasklet, tasklet_function);
-
-static int \_\_init my_init(void)
-
+static int __init my_init(void)
 {
-
-    /\* Schedule the handler \*/
-
-    tasklet_schedule(&my_tasklet);
-
-    pr_info("tasklet example\n");
-
-    return 0;
-
+    /* Schedule the handler */
+    tasklet_schedule(&my_tasklet);
+    pr_info("tasklet example\n");
+    return 0;
 }
-
 void my_exit( void )
-
 {
-
-    /\* Stop the tasklet before we exit \*/
-
-    tasklet_kill(&my_tasklet);
-
-    pr_info("tasklet example cleanup\n");
-
-    return;
-
+    /* Stop the tasklet before we exit */
+    tasklet_kill(&my_tasklet);
+    pr_info("tasklet example cleanup\n");
+    return;
 }
-
 module_init(my_init);
-
 module_exit(my_exit);
-
-MODULE_AUTHOR("John Madieu \<john.madieu@gmail.com\>");
-
+MODULE_AUTHOR("John Madieu <john.madieu@gmail.com>");
 MODULE_LICENSE("GPL");
+```
 
 In the preceding code snippet, we statically declare our **my_tasklet** tasklet and the function supposed to be invoked when this tasklet is scheduled. Since we did not used the **\_OLD** variant, we defined the handler prototype the same as **callback** field in the tasklet object.
 
@@ -1678,87 +1471,81 @@ Apart from these data structures, there are two generic terms you should be fami
 
 The first step in using workqueues consists of creating a work item, represented by **struct work_struct** or **struct delayed_work** for the delayed variant, and defined in **linux/workqueue.h**. The kernel provides either a **DECLARE_WORK** macro to statically declare and initialize a work structure or dynamically uses an **INIT_WORK** macro. If you need delayed work, you can use the **INIT_DELAYED_WORK** macro for dynamic allocation and initialization or **DECLARE_DELAYED_WORK** for a static one. You can see the macros in action in the following code snippet:
 
+``` c
 DECLARE_WORK(name, function)
-
 DECLARE_DELAYED_WORK(name, function)
-
 INIT_WORK(work, func );
-
 INIT_DELAYED_WORK( work, func);
+```
 
 Here is what our work item structure looks like:
 
+``` c
 struct work_struct {
-
-    atomic_long_t data;
-
-    struct list_head entry;
-
-    work_func_t func;
-
+    atomic_long_t data;
+    struct list_head entry;
+    work_func_t func;
 };
-
 struct delayed_work {
-
-    struct work_struct work;
-
-    struct timer_list timer;
-
-    struct workqueue_struct \*wq;
-
-    int cpu;
-
+    struct work_struct work;
+    struct timer_list timer;
+    struct workqueue_struct *wq;
+    int cpu;
 };
+```
 
 The **func** field, which is of type **work_func_t**, tells us a bit more about the header of a **work** function, as illustrated here:
 
-typedef void (\*work_func_t)(struct work_struct \*work);
+``` c
+typedef void (*work_func_t)(struct work_struct *work);
+```
 
 **work** is an input parameter that corresponds to the work structure to be scheduled. If you submitted delayed work, it would correspond to the **delayed_work.work** field. It would then be necessary to use the **to_delayed_work()** function in order to get the underlying delayed work structure, as illustrated in the following code snippet:
 
-struct delayed_work \*to_delayed_work(
-
-                struct work_struct \*work)
+``` c
+struct delayed_work *to_delayed_work(
+                struct work_struct *work)
+```
 
 Workqueue infrastructure allows drivers to create a dedicated kernel thread (a workqueue) called a worker thread to run work functions. A new workqueue can be created with the following functions:
 
-struct workqueue_struct \*create_workqueue(const char \*name)
-
-struct workqueue_struct \*create_singlethread_workqueue(
-
-                                          const char \*name)
+``` c
+struct workqueue_struct *create_workqueue(const char *name)
+struct workqueue_struct *create_singlethread_workqueue(
+                                          const char *name)
+```
 
 **create_workqueue()** creates a dedicated thread (a worker thread) per CPU on the system. For example, on an 8-core system, it will result in 8 kernel threads created to run the works submitted to your workqueue. Unless you have strong reasons to create a thread per CPU, you should prefer the single thread variant. In most cases, a single system kernel thread should be enough. In this case, you should use **create_singlethread_workqueue()** instead, which creates—as its name states—a single-threaded workqueue. Either normal or delayed works can be enqueued onto the same queue. In order to schedule works on your created workqueue, you can use either **queue_work()** or **queue_delayed_work()**, depending on the nature of the work. These functions are defined as follows:
 
-bool queue_work(struct workqueue_struct \*wq,
-
-                 struct work_struct \*work)
-
-bool queue_delayed_work(struct workqueue_struct \*wq,
-
-                        struct delayed_work \*dwork,
-
-                        unsigned long delay)
+``` c
+bool queue_work(struct workqueue_struct *wq,
+                 struct work_struct *work)
+bool queue_delayed_work(struct workqueue_struct *wq,
+                        struct delayed_work *dwork,
+                        unsigned long delay)
+```
 
 These functions return **false** if the work was already on a queue and **true** otherwise. **queue_dalayed_work()** is to be used to schedule a work item (a delayed one) for later execution after a given delay. The time unit for the delay is a jiffy. There are, however, APIs to convert milliseconds and microseconds to jiffies, defined as follows:
 
+``` c
 unsigned long msecs_to_jiffies(const unsigned int m)
-
 unsigned long usecs_to_jiffies(const unsigned int u)
+```
 
 The following example uses 200 milliseconds as a delay:
 
-queue_delayed_work(my_wq, &drvdata-\>tx_work,
-
-                  usecs_to_jiffies(200));
+``` c
+queue_delayed_work(my_wq, &drvdata->tx_work,
+                  usecs_to_jiffies(200));
+```
 
 You should not expect this delay to be accurate as the delay will be rounded up to the closest jiffy value. Thus, even when requesting 200 us, you should expect a jiffy. Submitted work items can be canceled by calling either **cancel_delayed_work()**, **cancel_delayed_work_sync()**, or **cancel_work_sync()**. These cancelation functions are defined as follows:
 
-bool cancel_work_sync(struct work_struct \*work)
-
-bool cancel_delayed_work(struct delayed_work \*dwork)
-
-bool cancel_delayed_work_sync(struct delayed_work \*dwork)
+``` c
+bool cancel_work_sync(struct work_struct *work)
+bool cancel_delayed_work(struct delayed_work *dwork)
+bool cancel_delayed_work_sync(struct delayed_work *dwork)
+```
 
 **cancel_work_sync()** synchronously cancels the given work—in other words, it cancels work and waits for its execution to finish. The kernel guarantees **work** not to be pending or executing on any CPU on return from this function, even if the work migrates to another workqueue or requeues itself. It returns **true** if **work** was pending and **false** otherwise.
 
@@ -1766,9 +1553,10 @@ bool cancel_delayed_work_sync(struct delayed_work \*dwork)
 
 When you are done with a workqueue, you should destroy it with **destroy_workqueue()**, as illustrated here:
 
-void flush_workqueue(struct worksqueue_struct \* queue);
-
-void destroy_workqueue(structure workqueque_struct \*queue);
+``` c
+void flush_workqueue(struct worksqueue_struct * queue);
+void destroy_workqueue(structure workqueque_struct *queue);
+```
 
 While waiting for any pending work to execute, the **\_sync** variant functions sleep and thus can be called only from a process context.
 
@@ -1780,33 +1568,31 @@ This kernel-global workqueue is the so-called **system_wq** workqueue, defined i
 
 You can queue a work item in the default system workqueue using one of the following functions:
 
-int schedule_work(struct work_struct \*work);
-
-int schedule_delayed_work(struct delayed_work \*dwork,
-
-                          unsigned long delay);
-
+``` c
+int schedule_work(struct work_struct *work);
+int schedule_delayed_work(struct delayed_work *dwork,
+                          unsigned long delay);
 int schedule_work_on(int cpu,
-
-               struct work_struct \*work);
-
+               struct work_struct *work);
 int schedule_delayed_work_on(int cpu,
-
-                struct delayed_work \*dwork,
-
-                unsigned long delay);
+                struct delayed_work *dwork,
+                unsigned long delay);
+```
 
 **schedule_work()** immediately schedules the work that will be executed as soon as possible after the worker thread on the current processor wakes up. With **schedule_delayed_work()**, the work will be put in the queue in the future, after the delay timer ticks. **\_on** variants are used to schedule the work on a specific CPU (which does not absolutely need to be the current one). Each of these functions queue works on the system's shared workqueue, **system_wq**, defined in **kernel/workqueue.c** as follows:
 
-struct workqueue_struct \*system_wq \_\_read_mostly;
-
+``` c
+struct workqueue_struct *system_wq __read_mostly;
 EXPORT_SYMBOL(system_wq);
+```
 
 You should also note that since this system workqueue is shared, you should not queue works which can run for too long, otherwise it may slow down other contender works, which could then wait for longer than they should before being executed.
 
 In order to flush the kernel-global workqueue—that is, ensure a given batch of work is completed—we can use **flush_scheduled_work()**, as follows:
 
+``` c
 void flush_scheduled_work(void);
+```
 
 **flush_scheduled_work()** is a wrapper that calls **flush_workqueue()** on **system_wq**. Note that there may be works in the **system_wq** workqueue that you have not submitted and have no control over. Flushing this workqueue entirely is thus overkill, and it is recommended to run **cancel_delayed_work_sync()** or **cancel_work_sync()** instead.
 
@@ -1828,15 +1614,13 @@ Moreover, subsystems that needed a dynamic or fine-grained level of concurrency 
 
 cmwq is an upgrade of workqueue APIs. Using this new API implies you are choosing between the **alloc_workqueue()** function and the **alloc_ordered_workqueue()** macro to create a workqueue. They both allocate a workqueue and return a pointer to it on success, and **NULL** on failure. The returned workqueue can be freed using the **destroy_workqueue()** function. You can see an illustration of the code in the following snippet:
 
-struct workqueue_struct \*alloc_workqueue(const char \*fmt,
-
-                             unsigned int flags,
-
-                             int max_active, ...);
-
-\#define alloc_ordered_workqueue(fmt, flags, args...) \[...\]
-
-void destroy_workqueue(struct workqueue_struct \*wq)
+``` c
+struct workqueue_struct *alloc_workqueue(const char *fmt,
+                             unsigned int flags,
+                             int max_active, ...);
+#define alloc_ordered_workqueue(fmt, flags, args...) [...]
+void destroy_workqueue(struct workqueue_struct *wq)
+```
 
 **fmt** is the **printf** format for the name of the workqueue, and **args...** are arguments for **fmt**.
 
@@ -1892,41 +1676,35 @@ When an interrupt handler is executed, it runs with interrupts disabled on the l
 
 An IRQ handler needs to be given two arguments: the interrupt line to install the handler for, and a **unique device ID** (**UDI**) of the peripheral (mostly used as a context data structure—that is, a pointer to the per-device or private structure of the associated hardware device)—as illustrated here:
 
-typedef irqreturn_t (\*irq_handler_t)(int, void \*);
+``` c
+typedef irqreturn_t (*irq_handler_t)(int, void *);
+```
 
 The device driver wishing to register an interrupt handler for a given IRQ should call **devm_request_irq()**, defined in **\<linux/interrupt.h\>** as follows:
 
-devm_request_irq(struct device \*dev, unsigned int irq,
-
-                  irq_handler_t handler,
-
-                  unsigned long irqflags,
-
-                  onst char \*devname, void \*dev_id)
+``` c
+devm_request_irq(struct device *dev, unsigned int irq,
+                  irq_handler_t handler,
+                  unsigned long irqflags,
+                  onst char *devname, void *dev_id)
+```
 
 The preceding function argument list, **dev**, is the device responsible for the IRQ line, **irq** represents the interrupt line (that is, the interrupt number of the issuing device) to register **handler** for. Prior to validating the request, the kernel will make sure the requested interrupt is valid and that it is not already assigned to another device unless both devices request this **irq** line to be shared (with help of **flags**). **handler** is the function pointer to the interrupt handler, and **flags** represent the interrupt flags. **name** is an **American Standard Code for Information Interchange** (**ASCII**) string that should namely describe the interrupt, and **dev** should be unique to each registered handler and cannot be **NULL** for shared IRQs since it is used by the kernel IRQ core to identify the device. A common way of using it is to provide a pointer to the device structure or a pointer to any per-device (and potentially useful to the handler) data structure, since when an interrupt occurs, both the interrupt line (**irq**) and this parameter will be passed to the registered handler, which can use this data as context data for further processing.
 
 **flags** mangles the state or the behavior of the IRQ line or its handler by means of the following masks, which can be OR'ed to form a final desired bitmask according to your needs:
 
-\#define IRQF_SHARED 0x00000080
-
-\#define IRQF_PROBE_SHARED 0x00000100
-
-\#define IRQF_NOBALANCING 0x00000800
-
-\#define IRQF_IRQPOLL 0x00001000
-
-\#define IRQF_ONESHOT 0x00002000
-
-\#define IRQF_NO_SUSPEND 0x00004000
-
-\#define IRQF_FORCE_RESUME 0x00008000
-
-\#define IRQF_NO_THREAD 0x00010000
-
-\#define IRQF_EARLY_RESUME 0x000200002
-
-\#define IRQF_COND_SUSPEND 0x00040000
+``` c
+#define IRQF_SHARED 0x00000080
+#define IRQF_PROBE_SHARED 0x00000100
+#define IRQF_NOBALANCING 0x00000800
+#define IRQF_IRQPOLL 0x00001000
+#define IRQF_ONESHOT 0x00002000
+#define IRQF_NO_SUSPEND 0x00004000
+#define IRQF_FORCE_RESUME 0x00008000
+#define IRQF_NO_THREAD 0x00010000
+#define IRQF_EARLY_RESUME 0x000200002
+#define IRQF_COND_SUSPEND 0x00040000
+```
 
 Note that **flags** can be **0** as well. Let's now explain some important flags—we leave the rest for the user to explore in **include/linux/interrupt.h**, but these are the ones we'll look at in more detail:
 
@@ -1954,15 +1732,17 @@ We must also consider the **irqreturn_t** return type of interrupt handlers sinc
 
 **devm_request_irq()** is the managed version of **request_irq()**, defined as follows:
 
+``` c
 int request_irq(unsigned int irq, irq_handler_t handler,
-
-                unsigned long flags, const char \*name,
-
-                void \*dev)
+                unsigned long flags, const char *name,
+                void *dev)
+```
 
 They both have the same variable meanings. If the driver used the managed version, the IRQ core will take care of releasing the resources. In other cases, such as at the unloading path or when the device leaves, the driver will have to release the IRQ resources by unregistering the interrupt handler using **free_irq()**, declared as follows:
 
-void free_irq(unsigned int irq, void \*dev_id)
+``` c
+void free_irq(unsigned int irq, void *dev_id)
+```
 
 **free_irq()** removes the handler (identified by **dev_id** when it comes to shared interrupts) and disables the line. If the interrupt line is shared, the handler is just removed from the list of handlers for this **irq**, and the interrupt line is disabled in the future when the last handler is removed. Moreover, if possible, your code must make sure the interrupt is really disabled on the card it drives before calling this function, since omitting this may lead to spurious IRQ.
 
@@ -2015,13 +1795,12 @@ Threaded interrupt handlers were introduced to reduce the time spent in interrup
 
 The general rule behind threaded interrupts is simple: keep the hard-IRQ handler as minimal as possible and defer as much work to the kernel thread as possible (preferably, all work). You should use **devm_request_threaded_irq()** if you wish to request a threaded interrupt handling. Here is its prototype:
 
-devm_request_threaded_irq(struct device \*dev, unsigned int irq,
-
-                  irq_handler_t handler, irq_handler_t thread_fn,
-
-                  unsigned long irqflags, const char \*devname,
-
-                  void \*dev_id);
+``` c
+devm_request_threaded_irq(struct device *dev, unsigned int irq,
+                  irq_handler_t handler, irq_handler_t thread_fn,
+                  unsigned long irqflags, const char *devname,
+                  void *dev_id);
+```
 
 This function accepts two special parameters on which we should spend some time, **handler**, and **thread_fn**. They are outlined in more detail here:
 
@@ -2035,53 +1814,32 @@ A default hard-IRQ handler will be installed by the kernel if **handler** is **N
 
 It is implemented as follows:
 
-/\* Default primary interrupt handler for threaded
-
-\* interrupts. Assigned as primary handler when
-
-\* request_threaded_irq is called with handler == NULL.
-
-\* Useful for oneshot interrupts.
-
-\*/
-
+``` c
+/* Default primary interrupt handler for threaded
+ * interrupts. Assigned as primary handler when
+ * request_threaded_irq is called with handler == NULL.
+ * Useful for oneshot interrupts.
+ */
 static irqreturn_t irq_default_primary_handler(int irq,
-
-                                         void \*dev_id)
-
+                                         void *dev_id)
 {
-
-    return IRQ_WAKE_THREAD;
-
+    return IRQ_WAKE_THREAD;
 }
-
 int request_threaded_irq(unsigned int irq,
-
-          irq_handler_t handler, irq_handler_t thread_fn,
-
-          unsigned long irqflags, const char \*devname,
-
-          void \*dev_id)
-
+          irq_handler_t handler, irq_handler_t thread_fn,
+          unsigned long irqflags, const char *devname,
+          void *dev_id)
 {
-
-\[...\]
-
-    if (!handler) {
-
-        if (!thread_fn)
-
-            return -EINVAL;
-
-        handler = irq_default_primary_handler;
-
-    }
-
-\[...\]
-
+[...]
+    if (!handler) {
+        if (!thread_fn)
+            return -EINVAL;
+        handler = irq_default_primary_handler;
+    }
+[...]
 }
-
 EXPORT_SYMBOL(request_threaded_irq);
+```
 
 This makes it possible to move the execution of interrupt handlers entirely to the process context, thus preventing buggy drivers (buggy IRQ handlers, actually) from breaking the whole system and reducing interrupt latency.
 
@@ -2095,55 +1853,33 @@ Using **devm_request_threaded()** (or the non-managed variant), it is possible t
 
 Here is an example of this:
 
+``` c
 static irqreturn_t data_event_handler(int irq,
-
-                                      void \*dev_id)
-
+                                      void *dev_id)
 {
-
-    struct big_structure \*bs = dev_id;
-
-    clear_device_interupt(bs);
-
-    process_data(bs-\>buffer);
-
-    return IRQ_HANDLED;
-
+    struct big_structure *bs = dev_id;
+    clear_device_interupt(bs);
+    process_data(bs->buffer);
+    return IRQ_HANDLED;
 }
-
-static int my_probe(struct i2c_client \*client)
-
+static int my_probe(struct i2c_client *client)
 {
-
-\[...\]
-
-    if (client-\>irq \> 0) {
-
-        ret = request_threaded_irq(client-\>irq, NULL,
-
-                &data_event_handler,
-
-                IRQF_TRIGGER_LOW \| IRQF_ONESHOT,
-
-                id-\>name, private);
-
-        if (ret)
-
-            goto error_irq;
-
-    }
-
+[...]
+    if (client->irq > 0) {
+        ret = request_threaded_irq(client->irq, NULL,
+                &data_event_handler,
+                IRQF_TRIGGER_LOW | IRQF_ONESHOT,
+                id->name, private);
+        if (ret)
+            goto error_irq;
+    }
 ...
-
-    return 0;
-
+    return 0;
 error_irq:
-
-    do_cleanup();
-
-    return ret;
-
+    do_cleanup();
+    return ret;
 }
+```
 
 In the preceding example, our device sits on an I2C bus, so accessing the device may put the underlying task to sleep. Such an operation must never be performed in the hard-interrupt handler.
 
@@ -2161,11 +1897,11 @@ A driver requesting an IRQ must know in advance the nature of the interrupt and 
 
 The problem with those approaches is that sometimes, a driver requesting an IRQ does not know about the nature of the interrupt controller that provides this IRQ line, especially when the interrupt controller is a discrete chip (typically, a **general-purpose I/O** (**GPIO**) expander connected over SPI or I2C buses). Now comes the **request_any_context_irq()**, function with which drivers requesting an IRQ will know whether the handler will run in a thread context or not, and call **request_threaded_irq()** or **request_irq()** accordingly. This means that whether the IRQ associated with our device comes from an interrupt controller that may not sleep (a memory-mapped one) or from one that can sleep (behind an I2C/SPI bus), there will be no need to change the code. Its prototype looks like this:
 
+``` c
 int request_any_context_irq(unsigned int irq,
-
-                irq_handler_t handler, unsigned long flags,
-
-                const char \*name, void \*dev_id)
+                irq_handler_t handler, unsigned long flags,
+                const char *name, void *dev_id)
+```
 
 **devm_request_any_context_irq()** and **devm_request_irq()** have the same interface but different semantics. Depending on the underlying context (the hardware platform), **devm_request_any_context_irq()** selects either a hard-interrupt handling using **request_irq()** or a threaded handling method using **request_threaded_irq()**. It returns a negative error value on failure, while on success, it returns either **IRQC_IS_HARDIRQ** (meaning a hard-interrupt handling method is used) or **IRQC_IS_NESTED** (meaning a threaded one is used). With this function, the behavior of the interrupt handler is decided at runtime. For more information, you can have a look at the commit introducing it in the kernel by following this link: <https://git.kernel.org/pub/scm/linux/kernel/git/next/linux-next.git/commit/?id=ae731f8d0785>.
 
@@ -2173,65 +1909,38 @@ The advantage of using **devm_request_any_context_irq()** is that the driver doe
 
 In the following example, the device expects an IRQ line mapped to a GPIO. The driver cannot assume that the given GPIO line will be memory-mapped, coming from the SoC. It may come from a discrete I2C or SPI GPIO controller as well. A good practice would be to use **request_any_context_irq()** here:
 
+``` c
 static irqreturn_t packt_btn_interrupt(int irq,
-
-                                       void \*dev_id)
-
+                                       void *dev_id)
 {
-
-    struct btn_data \*priv = dev_id;
-
-    input_report_key(priv-\>i_dev, BTN_0,
-
-        gpiod_get_value(priv-\>btn_gpiod) & 1);
-
-    input_sync(priv-\>i_dev);
-
-    return IRQ_HANDLED;
-
+    struct btn_data *priv = dev_id;
+    input_report_key(priv->i_dev, BTN_0,
+        gpiod_get_value(priv->btn_gpiod) & 1);
+    input_sync(priv->i_dev);
+    return IRQ_HANDLED;
 }
-
-static int btn_probe(struct platform_device \*pdev)
-
+static int btn_probe(struct platform_device *pdev)
 {
-
-    struct gpio_desc \*gpiod;
-
-    int ret, irq;
-
-    gpiod = gpiod_get(&pdev-\>dev, "button", GPIOD_IN);
-
-    if (IS_ERR(gpiod))
-
-        return -ENODEV;
-
-    priv-\>irq = gpiod_to_irq(priv-\>btn_gpiod);
-
-    priv-\>btn_gpiod = gpiod;
-
-\[...\]
-
-    ret = request_any_context_irq(priv-\>irq,
-
-              packt_btn_interrupt,
-
-             (IRQF_TRIGGER_FALLING \| IRQF_TRIGGER_RISING),
-
-             "packt-input-button", priv);
-
-    if (ret \< 0)
-
-        goto err_btn;
-
-    return 0;
-
+    struct gpio_desc *gpiod;
+    int ret, irq;
+    gpiod = gpiod_get(&pdev->dev, "button", GPIOD_IN);
+    if (IS_ERR(gpiod))
+        return -ENODEV;
+    priv->irq = gpiod_to_irq(priv->btn_gpiod);
+    priv->btn_gpiod = gpiod;
+[...]
+    ret = request_any_context_irq(priv->irq,
+              packt_btn_interrupt,
+             (IRQF_TRIGGER_FALLING | IRQF_TRIGGER_RISING),
+             "packt-input-button", priv);
+    if (ret < 0)
+        goto err_btn;
+    return 0;
 err_btn:
-
-    do_cleanup();
-
-    return ret;
-
+    do_cleanup();
+    return ret;
 }
+```
 
 The preceding code is simple enough but quite safe since **devm_request_any_context_irq()** does the job, which prevents it from mistaking the type of the underlying GPIO. The advantage of this approach is that you do not need to care about the nature of the interrupt controller that provides the IRQ line. In our example, if the GPIO belongs to a controller sitting on an I2C or SPI bus, the handler will be threaded. Otherwise (memory-mapped), the handler will run in a hard-IRQ context.
 
@@ -2241,205 +1950,120 @@ As we have already discussed the workqueue API in a dedicated section, it is now
 
 Let's start by defining a data structure that will hold the elements we need for further development, as follows:
 
+``` c
 struct private_struct {
-
-    int counter;
-
-    struct work_struct my_work;
-
-    void \_\_iomem \*reg_base;
-
-    spinlock_t lock;
-
-    int irq;
-
-    /\* Other fields \*/
-
-    \[...\]
-
+    int counter;
+    struct work_struct my_work;
+    void __iomem *reg_base;
+    spinlock_t lock;
+    int irq;
+    /* Other fields */
+    [...]
 };
+```
 
 In the preceding data structure, our work structure is represented by the **my_work** element. We do not use a pointer here because we will need to use a **container_of()** macro in order to grab back the pointer to the initial data structure. Next, we can define a method that will be invoked in the worker thread, as follows:
 
-static void work_handler(struct work_struct \*work)
-
+``` c
+static void work_handler(struct work_struct *work)
 {
-
-    int i;
-
-    unsigned long flags;
-
-    struct private_data \*my_data =
-
-          container_of(work, struct private_data, my_work);
-
-    /\*
-
-     \* Processing at least half of MIN_REQUIRED_FIFO_SIZE
-
-     \* prior to re-enabling the irq at device level,
-
-     \* so that buffer can receive further data
-
-     \*/
-
-    for (i = 0, i \< MIN_REQUIRED_FIFO_SIZE, i++) {
-
-        device_pop_and_process_data_buffer();
-
-        if (i == MIN_REQUIRED_FIFO_SIZE / 2)
-
-            enable_irq_at_device_level(my_data);
-
-    }
-
-    spin_lock_irqsave(&my_data-\>lock, flags);
-
-    my_data-\>buf_counter -= MIN_REQUIRED_FIFO_SIZE;
-
-    spin_unlock_irqrestore(&my_data-\>lock, flags);
-
+    int i;
+    unsigned long flags;
+    struct private_data *my_data =
+          container_of(work, struct private_data, my_work);
+    /*
+     * Processing at least half of MIN_REQUIRED_FIFO_SIZE
+     * prior to re-enabling the irq at device level,
+     * so that buffer can receive further data
+     */
+    for (i = 0, i < MIN_REQUIRED_FIFO_SIZE, i++) {
+        device_pop_and_process_data_buffer();
+        if (i == MIN_REQUIRED_FIFO_SIZE / 2)
+            enable_irq_at_device_level(my_data);
+    }
+    spin_lock_irqsave(&my_data->lock, flags);
+    my_data->buf_counter -= MIN_REQUIRED_FIFO_SIZE;
+    spin_unlock_irqrestore(&my_data->lock, flags);
 }
+```
 
 In the preceding work structure, we start data processing when enough data has been buffered. We can now provide our IRQ handler, which is responsible for scheduling our work, as follows:
 
-/\* This is our hard-IRQ handler. \*/
-
+``` c
+/* This is our hard-IRQ handler. */
 static irqreturn_t my_interrupt_handler(int irq,
-
-                                        void \*dev_id)
-
+                                        void *dev_id)
 {
-
-    u32 status;
-
-    unsigned long flags;
-
-    struct private_struct \*my_data = dev_id;
-
-    /\* we read the status register to know what to do \*/
-
-    status = readl(my_data-\>reg_base + REG_STATUS_OFFSET);
-
-    /\*
-
-     \* Ack irq at device level. We are safe if another
-
-     \* irq pokes since it is disabled at controller
-
-     \* level while we are in this handler
-
-     \*/
-
-    writel(my_data-\>reg_base + REG_STATUS_OFFSET,
-
-            status \| MASK_IRQ_ACK);
-
-    /\*
-
-     \* Protecting the shared resource, since the worker
-
-     \* also accesses this counter
-
-     \*/
-
-    spin_lock_irqsave(&my_data-\>lock, flags);
-
-    my_data-\>buf_counter++;
-
-    spin_unlock_irqrestore(&my_data-\>lock, flags);
-
-    /\*
-
-     \* Our device raised an interrupt to inform it has
-
-     \* new data in its fifo. But is it enough for us
-
-     \* to be processed ?
-
-     \*/
-
-    if (my_data-\>buf_counter != MIN_REQUIRED_FIFO_SIZE)) {
-
-       /\* ack and re-enable this irq at controller level \*/
-
-       return IRQ_HANDLED;
-
-    } else {
-
-        /\* Right. prior to scheduling the worker and
-
-         \* returning from this handler, we need to
-
-         \* disable the irq at device level
-
-         \*/
-
-        writel(my_data-\>reg_base + REG_STATUS_OFFSET,
-
-                MASK_IRQ_DISABLE);
-
-        schedule_work(&my_work);
-
-    }
-
-    /\* This will re-enable the irq at controller level \*/
-
-    return IRQ_HANDLED;
-
+    u32 status;
+    unsigned long flags;
+    struct private_struct *my_data = dev_id;
+    /* we read the status register to know what to do */
+    status = readl(my_data->reg_base + REG_STATUS_OFFSET);
+    /*
+     * Ack irq at device level. We are safe if another
+     * irq pokes since it is disabled at controller
+     * level while we are in this handler
+     */
+    writel(my_data->reg_base + REG_STATUS_OFFSET,
+            status | MASK_IRQ_ACK);
+    /*
+     * Protecting the shared resource, since the worker
+     * also accesses this counter
+     */
+    spin_lock_irqsave(&my_data->lock, flags);
+    my_data->buf_counter++;
+    spin_unlock_irqrestore(&my_data->lock, flags);
+    /*
+     * Our device raised an interrupt to inform it has
+     * new data in its fifo. But is it enough for us
+     * to be processed ?
+     */
+    if (my_data->buf_counter != MIN_REQUIRED_FIFO_SIZE)) {
+       /* ack and re-enable this irq at controller level */
+       return IRQ_HANDLED;
+    } else {
+        /* Right. prior to scheduling the worker and
+         * returning from this handler, we need to
+         * disable the irq at device level
+         */
+        writel(my_data->reg_base + REG_STATUS_OFFSET,
+                MASK_IRQ_DISABLE);
+        schedule_work(&my_work);
+    }
+    /* This will re-enable the irq at controller level */
+    return IRQ_HANDLED;
 };
+```
 
 The comments in the IRQ handler code are meaningful enough. **schedule_work()** is the function that schedules our work. Finally, we can write our probe method that will request our IRQ and register the previous handler, as follows:
 
-static int foo_probe(struct platform_device \*pdev)
-
+``` c
+static int foo_probe(struct platform_device *pdev)
 {
-
-    struct resource \*mem;
-
-    struct private_struct \*my_data;
-
-    my_data = alloc_some_memory(
-
-                        sizeof(struct private_struct));
-
-    mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-
-    my_data-\>reg_base = ioremap(ioremap(mem-\>start,
-
-                                resource_size(mem)););
-
-    if (IS_ERR(my_data-\>reg_base))
-
-        return PTR_ERR(my_data-\>reg_base);
-
-    /\*
-
-     \* workqueue initialization. "work_handler" is
-
-     \* the callback that will be executed when our work
-
-     \* is scheduled.
-
-     \*/
-
-    INIT_WORK(&my_data-\>my_work, work_handler);
-
-    spin_lock_init(&my_data-\>lock);
-
-    my_data-\>irq = platform_get_irq(pdev, 0);
-
-    if (devm_request_irq(&pdev-\>dev, my_data-\>irq,
-
-                        my_interrupt_handler, 0,
-
-                        pdev-\>name, my_data))
-
-        handler_this_error()
-
-    return 0;
-
+    struct resource *mem;
+    struct private_struct *my_data;
+    my_data = alloc_some_memory(
+                        sizeof(struct private_struct));
+    mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+    my_data->reg_base = ioremap(ioremap(mem->start,
+                                resource_size(mem)););
+    if (IS_ERR(my_data->reg_base))
+        return PTR_ERR(my_data->reg_base);
+    /*
+     * workqueue initialization. "work_handler" is
+     * the callback that will be executed when our work
+     * is scheduled.
+     */
+    INIT_WORK(&my_data->my_work, work_handler);
+    spin_lock_init(&my_data->lock);
+    my_data->irq = platform_get_irq(pdev, 0);
+    if (devm_request_irq(&pdev->dev, my_data->irq,
+                        my_interrupt_handler, 0,
+                        pdev->name, my_data))
+        handler_this_error()
+    return 0;
 }
+```
 
 The structure of the preceding probe method shows without a doubt that we are facing a platform device driver. Generic IRQ and workqueue APIs have been used here for initializing our workqueue and registering our handler.
 
@@ -2447,143 +2071,89 @@ The structure of the preceding probe method shows without a doubt that we are fa
 
 It is common to use spinlocks on SMP systems, as this guarantees mutual exclusion at the CPU level. Therefore, if a resource is shared only with a threaded bottom half (that is, it is never accessed from the hard IRQ), it is better to use mutexes, as we see in the following example:
 
-static int my_probe(struct platform_device \*pdev)
-
+``` c
+static int my_probe(struct platform_device *pdev)
 {
-
-    int irq;
-
-    int ret;
-
-    irq = platform_get_irq(pdev, i);
-
-    ret = devm_request_threaded_irq(&pdev-\>dev, irq, NULL,
-
-                my_threaded_irq, IRQF_ONESHOT,
-
-                dev_name(dev), my_data);
-
-\[...\]
-
-    return 0;
-
+    int irq;
+    int ret;
+    irq = platform_get_irq(pdev, i);
+    ret = devm_request_threaded_irq(&pdev->dev, irq, NULL,
+                my_threaded_irq, IRQF_ONESHOT,
+                dev_name(dev), my_data);
+[...]
+    return 0;
 }
-
-static irqreturn_t my_threaded_irq(int irq, void \*dev_id)
-
+static irqreturn_t my_threaded_irq(int irq, void *dev_id)
 {
-
-    struct priv_struct \*my_data = dev_id;
-
-    /\* Save FIFO Underrun & Transfer Error status \*/
-
-    mutex_lock(&my_data-\>fifo_lock);
-
-    /\*
-
-     \* Accessing the device's buffer through i2c
-
-     \*/
-
-    device_get_i2c_buffer_and_push_to_fifo();
-
-    mutex_unlock(&ldev-\>fifo_lock);
-
-    return IRQ_HANDLED;
-
+    struct priv_struct *my_data = dev_id;
+    /* Save FIFO Underrun & Transfer Error status */
+    mutex_lock(&my_data->fifo_lock);
+    /*
+     * Accessing the device's buffer through i2c
+     */
+    device_get_i2c_buffer_and_push_to_fifo();
+    mutex_unlock(&ldev->fifo_lock);
+    return IRQ_HANDLED;
 }
+```
 
 However, if the shared resource is accessed from within the hard-interrupt handler, you must use the **\_irqsave** variant of the spinlock, as in the following example, starting with the probe method:
 
-static int my_probe(struct platform_device \*pdev)
-
+``` c
+static int my_probe(struct platform_device *pdev)
 {
-
-    int irq;
-
-    int ret;
-
-    \[...\]
-
-    irq = platform_get_irq(pdev, 0);
-
-    if (irq \< 0)
-
-        goto handle_get_irq_error;
-
-    ret = devm_request_threaded_irq(&pdev-\>dev, irq,
-
-                    hard_handler, threaded_handler,
-
-                    IRQF_ONESHOT, dev_name(dev), my_data);
-
-    if (ret \< 0)
-
-        goto err_cleanup_irq;
-
-     \[...\]
-
-    return 0;
-
+    int irq;
+    int ret;
+    [...]
+    irq = platform_get_irq(pdev, 0);
+    if (irq < 0)
+        goto handle_get_irq_error;
+    ret = devm_request_threaded_irq(&pdev->dev, irq,
+                    hard_handler, threaded_handler,
+                    IRQF_ONESHOT, dev_name(dev), my_data);
+    if (ret < 0)
+        goto err_cleanup_irq;
+     [...]
+    return 0;
 }
+```
 
 Now that the probe method has been implemented, let's implement the top half—that is, the hard-IRQ handler—as follows:
 
-static irqreturn_t hard_handler(int irq, void \*dev_id)
-
+``` c
+static irqreturn_t hard_handler(int irq, void *dev_id)
 {
-
-    struct priv_struct \*my_data = dev_id;
-
-    u32 status;
-
-    unsigned long flags;
-
-    /\* Protecting the shared resource \*/
-
-    spin_lock_irqsave(&my_data-\>lock, flags);
-
-    my_data-\>status = \_\_raw_readl(
-
-            my_data-\>mmio_base + my_data-\>foo.reg_offset);
-
-    spin_unlock_irqrestore(&my_data-\>lock, flags);
-
-    /\* Let us schedule the bottom-half \*/
-
-    return IRQ_WAKE_THREAD;
-
+    struct priv_struct *my_data = dev_id;
+    u32 status;
+    unsigned long flags;
+    /* Protecting the shared resource */
+    spin_lock_irqsave(&my_data->lock, flags);
+    my_data->status = __raw_readl(
+            my_data->mmio_base + my_data->foo.reg_offset);
+    spin_unlock_irqrestore(&my_data->lock, flags);
+    /* Let us schedule the bottom-half */
+    return IRQ_WAKE_THREAD;
 }
+```
 
 The return value of the top half will wake the threaded bottom half, which is implemented as follows:
 
-static irqreturn_t threaded_handler(int irq, void \*dev_id)
-
+``` c
+static irqreturn_t threaded_handler(int irq, void *dev_id)
 {
-
-    struct priv_struct \*my_data = dev_id;
-
-    spin_lock_irqsave(&my_data-\>lock, flags);
-
-    /\* doing sanity depending on the status \*/
-
-    process_status(my_data-\>status);
-
-    spin_unlock_irqrestore(&my_data-\>lock, flags);
-
-    /\*
-
-     \* content of status not needed anymore, let's do
-
-     \* some other work
-
-     \*/
-
-     \[...\]
-
-    return IRQ_HANDLED;
-
+    struct priv_struct *my_data = dev_id;
+    spin_lock_irqsave(&my_data->lock, flags);
+    /* doing sanity depending on the status */
+    process_status(my_data->status);
+    spin_unlock_irqrestore(&my_data->lock, flags);
+    /*
+     * content of status not needed anymore, let's do
+     * some other work
+     */
+     [...]
+    return IRQ_HANDLED;
 }
+```
 
 There is a case where protection may not be necessary between the hard IRQ and its threaded counterpart when the **IRQF_ONESHOT** flag is set while requesting the IRQ line. This flag keeps the interrupt disabled after the hard-interrupt handler has finished. With this flag set, the IRQ line is disabled until the threaded handler has been run. This way, the hard handler and its threaded counterpart will never compete, and a lock for a resource shared between the two might not be necessary.
 

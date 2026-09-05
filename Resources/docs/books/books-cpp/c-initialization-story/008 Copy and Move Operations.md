@@ -38,7 +38,7 @@ As a mental model, we can assume that most classes have their default, compiler-
 
 The situation for a shallow copy is illustrated by the following diagram:
 
-![](media/index-54_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-54_1.png)
 
  
 
@@ -66,7 +66,6 @@ For the Product class, we can write the following:
 
 **explicit** Product(**int** id, **const** std::string& name)
 
-: id\_{id}, name\_{name} {
 
 std::cout \<\< "Product(): " \<\< id\_ \<\< ", " \<\< name\_ \<\< '\n';
 
@@ -82,19 +81,18 @@ Product(**const** Product& other)
 
 **int** id\_;
 
-std::string name\_;
 
 };
 
 As you can see, the copy constructor uses the member initialization list to copy the data from other. Please notice that there’s no need to use public getters, as we have access to all private data members. The syntax requires you to use a reference, so writing Product(Product other) won’t be treated as a copy constructor.
 
-![](media/index-55_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-55_1.png)
 
 A copy constructor can also take a non-const argument like Product(Product& other). However, such a constructor might modify the other object and make code harder to read and understand. It might be better to use move semantics and move constructors when you want to “steal” the guts of some other object.
 
 Copy and Move Operations 41
 
-![](media/index-56_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-56_1.png)
 
 Copy constructors can be marked with explicit, but this is not a common practice and might prevent copy initialization.
 
@@ -110,7 +108,6 @@ Here’s another example where basic logging is enabled. Such console output is 
 
 **explicit** Product(**int** id, **const** std::string& name)
 
-: id\_{id}, name\_{name} {
 
 std::cout \<\< "Product(): " \<\< id\_ \<\< ", " \<\< name\_ \<\< '\n';
 
@@ -126,7 +123,6 @@ Product(**const** Product& other)
 
 **int** id\_;
 
-std::string name\_;
 
 };
 
@@ -162,25 +158,19 @@ base product created
 
 Product other { base };
 
-Product(copy): 42, base product
 
 Product another(base);
 
-Product(copy): 42, base product
 
 Product oneMore = base;
 
-Product(copy): 42, base product
 
 std::array\<Product, 2\> = { base, other };
 
-Product(copy): 42, base product
 
-Product(copy): 42, base product
 
 calling foo()
 
-Product(copy): 42, base product
 
 inside foo()
 
@@ -318,7 +308,6 @@ As an example, let’s have a look at the following code:
 
 Name(**const** Name&) = **delete**;
 
-std::string name\_;
 
 };
 
@@ -328,7 +317,6 @@ std::string name\_;
 
 **explicit** Product(**int** id, **const** std::string& name)
 
-: id\_{id}, name\_{name} {
 
 std::cout \<\< "Product(): " \<\< id\_ \<\< ", " \<\< name\_.name\_ \<\< '\n';
 
@@ -400,7 +388,7 @@ Copy and Move Operations 47
 
 after the expression completes (unless it’s assigned to a const or rvalue reference⁷), so we can steal resources from them safely. It doesn’t make sense in the case of built-in types like integers or floats, as we need to copy values anyway. But in the case of strings or memory buffers, we can avoid data copy and reassign the pointers. The situation is illustrated with the following diagram:
 
-![](media/index-62_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-62_1.png)
 
  
 
@@ -432,7 +420,6 @@ Copy and Move Operations 48
 
 **explicit** Product(**int** id, **const** std::string& name)
 
-: id\_{id}, name\_{name} {
 
 std::cout \<\< "Product(): " \<\< id\_ \<\< ", " \<\< name\_ \<\< '\n';
 
@@ -448,7 +435,6 @@ Product(Product&& other) **noexcept**
 
 **int** id\_;
 
-std::string name\_;
 
 };
 
@@ -490,7 +476,7 @@ The above implementation is similar to a copy constructor, but we must pay atten
 
 The move constructor must ensure that the other object is left in an unspecified but valid state. In our case, we can see it in the last line of the output. The line old value: ends with nothing, so the string was cleared.
 
-![](media/index-64_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-64_1.png)
 
 Move constructors can be marked with explicit, but it’s not a common practice and might affect generic code that relies on implicit move constructors (like standard algorithms).
 
@@ -610,7 +596,7 @@ Copy and Move Operations 52
 
 Below you can find a basic illustration of this “growth” process:
 
-![](media/index-67_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-67_1.png)
 
  
 
@@ -710,7 +696,6 @@ See the following code, where I implemented a copy assignment for the Product cl
 
 **explicit** Product(**int** id, **const** std::string& name)
 
-: id\_{id}, name\_{name} {
 
 std::cout \<\< "Product(): " \<\< id\_ \<\< ", " \<\< name\_ \<\< '\n';
 
@@ -744,7 +729,6 @@ std::cout \<\< "operator=(copy): " \<\< id\_ \<\< ", " \<\< name\_ \<\< '\n'; **
 
 **int** id\_;
 
-std::string name\_;
 
 };
 
@@ -768,7 +752,6 @@ And here’s the corresponding version of the move assignment operator:
 
 **explicit** Product(**int** id, **const** std::string& name)
 
-: id\_{id}, name\_{name} {
 
 std::cout \<\< "Product(): " \<\< id\_ \<\< ", " \<\< name\_ \<\< '\n';
 
@@ -794,7 +777,6 @@ name\_ = std::move(other.name\_); std::cout \<\< "operator=(move): " \<\< id\_ \
 
 **int** id\_;
 
-std::string name\_;
 
 };
 
@@ -928,7 +910,7 @@ firstMsg's data after move ctor): "", sum: 0
 
 The example creates several DataPacket objects, and with each creation, you can see that the compiler invokes the appropriate constructor or an assignment operator. For instance, in **line 3**, we need a copy constructor call. On the other hand, **line 5** shows an assignment (copyMsg already exists). In the last section of main(), **lines 8 and 14**, there are calls to std::move(), which marks secondMsg and firstMsg as an rvalue reference, from which the contents could be moved. This means that the object is unimportant later, and we can “steal” from it. In this case, the compiler will call a move constructor or move assignment operator.
 
-![](media/index-74_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-74_1.png)
 
 The logging part in the example is a bit crude, as the class directly calls a global stream object. In some cases, this might complicate unit testing or using the class in general. It would be better to rely on some configurable “tracing/logging” object that could be passed as a parameter to the constructor. We’ll tackle that approach
 
@@ -1128,7 +1110,7 @@ Similarly, for const variables:
 
 **const** MyType3 ct3; // fine
 
-![](media/index-78_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-78_1.png)
 
 Additionally, the class type is of *standard layout*, which means briefly that their memory layout is well defined and thus can be consumed by a C program. When a class is also trivial, sharing across multiplatform code or communicating with
 
@@ -1136,7 +1118,7 @@ the C language modules is easy. Read more at [Trivial, standard-layout, POD, and
 
 [literal types \| Microsoft Docs](https://docs.microsoft.com/en-us/cpp/cpp/trivial-standard-layout-and-pod-types?view=msvc-170)¹⁹.
 
-![](media/index-78_2.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-78_2.png)
 
  
 
@@ -1145,3 +1127,54 @@ If you like to read more about trivial types, layout, and more, I highly recomme
 ¹⁸<https://godbolt.org/z/7bKnP6qea>
 
 ¹⁹<https://docs.microsoft.com/en-us/cpp/cpp/trivial-standard-layout-and-pod-types?view=msvc-170>
+
+**4. Delegating and Inheriting**
+
+ 
+
+**Constructors**
+
+In this chapter, we’ll look at improvements from C++11 related to inheritance and the ability to call constructors from other constructors.
+
+ 
+
+**Delegating constructors**
+
+Sometimes, when your class contains many data members and several constructors, it might be convenient to reuse their initialization code. Fortunately, since C++11, you can use **delegating constructors**. Let’s look at an example:
+
+**Ex 4.1. Delegating constructors. Run** [**@Compiler Explorer**](https://godbolt.org/z/qrYa9zq6e)
+
+**class Product** {
+
+**public**:
+
+Product(**int** id, **unsigned** quantity, **const** std::string& name)
+
+: id\_{id}, quantity\_{quantity}, name\_{name} { verifyData();
+
+}
+
+Product(**const** std::string& name)
+
+: Product{0, 0, name}
+
+{ }
+
+**void** verifyData() {
+
+**if** (quantity\_ \> MaxQuantity)
+
+**throw** std::invalid_argument("quantity is too large!");
+
+}
+
+**const** std::string& getName() **const** { **return** name\_; } **private**:
+
+**int** id\_;
+
+**unsigned** quantity\_;
+
+
+ 
+
+64

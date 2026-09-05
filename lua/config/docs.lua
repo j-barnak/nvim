@@ -2170,7 +2170,7 @@ end
 -- header / page numbers. Browsable, and <leader>fs gives the clause TOC.
 local PDF_BUILD = [[
 set -e
-PDF="$1"; OUT="$2"; URL="$3"
+PDF="$1"; OUT="$2"; URL="$3"; MODE="$4"
 if [ ! -f "$PDF" ]; then mkdir -p "$(dirname "$PDF")"; curl -fsSL "$URL" -o "$PDF"; fi
 mkdir -p "$OUT"
 # Clean slate; ".complete" (written only on full success) gates reuse, so a
@@ -2192,8 +2192,8 @@ emit() {
   # old hard cut -c1-80 chopped 11 Beautiful C++ guideline titles mid-word).
   f=$(printf '%s' "$3" | tr '/' '-' | awk '{ if (length($0) > 140) { s = substr($0, 1, 140); sub(/ [^ ]*$/, "", s); print s } else print }')
   pdftotext -layout -f "$1" -l "$2" "$PDF" - 2>/dev/null \
-    | sed 's/\f//g' | tr -d '\000-\010\013-\037' \
-    | awk '{o=$0; gsub(/\[Trial version\]/,""); t=$0; gsub(/^[ \t]+|[ \t]+$/,"",t)} o!=$0 && t==""{next} t ~ /^ISO\/IEC [0-9]/{next} t ~ /^© ISO\/IEC/{next} t ~ /^[0-9]+$/{next} t ~ /ABC Amber|Team LiB|processtext\.com/{next} {print}' \
+    | sed 's/\f//g' | tr '\000-\010\013-\037' '[?*]' \
+    | awk -v book="$MODE" '{o=$0; gsub(/\[Trial version\]/,""); t=$0; gsub(/^[ \t]+|[ \t]+$/,"",t); pb=prevblank; prevblank=(t=="")} o!=$0 && t==""{next} book!="book" && t ~ /^ISO\/IEC [0-9]/{next} book!="book" && t ~ /^© ISO\/IEC/{next} t ~ /^[0-9]{1,4}$/ && pb{next} t ~ /ABC Amber|Team LiB|processtext\.com/{next} {print}' \
     | cat -s > "$OUT/$n $f.txt"
 }
 # Book mode ($4=book): pick chapter/part/appendix boundaries from the outline by

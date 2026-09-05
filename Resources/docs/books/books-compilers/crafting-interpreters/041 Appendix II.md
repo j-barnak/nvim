@@ -43,16 +43,12 @@ Variable assignment is introduced in “Statements and State”.
 
       static class Assign extends Expr {
         Assign(Token name, Expr value) {
-          this.name = name;
           this.value = value;
         }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
           return visitor.visitAssignExpr(this);
         }
 
-        final Token name;
         final Expr value;
       }
 
@@ -69,8 +65,6 @@ Binary operators are introduced in “Representing Code”.
           this.right = right;
         }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
           return visitor.visitBinaryExpr(this);
         }
 
@@ -92,8 +86,6 @@ Function call expressions are introduced in “Functions”.
           this.arguments = arguments;
         }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
           return visitor.visitCallExpr(this);
         }
 
@@ -111,16 +103,12 @@ Property access, or “get” expressions are introduced in “Classes”.
       static class Get extends Expr {
         Get(Expr object, Token name) {
           this.object = object;
-          this.name = name;
         }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
           return visitor.visitGetExpr(this);
         }
 
         final Expr object;
-        final Token name;
       }
 
 *lox/Expr.java*, nest inside class *Expr*
@@ -134,8 +122,6 @@ Using parentheses to group expressions is introduced in “Representing Code”.
           this.expression = expression;
         }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
           return visitor.visitGroupingExpr(this);
         }
 
@@ -153,8 +139,6 @@ Literal value expressions are introduced in “Representing Code”.
           this.value = value;
         }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
           return visitor.visitLiteralExpr(this);
         }
 
@@ -174,8 +158,6 @@ The logical `and` and `or` operators are introduced in “Control Flow”.
           this.right = right;
         }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
           return visitor.visitLogicalExpr(this);
         }
 
@@ -193,17 +175,13 @@ Property assignment, or “set” expressions are introduced in “Classes”.
       static class Set extends Expr {
         Set(Expr object, Token name, Expr value) {
           this.object = object;
-          this.name = name;
           this.value = value;
         }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
           return visitor.visitSetExpr(this);
         }
 
         final Expr object;
-        final Token name;
         final Expr value;
       }
 
@@ -219,8 +197,6 @@ The `super` expression is introduced in “Inheritance”.
           this.method = method;
         }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
           return visitor.visitSuperExpr(this);
         }
 
@@ -239,8 +215,6 @@ The `this` expression is introduced in “Classes”.
           this.keyword = keyword;
         }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
           return visitor.visitThisExpr(this);
         }
 
@@ -259,8 +233,6 @@ Unary operators are introduced in “Representing Code”.
           this.right = right;
         }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
           return visitor.visitUnaryExpr(this);
         }
 
@@ -276,15 +248,11 @@ Variable access expressions are introduced in “Statements and State”.
 
       static class Variable extends Expr {
         Variable(Token name) {
-          this.name = name;
         }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
           return visitor.visitVariableExpr(this);
         }
 
-        final Token name;
       }
 
 *lox/Expr.java*, nest inside class *Expr*
@@ -328,8 +296,6 @@ The curly-braced block statement that defines a local scope is introduced in “
           this.statements = statements;
         }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
           return visitor.visitBlockStmt(this);
         }
 
@@ -346,17 +312,13 @@ Class declarations are introduced in, unsurprisingly, “Classes”.
         Class(Token name,
               Expr.Variable superclass,
               List<Stmt.Function> methods) {
-          this.name = name;
           this.superclass = superclass;
           this.methods = methods;
         }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
           return visitor.visitClassStmt(this);
         }
 
-        final Token name;
         final Expr.Variable superclass;
         final List<Stmt.Function> methods;
       }
@@ -372,8 +334,6 @@ The expression statement is introduced in “Statements and State”.
           this.expression = expression;
         }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
           return visitor.visitExpressionStmt(this);
         }
 
@@ -388,17 +348,13 @@ Function declarations are introduced in, you guessed it, “Functions”.
 
       static class Function extends Stmt {
         Function(Token name, List<Token> params, List<Stmt> body) {
-          this.name = name;
           this.params = params;
           this.body = body;
         }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
           return visitor.visitFunctionStmt(this);
         }
 
-        final Token name;
         final List<Token> params;
         final List<Stmt> body;
       }
@@ -416,8 +372,6 @@ The `if` statement is introduced in “Control Flow”.
           this.elseBranch = elseBranch;
         }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
           return visitor.visitIfStmt(this);
         }
 
@@ -437,8 +391,6 @@ The `print` statement is introduced in “Statements and State”.
           this.expression = expression;
         }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
           return visitor.visitPrintStmt(this);
         }
 
@@ -457,8 +409,6 @@ You need a function to return from, so `return` statements are introduced in “
           this.value = value;
         }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
           return visitor.visitReturnStmt(this);
         }
 
@@ -474,16 +424,12 @@ Variable declarations are introduced in “Statements and State”.
 
       static class Var extends Stmt {
         Var(Token name, Expr initializer) {
-          this.name = name;
           this.initializer = initializer;
         }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
           return visitor.visitVarStmt(this);
         }
 
-        final Token name;
         final Expr initializer;
       }
 
@@ -499,8 +445,6 @@ The `while` statement is introduced in “Control Flow”.
           this.body = body;
         }
 
-        @Override
-        <R> R accept(Visitor<R> visitor) {
           return visitor.visitWhileStmt(this);
         }
 

@@ -1,5 +1,3 @@
-![](media/index-592_1.jpg)
-
 9 TIMERS AND SLEEP FUNCTIONS
 
 In Chapter 8, in learning how to design programs that respond to signals, we took another step toward being able to write interactive and event-driven programs, but we still have a few more concepts to
@@ -354,7 +352,6 @@ return; /\* Just catch the signal and return to main(). \*/
 
 }
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -398,7 +395,6 @@ act.sa_handler = sigint_handler;
 
 if ( -1 == sigaction(SIGINT, &act, NULL) )
 
-fatal_error(errno, "sigaction");
 
 printf("About to sleep for %10.10f seconds...\n", delay);
 
@@ -504,7 +500,6 @@ const char mssge\[\] = "Signal received.\n"; write(STDOUT_FILENO, mssge, strlen(
 
 }
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -600,7 +595,7 @@ clock_nanosleep() is called to do a *relative* sleep, and the function behaves l
 
 &remainingtime);
 
-![](media/index-607_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-607_1.jpg)
 
 Unlike nanosleep(), it lets us choose the clock source.
 
@@ -668,7 +663,6 @@ Listing 9-3. The complete program is in the book’s source code distribution.
 
 *--snip--*
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -784,7 +778,6 @@ Listing 9-4.
 
 *alarm_demo1.c*
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -842,7 +835,6 @@ exit(EXIT_SUCCESS); /\* Exit the program. \*/
 
 }
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -1232,7 +1224,6 @@ functions already presented, in Listing 9-6. The program is named *progress_bar1
 
 double fraction_completed = 0; /\* Fraction of operation completed \*/
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -1250,17 +1241,14 @@ act.sa_handler = sig_handler;
 
 if ( sigaction(SIGINT, &act, NULL) == -1 )
 
-fatal_error(errno, "sigaction");
 
 if ( sigaction(SIGQUIT, &act, NULL) == -1 )
 
-fatal_error(errno, "sigaction");
 
 act.sa_handler = refresh_progressbar;
 
 if ( sigaction(SIGALRM, &act, NULL) == -1 )
 
-fatal_error(errno, "sigaction");
 
 alarm(REFRESH_INTERVAL); /\* Set first alarm. \*/
 
@@ -1722,7 +1710,6 @@ available in the book’s source code distribution.
 
 *progress_bar2.c* main()
 
-int main(int argc, char \*argv\[\])
 
 {
 
@@ -1962,7 +1949,7 @@ filenames in the argv\[\] array in order to do this. We can create an array, say
 
 array that we can watch. Figure 9-2 shows how this second array would simply point to the elements of argv\[\] that can be watched. The shaded pathnames and argv\[\] entries are the ones that can’t be watched for one reason or another.
 
-![](media/index-639_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-639_1.jpg)
 
 *Figure 9-2: The* *filelist\[\]* *array that points to only those pathnames in* *argv\[\]* *that can be* *stat-ed and watched*
 
@@ -2184,7 +2171,7 @@ The second method is a lot cleaner and easier than the first. [Figure 9-3
 
 illustrates this idea.
 
-![](media/index-645_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-645_1.jpg)
 
 *Figure 9-3: A depiction of the terminal window showing the region above the static prompt* *that needs to be refreshed by the signal handler every time the timer expires* To avoid calling the output functions declared in *stdio.h*, none of which are async-signal-safe, the handler will construct the strings to print using strcpy() and strcat(), after which it can use write() to print the entire string to the terminal.
 
@@ -2348,11 +2335,9 @@ sigemptyset(&(act.sa_mask));
 
 if ( sigaction(SIGINT, &act, NULL) == -1 )
 
-fatal_error(errno, "sigaction");
 
 if ( sigaction(SIGQUIT, &act, NULL) == -1 )
 
-fatal_error(errno, "sigaction");
 
 CLEARDISPLAY; /\* Completely erase the terminal window. \*/
 
@@ -2362,7 +2347,6 @@ act.sa_handler = update_stats;
 
 if ( sigaction(SIGUSR1, &act, NULL) == -1 )
 
-fatal_error(errno, "sigaction");
 
 /\* Set up sigevent structure for timer and create the timer. \*/
 
@@ -2787,3 +2771,5 @@ screen. (The macro TIOCGWINSZ will be its second argument.) Use
 your function to prevent watchfiles from crashing if the user enters
 
 more file arguments than can fit in the window.
+
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-658_1.jpg)

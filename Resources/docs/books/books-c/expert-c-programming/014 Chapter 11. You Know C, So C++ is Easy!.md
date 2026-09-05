@@ -1,5 +1,3 @@
-OK, I confess. I didn't change anything in the proof. But how can anyone reviewing that complicated text be sure one way or the other? Program proofs are not practical because most programmers find them too inaccessible.
-
 **Chapter 11. You Know C, So C++ is Easy!**
 
 *C++ will do for C what Algol-68 did for Algol.* \[1\]
@@ -70,7 +68,7 @@ This is the big one—allowing one class to receive the data structures and func
 
 Now C++ is a rather large language. As a concrete example, the size of a C compiler front-end might be around 40,000 lines; a C++ compiler front-end might be twice as big, or more.
 
-![Image 148](media/index-248_1.png)
+![Image 148](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-248_1.png)
 
 **Abstraction—Extracting Out the Essential Characteristics of a Thing** Object-oriented programming starts with object-oriented design. And object-oriented design starts with abstraction.
 
@@ -168,7 +166,7 @@ implementation without
 
 substitute a better sort algorithm
 
-![Image 149](media/index-249_1.png)
+![Image 149](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-249_1.png)
 
 changing the user interface
 
@@ -202,7 +200,7 @@ Abstraction creates an abstract data type, and C++ uses the class feature to imp
 
 **The Key Idea— A** *Class* **Encapsulates (Bundles Together) Code with Its Related Data** When programming first evolved, assembler programs could only operate on bits and words. As high-level languages developed, they provided easy access to the growing variety of hardware operands: floats, doubles, longs, chars, and so on. Some high-level languages enforced strong typing to ensure that only operations appropriate to a variable's type could be done. This was a rudimentary form of class, as it tied together data items with the permissible operations on them. The operations were typically restricted to individual
 
-![Image 150](media/index-250_1.png)
+![Image 150](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-250_1.png)
 
 hardware instructions, like "floating-point multiply".
 
@@ -224,7 +222,7 @@ A C++ class allows user-defined types to:
 
 • build up sophisticated types out of more basic ones.
 
-![Image 151](media/index-251_1.png)
+![Image 151](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-251_1.png)
 
 **Software Dogma**
 
@@ -266,7 +264,7 @@ friend This says that the function is not a member of the class, but can access 
 
 virtual We have not yet covered the concepts that motivate this, so we'll postpone explaining it till
 
-![Image 152](media/index-252_1.png)
+![Image 152](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-252_1.png)
 
 later.
 
@@ -280,7 +278,6 @@ The *declarations* are just regular C declarations of functions, types (includin
 
 The class binds them together. Each function declaration in the class needs an implementation, which can be inside the class or (usually) separated out. So the whole thing may look like: class Fruit { public: peel(); slice(); juice();
 
-private: int weight, calories_per_oz;
 
 };
 
@@ -322,7 +319,6 @@ slice();
 
 juice();
 
-private: int weight, calories_per_oz;
 
 };
 
@@ -334,7 +330,6 @@ slice();
 
 juice();
 
-private: int weight, calories_per_oz;
 
 };
 
@@ -344,7 +339,7 @@ The two approaches are semantically equivalent, but the second is more usual and
 
 **Programming Challenge**
 
-![Image 153](media/index-254_1.png)
+![Image 153](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-254_1.png)
 
 **Write the Method Bodies**
 
@@ -378,9 +373,8 @@ Every method has a this pointer parameter implicitly passed to it, allowing an o
 
 class Fruit { public: void peel();
 
-![Image 154](media/index-255_1.png)
+![Image 154](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-255_1.png)
 
-private: int weight, calories_per_oz;
 
 } ;
 
@@ -414,7 +408,7 @@ Classname :: Classname (arguments) { . . . };
 
 In the fruit example:
 
-![Image 155](media/index-256_1.png)
+![Image 155](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-256_1.png)
 
 class Fruit { public: peel(); slice(); juice();
 
@@ -422,7 +416,6 @@ Fruit(int i, int j); // constructor
 
 ~Fruit(); // destructor
 
-private: int weight, calories_per_oz;
 
 } ;
 
@@ -452,9 +445,9 @@ Single inheritance occurs when a class specializes, or refines, the data structu
 
 **Software Dogma**
 
-![Image 156](media/index-257_1.png)
+![Image 156](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-257_1.png)
 
-![Image 157](media/index-257_2.png)
+![Image 157](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-257_2.png)
 
 **The Key Idea: Inheritance**
 
@@ -500,7 +493,7 @@ So we make Apple a derived class that inherits all the Fruit class operations an
 
 **Software Dogma**
 
-![Image 158](media/index-259_1.png)
+![Image 158](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-259_1.png)
 
 **How C++ Does Inheritance**
 
@@ -510,7 +503,6 @@ An example of a base class is:
 
 class Fruit { public: peel(); slice(); juice();
 
-private: int weight, calories_per_oz;
 
 } ;
 
@@ -540,9 +532,9 @@ Don't confuse nesting one class inside another with inheritance. Nesting just br
 
 Inheritance says *the derived class is a variation of the base class* and there are many detailed semantics governing how they can access each other. It's the difference between a smaller object being one part of many in a larger object (nesting), and one object being a specialization of a more general parent object (inheritance). We wouldn't say that a mammal is nested in a dog; we may say that dogs inherit mammalian characteristics. Figure out which situation you have, and use the appropriate idiom.
 
-![Image 159](media/index-260_1.png)
+![Image 159](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-260_1.png)
 
-![Image 160](media/index-260_2.png)
+![Image 160](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-260_2.png)
 
 **Multiple Inheritance—Deriving from Two or More Base Classes** *C makes it easy to shoot yourself in the foot. C++ makes it harder, but when you do, it blows away* *your whole leg.*
 
@@ -564,7 +556,7 @@ Multiple inheritance is much less common than single inheritance, and has been t
 
 ***Figure 11-3. Multiple Inheritance***
 
-![Image 161](media/index-261_1.png)
+![Image 161](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-261_1.png)
 
 Multiple inheritance seems a difficult, error-prone feature in both implementation and use. Some people say that no convincing examples have been produced where there was no alternative design avoiding multiple inheritance.
 
@@ -594,7 +586,6 @@ int operator+(Fruit &f); // overload "+"
 
 operator
 
-private: int weight, calories_per_oz;
 
 } ;
 
@@ -634,7 +625,7 @@ There is an I/O interface known as iostream.h that helps to make I/O more conven
 
 The operators \<\< (to put, or "insert") and \>\> (to get, or "extract") are used instead of functions like putchar() and getchar().
 
-![Image 162](media/index-263_1.png)
+![Image 162](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-263_1.png)
 
 The \<\< and \>\> operators are still used for shift left and right as in C, but they are overloaded for C++
 
@@ -680,7 +671,6 @@ slice();
 
 juice();
 
-private: int weight, calories_per_oz;
 
 } ;
 
@@ -714,7 +704,7 @@ p = new Apple;
 
 p-\>peel();
 
-![Image 163](media/index-265_1.png)
+![Image 163](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-265_1.png)
 
 Whoa! If you try it, you'll get output like this:
 
@@ -760,7 +750,6 @@ fruit\n");}
 
 slice(); juice();
 
-private: int weight, calories_per_oz;
 
 } ;
 
@@ -792,7 +781,7 @@ main() {
 
 Apple apple;
 
-![Image 164](media/index-267_1.png)
+![Image 164](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-267_1.png)
 
 Fruit orange;
 
@@ -834,7 +823,7 @@ Among the concepts not covered here, C++ also has:
 
 Once you get the basic algorithm down, you can plug different types into it. They are similar to the generic facility in Ada and parameterized modules in Clu. They have quite complicated semantics. This code:
 
-![Image 165](media/index-268_1.png)
+![Image 165](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-268_1.png)
 
 •
 
@@ -868,7 +857,7 @@ C++ was designed under severe constraints of compatibility, internal consistency
 
 1\. \[1\] would cause a serious incompatibility with C at the source or linker levels.
 
-![Image 166](media/index-269_1.png)
+![Image 166](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-269_1.png)
 
 2\. \[2\] would cause run-time or space overheads for a program that did not use it.
 
@@ -906,7 +895,7 @@ C++ features to avoid using:
 
 • templates
 
-![Image 167](media/index-270_1.png)
+![Image 167](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-270_1.png)
 
 • exceptions
 
@@ -952,7 +941,7 @@ C++ may be more successful at software reuse than previous languages because its
 
 makes it easier to check books out from the library, but you still have the problem of copying the relevant parts sensibly.
 
-![Image 168](media/index-272_1.png)
+![Image 168](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-272_1.png)
 
 **It May Be Crufty \[4\], but It's the Only Game in Town**
 
@@ -984,7 +973,7 @@ is allowed in C++, but will generate an error message from C.
 
 Although C++ may be crufty, it's the only game in town. All the major players are behind it. All new development at AT&T is said to be in C++ now. The graphics part of Windows NT (which was later, slower and bigger than expected) was written in C++. Most new software development tools, applications libraries, and advanced technologies are now written in C++, or at least the ANSI C subset of it. But how long will it be before we start to see spectacular bugs like the AT&T network shutdown, caused or aggravated by features in C++ rather than C?
 
-![Image 169](media/index-273_1.png)
+![Image 169](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-273_1.png)
 
 It doesn't matter. C++ will become widely used in spite of its flaws, and we hope it will eventually lead the way to something better.
 
@@ -1181,3 +1170,17 @@ The panel moderator tried to draw the members out on the "one single thing that,
 However, the chief architect from Multiflow, which went down the tubes around the same time as Elxsi, felt that their decision not to use ECL was one of several factors that ultimately caused Multiflow's demise!
 
 About the only consensus was that management and market conditions were responsible for many, many more bankruptcies than were technical failures. This is understandable; companies that don't
+
+![Image 170](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-277_1.png)
+
+listen to their customers *always* go out of business. Companies that try to push the state of the art often succeed.
+
+There were some minor technical themes, like making your product hard to program (e.g. the CDC7600 with two-level memory, or one's complement arithmetic, or the cruel and unusual punishment of 60-bit words) doesn't help. It's not too surprising that no major common technical theme emerged. Maybe there isn't one. One thing is certain, though: we all learn far more from our mistakes than from our successes.
+
+**Some Final Light Relief—Your Certificate of Merit!**
+
+\[Instructions: cut out from book, write your name in, and hand to boss\]
+
+**Further Reading**
+
+One C book I have found very helpful is *C, A Reference Manual*, written by Samuel P. Harbison and Guy L. Steele, ( Englewood Cliffs, Prentice Hall, 1991). Harbison and Steele wrote this book based on their experience developing a family of C compilers for a wide range of different architectures, and their practical insights shine off every page.

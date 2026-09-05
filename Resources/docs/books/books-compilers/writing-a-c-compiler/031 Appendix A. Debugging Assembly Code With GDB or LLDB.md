@@ -1,6 +1,6 @@
 ## `A` `DEBUGGING ASSEMBLY CODE WITH GDB OR LLDB`
 
-![](media/a26394c5fd9047c0974071f62d6ff4719089a6da.jpg)
+![](/tmp/audit/iter1/epubregen/writing-a-c-compiler/media/a26394c5fd9047c0974071f62d6ff4719089a6da.jpg)
 
 At some point, your compiler is going to generate assembly code that doesn’t behave correctly, and you’ll need to figure out why. When that happens, a command line debugger is indispensable for understanding what’s going wrong. A debugger lets you pause a running program, step through it one instruction at a time, and examine the program state at different points. You can use either GDB (the GNU debugger) or LLDB (the debugger from the LLVM Project) to debug the assembly code your compiler generates. I recommend using GDB if you’re on Linux and LLDB if you’re on macOS (I think GDB has a slightly nicer UI for working with assembly, but getting it to run on macOS can be a challenge).
 
@@ -95,7 +95,7 @@ The `layout` command controls which windows are visible. Let’s open up the ass
 
 You should now see three windows in your terminal: the register window, the assembly window, and the command window with the `(gdb)` prompt. It should look similar to Figure A-1.
 
-![](media/3db878f081b128a4740edee5e42d47908571a9e2.jpg)
+![](/tmp/audit/iter1/epubregen/writing-a-c-compiler/media/3db878f081b128a4740edee5e42d47908571a9e2.jpg)
 
 `Figure A-1: A GDB session with the assembly and register windows open ``Description`
 
@@ -125,7 +125,7 @@ Now let’s start the program:
 
 The output of this command tells us that the program has hit the breakpoint we just set ❶. Notice that the current instruction is highlighted in the assembly window and the current values of the general-purpose registers are displayed in the register window, as shown in Figure A-2.
 
-![](media/729b96fd6a5a2e4dff4780af00cec29603957b4a.jpg)
+![](/tmp/audit/iter1/epubregen/writing-a-c-compiler/media/729b96fd6a5a2e4dff4780af00cec29603957b4a.jpg)
 
 `Figure A-2: A GDB session when the program is stopped at a breakpoint ``Description`
 
@@ -481,7 +481,6 @@ We can see from the command output that we’re stopped in `f` instead of `main`
 
     (lldb) finish
     --snip--
-    hello_debugger`main:
     ->  0x100003f72 <+13>: movl   $0x87654321, %eax         ; imm = 0x87654321
     --snip--
 
@@ -499,7 +498,6 @@ Now we’re paused at the start of `main` again. Once again, we’ll move forwar
 
     (lldb) nexti -c 4
     --snip--
-    hello_debugger`main:
     ->  0x100003f72 <+13>: movl   $0x87654321, %eax         ; imm = 0x87654321
     --snip--
 
@@ -509,7 +507,6 @@ This puts us back at the instruction right after `callq`.
 
 In addition to setting breakpoints on functions, you can break on specific machine instructions. Let’s set a breakpoint on the instruction `movl 0xdeadbeef, -4(%rbp)`. First, we need to find this instruction’s address. Luckily, LLDB has already given us this information. The output from the last command should look something like this:
 
-    hello_debugger`main:
     ->  0x100003f72 <+13>: movl   $0x87654321, %eax         ; imm = 0x87654321
         0x100003f77 <+18>: movsd  0x181(%rip), %xmm0        ; dbl, xmm0 = mem[0],zero
       ❶ 0x100003f7f ❷ <+26>: movl   $0xdeadbeef, -0x4(%rbp)   ; imm = 0xDEADBEEF
@@ -553,7 +550,6 @@ Next, we’ll look at how to display all the assembly instructions in a function
 The command `disassemble -n` `<function name>` tells LLDB to print out all the assembly instructions in a function. Let’s try this out on `main`:
 
     (lldb) disassemble -n main
-    hello_debugger`main:
         0x100003f65 <+0>:  pushq  %rbp
         0x100003f66 <+1>:  movq   %rsp, %rbp
         0x100003f69 <+4>:  subq   $0x10, %rsp
@@ -605,7 +601,6 @@ Let’s try some examples. Right now, the program should be paused at the instru
 
     (lldb) stepi
     --snip--
-    hello_debugger`main:
     ->  0x100003f77 <+18>: movsd  0x181(%rip), %xmm0        ; dbl, xmm0 = mem[0],zero
     --snip--
     (lldb) exp -- $eax
@@ -621,7 +616,6 @@ Chapter 13 introduces the XMM registers, which hold floating-point values. The n
 
     (lldb) stepi
     --snip--
-    hello_debugger`main:
     ->  0x100003f7f <+26>: movl   $0xdeadbeef, -0x4(%rbp)   ; imm = 0
     --snip--
     (lldb) exp -f float64[] -- $xmm0
@@ -650,7 +644,6 @@ We can also dereference pointers. Let’s execute the next instruction, `movl 0x
 
     (lldb) stepi
     --snip--
-    hello_debugger`main:
     ->  0x100003f86 <+33>: movl   $0x0, -0x8(%rbp)
     --snip--
     (lldb) exp -f x -- *(int *)($rbp - 4)
@@ -679,7 +672,6 @@ Let’s step through these instructions, then print out the whole stack frame. W
 
     (lldb) stepi -c 3
     --snip--
-    hello_debugger`main:
     ->  0x100003f9b <+54>: movl   $0x19, %ecx
     --snip--
     (lldb) memory read -f x -s 4 -c 6 -l 1 $rsp
@@ -722,7 +714,6 @@ To wrap up this walk-through, we’ll look at how to set *conditional breakpoint
 Let’s set a breakpoint on the `jne` instruction at the end of the last loop iteration in `hello_debugger`. First, we’ll find this instruction’s address in the disassembled `main` function:
 
     (lldb) disassemble -n main
-    hello_debugger`main:
         --snip--
       ❶ 0x100003fa6 <+65>:  jne    0x100003fa0               ; <+59>
         --snip--
@@ -735,7 +726,6 @@ Since this loop repeats until ECX is 0, the condition `$ecx` `==` `0` will be tr
 
     (lldb) continue
     --snip--
-    hello_debugger`main:
     ->  0x100003fa6 <+65>:  jne    0x100003fa0               ; <+59>
     --snip--
     (lldb) exp -- $ecx
@@ -757,7 +747,6 @@ We should be on the last loop iteration, so let’s step forward one instruction
 
     (lldb) stepi
     --snip--
-    hello_debugger`main:
     ->  0x100003fa8 <+67>:  movl   $0x0, %eax
     --snip--
 

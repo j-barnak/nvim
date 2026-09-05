@@ -12,7 +12,7 @@ In immutable structures, such as multicomponent LSM Trees and FD-Trees, bufferin
 
 When using immutability, unless we *also* use buffering, we end up with unordered storage structures like Bitcask and WiscKey (with the exception of copy-on-write B-Trees, which copy, re-sort, and relocate their pages). WiscKey stores *only keys* in sorted LSM Trees and allows retrieving records in key order using the key index. In Bw-Trees, *some* of the nodes (ones that were consolidated) hold data records in key order, while the rest of the logical Bw-Tree nodes may have their delta updates scattered across different pages.
 
-![dbin 0001](media/assets/dbin_0001.png)
+![dbin 0001](/tmp/audit/iter1/epubregen/database-internals/media/assets/dbin_0001.png)
 
 ###### Figure I-1. Buffering, immutability, and ordering properties of discussed storage structures. (1) WiscKey uses buffering only for keeping keys sorted order. (2) Only consolidated nodes in Bw-Trees hold ordered records.
 

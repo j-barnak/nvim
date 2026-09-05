@@ -1,4 +1,4 @@
-![](media/index-451_1.jpg)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-451_1.jpg)
 
 Backup slides
 

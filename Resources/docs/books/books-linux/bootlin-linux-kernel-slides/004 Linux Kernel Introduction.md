@@ -1,5 +1,3 @@
-![](media/index-17_1.jpg)
-
 Linux Kernel Introduction
 
  
@@ -22,7 +20,7 @@ Corrections, suggestions, contributions and translations are welcome!
 
 Origin
 
-![](media/index-18_1.jpg)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-18_1.jpg)
 
  
 
@@ -82,73 +80,73 @@ services
 
 *•* File and device operations, networking operations,
 
-![](media/index-21_1.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-21_1.png)
 
 inter-process communication, process management, memory mapping, timers, threads, synchronization primitives, etc.
 
-![](media/index-21_2.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-21_2.png)
 
 ▶ This system call interface is wrapped by the C library,
 
-![](media/index-21_3.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-21_3.png)
 
 and user space applications usually never make a system
 
-![](media/index-21_4.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-21_4.png)
 
 call directly but rather use the corresponding C library Image credits (Wikipedia):
 
-![](media/index-21_5.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-21_5.png)
 
 <https://bit.ly/2U2rdGB>
 
-![](media/index-21_6.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-21_6.png)
 
 function
 
-![](media/index-21_7.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-21_7.png)
 
  
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 21/436
 
-![](media/index-21_8.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-21_8.png)
 
-![](media/index-21_9.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-21_9.png)
 
-![](media/index-21_10.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-21_10.png)
 
-![](media/index-21_11.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-21_11.png)
 
-![](media/index-21_12.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-21_12.png)
 
-![](media/index-21_13.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-21_13.png)
 
-![](media/index-21_14.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-21_14.png)
 
-![](media/index-21_15.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-21_15.png)
 
-![](media/index-21_16.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-21_16.png)
 
-![](media/index-21_17.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-21_17.png)
 
-![](media/index-21_18.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-21_18.png)
 
-![](media/index-21_19.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-21_19.png)
 
-![](media/index-21_20.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-21_20.png)
 
-![](media/index-21_21.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-21_21.png)
 
-![](media/index-21_22.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-21_22.png)
 
-![](media/index-21_23.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-21_23.png)
 
-![](media/index-21_24.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-21_24.png)
 
-![](media/index-21_25.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-21_25.png)
 
-![](media/index-21_26.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-21_26.png)
 
 Pseudo filesystems
 
@@ -260,7 +258,7 @@ release, and is supposed to be supported (and receive bug and security fixes) fo
 
 up to 6 years.
 
-![](media/index-29_1.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-29_1.png)
 
  
 
@@ -366,13 +364,13 @@ filesystems... The core is pretty small!
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 32/436 Practical lab - Downloading kernel source code
 
-![](media/index-33_1.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-33_1.png)
 
  
 
 ▶ Clone the mainline Linux source tree with git
 
-![](media/index-33_2.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-33_2.png)
 
  
 
@@ -476,91 +474,91 @@ Linux kernel to userspace API is stable
 
 ▶ Source code for userspace applications will not have to
 
-![](media/index-38_1.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-38_1.png)
 
 be updated when compiling for a more recent kernel
 
-![](media/index-38_2.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-38_2.png)
 
 *•* System calls, /proc and /sys content cannot be
 
-![](media/index-38_3.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-38_3.png)
 
 removed or changed. Only new entries can be added.
 
-![](media/index-38_4.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-38_4.png)
 
 Linux kernel to userspace ABI is stable **Linux kernel to user** **ABI**
 
-![](media/index-38_5.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-38_5.png)
 
 ▶ ☐ ✔compatible ABI **can be** guaranteed, Binaries are portable and can be executed on a more binaries are portable
 
-![](media/index-38_6.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-38_6.png)
 
 Linux v3.8
 
-![](media/index-38_7.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-38_7.png)
 
 recent kernel LibreOffice
 
-![](media/index-38_8.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-38_8.png)
 
 *•* Firefox The way memory is accessed, the size of the variables in Emacs Linux v4.14
 
-![](media/index-38_9.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-38_9.png)
 
 memory, how structures are organized, the calling Gimp VLC
 
-![](media/index-38_10.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-38_10.png)
 
 et al.
 
-![](media/index-38_11.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-38_11.png)
 
 convention, etc, are all stable over time. compiled against Linux v5.19
 
-![](media/index-38_12.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-38_12.png)
 
 LSB 5.0 for x86-64
 
-![](media/index-38_13.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-38_13.png)
 
 compiled against
 
-![](media/index-38_14.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-38_14.png)
 
 LSB 5.0 for x86-64
 
-![](media/index-38_15.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-38_15.png)
 
 Modified Image from Wikipedia:
 
-![](media/index-38_16.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-38_16.png)
 
 <https://bit.ly/2U2rdGB>
 
-![](media/index-38_17.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-38_17.png)
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 38/436 Linux internal API/ABI instability
 
-![](media/index-38_18.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-38_18.png)
 
-![](media/index-38_19.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-38_19.png)
 
-![](media/index-38_20.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-38_20.png)
 
-![](media/index-38_21.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-38_21.png)
 
-![](media/index-38_22.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-38_22.png)
 
-![](media/index-38_23.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-38_23.png)
 
-![](media/index-38_24.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-38_24.png)
 
-![](media/index-38_25.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-38_25.png)
 
-![](media/index-38_26.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-38_26.png)
 
 **Linux internal** **API** ✘ ☐ API stability **is not** guaranteed,
 
@@ -584,51 +582,51 @@ Linux internal ABI is not stable ✘
 
 ▶ in Linux v5.19 A binary module compiled for a given kernel version
 
-![](media/index-39_1.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-39_1.png)
 
 cannot be used with another version ✘
 
-![](media/index-39_2.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-39_2.png)
 
 *•* compiled for in Linux v5.18 The module loading utilities will perform this check Linux v5.17
 
-![](media/index-39_3.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-39_3.png)
 
 prior to the insertion ✔
 
-![](media/index-39_4.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-39_4.png)
 
 in Linux v5.17
 
-![](media/index-39_5.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-39_5.png)
 
 Modified Image from Wikipedia:
 
-![](media/index-39_6.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-39_6.png)
 
 <https://bit.ly/2U2rdGB>
 
-![](media/index-39_7.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-39_7.png)
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 39/436 Kernel memory constraints
 
-![](media/index-39_8.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-39_8.png)
 
-![](media/index-39_9.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-39_9.png)
 
-![](media/index-39_10.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-39_10.png)
 
-![](media/index-39_11.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-39_11.png)
 
-![](media/index-39_12.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-39_12.png)
 
-![](media/index-39_13.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-39_13.png)
 
-![](media/index-39_14.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-39_14.png)
 
-![](media/index-39_15.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-39_15.png)
 
-![](media/index-39_16.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-39_16.png)
 
  
 
@@ -810,14 +808,16 @@ avoidance of system calls.
 
 Practical lab - Kernel Source Code - Exploring
 
-![](media/index-48_1.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-48_1.png)
 
  
 
 ▶ Explore kernel sources manually ▶ Use automated tools to explore the source code
 
-![](media/index-48_2.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-48_2.png)
 
  
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 48/436
+
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-49_1.jpg)

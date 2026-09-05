@@ -1,1 +1,1 @@
-![](media/f1bcaa17416cb1ae7da83a9cbd9fed7188f33905.svgz)
+![](/tmp/audit/iter1/epubregen/the-linux-memory-manager/media/f1bcaa17416cb1ae7da83a9cbd9fed7188f33905.svgz)

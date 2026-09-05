@@ -139,7 +139,7 @@ For more information about our books, conferences, Resource Centers, and the O�
 
 # Safari Enabled
 
-![image with no caption](media/httpatomoreillycomsourceoreillyimages138385.png)
+![image with no caption](/tmp/audit/iter1/epubregen/linux-device-drivers-3rd-edition/media/httpatomoreillycomsourceoreillyimages138385.png)
 
 When you see a Safari® Enabled icon on the cover of your favorite technology book, that means the book is available online through the O’Reilly Network Safari Bookshelf.
 

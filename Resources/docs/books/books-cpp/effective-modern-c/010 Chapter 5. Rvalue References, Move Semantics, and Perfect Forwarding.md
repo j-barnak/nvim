@@ -132,7 +132,6 @@ explicit Annotation(const std::string text)
 
 …
 
-private:
 
 std::string value;
 
@@ -216,7 +215,6 @@ Widget(Widget&& rhs)
 
 **162 \| Item 23**
 
-private:
 
 static std::size_t moveCtorCalls;
 
@@ -274,7 +272,6 @@ Universal references arise in two contexts. The most common is function template
 
 **164 \| Item 24**
 
-template\<typename T\>
 
 void f(T**&&** param); // param is a universal reference The second context is auto declarations, including this one from the sample code above:
 
@@ -290,7 +287,6 @@ Widget**&&** var1 = Widget(); // no type deduction;
 
 Because universal references are references, they must be initialized. The initializer for a universal reference determines whether it represents an rvalue reference or an lvalue reference. If the initializer is an rvalue, the universal reference corresponds to an rvalue reference. If the initializer is an lvalue, the universal reference corresponds to an lvalue reference. For universal references that are function parameters, the initializer is provided at the call site:
 
-template\<typename T\>
 
 void f(T&& param); // param is a universal reference
 
@@ -306,7 +302,6 @@ f(**std::move(w)**); // rvalue passed to f; param's type is
 
 For a reference to be universal, type deduction is necessary, but it’s not sufficient. The *form* of the reference declaration must also be correct, and that form is quite constrained. It must be precisely “T&&”. Look again at this example from the sample code we saw earlier:
 
-template\<typename T\>
 
 void f(**std::vector\<T\>&&** param); // param is an rvalue reference When f is invoked, the type T will be deduced (unless the caller explicitly specifies it, an edge case we’ll not concern ourselves with). But the form of param’s type declara-Item 24 \| 165
 
@@ -318,7 +313,6 @@ f(v); // error! can't bind lvalue to
 
 Even the simple presence of a const qualifier is enough to disqualify a reference from being universal:
 
-template\<typename T\>
 
 void f(**const** T&& param); // param is an rvalue reference If you’re in a template and you see a function parameter of type “T&&”, you might think you can assume that it’s a universal reference. You can’t. That’s because being in a template doesn’t guarantee the presence of type deduction. Consider this push_back member function in std::vector:
 
@@ -432,7 +426,6 @@ Widget(**Widget&&** rhs); // rhs *definitely* refers to an **168 \| Item 24**
 
 That being the case, you’ll want to pass such objects to other functions in a way that permits those functions to take advantage of the object’s rvalueness. The way to do that is to cast parameters bound to such objects to rvalues. As Item 23 explains, that’s not only what std::move does, it’s what it was created for:
 
-class Widget {
 
 public:
 
@@ -446,7 +439,6 @@ p(**std::move(rhs.p)**)
 
 …
 
-private:
 
 std::string name;
 
@@ -458,11 +450,9 @@ A universal reference, on the other hand (see Item 24), *might* be bound to an o
 
 were initialized with rvalues. Item 23 explains that this is precisely what std::for ward does:
 
-class Widget {
 
 public:
 
-template\<typename T\>
 
 void setName(T&& newName) // newName is
 
@@ -478,11 +468,9 @@ Item 23 explains that using std::forward on rvalue references can be made to exh
 
 **Item 25 \| 169**
 
-class Widget {
 
 public:
 
-template\<typename T\>
 
 void setName(**T&&** newName) // universal reference
 
@@ -490,7 +478,6 @@ void setName(**T&&** newName) // universal reference
 
 … // *bad, bad, bad!*
 
-private:
 
 std::string name;
 
@@ -512,7 +499,6 @@ Here, the local variable n is passed to w.setName, which the caller can be forgi
 
 You might argue that setName shouldn’t have declared its parameter to be a universal reference. Such references can’t be const (see Item 24), yet setName surely shouldn’t modify its parameter. You might point out that if setName had simply been overloaded for const lvalues and for rvalues, the whole problem could have been avoided. Like this:
 
-class Widget {
 
 public:
 
@@ -618,7 +604,6 @@ The situation is similar for universal references and std::forward. Consider a f
 
 Hence:
 
-template\<typename T\>
 
 **Fraction** // by-value return
 
@@ -896,11 +881,9 @@ arguments where this isn’t the case are described in Item 30.) This is why com
 
 An easy way to topple into this pit is to write a perfect forwarding constructor. A small modification to the logAndAdd example demonstrates the problem. Instead of writing a free function that can take either a std::string or an index that can be used to look up a std::string, imagine a class Person with constructors that do the same thing:
 
-class Person {
 
 public:
 
-template\<typename T\>
 
 explicit Person(T&& n) // perfect forwarding ctor;
 
@@ -912,7 +895,6 @@ explicit Person(int idx) // int ctor
 
 …
 
-private:
 
 std::string name;
 
@@ -920,7 +902,6 @@ std::string name;
 
 As was the case with logAndAdd, passing an integral type other than int (e.g., std::size_t, short, long, etc.) will call the universal reference constructor overload instead of the int overload, and that will lead to compilation failures. The problem here is much worse, however, because there’s more overloading present in Person than meets the eye. Item 17 explains that under the appropriate conditions, C++ will generate both copy and move constructors, and this is true even if the class contains a templatized constructor that could be instantiated to produce the signature of the copy or move constructor. If the copy and move constructors for Person are thus generated, Person will effectively look like this:
 
-class Person {
 
 public:
 
@@ -958,7 +939,6 @@ Indeed we are, but compilers are sworn to uphold the rules of C++, and the rules
 
 Compilers reason as follows. cloneOfP is being initialized with a non-const lvalue (p), and that means that the templatized constructor can be instantiated to take a non-const lvalue of type Person. After such instantiation, the Person class looks like this:
 
-class Person {
 
 public:
 
@@ -994,7 +974,6 @@ auto cloneOfP(cp); // calls copy constructor!
 
 Because the object to be copied is now const, it’s an exact match for the parameter taken by the copy constructor. The templatized constructor can be instantiated to have the same signature,
 
-class Person {
 
 public:
 
@@ -1078,7 +1057,6 @@ An approach that often allows you to dial up performance without any increase in
 
 by value. The design adheres to the advice in Item 41 to consider passing objects by value when you know you’ll copy them, so I’ll defer to that Item for a detailed discussion of how things work and how efficient they are. Here, I’ll just show how the technique could be used in the Person example:
 
-class Person {
 
 public:
 
@@ -1090,7 +1068,6 @@ explicit Person(**std::string** n) // replaces T&& ctor; see **184 \| Item 27**
 
 …
 
-private:
 
 std::string name;
 
@@ -1140,7 +1117,6 @@ Yes, I know, “Blah, blah, blah. Stop talking and show me the code!” No probl
 
 Here’s an almost-correct version of the updated logAndAdd:
 
-template\<typename T\>
 
 void logAndAdd(T&& name)
 
@@ -1160,7 +1136,6 @@ Recognizing the problem is tantamount to solving it, because the ever-handy Stan
 
 **186 \| Item 27**
 
-template\<typename T\>
 
 void logAndAdd(T&& name)
 
@@ -1250,7 +1225,6 @@ Here’s the declaration for the perfect-forwarding constructor in Person, showi
 
 Item 26.
 
-class Person {
 
 public:
 
@@ -1302,7 +1276,6 @@ Item 9 explains, the “typename” in front of std::decay is required, because 
 
 Inserting this condition into the std::enable_if boilerplate above, plus formatting the result to make it easier to see how the pieces fit together, yields this declaration for Person’s perfect-forwarding constructor:
 
-class Person {
 
 public:
 
@@ -1370,7 +1343,6 @@ std::is_base_of\<T1, T2\>::value is true if T2 is derived from T1. Types are con
 
 This is handy, because we want to revise our condition controlling Person’s perfect-forwarding constructor such that the constructor is enabled only if the type T, after stripping it of references and cv-qualifiers, is neither Person nor a class derived from Person. Using std::is_base_of instead of std::is_same gives us what we need: **192 \| Item 27**
 
-class Person {
 
 public:
 
@@ -1434,7 +1406,6 @@ We’ve seen how to use std::enable_if to selectively disable Person’s univers
 
 All we need to do—and I really do mean that this is everything—is (1) add a Person constructor overload to handle integral arguments and (2) further constrain the templatized constructor so that it’s disabled for such arguments. Pour these ingredi-ents into the pot with everything else we’ve discussed, simmer over a low flame, and savor the aroma of success:
 
-class Person {
 
 public:
 
@@ -1468,7 +1439,6 @@ explicit Person(T&& n) // ctor for std::strings and
 
 … // copy and move ctors, etc.
 
-private:
 
 std::string name;
 
@@ -1506,7 +1476,6 @@ In the case of Person, we know that the forwarding function’s universal refere
 
 static_assert to verify that it can play that role. The std::is_constructible type trait performs a compile-time test to determine whether an object of one type can be constructed from an object (or set of objects) of a different type (or set of types), so the assertion is easy to write:
 
-class Person {
 
 public:
 
@@ -1566,7 +1535,6 @@ This causes the specified error message to be produced if client code tries to c
 
 Item 23 remarks that when an argument is passed to a template function, the type deduced for the template parameter encodes whether the argument is an lvalue or an rvalue. The Item fails to mention that this happens only when the argument is used to initialize a parameter that’s a universal reference, but there’s a good reason for the omission: universal references aren’t introduced until Item 24. Together, these observations about universal references and lvalue/rvalue encoding mean that for this template,
 
-template\<typename T\>
 
 void func(T&& param);
 
@@ -1598,7 +1566,6 @@ int x;
 
 auto**& &** rx = x; // error! can't declare reference to reference But consider what happens when an lvalue is passed to a function template taking a universal reference:
 
-template\<typename T\>
 
 void func(T&& param); // as before
 
@@ -1630,7 +1597,6 @@ In our example above, substitution of the deduced type Widget& into the template
 
 Reference collapsing is a key part of what makes std::forward work. As explained in Item 25, std::forward is applied to universal reference parameters, so a common use case looks like this:
 
-template\<typename T\>
 
 void f(T&& fParam)
 
@@ -1718,7 +1684,6 @@ Reference collapsing occurs in four contexts. The first and most common is templ
 
 example from earlier in the Item:
 
-template\<typename T\>
 
 void func(T&& param);
 
@@ -1772,9 +1737,7 @@ The concept of universal references is useful, because it frees you from having 
 
 I said there were four such contexts, but we’ve discussed only two: template instantiation and auto type generation. The third is the generation and use of typedefs and alias declarations (see Item 9). If, during creation or evaluation of a typedef, references to references arise, reference collapsing intervenes to eliminate them. For example, suppose we have a Widget class template with an embedded typedef for an rvalue reference type,
 
-template\<typename T\>
 
-class Widget {
 
 public:
 
@@ -1822,25 +1785,25 @@ Move semantics can really pull that off, and that grants the feature an aura wor
 
 Let’s begin with the observation that many types fail to support move semantics. The entire C++98 Standard Library was overhauled for C++11 to add move operations for types where moving could be implemented faster than copying, and the implementation of the library components was revised to take advantage of these operations, but chances are that you’re working with a code base that has not been completely revised to take advantage of C++11. For types in your applications (or in the libraries you use) where no modifications for C++11 have been made, the exis-Item 28 \| 203
 
-![](media/index-222_1.jpg)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-222_1.jpg)
 
-![](media/index-222_2.png)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-222_2.png)
 
-![](media/index-222_3.jpg)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-222_3.jpg)
 
-![](media/index-222_4.png)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-222_4.png)
 
-![](media/index-222_5.jpg)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-222_5.jpg)
 
-![](media/index-222_6.png)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-222_6.png)
 
-![](media/index-222_7.jpg)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-222_7.jpg)
 
-![](media/index-222_8.png)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-222_8.png)
 
-![](media/index-222_9.jpg)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-222_9.jpg)
 
-![](media/index-222_10.png)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-222_10.png)
 
 tence of move support in your compilers is likely to do you little good. True, C++11
 
@@ -1886,17 +1849,17 @@ std::array objects lack such a pointer, because the data for a std::array’s co
 
 **204 \| Item 29**
 
-![](media/index-223_1.jpg)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-223_1.jpg)
 
-![](media/index-223_2.png)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-223_2.png)
 
-![](media/index-223_3.jpg)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-223_3.jpg)
 
-![](media/index-223_4.png)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-223_4.png)
 
-![](media/index-223_5.jpg)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-223_5.jpg)
 
-![](media/index-223_6.png)
+![](/tmp/audit/iter1/epubregen/effective-modern-c/media/index-223_6.png)
 
 **std::array**\<Widget, 10000\> aw1;
 
@@ -2072,7 +2035,6 @@ Item 8 explains that when you try to pass 0 or NULL as a null pointer to a templ
 
 **Declaration-only integral static const data members** As a general rule, there’s no need to define integral static const data members in classes; declarations alone suffice. That’s because compilers perform *const propagation* on such members’ values, thus eliminating the need to set aside memory for them. For example, consider this code:
 
-class Widget {
 
 public:
 
@@ -2158,7 +2120,6 @@ processVal alone has no type. Without a type, there can be no type deduction, an
 
 The same problem arises if we try to use a function template instead of (or in addition to) an overloaded function name. A function template doesn’t represent one function, it represents *many* functions:
 
-template\<typename T\>
 
 T workOnVal(T param) // template for processing values
 
@@ -2243,3 +2204,5 @@ In most cases, perfect forwarding works exactly as advertised. You rarely have t
 • The kinds of arguments that lead to perfect forwarding failure are braced initializers, null pointers expressed as 0 or NULL, declaration-only integral const static data members, template and overloaded function names, and bitfields.
 
 **214 \| Item 30**
+
+**CHAPTER 6**

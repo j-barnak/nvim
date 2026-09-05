@@ -17,33 +17,22 @@ The Linux device model is built on top of some fundamental data structures, incl
 
 Devices help extract either physical or virtual devices. They are built on top of the **struct device** structure, which is worth introducing first, as described in **include/linux/device.h**:
 
+``` c
 struct device {
-
-    struct device         \*parent;
-
-    struct kobject        kobj;
-
-    struct bus_type       \*bus;
-
-    struct device_driver  \*driver;
-
-    void \*platform_data;
-
-    void \*driver_data;
-
-    struct dev_pm_domain  \*pm_domain;
-
-    struct device_node    \*of_node;
-
-    struct fwnode_handle  \*fwnode;
-
-    dev_t       devt;
-
-    u32         id;
-
-    \[...\]
-
+    struct device         *parent;
+    struct kobject        kobj;
+    struct bus_type       *bus;
+    struct device_driver  *driver;
+    void *platform_data;
+    void *driver_data;
+    struct dev_pm_domain  *pm_domain;
+    struct device_node    *of_node;
+    struct fwnode_handle  *fwnode;
+    dev_t       devt;
+    u32         id;
+    [...]
 };
+```
 
 Let's look at each element in this structure:
 
@@ -65,33 +54,22 @@ The next structure we need to introduce is the **struct device_driver** structur
 
 This data structure is defined in **include/linux/device/driver.h** like so:
 
+``` c
 struct device_driver {
-
-    const char        \*name;
-
-    struct bus_type   \*bus;
-
-     struct module    \*owner;
-
-     const struct of_device_id   \*of_match_table;
-
-     const struct acpi_device_id \*acpi_match_table;
-
-     int (\*probe) (struct device \*dev);
-
-     int (\*remove) (struct device \*dev);
-
-    void (\*shutdown) (struct device \*dev);
-
-    int (\*suspend) (struct device \*dev,
-
-                      pm_message_t state);
-
-    int (\*resume) (struct device \*dev);
-
-    const struct dev_pm_ops \*pm;
-
+    const char        *name;
+    struct bus_type   *bus;
+     struct module    *owner;
+     const struct of_device_id   *of_match_table;
+     const struct acpi_device_id *acpi_match_table;
+     int (*probe) (struct device *dev);
+     int (*remove) (struct device *dev);
+    void (*shutdown) (struct device *dev);
+    int (*suspend) (struct device *dev,
+                      pm_message_t state);
+    int (*resume) (struct device *dev);
+    const struct dev_pm_ops *pm;
 };
+```
 
 Let's look at each element in this structure:
 
@@ -117,73 +95,49 @@ You probably never want to use **driver_register()** as-is; it is up to the bus 
 
 The recommended place to register/unregister the driver is within the **init**/**exit** functions of the module, which are executed at the module loading/unloading stages, respectively. In lots of cases, registering/unregistering the driver is the only action you will want to execute within those **init**/**exit** functions. In such cases, each bus core provides a specific helper macro, which will be expanded as the **init**/**exit** functions of the module and internally call the bus-specific registering/unregistering function. Those bus macros follow the **module\_{bus_name}\_driver(\_\_{bus_name}\_driver);** pattern, where **\_\_{bus_name}\_driver** is the driver structure of the corresponding bus. The following table shows a non-exhaustive list of buses that are supported in Linux, along with their macros:
 
-![Table 6.1 – Some buses, along with their (un)registration macros ](media/image/B17934_06_Table_1.jpg)
+![Table 6.1 – Some buses, along with their (un)registration macros ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_06_Table_1.jpg)
 
 Table 6.1 – Some buses, along with their (un)registration macros
 
 The bus controller code is responsible for providing such macros, but this is not always the case. For example, the MDIO bus driver (a 2-wire serial bus that's used to control network devices) does not provide a **module_mdio_driver()** macro. You should check whether this macro exists for the bus that the device sits on top of to write the driver before using it. The following code blocks show two examples of different buses – one using the bus-provided registering/unregistering macro, and another not using it. Let's see what the code looks like when we don't use the macro:
 
+``` c
 static struct platform_driver mypdrv = {
-
-    .probe = my_pdrv_probe,
-
-    .remove = my_pdrv_remove,
-
-    .driver = {
-
-        .name = KBUILD_MODNAME,
-
-        .owner = THIS_MODULE,
-
-    },
-
+    .probe = my_pdrv_probe,
+    .remove = my_pdrv_remove,
+    .driver = {
+        .name = KBUILD_MODNAME,
+        .owner = THIS_MODULE,
+    },
 };
-
-static int \_\_init my_drv_init(void)
-
+static int __init my_drv_init(void)
 {
-
-    /\* Registering with Kernel \*/
-
-    platform_driver_register(&mypdrv);
-
-    return 0;
-
+    /* Registering with Kernel */
+    platform_driver_register(&mypdrv);
+    return 0;
 }
-
-static void \_\_exit my_pdrv_remove (void)
-
+static void __exit my_pdrv_remove (void)
 {
-
-    /\* Unregistering from Kernel \*/
-
-    platform_driver_unregister(&my_driver);
-
+    /* Unregistering from Kernel */
+    platform_driver_unregister(&my_driver);
 }
-
 module_init(my_drv_init);
-
 module_exit(my_pdrv_remove);
+```
 
 The preceding example does not use the macro at all. Now, let's look at an example that uses the macro:
 
+``` c
 static struct platform_driver mypdrv = {
-
-    .probe = my_pdrv_probe,
-
-    .remove = my_pdrv_remove,
-
-    .driver = {
-
-        .name = KBUILD_MODNAME,
-
-        .owner = THIS_MODULE,
-
-    },
-
+    .probe = my_pdrv_probe,
+    .remove = my_pdrv_remove,
+    .driver = {
+        .name = KBUILD_MODNAME,
+        .owner = THIS_MODULE,
+    },
 };
-
 module_platform_driver(my_driver);
+```
 
 Here, you can see how the code is factorized, which is a serious plus when you're writing a driver.
 
@@ -193,79 +147,51 @@ The kernel must be aware of the devices that are supported by a given driver and
 
 If we have a look at each bus-specific device driver structure (**struct platform_driver**, **struct i2c_driver**, **struct spi_driver**, **struct pci_driver**, and **struct usb_driver**), we will see that there is an **id_table** field whose type depends on the bus type. This field should be given an array of device IDs that correspond to those supported by the driver. The following table shows the common buses, along with their device ID structures:
 
-![Table 6.2 – Some buses, along with their device identification data structures ](media/image/B17934_06_Table_2.jpg)
+![Table 6.2 – Some buses, along with their device identification data structures ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_06_Table_2.jpg)
 
 Table 6.2 – Some buses, along with their device identification data structures
 
 I intentionally omitted two special cases: the device tree and ACPI. They can expose devices so that they can be declared either from within the device tree or ACPI using the **driver.of_match_table** or **driver.acpi_match_table** fields, which are not direct elements of the bus-specific driver structure:
 
-![Table 6.3 – Pseudo buses, along with their device identification data structures ](media/image/B17934_06_Table_3.jpg)
+![Table 6.3 – Pseudo buses, along with their device identification data structures ](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_06_Table_3.jpg)
 
 Table 6.3 – Pseudo buses, along with their device identification data structures
 
 These structures are all defined in **include/linux/mod_devicetable.h** in the kernel sources, and their names match the **{bus_name}\_device_id** pattern. We have already discussed each structure in the appropriate chapters. So, let's look at an example that exposes SPI devices using both **struct spi_device_id** and **struct of_device_id** for declaring the device tree (new and recommended) of this driver (<http://elixir.free-electrons.com/linux/v4.10/source/drivers/gpio/gpio-mcp23s08.c>):
 
-static const struct spi_device_id mcp23s08_ids\[\] = {
-
-    { "mcp23s08", MCP_TYPE_S08 },
-
-    { "mcp23s17", MCP_TYPE_S17 },
-
-    { "mcp23s18", MCP_TYPE_S18 },
-
-    { },
-
+``` c
+static const struct spi_device_id mcp23s08_ids[] = {
+    { "mcp23s08", MCP_TYPE_S08 },
+    { "mcp23s17", MCP_TYPE_S17 },
+    { "mcp23s18", MCP_TYPE_S18 },
+    { },
 };
-
-static const struct of_device_id mcp23s08_spi_of_match\[\] = {
-
-    {
-
-        .compatible = "microchip,mcp23s08",
-
-        .data = (void \*) MCP_TYPE_S08,
-
-    },
-
-    {
-
-        .compatible = "microchip,mcp23s17",
-
-        .data = (void \*) MCP_TYPE_S17,
-
-    },
-
-    {
-
-        .compatible = "microchip,mcp23s18",
-
-        .data = (void \*) MCP_TYPE_S18,
-
-    },
-
-    { },
-
+static const struct of_device_id mcp23s08_spi_of_match[] = {
+    {
+        .compatible = "microchip,mcp23s08",
+        .data = (void *) MCP_TYPE_S08,
+    },
+    {
+        .compatible = "microchip,mcp23s17",
+        .data = (void *) MCP_TYPE_S17,
+    },
+    {
+        .compatible = "microchip,mcp23s18",
+        .data = (void *) MCP_TYPE_S18,
+    },
+    { },
 };
-
 static struct spi_driver mcp23s08_driver = {
-
-    .probe  = mcp23s08_probe, /\* don't care about this \*/
-
-    .remove = mcp23s08_remove, /\* don't care about this \*/
-
-    .id_table = mcp23s08_ids,
-
-    .driver = {
-
-        .name    = "mcp23s08",
-
-        .of_match_table =
-
-                of_match_ptr(mcp23s08_spi_of_match),
-
-    },
-
+    .probe  = mcp23s08_probe, /* don't care about this */
+    .remove = mcp23s08_remove, /* don't care about this */
+    .id_table = mcp23s08_ids,
+    .driver = {
+        .name    = "mcp23s08",
+        .of_match_table =
+                of_match_ptr(mcp23s08_spi_of_match),
+    },
 };
+```
 
 The preceding excerpt shows how a driver can declare the devices it supports. Since our example is an SPI driver, the data structure that is involved is **struct spi_device_id**, in addition to **struct of_device_id,** which is used in any driver that needs to match a device according to their **compatible** string in the driver.
 
@@ -279,71 +205,50 @@ Every device driver should expose the list of devices it supports and should mak
 
 The problem with the matching loop is that only loaded modules will have their probe functions invoked. In other words, the matching loop will be useless if the corresponding module is not loaded (**insmod**, **modprobe**) or built-in. You'll have to manually load the module before the device appears on the bus. The solution to this issue is module auto-loading. Since, most of the time, module loading is a userspace action (when the kernel does not request the module itself using the **request_module()** function), the kernel must find a way to expose drivers, along with their device tables, to the userspace. Thus came a macro called **MODULE_DEVICE_TABLE()**:
 
-MODULE_DEVICE_TABLE(\<bus_type_name\>,  \<array_of_ids\>)
+``` c
+MODULE_DEVICE_TABLE(<bus_type_name>,  <array_of_ids>)
+```
 
 This macro is used to support hot-plugging, which describes which devices each specific driver can support. At compilation time, the build process extracts this information out of the driver and builds a human-readable table called **modules.alias**, which is located in the **/lib/modules/kernel_version/** directory.
 
 The **\<bus_type_name\>** parameter should be the generic name of the bus that you need to add module auto-loading support to. It should be **spi** for an SPI bus, **of** for a device tree, **i2c** for I2C, and so on. In other words, it should be one of the elements of the first column (of the **bus type**) of the previous table (knowing that not all the buses are listed). Let's add module auto-loading support to the same driver we used previously (gpio-mcp23s08):
 
+``` c
 MODULE_DEVICE_TABLE(spi, mcp23s08_ids);
-
 MODULE_DEVICE_TABLE(of, mcp23s08_spi_of_match);
+```
 
 Now, let's see what these two lines do when they're added to the **modules.alias** file on an i.MX6-based board running a Yocto-based image:
 
+``` c
 root:/lib/modules/5.10.10+fslc+g8dc0fcb# cat modules.alias
-
-\# Aliases extracted from modules themselves.
-
+# Aliases extracted from modules themselves.
 alias fs-msdos msdos
-
 alias fs-binfmt_misc binfmt_misc
-
 alias fs-configfs configfs
-
 alias iso9660 isofs
-
 alias fs-iso9660 isofs
-
 alias fs-udf udf
-
-**alias of:N\*T\*Cmicrochip,mcp23s17\* gpio_mcp23s08**
-
-**alias of:N\*T\*Cmicrochip,mcp23s18\* gpio_mcp23s08**
-
-**alias of:N\*T\*Cmicrochip,mcp23s08\* gpio_mcp23s08**
-
-**alias spi:mcp23s17 gpio_mcp23s08**
-
-**alias spi:mcp23s18 gpio_mcp23s08**
-
-**alias spi:mcp23s08 gpio_mcp23s08**
-
-alias usb:v0C72p0011d\*dc\*dsc\*dp\*ic\*isc\*ip\*in\* peak_usb
-
-alias usb:v0C72p0012d\*dc\*dsc\*dp\*ic\*isc\*ip\*in\* peak_usb
-
-alias usb:v0C72p000Dd\*dc\*dsc\*dp\*ic\*isc\*ip\*in\* peak_usb
-
-alias usb:v0C72p000Cd\*dc\*dsc\*dp\*ic\*isc\*ip\*in\* peak_usb
-
-alias pci:v00008086d000015B8sv\*sd\*bc\*sc\*i\* e1000e
-
-alias pci:v00008086d000015B7sv\*sd\*bc\*sc\*i\* e1000e
-
-\[...\]
-
-alias usb:v0416pA91Ad\*dc\*dsc\*dp\*ic0Eisc01ip00in\* uvcvideo
-
-alias of:N\*T\*Ciio-hwmon\* iio_hwmon
-
+alias of:N*T*Cmicrochip,mcp23s17* gpio_mcp23s08
+alias of:N*T*Cmicrochip,mcp23s18* gpio_mcp23s08
+alias of:N*T*Cmicrochip,mcp23s08* gpio_mcp23s08
+alias spi:mcp23s17 gpio_mcp23s08
+alias spi:mcp23s18 gpio_mcp23s08
+alias spi:mcp23s08 gpio_mcp23s08
+alias usb:v0C72p0011d*dc*dsc*dp*ic*isc*ip*in* peak_usb
+alias usb:v0C72p0012d*dc*dsc*dp*ic*isc*ip*in* peak_usb
+alias usb:v0C72p000Dd*dc*dsc*dp*ic*isc*ip*in* peak_usb
+alias usb:v0C72p000Cd*dc*dsc*dp*ic*isc*ip*in* peak_usb
+alias pci:v00008086d000015B8sv*sd*bc*sc*i* e1000e
+alias pci:v00008086d000015B7sv*sd*bc*sc*i* e1000e
+[...]
+alias usb:v0416pA91Ad*dc*dsc*dp*ic0Eisc01ip00in* uvcvideo
+alias of:N*T*Ciio-hwmon* iio_hwmon
 alias i2c:lm73 lm73
-
 alias spi:ad7606-4 ad7606_spi
-
 alias spi:ad7606-6 ad7606_spi
-
 alias spi:ad7606-8 ad7606_spi
+```
 
 The second part of the solution is the kernel informing the userspace about some events (called **uevents**) through *netlink sockets*. Right after a device appears on a bus, this bus code will create and emit an event that contains the corresponding module alias (for example, **pci:v00008086d000015B8sv\*sd\*bc\*sc\*i\***). This event will be caught by your system hotplug manager (**udev** on most machines), which will parse the **module.alias** file while looking for an entry with the same alias and load the corresponding module (for example, e1000). As soon as the module is loaded, the device will be probed. This is how the simple **MODULE_DEVICE_TABLE()** macro can change your life.
 
@@ -361,23 +266,17 @@ To be handled by a driver, any declared device should exist at least in one modu
 
 Finally, there's the **struct bus_type** structure, which is the structure that the kernel internally represents a bus with (whether it is physical or virtual). The **bus controller** is the root element of any hierarchy. Physically speaking, a bus is a channel between the processor and one or more devices. From a software point of view, the bus (**struct bus_type**) is the link between devices (**struct device**) and drivers (**struct device_driver**). Without this, nothing would be appended to the system, since the bus (**bus_type**) is responsible for matching the devices and drivers:
 
+``` c
 struct bus_type {
-
-    const char    \*name;
-
-    struct device    \*dev_root;
-
-    int (\*match)(struct device \*dev,
-
-                   struct device_driver \*drv);
-
-    int (\*probe)(struct device \*dev);
-
-    int (\*remove)(struct device \*dev);
-
-    /\* \[...\] \*/
-
+    const char    *name;
+    struct device    *dev_root;
+    int (*match)(struct device *dev,
+                   struct device_driver *drv);
+    int (*probe)(struct device *dev);
+    int (*remove)(struct device *dev);
+    /* [...] */
 };
+```
 
 Let's look at the elements in this structure:
 
@@ -396,119 +295,69 @@ Device drivers and devices are always registered with the bus. When it comes to 
 
 Each bus driver has the responsibility of providing its match function, which is run by the kernel whenever a new device or device driver is registered with this bus. That said, there are three matching mechanisms for platform devices, all of which consist of string comparison. Those matching mechanisms are based on the DT table, ACPI table, device, and driver name. Let's see how the pseudo-platform and i2c buses implement their matching functions using those mechanisms:
 
-static int platform_match(struct device \*dev,
-
-                           struct device_driver \*drv)
-
+``` c
+static int platform_match(struct device *dev,
+                           struct device_driver *drv)
 {
-
-    struct platform_device \*pdev =
-
-                         to_platform_device(dev);
-
-    struct platform_driver \*pdrv =
-
-                         to_platform_driver(drv);
-
-     /\* Only bind to the matching driver when
-
-     \* driver_override is set
-
-     \*/
-
-    if (pdev-\>driver_override)
-
-        return !strcmp(pdev-\>driver_override, drv-\>name);
-
-    /\* Attempt an OF style match first \*/
-
-    if (of_driver_match_device(dev, drv))
-
-        return 1;
-
-    /\* Then try ACPI style match \*/
-
-    if (acpi_driver_match_device(dev, drv))
-
-    return 1;
-
-    /\* Then try to match against the id table \*/
-
-    if (pdrv-\>id_table)
-
-        return platform_match_id(pdrv-\>id_table,
-
-                                       pdev) != NULL;
-
-    /\* fall-back to driver name match \*/
-
-    return (strcmp(pdev-\>name, drv-\>name) == 0);
-
+    struct platform_device *pdev =
+                         to_platform_device(dev);
+    struct platform_driver *pdrv =
+                         to_platform_driver(drv);
+     /* Only bind to the matching driver when
+     * driver_override is set
+     */
+    if (pdev->driver_override)
+        return !strcmp(pdev->driver_override, drv->name);
+    /* Attempt an OF style match first */
+    if (of_driver_match_device(dev, drv))
+        return 1;
+    /* Then try ACPI style match */
+    if (acpi_driver_match_device(dev, drv))
+    return 1;
+    /* Then try to match against the id table */
+    if (pdrv->id_table)
+        return platform_match_id(pdrv->id_table,
+                                       pdev) != NULL;
+    /* fall-back to driver name match */
+    return (strcmp(pdev->name, drv->name) == 0);
 }
+```
 
 The preceding code shows the **pseudo-platform** bus matching function, which is defined in **drivers/base/platform.c**. The following code shows the I2C bus matching function, which is defined in **drivers/i2c/i2c-core.c**:
 
-static const struct i2c_device_id \*i2c_match_id(
-
-            const struct i2c_device_id \*id,
-
-            const struct i2c_client \*client)
-
+``` c
+static const struct i2c_device_id *i2c_match_id(
+            const struct i2c_device_id *id,
+            const struct i2c_client *client)
 {
-
-    while (id-\>name\[0\]) {
-
-        if (strcmp(client-\>name, id-\>name) == 0)
-
-            return id;
-
-        id++;
-
-    }
-
-    return NULL;
-
+    while (id->name[0]) {
+        if (strcmp(client->name, id->name) == 0)
+            return id;
+        id++;
+    }
+    return NULL;
 }
-
-static int i2c_device_match(struct device \*dev, struct
-
-          device_driver \*drv)
-
+static int i2c_device_match(struct device *dev, struct
+          device_driver *drv)
 {
-
-    struct i2c_client \*client = i2c_verify_client(dev);
-
-    struct i2c_driver \*driver;
-
-    if (!client)
-
-        return 0;
-
-    /\* Attempt an OF style match \*/
-
-    if (of_driver_match_device(dev, drv))
-
-        return 1;
-
-    /\* Then ACPI style match \*/
-
-    if (acpi_driver_match_device(dev, drv))
-
-        return 1;
-
-    driver = to_i2c_driver(drv);
-
-    /\* match on an id table if there is one \*/
-
-    if (driver-\>id_table)
-
-        return i2c_match_id(driver-\>id_table,
-
-                               client) != NULL;
-
-    return 0;
-
+    struct i2c_client *client = i2c_verify_client(dev);
+    struct i2c_driver *driver;
+    if (!client)
+        return 0;
+    /* Attempt an OF style match */
+    if (of_driver_match_device(dev, drv))
+        return 1;
+    /* Then ACPI style match */
+    if (acpi_driver_match_device(dev, drv))
+        return 1;
+    driver = to_i2c_driver(drv);
+    /* match on an id table if there is one */
+    if (driver->id_table)
+        return i2c_match_id(driver->id_table,
+                               client) != NULL;
+    return 0;
 }
+```
 
 ## Case study – the OF matching mechanism
 

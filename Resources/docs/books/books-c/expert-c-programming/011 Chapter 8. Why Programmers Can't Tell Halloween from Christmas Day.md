@@ -252,7 +252,7 @@ unsigned short
 
 int
 
-![Image 98](media/index-178_1.png)
+![Image 98](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-178_1.png)
 
 float
 
@@ -350,13 +350,13 @@ in ANSI C as int foo(void); so even this case looks different from classic C.
 
 However, ANSI C didn't and couldn't insist on the use of prototypes exclusively, because that would have destroyed upward compatibility for billions of lines of existing pre-ANSI code. The standard does stipulate that the use of function declarators with empty parentheses (i.e., without specifying argument types) is officially declared obsolescent, and support for it may be withdrawn from future
 
-![Image 99](media/index-180_1.png)
+![Image 99](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-180_1.png)
 
-![Image 100](media/index-180_2.png)
+![Image 100](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-180_2.png)
 
-![Image 101](media/index-180_3.png)
+![Image 101](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-180_3.png)
 
-![Image 102](media/index-180_4.png)
+![Image 102](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-180_4.png)
 
 versions of the standard. For the foreseeable future both styles will coexist, because of the volume of pre-ANSI code. So, if prototypes are "a good thing," should we use them everywhere, and go back and add prototypes to existing code when we conduct maintenance on it? Emphatically not!
 
@@ -446,7 +446,7 @@ olddef: float= 524288.000000, char =4
 
 newdef: float= 2.562500, char =0
 
-![Image 103](media/index-182_1.png)
+![Image 103](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-182_1.png)
 
 Note that if you put the functions in the same file where they are called (file 2, here), the behavior changes. The compiler will detect the mismatch of olddef() because it now sees the prototype and K&R definition together. If you place the definition of newdef() before it is called, the compiler will silently do the right thing because the definition acts as a prototype, providing consistency. If you place the definition after the call, the compiler should complain about the mismatch. Since C++
 
@@ -478,7 +478,7 @@ Earlier we mentioned that prototypes allow the compiler to check use against dec
 
 **Handy Heuristic**
 
-![Image 104](media/index-183_1.png)
+![Image 104](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-183_1.png)
 
 **Don't Mix Old and New Styles in Function Declaration and Definition** Never mix the old and new styles of function declaration and definition. If the function has a K&R-style declaration in the header file, then use K&R syntax in the definition.
 
@@ -502,7 +502,7 @@ One of the first questions that MS-DOS programmers ask on encountering a UNIX sy
 
 This feature is essential for many kinds of software and is trivial on a PC. The C libraries there support this, often with a function called kbhit(), which indicates if a character is waiting to be read.
 
-![Image 105](media/index-184_1.png)
+![Image 105](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-184_1.png)
 
 The C compilers from Microsoft and Borland provide getch() (or getche() to echo the character) to get input character-by-character without waiting for the whole line.
 
@@ -538,7 +538,7 @@ system("stty cooked");
 
 /\* The terminal driver is back in line-at-a-time mode \*/
 
-![Image 106](media/index-185_1.png)
+![Image 106](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-185_1.png)
 
 }
 
@@ -650,7 +650,7 @@ mvprintw(1, 0, "got char '%c' on iteration %d \n",c, ++i); refresh();
 
 nocbreak();
 
-![Image 107](media/index-187_1.png)
+![Image 107](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-187_1.png)
 
 echo();
 
@@ -712,7 +712,7 @@ or even
 
 (\*\*\*\*\*\*state\[i\])();
 
-![Image 108](media/index-189_1.png)
+![Image 108](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-189_1.png)
 
 This is an unfortunate quirk popularized with ANSI C: calls to a function and calls to a function through a pointer (or any level of pointer indirection) can use the same syntax. There's a corresponding quirk applying to arrays. It further undermines the flawed "declaration looks like use"
 
@@ -738,9 +738,9 @@ If you want to get fancier, you can have the state function return a pointer to 
 
 Did you ever notice that software and hardware are named the wrong way round—software is easier to change, but harder in all other respects? Because software is so difficult to develop and get right, as programmers we need to find ways to make it as easy as possible. One way to do that (and it applies to
 
-![Image 109](media/index-190_1.png)
+![Image 109](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-190_1.png)
 
-![Image 110](media/index-190_2.png)
+![Image 110](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-190_2.png)
 
 all languages, not just C) is to code for debuggability. When you write the program, provide the debugging hooks.
 
@@ -818,7 +818,7 @@ file f;
 
 for (f = file_hash_table\[hash_value\]; f != NIL;f=f-\>flink) {
 
-![Image 111](media/index-192_1.png)
+![Image 111](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-192_1.png)
 
 if (strcmp(f-\>fname, s) == SAME) {
 
@@ -944,7 +944,7 @@ main() { printf(&unix\["\021%six\012\0"\],(unix)\["have"\]+"fun"-
 
 0x60);}
 
-![Image 112](media/index-195_1.png)
+![Image 112](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-195_1.png)
 
 What does *that* print? (Hint: it's not "have fun"!) David wrote the eponymous Korn shell, which is widely regarded as much cleaner than the version 7 /bin/sh, so presumably the IOCCC also acts as a safety valve for the happy hacker.
 
@@ -1326,7 +1326,7 @@ X'N':++P\[\*d\]\<=M\[\*d\]&&(l=L\[\*d\]);}else p=B+2,P\[
 
 t('S',5,"w",N
 
-![Image 113](media/index-200_1.png)
+![Image 113](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-200_1.png)
 
 fprintf(f,I))t('O',4,"r",while(fgets(B,R,f))(\*Q(B,"\n")=0,G())
 
@@ -1382,7 +1382,7 @@ put in a double, pull out a float f= 2.562500
 
 put in a float, pull out a double d= 524288.000000
 
-![Image 114](media/index-201_1.png)
+![Image 114](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-201_1.png)
 
 **Programming Solution**
 
@@ -1446,7 +1446,7 @@ for(;;iteration++);
 
 Use sigset() instead of signal() and you won't have to re-register the signal handler each
 
-![Image 115](media/index-202_1.png)
+![Image 115](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-202_1.png)
 
 time. Sample output is:
 
@@ -1679,3 +1679,73 @@ gettoken();
 gettoken();
 
 printf("function returning ");
+
+}
+
+}
+
+void get_lparen()
+
+{
+
+nextstate = get_ptr_part;
+
+if (top \>= 0) {
+
+if (stack\[top\].type == '(') {
+
+pop;
+
+gettoken();/\* read past ')' \*/
+
+nextstate = get_array;
+
+}
+
+}
+
+}
+
+void get_ptr_part()
+
+{
+
+nextstate = get_type;
+
+if (stack\[top\].type == '\*') {
+
+printf("pointer to ");
+
+pop;
+
+nextstate = get_lparen;
+
+} else if (stack\[top\].type == QUALIFIER) {
+
+printf("%s ", pop.string);
+
+nextstate = get_lparen;
+
+}
+
+}
+
+void get_type()
+
+{
+
+nextstate = NULL;
+
+/\* process tokens that we stacked while reading to
+
+identifier \*/
+
+while (top \>= 0) {
+
+printf("%s ", pop.string);
+
+}
+
+printf("\n");
+
+}

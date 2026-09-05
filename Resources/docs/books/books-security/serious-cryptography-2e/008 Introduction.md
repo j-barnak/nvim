@@ -1,6 +1,6 @@
 # `INTRODUCTION`
 
-![](media/636a68d74eb8359117dad78bd99a98f0c37c7dbb.jpg)
+![](/tmp/audit/iter1/epubregen/serious-cryptography-2e/media/636a68d74eb8359117dad78bd99a98f0c37c7dbb.jpg)
 
 I wrote this book to be the one I wish I had when I started learning cryptography. In 2005, I was studying for my master’s degree near Paris, and I eagerly registered for the upcoming semester’s crypto class. Unfortunately, the class was canceled because too few students had registered. “Crypto is too hard,” the students argued, instead enrolling en masse in the computer graphics and database classes.
 

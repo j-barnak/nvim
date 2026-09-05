@@ -8,7 +8,7 @@
 
 If you want to properly set the mood for this chapter, try to conjure up a thunderstorm, one of those swirling tempests that likes to yank open shutters at the climax of the story. Maybe toss in a few bolts of lightning. In this chapter, our interpreter will take breath, open its eyes, and execute some code.
 
-![A bolt of lightning strikes a Victorian mansion. Spooky!](media/image/evaluating-expressions/lightning.png)
+![A bolt of lightning strikes a Victorian mansion. Spooky!](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/evaluating-expressions/lightning.png)
 
 A decrepit Victorian mansion is optional, but adds to the ambiance.
 
@@ -322,7 +322,7 @@ You can’t negate a muffin, so we need to report a runtime error at that inner 
 
 I don’t know, man, *can* you negate a muffin?
 
-![A muffin, negated.](media/image/evaluating-expressions/muffin.png)
+![A muffin, negated.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/evaluating-expressions/muffin.png)
 
 We could print a runtime error and then abort the process and exit the application entirely. That has a certain melodramatic flair. Sort of the programming language interpreter equivalent of a mic drop.
 
@@ -668,7 +668,7 @@ We have an entire language pipeline now: scanning, parsing, and execution. Congr
 
 As you can see, the interpreter is pretty bare bones. But the Interpreter class and the Visitor pattern we’ve set up today form the skeleton that later chapters will stuff full of interesting guts—variables, functions, etc. Right now, the interpreter doesn’t do very much, but it’s alive!
 
-![A skeleton waving hello.](media/image/evaluating-expressions/skeleton.png)
+![A skeleton waving hello.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/evaluating-expressions/skeleton.png)
 
 ## Challenges
 

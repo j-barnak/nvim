@@ -1,6 +1,6 @@
-![](media/index-1_1.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-1_1.png)
 
-![](media/index-1_2.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-1_2.png)
 
 Systems programming concepts
 
@@ -10,29 +10,29 @@ Timothy Samuel McNamara
 
 M A N N I N G
 
-![](media/index-2_1.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-2_1.png)
 
-![](media/index-2_2.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-2_2.png)
 
-![](media/index-2_3.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-2_3.png)
 
-![](media/index-2_4.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-2_4.png)
 
-![](media/index-2_5.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-2_5.png)
 
-![](media/index-2_6.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-2_6.png)
 
-![](media/index-2_7.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-2_7.png)
 
-![](media/index-2_8.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-2_8.png)
 
-![](media/index-2_9.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-2_9.png)
 
-![](media/index-2_10.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-2_10.png)
 
-![](media/index-2_11.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-2_11.png)
 
-![](media/index-2_12.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-2_12.png)
 
 **Raw Pointer**
 
@@ -407,3 +407,99 @@ ISBN: 9781617294556
 Printed in the United States of America
 
 *To everyone aspiring to write safer software.*
+
+*contents*
+
+*preface*
+
+*xv*
+
+*acknowledgments*
+
+*xvii*
+
+*about this book*
+
+*xix*
+
+*about the author*
+
+*xxii*
+
+*about the cover illustration*
+
+*xxiii*
+
+*1 **Introducing Rust 1***
+
+1.1
+
+Where is Rust used?
+
+2
+
+1.2
+
+Advocating for Rust at work
+
+3
+
+1.3
+
+A taste of the language
+
+4
+
+*Cheating your way to “Hello, world!”*
+
+*5* ■ *Your first Rust*
+
+*program*
+
+*7*
+
+1.4
+
+Downloading the book’s source code
+
+8
+
+1.5
+
+What does Rust look and feel like?
+
+8
+
+1.6
+
+What is Rust?
+
+11
+
+*Goal of Rust: Safety*
+
+*12* ■ *Goal of Rust: Productivity*
+
+*16*
+
+*Goal of Rust: Control*
+
+*18*
+
+1.7
+
+Rust’s big features
+
+19
+
+*Performance*
+
+*19* ■ *Concurrency*
+
+*20* ■ *Memory efficiency*
+
+*20*
+
+**vii**
+
+**viii**

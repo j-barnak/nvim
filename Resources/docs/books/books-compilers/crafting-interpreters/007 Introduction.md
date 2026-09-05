@@ -34,7 +34,7 @@ But programming languages are a little different. I suppose it is true that the 
 
 For every successful general-purpose language, there are a thousand successful niche ones. We used to call them “little languages”, but inflation in the jargon economy led to the name “domain-specific languages”. These are pidgins tailor-built to a specific task. Think application scripting languages, template engines, markup formats, and configuration files.
 
-![A random selection of little languages.](media/image/introduction/little-languages.png)
+![A random selection of little languages.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/introduction/little-languages.png)
 
 A random selection of some little languages you might run into.
 
@@ -86,7 +86,7 @@ Yacc is a tool that takes in a grammar file and produces a source file for a com
 
 Yacc wasn’t the first of its ilk, which is why it’s named “Yacc”—*Yet Another* Compiler-Compiler. A later similar tool is [Bison](https://en.wikipedia.org/wiki/GNU_bison), named as a pun on the pronunciation of Yacc like “yak”.
 
-![A yak.](media/image/introduction/yak.png)
+![A yak.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/introduction/yak.png)
 
 If you find all of these little self-references and puns charming and fun, you’ll fit right in here. If not, well, maybe the language nerd sense of humor is an acquired taste.
 
@@ -166,7 +166,7 @@ A compiler reads files in one language, translates them, and outputs files in an
 
 You can’t compile your compiler using itself yet, but if you have another compiler for your language written in some other language, you use *that* one to compile your compiler once. Now you can use the compiled version of your own compiler to compile future versions of itself, and you can discard the original one compiled from the other compiler. This is called **bootstrapping**, from the image of pulling yourself up by your own bootstraps.
 
-![Fact: This is the primary mode of transportation of the American cowboy.](media/image/introduction/bootstrap.png)
+![Fact: This is the primary mode of transportation of the American cowboy.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/introduction/bootstrap.png)
 
 And, finally, Java is hugely popular. That means there’s a good chance you already know it, so there’s less for you to learn to get going in the book. If you aren’t that familiar with Java, don’t freak out. I try to stick to a fairly minimal subset of it. I use the diamond operator from Java 7 to make things a little more terse, but that’s about it as far as “advanced” features go. If you know another object-oriented language, like C# or C++, you can muddle through.
 

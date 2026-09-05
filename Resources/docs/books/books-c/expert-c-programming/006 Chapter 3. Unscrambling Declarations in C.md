@@ -1,55 +1,3 @@
-![Image 36](media/index-60_1.png)
-
-We have long felt that programmers working on real-time control systems should have the privilege of taking the first ride on the operational prototype. In other words, if your code implements the life support systems on the space shuttle, then you get to be launched into space and debug any last minute glitches personally. This would surely bring a whole new focus to product quality. Table 2-2 shows some of the opportunities.
-
-***Table 2-2. The Truth About Two Famous Space Software Failures***
-
-**When Mission**
-
-**Error**
-
-**Result**
-
-**Cause**
-
-Summer
-
-Mercury . used instead of ,
-
-nothing; error found Flaw in Fortran language
-
-1961
-
-before flight
-
-July 22,
-
-Mariner " *R*" instead of " " written \$12M rocket and programmer followed error
-
-1962
-
-1
-
-in specification
-
-probe destroyed
-
-in specification
-
-Let us give the last word in this chapter to a more modern story of space software mishaps, almost certainly apocryphal. On every space shuttle mission, there is a cargo manifest, or list of all items to be loaded on board the craft before launch. The manifest lists each item with its weight, and is vital for calculating the fuel and balancing the craft. It seems that before the maiden flight, a dock master was checking off certain items as they were loaded onto the shuttle. He checked off the computer systems, and then came to the manifest entry for the software. It showed the software as having zero weight, which caused a minor panic—after all, surely everything weighs something!
-
-There was some frantic communication between the loading dock and the computer center before the problem was resolved, and the zero-weight software (bit patterns in memory) was allowed to pass! Of course, everyone knows that information has mass in a relativistic sense, but let's not ruin a good story with pedantry, eh?
-
-**References**
-
-Ceruzzi, Paul, *Beyond the Limits—Flight Enters the Computer Age*, Cambridge, MA, MIT Press,1989
-
-Hill, Gladwyn, *"For Want of Hyphen Venus Rocket is Lost,"* *New York Times*, July 28, 1962.
-
-Nicks, Oran W., *Far Travelers—The Exploring Machines*, *NASA publication SP-480*, 1985.
-
-*"Venus Shot Fails as Rocket Strays,"* Associated Press, *New York Times*, July 23, 1962.
-
 **Chapter 3. Unscrambling Declarations in C**
 
 *"The name of the song is called 'Haddocks' Eyes.'"*
@@ -174,9 +122,9 @@ An important building block is a declarator—the heart of any declaration; roug
 
 ***Figure 3-1. The Declarator in C***
 
-![Image 37](media/index-64_1.png)
+![Image 37](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-64_1.png)
 
-![Image 38](media/index-64_2.png)
+![Image 38](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-64_2.png)
 
 A declaration is made up of the parts shown in Figure 3-2 Figure 3-2(not all combinations are valid, but this table gives us the vocabulary for further discussion). A declaration gives the basic underlying type of the variable and any initial value.
 
@@ -484,7 +432,7 @@ and we're done. The precedence rule is what all the rules boil down to, but if y
 
 ***Figure 3-3. How to Parse a C Declaration***
 
-![Image 39](media/index-71_1.png)
+![Image 39](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-71_1.png)
 
 **Unscrambling C Declarations by Diagram**
 
@@ -636,7 +584,7 @@ typedef void (\*ptr_to_func) (int);
 
 \*/
 
-![Image 40](media/index-74_1.png)
+![Image 40](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-74_1.png)
 
 ptr_to_func signal(int, ptr_to_func);
 
@@ -758,7 +706,7 @@ statement 2 \*/
 
 very different things are happening. Statement 1 declares a structure tag "fruit" and a structure typedef "fruit" which can be used like this:
 
-![Image 41](media/index-77_1.png)
+![Image 41](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-77_1.png)
 
 struct fruit mandarin; /\* uses structure **tag** "fruit" \*/
 
@@ -806,7 +754,7 @@ Always use a tag in a structure definition, even if it's not needed. It will be 
 
 A pretty good principle in computer science, when you have two different things, is to use two different names to refer to them. It reduces the opportunities for confusion (always a good policy in software). If you're stuck for a name for a structure tag, just give it a name that ends in "\_tag". This
 
-![Image 42](media/index-78_1.png)
+![Image 42](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-78_1.png)
 
 makes it simpler to detect what a particular name is. Future generations will then bless your name instead of reviling your works.
 
@@ -934,7 +882,7 @@ Naturally, Mike and Dave didn't stop there. They also designed a network protoco
 
 you could discover the Coke machine's status from any machine anywhere on the Internet, even thousands of miles away!
 
-![Image 43](media/index-81_1.png)
+![Image 43](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-81_1.png)
 
 Others who worked on the project include Steve Berman, Eddie Caplan, Mark Wilkins, and Mark Zaremsky \[2\]. The Coke machine programs were used for over a decade, and were even rewritten for UNIX Vaxen when the PDP-10 was retired in the early 1980s. The end came a few years ago, when the local Coke bottler discontinued the returnable, Coke-bottle-shaped bottles. The old machine couldn't handle the new shape bottles, so it was replaced by a new vending machine that required a new interface. For a while nobody bothered, but the lure of caffeine eventually motivated Greg Nelson to reengineer the new machine. The CMU graduate students also wired up the candy machine, and similar projects have been completed in other schools, too.
 
@@ -1170,7 +1118,7 @@ I don't think I'll be divulging a trade secret if I mention that extensive use w
 
 104 while ( stack\[top\].type== '\*' ) {
 
-![Image 44](media/index-84_1.png)
+![Image 44](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-84_1.png)
 
 105 printf("%s ", pop.string );
 
@@ -1250,7 +1198,7 @@ to identifier \*/
 
 One of the problems with the strcmp () routine to compare two strings is that it returns
 
-![Image 45](media/index-85_1.png)
+![Image 45](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-85_1.png)
 
 zero if the strings are identical. This leads to convoluted code when the comparison is part of a conditional statement:
 

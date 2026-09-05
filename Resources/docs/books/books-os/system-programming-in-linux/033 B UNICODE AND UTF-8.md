@@ -1,5 +1,3 @@
-![](media/index-1225_1.jpg)
-
 B UNICODE AND UTF-8
 
 Computers store all data as sequences of bits that are essentially
@@ -108,7 +106,7 @@ code space. The code reserves the remaining values for future use
 
 (Figure B-1).
 
-![](media/index-1228_1.jpg)
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-1228_1.jpg)
 
 *Figure B-1: Unicode layout*
 
@@ -323,3 +321,5 @@ rightmost byte after a leading 10. The next 6 bits are placed into the middle by
 The sequence 11100000 10101010 10111100 in hexadecimal is 0xE0 0xAA
 
 0xBC, which in decimal is 224 170 188, the Gujarati sign *nuqta*.
+
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-1233_1.jpg)

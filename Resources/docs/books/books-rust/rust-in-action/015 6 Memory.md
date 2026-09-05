@@ -1,25 +1,3 @@
-*Memory*
-
-***This chapter covers***
-
- What pointers are and why some are smart
-
- What the terms stack and heap mean
-
- How a program views its memory
-
-This chapter provides you with some of the tacit knowledge held by systems programmers about how a computer’s memory operates. It aims to be the most accessible guide to pointers and memory management available. You will learn how applications interact with an operating system (OS). Programmers who understand these dynamics can use that knowledge to maximize their programs’ performance, while minimizing their memory footprint.
-
-Memory is a shared resource, and the OS is an arbiter. To make its life easier, the OS lies to your program about how much memory is available and where it’s located. Revealing the truth behind those lies requires us to work through some prior knowledge. This is the work of the first two sections of the chapter.
-
-Each of the four sections in this chapter builds on the previous one. None of these sections assume that you’ve encountered the topic before. There is a fairly large body of theory to cover, but all of it is explained by examples.
-
-**175**
-
-**176**
-
-CHAPTER 6
-
 ***Memory***
 
 In this chapter, you’ll create your first graphical application. The chapter introduces little new Rust syntax, as the material is quite dense. You’ll learn how to construct pointers, how to interact with an OS via its native API, and how to interact with other programs through Rust’s foreign function interface.
@@ -100,7 +78,6 @@ Rust’s references offer substantial benefits over pointers:
 
 **178**
 
-CHAPTER 6
 
 ***Memory***
 
@@ -136,7 +113,6 @@ Mimicking pointers with references
 
 static B: \[u8; 10\] = \[99, 97, 114, 114, 121, 116, 111, 119, 101, 108\]; static C: \[u8; 11\] = \[116, 104, 97, 110, 107, 115, 102, 105, 115, 104, 0\]; **For simplicity, uses the same**
 
-fn main() {
 
 **reference type for this example.**
 
@@ -270,7 +246,6 @@ produces much more output. It uses more sophisticated types instead of reference
 
 **180**
 
-CHAPTER 6
 
 ***Memory***
 
@@ -670,7 +645,6 @@ Comparing references and **Box\<T\>** to several types
 
 **182**
 
-CHAPTER 6
 
 ***Memory***
 
@@ -816,7 +790,6 @@ Listing 6.4
 
 Creating a raw pointer (**\*const T**)
 
-fn main() {
 
 **Casts a reference to the**
 
@@ -848,7 +821,6 @@ from a pointer is known as *dereferencing a pointer*. The following listing iden
 
 **184**
 
-CHAPTER 6
 
 ***Memory***
 
@@ -856,7 +828,6 @@ Listing 6.5
 
 Identifying a value’s address
 
-fn main() {
 
 let a: i64 = 42;
 
@@ -892,7 +863,6 @@ To demonstrate their volatility, let’s work through a quick example with Rust�
 
 Dereferencing that pointer must occur within an unsafe block, as the following snippet shows. An unsafe block implies that the programmer takes full responsibility for any consequences:
 
-fn main() {
 
 **You can create pointers safely from**
 
@@ -956,33 +926,32 @@ With interior mutability, you may want to provide an argument to a method that t
 
 With shared ownership, some objects, such as a network connection or, perhaps, access to some OS service, are difficult to mould into the pattern of having a single place with read-write access at any given time. Code might be simplified if two parts of
 
-![](media/index-212_1.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-212_1.png)
 
-![](media/index-212_2.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-212_2.png)
 
-![](media/index-212_3.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-212_3.png)
 
-![](media/index-212_4.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-212_4.png)
 
-![](media/index-212_5.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-212_5.png)
 
-![](media/index-212_6.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-212_6.png)
 
-![](media/index-212_7.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-212_7.png)
 
-![](media/index-212_8.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-212_8.png)
 
-![](media/index-212_9.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-212_9.png)
 
-![](media/index-212_10.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-212_10.png)
 
-![](media/index-212_11.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-212_11.png)
 
-![](media/index-212_12.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-212_12.png)
 
 **186**
 
-CHAPTER 6
 
 ***Memory***
 
@@ -1340,7 +1309,6 @@ That difference leads to the following axiom: “When in doubt, prefer the stack
 
 **188**
 
-CHAPTER 6
 
 ***Memory***
 
@@ -1430,7 +1398,6 @@ When read-write access to the argument is required, normally you can make use of
 
 **190**
 
-CHAPTER 6
 
 ***Memory***
 
@@ -1492,7 +1459,6 @@ Listing 6.6
 
 Creating variables on the heap
 
-fn main() {
 
 **40 lives on the stack.**
 
@@ -1518,7 +1484,6 @@ The code for the next listing is in the file ch6/ch6-heap-via-box/src/main.rs. A
 
 **192**
 
-CHAPTER 6
 
 ***Memory***
 
@@ -1834,7 +1799,6 @@ A view into a program’s memory layout during the execution of listing 6.7
 
 **194**
 
-CHAPTER 6
 
 ***Memory***
 
@@ -1888,11 +1852,11 @@ Accessing data on the stack is fast because a function’s local variables, whic
 
 A contiguous layout is cache-friendly. Alternatively, variables allocated on the heap are unlikely to reside next to each other. Moreover, accessing data on the heap involves dereferencing the pointer. That implies a page table lookup and a trip to main memory. Table 6.1 summarizes these differences.
 
-![](media/index-221_1.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-221_1.png)
 
-![](media/index-221_2.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-221_2.png)
 
-![](media/index-221_3.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-221_3.png)
 
 ***Providing programs with memory for their data***
 
@@ -1948,7 +1912,6 @@ contains three major sections:
 
 **196**
 
-CHAPTER 6
 
 ***Memory***
 
@@ -2262,7 +2225,6 @@ A graphical application to create and destroy objects on the heap **graphics::ma
 
 **198**
 
-CHAPTER 6
 
 ***Memory***
 
@@ -2488,7 +2450,6 @@ If you run listing 6.9 from a terminal window, you’ll soon see two columns of 
 
 **200**
 
-CHAPTER 6
 
 ***Memory***
 
@@ -2624,7 +2585,6 @@ nanosecond delay between each of those operations, your computer can only perfor
 
 **202**
 
-CHAPTER 6
 
 ***Memory***
 
@@ -2740,7 +2700,6 @@ Attempting to scan a running program’s memory byte by byte
 
 **204**
 
-CHAPTER 6
 
 ***Memory***
 
@@ -2838,7 +2797,6 @@ let noop_local = 12345;
 
 **Creates a local variable within noop() so that**
 
-fn main() {
 
 **something outside of main() has a memory address**
 
@@ -2872,7 +2830,6 @@ Accessing data in a program requires virtual addresses—the only addresses that
 
 **206**
 
-CHAPTER 6
 
 ***Memory***
 
@@ -2934,13 +2891,12 @@ While the exact process is dependent on the OS and file format, the following fi
 
 loads the right bytes into the right places. Once the virtual address space is created, the CPU can be told to jump to the start of the .text segment, and the program begins executing.
 
-![](media/index-234_1.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-234_1.png)
 
-![](media/index-234_2.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-234_2.png)
 
 **208**
 
-CHAPTER 6
 
 ***Memory***
 
@@ -3206,11 +3162,9 @@ MEMORY_BASIC_INFORMATION as MEMINFO,
 
 **210**
 
-CHAPTER 6
 
 ***Memory***
 
-fn main() {
 
 let this_pid: DWORD;
 
@@ -3389,3 +3343,109 @@ Memory management is a complicated area with many levels of abstraction to uncov
  The heap and the stack are abstractions provided by operating systems and programming languages. These do not exist at the level of the CPU.
 
  Operating systems often provide mechanisms such as memory allocations to inspect a program’s behavior.
+
+*Files and storage*
+
+***This chapter covers***
+
+ Learning how data is represented on physical
+
+storage devices
+
+ Writing data structures to your preferred file
+
+format
+
+ Building a tool to read from a file and inspect
+
+its contents
+
+ Creating a working key-value store that’s
+
+immune from corruption
+
+Storing data permanently on digital media is trickier than it looks. This chapter takes you though some of the details. To transfer information held by ephemeral electrical charges in RAM to (semi)permanent storage media and then be able to retrieve it again later takes several layers of software indirection.
+
+The chapter introduces some new concepts such as how to structure projects into library crates for Rust developers. This task is needed because one of the projects is ambitious. By the end of the chapter, you’ll have built a working key-value store that’s guaranteed to be durable to hardware failure at any stage. During the chapter, we’ll work through a small number of side quests. For example, we implement parity **212**
+
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-239_1.png)
+
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-239_2.png)
+
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-239_3.png)
+
+***What is a file format?***
+
+**213**
+
+bit checking and explore what it means to hash a value. To start with, however, let’s see if we can create patterns from the raw byte sequence within files.
+
+***7.1***
+
+***What is a file format?***
+
+File formats are standards for working with data as an single, ordered sequence of bytes. Storage media like hard disk drives work faster when reading or writing large blocks of data in serial. This contrasts with in-memory data structures, where data layout has less of an impact.
+
+File formats live in a large design space with trade-offs in performance, human-readability, and portability. Some formats are highly portable and self-describing. Others restrict themselves to being accessible within a single environment and are unable to be read by third-party tools, yet they are high performance.
+
+Table 7.1 illustrates some of the design space for file formats. Each row reveals the file format’s internal patterns, which are generated from the same source text. By color-coding each byte within the file, it’s possible to see structural differences between each representation.
+
+Table 7.1
+
+The internals of four digital versions of William Shakespeare’s ***Much Ado About Nothing***
+
+produced by Project Gutenberg.
+
+The plain text version of the play contains printable char-
+
+acters only. These are indicated by dark grey for letters
+
+and punctuation, and white for whitespace.
+
+Visually, the image appears to be noisy. It lacks internal
+
+structure. That’s due to the variation in length of the natu-
+
+ral language that the file represents. A file with regular,
+
+repeating structures, such as a file format designed to
+
+hold arrays of floating-point numbers, tends to look quite
+
+different.
+
+The EPUB format is actually a compressed ZIP archive
+
+with a bespoke file extension. There are many bytes
+
+within the file that fall out of the range of the printable
+
+category as indicated by the mid-grey pixels.
+
+MOBI includes four bands of NULL bytes (0x00), repre-
+
+sented as black pixels. These bands probably represent
+
+the result of an engineering trade-off. In some sense,
+
+these empty bytes are wasted space. They’re probably
+
+added as padding so that the file’s sections are easy to
+
+parse later on.
+
+The other notable feature of this file is its size. It’s larger
+
+than the other versions of the play. This might imply that
+
+the file is harboring more data than just the text. Candi-
+
+dates include display elements like fonts, or encryption
+
+keys that enforce anti-copying restrictions within the file.
+
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-240_1.png)
+
+**214**
+
+CHAPTER 7

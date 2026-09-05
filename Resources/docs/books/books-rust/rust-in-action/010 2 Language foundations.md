@@ -1,33 +1,3 @@
-*Language foundations*
-
-***This chapter covers***
-
- Coming to grips with the Rust syntax
-
- Learning fundamental types and data
-
-structures
-
- Building command-line utilities
-
- Compiling programs
-
-This chapter introduces you to the fundamentals of Rust programming. By the end of the chapter, you will be able to create command-line utilities and should be able to get the gist of most Rust programs. We’ll work through most of the language’s syntax, but defer much of the detail about *why* things are *how* they are for later in the book.
-
-NOTE
-
-Programmers who have experience with another programming lan-
-
-guage will benefit the most from this chapter. If you are an experienced Rust programmer, feel free to skim through it.
-
-Beginners are welcomed. Rust’s community strives to be responsive to newcomers.
-
-At times, you may strike a mental pothole when you encounter terms such as *lifetime* *elision*, *hygienic macros*, *move semantics*, and *algebraic data types* without context. Don’t **31**
-
-**32**
-
-CHAPTER 2
-
 ***Language foundations***
 
 be afraid to ask for help. The community is much more welcoming than these helpful, yet opaque, terms might suggest.
@@ -110,7 +80,6 @@ Listing 2.1
 
 Almost the shortest valid Rust program
 
-1 fn main() {
 
 2 println!("OK")
 
@@ -158,7 +127,6 @@ cargo understands how to drive rustc (and much more).
 
 **34**
 
-CHAPTER 2
 
 ***Language foundations***
 
@@ -276,7 +244,6 @@ Adding integers using variables and declaring types
 
 **…or declared by the programmer**
 
-1 fn main() {
 
 **when creating variables.**
 
@@ -346,7 +313,6 @@ In line 4 (let c = 30i32;), you’ll note that Rust’s numeric literals can inc
 
 **36**
 
-CHAPTER 2
 
 ***Language foundations***
 
@@ -402,7 +368,6 @@ Numeric literals and basic operations on numbers in Rust
 
 **…which is done**
 
-1 fn main() {
 
 **on your behalf if you**
 
@@ -510,7 +475,6 @@ Listing 2.4
 
 Using base 2, base 8, and base 16 numeric literals
 
-1 fn main() {
 
 **The 0b prefix indicates**
 
@@ -536,7 +500,6 @@ Using base 2, base 8, and base 16 numeric literals
 
 **38**
 
-CHAPTER 2
 
 ***Language foundations***
 
@@ -666,7 +629,6 @@ IMPOSSIBLE TO COMPARE DIFFERENT TYPES
 
 Rust’s type safety requirements prevent comparisons between types. For example, this code does not compile:
 
-fn main() {
 
 let a: i32 = 10;
 
@@ -704,7 +666,6 @@ In some cases, using the as keyword is too restrictive. It’s possible to regai
 
 **40**
 
-CHAPTER 2
 
 ***Language foundations***
 
@@ -834,7 +795,6 @@ But not all. It turns out that the data type can affect whether the program succ
 
 **42**
 
-CHAPTER 2
 
 ***Language foundations***
 
@@ -868,7 +828,6 @@ Rust includes some tolerances to allow comparisons between floating-point values
 
 These tolerances are defined as f32::EPSILON and f64::EPSILON. To be more precise, it’s possible to get closer to how Rust is behaving under the hood, as the following small example shows:
 
-fn main() {
 
 let result: f32 = 0.1 + 0.1;
 
@@ -888,7 +847,6 @@ NAN values poison other numbers. Almost all operations interacting with NAN retu
 
 This small program will always crash:
 
-fn main() {
 
 let x = (-42.0_f32).sqrt();
 
@@ -902,7 +860,6 @@ assert_eq!(x, x);
 
 To program defensively, make use of the is_nan() and is_finite() methods. Inducing a crash, rather than silently proceeding with a mathematical error, allows you to debug close to what has caused the problem. The following illustrates using the is_finite() method to bring about this condition:
 
-fn main() {
 
 let x: f32 = 1.0 / 0.0;
 
@@ -958,7 +915,6 @@ cd ch2-complex
 
 **44**
 
-CHAPTER 2
 
 ***Language foundations***
 
@@ -1092,7 +1048,6 @@ Counterintuitively, once the block ends, accessing the container another time be
 
 **46**
 
-CHAPTER 2
 
 ***Language foundations***
 
@@ -1216,7 +1171,6 @@ Listing 2.7 (source code available at ch2/ch2-while-true-incr-count.rs) provides
 
 **48**
 
-CHAPTER 2
 
 ***Language foundations***
 
@@ -1380,7 +1334,6 @@ if item == 42 {
 
 **50**
 
-CHAPTER 2
 
 ***Language foundations***
 
@@ -1420,7 +1373,6 @@ println!("{} is {}", n, description);
 
 This can be extended to other blocks including match like this:
 
-fn main() {
 
 let n = 654321;
 
@@ -1442,7 +1394,6 @@ println!("{} is {}", n, description);
 
 Perhaps most surprisingly, the break keyword also returns a value. This can be used to allow “infinite” loops to return values:
 
-fn main() {
 
 let n = loop {
 
@@ -1526,7 +1477,6 @@ Listing 2.8 demonstrates a larger example of match. The source code for this lis
 
 **52**
 
-CHAPTER 2
 
 ***Language foundations***
 
@@ -1534,7 +1484,6 @@ Listing 2.8
 
 Using **match** to match multiple values
 
-1 fn main() {
 
 **The variable needle**
 
@@ -1656,7 +1605,6 @@ Listing 2.10
 
 Creating a reference to a large array
 
-fn main() {
 
 **r is a reference to a.**
 
@@ -1684,7 +1632,6 @@ Listing 2.11
 
 Searching for an integer in an array of integers
 
-1 fn main() {
 
 2 let needle = 0o204;
 
@@ -1700,7 +1647,6 @@ Searching for an integer in an array of integers
 
 **54**
 
-CHAPTER 2
 
 ***Language foundations***
 
@@ -1984,7 +1930,6 @@ Rendering the Mandelbrot set
 
 **56**
 
-CHAPTER 2
 
 ***Language foundations***
 
@@ -2144,7 +2089,6 @@ On line 2, \*i + \*j adds together the referent values held by the i and j varia
 
 **58**
 
-CHAPTER 2
 
 ***Language foundations***
 
@@ -2266,7 +2210,6 @@ Listing 2.17 is a full example that demonstrates that generic functions can be c
 
 **60**
 
-CHAPTER 2
 
 ***Language foundations***
 
@@ -2374,7 +2317,6 @@ Listing 2.18
 
 Searching for a simple pattern within lines of a string
 
-1 fn main() {
 
 2 let search_term = "picture";
 
@@ -2444,7 +2386,6 @@ str is usually seen in this form: &str. A &str (pronounced *string slice*) is a 
 
 **62**
 
-CHAPTER 2
 
 ***Language foundations***
 
@@ -2490,7 +2431,6 @@ Listing 2.19
 
 Manually incrementing an index variable
 
-1 fn main() {
 
 **A backslash escapes the newline**
 
@@ -2544,7 +2484,6 @@ Listing 2.20
 
 Automatically incrementing an index variable
 
-1 fn main() {
 
 2 let search_term = "picture";
 
@@ -2594,7 +2533,6 @@ Lists of things are incredibly common. The two types that you will work with mos
 
 **64**
 
-CHAPTER 2
 
 ***Language foundations***
 
@@ -2620,7 +2558,6 @@ Creating arrays takes two forms. We can provide a comma-delimited list within sq
 
 Defining arrays and iterating over their elements
 
-1 fn main() {
 
 2 let one = \[1, 2, 3\];
 
@@ -2704,7 +2641,6 @@ Don’t worry too much about the distinctions between arrays and slices yet. In 
 
 **66**
 
-CHAPTER 2
 
 ***Language foundations***
 
@@ -2950,7 +2886,6 @@ Incorporating third-party code is essential to productive Rust programming. Rust
 
 **68**
 
-CHAPTER 2
 
 ***Language foundations***
 
@@ -3016,7 +2951,6 @@ Listing 2.23
 
 Matching on exact strings with the **contains()** method
 
-fn main() {
 
 let search_term = "picture";
 
@@ -3060,7 +2994,6 @@ use regex::Regex;
 
 **crashing if an error occurs.**
 
-fn main() {
 
 **Handling errors more robustly**
 
@@ -3136,7 +3069,6 @@ Move to the root of the project directory in a terminal: /tmp/grep-lite or
 
 **70**
 
-CHAPTER 2
 
 ***Language foundations***
 
@@ -3310,7 +3242,6 @@ Editing grep-lite/src/main.rs
 
 **72**
 
-CHAPTER 2
 
 ***Language foundations***
 
@@ -3510,7 +3441,6 @@ We’re now in a position to add reading from a file into grep-lite’s feature 
 
 **74**
 
-CHAPTER 2
 
 ***Language foundations***
 
@@ -3718,7 +3648,6 @@ Searching through a file or stdin
 
 **76**
 
-CHAPTER 2
 
 ***Language foundations***
 
@@ -3729,3 +3658,35 @@ CHAPTER 2
  The cargo tool is able to compile your code and fetch its dependencies.
 
  The rustup tool provides access to multiple compiler toolchains and to the language’s documentation.
+
+*Compound data types*
+
+***This chapter covers***
+
+ Composing data with structs
+
+ Creating enumerated data types
+
+ Adding methods and handling errors in a type-
+
+safe manner
+
+ Defining and implementing common behavior
+
+with traits
+
+ Understanding how to keep implementation
+
+details private
+
+ Using cargo to build documentation for your
+
+project
+
+Welcome to chapter 3. If we spent the last chapter looking at Rust’s atoms, this chapter is focused more on its molecules.
+
+This chapter focuses on two key building blocks for Rust programmers, struct and enum. Both are forms of *compound data types*. Together, struct and enum can compose other types to create something more useful than what those other types would be alone. Consider how a 2D point (x,y) is composed from two numbers, *x* and *y*. We wouldn’t want to maintain two variables, x and y, in our program. Instead, **77**
+
+**78**
+
+CHAPTER 3

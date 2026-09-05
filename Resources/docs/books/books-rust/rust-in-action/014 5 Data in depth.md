@@ -1,31 +1,3 @@
-*Data in depth*
-
-***This chapter covers***
-
- Learning how the computer represents data
-
- Building a working CPU emulator
-
- Creating your own numeric data type
-
- Understanding floating-point numbers
-
-This chapter is all about understanding how zeroes and ones can become much larger objects like text, images, and sound. We will also touch on how computers do computation.
-
-By the end of the chapter, you will have emulated a fully functional computer with CPU, memory, and user-defined functions. You will break apart floating-point numbers to create a numeric data type of your own that only takes a single byte. The chapter introduces a number of terms, such as *endianness* and *integer overflow*, that may not be familiar to programmers who have never done systems programming.
-
-***5.1***
-
-***Bit patterns and types***
-
-A small but important lesson is that a single bit pattern can mean different things. The type system of a higher-level language, such as Rust, is just an artificial abstraction over reality. Understanding this becomes important as you begin to unravel some of that abstraction and to gain a deeper understanding of how computers work.
-
-**137**
-
-**138**
-
-CHAPTER 5
-
 ***Data in depth***
 
 Listing 5.1 (in ch5-int-vs-int.rs) is an example that uses the same bit pattern to represent two different numbers. The type system—not the CPU—is what makes this distinction. The following shows the listing’s output:
@@ -156,7 +128,6 @@ During earlier chapters, we spent some time discussing what it means for an inte
 
 **140**
 
-CHAPTER 5
 
 ***Data in depth***
 
@@ -310,7 +281,6 @@ ch5-impossible-add.rs && ch5-impossible-add.
 
 **142**
 
-CHAPTER 5
 
 ***Data in depth***
 
@@ -418,7 +388,6 @@ Here is some context for the problem at hand. Machine learning practitioners oft
 
 **144**
 
-CHAPTER 5
 
 ***Data in depth***
 
@@ -482,23 +451,23 @@ pattern
 
 01000010001010011010111000010100. That bit pattern is more compactly represented as 0x4229AE14. Table 5.1 shows the values of each of the three fields and what these represent..
 
-![](media/index-171_1.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-171_1.png)
 
-![](media/index-171_2.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-171_2.png)
 
-![](media/index-171_3.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-171_3.png)
 
-![](media/index-171_4.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-171_4.png)
 
-![](media/index-171_5.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-171_5.png)
 
-![](media/index-171_6.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-171_6.png)
 
-![](media/index-171_7.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-171_7.png)
 
-![](media/index-171_8.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-171_8.png)
 
-![](media/index-171_9.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-171_9.png)
 
 ***Floating-point numbers***
 
@@ -610,27 +579,26 @@ That is, floating-point numbers that have different bit patterns compare as equa
 
 and –0) and have identical bit patterns (NAN values) that compare as unequal.
 
-![](media/index-172_1.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-172_1.png)
 
-![](media/index-172_2.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-172_2.png)
 
-![](media/index-172_3.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-172_3.png)
 
-![](media/index-172_4.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-172_4.png)
 
-![](media/index-172_5.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-172_5.png)
 
-![](media/index-172_6.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-172_6.png)
 
-![](media/index-172_7.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-172_7.png)
 
-![](media/index-172_8.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-172_8.png)
 
-![](media/index-172_9.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-172_9.png)
 
 **146**
 
-CHAPTER 5
 
 ***Data in depth***
 
@@ -644,7 +612,6 @@ Listing 5.7
 
 Isolating and decoding the sign bit from an **f32**
 
-1 let n: f32 = 42.42;
 
 2 let n_bits: u32 = n.to_bits();
 
@@ -656,7 +623,6 @@ To provide you with a deeper intuition about what is happening, these steps are 
 
 Start with a f32 value:
 
-1 let n: f32 = 42.42;
 
 2
 
@@ -682,59 +648,59 @@ To isolate the exponent, two bit manipulations are required. First, perform a ri
 
 The exponent’s bits also need to go through a decoding step. To decode the exponent, interpret its 8 bits a signed integer, then subtract 127 from the result. (As discussed in section 5.3.2, 127 is known as the *bias*.) The following listing shows the code that describes the steps given in the last two paragraphs.
 
-![](media/index-173_1.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_1.png)
 
-![](media/index-173_2.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_2.png)
 
-![](media/index-173_3.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_3.png)
 
-![](media/index-173_4.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_4.png)
 
-![](media/index-173_5.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_5.png)
 
-![](media/index-173_6.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_6.png)
 
-![](media/index-173_7.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_7.png)
 
-![](media/index-173_8.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_8.png)
 
-![](media/index-173_9.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_9.png)
 
-![](media/index-173_10.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_10.png)
 
-![](media/index-173_11.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_11.png)
 
-![](media/index-173_12.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_12.png)
 
-![](media/index-173_13.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_13.png)
 
-![](media/index-173_14.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_14.png)
 
-![](media/index-173_15.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_15.png)
 
-![](media/index-173_16.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_16.png)
 
-![](media/index-173_17.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_17.png)
 
-![](media/index-173_18.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_18.png)
 
-![](media/index-173_19.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_19.png)
 
-![](media/index-173_20.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_20.png)
 
-![](media/index-173_21.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_21.png)
 
-![](media/index-173_22.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_22.png)
 
-![](media/index-173_23.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_23.png)
 
-![](media/index-173_24.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_24.png)
 
-![](media/index-173_25.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_25.png)
 
-![](media/index-173_26.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_26.png)
 
-![](media/index-173_27.png)
+![](/tmp/audit/iter1/epubregen/rust-in-action/media/index-173_27.png)
 
 ***Floating-point numbers***
 
@@ -744,7 +710,6 @@ Listing 5.8
 
 Isolating and decoding the exponent from an **f32**
 
-1 let n: f32 = 42.42;
 
 2 let n_bits: u32 = n.to_bits();
 
@@ -758,7 +723,6 @@ And to further explain the process, these steps are repeated graphically as foll
 
 Start with an f32 number:
 
-1 let n: f32 = 42.42;
 
 2
 
@@ -788,7 +752,6 @@ Interpret the remaining bits as a signed integer and subtract the bias as define
 
 **148**
 
-CHAPTER 5
 
 ***Data in depth***
 
@@ -814,7 +777,6 @@ Listing 5.9
 
 Isolating and decoding the mantissa from an **f32**
 
-1 let n: f32 = 42.42;
 
 2 let n_bits: u32 = n.to_bits();
 
@@ -846,7 +808,6 @@ Repeating that process slowly:
 
 Start with an f32 value:
 
-1 let n: f32 = 42.42;
 
 ***Floating-point numbers***
 
@@ -926,7 +887,6 @@ Add the weight to mantissa in place:
 
 **150**
 
-CHAPTER 5
 
 ***Data in depth***
 
@@ -1168,7 +1128,6 @@ Deconstructing a floating-point value
 
 **152**
 
-CHAPTER 5
 
 ***Data in depth***
 
@@ -1292,7 +1251,6 @@ The two impl From\<T\> for U blocks in listing 5.12 explain to Rust how to conve
 
 **154**
 
-CHAPTER 5
 
 ***Data in depth***
 
@@ -1454,7 +1412,6 @@ Full code implementation of the **Q7** format
 
 **156**
 
-CHAPTER 5
 
 ***Data in depth***
 
@@ -1644,7 +1601,6 @@ Generating **f32** values in interval \[0,1\] from a **u8**
 
 **158**
 
-CHAPTER 5
 
 ***Data in depth***
 
@@ -1774,7 +1730,6 @@ The following listing, an extract from listing 5.22, shows the CPU initializatio
 
 **160**
 
-CHAPTER 5
 
 ***Data in depth***
 
@@ -2040,7 +1995,6 @@ Integer
 
 **162**
 
-CHAPTER 5
 
 ***Data in depth***
 
@@ -2290,7 +2244,6 @@ Implementing the beginnings of CHIP-8 emulator
 
 **164**
 
-CHAPTER 5
 
 ***Data in depth***
 
@@ -2452,7 +2405,6 @@ Handling overflow in CHIP-8 operations
 
 **166**
 
-CHAPTER 5
 
 ***Data in depth***
 
@@ -2676,7 +2628,6 @@ To enable these to opcodes to work together, the CPU needs to have some speciali
 
 **168**
 
-CHAPTER 5
 
 ***Data in depth***
 
@@ -2840,7 +2791,6 @@ Set the current memory location to the intended memory address.
 
 **170**
 
-CHAPTER 5
 
 ***Data in depth***
 
@@ -2976,7 +2926,6 @@ Listing 5.29 shows our completed emulator for CPU RIA/3, the Caller. You’ll fi
 
 Value in memory
 
-**5** Step in program
 
 80
 
@@ -3070,7 +3019,6 @@ Emulating a CPU that incorporates user-defined functions
 
 **172**
 
-CHAPTER 5
 
 ***Data in depth***
 
@@ -3272,7 +3220,6 @@ The last step in learning about CPUs and data is to understand how control flow 
 
 **174**
 
-CHAPTER 5
 
 ***Data in depth***
 
@@ -3299,3 +3246,25 @@ But in cases where the conversion may fail, the std::convert::TryFrom trait is t
  A CPU opcode is a number that represents an instruction rather than data.
 
 Memory addresses are also just numbers. Function calls are just sequences of numbers.
+
+*Memory*
+
+***This chapter covers***
+
+ What pointers are and why some are smart
+
+ What the terms stack and heap mean
+
+ How a program views its memory
+
+This chapter provides you with some of the tacit knowledge held by systems programmers about how a computer’s memory operates. It aims to be the most accessible guide to pointers and memory management available. You will learn how applications interact with an operating system (OS). Programmers who understand these dynamics can use that knowledge to maximize their programs’ performance, while minimizing their memory footprint.
+
+Memory is a shared resource, and the OS is an arbiter. To make its life easier, the OS lies to your program about how much memory is available and where it’s located. Revealing the truth behind those lies requires us to work through some prior knowledge. This is the work of the first two sections of the chapter.
+
+Each of the four sections in this chapter builds on the previous one. None of these sections assume that you’ve encountered the topic before. There is a fairly large body of theory to cover, but all of it is explained by examples.
+
+**175**
+
+**176**
+
+CHAPTER 6

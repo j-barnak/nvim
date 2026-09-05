@@ -1,1 +1,1 @@
-![Linux Device Drivers, 3rd Edition](media/orm_front_cover.jpg)
+![Linux Device Drivers, 3rd Edition](/tmp/audit/iter1/epubregen/linux-device-drivers-3rd-edition/media/orm_front_cover.jpg)

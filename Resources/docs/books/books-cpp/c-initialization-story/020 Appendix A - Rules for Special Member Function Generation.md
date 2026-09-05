@@ -1,25 +1,3 @@
-**Appendix A - Rules for Special**
-
- 
-
-**Member Function Generation**
-
-In the chapters about constructors and the destructor, we discussed when a compiler implicitly generates a given special member for a class type. In this appendix, you’ll see a handy summary of the rules and guidelines for most common use cases.
-
- 
-
-**The diagram**
-
-A C++ expert Howard Hinnant, a few years ago created a diagram⁵ with the rules:
-
-![](media/index-263_1.png)
-
- 
-
-⁵diagram redrawn, with permission of Howard Hinnant.
-
-248
-
 Appendix A - Rules for Special Member Function Generation 249
 
  

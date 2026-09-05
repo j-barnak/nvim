@@ -1,5 +1,3 @@
-![](media/index-1211_1.jpg)
-
 A CREATING LIBRARIES
 
 Here, I’ll show you how to create and use static and shared libraries in a Unix environment. This summary is tutorial and elementary. I begin by
@@ -521,3 +519,5 @@ contain the directory in which you put your libraries in your *.bashrc* file: LD
 export LD_RUN_PATH
 
 If this variable is defined when you compile the executable, then the run path will be hardcoded into the executable and the dynamic linker will find your libraries at runtime.
+
+![](/tmp/audit/iter1/epubregen/system-programming-in-linux/media/index-1225_1.jpg)

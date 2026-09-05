@@ -5,21 +5,21 @@ In this chapter, we will develop a very simple typesetter. Given a string repres
 
 To begin with, some of our numbers (lines per page, margins etc.) will be hard coded – we will then factor them out as we generalize the code. But let us define names for the page width and height for an A4 page first, to prevent excessive duplication:
 
-> ![](media/images/00149.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00149.jpg)
 
 We first need to split our text into words. For our purposes, a word is anything separated from another word by one or more spaces. To preserve the paragraph breaks, the new line character `\n `will be considered a word also. So, for example, the string `"He stopped.\n Looking around, he saw he was enveloped in smoke."` would be split into the list of words `["He"; "stopped."; "\n"; "Looking"; "around,"; "he"; "saw";` `"he"; "was"; "enveloped"; "in"; "smoke."]`.
 
 The function `consume_spaces`, given an input, places the input position at the first non-space character at or after its current position. If the end of the input is reached, no exception is raised.
 
-> ![](media/images/00176.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00176.jpg)
 
 Now we can write a function to read a word. First, we consume any spaces present. Then, we repeatedly read characters into a buffer until either a space occurs, a newline occurs, or we reach the end of a file. If a space occurs, we have finished reading the word. If a newline occurs, we have finished also, but we rewind so the newline will be picked up as its own word next time. If we reach the end of the input, we return the contents of the buffer so far.
 
-> ![](media/images/00202.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00202.jpg)
 
 Now it is simple to collect all the words in an input by repeatedly calling `read_word`, and accumulating the result is a list.
 
-> ![](media/images/00032.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00032.jpg)
 
 We shall consider the opening paragraphs of Kafka’s “Metamorphosis”:
 
@@ -69,7 +69,7 @@ Now the line breaking function. The function `lines `takes a maximum width in ch
 2.  If we have a newline word, create a `Partial `line from the current buffer (even if it is empty – this allows blank lines to be inserted using multiple newlines), and carry on.
 3.  If we have any other word, see how long it and the buffer are. If the word is longer than the whole line and we are at the beginning of that line, we output an over-sized line (an alternative would be to wrap or hyphenate the word in some way). Otherwise, we see if the current word will fit. If it will, we add it and a space to the buffer and carry on. It not, we output a `Full `line, and start with the word on the next line.
 
-> ![](media/images/00258.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00258.jpg)
 
 For example, here is our text split into lines of no more than twenty characters each:
 
@@ -93,7 +93,7 @@ Now we need to add appropriate text-showing operators to our Pdfpage module, and
 
 This contains the following operators and operands:
 
-![](media/images/00287.jpg)
+![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00287.jpg)
 
 Here are the fragments added to the Pdfpage.t type…
 
@@ -115,7 +115,7 @@ Consider Figure 16.1. The function `typeset_line_at `builds a single line at x p
 
 ------------------------------------------------------------------------
 
-> ![](media/images/00272.jpg)
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00272.jpg)
 
  
 
@@ -125,7 +125,7 @@ Consider Figure 16.1. The function `typeset_line_at `builds a single line at x p
 
 ------------------------------------------------------------------------
 
-> ![](media/images/00118.jpg)  
+> ![](/tmp/audit/iter1/epubregen/more-ocaml-algorithms-methods-and-diversions/media/images/00118.jpg)  
 
 > Figure 16.2:
 

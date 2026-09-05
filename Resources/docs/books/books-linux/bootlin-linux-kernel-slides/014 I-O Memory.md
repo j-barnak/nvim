@@ -1,5 +1,3 @@
-![](media/index-299_1.jpg)
-
 I/O Memory
 
  
@@ -198,16 +196,18 @@ is the value at the corresponding physical address. ▶ Used by applications suc
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 296/436 Practical lab - I/O memory and ports
 
-![](media/index-311_1.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-311_1.png)
 
  
 
 ▶ Add UART devices to the board device tree ▶ Access I/O registers to control the device and
 
-![](media/index-311_2.png)
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-311_2.png)
 
 send first characters to it.
 
  
 
 - Kernel, drivers and embedded Linux - Development, consulting, training and support -https://bootlin.com 297/436
+
+![](/tmp/audit/iter1/epubregen/bootlin-linux-kernel-slides/media/index-312_1.jpg)

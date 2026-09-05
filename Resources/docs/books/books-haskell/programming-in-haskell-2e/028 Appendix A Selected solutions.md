@@ -8,171 +8,127 @@ In this appendix we present model solutions to selected exercises for each chapt
 
 ##### Exercise 1
 
+``` haskell
 double (double 2)
-
 ={ applying the inner double }
-
 double (2 + 2)
-
 ={ applying double }
-
 (2 + 2) + (2 + 2)
-
 ={ applying the first + }
-
 4 + (2 + 2)
-
 ={ applying the second + }
-
 4 + 4
-
 ={ applying + }
-
 8
+```
 
 or
 
+``` haskell
 double (double 2)
-
 ={ applying the outer double }
-
 (double 2) + (double 2)
-
 ={ applying the second double }
-
 (double 2) + (2 + 2)
-
 ={ applying the second + }
-
 (double 2) + 4
-
 ={ applying double }
-
 (2 + 2) + 4
-
 ={ applying the first + }
-
 4 + 4
-
 ={ applying + }
-
 8
+```
 
 There are a number of other possible answers.
 
 ##### Exercise 2
 
-sum \[x\]
-
+``` haskell
+sum [x]
 ={ applying sum }
-
-x + sum \[\]
-
+x + sum []
 ={ applying sum }
-
 x + 0
-
 ={ applying + }
-
 x
+```
 
 ##### Exercise 3
 
-product \[\] = 1
-
-product (n:ns) = n \* product ns
+``` haskell
+product [] = 1
+product (n:ns) = n * product ns
+```
 
 For example:
 
-product \[2,3,4\]
-
+``` haskell
+product [2,3,4]
 ={ applying product }
-
-2 \* (product \[3,4\])
-
+2 * (product [3,4])
 ={ applying product }
-
-2 \* (3 \* product \[4\])
-
+2 * (3 * product [4])
 ={ applying product }
-
-2 \* (3 \* (4 \* product \[\]))
-
+2 * (3 * (4 * product []))
 ={ applying product }
-
-2 \* (3 \* (4 \* 1))
-
-={ applying \* }
-
+2 * (3 * (4 * 1))
+={ applying * }
 24
+```
 
 ### **A.2First steps**
 
 ##### Exercise 2
 
-```cpp
+``` haskell
 (2^3)*4
-
-
 (2*3)+(4*5)
+2+(3*(4^5))
 ```
-  
-
-2+(3\*(4^5))
 
 ##### Exercise 3
 
+``` haskell
 n = a ‘div‘ length xs
-
 where
-
 a = 10
-
-xs = \[1,2,3,4,5\]
+xs = [1,2,3,4,5]
+```
 
 ##### Exercise 4
 
+``` haskell
 last xs = head (reverse xs)
+```
 
 or
 
+``` haskell
 last xs = xs !! (length xs - 1)
+```
 
 ### **A.3Types and classes**
 
 ##### Exercise 1
 
-```cpp
+``` haskell
 [’a’,’b’,’c’] :: [Char]
-
-
 (’a’,’b’,’c’) :: (Char,Char,Char)
-
-
 [(False,’O’),(True,’1’)] :: [(Bool,Char)]
-
-
 ([False,True],[’0’,’1’]) :: ([Bool],[Char])
+[tail, init, reverse] :: [[a] -> [a]]
 ```
-  
-
-\[tail, init, reverse\] :: \[\[a\] -\> \[a\]\]
 
 ##### Exercise 2
 
-bools = \[False,True\]  
-  
-
-nums = \[\[1,2\],\[3,4\],\[5,6\]\]  
-  
-
-add x y z = x+y+z  
-  
-
-copy x = (x,x)  
-  
-
+``` haskell
+bools = [False,True]
+nums = [[1,2],[3,4],[5,6]]
+add x y z = x+y+z
+copy x = (x,x)
 apply f x = f x
+```
 
 There are a number of other possible answers for bools, nums and add.
 
@@ -180,80 +136,77 @@ There are a number of other possible answers for bools, nums and add.
 
 ##### Exercise 1
 
+``` haskell
 halve xs = (take n xs, drop n xs)
-
 where n = length xs ‘div‘ 2
+```
 
 or
 
+``` haskell
 halve xs = splitAt (length xs ‘div‘ 2) xs
+```
 
 ##### Exercise 2
 
-third xs = head (tail (tail xs))  
-  
-
-third xs = xs !! 2  
-  
-
-third (\_:\_:x:\_) = x
+``` haskell
+third xs = head (tail (tail xs))
+third xs = xs !! 2
+third (_:_:x:_) = x
+```
 
 ##### Exercise 3
 
-safetail xs = if null xs then \[\] else tail xs  
-  
+``` haskell
+safetail xs = if null xs then [] else tail xs
 
-![image](media/Images/Appendix_a_image_4_25.png)  
-  
-
-safetail \[\] = \[\]
-
-safetail (\_:xs) = xs
+safetail [] = []
+safetail (_:xs) = xs
+```
 
 ##### Exercise 4
 
-False \|\| False = False
-
-False \|\| True = True
-
-True \|\| False = True
-
-True \|\| True = True  
-  
-
-False \|\| False = False
-
-\_ \|\| \_ = True  
-  
-
-False \|\| b = b
-
-True \|\| \_ = True  
-  
-
-![image](media/Images/Appendix_a_image_4_26.png)
+``` haskell
+False || False = False
+False || True = True
+True || False = True
+True || True = True
+False || False = False
+_ || _ = True
+False || b = b
+True || _ = True
+```
 
 ### **A.5List comprehensions**
 
 ##### Exercise 1
 
-sum \[x^2 \| x \<- \[1..100\]\]
+``` haskell
+sum [x^2 | x <- [1..100]]
+```
 
 ##### Exercise 2
 
-grid m n = \[(x,y) \| x \<- \[0..m\], y \<- \[0..n\]\]
+``` haskell
+grid m n = [(x,y) | x <- [0..m], y <- [0..n]]
+```
 
 ##### Exercise 3
 
-square n = \[(x,y) \| (x,y) \<- grid n n, x /= y\]
+``` haskell
+square n = [(x,y) | (x,y) <- grid n n, x /= y]
+```
 
 ##### Exercise 4
 
-replicate n x = \[x \| \_ \<- \[1..n\]\]
+``` haskell
+replicate n x = [x | _ <- [1..n]]
+```
 
 ##### Exercise 5
 
-![image](media/Images/Appendix_a_image_5_24.png)
+``` haskell
+```
 
 ### **A.6Recursive functions**
 
@@ -261,124 +214,124 @@ replicate n x = \[x \| \_ \<- \[1..n\]\]
 
 The function does not terminate, because each application of fac decreases the argument by one, and hence the base case is never reached.
 
+``` haskell
 fac 0 = 1
-
-fac n \| n \> 0 = n \* fac (n-1)
+fac n | n > 0 = n * fac (n-1)
+```
 
 ##### Exercise 2
 
+``` haskell
 sumdown 0 = 0
-
 sumdown n = n + sumdown (n-1)
+```
 
 ##### Exercise 3
 
-(^) :: Int -\> Int -\> Int
-
+``` haskell
+(^) :: Int -> Int -> Int
 m ^ 0 = 1
-
-m ^ n = m \* (m ^ (n-1))
+m ^ n = m * (m ^ (n-1))
+```
 
 For example:
 
+``` haskell
 2 ^ 3
-
 ={ applying ^ }
-
-2 \* (2 ^ 2)
-
+2 * (2 ^ 2)
 ={ applying ^ }
-
-2 \* (2 \* (2 ^ 1))
-
+2 * (2 * (2 ^ 1))
 ={ applying ^ }
-
-2 \* (2 \* (2 \* (2 ^ 0)))
-
+2 * (2 * (2 * (2 ^ 0)))
 ={ applying ^ }
-
-2 \* (2 \* (2 \* 1))
-
-={ applying \* }
-
+2 * (2 * (2 * 1))
+={ applying * }
 8
+```
 
 ##### Exercise 4
 
-![image](media/Images/Appendix_a_image_6_24.png)
+``` haskell
+```
 
 ### **A.7Higher-order functions**
 
 ##### Exercise 1
 
+``` haskell
 map f (filter p xs)
+```
 
 ##### Exercise 2
 
+``` haskell
 all p = and . map p
-
-any p = or . map p  
-  
-
-![image](media/Images/Appendix_a_image_6_25.png)
+any p = or . map p
+```
 
 ##### Exercise 3
 
-map f = foldr (\x xs -\> f x : xs) \[\]
-
-filter p = foldr (\x xs -\> if p x then x:xs else xs) \[\]
+``` haskell
+map f = foldr (\x xs -> f x : xs) []
+filter p = foldr (\x xs -> if p x then x:xs else xs) []
+```
 
 ##### Exercise 4
 
-dec2int = foldl (\x y -\> 10\*x + y) 0
+``` haskell
+dec2int = foldl (\x y -> 10*x + y) 0
+```
 
 ##### Exercise 5
 
-curry :: ((a,b) -\> c) -\> (a -\> b -\> c)
-
-curry f = \x y -\> f (x,y)  
-  
-
-uncurry :: (a -\> b -\> c) -\> ((a,b) -\> c)
-
-uncurry f = \\x,y) -\> f x y
+``` haskell
+curry :: ((a,b) -> c) -> (a -> b -> c)
+curry f = \x y -> f (x,y)
+uncurry :: (a -> b -> c) -> ((a,b) -> c)
+uncurry f = \(x,y) -> f x y
+```
 
 ### **A.8Declaring types and classes**
 
 ##### Exercise 1
 
+``` haskell
 mult m Zero = Zero
-
 mult m (Succ n) = add m (mult m n)
+```
 
 ##### Exercise 2
 
-![image](media/Images/Appendix_a_image_7_20.png)
+``` haskell
+```
 
 This version is more efficient because it only requires one comparison between x and y for each node, whereas the previous version may require two.
 
 ##### Exercise 3
 
-leaves (Leaf \_) = 1
-
-leaves (Node l r) = leaves l + leaves r  
-  
-
-![image](media/Images/Appendix_a_image_7_21.png)
+``` haskell
+leaves (Leaf _) = 1
+leaves (Node l r) = leaves l + leaves r
+```
 
 ##### Exercise 4
 
-![image](media/Images/Appendix_a_image_8_15.png)
+``` haskell
+```
 
 ### **A.9The countdown problem**
 
 ##### Exercise 1
 
-choices xs = \[zs \| ys \<- subs xs, zs \<- perms ys\]
+``` haskell
+choices xs = [zs | ys <- subs xs, zs <- perms ys]
+```
 
 ##### Exercise 2
 
-![image](media/Images/Appendix_a_image_8_16.png)
+``` haskell
+```
 
 ##### Exercise 3
 
@@ -388,15 +341,20 @@ It would lead to non-termination, because recursive calls to exprs would no long
 
 ##### Exercise 1
 
-putStr xs = sequence\_ \[putChar x \| x \<- xs\]
+``` haskell
+putStr xs = sequence_ [putChar x | x <- xs]
+```
 
 ##### Exercise 2
 
-![image](media/Images/Appendix_a_image_8_17.png)
+``` haskell
+```
 
 ##### Exercise 3
 
-putBoard b = sequence\_ \[putRow r n \| (r,n) \<- zip \[1..\] b\]
+``` haskell
+putBoard b = sequence_ [putRow r n | (r,n) <- zip [1..] b]
+```
 
 ### **A.11Unbeatable tic-tac-toe**
 
@@ -404,37 +362,29 @@ putBoard b = sequence\_ \[putRow r n \| (r,n) \<- zip \[1..\] b\]
 
 Using the definitions
 
-nodes :: Tree a -\> Int
-
-nodes (Node \_ ts) = 1 + sum (map nodes ts)  
-  
-
-mydepth :: Tree a -\> Int
-
-mydepth (Node \_ \[\]) = 0
-
-mydepth (Node \_ ts) = 1 + maximum (map mydepth ts)
+``` haskell
+nodes :: Tree a -> Int
+nodes (Node _ ts) = 1 + sum (map nodes ts)
+mydepth :: Tree a -> Int
+mydepth (Node _ []) = 0
+mydepth (Node _ ts) = 1 + maximum (map mydepth ts)
+```
 
 we have:
 
-\> let tree = gametree empty O  
-  
-
-\> nodes tree
-
-549946  
-  
-
-\> mydepth tree
-
+``` haskell
+> let tree = gametree empty O
+> nodes tree
+549946
+> mydepth tree
 9
+```
 
 ##### Exercise 2
 
-import System.Random hiding (next)  
-  
-
-![image](media/Images/Appendix_a_image_9_20.png)
+``` haskell
+import System.Random hiding (next)
+```
 
 Note that the function next from the imported library is hidden to avoid clashing with our next function on player values.
 
@@ -442,69 +392,60 @@ Note that the function next from the imported library is hidden to avoid clashin
 
 ##### Exercise 1
 
+``` haskell
 instance Functor Tree where
-
--- fmap :: (a -\> b) -\> Tree a -\> Tree b
-
+-- fmap :: (a -> b) -> Tree a -> Tree b
 fmap g Leaf = Leaf
-
 fmap g (Node l x r) = Node (fmap g l) (g x) (fmap g r)
+```
 
 ##### Exercise 2
 
-instance Functor ((-\>) a) where
-
--- fmap :: (b -\> c) -\> (a -\> b) -\> (a -\> c)
-
+``` haskell
+instance Functor ((->) a) where
+-- fmap :: (b -> c) -> (a -> b) -> (a -> c)
 fmap = (.)
+```
 
 ##### Exercise 3
 
-instance Applicative ((-\>) a) where
-
--- pure :: b -\> (a -\> b)
-
-pure = const  
-  
-
--- (\<\*\>) :: (a -\> b -\> c) -\> (a -\> b) -\> (a -\> c)
-
-g \<\*\> h = \x -\> g x (h x)
+``` haskell
+instance Applicative ((->) a) where
+-- pure :: b -> (a -> b)
+pure = const
+-- (<*>) :: (a -> b -> c) -> (a -> b) -> (a -> c)
+g <*> h = \x -> g x (h x)
+```
 
 ##### Exercise 4
 
+``` haskell
 instance Functor ZipList where
-
--- fmap :: (a -\> b) -\> ZipList a -\> ZipList b
-
-fmap g (Z xs) = Z (fmap g xs)  
-  
-
+-- fmap :: (a -> b) -> ZipList a -> ZipList b
+fmap g (Z xs) = Z (fmap g xs)
 instance Applicative ZipList where
-
--- pure :: a -\> ZipList a
-
+-- pure :: a -> ZipList a
 pure x = Z (repeat x)
-
--- \<\*\> :: ZipList (a -\> b) -\> ZipList a -\> ZipList b
-
-(Z gs) \<\*\> (Z xs) = Z \[g x \| (g,x) \<- zip gs xs\]
+-- <*> :: ZipList (a -> b) -> ZipList a -> ZipList b
+(Z gs) <*> (Z xs) = Z [g x | (g,x) <- zip gs xs]
+```
 
 ### **A.13Monadic parsing**
 
 ##### Exercise 1
 
-![image](media/Images/Appendix_a_image_11_10.png)
+``` haskell
+```
 
 ##### Exercise 2
 
-![image](media/Images/Appendix_a_image_11_11.png)
+![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Appendix_a_image_11_11.png)
 
 ##### Exercise 3
 
-![image](media/Images/Appendix_a_image_11_12.png)
+![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Appendix_a_image_11_12.png)
 
-![image](media/Images/Appendix_a_image_12_17.png)
+![image](/tmp/audit/iter1/epubregen/programming-in-haskell-2e/media/Images/Appendix_a_image_12_17.png)
 
 ##### Exercise 4
 
@@ -514,31 +455,24 @@ Without left-factorising, the resulting parser would backtrack excessively and t
 
 ##### Exercise 1
 
-instance (Monoid a, Monoid b) =\> Monoid (a,b) where
-
+``` haskell
+instance (Monoid a, Monoid b) => Monoid (a,b) where
 -- mempty :: (a,b)
-
-mempty = (mempty, mempty)  
-  
-
--- mappend :: (a,b) -\> (a,b) -\> (a,b)
-
+mempty = (mempty, mempty)
+-- mappend :: (a,b) -> (a,b) -> (a,b)
 (x1,y1) ‘mappend‘ (x2,y2) =
-
 (x1 ‘mappend‘ x2, y1 ‘mappend‘ y2)
+```
 
 ##### Exercise 2
 
-instance Monoid b =\> Monoid (a -\> b) where
-
--- mempty :: a -\> b
-
-mempty = \\ -\> mempty  
-  
-
--- mappend :: (a -\> b) -\> (a -\> b) -\> (a -\> b)
-
-f ‘mappend‘ g = \x -\> f x ‘mappend‘ g x
+``` haskell
+instance Monoid b => Monoid (a -> b) where
+-- mempty :: a -> b
+mempty = \_ -> mempty
+-- mappend :: (a -> b) -> (a -> b) -> (a -> b)
+f ‘mappend‘ g = \x -> f x ‘mappend‘ g x
+```
 
 ### **A.15Lazy evaluation**
 
@@ -556,249 +490,184 @@ The redexes in (\x -\> 1 + x) (2\*3) are 2\*3 and (\x -\> 1 + x) (2\*3), with th
 
 Outermost:
 
+``` haskell
 fst (1+2, 2+3)
-
 ={ applying fst }
-
 1+2
-
 ={ applying + }
-
 3
+```
 
 Innermost:
 
+``` haskell
 fst (1+2, 2+3)
-
 ={ applying the first + }
-
 fst (3, 2+3)
-
 ={ applying + }
-
 fst (3, 5)
-
 ={ applying fst }
-
 3
+```
 
 Outermost evaluation is preferable because it avoids evaluation of the second argument, and hence takes one fewer reduction steps.
 
 ##### Exercise 3
 
+``` haskell
 mult 3 4
-
 ={ applying mult }
-
-(\x -\> (\y -\> x \* y)) 3 4
-
+(\x -> (\y -> x * y)) 3 4
 ={ applying the outer lambda }
-
-(\y -\> 3 \* y) 4
-
+(\y -> 3 * y) 4
 ={ applying the lambda }
-
-3 \* 4
-
-={ applying \* }
-
+3 * 4
+={ applying * }
 12
+```
 
 ### **A.16Reasoning about programs**
 
 ##### Exercise 1
 
-Base case:
 
+``` haskell
 add Zero (Succ m)
-
 ={ applying add }
-
 Succ m
-
 ={ unapplying add }
-
 Succ (add Zero m)
+```
 
-Inductive case:
 
+``` haskell
 add (Succ n) (Succ m)
-
 ={ applying add }
-
 Succ (add n (Succ m))
-
 ={ induction hypothesis }
-
 Succ (Succ (add n m))
-
 ={ unapplying add }
-
 Succ (add (Succ n) m)
+```
 
 ##### Exercise 2
 
-Base case:
 
+``` haskell
 add Zero m
-
 ={ applying add }
-
 m
-
 ={ property of add }
-
 add m Zero
+```
 
-Inductive case:
 
+``` haskell
 add (Succ n) m
-
 ={ applying add }
-
 Succ (add n m)
-
 ={ induction hypothesis }
-
 Succ (add m n)
-
 ={ property of add }
-
 add m (Succ n)
+```
 
 ##### Exercise 3
 
-Base case:
 
+``` haskell
 all (== x) (replicate 0 x)
-
 ={ applying replicate }
-
-all (== x) \[\]
-
+all (== x) []
 ={ applying all }
-
 True
+```
 
-Inductive case:
 
+``` haskell
 all (== x) (replicate (n+1) x)
-
 ={ applying replicate }
-
 all (== x) (x : replicate n x)
-
 ={ applying all }
-
 x == x && all (== x) (replicate n x)
-
 ={ applying == }
-
 True && all (== x) (replicate n x)
-
 ={ applying && }
-
 all (== x) (replicate n x)
-
 ={ induction hypothesis }
-
 True
+```
 
 ##### Exercise 4
 
-Base case:
 
-\[\] ++ \[\]
-
+``` haskell
+[] ++ []
 ={ applying ++ }
+[]
+```
 
-\[\]
 
-Inductive case:
-
-(x : xs) ++ \[\]
-
+``` haskell
+(x : xs) ++ []
 ={ applying ++ }
-
-x : (xs ++ \[\])
-
+x : (xs ++ [])
 ={ induction hypothesis }
-
 x : xs
+```
 
-Base case:
 
-\[\] ++ (ys ++ zs)
-
+``` haskell
+[] ++ (ys ++ zs)
 ={ applying ++ }
-
 ys ++ zs
-
 ={ unapplying ++ }
+([] ++ ys) ++ zs
+```
 
-(\[\] ++ ys) ++ zs
 
-Inductive case:
-
+``` haskell
 (x : xs) ++ (ys ++ zs)
-
 ={ applying ++ }
-
 x : (xs ++ (ys ++ zs))
-
 ={ induction hypothesis }
-
 x : ((xs ++ ys) ++ zs)
-
 ={ unapplying ++ }
-
 (x : (xs ++ ys)) ++ zs
-
 ={ unapplying ++ }
-
 ((x : xs) ++ ys) ++ zs
+```
 
 ##### Exercise 5
 
-Base case:
 
+``` haskell
 take 0 xs ++ drop 0 xs
-
 ={ applying take, drop }
-
-\[\] ++ xs
-
+[] ++ xs
 ={ applying ++ }
-
 xs
+```
 
-Base case:
 
-take (n+1) \[\] ++ drop (n+1) \[\]
-
+``` haskell
+take (n+1) [] ++ drop (n+1) []
 ={ applying take, drop }
-
-\[\] ++ \[\]
-
+[] ++ []
 ={ applying ++ }
+[]
+```
 
-\[\]
 
-Inductive case:
-
+``` haskell
 take (n+1) (x:xs) ++ drop (n+1) (x:xs)
-
 ={ applying take, drop }
-
 (x : take n xs) ++ (drop n xs)
-
 ={ applying ++ }
-
 x : (take n xs ++ drop n xs)
-
 ={ induction hypothesis }
-
 x : xs
+```
 
 ### **A.17Calculating compilers**
 

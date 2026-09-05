@@ -28,7 +28,7 @@ Since you’ve written about a thousand lines of Java code with me already, I’
 
 That’s about as minimal as it gets. Most object-oriented languages, all the way back to Simula, also do inheritance to reuse behavior across classes. We’ll add that in the next chapter. Even kicking that out, we still have a lot to get through. This is a big chapter and everything doesn’t quite come together until we have all of the above pieces, so gather your stamina.
 
-![The relationships between classes, methods, instances, constructors, and fields.](media/image/classes/circle.png)
+![The relationships between classes, methods, instances, constructors, and fields.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/classes/circle.png)
 
 It’s like the circle of life, *sans* Sir Elton John.
 
@@ -130,11 +130,9 @@ Like we do in any open-ended loop in the parser, we also check for hitting the e
 
 We wrap the name and list of methods into a Stmt.Class node and we’re done. Previously, we would jump straight into the interpreter, but now we need to plumb the node through the resolver first.
 
-      @Override
       public Void visitClassStmt(Stmt.Class stmt) {
         declare(stmt.name);
         define(stmt.name);
-        return null;
       }
 
 *lox/Resolver.java*, add after *visitBlockStmt*()
@@ -143,12 +141,10 @@ We aren’t going to worry about resolving the methods themselves yet, so for no
 
 Now we interpret the class declaration.
 
-      @Override
       public Void visitClassStmt(Stmt.Class stmt) {
         environment.define(stmt.name.lexeme, null);
         LoxClass klass = new LoxClass(stmt.name.lexeme);
         environment.assign(stmt.name, klass);
-        return null;
       }
 
 *lox/Interpreter.java*, add after *visitBlockStmt*()
@@ -226,14 +222,12 @@ class LoxClass implements LoxCallable {
 
 Implementing that interface requires two methods.
 
-      @Override
       public Object call(Interpreter interpreter,
                          List<Object> arguments) {
         LoxInstance instance = new LoxInstance(this);
         return instance;
       }
 
-      @Override
       public int arity() {
         return 0;
       }
@@ -344,14 +338,12 @@ Following the grammar, the new parsing code goes in our existing `call()` method
 
 The outer `while` loop there corresponds to the `*` in the grammar rule. We zip along the tokens building up a chain of calls and gets as we find parentheses and dots, like so:
 
-![Parsing a series of '.' and '()' expressions to an AST.](media/image/classes/zip.png)
+![Parsing a series of '.' and '()' expressions to an AST.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/classes/zip.png)
 
 Instances of the new Expr.Get node feed into the resolver.
 
-      @Override
       public Void visitGetExpr(Expr.Get expr) {
         resolve(expr.object);
-        return null;
       }
 
 *lox/Resolver.java*, add after *visitCallExpr*()
@@ -360,7 +352,6 @@ OK, not much to that. Since properties are looked up dynamically, they don’t g
 
 You can literally see that property dispatch in Lox is dynamic since we don’t process the property name during the static resolution pass.
 
-      @Override
       public Object visitGetExpr(Expr.Get expr) {
         Object object = evaluate(expr.object);
         if (object instanceof LoxInstance) {
@@ -435,7 +426,7 @@ assignment     → ( call "." )? IDENTIFIER "=" assignment
 
 Unlike getters, setters don’t chain. However, the reference to `call` allows any high-precedence expression before the last dot, including any number of *getters*, as in:
 
-![breakfast.omelette.filling.meat = ham](media/image/classes/setter.png)
+![breakfast.omelette.filling.meat = ham](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/classes/setter.png)
 
 Note here that only the *last* part, the `.meat` is the *setter*. The `.omelette` and `.filling` parts are both *get* expressions.
 
@@ -481,11 +472,9 @@ We add another clause to that transformation to handle turning an Expr.Get expre
 
 That’s parsing our syntax. We push that node through into the resolver.
 
-      @Override
       public Void visitSetExpr(Expr.Set expr) {
         resolve(expr.value);
         resolve(expr.object);
-        return null;
       }
 
 *lox/Resolver.java*, add after *visitLogicalExpr*()
@@ -494,7 +483,6 @@ Again, like Expr.Get, the property itself is dynamically evaluated, so there’s
 
 That leads us to the interpreter.
 
-      @Override
       public Object visitSetExpr(Expr.Set expr) {
         Object object = evaluate(expr.object);
 
@@ -536,7 +524,7 @@ You can create instances of classes and stuff data into them, but the class itse
 
 Our helpful parser already parses method declarations, so we’re good there. We also don’t need to add any new parser support for method *calls*. We already have `.` (getters) and `()` (function calls). A “method call” simply chains those together.
 
-![The syntax tree for 'object.method(argument)](media/image/classes/method.png)
+![The syntax tree for 'object.method(argument)](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/classes/method.png)
 
 That raises an interesting question. What happens when those two expressions are pulled apart? Assuming that `method` in this example is a method on the class of `object` and not a field on the instance, what should the following piece of code do?
 
@@ -760,7 +748,6 @@ Looking for a field first implies that fields shadow methods, a subtle but impor
           return methods.get(name);
         }
 
-        return null;
       }
 
 *lox/LoxClass.java*, add after *LoxClass*()
@@ -825,15 +812,15 @@ cake.taste(); // Prints "The German chocolate cake is delicious!".
 
 When we first evaluate the class definition, we create a LoxFunction for `taste()`. Its closure is the environment surrounding the class, in this case the global one. So the LoxFunction we store in the class’s method map looks like so:
 
-![The initial closure for the method.](media/image/classes/closure.png)
+![The initial closure for the method.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/classes/closure.png)
 
 When we evaluate the `cake.taste` get expression, we create a new environment that binds `this` to the object the method is accessed from (here, `cake`). Then we make a *new* LoxFunction with the same code as the original one but using that new environment as its closure.
 
-![The new closure that binds 'this'.](media/image/classes/bound-method.png)
+![The new closure that binds 'this'.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/classes/bound-method.png)
 
 This is the LoxFunction that gets returned when evaluating the get expression for the method name. When that function is later called by a `()` expression, we create an environment for the method body as usual.
 
-![Calling the bound method and creating a new environment for the method body.](media/image/classes/call.png)
+![Calling the bound method and creating a new environment for the method body.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/classes/call.png)
 
 The parent of the body environment is the environment we created earlier to bind `this` to the current object. Thus any use of `this` inside the body successfully resolves to that instance.
 
@@ -893,10 +880,8 @@ Parsing is simple since it’s a single token which our lexer already recognizes
 
 You can start to see how `this` works like a variable when we get to the resolver.
 
-      @Override
       public Void visitThisExpr(Expr.This expr) {
         resolveLocal(expr, expr.keyword);
-        return null;
       }
 
 *lox/Resolver.java*, add after *visitSetExpr*()
@@ -969,7 +954,6 @@ We declare “this” as a variable in that environment and bind it to the given
 
 The remaining task is interpreting those `this` expressions. Similar to the resolver, it is the same as interpreting a variable expression.
 
-      @Override
       public Object visitThisExpr(Expr.This expr) {
         return lookUpVariable(expr.keyword, expr);
       }

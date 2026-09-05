@@ -1,47 +1,3 @@
-**8. Non-Static Data Member**
-
- 
-
-**Initialization**
-
-You’ve learned a lot of techniques related to constructors! You can initialize data members in various constructors, delegate them to reuse code, and inherit them from base classes. Yet, we can still improve on assigning default values for data members. I mentioned this feature in the first chapter, where we gave default values for aggregates. We can do the same for classes. And in this chapter, we’ll look at the full syntax and options related to this feature.
-
-Please have a look at the example below:
-
-**Ex 8.1. NSDMI Basics. Run** [**@Compiler Explorer**](https://godbolt.org/z/dc88fd3Y1) **class DataPacket** {
-
-std::string data\_;
-
-**size_t** checkSum\_ { 0 };
-
-**size_t** serverId\_ { 0 };
-
-**public**:
-
-DataPacket() = **default**;
-
-DataPacket(**const** std::string& data, **size_t** serverId)
-
-: data\_{data}, checkSum\_{calcCheckSum(data)}, serverId\_{serverId}
-
-{ }
-
-// getters and setters...
-
-};
-
-As you can see, the data members have their default values set at the point of declaration. There’s no need to assign default values inside constructors. This feature is much better than a default constructor because it combines declaration and initialization code. This way, it’s harder to leave data members uninitialized!
-
-Let’s explore this handy feature of Modern C++ in detail.
-
- 
-
-**How it works**
-
-This section shows how the compiler “expands” the code to initialize data members.
-
-112
-
 Non-Static Data Member Initialization 113
 
  
@@ -68,7 +24,6 @@ Here’s the full working example:
 
 **Ex 8.2. Basic Non-static data member initialization. Run** [**@Compiler Explorer**](https://godbolt.org/z/9968jYrsv)
 
-\#include \<iostream\>
 
 **struct SimpleType** {
 
@@ -176,15 +131,12 @@ After running the code, we can see the following output:
 
 SimpleType t0
 
-initA() called
 
-initB() called
 
 SimpleType()
 
 SimpleType t1(10)
 
-initB() called
 
 SimpleType(int)
 
@@ -226,7 +178,7 @@ SimpleType(**int** x) : a(x), b(initB()) { } };
 
 We can also visualize it using the following diagram:
 
-![](media/index-131_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-131_1.png)
 
  
 
@@ -420,7 +372,6 @@ Now, let’s update our previous examples with copy constructors:
 
 **Ex 8.6. Copy constructor and NSDMI. Run** [**@Compiler Explorer**](https://godbolt.org/z/qf365b5GG)
 
-\#include \<iostream\>
 
 \#include \<string\>
 
@@ -476,15 +427,11 @@ SimpleType t2 = t1;
 
 After running it, we can see the following output:
 
-initA() called
 
-initB() called
 
 SimpleType t2 = t1:
 
-initA() called
 
-initB() called
 
 copy ctor
 
@@ -504,9 +451,7 @@ Non-Static Data Member Initialization 122
 
 SimpleType t1:
 
-initA() called
 
-initB() called
 
 SimpleType t2 = t1:
 
@@ -526,7 +471,6 @@ We can observe a similar effect with a move constructor:
 
 **Ex 8.7. NSDMI and move constructor. Run** [**@Compiler Explorer**](https://godbolt.org/z/xWMPodver)
 
-\#include \<iostream\>
 
 \#include \<string\>
 
@@ -586,15 +530,11 @@ When you run the code, you can see that initA() and initB() are also called only
 
 SimpleType t1:
 
-initA() called
 
-initB() called
 
 SimpleType t2 = t1:
 
-initA() called
 
-initB() called
 
 move ctor
 
@@ -626,7 +566,6 @@ Fortunately, in C++14, the limitation was lifted, and the above line compiles. T
 
 **Ex 8.8. Aggregates and NSDMI in C++14. Run** [**@CompilerExplorer**](https://godbolt.org/z/WxWzsr635)
 
-\#include \<iostream\>
 
 **struct Point** { **float** x = 1.0f; **float** y = 2.0f; };
 
@@ -656,7 +595,6 @@ Non-Static Data Member Initialization 125
 
 **Ex 8.9. Bit fields and NSDMI in C++20. Run** [**@Compiler Explorer**](https://godbolt.org/z/7GoaaTMn5)
 
-\#include \<iostream\>
 
 **struct Type** {
 
@@ -690,7 +628,7 @@ In this section, we’ll discuss the current (as of C++20) limitations of non-st
 
 Since we can declare and initialize a variable inside a class, can we also/still use auto? It seems natural and follows the AAA (Almost Always Auto) Rule.
 
-![](media/index-140_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-140_1.png)
 
 **Almost Always Auto Rule**: this term was coined by Herb Sutter. It recommends using auto-type deduction rather than writing explicit types. See the blog post
 
@@ -732,7 +670,7 @@ error: non-**static** data member declared **with** placeholder 'auto'
 
 It’s easy for the compiler to deduce the type of a static data member as the initialization happens at the place you declare it. However, it’s not possible for regular data members because the initializer might come from the default member init or the constructor (when you override a default value).
 
-![](media/index-141_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-141_1.png)
 
  
 
@@ -772,7 +710,7 @@ error: 'vector' does not name a type
 
 Hopefully, both issues presented here are not big blockers, but it’s good to be aware of them.
 
-![](media/index-142_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-142_1.png)
 
 Non-Static Data Member Initialization 128
 
@@ -792,7 +730,6 @@ What if I want data\_ to be initialized with 40 stars \*? I can write the long s
 
 **Ex 8.10. Direct initialization with parens and** **std::string****. Run** [**@Compiler Explorer**](https://godbolt.org/z/WW569j6h6)
 
-\#include \<iostream\>
 
 **int** main() {
 
@@ -938,7 +875,7 @@ And in [C++ Core Guidelines - C.45⁷](https://isocpp.github.io/CppCoreGuideline
 
 **Reason**: Using in-class member initializers lets the compiler generate the function for you. The compiler-generated function can be more efficient.
 
-![](media/index-146_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-146_1.png)
 
  
 

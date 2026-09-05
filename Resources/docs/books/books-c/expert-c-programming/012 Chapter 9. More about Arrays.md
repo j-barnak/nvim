@@ -1,73 +1,3 @@
-}
-
-}
-
-void get_lparen()
-
-{
-
-nextstate = get_ptr_part;
-
-if (top \>= 0) {
-
-if (stack\[top\].type == '(') {
-
-pop;
-
-gettoken();/\* read past ')' \*/
-
-nextstate = get_array;
-
-}
-
-}
-
-}
-
-void get_ptr_part()
-
-{
-
-nextstate = get_type;
-
-if (stack\[top\].type == '\*') {
-
-printf("pointer to ");
-
-pop;
-
-nextstate = get_lparen;
-
-} else if (stack\[top\].type == QUALIFIER) {
-
-printf("%s ", pop.string);
-
-nextstate = get_lparen;
-
-}
-
-}
-
-void get_type()
-
-{
-
-nextstate = NULL;
-
-/\* process tokens that we stacked while reading to
-
-identifier \*/
-
-while (top \>= 0) {
-
-printf("%s ", pop.string);
-
-}
-
-printf("\n");
-
-}
-
 **Chapter 9. More about Arrays**
 
 *Never eat at a place called "Mom's." Never play cards with a man called "Doc."*
@@ -76,7 +6,7 @@ printf("\n");
 
 —C programmers' saying (Traditional)
 
-![Image 116](media/index-206_1.png)
+![Image 116](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-206_1.png)
 
 when an array is a pointer…why the confusion?…an "array name in an expression" is a pointer…why C treats array subscripts as pointer offsets…an "array name as a function parameter" is a pointer…why C treats array parameters as pointers…how an array parameter is referenced…indexing a slice…arrays and pointers interchangeability summary…C has multi-dimensional arrays…but every other language calls them "arrays of arrays"…how arrays are laid out in memory…how to initialize arrays…some light relief—hardware/software trade-offs **When an Array *Is*** **a Pointer**
 
@@ -138,7 +68,7 @@ Programmers also see a lot of statements like
 
 printf("%s %s", my_ptr, my_array);
 
-![Image 117](media/index-208_1.png)
+![Image 117](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-208_1.png)
 
 which clearly demonstrate the interchangeability of pointers and arrays.
 
@@ -208,7 +138,7 @@ Treating array subscripts as a pointer-plus-offset is a technique inherited from
 
 Word has gotten out that it is "more efficient" to program array algorithms using pointers instead of arrays.
 
-![Image 118](media/index-210_1.png)
+![Image 118](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-210_1.png)
 
 The popular belief is usually wrong. With modern production-quality optimizing compilers, there is not necessarily a difference in the code generated for one-dimensional arrays and that for references through a pointer. After all, array subscripts are defined in terms of pointers, so it is often possible for the optimizer to make the transformation to the most efficient representation, and output machine instructions for that. Let's take a look at those array/pointer alternatives again, and separate out the initialization from an access in a loop:
 
@@ -274,7 +204,7 @@ assembler I/O libraries. Comprehensive semantic checking was excluded from the P
 
 Compiler on the questionable grounds that it is more "efficient" to implement lint as a separate
 
-![Image 119](media/index-212_1.png)
+![Image 119](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-212_1.png)
 
 program. That decision has been implicitly revoked by the enhanced error checking done by most ANSI C compilers.
 
@@ -352,7 +282,7 @@ You thus have a choice when declaring such a function. You can define the parame
 
 **Programming Challenge**
 
-![Image 120](media/index-214_1.png)
+![Image 120](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-214_1.png)
 
 **Play Around with Array/Pointer Arguments**
 
@@ -436,9 +366,9 @@ Caution: don't read this unless you've read and understood the preceding chapter
 
 Some people claim that C doesn't have multidimensional arrays. They're wrong. Section 6.5.4.2 of the ANSI standard and its footnote number 69 says:
 
-![Image 121](media/index-216_1.png)
+![Image 121](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-216_1.png)
 
-![Image 122](media/index-216_2.png)
+![Image 122](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-216_2.png)
 
 When several "array of" specifications *(i.e., the square brackets that denote an index)* are adjacent, a multidimensional array is declared.
 
@@ -460,9 +390,9 @@ The opposite approach was taken by Pascal, which regards arrays of arrays and mu
 
 **Handy Heuristic**
 
-![Image 123](media/index-217_1.png)
+![Image 123](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-217_1.png)
 
-![Image 124](media/index-217_2.png)
+![Image 124](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-217_2.png)
 
 **What "Multidimensional" Means in Different Languages** The Ada standard explicitly says arrays of arrays and multidimensional arrays are different.
 
@@ -486,9 +416,9 @@ Although its terminology refers to "multidimensional arrays," C really only supp
 
 **Handy Heuristic**
 
-![Image 125](media/index-218_1.png)
+![Image 125](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-218_1.png)
 
-![Image 126](media/index-218_2.png)
+![Image 126](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-218_2.png)
 
 **Arrays in C Are One-Dimensional**
 
@@ -506,7 +436,7 @@ this tells us that the same storage can be looked at in any of the ways shown in
 
 Normally, one assigns between two identical types, integer to integer, double to double, and so on. In Figure 9-8, we see that each individual array within the array-of-array-of-arrays is compatible with a pointer. This is because an array-name in an expression decays into a "pointer-to-element" (Rule 1 on page 242). In other words, you can't assign an array to something of the same type because an array cannot be assigned to as a whole. You can load a *pointer* with the value of the array-name because of the "array-name in an expression decays into a pointer" rule.
 
-![Image 127](media/index-219_1.png)
+![Image 127](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-219_1.png)
 
 The dimensions of the array that the pointer points to make a big difference. Using the declarations in the example above,
 
@@ -538,7 +468,7 @@ With multidimensional arrays in C the rightmost subscript varies fastest, a conv
 
 ***Figure 9-9. Row Major versus Column Major Order***
 
-![Image 128](media/index-220_1.png)
+![Image 128](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-220_1.png)
 
 The most common use of multidimensional arrays in C is to store several strings of characters. Some people point out that rightmost-subscript-varies-fastest is advantageous for this (adjacent characters in each string are stored next to each other); this is not true for multidimensional arrays of characters in leftmost-subscript-varies-fastest order.
 
@@ -568,7 +498,7 @@ If the array dimension is bigger than the number of initial values provided, the
 
 **Programming Challenge**
 
-![Image 129](media/index-221_1.png)
+![Image 129](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-221_1.png)
 
 **Check Those Bit Patterns**
 
@@ -618,7 +548,7 @@ The secret to doing this kind of initialization is to create the rows as individ
 
 int row_1\[\] = {1,2,3,4,5,-1}; /\* -1 is end-of-row marker \*/
 
-![Image 130](media/index-222_1.png)
+![Image 130](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-222_1.png)
 
 int row_2\[\] = {6,7,-1};
 
@@ -652,7 +582,7 @@ The winder on the alarm wound up the thread, pulling out a pin, which caused the
 
 Although everyone laughed at this contraption, it worked for six months until the new system was in place! Within hours of the new system being commissioned, systems engineers from both Burroughs and IBM were begging for a surviving example of these Rube Goldberg devices. And that is the essence of a successful software-hardware trade-off.
 
-![Image 131](media/index-223_1.png)
+![Image 131](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-223_1.png)
 
 **Programming Solution**
 
@@ -717,3 +647,21 @@ addr (ga\[1\]) = 0x20901
 addr of array param = 0xeffffa14
 
 addr (ca\[0\]) = 0x20900
+
+![Image 132](/tmp/audit/iter1/epubregen/expert-c-programming/media/index-224_1.png)
+
+addr (ca\[1\]) = 0x20901
+
+++ca = 0x20901
+
+addr of ptr param = 0xeffffa14
+
+addr (pa\[0\]) = 0x20900
+
+addr (pa\[1\]) = 0x20901
+
+++pa = 0x20901
+
+It looks a little weird at first sight, to see the address of an array parameter not equal to the address of the first element of the array parameter, but it's true enough.
+
+You can win a lot of money-making bets with novice C programmers about what the sizeof operator will produce in this circumstance.

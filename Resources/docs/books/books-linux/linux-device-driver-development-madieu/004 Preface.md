@@ -54,7 +54,7 @@ To make use of the content of this book, prior knowledge of basic C programming 
 
 This book assumes a medium level of understanding of the Linux operating system and basic knowledge of C programming (at least data structures, pointer handling, and memory allocation). All code examples have been tested with Linux kernel v5.10. If additional skill is required for a given chapter, links to document references will be provided for you to quickly learn these skills.
 
-![](media/image/B17934_Preface_001.jpg)
+![](/tmp/audit/iter1/epubregen/linux-device-driver-development-madieu/media/image/B17934_Preface_001.jpg)
 
 Other necessary packages are described in the dedicated chapter in the book. Internet connectivity is required for kernel source downloading.
 
@@ -78,37 +78,32 @@ There are a number of text conventions used throughout this book.
 
 A block of code is set as follows:
 
+``` c
 struct mutex {
-
-atomic_long_t owner;
-
-spinlock_t wait_lock;
-
-\#ifdef CONFIG_MUTEX_SPIN_ON_OWNER
-
-struct optimistic_spin_queue osq; /\* Spinner MCS lock \*/
+    atomic_long_t owner;
+    spinlock_t wait_lock;
+#ifdef CONFIG_MUTEX_SPIN_ON_OWNER
+    struct optimistic_spin_queue osq; /* Spinner MCS lock */
+```
 
 When we wish to draw your attention to a particular part of a code block, the relevant lines or items are set in bold:
 
+``` c
 struct fake_data {
-
-struct i2c_client \*client;
-
-**u16 reg_conf;**
-
-struct mutex mutex;
-
+    struct i2c_client *client;
+ u16 reg_conf;
+    struct mutex mutex;
 };
+```
 
 Any command-line input or output is written as follows:
 
-\[342081.385491\] Wait queue example
-
-\[342081.385505\] Going to sleep my_init
-
-\[342081.385515\] Waitqueue module handler work_handler
-
-\[342086.387017\] Wake up the sleeping module
+``` c
+[342081.385491] Wait queue example
+[342081.385505] Going to sleep my_init
+[342081.385515] Waitqueue module handler work_handler
+[342086.387017] Wake up the sleeping module
+```
 
 Tips or Important Notes
 

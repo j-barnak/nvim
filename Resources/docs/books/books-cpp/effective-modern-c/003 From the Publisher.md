@@ -1,5 +1,3 @@
-![](media/index-13_1.png)
-
 **From the Publisher**
 
 **Using Code Examples**

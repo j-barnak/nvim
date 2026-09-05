@@ -1,6 +1,6 @@
 ## `B` `ASSEMBLY GENERATION AND CODE EMISSION TABLES`
 
-![](media/a26394c5fd9047c0974071f62d6ff4719089a6da.jpg)
+![](/tmp/audit/iter1/epubregen/writing-a-c-compiler/media/a26394c5fd9047c0974071f62d6ff4719089a6da.jpg)
 
 In each chapter where we updated the conversion from TACKY to assembly or the code emission pass, I included tables summarizing those passes. From Chapter 4 on, these tables showed only the changes made in that chapter, not the entire pass. This appendix presents the complete tables summarizing these passes at the end of Part I, Part II, and Part III.
 

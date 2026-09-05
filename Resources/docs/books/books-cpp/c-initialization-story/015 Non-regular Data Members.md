@@ -16,9 +16,7 @@ Consider the following code with a const data member id\_:
 
 **Ex 10.1. A constant data member. Run** [**@Compiler Explorer**](https://godbolt.org/z/1hrncModb)
 
-\#include \<iostream\>
 
-\#include \<string\>
 
 **class ProductConst** {
 
@@ -112,7 +110,7 @@ The only way to fix the compiler error is to write a custom assignment operator.
 
 If you want your object to be constant, make it const as a “whole” rather than just some of its parts.
 
-![](media/index-167_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-167_1.png)
 
 You can read more about this semantic problem with constant data members in a
 
@@ -144,9 +142,7 @@ This section should start with a warning: “don’t use raw pointers”, but if
 
 **Ex 10.2. A raw pointer as a data member. Run** [**@Compiler Explorer**](https://godbolt.org/z/aY8haWzfY)
 
-\#include \<iostream\>
 
-\#include \<string\>
 
 **class DangerousWrapper** {
 
@@ -162,7 +158,6 @@ std::string\* pName\_ { **nullptr** }; };
 
 **int** main() {
 
-std::string str { "Name"};
 
 DangerousWrapper w { &str };
 
@@ -194,7 +189,6 @@ What’s more, you have to be prepared for cases like:
 
 DangerousWrapper foo() {
 
-std::string str { "Name"};
 
 DangerousWrapper w { &str };
 
@@ -298,7 +292,7 @@ objects, *etc.*
 
 In all of the above cases, the lifetime of the stored pointer is “inside” or wrapped by the lifetime of the parent class/object. It’s tricky but usually safer than when you rely on entities totally “outside” the object.
 
-![](media/index-171_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-171_1.png)
 
 Raw pointers are usually tricky to use, so be careful or use smart pointers.
 
@@ -390,7 +384,6 @@ Since the class doesn’t implement any special member functions, the compiler w
 
 unique_ptr can also help with objects going out of the scope we’ve seen with DangerousWrapper. Below you have a version with a replaced raw pointer with a smart pointer; the code won’t compile:
 
-\#include \<string\>
 
 \#include \<memory\>
 
@@ -434,7 +427,6 @@ To fix the issue, we can write:
 
 // 1)
 
-std::string str { "Name"};
 
 SaferWrapper w { std::make_unique\<std::string\>(str) }; // 2):
 
@@ -446,7 +438,6 @@ Of course, you can still write the following code:
 
 // bad idea:
 
-std::string str { "Name"};
 
 SaferWrapper w { std::unique_ptr\<std::string\>(&str) };
 
@@ -510,7 +501,6 @@ And the source file:
 
 \#include "class.h"
 
-\#include \<iostream\>
 
 **class MyClassImpl** {
 
@@ -716,9 +706,7 @@ See the example:
 
 Non-regular Data Members 165
 
-\#include \<iostream\>
 
-\#include \<string\>
 
 **class WrapperWithRef** {
 
@@ -736,7 +724,6 @@ std::string& name\_; // cannot set to "nullptr" or {} empty! };
 
 **int** main() {
 
-std::string str { "Name"};
 
 WrapperWithRef w { str };
 
@@ -764,13 +751,10 @@ However, having a reference is not uncommon, and you might implicitly create suc
 
 Non-regular Data Members 166
 
-\#include \<iostream\>
 
-\#include \<string\>
 
 **int** main() {
 
-std::string str { "Name"};
 
 **auto** changeStr = \[&str\](**int** x) {
 
@@ -820,9 +804,7 @@ See the example:
 
 Non-regular Data Members 167
 
-\#include \<iostream\>
 
-\#include \<string\>
 
 **class WrapperWitStdhRef** {
 
@@ -840,7 +822,6 @@ std::reference_wrapper\<std::string\> name\_; };
 
 **int** main() {
 
-std::string str { "Name"};
 
 WrapperWitStdhRef w { str };
 
@@ -880,7 +861,7 @@ Non-regular Data Members 168
 
 • Passing reference-like arguments to the start function of std::thread.
 
-![](media/index-183_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-183_1.png)
 
 std::refrence_wrapper is usually implemented as a raw pointer to the wrapped type. Extra member functions and operators make it “feel” like a reference type that can also rebind.
 
@@ -918,7 +899,7 @@ Using the above function template, I generated the following table:
 
 Non-regular Data Members 169
 
-![](media/index-184_1.png)
+![](/tmp/audit/iter1/epubregen/c-initialization-story/media/index-184_1.png)
 
  
 

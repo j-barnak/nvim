@@ -213,7 +213,7 @@ Note that we don’t push anything else after that. This is a key difference bet
 
 The stack is one element shorter after an `OP_ADD`, so its effect is -1:
 
-![The stack effect of an OP_ADD instruction.](media/image/global-variables/stack-effect.png)
+![The stack effect of an OP_ADD instruction.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/global-variables/stack-effect.png)
 
 You can sum the stack effects of a series of instructions to get their total effect. When you add the stack effects of the series of instructions compiled from any complete expression, it will total one. Each expression leaves one result value on the stack.
 
@@ -792,7 +792,7 @@ In this code, the parser doesn’t realize `menu.brunch(sunday).beverage` is the
 
 The problem is not as dire as it might seem, though. Look at how the parser sees that example:
 
-![The 'menu.brunch(sunday).beverage = "mimosa"' statement, showing that 'menu.brunch(sunday)' is an expression.](media/image/global-variables/setter.png)
+![The 'menu.brunch(sunday).beverage = "mimosa"' statement, showing that 'menu.brunch(sunday)' is an expression.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/global-variables/setter.png)
 
 Even though the `.beverage` part must not be compiled as a get expression, everything to the left of the `.` is an expression, with the normal expression semantics. The `menu.brunch(sunday)` part can be compiled and executed as usual.
 
@@ -895,7 +895,7 @@ a * b = c + d;
 
 According to Lox’s grammar, `=` has the lowest precedence, so this should be parsed roughly like:
 
-![The expected parse, like '(a \* b) = (c + d)'.](media/image/global-variables/ast-good.png)
+![The expected parse, like '(a \* b) = (c + d)'.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/global-variables/ast-good.png)
 
 Obviously, `a * b` isn’t a valid assignment target, so this should be a syntax error. But here’s what our parser does:
 
@@ -910,7 +910,7 @@ Wouldn’t it be wild if `a * b` *was* a valid assignment target, though? You co
 
 In other words, the parser sees the above code like:
 
-![The actual parse, like 'a \* (b = c + d)'.](media/image/global-variables/ast-bad.png)
+![The actual parse, like 'a \* (b = c + d)'.](/tmp/audit/iter1/epubregen/crafting-interpreters/media/image/global-variables/ast-bad.png)
 
 We’ve messed up the precedence handling because `variable()` doesn’t take into account the precedence of the surrounding expression that contains the variable. If the variable happens to be the right-hand side of an infix operator, or the operand of a unary operator, then that containing expression is too high precedence to permit the `=`.
 
