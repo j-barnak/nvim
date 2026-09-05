@@ -24,6 +24,8 @@ local TOOLS = {
 	{ "cppman", "CppReference provider" },
 	{ "sha256sum", "background pre-conversion of browsed .rst/.xml/.html sets (optional)" },
 	{ "nice", "background pre-conversion runs at low priority (optional)" },
+	{ "setsid", "background pre-conversion is killed cleanly on exit (optional)" },
+	{ "timeout", "network fetches and man renders are capped at 60 s (optional)" },
 	{ "pdftoppm", "Intel SDM figure extraction (optional)" },
 	{ "convert", "Intel SDM figure cropping (optional, ImageMagick)" },
 	{ "xdg-open", "opening a figure when snacks.image is unavailable (optional)" },

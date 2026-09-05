@@ -1,6 +1,9 @@
 set -e
 cd "$1"
 grep -rhoE '^\.\. kernel-doc:: \S+' Documentation --include='*.rst' | awk '{print $3}' | sort -u > .kd_files.txt
+# set -e is blind to failures inside a pipeline (POSIX XCU 2.9.2), so check the
+# result: an empty index otherwise fails later as a confusing git error.
+[ -s .kd_files.txt ] || { echo "api_build: no kernel-doc directives found under Documentation" >&2; exit 1; }
 # /scripts holds the perl kernel-doc on older trees; recent kernels rewrote it
 # in Python (scripts/kernel-doc symlinks to /tools/docs/kernel-doc) which imports
 # the kdoc package from /tools/lib/python. Fetch all three or the recent-kernel

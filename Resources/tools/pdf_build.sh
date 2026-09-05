@@ -1,5 +1,9 @@
 set -e
-PDF="$1"; OUT="$2"; URL="$3"; MODE="$4"
+# MODE is optional: the PDF spec providers pass only three arguments.
+PDF="$1"; OUT="$2"; URL="$3"; MODE="${4:-}"
+# The cleanup below globs outside the quotes, so an empty or root OUT would
+# expand to "rm -f /*.txt". Refuse both.
+case "$OUT" in "" | / | //) echo "pdf_build: refusing out-dir '$OUT'" >&2; exit 1 ;; esac
 if [ ! -f "$PDF" ]; then mkdir -p "$(dirname "$PDF")"; curl -fsSL "$URL" -o "$PDF"; fi
 mkdir -p "$OUT"
 # Clean slate; ".complete" (written only on full success) gates reuse, so a
@@ -14,6 +18,9 @@ walk(doc.loadOutline(),0);
 EOF2
 mutool run "$JS" > "$OUT/.all.tsv" 2>/dev/null
 TOTAL=$(pdfinfo "$PDF" | awk '/^Pages:/{print $2}')
+# A pipeline hides its failures from set -e, so a missing pdfinfo or an
+# unreadable PDF would otherwise surface as arithmetic errors much later.
+[ -n "$TOTAL" ] || { echo "pdf_build: pdfinfo gave no page count for $PDF" >&2; exit 1; }
 idx=0; prev_p=""; prev_t=""
 # Some PDFs (LaTeX-set ones such as The Algorithm Design Manual) carry the
 # ff/fi/fl/ffi/ffl ligatures as the single code points U+FB00 to U+FB04, which

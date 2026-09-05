@@ -159,6 +159,9 @@ local function docs_toc()
 				local lnum = sel and sel[1] and tonumber(sel[1]:match("^(%d+)"))
 				if lnum and vim.api.nvim_win_is_valid(win) then
 					vim.api.nvim_set_current_win(win)
+					-- Clamp: the buffer may have been replaced by a shorter doc
+					-- since the picker was built, and an out-of-range line throws.
+					lnum = math.min(lnum, vim.api.nvim_buf_line_count(vim.api.nvim_win_get_buf(win)))
 					vim.api.nvim_win_set_cursor(win, { lnum, 0 })
 					vim.cmd.normal({ "zz", bang = true })
 				end
@@ -176,7 +179,10 @@ local last_picker -- re-open the current provider's fuzzy finder (D in a doc)
 local render_seq = 0
 
 -- ── render lines in a reused right vsplit with the given filetype ─────────
+-- Every caller that renders synchronously bumps render_seq through this, so an
+-- async render still in flight cannot overwrite what the user is now reading.
 local function render_lines(lines, ft, dir, title)
+	render_seq = render_seq + 1
 	if not lines or #lines == 0 then
 		return vim.notify("Nothing to render", vim.log.levels.WARN)
 	end
@@ -280,6 +286,12 @@ local function render_lines(lines, ft, dir, title)
 			local word = vim.fn.expand("<cword>")
 			if word ~= "" then
 				vim.cmd.vsplit({ mods = { split = "belowright" } })
+				-- Hand the new split over as the viewer, otherwise render_lines
+				-- follows the tracked viewer_win and puts the new page back in
+				-- the old window, leaving the stale one here and leaking a
+				-- window on every jump.
+				viewer_win = vim.api.nvim_get_current_win()
+				vim.w[viewer_win].docs_viewer = true
 				render_shell("MANWIDTH=90 man " .. shq(word) .. " 2>/dev/null | col -bx", word, "man", "man::" .. word)
 			end
 		end, { buffer = buf, nowait = true, silent = true, desc = "Docs: follow man cross-reference" })
@@ -492,6 +504,16 @@ local function open_file(path)
 	if ({ png = 1, jpg = 1, jpeg = 1, gif = 1, svg = 1, webp = 1 })[ext] then
 		return show_figure(path)
 	end
+	-- Any other binary (a tarball or PDF reached through a link) would throw
+	-- the same way, so refuse it rather than wiping the current doc for it.
+	local probe = io.open(path, "rb")
+	if probe then
+		local head = probe:read(1024) or ""
+		probe:close()
+		if head:find("\0", 1, true) then
+			return vim.notify("Not a text document: " .. vim.fs.basename(path), vim.log.levels.WARN)
+		end
+	end
 	if not from then
 		return finish(nil, nil) -- markdown / code: raw read is already instant
 	end
@@ -515,10 +537,14 @@ local function open_file(path)
 					end
 					return
 				end
-				pcall(function() -- cache the conversion even if a newer open won
-					vim.fn.mkdir(convcache_dir, "p")
-					vim.fn.writefile(lines, cf)
-				end)
+				-- Only cache a clean exit: pandoc can print half a document and
+				-- then fail, and that truncation would be served forever.
+				if res.code == 0 then
+					pcall(function() -- cache even if a newer open won the race
+						vim.fn.mkdir(convcache_dir, "p")
+						vim.fn.writefile(lines, cf)
+					end)
+				end
 				if myseq ~= render_seq then
 					return -- superseded by a later open; do not clobber the viewer
 				end
@@ -1400,8 +1426,10 @@ local function make_wiki(name, url, prompt)
 		-- a partial dir that makes every retry fail with "already exists".
 		local tmp = dir .. ".tmp"
 		vim.fn.delete(tmp, "rf")
+		-- rm -rf the destination too: without it `mv` nests the new clone
+		-- inside a leftover directory and every retry then fails.
 		vim.system(
-			{ "sh", "-c", 'git clone --depth=1 "$1" "$2" && mv "$2" "$3"', "wiki", url, tmp, dir },
+			{ "sh", "-c", 'rm -rf "$3" && git clone --depth=1 "$1" "$2" && mv "$2" "$3"', "wiki", url, tmp, dir },
 			{ text = true, timeout = 120000 },
 			function(res)
 			vim.schedule(function()
@@ -1616,7 +1644,10 @@ render_shell = function(cmd, title, ft, cache_key)
 				local err = res.stderr ~= "" and res.stderr or ("Nothing for " .. title)
 				return vim.notify(err, vim.log.levels.WARN)
 			end
-			if cf then -- persist successful, non-empty output for instant reopen
+			-- Only cache a clean exit: a `timeout` kill (124) or a failing tool
+			-- can still have written a partial page, and caching that would
+			-- serve the truncation forever.
+			if cf and res.code == 0 then
 				pcall(function()
 					vim.fn.mkdir(vim.fs.dirname(cf), "p")
 					vim.fn.writefile(out, cf)
@@ -1770,7 +1801,9 @@ local function pick_haskell()
 		if not q or q == "" then
 			return
 		end
-		local url = "https://hoogle.haskell.org/?hoogle=" .. vim.uri_encode(q) .. "&mode=json&count=100"
+		-- rfc2396, not the rfc3986 default: the latter leaves &, +, = and ; raw,
+		-- so searching for "&&" or "(+)" built a malformed query.
+		local url = "https://hoogle.haskell.org/?hoogle=" .. vim.uri_encode(q, "rfc2396") .. "&mode=json&count=100"
 		vim.system({ "curl", "-sSL", url }, { text = true, timeout = 20000 }, function(res)
 			vim.schedule(function()
 				local ok, data = pcall(vim.json.decode, res.stdout or "")
@@ -2651,6 +2684,9 @@ function M.open()
 				end
 				for _, p in ipairs(providers) do
 					if p.name == sel[1] then
+						-- Same default as the `:Docs <key>` path: D reopens this
+						-- provider unless it installs a narrower picker itself.
+						last_picker = p.run
 						return p.run()
 					end
 				end

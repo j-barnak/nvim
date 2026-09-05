@@ -6,10 +6,17 @@ DPI = 300  # crisp enough to zoom; figures are cached under stdpath("data")
 SCALE = DPI / 72.0
 os.makedirs(OUTDIR, exist_ok=True)
 
+# pdftotext emits UTF-8 XML regardless of locale, so decode it explicitly:
+# text=True would use the locale encoding and fail under LC_ALL=C.
 raw = subprocess.run(["pdftotext", "-bbox-layout", PDF, "-"],
-                     capture_output=True, text=True).stdout
+                     capture_output=True, check=True,
+                     encoding="utf-8", errors="replace").stdout
 raw = re.sub(r'<!DOCTYPE[^>]*>', '', raw)
 raw = re.sub(r'\sxmlns="[^"]*"', '', raw, count=1)
+# Some PDFs carry glyphs that pdftotext emits as raw C0 control characters,
+# which XML 1.0 forbids (only tab, newline and carriage return are legal), so
+# the parse would fail on the whole document for a handful of bytes.
+raw = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', raw)
 root = ET.fromstring(raw)
 
 FIG_RE = re.compile(r'^Figure\s+([0-9A-Z]+-[0-9A-Z]+)\.', re.I)

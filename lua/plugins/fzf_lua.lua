@@ -11,8 +11,10 @@ return {
 			},
 		},
 		files = {
-			fd_opts = [[--color=never --hidden --follow
-                --type f --exclude .git --exclude exports --exclude build]],
+			-- Must stay on ONE line: fzf-lua splices this verbatim into a single
+			-- sh command, so an embedded newline truncates it (dropping --type f
+			-- and every exclude, and erroring on the remainder).
+			fd_opts = "--color=never --hidden --follow --type f --exclude .git --exclude exports --exclude build",
 		},
 		grep = {
 			rg_opts = [[--color=never --hidden --line-number --column --no-heading --smart-case -g "!build/*" -g "!.git/*" -g "!exports/*"]],

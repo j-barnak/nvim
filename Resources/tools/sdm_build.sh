@@ -1,5 +1,8 @@
 set -e
 PDF="$1"; OUT="$2"; URL="$3"; PY="$4"
+# The cleanup below globs outside the quotes, so an empty or root OUT would
+# expand to "rm -f /*.txt". Refuse both.
+case "$OUT" in "" | / | //) echo "sdm_build: refusing out-dir '$OUT'" >&2; exit 1 ;; esac
 if [ ! -f "$PDF" ]; then
   mkdir -p "$(dirname "$PDF")"
   curl -fsSL "$URL" -o "$PDF"
@@ -18,6 +21,9 @@ walk(doc.loadOutline(),0);
 EOF2
 mutool run "$JS" > "$OUT/.all.tsv" 2>/dev/null
 TOTAL=$(pdfinfo "$PDF" | awk '/^Pages:/{print $2}')
+# A pipeline hides its failures from set -e, so a missing pdfinfo or an
+# unreadable PDF would otherwise surface as arithmetic errors much later.
+[ -n "$TOTAL" ] || { echo "sdm_build: pdfinfo gave no page count for $PDF" >&2; exit 1; }
 # Split at the shallowest outline depth with >= 5 entries (volumes differ).
 D=$(awk -F'\t' '{c[$1]++} END{for(d=0;d<8;d++) if(c[d]>=5){print d; exit}}' "$OUT/.all.tsv")
 idx=0; prev_p=""; prev_t=""
@@ -50,6 +56,8 @@ rm -f "$JS" "$OUT/.all.tsv" "$OUT/.ch.tsv"
 # Extract figures as tight PNGs (diagrams are vector, so rasterize regions).
 if [ -n "$PY" ] && command -v python3 >/dev/null 2>&1 \
    && command -v pdftoppm >/dev/null 2>&1 && command -v convert >/dev/null 2>&1; then
-  python3 "$PY" "$PDF" "$OUT/figures" >/dev/null 2>&1 || true
+  # Figures are optional (the chapters are already written), so a failure here
+  # must not fail the build. Keep stderr: silencing it hid a locale crash.
+  python3 "$PY" "$PDF" "$OUT/figures" >/dev/null || echo "sdm_build: figure extraction failed, chapters are unaffected" >&2
 fi
 touch "$OUT/.complete"

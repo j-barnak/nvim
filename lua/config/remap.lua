@@ -1,7 +1,12 @@
 vim.keymap.set("n", "q", "<Nop>", { silent = true })
 vim.keymap.set({ "n", "v" }, "<leader>y", [["+y]])
-vim.keymap.set("n", "<leader>Y", [["+Y]])
-vim.keymap.set("n", "<cr>", "ciw")
+-- y$, not the built-in linewise Y, so it matches Neovim's default Y.
+vim.keymap.set("n", "<leader>Y", [["+y$]])
+-- <CR> changes the word under the cursor, but only where that is possible:
+-- a plain "ciw" raised E21 in every read-only buffer (:help, :Man, quickfix).
+vim.keymap.set("n", "<cr>", function()
+	return (vim.bo.modifiable and not vim.bo.readonly) and "ciw" or "<CR>"
+end, { expr = true, desc = "Change word (plain <CR> when not modifiable)" })
 vim.keymap.set("i", "jj", "<Esc>", { silent = true })
 vim.keymap.set({ "n", "o", "x" }, "H", "^", {})
 vim.keymap.set({ "n", "o", "x" }, "L", "$", {})

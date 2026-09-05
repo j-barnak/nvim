@@ -9,7 +9,9 @@ fi
 # Kill-atomic: build the whole markdown set in $OUT.stage, then rename it in.
 # A doxygen/moxygen run killed midway must not leave a partial $OUT that the
 # glob check treats as a finished build.
-STAGE="$OUT.stage"; rm -rf "$STAGE" "$OUT"; mkdir -p "$STAGE"
+# Keep the existing $OUT untouched until the new set is built: a failed
+# download or doxygen run must leave the working docs in place.
+STAGE="$OUT.stage"; rm -rf "$STAGE"; mkdir -p "$STAGE"
 XML="$STAGE/.xml"; mkdir -p "$XML"
 {
   echo "INPUT = $INPUT"
@@ -31,4 +33,4 @@ XML="$STAGE/.xml"; mkdir -p "$XML"
 "$DOXY" "$XML/Doxyfile" >/dev/null 2>&1
 moxygen --classes --groups --anchors --output "$STAGE/%s.md" "$XML" >/dev/null 2>&1
 rm -rf "$XML"
-mv "$STAGE" "$OUT"
+rm -rf "$OUT"; mv "$STAGE" "$OUT"

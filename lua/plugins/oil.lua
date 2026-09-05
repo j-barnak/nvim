@@ -73,9 +73,12 @@ return {
 		},
 
 		keymaps = {
-			["h"] = "actions.parent",
-			["l"] = "actions.select",
-			["<CR>"] = "actions.select",
+			-- Scoped to normal mode (oil gives a bare string `mode or ""`, which
+			-- also claims visual and operator-pending, so dl, vll and moving
+			-- inside a filename were dead in this editable buffer).
+			["h"] = { "actions.parent", mode = "n" },
+			["l"] = { "actions.select", mode = "n" },
+			["<CR>"] = { "actions.select", mode = "n" },
 		},
 		use_default_keymaps = true,
 	},

@@ -1,5 +1,9 @@
 set -e
 SRC="$1"; OUT="$2"; TITLE="$3"
+# The cleanup below globs outside the quotes, so an empty or root OUT would
+# expand to "rm -f /*.md" and "rm -rf /media". Refuse both (set -u is not an
+# option here: several callers pass a deliberately empty trailing argument).
+case "$OUT" in "" | / | //) echo "epub_build: refusing out-dir '$OUT'" >&2; exit 1 ;; esac
 mkdir -p "$OUT"
 rm -f "$OUT"/*.md "$OUT"/.complete; rm -rf "$OUT/media" "$OUT/.x"; mkdir -p "$OUT/.x"
 ( cd "$OUT/.x" && unzip -o -q "$SRC" )
