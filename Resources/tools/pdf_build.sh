@@ -64,18 +64,34 @@ SLUG=$(basename "$OUT")
 #   c-concurrency-in-action: a distributor watermark on all 592 pages.
 #   talking-compilers-with-chatgpt: a two-line licence/contact notice at the top
 #   of all 916 pages (its first page words the second line differently).
+#   disarming-code: the running head of a scanned book, on 497 of its 545 pages.
+#   Even pages carry "<printed page number>   Disarming Code" and odd pages
+#   "Chapter N: Title   <printed page number>" (or "Appendix A: ..."), and the
+#   OCR sprinkles stray spaces through both, so the pattern tolerates a space
+#   after any letter of the two fixed words and a space or a question mark
+#   inside the page number ("11 2", "3?4"). Requiring the title to start with a
+#   capital, a digit or a colon keeps body lines such as "Appendix B of this
+#   work provides ." out of it.
 FURN=
 case "$SLUG" in
   c-concurrency-in-action) FURN='^https://avxhm\.se/' ;;
   talking-compilers-with-chatgpt) FURN='^(This material is freely available|For typos or suggestions, please contact Fernando|Send comments, typos and suggestions to)' ;;
+  disarming-code) FURN='^([0-9?][0-9? ]{0,4} +D ?i ?s ?a ?r ?m ?i ?n ?g +C ?o ?d ?e$|(C ?h ?a ?p ?t ?e ?r|A ?p ?p ?e ?n ?d ?i ?x) ?[0-9AB]{1,2} ?([:.] ?[A-Za-z0-9/]|[A-Z0-9/]).{0,100}$)' ;;
 esac
-if [ "$4" = book ] && [ "$SLUG" = talking-compilers-with-chatgpt ]; then
-  # These lecture notes are transcribed ChatGPT sessions, and every numbered
-  # item of every answer ("1. Front-End (Language Independence)") is bookmarked,
-  # so the title patterns below matched 240 of them and shredded the book. The
-  # 25 chapters of the printed table of contents are exactly the outline's
-  # depth-0 nodes (plus the title and contents pages), so leave .ch.tsv unwritten
-  # and let the depth fallback split there.
+if [ "$4" = book ] && { [ "$SLUG" = talking-compilers-with-chatgpt ] || [ "$SLUG" = introduction-to-static-analysis ] || [ "$SLUG" = is-parallel-programming-hard ]; }; then
+  # Three books whose printed table of contents is exactly the outline's depth-0
+  # nodes, so they leave .ch.tsv unwritten and let the depth fallback split there.
+  #   talking-compilers-with-chatgpt: these lecture notes are transcribed ChatGPT
+  #   sessions, and every numbered item of every answer ("1. Front-End (Language
+  #   Independence)") is bookmarked, so the title patterns below matched 240 of
+  #   them and shredded the book. Its 25 chapters are the depth-0 nodes (plus the
+  #   title and contents pages).
+  #   introduction-to-static-analysis and is-parallel-programming-hard: both
+  #   number their appendices as a bare letter and a title ("A Reference for
+  #   Mathematical Notions", "E Answers to Quick Quizzes"), which no title
+  #   pattern below can tell from an ordinary section, so the appendices ended up
+  #   inside the last numbered chapter. Their depth-0 nodes are the chapters, the
+  #   appendices and the end matter, in printed order.
   :
 elif [ "$4" = book ] && [ "$SLUG" = operating-systems-three-easy-pieces ]; then
   # OSTEP's chapters are topic-titled (no Chapter N / number / Part keyword), so
@@ -113,6 +129,54 @@ elif [ "$4" = book ] && [ "$SLUG" = operating-systems-three-easy-pieces ]; then
         }
       }' "$OUT/.all.tsv"; } | sort -t"$(printf '\t')" -k1,1n -s > "$OUT/.ch.tsv"
   rm -f "$OUT/.fm.tsv"
+elif [ "$4" = book ] && [ "$SLUG" = programming-with-posix-threads ]; then
+  # This PDF is a Word conversion and carries no outline at all, so the only
+  # structure left is the printed page text. Each of chapters 1 to 9 opens with
+  # its heading as the first line of its page ("1    Introduction": the number,
+  # a run of spaces, then the title), and the Preface opens the same way, so a
+  # page whose first line has that shape starts a chapter. Chapter 10 is the one
+  # exception: it starts halfway down page 188, where the heading is the tail of
+  # a body line, and it is picked up by a line ending in a chapter number and a
+  # short capitalised title. That second pattern matches exactly one line in the
+  # whole 202-page book, so nothing else is cut; chapter 10's file does open
+  # with the last few entries of the mini-reference that share its page.
+  pdftotext -layout "$PDF" - 2>/dev/null \
+    | awk 'BEGIN{RS="\f"}
+      {
+        n=split($0,L,"\n"); h=""
+        for(i=1;i<=n;i++){ h=L[i]; gsub(/^[ \t]+|[ \t]+$/,"",h); if(h!="") break }
+        if (h ~ /^[0-9]{1,2}[ \t]{2,}[^ \t]/) { num=h; sub(/[ \t].*$/,"",num); ttl=h; sub(/^[0-9]+[ \t]+/,"",ttl); print NR"\t"num". "ttl }
+        else if (h ~ /^Preface[ \t]*$/) { print NR"\tPreface" }
+        else { for(i=1;i<=n;i++) if (L[i] ~ /(^|[.] )[0-9]{1,2} [A-Z][a-z]+([ ][a-z]+){0,3}[ \t]*$/) { s=L[i]; sub(/^.*[.] /,"",s); gsub(/^[ \t]+|[ \t]+$/,"",s); num=s; sub(/[ \t].*$/,"",num); ttl=s; sub(/^[0-9]+[ \t]+/,"",ttl); print NR"\t"num". "ttl; break } }
+      }' > "$OUT/.ch.tsv"
+elif [ "$4" = book ] && [ "$SLUG" = disarming-code ]; then
+  # A 545-page scan whose text layer is Acrobat Paper Capture OCR. It has no
+  # outline, and no reliable heading shape either (the display titles are set as
+  # artwork and come back mangled), so the boundaries below are the printed
+  # table of contents, written out here because there is nothing in the file to
+  # derive them from. Every page in the map was checked against the scan: a
+  # chapter opens on a page whose first line is the bare printed page number,
+  # with the chapter title on the next line, and all sixteen land on such a
+  # page. The closing note that follows appendix B carries no printed heading,
+  # so it stays at the end of appendix B rather than becoming its own chapter.
+  cat > "$OUT/.ch.tsv" <<'EOF3'
+17	1. An ARM Assembly Primer
+75	2. Compilation & Linking
+99	3. Binary Formats
+141	4. The Process Lifecycle
+167	5. Memory - I - The System View
+191	6. Memory - II - The Process View
+249	7. MultiThreading
+285	8. I/O & IPC
+329	9. Profiling
+359	10. Hooking & Injecting
+387	11. Runtimes
+423	12. Post Mortem
+445	13. Beyond User Mode
+491	14. Reverse Engineering
+521	A. disarm(j) - The Missing Manual Page
+535	B. jtrace(j) - The Missing Manual Page
+EOF3
 elif [ "$4" = book ]; then
   # Match on a lowercased copy so No Starch's "APPENDIX: ..." / "GLOSSARY" count;
   # accept letter-numbered appendices ("A. The One-Definition Rule") once a

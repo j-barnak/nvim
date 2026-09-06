@@ -1,0 +1,1817 @@
+We now need to migrate the database44 :
+DATABASE_URL=YOUR-DIGITAL-OCEAN-DB-CONNECTION-STRING sqlx migrate run
+
+We are ready to go!
+Let’s fire off a POST request to /subscriptions:
+curl --request POST \
+    --data 'name=le%20guin&email=ursula_le_guin%40gmail.com' \
+    https://zero2prod-adqrw.ondigitalocean.app/subscriptions \
+    --verbose
+
+The server should respond with a 200 OK.
+Congrats, you have just deployed your first Rust application!
+And Ursula Le Guin just subscribed to your email newsletter (allegedly)!
+If you have come this far, I’d love to get a screenshot of your Digital Ocean’s dashboard showing off
+that running application!
+Email it over at rust@lpalmieri.com or share it on Twitter tagging the Zero To Production In Rust
+account, zero2prod.
+
+ 44 You will have to temporarily disable Trusted   Sources to run the migrations from your local machine.
+
+6    Reject Invalid Subscribers #1
+Our newsletter API is live, hosted on a Cloud provider.
+We have a basic set of instrumentation to troubleshoot issues that might arise.
+There is an exposed endpoint (POST /subscriptions) to subscribe to our content.
+We have come a long way!
+But we have cut a few corners along the way: POST /subscriptions is fairly… permissive.
+Our input validation is extremely limited: we just ensure that both the name and the email fields
+are provided, nothing else.
+We can add a new integration test to probe our API with some “troublesome” inputs:
+//! tests/health_check.rs
+// [...]
+
+#[tokio::test]
+async fn subscribe_returns_a_200_when_fields_are_present_but_empty() {
+    // Arrange
+    let app = spawn_app().await;
+    let client = reqwest::Client::new();
+    let test_cases = vec![
+        ("name=&email=ursula_le_guin%40gmail.com", "empty name"),
+        ("name=Ursula&email=", "empty email"),
+        ("name=Ursula&email=definitely-not-an-email", "invalid email"),
+    ];
+
+    for (body, description) in test_cases {
+        // Act
+        let response = client
+            .post(&format!("{}/subscriptions", &app.address))
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(body)
+            .send()
+            .await
+            .expect("Failed to execute request.");
+
+        // Assert
+        assert_eq!(
+            200,
+            response.status().as_u16(),
+            "The API did not return a 200 OK when the payload was {}.",
+            description
+        );
+    }
+}
+
+The new test, unfortunately, passes.
+Although all those payloads are clearly invalid, our API is gladly accepting them, returning a 200
+OK.
+Those troublesome subscriber details end up straight in our database, ready to give us problems down
+the line when it is time to deliver a newsletter issue.
+We are asking for two pieces of information when subscribing to our newsletter: a name and an email.
+This chapter will focus on name validation: what should we look out for?
+
+6.1     Requirements
+6.1.1   Domain Constraints
+It turns out that names are complicated45 .
+Trying to nail down what makes a name valid is a fool’s errand. Remember that we chose to collect
+a name to use it in the opening line of our emails - we do not need it to match the real identity of a
+person, whatever that means in their geography. It would be totally unnecessary to inflict the pain
+of incorrect or overly prescriptive validation on our users.
+We could thus settle on simply requiring the name field to be non-empty (as in, it must contain at
+least a non-whitespace character).
+
+6.1.2   Security Constraints
+Unfortunately, not all people on the Internet are good people.
+Given enough time, especially if our newsletter picks up traction and becomes successful, we are
+bound to capture the attention of malicious visitors.
+Forms and user inputs are a primary attack target - if they are not properly sanitised, they might
+allow an attacker to mess with our database (SQL injection), execute code on our servers, crash our
+service and other nasty stuff.
+Thanks, but no thanks.
+What is likely to happen in our case? What should we brace for in the wild range of possible attacks?46
+We are building an email newsletter, which leads us to focus on:
+   • denial of service - e.g. trying to take our service down to prevent other people from signing up.
+     A common threat for basically any online service;
+   • data theft - e.g. steal a huge list of email addresses;
+   • phishing - e.g. use our service to send what looks like a legitimate email to a victim to trick
+     them into clicking on some links or perform other actions.
+Should we try to tackle all these threats in our validation logic?
+Absolutely not!
+But it is good practice to have a layered security approach47 : by having mitigations to reduce the
+risk for those threats at multiple levels in our stack (e.g. input validation, parametrised queries to
+avoid SQL injection, escaping parametrised input in emails, etc.) we are less likely to be vulnerable
+should any of those checks fail us or be removed later down the line.
+We should always keep in mind that software is a living artifact: holistic understanding of a system
+is the first victim of the passage of time.
+You have the whole system in your head when writing it down for the first time, but the next developer
+touching it will not - at least not from the get-go. It is therefore possible for a load-bearing check
+in an obscure corner of the application to disappear (e.g. HTML escaping) leaving you exposed to a
+class of attacks (e.g. phishing).
+Redundancy reduces risk.
+Let’s get to the point - what validation should we perform on names to improve our security posture
+given the class of threats we identified?
+I suggest:
+   • Enforcing a maximum length. We are using TEXT as type for our email in Postgres, which is
+     virtually unbounded - well, until disk storage starts to run out. Names come in all shapes and
+     forms, but 256 characters should be enough for the greatest majority of our users48 - if not, we
+     will politely ask them to enter a nickname.
+ 45 “Falsehoods programmers believe about names” by patio11 is a great starting point to deconstruct everything you
+
+believed to be true about peoples’ names.
+ 46 In a more formalised context you would usually go through a threat-modelling exercise.
+ 47 It is commonly referred to as defense in depth.
+ 48 Hubert B. Wolfe + 666 Sr would have been a victim of our maximum length check.
+
+  • Reject names containing troublesome characters. /()"<>\{} are fairly common in URLs, SQL
+    queries and HTML fragments - not as much in names49 . Forbidding them raises the complexity
+    bar for SQL injection and phishing attempts.
+
+6.2   First Implementation
+Let’s have a look at our request handler, as it stands right now:
+//! src/routes/subscriptions.rs
+use actix_web::{web, HttpResponse};
+use chrono::Utc;
+use sqlx::PgPool;
+use uuid::Uuid;
+
+#[derive(serde::Deserialize)]
+pub struct FormData {
+    email: String,
+    name: String,
+}
+
+#[tracing::instrument(
+    name = "Adding a new subscriber",
+    skip(form, pool),
+    fields(
+        subscriber_email = %form.email,
+        subscriber_name= %form.name
+    )
+)]
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    match insert_subscriber(&pool, &form).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(_) => HttpResponse::InternalServerError().finish(),
+    }
+}
+
+// [...]
+
+Where should our new validation live?
+A first sketch could look somewhat like this:
+//! src/routes/subscriptions.rs
+
+// An extension trait to provide the `graphemes` method
+// on `String` and `&str`
+use unicode_segmentation::UnicodeSegmentation;
+// [...]
+
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    if !is_valid_name(&form.name) {
+        return HttpResponse::BadRequest().finish();
+    }
+    match insert_subscriber(&pool, &form).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(_) => HttpResponse::InternalServerError().finish(),
+    }
+ 49 Mandatory xkcd comic.
+
+}
+
+/// Returns `true` if the input satisfies all our validation constraints
+/// on subscriber names, `false` otherwise.
+pub fn is_valid_name(s: &str) -> bool {
+    // `.trim()` returns a view over the input `s` without trailing
+    // whitespace-like characters.
+    // `.is_empty` checks if the view contains any character.
+    let is_empty_or_whitespace = s.trim().is_empty();
+
+      // A grapheme is defined by the Unicode standard as a "user-perceived"
+      // character: `å` is a single grapheme, but it is composed of two characters
+      // (`a` and `̊`).
+      //
+      // `graphemes` returns an iterator over the graphemes in the input `s`.
+      // `true` specifies that we want to use the extended grapheme definition set,
+      // the recommended one.
+      let is_too_long = s.graphemes(true).count() > 256;
+
+      // Iterate over all characters in the input `s` to check if any of them matches
+      // one of the characters in the forbidden array.
+      let forbidden_characters = ['/', '(', ')', '"', '<', '>', '\\', '{', '}'];
+      let contains_forbidden_characters = s.chars().any(|g| forbidden_characters.contains(&g));
+
+      // Return `false` if any of our conditions have been violated
+      !(is_empty_or_whitespace || is_too_long || contains_forbidden_characters)
+}
+
+To compile the new function successfully we will have to add the unicode-segmentation crate to
+our dependencies:
+#! Cargo.toml
+# [...]
+[dependencies]
+unicode-segmentation = "1"
+# [...]
+While it looks like a perfectly fine solution (assuming we add a bunch of tests), functions like
+is_valid_name give us a false sense of safety.
+
+6.3     Validation Is A Leaky Cauldron
+Let’s shift our attention to insert_subscriber.
+Let’s imagine, for a second, that it requires form.name to be non-empty otherwise something horrible
+is going to happen (e.g. a panic!).
+Can insert_subscriber safely assume that form.name will be non-empty?
+Just by looking at its type, it cannot: form.name is a String. There is no guarantee about its content.
+If you were to look at our program in its entirety you might say: we are checking that it is non-empty
+at the edge, in the request handler, therefore we can safely assume that form.name will be non-empty
+every time insert_subscriber is invoked.
+But we had to shift from a local approach (let’s look at this function’s parameters) to a global ap-
+proach (let’s scan the whole codebase) to make such a claim.
+And while it might be feasible for a small project such as ours, examining all the calling sites of a func-
+tion (insert_subscriber) to ensure that a certain validation step has been performed beforehand
+quickly becomes unfeasible on larger projects.
+If we are to stick with is_valid_name, the only viable approach is validating again form.name inside
+insert_subscriber - and every other function that requires our name to be non-empty.
+That is the only way we can actually make sure that our invariant is in place where we need it.
+
+What happens if insert_subscriber becomes too big and we have to split it out in multiple sub-
+functions? If they need the invariant, each of those has to perform validation to be certain it holds.
+As you can see, this approach does not scale.
+The issue here is that is_valid_name is a validation function: it tells us that, at a certain point in
+the execution flow of our program, a set of conditions is verified.
+But this information about the additional structure in our input data is not stored anywhere. It
+is immediately lost.
+Other parts of our program cannot reuse it effectively - they are forced to perform another point-in-
+time check leading to a crowded codebase with noisy (and wasteful) input checks at every step.
+What we need is a parsing function - a routine that accepts unstructured input and, if a set of
+conditions holds, returns us a more structured output, an output that structurally guarantees
+that the invariants we care about hold from that point onwards.
+How?
+Using types!
+
+6.4   Type-Driven Development
+Let’s add a new module to our project, domain, and define a new struct inside it, SubscriberName:
+//! src/lib.rs
+pub mod configuration;
+// New module!
+pub mod domain;
+pub mod routes;
+pub mod startup;
+pub mod telemetry;
+
+//! src/domain.rs
+
+pub struct SubscriberName(String);
+
+SubscriberName is a tuple struct - a new type, with a single (unnamed) field of type String.
+SubscriberName is a proper new type, not just an alias - it does not inherit any of the methods
+available on String and trying to assign a String to a variable of type SubscriberName will trigger
+a compiler error - e.g.:
+let name: SubscriberName = "A string".to_string();
+
+error[E0308]: mismatched types
+   |     let name: SubscriberName = "A string".to_string();
+   |               --------------   ^^^^^^^^^^^^^^^^^^^^^^
+   |               |                expected struct `SubscriberName`,
+   |               |                found struct `std::string::String`
+   |               |
+   |               expected due to this
+
+The inner field of SubscriberName, according to our current definition, is private: it can only be
+accessed from code within our domain module according to Rust’s visibility rules.
+As always, trust but verify: what happens if we try to build a SubscriberName in our subscribe
+request handler?
+//! src/routes/subscriptions.rs
+/// [...]
+
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    let subscriber_name = crate::domain::SubscriberName(form.name.clone());
+
+    /// [...]
+}
+
+The compiler complains with
+error[E0603]: tuple struct constructor `SubscriberName` is private
+  --> src/routes/subscriptions.rs:25:42
+   |
+25 |     let subscriber_name = crate::domain::SubscriberName(form.name.clone());
+   |                                          ^^^^^^^^^^^^^^
+   |                                          private tuple struct constructor
+   |
+  ::: src/domain.rs:1:27
+   |
+1 | pub struct SubscriberName(String);
+   |                           ------ a constructor is private if
+   |                                  any of the fields is private
+
+It is therefore impossible (as it stands now) to build a SubscriberName instance outside of our
+domain module.
+Let’s add a new method to SubscriberName:
+//! src/domain.rs
+use unicode_segmentation::UnicodeSegmentation;
+
+pub struct SubscriberName(String);
+
+impl SubscriberName {
+    /// Returns an instance of `SubscriberName` if the input satisfies all
+    /// our validation constraints on subscriber names.
+    /// It panics otherwise.
+    pub fn parse(s: String) -> SubscriberName {
+        // `.trim()` returns a view over the input `s` without trailing
+        // whitespace-like characters.
+        // `.is_empty` checks if the view contains any character.
+        let is_empty_or_whitespace = s.trim().is_empty();
+
+        // A grapheme is defined by the Unicode standard as a "user-perceived"
+        // character: `å` is a single grapheme, but it is composed of two characters
+        // (`a` and `̊`).
+        //
+        // `graphemes` returns an iterator over the graphemes in the input `s`.
+        // `true` specifies that we want to use the extended grapheme definition set,
+        // the recommended one.
+        let is_too_long = s.graphemes(true).count() > 256;
+
+        // Iterate over all characters in the input `s` to check if any of them matches
+        // one of the characters in the forbidden array.
+        let forbidden_characters = ['/', '(', ')', '"', '<', '>', '\\', '{', '}'];
+        let contains_forbidden_characters = s.chars().any(|g| forbidden_characters.contains(&g));
+
+        if is_empty_or_whitespace || is_too_long || contains_forbidden_characters {
+            panic!("{} is not a valid subscriber name.", s)
+        } else {
+            Self(s)
+        }
+    }
+}
+
+Yes, you are right - that is a shameless copy-paste of what we had in is_valid_name.
+There is one key difference though: the return type.
+While is_valid_name gave us back a boolean, the parse method returns a SubscriberName if all
+
+checks are successful.
+There is more!
+parse is the only way to build an instance of SubscriberName outside of the domain module - we
+checked this was the case a few paragraphs ago.
+We can therefore assert that any instance of SubscriberName will satisfy all our validation constraints.
+We have made it impossible for an instance of SubscriberName to violate those constraints.
+Let’s define a new struct, NewSubscriber:
+//! src/domain.rs
+// [...]
+
+pub struct NewSubscriber {
+    pub email: String,
+    pub name: SubscriberName,
+}
+
+pub struct SubscriberName(String);
+
+// [...]
+
+What happens if we change insert_subscriber to accept an argument of type NewSubscriber
+instead of FormData?
+pub async fn insert_subscriber(
+    pool: &PgPool,
+    new_subscriber: &NewSubscriber,
+) -> Result<(), sqlx::Error> {
+    // [...]
+}
+
+With the new signature we can be sure that new_subscriber.name is non-empty - it is impossible
+to call insert_subscriber passing an empty subscriber name.
+And we can draw this conclusion just by looking up the definition of the types of the function
+arguments - we can once again make a local judgement, no need to go and check all the calling sites
+of our function.
+Take a second to appreciate what just happened: we started with a set of requirements (all subscriber
+names must verify some constraints), we identified a potential pitfall (we might forget to validate the
+input before calling insert_subscriber) and we leveraged Rust’s type system to eliminate
+the pitfall, entirely.
+We made an incorrect usage pattern unrepresentable, by construction - it will not compile.
+This technique is known as type-driven development 50 .
+Type-driven development is a powerful approach to encode the constraints of a domain we are trying
+to model inside the type system, leaning on the compiler to make sure they are enforced.
+The more expressive the type system of our programming language is, the tighter we can constrain
+our code to only be able to represent states that are valid in the domain we are working in.
+Rust has not invented type-driven development - it has been around for a while, especially in the
+functional programming communities (Haskell, F#, OCaml, etc.). Rust “just” provides you with
+a type-system that is expressive enough to leverage many of the design patterns that have been
+pioneered in those languages in the past decades. The particular pattern we have just shown is often
+referred to as the “new-type pattern” in the Rust community.
+We will be touching upon type-driven development as we progress in our implementation, but I
+strongly invite you to check out some of the resources mentioned in the footnotes of this chapter:
+they are treasure chests for any developer.
+ 50 “Parse, don’t validate” by Alexis King is a great starting point on type-driven development. “Domain Modelling
+
+Functional” by Scott Wlaschin is the perfect book to go deeper, with a specific focus around domain modelling - if a
+book looks like too much material, definitely check out Scott’s talk.
+
+6.5   Ownership Meets Invariants
+We changed insert_subscriber’s signature, but we have not amended the body to match the new
+requirements - let’s do it now.
+//! src/routes/subscriptions.rs
+use crate::domain::{NewSubscriber, SubscriberName};
+// [...]
+
+#[tracing::instrument([...])]
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    // `web::Form` is a wrapper around `FormData`
+    // `form.0` gives us access to the underlying `FormData`
+    let new_subscriber = NewSubscriber {
+        email: form.0.email,
+        name: SubscriberName::parse(form.0.name),
+    };
+    match insert_subscriber(&pool, &new_subscriber).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(_) => HttpResponse::InternalServerError().finish(),
+    }
+}
+
+#[tracing::instrument(
+    name = "Saving new subscriber details in the database",
+    skip(new_subscriber, pool)
+)]
+pub async fn insert_subscriber(
+    pool: &PgPool,
+    new_subscriber: &NewSubscriber,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+         r#"
+    INSERT INTO subscriptions (id, email, name, subscribed_at)
+    VALUES ($1, $2, $3, $4)
+         "#,
+         Uuid::new_v4(),
+         new_subscriber.email,
+         new_subscriber.name,
+         Utc::now()
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| {
+         tracing::error!("Failed to execute query: {:?}", e);
+         e
+    })?;
+    Ok(())
+}
+
+Close enough - cargo check fails with:
+error[E0308]: mismatched types
+  --> src/routes/subscriptions.rs:50:9
+   |
+50 |         new_subscriber.name,
+   |         ^^^^^^^^^^^^^^ expected `&str`,
+   |         found struct `SubscriberName`
+
+We have an issue here: we do not have any way to actually access the String value encapsulated
+inside SubscriberName!
+
+We could change SubscriberName’s definition from SubscriberName(String) to SubscriberName(pub
+String), but we would lose all the nice guarantees we spent the last two sections talking about:
+  • other developers would be allowed to bypass parse and build a SubscriberName with an arbi-
+    trary string
+let liar = SubscriberName("".to_string());
+
+  • other developers might still choose to build a SubscriberName using parse but they would then
+    have the option to mutate the inner value later to something that does not satisfy anymore the
+    constraints we care about
+let mut started_well = SubscriberName::parse("A valid name".to_string());
+started_well.0 = "".to_string();
+
+We can do better - this is the perfect place to take advantage of Rust’s ownership system!
+Given a field in a struct we can choose to:
+  • expose it by value, consuming the struct itself:
+impl SubscriberName {
+    pub fn inner(self) -> String {
+        // The caller gets the inner string,
+        // but they do not have a SubscriberName anymore!
+        // That's because `inner` takes `self` by value,
+        // consuming it according to move semantics
+        self.0
+    }
+}
+
+  • expose a mutable reference:
+impl SubscriberName {
+    pub fn inner_mut(&mut self) -> &mut str {
+        // The caller gets a mutable reference to the inner string.
+        // This allows them to perform *arbitrary* changes to
+        // value itself, potentially breaking our invariants!
+        &mut self.0
+    }
+}
+
+  • expose a shared reference:
+impl SubscriberName {
+    pub fn inner_ref(&self) -> &str {
+        // The caller gets a shared reference to the inner string.
+        // This gives the caller **read-only** access,
+        // they have no way to compromise our invariants!
+        &self.0
+    }
+}
+
+inner_mut is not what we are looking for here - the loss of control on our invariants would be
+equivalent to using SubscriberName(pub String).
+Both inner and inner_ref would be suitable, but inner_ref communicates better our intent: give
+the caller a chance to read the value without the power to mutate it.
+Let’s add inner_ref to SubscriberName - we can then amend insert_subscriber to use it:
+//! src/routes/subscriptions.rs
+// [...]
+
+#[tracing::instrument([...])]
+pub async fn insert_subscriber(
+    pool: &PgPool,
+    new_subscriber: &NewSubscriber,
+
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+         r#"
+    INSERT INTO subscriptions (id, email, name, subscribed_at)
+    VALUES ($1, $2, $3, $4)
+         "#,
+         Uuid::new_v4(),
+         new_subscriber.email,
+         // Using `inner_ref`!
+         new_subscriber.name.inner_ref(),
+         Utc::now()
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| {
+         tracing::error!("Failed to execute query: {:?}", e);
+         e
+    })?;
+    Ok(())
+}
+
+Boom, it compiles!
+
+6.5.1   AsRef
+While our inner_ref method gets the job done, I am obliged to point out that Rust’s standard
+library exposes a trait that is designed exactly for this type of usage - AsRef.
+The definition is quite concise:
+pub trait AsRef<T: ?Sized> {
+    /// Performs the conversion.
+    fn as_ref(&self) -> &T;
+}
+
+When should you implement AsRef<T> for a type?
+When the type is similar enough to T that we can use a &self to get a reference to T itself!
+Does it sound too abstract? Check out the signature of inner_ref again: that is basically AsRef<str>
+for SubscriberName!
+AsRef can be used to improve ergonomics - let’s consider a function with this signature:
+pub fn do_something_with_a_string_slice(s: &str) {
+    // [...]
+}
+
+To invoke it with our SubscriberName we would have to first call inner_ref and then call
+do_something_with_a_string_slice:
+let name = SubscriberName::parse("A valid name".to_string());
+do_something_with_a_string_slice(name.inner_ref())
+
+Nothing too complicated, but it might take you some time to figure out if SubscriberName can give
+you a &str as well as how, especially if the type comes from a third-party library.
+We can make the experience more seamless by changing do_something_with_a_string_slice’s sig-
+nature:
+// We are constraining T to implement the AsRef<str> trait
+// using a trait bound - `T: AsRef<str>`
+pub fn do_something_with_a_string_slice<T: AsRef<str>>(s: T) {
+    let s = s.as_ref();
+    // [...]
+}
+
+We can now write
+let name = SubscriberName::parse("A valid name".to_string());
+do_something_with_a_string_slice(name)
+
+and it will compile straight-away (assuming SubscriberName implements AsRef<str>).
+This pattern is used quite extensively, for example, in the filesystem module in Rust’s standard
+library - std::fs. Functions like create_dir take an argument of type P constrained to implement
+AsRef<Path> instead of forcing the user to understand how to convert a String into a Path. Or how
+to convert a PathBuf into Path. Or an OsString. Or… you got the gist.
+There are other little conversion traits like AsRef in that standard library - they provide a shared
+interface for the whole ecosystem to standardise around. Implementing them for your types suddenly
+unlocks a great deal of functionality exposed via generic types in the crates already available in the
+wild.
+We will cover some of the other conversion trait later down the line (e.g. From/Into, TryFrom/TryInto).
+Let’s remove inner_ref and implement AsRef<str> for SubscriberName:
+//! src/domain.rs
+// [...]
+
+impl AsRef<str> for SubscriberName {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+We also need to change insert_subscriber:
+//! src/routes/subscriptions.rs
+// [...]
+
+#[tracing::instrument([...])]
+pub async fn insert_subscriber(
+    pool: &PgPool,
+    new_subscriber: &NewSubscriber,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+         r#"
+    INSERT INTO subscriptions (id, email, name, subscribed_at)
+    VALUES ($1, $2, $3, $4)
+         "#,
+         Uuid::new_v4(),
+         new_subscriber.email,
+         // Using `as_ref` now!
+         new_subscriber.name.as_ref(),
+         Utc::now()
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| {
+         tracing::error!("Failed to execute query: {:?}", e);
+         e
+    })?;
+    Ok(())
+}
+
+The project compiles…
+
+6.6   Panics
+…but our tests are not green:
+
+thread 'actix-rt:worker:0' panicked at
+' is not a valid subscriber name.', src/domain.rs:39:13
+
+[...]
+
+---- subscribe_returns_a_200_when_fields_are_present_but_empty stdout ----
+thread 'subscribe_returns_a_200_when_fields_are_present_but_empty' panicked at
+'Failed to execute request.:
+  reqwest::Error {
+    kind: Request,
+    url: Url {
+      scheme: "http",
+      host: Some(Ipv4(127.0.0.1)),
+      port: Some(40681),
+      path: "/subscriptions",
+      query: None,
+      fragment: None
+    },
+    source: hyper::Error(IncompleteMessage)
+  }',
+tests/health_check.rs:164:14
+Panic in Arbiter thread.
+
+On the bright side: we are not returning a 200 OK anymore for empty names.
+On the not-so-bright side: our API is terminating the request processing abruptly, causing the client
+to observe an IncompleteMessage error. Not very graceful.
+Let’s change the test to reflect our new expectations: we’d like to see a 400 Bad Request response
+when the payload contains invalid data.
+//! tests/health_check.rs
+// [...]
+
+#[tokio::test]
+// Renamed!
+async fn subscribe_returns_a_400_when_fields_are_present_but_invalid() {
+    // [...]
+
+    assert_eq!(
+        // Not 200 anymore!
+        400,
+        response.status().as_u16(),
+        "The API did not return a 400 Bad Request when the payload was {}.",
+        description
+    );
+
+    // [...]
+}
+
+Now, let’s look at the root cause - we chose to panic when validation checks in SubscriberName::parse
+fail:
+//! src/domain.rs
+// [...]
+
+impl SubscriberName {
+    pub fn parse(s: String) -> SubscriberName {
+        // [...]
+
+        if is_empty_or_whitespace || is_too_long || contains_forbidden_characters {
+            panic!("{} is not a valid subscriber name.", s)
+        } else {
+            Self(s)
+
+           }
+      }
+}
+
+Panics in Rust are used to deal with unrecoverable errors: failure modes that were not expected
+or that we have no way to meaningfully recover from. Examples might include the host machine
+running out of memory or a full disk.
+Rust’s panics are not equivalent to exceptions in languages such as Python, C# or Java. Although
+Rust provides a few utilities to catch (some) panics, it is most definitely not the recommended
+approach and should be used sparingly.
+burntsushi put it down quite neatly in a Reddit thread a few years ago:
+
+    […] If your Rust application panics in response to any user input, then the following should
+    be true: your application has a bug, whether it be in a library or in the primary application
+    code.
+
+Adopting this viewpoint we can understand what is happening: when our request handler panics
+actix-web assumes that something horrible happened and immediately drops the worker that was
+dealing with that panicking request.51
+If panics are not the way to go, what should we use to handle recoverable errors?
+
+6.7       Error As Values - Result
+Rust’s primary error handling mechanism is built on top of the Result type:
+pub enum Result<T, E> {
+    Ok(T),
+    Err(E),
+}
+
+Result is used as the return type for fallible operations: if the operation succeeds, Ok(T) is returned;
+if it fails, you get Err(E).
+We have actually already used Result, although we did not stop to discuss its nuances at the time.
+Let’s look again at the signature of insert_subscriber:
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn insert_subscriber(
+    pool: &PgPool,
+    new_subscriber: &NewSubscriber,
+) -> Result<(), sqlx::Error> {
+    // [...]
+}
+
+It tells us that inserting a subscriber in the database is a fallible operation - if all goes as planned,
+we don’t get anything back (() - the unit type), if something is amiss we will instead receive a
+sqlx::Error with details about what went wrong (e.g. a connection issue).
+Errors as values, combined with Rust’s enums, are awesome building blocks for a robust error handling
+story.
+If you are coming from a language with exception-based error handling, this is likely to be a game
+changer52 : everything we need to know about the failure modes of a function is in its signature.
+  51 A panic in a request handler does not crash the whole application. actix-web spins up multiple workers to deal
+
+with incoming requests and it is resilient to one or more of them crashing: it will just spawn new ones to replace the
+ones that failed.
+  52 Checked exceptions in Java are the only example I am aware of in mainstream languages using exceptions that
+
+comes close enough to the compile-time safety provided by Result.
+
+You will not have to dig in the documentation of your dependencies to understand what exceptions
+a certain function might throw (assuming it is documented in the first place!).
+You will not be surprised at runtime by yet another undocumented exception type.
+You will not have to insert a catch-all statement “just in case”.
+We will cover the basics here and leave the finer details (Error trait) to the next chapter.
+
+6.7.1   Converting parse To Return Result
+Let’s refactor our SubscriberName::parse to return a Result instead of panicking on invalid inputs.
+We will start by changing the signature, without touching the body:
+//! src/domain.rs
+// [...]
+
+impl SubscriberName {
+    pub fn parse(s: String) -> Result<SubscriberName, ???> {
+        // [...]
+    }
+}
+
+What type should we use as Err variant for our Result?
+The simplest option is a String - we just return an error message on failure.
+//! src/domain.rs
+// [...]
+
+impl SubscriberName {
+    pub fn parse(s: String) -> Result<SubscriberName, String> {
+        // [...]
+    }
+}
+
+Running cargo check surfaces two errors from the compiler:
+error[E0308]: mismatched types
+  --> src/routes/subscriptions.rs:27:15
+   |
+27 |         name: SubscriberName::parse(form.0.name),
+   |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |               expected struct `SubscriberName`,
+   |               found enum `Result`
+
+error[E0308]: mismatched types
+  --> src/domain.rs:41:13
+   |
+14 |     pub fn parse(s: String) -> Result<SubscriberName, String> {
+   |                                ------------------------------
+   |                                expected `Result<SubscriberName, String>`
+   |                                because of return type
+...
+41 |             Self(s)
+   |             ^^^^^^^
+   |             |
+   |             expected enum `Result`, found struct `SubscriberName`
+   |             help: try using a variant of the expected enum: `Ok(Self(s))`
+   |
+   = note: expected enum `Result<SubscriberName, String>`
+            found struct `SubscriberName`
+
+Let’s focus on the second error: we cannot return a bare instance of SubscriberName at the end of
+parse - we need to choose one of the two Result variants.
+The compiler understands the issue and suggests the right edit: use Ok(Self(s)) instead of Self(s).
+Let’s follow its advice:
+
+//! src/domain.rs
+// [...]
+
+impl SubscriberName {
+    pub fn parse(s: String) -> Result<SubscriberName, String> {
+        // [...]
+
+           if is_empty_or_whitespace || is_too_long || contains_forbidden_characters {
+               panic!("{} is not a valid subscriber name.", s)
+           } else {
+               Ok(Self(s))
+           }
+      }
+}
+
+cargo check should now return a single error:
+error[E0308]: mismatched types
+  --> src/routes/subscriptions.rs:27:15
+   |
+27 |         name: SubscriberName::parse(form.0.name),
+   |               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |               expected struct `SubscriberName`,
+   |               found enum `Result`
+
+It is complaining about our invocation of the parse method in subscribe: when parse returned a
+SubscriberName it was perfectly fine to assign its output directly to Subscriber.name.
+We are returning a Result now - Rust’s type system forces us to deal with the unhappy path. We
+cannot just pretend it won’t happen.
+Let’s avoid covering too much ground at once though - for the time being we will just panic if
+validation fails in order to get the project to compile again as quickly as possible:
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    let new_subscriber = NewSubscriber {
+        email: form.0.email,
+        // Notice the usage of `expect` to specify a meaningful panic message
+        name: SubscriberName::parse(form.0.name).expect("Name validation failed."),
+    };
+    // [...]
+}
+
+cargo check should be happy now.
+Time to work on tests!
+
+6.8       Insightful Assertion Errors: claim
+Most of our assertions will be along the lines of assert!(result.is_ok()) or assert!(result.is_err()).
+The error messages returned by cargo test on failure when using these assertions are quite poor.
+How poor? Let’s run a quick experiment!
+If you run cargo test on this dummy test
+#[test]
+fn dummy_fail() {
+    let result: Result<&str, &str> = Err("The app crashed due to an IO error");
+    assert!(result.is_ok());
+}
+
+you will get
+---- dummy_fail stdout ----
+thread 'dummy_fail' panicked at 'assertion failed: result.is_ok()'
+
+We do not get any detail concerning the error itself - it makes for a somewhat painful debugging
+experience.
+We will be using the claim crate to get more informative error messages:
+#! Cargo.toml
+# [...]
+[dev-dependencies]
+claim = "0.5"
+# [...]
+claim provides a fairly comprehensive range of assertions to work with common Rust types - in
+particular Option and Result.
+If we rewrite our dummy_fail test to use claim
+#[test]
+fn dummy_fail() {
+    let result: Result<&str, &str> = Err("The app crashed due to an IO error");
+    claim::assert_ok!(result);
+}
+
+we get
+---- dummy_fail stdout ----
+thread 'dummy_fail' panicked at 'assertion failed, expected Ok(..),
+  got Err("The app crashed due to an IO error")'
+
+Much better.
+
+6.9      Unit Tests
+We are all geared up - let’s add some unit tests to the domain module to make sure all the code we
+wrote behaves as expected.
+//! src/domain.rs
+// [...]
+
+#[cfg(test)]
+mod tests {
+    use crate::domain::SubscriberName;
+    use claim::{assert_err, assert_ok};
+
+      #[test]
+      fn a_256_grapheme_long_name_is_valid() {
+          let name = "a�".repeat(256);
+          assert_ok!(SubscriberName::parse(name));
+      }
+
+      #[test]
+      fn a_name_longer_than_256_graphemes_is_rejected() {
+          let name = "a".repeat(257);
+          assert_err!(SubscriberName::parse(name));
+      }
+
+      #[test]
+      fn whitespace_only_names_are_rejected() {
+          let name = " ".to_string();
+          assert_err!(SubscriberName::parse(name));
+      }
+
+    #[test]
+    fn empty_string_is_rejected() {
+        let name = "".to_string();
+        assert_err!(SubscriberName::parse(name));
+    }
+
+    #[test]
+    fn names_containing_an_invalid_character_are_rejected() {
+        for name in &['/', '(', ')', '"', '<', '>', '\\', '{', '}'] {
+            let name = name.to_string();
+            assert_err!(SubscriberName::parse(name));
+        }
+    }
+
+    #[test]
+    fn a_valid_name_is_parsed_successfully() {
+        let name = "Ursula Le Guin".to_string();
+        assert_ok!(SubscriberName::parse(name));
+    }
+}
+
+Unfortunately, it does not compile - cargo highlights all our usages of assert_ok/assert_err with
+66 |         assert_err!(SubscriberName::parse(name));
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+   |         `SubscriberName` cannot be formatted using `{:?}`
+   |
+   = help: the trait `std::fmt::Debug` is not implemented for `SubscriberName`
+   = note: add `#[derive(Debug)]` or manually implement `std::fmt::Debug`
+   = note: required by `std::fmt::Debug::fmt`
+
+claim needs our type to implement the Debug trait to provide those nice error messages. Let’s add
+a #[derive(Debug)] attribute on top of SubscriberName:
+//! src/domain.rs
+// [...]
+
+#[derive(Debug)]
+pub struct SubscriberName(String);
+
+The compiler should be happy now. What about tests?
+cargo test
+
+failures:
+    domain::tests::a_name_longer_than_256_graphemes_is_rejected
+    domain::tests::empty_string_is_rejected
+    domain::tests::names_containing_an_invalid_character_are_rejected
+    domain::tests::whitespace_only_names_are_rejected
+
+test result: FAILED. 2 passed; 4 failed; 0 ignored; 0 measured; 0 filtered out
+
+All our unhappy-path tests are failing because we are still panicking if our validation constraints are
+not satisfied - let’s change it:
+//! src/domain.rs
+// [...]
+
+impl SubscriberName {
+    pub fn parse(s: String) -> Result<SubscriberName, String> {
+        // [...]
+
+        if is_empty_or_whitespace || is_too_long || contains_forbidden_characters {
+            // Replacing `panic!` with `Err(...)`
+
+             Err(format!("{} is not a valid subscriber name.", s))
+         } else {
+             Ok(Self(s))
+         }
+    }
+}
+
+All our domain unit tests are now passing - let’s finally address the failing integration test we wrote
+at the beginning of the chapter.
+
+6.10     Handling A Result
+SubscriberName::parse is now returning a Result, but subscribe is calling expect on it, therefore
+panicking if an Err variant is returned.
+The behaviour of the application, as a whole, has not changed at all.
+How do we change subscribe to return a 400 Bad Request on validation errors? We can have a
+look at what we are already doing for our call to insert_subscriber!
+
+6.10.1   match
+How do we handle the possibility of a failure on the caller side?
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn insert_subscriber(
+    pool: &PgPool,
+    new_subscriber: &NewSubscriber,
+) -> Result<(), sqlx::Error> {
+    // [...]
+}
+
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    // [...]
+    match insert_subscriber(&pool, &new_subscriber).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(_) => HttpResponse::InternalServerError().finish(),
+    }
+}
+
+insert_subscriber returns a Result<(), sqlx::Error> while subscribe speaks the language of
+a REST API - its output must be of type HttpResponse. To return a HttpResponse to the caller
+in the error case we need to convert sqlx::Error into a representation that makes sense within the
+technical domain of a REST API - in our case, a 500 Internal Server Error.
+That’s where a match comes in handy: we tell the compiler what to do in both scenarios, Ok and Err.
+
+6.10.2   The ? Operator
+Speaking of error handling, let’s look again at insert_subscriber:
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn insert_subscriber(/* */) -> Result<(), sqlx::Error> {
+    sqlx::query!(/* */)
+
+        .execute(pool)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to execute query: {:?}", e);
+            e
+        })?;
+    Ok(())
+}
+
+Have you noticed that ?, before Ok(())?
+It is the question mark operator, ?.
+? was introduced in Rust 1.13 - it is syntactic sugar.
+It reduces the amount of visual noise when you are working with fallible functions and you want to
+“bubble up” failures (e.g. similar enough to re-throwing a caught exception).
+The ? in this block
+insert_subscriber(&pool, &new_subscriber)
+.await
+.map_err(|_| HttpResponse::InternalServerError().finish())?;
+
+is equivalent to this control flow block
+if let Err(error) = insert_subscriber(&pool, &new_subscriber)
+    .await
+    .map_err(|_| HttpResponse::InternalServerError().finish())
+{
+    return Err(error);
+}
+
+It allows us to return early when something fails using a single character instead of a multi-line block.
+Given that ? triggers an early return using an Err variant, it can only be used within a function that
+returns a Result. subscribe does not qualify (yet).
+
+6.10.3   400 Bad Request
+Let’s handle now the error returned by SubscriberName::parse:
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    let name = match SubscriberName::parse(form.0.name) {
+        Ok(name) => name,
+        // Return early if the name is invalid, with a 400
+        Err(_) => return HttpResponse::BadRequest().finish(),
+    };
+    let new_subscriber = NewSubscriber {
+        email: form.0.email,
+        name,
+    };
+    match insert_subscriber(&pool, &new_subscriber).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(_) => HttpResponse::InternalServerError().finish(),
+    }
+}
+
+cargo test is not green yet, but we are getting a different error:
+
+--- subscribe_returns_a_400_when_fields_are_present_but_invalid stdout ----
+thread 'subscribe_returns_a_400_when_fields_are_present_but_invalid'
+panicked at 'assertion failed: `(left == right)`
+  left: `400`,
+ right: `200`:
+ The API did not return a 400 Bad Request when the payload was empty email.',
+tests/health_check.rs:167:9
+
+The test case using an empty name is now passing, but we are failing to return a 400 Bad Request
+when an empty email is provided.
+Not unexpected - we have not implemented any kind of email validation yet!
+
+6.11     The Email Format
+We are all intuitively familiar with the common structure of an email address - XXX@YYY.ZZZ - but the
+subject quickly gets more complicated if you desire to be rigorous and avoid bouncing email addresses
+that are actually valid.
+How do we establish if an email address is “valid”?
+There are a few Request For Comments (RFC) by the Internet Engineering Task Force (IETF)
+outlining the expected structure of an email address - RFC 6854, RFC 5322, RFC 2822. We would
+have to read them, digest the material and then come up with an is_valid_email function that
+matches the specification.
+Unless you have a keen interest in understanding the subtle nuances of the email address format, I
+would suggest you to take a step back: it is quite messy. So messy that even the HTML specification
+is willfully non-compliant with the RFCs we just linked.
+Our best shot is to look for an existing library that has stared long and hard at the problem to
+provide us with a plug-and-play solution. Luckily enough, there is at least one in the Rust ecosystem
+- the validator crate!53
+
+6.12     The SubscriberEmail Type
+We will follow the same strategy we used for name validation - encode our invariant (“this string
+represents a valid email”) in a new SubscriberEmail type.
+
+6.12.1    Breaking The Domain Sub-Module
+Before we get started though, let’s make some space - let’s break our domain sub-module (domain.rs)
+into multiple smaller files, one for each type, similarly to what we did for routes back in Chapter 3.
+Our current folder structure (under src) is:
+src/
+  routes/
+     [...]
+  domain.rs
+  [...]
+We want to have
+src/
+  routes/
+     [...]
+  domain/
+     mod.rs
+     subscriber_name.rs
+     subscriber_email.rs
+     new_subscriber.rs
+  53 The validator crate follows the HTML specification when it comes to email validation. You can check its source
+
+code if you are curious to see how it’s implemented.
+
+  [...]
+Unit tests should be in the same file of the type they refer to. We will end up with:
+//! src/domain/mod.rs
+
+mod subscriber_name;
+mod subscriber_email;
+mod new_subscriber;
+
+pub use subscriber_name::SubscriberName;
+pub use new_subscriber::NewSubscriber;
+
+//! src/domain/subscriber_name.rs
+
+use unicode_segmentation::UnicodeSegmentation;
+
+#[derive(Debug)]
+pub struct SubscriberName(String);
+
+impl SubscriberName {
+    // [...]
+}
+
+impl AsRef<str> for SubscriberName {
+    // [...]
+}
+
+#[cfg(test)]
+mod tests {
+    // [...]
+}
+
+//! src/domain/subscriber_email.rs
+
+// Still empty, ready for us to get started!
+
+//! src/domain/new_subscriber.rs
+
+use crate::domain::subscriber_name::SubscriberName;
+
+pub struct NewSubscriber {
+    pub email: String,
+    pub name: SubscriberName,
+}
+
+No changes should be required to other files in our project - the API of our module has not changed
+thanks to our pub use statements in mod.rs.
+
+6.12.2    Skeleton Of A New Type
+Let’s add a barebone SubscriberEmail type: no validation, just a wrapper around a String and a
+convenient AsRef implementation:
+//! src/domain/subscriber_email.rs
+
+#[derive(Debug)]
+pub struct SubscriberEmail(String);
+
+impl SubscriberEmail {
+    pub fn parse(s: String) -> Result<SubscriberEmail, String> {
+        // TODO: add validation!
+        Ok(Self(s))
+    }
+
+}
+
+impl AsRef<str> for SubscriberEmail {
+    fn as_ref(&self) -> &str {
+        &self.0
+    }
+}
+
+//! src/domain/mod.rs
+
+mod new_subscriber;
+mod subscriber_email;
+mod subscriber_name;
+
+pub use new_subscriber::NewSubscriber;
+pub use subscriber_email::SubscriberEmail;
+pub use subscriber_name::SubscriberName;
+
+We start with tests this time: let’s come up with a few examples of invalid emails that should be
+rejected.
+//! src/domain/subscriber_email.rs
+
+#[derive(Debug)]
+pub struct SubscriberEmail(String);
+
+// [...]
+
+#[cfg(test)]
+mod tests {
+    use super::SubscriberEmail;
+    use claim::assert_err;
+
+    #[test]
+    fn empty_string_is_rejected() {
+        let email = "".to_string();
+        assert_err!(SubscriberEmail::parse(email));
+    }
+
+    #[test]
+    fn email_missing_at_symbol_is_rejected() {
+        let email = "ursuladomain.com".to_string();
+        assert_err!(SubscriberEmail::parse(email));
+    }
+
+    #[test]
+    fn email_missing_subject_is_rejected() {
+        let email = "@domain.com".to_string();
+        assert_err!(SubscriberEmail::parse(email));
+    }
+}
+
+Running cargo test domain confirms that all test cases are failing:
+failures:
+    domain::subscriber_email::tests::email_missing_at_symbol_is_rejected
+    domain::subscriber_email::tests::email_missing_subject_is_rejected
+    domain::subscriber_email::tests::empty_string_is_rejected
+
+test result: FAILED. 6 passed; 3 failed; 0 ignored; 0 measured; 0 filtered out
+
+Time to bring validator in:
+#! Cargo.toml
+
+# [...]
+[dependencies]
+validator = "0.14"
+# [...]
+Our parse method will just delegate all the heavy-lifting to validator::validate_email:
+//! src/domain/subscriber_email.rs
+
+use validator::validate_email;
+
+#[derive(Debug)]
+pub struct SubscriberEmail(String);
+
+impl SubscriberEmail {
+    pub fn parse(s: String) -> Result<SubscriberEmail, String> {
+        if validate_email(&s) {
+            Ok(Self(s))
+        } else {
+            Err(format!("{} is not a valid subscriber email.", s))
+        }
+    }
+}
+
+// [...]
+
+As simple as that - all our tests are green now!
+There is a caveat - all our tests cases are checking for invalid emails. We should also have at least
+one test checking that valid emails are going through.
+We could hard-code a known valid email address in a test and check that it is parsed successfully -
+e.g. ursula@domain.com.
+What value would we get from that test case though? It would only re-assure us that a specific email
+address is correctly parsed as valid.
+
+6.13     Property-based Testing
+We could use another approach to test our parsing logic: instead of verifying that a certain set of
+inputs is correctly parsed, we could build a random generator that produces valid values and check
+that our parser does not reject them.
+In other words, we verify that our implementation displays a certain property - “No valid email address
+is rejected”.
+This approach is often referred to as property-based testing.
+If we were working with time, for example, we could repeatedly sample three random integers
+  • H, between 0 and 23 (inclusive);
+  • M, between 0 and 59 (inclusive);
+  • S, between 0 and 59 (inclusive);
+and verify that H:M:S is always correctly parsed.
+Property-based testing significantly increases the range of inputs that we are validating, and therefore
+our confidence in the correctness of our code, but it does not prove that our parser is correct - it does
+not exhaustively explore the input space (except for tiny ones).
+Let’s see what property testing would look like for our SubscriberEmail.
+
+6.13.1     How To Generate Random Test Data With fake
+First and foremost, we need a random generator of valid emails.
+We could write one, but this a great opportunity to introduce the fake crate.
+
+fake provides generation logic for both primitive data types (integers, floats, strings) and higher-level
+objects (IP addresses, country codes, etc.) - in particular, emails! Let’s add fake as a development
+dependency of our project:
+# Cargo.toml
+# [...]
+
+[dev-dependencies]
+# [...]
+# We are not using fake >= 2.4 because it relies on rand 0.8
+# which has been recently released and it is not yet used by
+# quickcheck (solved in its upcoming 1.0 release!)
+fake = "~2.3"
+Let’s use it in a new test:
+//! src/domain/subscriber_email.rs
+
+// [...]
+
+#[cfg(test)]
+mod tests {
+    // We are importing the `SafeEmail` faker!
+    // We also need the `Fake` trait to get access to the
+    // `.fake` method on `SafeEmail`
+    use fake::faker::internet::en::SafeEmail;
+    use fake::Fake;
+    // [...]
+
+    #[test]
+    fn valid_emails_are_parsed_successfully() {
+        let email = SafeEmail().fake();
+        claim::assert_ok!(SubscriberEmail::parse(email));
+    }
+}
+
+Every time we run our test suite, SafeEmail().fake() generates a new random valid email which
+we then use to test our parsing logic.
+This is already a major improvement compared to a hard-coded valid email, but we would have to
+run our test suite several times to catch an issue with an edge case. A fast-and-dirty solution would
+be to add a for loop to the test, but, once again, we can use this as an occasion to delve deeper and
+explore one of the available testing crates designed around property-based testing.
+
+6.13.2     quickcheck Vs proptest
+There are two mainstream options for property-based testing in the Rust ecosystem: quickcheck
+and proptest.
+Their domains overlap, although each shines in its own niche - check their READMEs for all the nitty
+gritty details.
+For our project we will go with quickcheck - it is fairly simple to get started with and it does not
+use too many macros, which makes for a pleasant IDE experience.
+
+6.13.3     Getting Started With quickcheck
+Let’s have a look at one of their examples to get the gist of how it works:
+/// The function we want to test.
+fn reverse<T: Clone>(xs: &[T]) -> Vec<T> {
+    let mut rev = vec!();
+    for x in xs.iter() {
+        rev.insert(0, x.clone())
+    }
+
+     rev
+}
+
+#[cfg(test)]
+mod tests {
+    #[quickcheck_macros::quickcheck]
+    fn prop(xs: Vec<u32>) -> bool {
+        /// A property that is always true, regardless
+        /// of the vector we are applying the function to:
+        /// reversing it twice should return the original input.
+        xs == reverse(&reverse(&xs))
+    }
+}
+
+quickcheck calls prop in a loop with a configurable number of iterations (100 by default): on every
+iteration, it generates a new Vec<u32> and checks that prop returned true.
+If prop returns false, it tries to shrink the generated input to the smallest possible failing example
+(the shortest failing vector) to help us debug what went wrong.
+In our case, we’d like to have something along these lines:
+#[quickcheck_macros::quickcheck]
+fn valid_emails_are_parsed_successfully(valid_email: String) -> bool {
+    SubscriberEmail::parse(valid_email).is_ok()
+}
+
+Unfortunately, if we ask for a String type as input we are going to get all sorts of garbage which will
+fail validation.
+How do we customise the generation routine?
+
+6.13.4     Implementing The Arbitrary Trait
+Let’s go back to the previous example - how does quickcheck know how to generate a Vec<u32>?
+Everything is built on top of quickcheck’s Arbitrary trait:
+pub trait Arbitrary: Clone + Send + 'static {
+    fn arbitrary<G: Gen>(g: &mut G) -> Self;
+
+     fn shrink(&self) -> Box<dyn Iterator<Item = Self>> {
+         empty_shrinker()
+     }
+}
+
+We have two methods:
+    • arbitrary: given a source of randomness (g) it returns an instance of the type;
+    • shrink: it returns a sequence of progressively “smaller” instances of the type to help quickcheck
+      find the smallest possible failure case.
+Vec<u32> implements Arbitrary, therefore quickcheck knows how to generate random u32 vectors.
+We need to create our own type, let’s call it ValidEmailFixture, and implement Arbitrary for it.
+If you look at Arbitrary’s trait definition, you’ll notice that shrinking is optional: there is a default
+implementation (using empty_shrinker) which results in quickcheck outputting the first failure
+encountered, without trying to make it any smaller or nicer. Therefore we only need to provide an
+implementation of Arbitrary::arbitrary for our ValidEmailFixture.
+Let’s add both quickcheck and quickcheck-macros as development dependencies:
+#! Cargo.toml
+# [...]
+
+[dev-dependencies]
+# [...]
+quickcheck = "0.9.2"
+
+quickcheck_macros = "0.9.1"
+Then
+//! src/domain/subscriber_email.rs
+// [...]
+
+#[cfg(test)]
+mod tests {
+    // We have removed the `assert_ok` import.
+    use claim::assert_err;
+    // [...]
+
+    // Both `Clone` and `Debug` are required by `quickcheck`
+    #[derive(Debug, Clone)]
+    struct ValidEmailFixture(pub String);
+
+    impl quickcheck::Arbitrary for ValidEmailFixture {
+        fn arbitrary<G: quickcheck::Gen>(g: &mut G) -> Self {
+            let email = SafeEmail().fake_with_rng(g);
+            Self(email)
+        }
+    }
+
+    #[quickcheck_macros::quickcheck]
+    fn valid_emails_are_parsed_successfully(valid_email: ValidEmailFixture) -> bool {
+        SubscriberEmail::parse(valid_email.0).is_ok()
+    }
+}
+
+This is an amazing example of the interoperability you gain by sharing key traits across the Rust
+ecosystem.
+How do we get fake and quickcheck to play nicely together?
+In Arbitrary::arbitrary we get g as input, an argument of type G.
+G is constrained by a trait bound, G: quickcheck::Gen, therefore it must implement the Gen trait
+in quickcheck, where Gen stands for “generator”.
+How is Gen defined?
+pub trait Gen: RngCore {
+    fn size(&self) -> usize;
+}
+
+Anything that implements Gen must also implement the RngCore trait from rand-core.
+Let’s examine the SafeEmail faker: it implements the Fake trait.
+Fake gives us a fake method, which we have already tried out, but it also exposes a fake_with_rng
+method, where “rng” stands for “random number generator”.
+What does fake accept as a valid random number generator?
+pub trait Fake: Sized {
+    //[...]
+
+    fn fake_with_rng<U, R>(&self, rng: &mut R) -> U where
+        R: Rng + ?Sized,
+        Self: FakeBase<U>;
+}
+
+You read that right - any type that implements the Rng trait from rand, which is automatically
+implemented by all types implementing RngCore!
+We can just pass g from Arbitrary::arbitrary as the random number generator for fake_with_rng
+and everything just works!
+Maybe the maintainers of the two crates are aware of each other, maybe they aren’t, but a community-
+
+sanctioned set of traits in rand-core gives us painless interoperability. Pretty sweet!
+You can now run cargo test domain - it should come out green, re-assuring us that our email
+validation check is indeed not overly prescriptive.
+If you want to see the random inputs that are being generated, add a dbg!(&valid_email.0);
+statement to the test and run cargo test valid_emails -- --nocapture - tens of valid emails
+should pop up in your terminal!
+
+6.14    Payload Validation
+If you run cargo test, without restricting the set of tests being run to domain, you will see that our
+integration test with invalid data is still red.
+--- subscribe_returns_a_400_when_fields_are_present_but_invalid stdout ----
+thread 'subscribe_returns_a_400_when_fields_are_present_but_invalid'
+panicked at 'assertion failed: `(left == right)`
+  left: `400`,
+ right: `200`:
+ The API did not return a 400 Bad Request when the payload was empty email.',
+tests/health_check.rs:167:9
+
+Let’s integrate our shiny SubscriberEmail into the application to benefit from its validation in our
+/subscriptions endpoint.
+We need to start from NewSubscriber:
+//! src/domain/new_subscriber.rs
+
+use crate::domain::SubscriberName;
+use crate::domain::SubscriberEmail;
+
+pub struct NewSubscriber {
+    // We are not using `String` anymore!
+    pub email: SubscriberEmail,
+    pub name: SubscriberName,
+}
+
+Hell should break loose if you try to compile the project now.
+Let’s start with the first error reported by cargo check:
+error[E0308]: mismatched types
+  --> src/routes/subscriptions.rs:28:16
+   |
+28 |         email: form.0.email,
+   |                ^^^^^^^^^^^^
+   |                expected struct `SubscriberEmail`,
+   |                found struct `std::string::String`
+
+It is referring to a line in our request handler, subscribe:
+//! src/routes/subscriptions.rs
+// [...]
+
+#[tracing::instrument([...])]
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    let name = match SubscriberName::parse(form.0.name) {
+        Ok(name) => name,
+        Err(_) => return HttpResponse::BadRequest().finish(),
+    };
+    let new_subscriber = NewSubscriber {
+        // We are trying to assign a string to a field of type SubscriberEmail!
+
+           email: form.0.email,
+           name,
+    };
+    match insert_subscriber(&pool, &new_subscriber).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(_) => HttpResponse::InternalServerError().finish(),
+    }
+}
+
+We need to mimic what we are already doing for the name field: first we parse form.0.email then
+we assign the result (if successful) to NewSubscriber.email.
+//! src/routes/subscriptions.rs
+
+// We added `SubscriberEmail`!
+use crate::domain::{NewSubscriber, SubscriberEmail, SubscriberName};
+// [...]
+
+#[tracing::instrument([...])]
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    let name = match SubscriberName::parse(form.0.name) {
+        Ok(name) => name,
+        Err(_) => return HttpResponse::BadRequest().finish(),
+    };
+    let email = match SubscriberEmail::parse(form.0.email) {
+        Ok(email) => email,
+        Err(_) => return HttpResponse::BadRequest().finish(),
+    };
+    let new_subscriber = NewSubscriber { email, name };
+    // [...]
+}
+
+Time to move to the second error:
+error[E0308]: mismatched types
+  --> src/routes/subscriptions.rs:50:9
+   |
+50 |         new_subscriber.email,
+   |         ^^^^^^^^^^^^^^
+   |         expected `&str`,
+   |         found struct `SubscriberEmail`
+
+This is in our insert_subscriber function, where we perform a SQL INSERT query to store the
+details of the new subscriber:
+//! src/routes/subscriptions.rs
+
+// [...]
+
+#[tracing::instrument([...])]
+pub async fn insert_subscriber(
+    pool: &PgPool,
+    new_subscriber: &NewSubscriber,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"
+    INSERT INTO subscriptions (id, email, name, subscribed_at)
+    VALUES ($1, $2, $3, $4)
+            "#,
+        Uuid::new_v4(),
+
+           // It expects a `&str` but we are passing it
+           // a `SubscriberEmail` value
+           new_subscriber.email,
+           new_subscriber.name.as_ref(),
+           Utc::now()
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| {
+         tracing::error!("Failed to execute query: {:?}", e);
+         e
+    })?;
+    Ok(())
+}
+
+The solution is right there, on the line below - we just need to borrow the inner field of
+SubscriberEmail as a string slice using our implementation of AsRef<str>.
+//! src/routes/subscriptions.rs
+
+// [...]
+
+#[tracing::instrument([...])]
+pub async fn insert_subscriber(
+    pool: &PgPool,
+    new_subscriber: &NewSubscriber,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+         r#"
+    INSERT INTO subscriptions (id, email, name, subscribed_at)
+    VALUES ($1, $2, $3, $4)
+             "#,
+         Uuid::new_v4(),
+         // Using `as_ref` now!
+         new_subscriber.email.as_ref(),
+         new_subscriber.name.as_ref(),
+         Utc::now()
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| {
+         tracing::error!("Failed to execute query: {:?}", e);
+         e
+    })?;
+    Ok(())
+}
+
+That’s it - it compiles now!
+What about our integration test?
+cargo test
+
+running 4 tests
+test subscribe_returns_a_400_when_data_is_missing ... ok
+test health_check_works ... ok
+test subscribe_returns_a_400_when_fields_are_present_but_invalid ... ok
+test subscribe_returns_a_200_for_valid_form_data ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out
+
+All green! We made it!
+
+6.14.1   Refactoring With TryFrom
+Before we move on let’s spend a few paragraphs to refactor the code we just wrote.
+I am referring to our request handler, subscribe:
+//! src/routes/subscriptions.rs
+// [...]
+
+#[tracing::instrument([...])]
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    let name = match SubscriberName::parse(form.0.name) {
+        Ok(name) => name,
+        Err(_) => return HttpResponse::BadRequest().finish(),
+    };
+    let email = match SubscriberEmail::parse(form.0.email) {
+        Ok(email) => email,
+        Err(_) => return HttpResponse::BadRequest().finish(),
+    };
+    let new_subscriber = NewSubscriber { email, name };
+    match insert_subscriber(&pool, &new_subscriber).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(_) => HttpResponse::InternalServerError().finish(),
+    }
+}
+
+We can extract the first two statements in a parse_subscriber function:
+//! src/routes/subscriptions.rs
+// [...]
+
+pub fn parse_subscriber(form: FormData) -> Result<NewSubscriber, String> {
+    let name = SubscriberName::parse(form.name)?;
+    let email = SubscriberEmail::parse(form.email)?;
+    Ok(NewSubscriber { email, name })
+}
+
+#[tracing::instrument([...])]
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    let new_subscriber = match parse_subscriber(form.0) {
+        Ok(subscriber) => subscriber,
+        Err(_) => return HttpResponse::BadRequest().finish(),
+    };
+    match insert_subscriber(&pool, &new_subscriber).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(_) => HttpResponse::InternalServerError().finish(),
+    }
+}
+
+The refactoring gives us a clearer separation of concerns:
+  • parse_subscriber takes care of the conversion from our wire format (the url-decoded data
+    collected from a HTML form) to our domain model (NewSubscriber);
+  • subscribe remains in charge of generating the HTTP response to the incoming HTTP request.
+The Rust standard library provides a few traits to deal with conversions in its std::convert sub-
+module. That is where AsRef comes from!
+Is there any trait there that captures what we are trying to do with parse_subscriber?
+AsRef is not a good fit for what we are dealing with here: a fallible conversion between two types
+
+which consumes the input value.
+We need to look at TryFrom:
+pub trait TryFrom<T>: Sized {
+    /// The type returned in the event of a conversion error.
+    type Error;
+
+    /// Performs the conversion.
+    fn try_from(value: T) -> Result<Self, Self::Error>;
+}
+
+Replace T with FormData, Self with NewSubscriber and Self::Error with String - there you have
+it, the signature of our parse_subscriber function!
+Let’s try it out:
+//! src/routes/subscriptions.rs
+// No need to import the TryFrom trait, it is included
+// in Rust's prelude since edition 2021!
+// [...]
+
+impl TryFrom<FormData> for NewSubscriber {
+    type Error = String;
+
+    fn try_from(value: FormData) -> Result<Self, Self::Error> {
+        let name = SubscriberName::parse(value.name)?;
+        let email = SubscriberEmail::parse(value.email)?;
+        Ok(Self { email, name })
+    }
+}
+
+#[tracing::instrument([...])]
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    let new_subscriber = match form.0.try_into() {
+        Ok(form) => form,
+        Err(_) => return HttpResponse::BadRequest().finish(),
+    };
+    match insert_subscriber(&pool, &new_subscriber).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(_) => HttpResponse::InternalServerError().finish(),
+    }
+}
+
+We implemented TryFrom, but we are calling .try_into? What is happening there?
+There is another conversion trait in the standard library, called TryInto:
+pub trait TryInto<T> {
+    type Error;
+    fn try_into(self) -> Result<T, Self::Error>;
+}
+
+Its signature mirrors the one of TryFrom - the conversion just goes in the other direction!
+If you provide a TryFrom implementation, your type automatically gets the corresponding TryInto
+implementation, for free.
+try_into takes self as first argument, which allows us to do form.0.try_into() instead of going
+for NewSubscriber::try_from(form.0) - matter of taste, if you want.
+Generally speaking, what do we gain by implementing TryFrom/TryInto?
+Nothing shiny, no new functionality - we are “just” making our intent clearer.
+We are spelling out “This is a type conversion!”.
+Why does it matter? It helps others!
+

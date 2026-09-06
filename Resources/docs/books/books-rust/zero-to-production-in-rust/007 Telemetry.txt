@@ -1,0 +1,1738 @@
+test runs, performance starts to suffer due to the number of lingering (almost empty) databases.
+
+3.11    Summary
+We covered a large number of topics in this chapter: actix-web extractors and HTML forms,
+(de)serialisation with serde, an overview of the available database crates in the Rust ecosystem,
+the fundamentals of sqlx as well as basic techniques to ensure test isolation when dealing with
+databases.
+Take your time to digest the material and go back to review individual sections if necessary.
+
+4     Telemetry
+In Chapter 3 we managed to put together a first implementation of POST /subscriptions to fulfill
+one of the user stories of our email newsletter project:
+
+    As a blog visitor,
+    I want to subscribe to the newsletter,
+    So that I can receive email updates when new content is published on the blog.
+
+We have not yet created a web page with a HTML form to actually test the end-to-end flow, but we
+have a few black-box integration tests that cover the two basic scenarios we care about at this stage:
+    • if valid form data is submitted (i.e. both name and email have been provided), the data is saved
+      in our database;
+    • if the submitted form is incomplete (e.g. the email is missing, the name is missing or both), the
+      API returns a 400.
+Should we be satisfied and rush to deploy the first version of our application on the coolest cloud
+provider out there?
+Not yet - we are not yet equipped to properly run our software in a production environment.
+We are blind: the application is not instrumented yet and we are not collecting any telemetry
+data, making us vulnerable to unknown unknowns.
+If most of the previous sentence makes little to no sense to you, do not worry: getting to the bottom
+of it is going to be the main focus of this chapter.
+
+4.1    Unknown Unknowns
+We have a few tests. Tests are good, they make us more confident in our software, in its correctness.
+Nonetheless, a test suite is not proof of the correctness of our application. We would have to explore
+significantly different approaches to prove that something is correct (e.g. formal methods).
+At runtime we will encounter scenarios that we have not tested for or even thought about when
+designing the application in the first place.
+I can point at a few blind spots based on the work we have done so far and my past experiences:
+    • what happens if we lose connection to the database? Does sqlx::PgPool try to automati-
+      cally recover or will all database interactions fail from that point onwards until we restart the
+      application?
+    • what happens if an attacker tries to pass malicious payloads in the body of the POST
+      /subscriptions request (i.e. extremely large payloads, attempts to perform SQL injection,
+      etc.)?
+These are often referred to as known unknowns: shortcomings that we are aware of and we have
+not yet managed to investigate or we have deemed to be not relevant enough to spend time on.
+Given enough time and effort, we could get rid of most known unknowns.
+Unfortunately there are issues that we have not seen before and we are not expecting, unknown
+unknowns.
+Sometimes experience is enough to transform an unknown unknown into a known unknown: if you
+had never worked with a database before you might have not thought about what happens when we
+lose connection; once you have seen it happen once, it becomes a familiar failure mode to look out
+for.
+More often than not, unknown unknowns are peculiar failure modes of the specific system we are
+working on.
+They are problems at the crossroads between our software components, the underlying operating
+systems, the hardware we are using, our development process peculiarities and that huge source of
+randomness known as “the outside world”.
+They might emerge when:
+
+   • the system is pushed outside of its usual operating conditions (e.g. an unusual spike of traffic);
+   • multiple components experience failures at the same time (e.g. a SQL transaction is left hanging
+     while the database is going through a master-replica failover);
+   • a change is introduced that moves the system equilibrium (e.g. tuning a retry policy);
+   • no changes have been introduced for a long time (e.g. applications have not been restarted for
+     weeks and you start to see all sorts of memory leaks);
+   • etc.
+All these scenarios share one key similarity: they are often impossible to reproduce outside of the live
+environment.
+What can we do to prepare ourselves to deal with an outage or a bug caused by an unknown unknown?
+
+4.2    Observability
+We must assume that we will not be there when an unknown unknown issue arises: it might be late
+at night, we might be working on something else, etc.
+Even if we were paying attention at the very same moment something starts to go wrong, it often
+isn’t possible or practical to attach a debugger to a process running in production (assuming you
+even know in the first place which process you should be looking at) and the degradation might affect
+multiple systems at once.
+The only thing we can rely on to understand and debug an unknown unknown is telemetry data:
+information about our running applications that is collected automatically and can be later inspected
+to answer questions about the state of the system at a certain point in time.
+What questions?
+Well, if it is an unknown unknown we do not really know in advance what questions we might need
+to ask to isolate its root cause - that’s the whole point.
+The goal is to have an observable application.
+Quoting from Honeycomb’s observability guide
+
+   Observability is about being able to ask arbitrary questions about your environment without
+   — and this is the key part — having to know ahead of time what you wanted to ask.
+
+“arbitrary” is a strong word - as all absolute statements, it might require an unreasonable investment
+of both time and money if we are to interpret it literally.
+In practice we will also happily settle for an application that is sufficiently observable to enable us to
+deliver the level of service we promised to our users.
+In a nutshell, to build an observable system we need:
+   • to instrument our application to collect high-quality telemetry data;
+   • access to tools and systems to efficiently slice, dice and manipulate the data to find answers to
+     our questions.
+We will touch upon some of the options available to fulfill the second point, but an exhaustive
+discussion is outside of the scope of this book.
+Let’s focus on the first for the rest of this chapter.
+
+4.3    Logging
+Logs are the most common type of telemetry data.
+Even developers who have never heard of observability have an intuitive understanding of the use-
+fulness of logs: logs are what you look at when stuff goes south to understand what is happening,
+crossing your fingers extra hard hoping you captured enough information to troubleshoot effectively.
+What are logs though?
+The format varies, depending on the epoch, the platform and the technologies you are using.
+Nowadays a log record is usually a bunch of text data, with a line break to separate the current
+record from the next one. For example
+
+The application is starting on port 8080
+Handling a request to /index
+Handling a request to /index
+Returned a 200 OK
+
+are four perfectly valid log records for a web server.
+What does the Rust ecosystem have to offer us when it comes to logging?
+
+4.3.1   The log Crate
+The go-to crate for logging in Rust is log.
+log provides five macros: trace, debug, info, warn and error.
+They all do the same thing - emit a log a record - but each of them uses a different log level, as the
+naming implies.
+trace is the lowest level: trace-level logs are often extremely verbose and have a low signal-to-noise
+ratio (e.g. emit a trace-level log record every time a TCP packet is received by a web server).
+We then have, in increasing order of severity, debug, info, warn and error.
+Error-level logs are used to report serious failures that might have user impact (e.g. we failed to
+handle an incoming request or a query to the database timed out).
+Let’s look at a quick usage example:
+fn fallible_operation() -> Result<String, String> { ... }
+
+pub fn main() {
+    match fallible_operation() {
+        Ok(success) => {
+            log::info!("Operation succeeded: {}", success);
+        }
+        Err(err) => {
+            log::error!("Operation failed: {}", err);
+        }
+    }
+}
+
+We are trying to perform an operation that might fail.
+If it succeeds, we emit an info-level log record.
+If it doesn’t, we emit an error-level log record.
+Notice as well how log’s macros support the same interpolation syntax provided by println/print
+in the standard library.
+We can use log’s macros to instrument our codebase.
+Choosing what information should be logged about the execution of a particular function is often a
+local decision: it is enough to look at the function to decide what deserves to be captured in a log
+record. This enables libraries to be instrumented effectively, extending the reach of our telemetry
+outside the boundaries of the code we have written first-hand.
+
+4.3.2   actix-web’s Logger Middleware
+actix_web provides a Logger middleware. It emits a log record for every incoming request.
+Let’s add it to our application.
+//! src/startup.rs
+use crate::routes::{health_check, subscribe};
+use actix_web::dev::Server;
+use actix_web::web::Data;
+use actix_web::{web, App, HttpServer};
+use actix_web::middleware::Logger;
+use sqlx::PgPool;
+use std::net::TcpListener;
+
+pub fn run(listener: TcpListener, db_pool: PgPool) -> Result<Server, std::io::Error> {
+    let db_pool = Data::new(db_pool);
+    let server = HttpServer::new(move || {
+        App::new()
+            // Middlewares are added using the `wrap` method on `App`
+            .wrap(Logger::default())
+            .route("/health_check", web::get().to(health_check))
+            .route("/subscriptions", web::post().to(subscribe))
+            .app_data(db_pool.clone())
+    })
+    .listen(listener)?
+    .run();
+    Ok(server)
+}
+
+We can now launch the application using cargo run and fire a quick request with curl
+http://127.0.0.1:8000/health_check -v.
+The request comes back with a 200 but… nothing happens on the terminal we used to launch our
+application.
+No logs. Nothing. Blank screen.
+
+4.3.3   The Facade Pattern
+We said that instrumentation is a local decision.
+There is instead a global decision that applications are uniquely positioned to do: what are we
+supposed to do with all those log records?
+Should we append them to a file? Should we print them to the terminal? Should we send them to a
+remote system over HTTP (e.g. ElasticSearch)?
+The log crate leverages the facade pattern to handle this duality.
+It gives you the tools you need to emit log records, but it does not prescribe how those log records
+should be processed. It provides, instead, a Log trait:
+//! From `log`'s source code - src/lib.rs
+
+/// A trait encapsulating the operations required of a logger.
+pub trait Log: Sync + Send {
+    /// Determines if a log message with the specified metadata would be
+    /// logged.
+    ///
+    /// This is used by the `log_enabled!` macro to allow callers to avoid
+    /// expensive computation of log message arguments if the message would be
+    /// discarded anyway.
+    fn enabled(&self, metadata: &Metadata) -> bool;
+
+    /// Logs the `Record`.
+    ///
+    /// Note that `enabled` is *not* necessarily called before this method.
+    /// Implementations of `log` should perform all necessary filtering
+    /// internally.
+    fn log(&self, record: &Record);
+
+    /// Flushes any buffered records.
+    fn flush(&self);
+}
+
+At the beginning of your main function you can call the set_logger function and pass an imple-
+mentation of the Log trait: every time a log record is emitted Log::log will be called on the logger
+you provided, therefore making it possible to perform whatever form of processing of log records you
+deem necessary.
+If you do not call set_logger, then all log records will simply be discarded. Exactly what happened
+
+to our application.
+Let’s initialise our logger this time.
+There are a few Log implementations available on crates.io - the most popular options are listed in
+the documentation of log itself.
+We will use env_logger - it works nicely if, as in our case, the main goal is printing all logs records
+to the terminal.
+Let’s add it as a dependency with
+#! Cargo.toml
+# [...]
+[dependencies]
+env_logger = "0.9"
+# [...]
+env_logger::Logger prints log records to the terminal, using the following format:
+[<timestamp> <level> <module path>] <log message>
+
+It looks at the RUST_LOG environment variable to determine what logs should be printed and what
+logs should be filtered out.
+RUST_LOG=debug cargo run, for example, will surface all logs at debug-level or higher emitted by
+our application or the crates we are using. RUST_LOG=zero2prod, instead, would filter out all records
+emitted by our dependencies.
+Let’s modify our main.rs file as required:
+// [...]
+use env_logger::Env;
+
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    // `init` does call `set_logger`, so this is all we need to do.
+    // We are falling back to printing all logs at info-level or above
+    // if the RUST_LOG environment variable has not been set.
+    env_logger::Builder::from_env(Env::default().default_filter_or("info")).init();
+
+    // [...]
+}
+
+Let’s try to launch the application again using cargo run (equivalent to RUST_LOG=info cargo run
+given our defaulting logic). Two log records should show up on your terminal (using a new line break
+with indentation to make them fit within the page margins)
+[2020-09-21T21:28:40Z INFO actix_server::builder] Starting 12 workers
+[2020-09-21T21:28:40Z INFO actix_server::builder] Starting
+    "actix-web-service-127.0.0.1:8000" service on 127.0.0.1:8000
+
+If we make a request with curl http://127.0.0.1:8000/health_check you should see another log
+record, emitted by the Logger middleware we added a few paragraphs ago
+[2020-09-21T21:28:43Z INFO actix_web::middleware::logger] 127.0.0.1:47244
+    "GET /health_check HTTP/1.1" 200 0 "-" "curl/7.61.0" 0.000225
+
+Logs are also an awesome tool to explore how the software we are using works.
+Try setting RUST_LOG to trace and launching the application again.
+You should see a bunch of registering with poller log records coming from mio, a low-level
+library for non-blocking IO, as well as a couple of startup log records for each worker spawned up by
+actix-web (one for each physical core available on your machine!).
+Insightful things can be learned by playing around with trace-level logs.
+
+4.4     Instrumenting POST /subscriptions
+Let’s use what we learned about log to instrument our handler for POST /subscriptions requests.
+It currently looks like this:
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn subscribe(/* */) -> HttpResponse {
+    match sqlx::query!(/* */)
+        .execute(pool.as_ref())
+        .await
+    {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(e) => {
+            // Using `println!` to capture information about the error
+            // in case things don't work out as expected
+            println!("Failed to execute query: {}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+Let’s add log as a dependency:
+#! Cargo.toml
+# [...]
+[dependencies]
+log = "0.4"
+# [...]
+What should we capture in log records?
+
+4.4.1   Interactions With External Systems
+Let’s start with a tried-and-tested rule of thumb: any interaction with external systems over the
+network should be closely monitored. We might experience networking issues, the database might be
+unavailable, queries might get slower over time as the subscribers table gets longer, etc.
+Let’s add two logs records: one before query execution starts and one immediately after its completion.
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn subscribe(/* */) -> HttpResponse {
+    log::info!("Saving new subscriber details in the database");
+    match sqlx::query!(/* */)
+        .execute(pool.as_ref())
+        .await
+    {
+        Ok(_) => {
+            log::info!("New subscriber details have been saved");
+            HttpResponse::Ok().finish()
+        },
+        Err(e) => {
+            println!("Failed to execute query: {}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+As it stands, we would only be emitting a log record when the query succeeds. To capture failures
+we need to convert that println statement into an error-level log:
+
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn subscribe(/* */) -> HttpResponse {
+    log::info!("Saving new subscriber details in the database");
+    match sqlx::query!(/* */)
+        .execute(pool.as_ref())
+        .await
+    {
+        Ok(_) => {
+            log::info!("New subscriber details have been saved");
+            HttpResponse::Ok().finish()
+        },
+        Err(e) => {
+            log::error!("Failed to execute query: {:?}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+Much better - we have that query somewhat covered now.
+Pay attention to a small but crucial detail: we are using {:?}, the std::fmt::Debug format, to
+capture the query error.
+Operators are the main audience of logs - we should extract as much information as possible
+about whatever malfunction occurred to ease troubleshooting. Debug gives us that raw view, while
+std::fmt::Display ({}) will return a nicer error message that is more suitable to be shown directly
+to our end users.
+
+4.4.2   Think Like A User
+What else should we capture?
+Previously we stated that
+
+   We will happily settle for an application that is sufficiently observable to enable us to deliver
+   the level of service we promised to our users.
+
+What does this mean in practice?
+We need to change our reference system.
+Forget, for a second, that we are the authors of this piece of software.
+Put yourself in the shoes of one of your users, a person landing on your website that is interested in
+the content you publish and wants to subscribe to your newsletter.
+What does a failure look like for them?
+The story might play out like this:
+
+   Hey!
+   I tried subscribing to your newsletter using my main                           email address,
+   thomas_mann@hotmail.com, but the website failed with a weird error.            Any chance you
+   could look into what happened?
+   Best,
+   Tom
+   P.S. Keep it up, your blog rocks!
+
+Tom landed on our website and received “a weird error” when he pressed the Submit button.
+Our application is sufficiently observable if we can triage the issue from the breadcrumbs of information
+he has provided us - i.e. the email address he entered.
+
+Can we do it?
+Let’s, first of all, confirm the issue: is Tom registered as a subscriber?
+We can connect to the database and run a quick query to double-check that there is no record with
+thomas_mann@hotmail.com as email in our subscribers table.
+The issue is confirmed. What now?
+None of our logs include the subscriber email address, so we cannot search for it. Dead end.
+We could ask Tom to provide additional information: all our log records have a timestamp, maybe if
+he remembers around what time he tried to subscribe we can dig something out?
+This is a clear indication that our current logs are not good enough.
+Let’s improve them:
+//! src/routes/subscriptions.rs
+//! ..
+
+pub async fn subscribe(/* */) -> HttpResponse {
+    // We are using the same interpolation syntax of `println`/`print` here!
+    log::info!(
+        "Adding '{}' '{}' as a new subscriber.",
+        form.email,
+        form.name
+    );
+    log::info!("Saving new subscriber details in the database");
+    match sqlx::query!(/* */)
+        .execute(pool.as_ref())
+        .await
+    {
+        Ok(_) => {
+            log::info!("New subscriber details have been saved");
+            HttpResponse::Ok().finish()
+        },
+        Err(e) => {
+            log::error!("Failed to execute query: {:?}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+Much better - we now have a log line that is capturing both name and email.31 .
+Is it enough to troubleshoot Tom’s issue?
+
+4.4.3    Logs Must Be Easy To Correlate
+
+    Going forward I will omit logs emitted by sqlx from the reported terminal output to keep the
+    examples concise. sqlx’s logs use the INFO level by default - we will tune it down to TRACE in
+    Chapter 5.
+
+If we had a single copy of our web server running at any point in time and that copy was only capable
+of handling a single request at a time, we might imagine logs showing up in our terminal more or less
+like this:
+# First request
+[.. INFO zero2prod] Adding 'thomas_mann@hotmail.com' 'Tom' as a new subscriber
+
+  31 Should we log names and emails? If you are operating in Europe, they generally qualify as Personal Identifiable
+
+Information (PII) and their processing must obey the principles and rules laid out in the General Data Protection
+Regulation (GDPR). We should have tight controls around who can access that information, how long we are planning
+to store it for, procedures to delete it if the user asks to be forgotten, etc. Generally speaking, there are many types
+of information that would be useful for debugging purposes but cannot be logged freely (e.g. passwords) - you will
+either have to do without them or rely on obfuscation (e.g. tokenization/pseudonymisation) to strike a balance between
+security, privacy and usefulness.
+
+[.. INFO zero2prod] Saving new subscriber details in the database
+[.. INFO zero2prod] New subscriber details have been saved
+[.. INFO actix_web] .. "POST /subscriptions HTTP/1.1" 200 ..
+# Second request
+[.. INFO zero2prod] Adding 's_erikson@malazan.io' 'Steven' as a new subscriber
+[.. ERROR zero2prod] Failed to execute query: connection error with the database
+[.. ERROR actix_web] .. "POST /subscriptions HTTP/1.1" 500 ..
+
+You can clearly see where a single request begins, what happened while we tried to fulfill it, what we
+returned as a response, where the next request begins, etc.
+It is easy to follow.
+But this is not what it looks like when you are handling multiple requests concurrently:
+[.. INFO zero2prod] Receiving request for POST /subscriptions
+[.. INFO zero2prod] Receiving request for POST /subscriptions
+[.. INFO zero2prod] Adding 'thomas_mann@hotmail.com' 'Tom' as a new subscriber
+[.. INFO zero2prod] Adding 's_erikson@malazan.io' 'Steven' as a new subscriber
+[.. INFO zero2prod] Saving new subscriber details in the database
+[.. ERROR zero2prod] Failed to execute query: connection error with the database
+[.. ERROR actix_web] .. "POST /subscriptions HTTP/1.1" 500 ..
+[.. INFO zero2prod] Saving new subscriber details in the database
+[.. INFO zero2prod] New subscriber details have been saved
+[.. INFO actix_web] .. "POST /subscriptions HTTP/1.1" 200 ..
+
+What details did we fail to save though? thomas_mann@hotmail.com or s_erikson@malazan.io?
+Impossible to say from the logs.
+We need a way to correlate all logs related to the same request.
+This is usually achieved using a request id (also known as correlation id): when we start to process
+an incoming request we generate a random identifier (e.g. a UUID) which is then associated to all
+logs concerning the fulfilling of that specific request.
+Let’s add one to our handler:
+//! src/routes/subscriptions.rs
+//! ..
+
+pub async fn subscribe(/* */) -> HttpResponse {
+    // Let's generate a random unique identifier
+    let request_id = Uuid::new_v4();
+    log::info!(
+        "request_id {} - Adding '{}' '{}' as a new subscriber.",
+        request_id,
+        form.email,
+        form.name
+    );
+    log::info!(
+        "request_id {} - Saving new subscriber details in the database",
+        request_id
+    );
+    match sqlx::query!(/* */)
+        .execute(pool.as_ref())
+        .await
+    {
+        Ok(_) => {
+            log::info!(
+                "request_id {} - New subscriber details have been saved",
+                request_id
+            );
+            HttpResponse::Ok().finish()
+        },
+        Err(e) => {
+            log::error!(
+
+                   "request_id {} - Failed to execute query: {:?}",
+                   request_id,
+                   e
+               );
+               HttpResponse::InternalServerError().finish()
+           }
+      }
+}
+
+Logs for an incoming request will now look like this:
+curl -i -X POST -d 'email=thomas_mann@hotmail.com&name=Tom' \
+    http://127.0.0.1:8000/subscriptions
+
+[.. INFO zero2prod] request_id 9ebde7e9-1efe-40b9-ab65-86ab422e6b87 - Adding
+    'thomas_mann@hotmail.com' 'Tom' as a new subscriber.
+[.. INFO zero2prod] request_id 9ebde7e9-1efe-40b9-ab65-86ab422e6b87 - Saving
+    new subscriber details in the database
+[.. INFO zero2prod] request_id 9ebde7e9-1efe-40b9-ab65-86ab422e6b87 - New
+    subscriber details have been saved
+[.. INFO actix_web] .. "POST /subscriptions HTTP/1.1" 200 ..
+
+We can now search for thomas_mann@hotmail.com in our logs, find the first record, grab the
+request_id and then pull down all the other log records associated with that request.
+Well, almost all the logs: request_id is created in our subscribe handler, therefore actix_web’s
+Logger middleware is completely unaware of it.
+That means that we will not know what status code our application has returned to the user when
+they tried to subscribe to our newsletter.
+What should we do?
+We could bite the bullet, remove actix_web’s Logger, write a middleware to generate a random
+request identifier for every incoming request and then write our own logging middleware that is
+aware of the identifier and includes it in all log lines.
+Could it work? Yes.
+Should we do it? Probably not.
+
+4.5       Structured Logging
+To ensure that request_id is included in all log records we would have to:
+    • rewrite all upstream components in the request processing pipeline (e.g. actix-web’s Logger);
+    • change the signature of all downstream functions we are calling from the subscribe handler; if
+      they are emitting a log statement, they need to include the request_id, which therefore needs
+      to be passed down as an argument.
+What about log records emitted by the crates we are importing into our project? Should we rewrite
+those as well?
+It is clear that this approach cannot scale.
+Let’s take a step back: what does our code look like?
+We have an over-arching task (an HTTP request), which is broken down in a set of sub-tasks (e.g. parse
+input, make a query, etc.), which might in turn be broken down in smaller sub-routines recursively.
+Each of those units of work has a duration (i.e. a beginning and an end).
+Each of those units of work has a context associated to it (e.g. name and email of a new subscriber,
+request_id) that is naturally shared by all its sub-units of work.
+No doubt we are struggling: log statements are isolated events happening at a defined moment in
+time that we are stubbornly trying to use to represent a tree-like processing pipeline.
+Logs are the wrong abstraction.
+What should we use then?
+
+4.5.1   The tracing Crate
+The tracing crate comes to the rescue:
+
+   tracing expands upon logging-style diagnostics by allowing libraries and applications to
+   record structured events with additional information about temporality and causality — un-
+   like a log message, a span in tracing has a beginning and end time, may be entered and exited
+   by the flow of execution, and may exist within a nested tree of similar spans.
+
+That is music to our ears.
+What does it look like in practice?
+
+4.5.2   Migrating From log To tracing
+There is only one way to find out - let’s convert our subscribe handler to use tracing instead of
+log for instrumentation. Let’s add tracing to our dependencies:
+#! Cargo.toml
+
+[dependencies]
+tracing = { version = "0.1", features = ["log"] }
+# [...]
+The first migration step is as straight-forward as it gets: search and replace all occurrences of the
+log string in our function body with tracing.
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn subscribe(/* */) -> HttpResponse {
+    let request_id = Uuid::new_v4();
+    tracing::info!(
+        "request_id {} - Adding '{}' '{}' as a new subscriber.",
+        request_id,
+        form.email,
+        form.name
+    );
+    tracing::info!(
+        "request_id {} - Saving new subscriber details in the database",
+        request_id
+    );
+    match sqlx::query!(/* */)
+        .execute(pool.as_ref())
+        .await
+    {
+        Ok(_) => {
+            tracing::info!(
+                "request_id {} - New subscriber details have been saved",
+                request_id
+            );
+            HttpResponse::Ok().finish()
+        },
+        Err(e) => {
+            tracing::error!(
+                "request_id {} - Failed to execute query: {:?}",
+                request_id,
+                e
+            );
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+That’s it.
+If you run the application and fire a POST /subscriptions request you will see exactly the same logs
+in your console. Identical.
+Pretty cool, isn’t it?
+This works thanks to tracing’s log feature flag, which we enabled in Cargo.toml. It ensures that
+every time an event or a span are created using tracing’s macros a corresponding log event is emitted,
+allowing log’s loggers to pick up on it (env_logger, in our case).
+
+4.5.3   tracing’s Span
+We can now start to leverage tracing’s Span to better capture the structure of our program.
+We want to create a span that represents the whole HTTP request:
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn subscribe(/* */) -> HttpResponse {
+    let request_id = Uuid::new_v4();
+    // Spans, like logs, have an associated level
+    // `info_span` creates a span at the info-level
+    let request_span = tracing::info_span!(
+        "Adding a new subscriber.",
+        %request_id,
+        subscriber_email = %form.email,
+        subscriber_name= %form.name
+    );
+    // Using `enter` in an async function is a recipe for disaster!
+    // Bear with me for now, but don't do this at home.
+    // See the following section on `Instrumenting Futures`
+    let _request_span_guard = request_span.enter();
+
+     // [...]
+     // `_request_span_guard` is dropped at the end of `subscribe`
+     // That's when we "exit" the span
+}
+
+There is a lot going on here - let’s break it down.
+We are using the info_span! macro to create a new span and attach some values to its context:
+request_id, form.email and form.name.
+We are not using string interpolation anymore: tracing allows us to associate structured information
+to our spans as a collection of key-value pairs32 . We can explicitly name them (e.g. subscriber_email
+for form.email) or implicitly use the variable name as key (e.g. the isolated request_id is equivalent
+to request_id = request_id).
+Notice that we prefixed all of them with a % symbol: we are telling tracing to use their Display
+implementation for logging purposes. You can find more details on the other available options in
+their documentation.
+info_span returns the newly created span, but we have to explicit step into it using the .enter()
+method to activate it.
+.enter() returns an instance of Entered, a guard: as long the guard variable is not dropped all
+downstream spans and log events will be registered as children of the entered span. This is a typical
+Rust pattern, often referred to as Resource Acquisition Is Initialization (RAII): the compiler keeps
+track of the lifetime of all variables and when they go out of scope it inserts a call to their destructor,
+Drop::drop.
+The default implementation of the Drop trait simply takes care of releasing the resources owned by
+  32 The capability of capturing contextual information as a collection of key-value pairs has recently been explored
+
+in the log crate as well - see the unstable kv feature. At the time of writing though, none of the mainstream Log
+implementation supports structured logging as far as I can see.
+
+that variable. We can, though, specify a custom Drop implementation to perform other cleanup
+operations on drop - e.g. exiting from a span when the Entered guard gets dropped:
+//! `tracing`'s source code
+
+impl<'a> Drop for Entered<'a> {
+    #[inline]
+    fn drop(&mut self) {
+        // Dropping the guard exits the span.
+        //
+        // Running this behaviour on drop rather than with an explicit function
+        // call means that spans may still be exited when unwinding.
+        if let Some(inner) = self.span.inner.as_ref() {
+            inner.subscriber.exit(&inner.id);
+        }
+
+         if_log_enabled! {{
+             if let Some(ref meta) = self.span.meta {
+                 self.span.log(
+                     ACTIVITY_LOG_TARGET,
+                     log::Level::Trace,
+                     format_args!("<- {}", meta.name())
+                 );
+             }
+         }}
+     }
+}
+
+Inspecting the source code of your dependencies can often expose some gold nuggets - we just found
+out that if the log feature flag is enabled tracing will emit a trace-level log when a span exits.
+Let’s give it a go immediately:
+RUST_LOG=trace cargo run
+
+[.. INFO zero2prod] Adding a new subscriber.; request_id=f349b0fe..
+    subscriber_email=ursulale_guin@gmail.com subscriber_name=le guin
+[.. TRACE zero2prod] -> Adding a new subscriber.
+[.. INFO zero2prod] request_id f349b0fe.. - Saving new subscriber details
+    in the database
+[.. INFO zero2prod] request_id f349b0fe.. - New subscriber details have
+    been saved
+[.. TRACE zero2prod] <- Adding a new subscriber.
+[.. TRACE zero2prod] -- Adding a new subscriber.
+[.. INFO actix_web] .. "POST /subscriptions HTTP/1.1" 200 ..
+
+Notice how all the information we captured in the span’s context is reported in the emitted log line.
+We can closely follow the lifetime of our span using the emitted logs:
+    • Adding a new subscriber is logged when the span is created;
+    • We enter the span (->);
+    • We execute the INSERT query;
+    • We exit the span (<-);
+    • We finally close the span (--).
+Wait, what is the difference between exiting and closing a span?
+Glad you asked!
+You can enter (and exit) a span multiple times. Closing, instead, is final: it happens when the span
+itself is dropped.
+This comes pretty handy when you have a unit of work that can be paused and then resumed - e.g. an
+asynchronous task!
+
+4.5.4   Instrumenting Futures
+Let’s use our database query as an example.
+The executor might have to poll its future more than once to drive it to completion - while that future
+is idle, we are going to make progress on other futures.
+This can clearly cause issues: how do we make sure we don’t mix their respective spans?
+The best way would be to closely mimic the future’s lifecycle: we should enter into the span associated
+to our future every time it is polled by the executor and exit every time it gets parked.
+That’s where Instrument comes into the picture.               It is an extension trait for futures.
+Instrument::instrument does exactly what we want: enters the span we pass as argument
+every time self, the future, is polled; it exits the span every time the future is parked.
+Let’s try it out on our query:
+//! src/routes/subscriptions.rs
+use tracing::Instrument;
+// [...]
+
+pub async fn subscribe(/* */) -> HttpResponse {
+    let request_id = Uuid::new_v4();
+    let request_span = tracing::info_span!(
+        "Adding a new subscriber.",
+        %request_id,
+        subscriber_email = %form.email,
+        subscriber_name= %form.name
+    );
+    let _request_span_guard = request_span.enter();
+
+    // We do not call `.enter` on query_span!
+    // `.instrument` takes care of it at the right moments
+    // in the query future lifetime
+    let query_span = tracing::info_span!(
+        "Saving new subscriber details in the database"
+    );
+    match sqlx::query!(/* */)
+        .execute(pool.as_ref())
+        // First we attach the instrumentation, then we `.await` it
+        .instrument(query_span)
+        .await
+    {
+        Ok(_) => {
+            HttpResponse::Ok().finish()
+        },
+        Err(e) => {
+            // Yes, this error log falls outside of `query_span`
+            // We'll rectify it later, pinky swear!
+            tracing::error!("Failed to execute query: {:?}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+If we launch the application again with RUST_LOG=trace and try a POST /subscriptions request
+we will see logs that look somewhat similar to these:
+[.. INFO zero2prod] Adding a new subscriber.; request_id=f349b0fe..
+    subscriber_email=ursulale_guin@gmail.com subscriber_name=le guin
+[.. TRACE zero2prod] -> Adding a new subscriber.
+[.. INFO zero2prod] Saving new subscriber details in the database
+[.. TRACE zero2prod] -> Saving new subscriber details in the database
+[.. TRACE zero2prod] <- Saving new subscriber details in the database
+[.. TRACE zero2prod] -> Saving new subscriber details in the database
+
+[.. TRACE zero2prod] <- Saving new subscriber details in the database
+[.. TRACE zero2prod] -> Saving new subscriber details in the database
+[.. TRACE zero2prod] <- Saving new subscriber details in the database
+[.. TRACE zero2prod] -> Saving new subscriber details in the database
+[.. TRACE zero2prod] -> Saving new subscriber details in the database
+[.. TRACE zero2prod] <- Saving new subscriber details in the database
+[.. TRACE zero2prod] -- Saving new subscriber details in the database
+[.. TRACE zero2prod] <- Adding a new subscriber.
+[.. TRACE zero2prod] -- Adding a new subscriber.
+[.. INFO actix_web] .. "POST /subscriptions HTTP/1.1" 200 ..
+
+We can clearly see how many times the query future has been polled by the executor before completing.
+How cool is that!?
+
+4.5.5   tracing’s Subscriber
+We embarked in this migration from log to tracing because we needed a better abstraction to
+instrument our code effectively. We wanted, in particular, to attach request_id to all logs associated
+to the same incoming HTTP request.
+Although I promised tracing was going to solve our problem, look at those logs: request_id is only
+printed on the very first log statement where we attach it explicitly to the span context.
+Why is that?
+Well, we haven’t completed our migration yet.
+Although we moved all our instrumentation code from log to tracing we are still using env_logger
+to process everything!
+//! src/main.rs
+//! [...]
+
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    env_logger::from_env(Env::default().default_filter_or("info")).init();
+    // [...]
+}
+
+env_logger’s logger implements log’s Log trait - it knows nothing about the rich structure exposed
+by tracing’s Span!
+tracing’s compatibility with log was great to get off the ground, but it is now time to replace
+env_logger with a tracing-native solution.
+The tracing crate follows the same facade pattern used by log - you can freely use its macros to
+instrument your code, but applications are in charge to spell out how that span telemetry data should
+be processed.
+Subscriber is the tracing counterpart of log’s Log: an implementation of the Subscriber trait
+exposes a variety of methods to manage every stage of the lifecycle of a Span - creation, enter/exit,
+closure, etc.
+//! `tracing`'s source code
+
+pub trait Subscriber: 'static {
+    fn new_span(&self, span: &span::Attributes<'_>) -> span::Id;
+    fn event(&self, event: &Event<'_>);
+    fn enter(&self, span: &span::Id);
+    fn exit(&self, span: &span::Id);
+    fn clone_span(&self, id: &span::Id) -> span::Id;
+    // [...]
+}
+
+The quality of tracing’s documentation is breath-taking - I strongly invite you to have a look for
+yourself at Subscriber’s docs to properly understand what each of those methods does.
+
+4.5.6   tracing-subscriber
+tracing does not provide any subscriber out of the box.
+We need to look into tracing-subscriber, another crate maintained in-tree by the tracing project,
+to find a few basic subscribers to get off the ground. Let’s add it to our dependencies:
+[dependencies]
+# ...
+tracing-subscriber = { version = "0.3", features = ["registry", "env-filter"] }
+tracing-subscriber does much more than providing us with a few handy subscribers.
+It introduces another key trait into the picture, Layer.
+Layer makes it possible to build a processing pipeline for spans data: we are not forced to provide an
+all-encompassing subscriber that does everything we want; we can instead combine multiple smaller
+layers to obtain the processing pipeline we need.
+This substantially reduces duplication across in tracing ecosystem: people are focused on adding new
+capabilities by churning out new layers rather than trying to build the best-possible-batteries-included
+subscriber.
+The cornerstone of the layering approach is Registry.
+Registry implements the Subscriber trait and takes care of all the difficult stuff:
+
+    Registry does not actually record traces itself: instead, it collects and stores span data that is
+    exposed to any layer wrapping it […]. The Registry is responsible for storing span metadata,
+    recording relationships between spans, and tracking which spans are active and which are
+    closed.
+
+Downstream layers can piggyback on Registry’s functionality and focus on their purpose: filtering
+what spans should be processed, formatting span data, shipping span data to remote systems, etc.
+
+4.5.7   tracing-bunyan-formatter
+We’d like to put together a subscriber that has feature-parity with the good old env_logger.
+We will get there by combining three layers33 :
+   • tracing_subscriber::filter::EnvFilter discards spans based on their log levels and their
+     origins, just as we did in env_logger via the RUST_LOG environment variable;
+   • tracing_bunyan_formatter::JsonStorageLayer processes spans data and stores the associ-
+     ated metadata in an easy-to-consume JSON format for downstream layers. It does, in particular,
+     propagate context from parent spans to their children;
+   • tracing_bunyan_formatter::BunyanFormatterLayer builds on top of JsonStorageLayer
+     and outputs log records in bunyan-compatible JSON format.
+Let’s add tracing_bunyan_formatter to our dependencies34 :
+[dependencies]
+# ...
+tracing-bunyan-formatter = "0.3"
+We can now tie everything together in our main function:
+//! src/main.rs
+//! [...]
+use tracing::subscriber::set_global_default;
+use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
+use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Registry};
+
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+
+  33 We are using tracing-bunyan-formatter instead of the formatting layer provided by tracing-subscriber because
+
+the latter does not implement metadata inheritance: it would therefore fail to meet our requirements.
+  34 Full disclosure - I am the author of tracing-bunyan-formatter.
+
+      // We removed the `env_logger` line we had before!
+
+      // We are falling back to printing all spans at info-level or above
+      // if the RUST_LOG environment variable has not been set.
+      let env_filter = EnvFilter::try_from_default_env()
+          .unwrap_or_else(|_| EnvFilter::new("info"));
+      let formatting_layer = BunyanFormattingLayer::new(
+          "zero2prod".into(),
+          // Output the formatted spans to stdout.
+          std::io::stdout
+      );
+      // The `with` method is provided by `SubscriberExt`, an extension
+      // trait for `Subscriber` exposed by `tracing_subscriber`
+      let subscriber = Registry::default()
+          .with(env_filter)
+          .with(JsonStorageLayer)
+          .with(formatting_layer);
+      // `set_global_default` can be used by applications to specify
+      // what subscriber should be used to process spans.
+      set_global_default(subscriber).expect("Failed to set subscriber");
+
+      // [...]
+}
+
+If you launch the application with cargo run and fire a request you’ll see these logs (pretty-printed
+here to be easier on the eye):
+{
+    "msg": "[ADDING A NEW SUBSCRIBER - START]",
+    "subscriber_name": "le guin",
+    "request_id": "30f8cce1-f587-4104-92f2-5448e1cc21f6",
+    "subscriber_email": "ursula_le_guin@gmail.com"
+    ...
+}
+{
+    "msg": "[SAVING NEW SUBSCRIBER DETAILS IN THE DATABASE - START]",
+    "subscriber_name": "le guin",
+    "request_id": "30f8cce1-f587-4104-92f2-5448e1cc21f6",
+    "subscriber_email": "ursula_le_guin@gmail.com"
+    ...
+}
+{
+    "msg": "[SAVING NEW SUBSCRIBER DETAILS IN THE DATABASE - END]",
+    "elapsed_milliseconds": 4,
+    "subscriber_name": "le guin",
+    "request_id": "30f8cce1-f587-4104-92f2-5448e1cc21f6",
+    "subscriber_email": "ursula_le_guin@gmail.com"
+    ...
+}
+{
+    "msg": "[ADDING A NEW SUBSCRIBER - END]",
+    "elapsed_milliseconds": 5
+    "subscriber_name": "le guin",
+    "request_id": "30f8cce1-f587-4104-92f2-5448e1cc21f6",
+    "subscriber_email": "ursula_le_guin@gmail.com",
+    ...
+}
+
+We made it: everything we attached to the original context has been propagated to all its sub-spans.
+tracing-bunyan-formatter also provides duration out-of-the-box: every time a span is closed a
+JSON message is printed to the console with an elapsed_millisecond property attached to it.
+The JSON format is extremely friendly when it comes to searching: an engine like ElasticSearch can
+
+easily ingest all these records, infer a schema and index the request_id, name and email fields. It
+unlocks the full power of a querying engine to sift through our logs!
+This is exponentially better than we had before: to perform complex searches we would have had to
+use custom-built regexes, therefore limiting considerably the range of questions that we could easily
+ask to our logs.
+
+4.5.8   tracing-log
+If you take a closer look you will realise we lost something along the way: our terminal is only showing
+logs that were directly emitted by our application. What happened to actix-web’s log records?
+tracing’s log feature flag ensures that a log record is emitted every time a tracing event happens,
+allowing log’s loggers to pick them up.
+The opposite does not hold true: log does not emit tracing events out of the box and does not
+provide a feature flag to enable this behaviour.
+If we want it, we need to explicitly register a logger implementation to redirect logs to our tracing
+subscriber for processing.
+We can use LogTracer, provided by the tracing-log crate.
+#! Cargo.toml
+# [...]
+[dependencies]
+tracing-log = "0.1"
+# [...]
+Let’s edit our main as required:
+//! src/main.rs
+//! [...]
+use tracing::subscriber::set_global_default;
+use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
+use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Registry};
+use tracing_log::LogTracer;
+
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    // Redirect all `log`'s events to our subscriber
+    LogTracer::init().expect("Failed to set logger");
+
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("info"));
+    let formatting_layer = BunyanFormattingLayer::new(
+        "zero2prod".into(),
+        std::io::stdout
+    );
+    let subscriber = Registry::default()
+        .with(env_filter)
+        .with(JsonStorageLayer)
+        .with(formatting_layer);
+    set_global_default(subscriber).expect("Failed to set subscriber");
+
+    // [...]
+}
+
+All actix-web’s logs should once again be available in our console.
+
+4.5.9   Removing Unused Dependencies
+If you quickly scan through all our files you will realise that we are not using log or env_logger
+anywhere at this point. We should remove them from our Cargo.toml file.
+
+In a large project it is very difficult to spot that a dependency has become unused after a refactoring.
+Luckily enough, tooling comes to the rescue once again - let’s install cargo-udeps (unused
+dependencies):
+cargo install cargo-udeps
+
+cargo-udeps scans your Cargo.toml file and checks if all the crates listed under [dependencies]
+have actually been used in the project. Check cargo-deps’ trophy case for a long list of popular Rust
+projects where cargo-udeps was able to spot unused dependencies and cut down build times.
+Let’s run it on our project!
+# cargo-udeps requires the nightly compiler.
+# We add +nightly to our cargo invocation
+# to tell cargo explicitly what toolchain we want to use.
+cargo +nightly udeps
+
+The output should be
+zero2prod
+  dependencies
+    "env-logger"
+
+Unfortunately it does not pick up log.
+Let’s strike both out of our Cargo.toml file.
+
+4.5.10   Cleaning Up Initialisation
+We relentlessly pushed forward to improve the observability posture of our application.
+Let’s now take a step back and look at the code we wrote to see if we can improve in any meaningful
+way.
+Let’s start from our main function:
+//! src/main.rs
+use zero2prod::configuration::get_configuration;
+use zero2prod::startup::run;
+use sqlx::postgres::PgPool;
+use std::net::TcpListener;
+use tracing::subscriber::set_global_default;
+use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
+use tracing_log::LogTracer;
+use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Registry};
+
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    LogTracer::init().expect("Failed to set logger");
+
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or(EnvFilter::new("info"));
+    let formatting_layer = BunyanFormattingLayer::new(
+        "zero2prod".into(),
+        std::io::stdout
+    );
+    let subscriber = Registry::default()
+        .with(env_filter)
+        .with(JsonStorageLayer)
+        .with(formatting_layer);
+    set_global_default(subscriber).expect("Failed to set subscriber");
+
+    let configuration = get_configuration().expect("Failed to read configuration.");
+    let connection_pool = PgPool::connect(&configuration.database.connection_string())
+        .await
+        .expect("Failed to connect to Postgres.");
+
+    let address = format!("127.0.0.1:{}", configuration.application_port);
+    let listener = TcpListener::bind(address)?;
+    run(listener, connection_pool)?.await?;
+    Ok(())
+}
+
+There is a lot going on in that main function right now.
+Let’s break it down a bit:
+//! src/main.rs
+use zero2prod::configuration::get_configuration;
+use zero2prod::startup::run;
+use sqlx::postgres::PgPool;
+use std::net::TcpListener;
+use tracing::{Subscriber, subscriber::set_global_default};
+use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
+use tracing_log::LogTracer;
+use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Registry};
+
+/// Compose multiple layers into a `tracing`'s subscriber.
+///
+/// # Implementation Notes
+///
+/// We are using `impl Subscriber` as return type to avoid having to
+/// spell out the actual type of the returned subscriber, which is
+/// indeed quite complex.
+/// We need to explicitly call out that the returned subscriber is
+/// `Send` and `Sync` to make it possible to pass it to `init_subscriber`
+/// later on.
+pub fn get_subscriber(
+    name: String,
+    env_filter: String
+) -> impl Subscriber + Send + Sync {
+    let env_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new(env_filter));
+    let formatting_layer = BunyanFormattingLayer::new(
+        name,
+        std::io::stdout
+    );
+    Registry::default()
+        .with(env_filter)
+        .with(JsonStorageLayer)
+        .with(formatting_layer)
+}
+
+/// Register a subscriber as global default to process span data.
+///
+/// It should only be called once!
+pub fn init_subscriber(subscriber: impl Subscriber + Send + Sync) {
+    LogTracer::init().expect("Failed to set logger");
+    set_global_default(subscriber).expect("Failed to set subscriber");
+}
+
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    let subscriber = get_subscriber("zero2prod".into(), "info".into());
+    init_subscriber(subscriber);
+
+    // [...]
+}
+
+We can now move get_subscriber and init_subscriber to a module within our zero2prod library,
+
+telemetry.
+//! src/lib.rs
+pub mod configuration;
+pub mod routes;
+pub mod startup;
+pub mod telemetry;
+
+//! src/telemetry.rs
+use tracing::subscriber::set_global_default;
+use tracing::Subscriber;
+use tracing_bunyan_formatter::{BunyanFormattingLayer, JsonStorageLayer};
+use tracing_log::LogTracer;
+use tracing_subscriber::{layer::SubscriberExt, EnvFilter, Registry};
+
+pub fn get_subscriber(
+    name: String,
+    env_filter: String
+) -> impl Subscriber + Sync + Send {
+    // [...]
+}
+
+pub fn init_subscriber(subscriber: impl Subscriber + Sync + Send) {
+    // [...]
+}
+
+//! src/main.rs
+use zero2prod::configuration::get_configuration;
+use zero2prod::startup::run;
+use zero2prod::telemetry::{get_subscriber, init_subscriber};
+use sqlx::postgres::PgPool;
+use std::net::TcpListener;
+
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    let subscriber = get_subscriber("zero2prod".into(), "info".into());
+    init_subscriber(subscriber);
+
+    // [...]
+}
+
+Awesome.
+
+4.5.11   Logs For Integration Tests
+We are not just cleaning up for aesthetic/readability reasons - we are moving those two functions to
+the zero2prod library to make them available to our test suite!
+As a rule of thumb, everything we use in our application should be reflected in our integration tests.
+Structured logging, in particular, can significantly speed up our debugging when an integration test
+fails: we might not have to attach a debugger, more often than not the logs can tell us where something
+went wrong. It is also a good benchmark: if you cannot debug it from logs, imagine how difficult
+would it be to debug in production!
+Let’s change our spawn_app helper function to take care of initialising our tracing stack:
+//! tests/health_check.rs
+
+use zero2prod::configuration::{get_configuration, DatabaseSettings};
+use zero2prod::startup::run;
+use zero2prod::telemetry::{get_subscriber, init_subscriber};
+use sqlx::{Connection, Executor, PgConnection, PgPool};
+use std::net::TcpListener;
+use uuid::Uuid;
+
+pub struct TestApp {
+    pub address: String,
+    pub db_pool: PgPool,
+}
+
+async fn spawn_app() -> TestApp {
+    let subscriber = get_subscriber("test".into(), "debug".into());
+    init_subscriber(subscriber);
+
+     let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind random port");
+     let port = listener.local_addr().unwrap().port();
+     let address = format!("http://127.0.0.1:{}", port);
+
+     let mut configuration = get_configuration().expect("Failed to read configuration.");
+     configuration.database.database_name = Uuid::new_v4().to_string();
+     let connection_pool = configure_database(&configuration.database).await;
+
+     let server = run(listener, connection_pool.clone()).expect("Failed to bind address");
+     let _ = tokio::spawn(server);
+     TestApp {
+         address,
+         db_pool: connection_pool,
+     }
+}
+
+// [...]
+
+If you try to run cargo test you will be greeted by one success and a long series of test failures:
+failures:
+---- subscribe_returns_a_400_when_data_is_missing stdout ----
+thread 'subscribe_returns_a_400_when_data_is_missing' panicked at
+'Failed to set logger: SetLoggerError(())'
+Panic in Arbiter thread.
+
+---- subscribe_returns_a_200_for_valid_form_data stdout ----
+thread 'subscribe_returns_a_200_for_valid_form_data' panicked at
+'Failed to set logger: SetLoggerError(())'
+Panic in Arbiter thread.
+
+failures:
+    subscribe_returns_a_200_for_valid_form_data
+    subscribe_returns_a_400_when_data_is_missing
+
+init_subscriber should only be called once, but it is being invoked by all our tests.
+We can use once_cell to rectify it35 :
+#! Cargo.toml
+# [...]
+[dev-dependencies]
+once_cell = "1"
+# [...]
+//! tests/health_check.rs
+// [...]
+use once_cell::sync::Lazy;
+
+  35 Given that we never refer to TRACING after its initialization, we could have used std::sync::Once with its call_once
+
+method. Unfortunately, as soon as the requirements change (i.e. you need to use it after initialization), you end up
+reaching for std::sync::SyncOnceCell, which is not stable yet. once_cell covers both usecases - this seemed like a
+great opportunity to introduce a useful crate into your toolkit.
+
+// Ensure that the `tracing` stack is only initialised once using `once_cell`
+static TRACING: Lazy<()> = Lazy::new(|| {
+    let subscriber = get_subscriber("test".into(), "debug".into());
+    init_subscriber(subscriber);
+});
+
+pub struct TestApp {
+    pub address: String,
+    pub db_pool: PgPool,
+}
+
+async fn spawn_app() -> TestApp {
+    // The first time `initialize` is invoked the code in `TRACING` is executed.
+    // All other invocations will instead skip execution.
+    Lazy::force(&TRACING);
+
+    // [...]
+}
+
+// [...]
+
+cargo test is green again.
+The output, though, is very noisy: we have several log lines coming out of each test case.
+We want our tracing instrumentation to be exercised in every test, but we do not want to look at
+those logs every time we run our test suite.
+cargo test solves the very same problem for println/print statements. By default, it swallows
+everything that is printed to console. You can explicitly opt in to look at those print statements
+using cargo test -- --nocapture.
+We need an equivalent strategy for our tracing instrumentation.
+Let’s add a new parameter to get_subscriber to allow customisation of what sink logs should be
+written to:
+//! src/telemetry.rs
+use tracing_subscriber::fmt::MakeWriter;
+// [...]
+
+pub fn get_subscriber<Sink>(
+    name: String,
+    env_filter: String,
+    sink: Sink,
+) -> impl Subscriber + Sync + Send
+    where
+        // This "weird" syntax is a higher-ranked trait bound (HRTB)
+        // It basically means that Sink implements the `MakeWriter`
+        // trait for all choices of the lifetime parameter `'a`
+        // Check out https://doc.rust-lang.org/nomicon/hrtb.html
+        // for more details.
+        Sink: for<'a> MakeWriter<'a> + Send + Sync + 'static,
+{
+    // [...]
+    let formatting_layer = BunyanFormattingLayer::new(name, sink);
+    // [...]
+}
+
+We can then adjust our main function to use stdout:
+//! src/main.rs
+// [...]
+
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+
+    let subscriber = get_subscriber("zero2prod".into(), "info".into(), std::io::stdout);
+
+    // [...]
+}
+
+In our test suite we will choose the sink dynamically according to an environment variable, TEST_LOG.
+If TEST_LOG is set, we use std::io::stdout.
+If TEST_LOG is not set, we send all logs into the void using std::io::sink.
+Our own home-made version of the --nocapture flag.
+//! tests/health_check.rs
+//! ...
+
+// Ensure that the `tracing` stack is only initialised once using `once_cell`
+static TRACING: Lazy<()> = Lazy::new(|| {
+    let default_filter_level = "info".to_string();
+    let subscriber_name = "test".to_string();
+    // We cannot assign the output of `get_subscriber` to a variable based on the value of `TEST_LOG`
+    // because the sink is part of the type returned by `get_subscriber`, therefore they are not the
+    // same type. We could work around it, but this is the most straight-forward way of moving forward.
+    if std::env::var("TEST_LOG").is_ok() {
+        let subscriber = get_subscriber(subscriber_name, default_filter_level, std::io::stdout);
+        init_subscriber(subscriber);
+    } else {
+        let subscriber = get_subscriber(subscriber_name, default_filter_level, std::io::sink);
+        init_subscriber(subscriber);
+    };
+});
+
+// [...]
+
+When you want to see all logs coming out of a certain test case to debug it you can run
+# We are using the `bunyan` CLI to prettify the outputted logs
+# The original `bunyan` requires NPM, but you can install a Rust-port with
+# `cargo install bunyan`
+TEST_LOG=true cargo test health_check_works | bunyan
+
+and sift through the output to understand what is going on.
+Neat, isn’t it?
+
+4.5.12     Cleaning Up Instrumentation Code - tracing::instrument
+We refactored our initialisation logic. Let’s have a look at our instrumentation code now.
+Time to bring subscribe back once again.
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    let request_id = Uuid::new_v4();
+    let request_span = tracing::info_span!(
+        "Adding a new subscriber",
+        %request_id,
+        subscriber_email = %form.email,
+        subscriber_name= %form.name
+    );
+    let _request_span_guard = request_span.enter();
+    let query_span = tracing::info_span!(
+        "Saving new subscriber details in the database"
+
+    );
+    match sqlx::query!(/* */)
+        .execute(pool.as_ref())
+        // First we attach the instrumentation, then we `.await` it
+        .instrument(query_span)
+        .await
+    {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(e) => {
+            tracing::error!("Failed to execute query: {:?}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+It is fair to say logging has added some noise to our subscribe function.
+Let’s see if we can cut it down a bit.
+We will start with request_span: we’d like all operations within subscribe to happen within the
+context of request_span.
+In other words, we’d like to wrap the subscribe function in a span.
+This requirement is fairly common: extracting each sub-task in its own function is a common way
+to structure routines to improve readability and make it easier to write tests; therefore we will often
+want to attach a span to a function declaration.
+tracing caters for this specific usecase with its tracing::instrument procedural macro. Let’s see
+it in action:
+//! src/routes/subscriptions.rs
+// [...]
+
+#[tracing::instrument(
+    name = "Adding a new subscriber",
+    skip(form, pool),
+    fields(
+        request_id = %Uuid::new_v4(),
+        subscriber_email = %form.email,
+        subscriber_name= %form.name
+    )
+)]
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    let query_span = tracing::info_span!(
+        "Saving new subscriber details in the database"
+    );
+    match sqlx::query!(/* */)
+        .execute(pool.as_ref())
+        .instrument(query_span)
+        .await
+    {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(e) => {
+            tracing::error!("Failed to execute query: {:?}", e);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+#[tracing::instrument] creates a span at the beginning of the function invocation and automat-
+ically attaches all arguments passed to the function to the context of the span - in our case, form
+
+and pool. Often function arguments won’t be displayable on log records (e.g. pool) or we’d like to
+specify more explicitly what should/how they should be captured (e.g. naming each field of form) -
+we can explicitly tell tracing to ignore them using the skip directive.
+name can be used to specify the message associated to the function span - if omitted, it defaults to
+the function name.
+We can also enrich the span’s context using the fields directive. It leverages the same syntax we
+have already seen for the info_span! macro.
+The result is quite nice: all instrumentation concerns are visually separated by execution concerns
+- the first are dealt with in a procedural macro that “decorates” the function declaration, while the
+function body focuses on the actual business logic.
+It is important to point out that tracing::instrument takes care as well to use Instrument::instrument
+if it is applied to an asynchronous function.
+Let’s extract the query in its own function and use tracing::instrument to get rid of query_span
+and the call to the .instrument method:
+//! src/routes/subscriptions.rs
+// [...]
+
+#[tracing::instrument(
+    name = "Adding a new subscriber",
+    skip(form, pool),
+    fields(
+        request_id = %Uuid::new_v4(),
+        subscriber_email = %form.email,
+        subscriber_name= %form.name
+    )
+)]
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    match insert_subscriber(&pool, &form).await
+    {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(_) => HttpResponse::InternalServerError().finish()
+    }
+}
+
+#[tracing::instrument(
+    name = "Saving new subscriber details in the database",
+    skip(form, pool)
+)]
+pub async fn insert_subscriber(
+    pool: &PgPool,
+    form: &FormData,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"
+    INSERT INTO subscriptions (id, email, name, subscribed_at)
+    VALUES ($1, $2, $3, $4)
+            "#,
+        Uuid::new_v4(),
+        form.email,
+        form.name,
+        Utc::now()
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| {
+
+          tracing::error!("Failed to execute query: {:?}", e);
+          e
+     // Using the `?` operator to return early
+     // if the function failed, returning a sqlx::Error
+     // We will talk about error handling in depth later!
+     })?;
+     Ok(())
+}
+
+The error event does now fall within the query span and we have a better separation of concerns:
+    • insert_subscriber takes care of the database logic and it has no awareness of the surrounding
+      web framework - i.e. we are not passing web::Form or web::Data wrappers as input types;
+    • subscribe orchestrates the work to be done by calling the required routines and translates
+      their outcome into the proper response according to the rules and conventions of the HTTP
+      protocol.
+I must confess my unbounded love for tracing::instrument: it significantly lowers the effort required
+to instrument your code.
+It pushes you in the pit of success: the right thing to do is the easiest thing to do.
+
+4.5.13     Protect Your Secrets - secrecy
+There is actually one element of #[tracing::instrument] that I am not fond of: it automatically
+attaches all arguments passed to the function to the context of the span - you have to opt-out of
+logging function inputs (via skip) rather than opt-in36 .
+You do not want secrets (e.g. a password) or personal identifiable information (e.g. the billing address
+of an end user) in your logs.
+Opt-out is a dangerous default - every time you add a new input to a function using
+#[tracing::instrument] you need to ask yourself: is it safe to log this? Should I skip
+it?
+Give it enough time and somebody will forget - you now have a security incident to deal with37 .
+You can prevent this scenario by introducing a wrapper type that explicitly marks which fields are
+considered to be sensitive - secrecy::Secret.
+#! Cargo.toml
+# [...]
+[dependencies]
+secrecy = { version = "0.8", features = ["serde"] }
+# [...]
+Let’s check out its definition:
+/// Wrapper type for values that contains secrets, which attempts to limit
+/// accidental exposure and ensure secrets are wiped from memory when dropped.
+/// (e.g. passwords, cryptographic keys, access tokens or other credentials)
+///
+/// Access to the secret inner value occurs through the [...]
+/// `expose_secret()` method [...]
+pub struct Secret<S>
+    where
+        S: Zeroize,
+{
+    /// Inner secret value
+    inner_secret: S,
+}
+  36 There is a chance that tracing’s default behaviour will be changed to be opt-in rather than opt-out in the next
+
+breaking release (0.2.x).
+  37 Some of these security incidents are pretty severe - e.g. Facebook logged by mistake hundreds of millions of plaintext
+
+passwords.
+
+Memory wiping, provided by the Zeroize trait, is a nice-to-have.
+The key property we are looking for is Secret’s masked Debug implementation: println!("{:?}",
+my_secret_string) outputs Secret([REDACTED String]) instead of the actual secret value. This is
+exactly what we need to prevent accidental leakage of sensitive material via #[tracing::instrument]
+or other logging statements.
+There is an additional upside to an explicit wrapper type: it serves as documentation for new devel-
+opers who are being introduced to the codebase. It nails down what is considered sensitive in your
+domain/according to the relevant regulation.
+The only secret value we need to worry about, right now, is the database password. Let’s wrap it up:
+//! src/configuration.rs
+use secrecy::Secret;
+// [..]
+
+#[derive(serde::Deserialize)]
+pub struct DatabaseSettings {
+    // [...]
+    pub password: Secret<String>,
+}
+
+Secret does not interfere with deserialization - Secret implements serde::Deserialize by delegat-
+ing to the deserialization logic of the wrapped type (if you enable the serde feature flag, as we did).
+The compiler is not happy:
+error[E0277]: `Secret<std::string::String>` doesn't implement `std::fmt::Display`
+--> src/configuration.rs:29:28
+|
+|             self.username, self.password, self.host, self.port
+|                            ^^^^^^^^^^^^^
+| `Secret<std::string::String>` cannot be formatted with the default formatter
+
+That is a feature, not a bug - secret::Secret does not implement Display therefore we need to
+explicitly allow the exposure of the wrapped secret. The compiler error is a great prompt to notice
+that the entire database connection string should be marked as Secret as well given that it embeds
+the database password:
+//! src/configuration.rs
+use secrecy::ExposeSecret;
+// [...]
+
+impl DatabaseSettings {
+    pub fn connection_string(&self) -> Secret<String> {
+        Secret::new(format!(
+            "postgres://{}:{}@{}:{}/{}",
+            // [...]
+            self.password.expose_secret(),
+            // [...]
+        ))
+    }
+
+    pub fn connection_string_without_db(&self) -> Secret<String> {
+        Secret::new(format!(
+            "postgres://{}:{}@{}:{}",
+            // [...]
+            self.password.expose_secret(),
+            // [...]
+        ))
+    }
+}
+
+//! src/main.rs
+use secrecy::ExposeSecret;
+
+// [...]
+
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    // [...]
+    let connection_pool =
+        PgPool::connect(&configuration.database.connection_string().expose_secret())
+             .await
+             .expect("Failed to connect to Postgres.");
+    // [...]
+}
+
+//! tests/health_check.rs
+use secrecy::ExposeSecret;
+// [...]
+
+pub async fn configure_database(config: &DatabaseSettings) -> PgPool {
+    let mut connection =
+        PgConnection::connect(&config.connection_string_without_db().expose_secret())
+             .await
+             .expect("Failed to connect to Postgres");
+    // [...]
+    let connection_pool = PgPool::connect(&config.connection_string().expose_secret())
+        .await
+        .expect("Failed to connect to Postgres.");
+    // [...]
+}
+
+This is it for the time being - going forward we will make sure to wrap sensitive values into Secret
+as soon as they are introduced.
+
+4.5.14     Request Id
+We have one last job to do: ensure all logs for a particular request, in particular the record with the
+returned status code, are enriched with a request_id property. How?
+If our goal is to avoid touching actix_web::Logger the easiest solution is adding another middleware,
+RequestIdMiddleware, that is in charge of:
+  • generating a unique request identifier;
+  • creating a new span with the request identifier attached as context;
+  • wrapping the rest of the middleware chain in the newly created span.
+We would be leaving a lot on the table though: actix_web::Logger does not give us access to its
+rich information (status code, processing time, caller IP, etc.) in the same structured JSON format
+we are getting from other logs - we would have to parse all that information out of its message string.
+We are better off, in this case, by bringing in a solution that is tracing-aware.
+Let’s add tracing-actix-web as one of our dependencies38 :
+#! Cargo.toml
+# [...]
+[dependencies]
+tracing-actix-web = "0.5"
+# [...]
+It is designed as a drop-in replacement of actix-web’s Logger, just based on tracing instead of log:
+//! src/startup.rs
+use crate::routes::{health_check, subscribe};
+use actix_web::dev::Server;
+use actix_web::web::Data;
+ 38 Full disclosure - I am the author of tracing-actix-web.
+
+use actix_web::{web, App, HttpServer};
+use sqlx::PgPool;
+use std::net::TcpListener;
+use tracing_actix_web::TracingLogger;
+
+pub fn run(listener: TcpListener, db_pool: PgPool) -> Result<Server, std::io::Error> {
+    let db_pool = Data::new(db_pool);
+    let server = HttpServer::new(move || {
+        App::new()
+            // Instead of `Logger::default`
+            .wrap(TracingLogger::default())
+            .route("/health_check", web::get().to(health_check))
+            .route("/subscriptions", web::post().to(subscribe))
+            .app_data(db_pool.clone())
+    })
+    .listen(listener)?
+    .run();
+    Ok(server)
+}
+
+If you launch the application and fire a request you should see a request_id on all logs as well as
+request_path and a few other useful bits of information.
+We are almost done - there is one outstanding issue we need to take care of.
+Let’s take a closer look at the emitted log records for a POST /subscriptions request:
+{
+    "msg": "[REQUEST - START]",
+    "request_id": "21fec996-ace2-4000-b301-263e319a04c5",
+    ...
+}
+{
+    "msg": "[ADDING A NEW SUBSCRIBER - START]",
+    "request_id":"aaccef45-5a13-4693-9a69-5",
+    ...
+}
+
+We have two different request_id for the same request!
+The bug can be traced back to the #[tracing::instrument] annotation on our subscribe function:
+//! src/routes/subscriptions.rs
+// [...]
+
+#[tracing::instrument(
+    name = "Adding a new subscriber",
+    skip(form, pool),
+    fields(
+        request_id = %Uuid::new_v4(),
+        subscriber_email = %form.email,
+        subscriber_name= %form.name
+    )
+)]
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    // [...]
+}
+
+// [...]
+
+We are still generating a request_id at the function-level which overrides the request_id coming
+from TracingLogger.
+

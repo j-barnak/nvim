@@ -2533,10 +2533,12 @@ local BOOKS = {
 		{ title = "The Rustonomicon (unsafe Rust)", fmt = "mdbook", url = "https://github.com/rust-lang/nomicon" },
 		{ title = "Rust by Example", fmt = "mdbook", url = "https://github.com/rust-lang/rust-by-example" },
 		{ title = "Learn Rust With Entirely Too Many Linked Lists", fmt = "mdbook", url = "https://github.com/rust-unofficial/too-many-lists" },
+		{ title = "Zero to Production in Rust", fmt = "pdf", file = "Zero to Production in Rust.pdf" },
 	} },
 	{ module = "Assembly", key = "books-asm", items = {
 		{ title = "Modern x86 Assembly Language Programming", fmt = "pdf", file = "Daniel Kusswurm - Modern X86 Assembly Language Programming_ Covers X86 64-bit, AVX, AVX2, and AVX-512 (2023, Apress) [10.1007_978-1-4842-9603-5] - libgen.li.pdf" },
 		{ title = "The Art of ARM Assembly, Volume 1", fmt = "pdf", file = "[The BOOK of…] The Art of ARM Assembly. Volume 1_ 64-Bit ARM Machine Organization and Programming{Randall Hyde}(2025, No Starch Press){108023809} libgen.li.pdf" },
+		{ title = "DisARMing Code", fmt = "pdf", file = "DisARMing Code  545p (2).pdf" },
 	} },
 	{ module = "Operating Systems", key = "books-os", items = {
 		{ title = "Operating Systems: Three Easy Pieces", fmt = "pdf", file = "OSTEP.pdf" },
@@ -2544,12 +2546,15 @@ local BOOKS = {
 		{ title = "Advanced Programming in the UNIX Environment", fmt = "pdf", file = "Advanced Programming in the UNIX Environment.pdf" },
 		{ title = "System Programming in Linux", fmt = "epub", file = "System-Programming-in-Linux_-A-Hands-On-Introduction-Stewart-N_-Weiss-2025-No-Starch-Press_-Incorpor.epub" },
 		{ title = "Unix Network Programming", fmt = "pdf", file = "Unix-Network-Programming.pdf" },
+		{ title = "Programming with POSIX Threads", fmt = "pdf", file = "Programming with Posix Threads.pdf" },
+		{ title = "Is Parallel Programming Hard, And, If So, What Can You Do About It?", fmt = "pdf", slug = "is-parallel-programming-hard", file = "perfbook.pdf" },
 	} },
 	{ module = "Compilers", key = "books-compilers", items = {
 		{ title = "Crafting Interpreters", fmt = "epub", file = "Crafting Interpreters -- Robert Nystrom -- United States_] _, 2021 -- Genever Benning -- isbn13 9780990582939 -- c96d09f7d0933fc5c9b75228f7f3e2a3 -- Anna’s Archive.epub" },
 		{ title = "Writing a C Compiler", fmt = "epub", file = "WritingaCCompiler.epub" },
 		{ title = "SSA-based Compiler Design", fmt = "pdf", file = "Fabrice Rastello, Florent Bouchez Tichadou - SSA-based Compiler Design-Springer (2022).pdf" },
 		{ title = "Talking Compilers with ChatGPT", fmt = "pdf", file = "TalkingCompilersWithGPT.pdf" },
+		{ title = "Introduction to Static Analysis", fmt = "pdf", file = "Introduction to Static Analysis_ An Abstract Interpretation -- Xavier Rival & Kwangkeun Yi -- MIT Press, Cambridge, Massachusetts, 2020 -- The MIT -- 9780262043410 -- ba89612250e3eb6bad9461c789c1b5fe -- Anna’s Arch.pdf" },
 	} },
 	{ module = "Databases", key = "books-db", items = {
 		{ title = "Build Your Own SQLite (CodeCrafters)", fmt = "md", slug = "build-your-own-sqlite", file = "https://github.com/codecrafters-io/build-your-own-sqlite" },
@@ -2576,6 +2581,7 @@ local BOOKS = {
 		{ title = "ir0nstone: Binary Exploitation Notes", fmt = "md", slug = "ir0nstone-binary-exploitation", file = "https://github.com/ir0nstone/cybersec-notes" },
 		{ title = "Serious Cryptography (2e)", fmt = "epub", file = "Serious Cryptography, 2nd Edition_ A Practical Introduction -- Jean-Philippe Aumasson -- 2, 2024 -- No Starch Press, Incorporated -- isbn13 9781718503847 -- 98baee034c0a929a742dfde69353a637 -- Anna’s Archive.epub" },
 		{ title = "Fuzzing Against the Machine", fmt = "pdf", file = "FuzzingAgainstTheMachine.pdf" },
+		{ title = "Secure Coding in C and C++ (2e)", fmt = "pdf", slug = "secure-coding-in-c-and-cpp", file = "Secure Coding in C and C++ (2nd Edition) (SEI Series in -- Seacord, Robert C_ -- 601df46864954c0d50394370bb73c517 -- Anna’s Archive.pdf" },
 	} },
 	{ module = "Firmware", key = "books-firmware", items = {
 		{ title = "Beyond BIOS", fmt = "epub", file = "Beyond BIOS - Vincent Zimmer,Michael Rothman,Suresh Marisetty.epub" },
@@ -2589,9 +2595,11 @@ local BOOKS = {
 	} },
 	{ module = "OCaml", key = "books-ocaml", items = {
 		{ title = "More OCaml: Algorithms, Methods, and Diversions", fmt = "epub", file = "More OCaml_ Algorithms, Methods, and Diversions -- John Whitington -- Reprint with corrections, Cambridge, United Kingdom, 2014 -- Coherent Press -- 9780957671119 -- 654b9e3e8e78e1a0d5c84ac0dcd6604c -- Anna’s Arch.epub" },
+		{ title = "Learn Programming with OCaml", fmt = "pdf", file = "programming_with_ocaml.pdf" },
 	} },
 	{ module = "Python", key = "books-python", items = {
 		{ title = "Python Crash Course", fmt = "pdf", file = "Python-Crash-Course.pdf" },
+		{ title = "Dead Simple Python", fmt = "pdf", file = "Dead Simple Python _ Idiomatic Python for the Impatient -- Jason C_ McDonald -- Penguin Random House LLC (Publisher Services), [N_p_], 2022 -- No -- 9781718500921 -- 86363cb1caad694cdfe8893bf2fb3de2 -- Anna’s Archi.pdf" },
 	} },
 	{ module = "Java", key = "books-java", items = {
 		{ title = "Java Concurrency in Practice", fmt = "pdf", file = "JavaConcurrencyInPractice.pdf" },

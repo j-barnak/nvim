@@ -1,0 +1,957 @@
+                                          Premature abstraction is the root of all evil.
+                                                                             A cast of thousands
+
+Chapter 3
+
+Hardware and its Habits
+
+Most people intuitively understand that passing messages between systems is more
+expensive than performing simple calculations within the confines of a single system.
+But it is also the case that communicating among threads within the confines of a single
+shared-memory system can be quite expensive. This chapter therefore looks at the cost
+of synchronization and communication within a shared-memory system. These few
+pages can do no more than scratch the surface of shared-memory parallel hardware
+design; readers desiring more detail would do well to start with a recent edition of
+Hennessy’s and Patterson’s classic text [HP17].
+Quick Quiz 3.1: Why should parallel programmers bother learning low-level properties of
+the hardware? Wouldn’t it be easier, better, more elegant, and more productive to remain at a
+higher level of abstraction?
+
+3.1     Overview
+
+                                          Mechanical Sympathy: Hardware and software
+                                          working together in harmony.
+                                                                               Martin Thompson
+
+Careless reading of computer-system specification sheets might lead one to believe that
+CPU performance is a footrace on a clear track, as illustrated in Figure 3.1, where the
+race always goes to the swiftest.
+    Although there are a few CPU-bound benchmarks that approach the ideal case
+shown in Figure 3.1, the typical program more closely resembles an obstacle course than
+a race track. This is because the internal architecture of CPUs has changed dramatically
+over the past few decades, courtesy of a collision of Moore’s Law with certain laws
+of physics. A number of these architectural changes are described in the following
+sections.
+
+3.1.1    Pipelined CPUs
+In the 1980s, the typical microprocessor fetched an instruction, decoded it, and executed
+it, typically taking at least three clock cycles to complete one instruction before even
+
+                                                                                                   v2025.12.18a
+26                CHAPTER 3. HARDWARE AND ITS HABITS
+
+           CPU Benchmark Trackmeet
+
+     Figure 3.1: CPU Performance at its Best
+
+           4.0 GHz clock, 20 MB L3
+           cache, 20 stage pipeline...
+
+                The only pipeline I need
+               is to cool off that hot-
+                     headed brat.
+
+         Figure 3.2: CPUs Old and New
+
+                                                       v2025.12.18a
+3.1. OVERVIEW                                                                                   27
+
+                                                                                           ON
+                                                                                         TI
+                                                                                     DIC
+                                                                                  RE
+                                                                               SP
+                                          PI                                 MI
+                                             PE                          H
+                                                LI
+                                                   NE              A  NC
+                                                        ER       BR
+                                                          RO
+                                                             R
+
+                       Figure 3.3: CPU Meets a Pipeline Flush
+
+starting the next. In contrast, the CPU of the late 1990s and of the 2000s execute
+many instructions simultaneously, using pipelines; superscalar techniques; out-of-order
+instruction and data handling; speculative execution, and more [HP17] in order to
+optimize the flow of instructions and data through the CPU. Some cores have more
+than one hardware thread, which is variously called simultaneous multithreading (SMT)
+or hyperthreading (HT) [Fen73], each of which appears as an independent CPU to
+software, at least from a functional viewpoint. These modern hardware features can
+greatly improve performance, as illustrated by Figure 3.2.
+    Achieving full performance with a CPU having a long pipeline requires highly
+predictable control flow through the program. Suitable control flow is provided by
+programs that run in tight loops, for example, those doing arithmetic on large matrices
+or vectors. Such loops allow the CPU to correctly predict that the end-of-loop branch
+will be taken in almost all cases, allowing the pipeline to be kept full and the CPU to
+execute at full speed.
+    However, branch prediction is not always so easy. For example, consider a program
+with many loops, each of which iterates a small but random number of times. For
+another example, consider a museum-piece object-oriented program with many virtual
+objects that can reference many different real objects, all with different implementations
+for frequently invoked member functions, resulting in many calls through pointers. In
+these cases, it is difficult or even impossible for the CPU to predict where the next
+branch might lead. Then either the CPU must stall waiting for execution to proceed
+far enough to be certain where that branch leads, or it must guess and then proceed
+using speculative execution. Although guessing works extremely well for programs
+with predictable control flow, for unpredictable branches (such as those in binary search)
+the guesses will frequently be wrong. A wrong guess can be expensive because the
+CPU must discard any speculatively executed instructions following the corresponding
+branch, resulting in a pipeline flush. If pipeline flushes appear too frequently, they
+drastically reduce overall performance, as fancifully depicted in Figure 3.3.
+    This gets even worse for hyperthreading (or SMT, if you prefer), especially on
+pipelined superscalar out-of-order CPU featuring speculative execution. In this in-
+creasingly common case, all the hardware threads sharing a core also share that core’s
+
+                                                                                                     v2025.12.18a
+28                                              CHAPTER 3. HARDWARE AND ITS HABITS
+
+                         Thread 0                                               Thread 1
+                         Instructions                                        Instructions
+                                                   Decode and
+                                                    Translate
+
+                                                    Micro-Op
+                                                    Scheduler
+
+                                                                     Registers
+                                 Execution                            (100s!)
+                                   Units
+
+                   Figure 3.4: Rough View of Modern Micro-Architecture
+
+resources, including registers, cache, execution units, and so on. The instructions are
+often decoded into micro-operations, and use of the shared execution units and the
+hundreds of hardware registers is often coordinated by a micro-operation scheduler. A
+rough diagram of such a two-threaded core is shown in Figure 3.4, and more accurate
+(and thus more complex) diagrams are available in textbooks and scholarly papers.1
+Therefore, the execution of one hardware thread can and often is perturbed by the actions
+of other hardware threads sharing that core.
+    Even if only one hardware thread is active (for example, in old-school CPU designs
+where there is only one thread), counterintuitive results are quite common. Execution
+units often have overlapping capabilities, so that a CPU’s choice of execution unit can
+result in pipeline stalls due to contention for that execution unit from later instructions.
+In theory, this contention is avoidable, but in practice CPUs must choose very quickly
+and without the benefit of clairvoyance. In particular, adding an instruction to a tight
+loop can sometimes actually cause execution to speed up.
+    Unfortunately, pipeline flushes and shared-resource contention are not the only
+hazards in the obstacle course that modern CPUs must run. The next section covers the
+hazards of referencing memory.
+
+3.1.2       Memory References
+In the 1980s, it often took less time for a microprocessor to load a value from memory
+than it did to execute an instruction. More recently, microprocessors might execute
+hundreds or even thousands of instructions in the time required to access memory. This
+disparity is due to the fact that Moore’s Law has increased CPU performance at a much
+greater rate than it has decreased memory latency, in part due to the rate at which
+memory sizes have grown. For example, a typical 1970s minicomputer might have 4 KB
+(yes, kilobytes, not megabytes, let alone gigabytes or terabytes) of main memory, with
+single-cycle access.2 Present-day CPU designers still can construct a 4 KB memory
+with single-cycle access, even on systems with multi-GHz clock frequencies. And
+
+   1 Here is one example for a late-2010s Intel core: https://en.wikichip.org/wiki/
+
+intel/microarchitectures/skylake_(server).
+   2 It is only fair to add that each of these single cycles lasted no less than 1.6 microseconds.
+
+                                                                                                     v2025.12.18a
+3.1. OVERVIEW                                                                           29
+
+                     Figure 3.5: CPU Meets a Memory Reference
+
+in fact they frequently do construct such memories, but they now call them “level-0
+caches”, plus they can be a bit larger than 4 KB.
+     Although the large caches found on modern microprocessors can do quite a bit to help
+combat memory-access latencies, these caches require highly predictable data-access
+patterns to successfully hide those latencies. Unfortunately, common operations such as
+traversing a linked list have extremely unpredictable memory-access patterns—after
+all, if the pattern was predictable, us software types would not bother with the pointers,
+right? Therefore, as shown in Figure 3.5, memory references often pose severe obstacles
+to modern CPUs.
+     Thus far, we have only been considering obstacles that can arise during a given
+CPU’s execution of single-threaded code. Multi-threading presents additional obstacles
+to the CPU, as described in the following sections.
+
+3.1.3    Atomic Operations
+One such obstacle is atomic operations. The problem here is that the whole idea of an
+atomic operation conflicts with the piece-at-a-time assembly-line operation of a CPU
+pipeline. To hardware designers’ credit, modern CPUs use a number of extremely clever
+tricks to make such operations look atomic even though they are in fact being executed
+piece-at-a-time, with one common trick being to identify all the cachelines containing
+the data to be atomically operated on, ensure that these cachelines are owned by the
+CPU executing the atomic operation, and only then proceed with the atomic operation
+while ensuring that these cachelines remained owned by this CPU. Because all the data
+is private to this CPU, other CPUs are unable to interfere with the atomic operation
+despite the piece-at-a-time nature of the CPU’s pipeline. Needless to say, this sort of
+trick can require that the pipeline must be delayed or even flushed in order to perform the
+cacheline-setup operations that permit a given atomic operation to complete correctly.
+
+                                                                                              v2025.12.18a
+30                                     CHAPTER 3. HARDWARE AND ITS HABITS
+
+                        Figure 3.6: CPU Meets an Atomic Operation
+
+     In contrast, when executing a non-atomic operation, the CPU can load values from
+cachelines as they appear and place the results in the store buffer, without the need to
+wait for cacheline ownership. Although there are a number of hardware optimizations
+that can sometimes hide cache latencies, an atomic operation’s effect on performance is
+all too often as depicted in Figure 3.6.
+     Unfortunately, atomic operations usually apply only to single elements of data.
+Because many parallel algorithms require that ordering constraints be maintained
+between updates of multiple data elements, most CPUs provide memory barriers. These
+memory barriers also serve as performance-sapping obstacles, as described in the next
+section.
+    Quick Quiz 3.2: What types of machines would allow atomic operations on multiple data
+    elements?
+
+3.1.4       Memory Barriers
+Memory barriers will be considered in more detail in Chapter 15 and Appendix C. In
+the meantime, consider the following simple lock-based critical section:
+
+1    spin_lock(&mylock);
+2    a = a + 1;
+3    spin_unlock(&mylock);
+
+    If the CPU were not constrained to execute these statements in the order shown, the
+effect would be that the variable “a” would be incremented without the protection of
+“mylock”, which would defeat the purpose of acquiring it. To prevent such destructive
+reordering, locking primitives contain either explicit or implicit memory barriers.
+Because the whole purpose of these memory barriers is to prevent reorderings that the
+CPU (to say nothing of the compiler) would otherwise undertake in order to increase
+performance, memory barriers almost always reduce performance, as depicted in
+Figure 3.7.
+    As with atomic operations, CPU designers have been working hard to reduce
+memory-barrier overhead, and have made substantial progress.
+
+                                                                                            v2025.12.18a
+3.1. OVERVIEW                                                                           31
+
+                                   Memory
+                                  Barrier
+
+                      Figure 3.7: CPU Meets a Memory Barrier
+
+3.1.5    Functional Unit Failings
+Modern superscalar CPUs have numerous functional units with varying purposes and
+capabilities. Each CPU is likely to have several arithmetic-logic units (ALUs) for integer
+and boolean arithmetic, a few vector units, a couple of floating-point units (FPUs),
+and at least one each branch unit, load unit, and store unit. Different CPUs will of
+course have different combinations of functional units. However, not only will different
+applications need different combinations of functional units, a given application is likely
+to need different combinations at different phases of its execution.
+    This means that it does not make much sense to think in terms of a given CPU
+having a perfect combination of functional units. Sometimes a CPU instead must “hop
+along on one leg” using only a very few out of its impressive array of functional units,
+as fancifully depicted by the unfortunate CPU losing the race in Figure 3.8.
+Quick Quiz 3.3: But what does this have to do with scaling workloads across a multi-core
+CPU???
+
+    Unfortunately, a workload could make perfectly efficient use of each and every one
+of a given CPU’s functional units and still lose, for example, as described in the next
+section.
+
+3.1.6    Thermal Throttling
+One increasingly common frustrating experience is to carefully micro-optimize a critical
+code path, greatly reducing the number of clock cycles consumed by that code path,
+only to find that the wall-clock time consumed by that code has actually increased.
+    Welcome to modern thermal throttling.
+    If you reduced the number of clock cycles by making more effective use of the
+CPU’s functional units, you will have increased the power consumed by that CPU. This
+will in turn increase the amount of heat dissipated by that CPU. If this heat dissipation
+
+                                                                                              v2025.12.18a
+32                                  CHAPTER 3. HARDWARE AND ITS HABITS
+
+                    Figure 3.8: CPU Functional-Unit Mismatch
+
+                  Figure 3.9: CPU Encounters Thermal Throttling
+
+exceeds the cooling system’s capacity, the system will thermally throttle that CPU, for
+example, by reducing its clock frequency, as fancifully depicted by the snow penguin in
+Figure 3.9.
+    If performance is of the essence, the proper fix is improved cooling, an approach
+loved by serious gamers, by overclockers (some of whom make good use of liquid
+nitrogen), and by performance-first systems vendors (one of which used per-CPU
+aluminum heat sinks, each of which weighed one pound, that is, 0.454 kilograms).
+But if you cannot modify your computer’s cooling system, perhaps because you are
+renting it from a cloud provider, then you will need to take some other optimization
+approach. For example, you might need to apply algorithmic optimizations instead of
+hardware-centric micro-optimizations. Alternatively, perhaps you can parallelize your
+code, spreading the work (and thus the heat) over multiple CPU cores.
+    Some recommend normalizing the results of a given test based on the various CPU
+core clock frequencies, which can help. However, the latency of cache misses and
+memory accesses do not depend on CPU core clock frequency. In addition, if the code
+under test features tight interaction among multiple CPUs, then the performance that
+code running on one of the CPUs will depend on the core clock frequencies of those
+other CPUs.
+
+                                                                                          v2025.12.18a
+3.1. OVERVIEW                                                                           33
+
+                     CACHE-
+                      MISS
+                     TOLL
+                     BOOTH
+
+                        Figure 3.10: CPU Meets a Cache Miss
+
+    Finally, if the goal is instead to obtain repeatable benchmark measurements, one
+approach is to extend traditional cache warmup to include thermal warmup, with the
+required warm-up duration depending on the size and thus the thermal inertia of the
+system under test.
+    Another approach for repeatable benchmarks applies to event-based applications
+that run in short but widely spaced bursts of latency-critical execution. In this case, the
+previous approach’s thermal warmup interval should be replaced by a cooldown interval
+during which the system remains idle.
+    Even given careful thermal warmup or cooldown, results can vary with changes in
+ambient temperature, which can depend strongly on time of day, to say nothing of time
+of year in certain parts of the world.
+
+Quick Quiz 3.4: Given a long thermal warmup or cooldown period and a fixed workload, why
+would ambient temperature matter?
+
+3.1.7    Cache Misses
+An additional multi-threading obstacle to CPU performance is the “cache miss”. As
+noted earlier, modern CPUs sport large caches in order to reduce the performance
+penalty that would otherwise be incurred due to high memory latencies. However, these
+caches are actually counter-productive for variables that are frequently shared among
+CPUs. This is because when a given CPU wishes to modify the variable, it is most
+likely the case that some other CPU has modified it recently. In this case, the variable
+will be in that other CPU’s cache, but not in this CPU’s cache, which will therefore
+incur an expensive cache miss (see Appendix C.1 for more detail). Such cache misses
+form a major obstacle to CPU performance, as shown in Figure 3.10.
+
+Quick Quiz 3.5: So have CPU designers also greatly reduced the overhead of cache misses?
+
+                                                                                              v2025.12.18a
+34                                    CHAPTER 3. HARDWARE AND ITS HABITS
+
+                      TELE              Please stay on the
+                                        line. Your call is very
+                                        important to us...
+
+                     Figure 3.11: CPU Waits for I/O Completion
+
+3.1.8    I/O Operations
+A cache miss can be thought of as a CPU-to-CPU I/O operation, and as such is one
+of the cheapest I/O operations available. I/O operations involving networking, mass
+storage, or (worse yet) human beings pose much greater obstacles than the internal
+obstacles called out in the prior sections, as illustrated by Figure 3.11.
+    This is one of the differences between shared-memory and distributed-system
+parallelism: Shared-memory parallel programs must normally deal with no obstacle
+worse than a cache miss, while a distributed parallel program will typically incur the
+larger network communication latencies. In both cases, the relevant latencies can be
+thought of as a cost of communication—a cost that would be absent in a sequential
+program. Therefore, the ratio between the overhead of the communication to that of
+the actual work being performed is a key design parameter. A major goal of parallel
+hardware design is to reduce this ratio as needed to achieve the relevant performance
+and scalability goals. In turn, as will be seen in Chapter 6, a major goal of parallel
+software design is to reduce the frequency of expensive operations like communications
+cache misses.
+    Of course, it is one thing to say that a given operation is an obstacle, and quite
+another to show that the operation is a significant obstacle. This distinction is discussed
+in the following sections.
+
+3.2     Overheads
+                                         Don’t design bridges in ignorance of materials, and
+                                         don’t design low-level software in ignorance of the
+                                         underlying hardware.
+                                                                                    Unknown
+
+This section presents actual overheads of the obstacles to performance listed out in the
+previous section. However, it is first necessary to get a rough view of hardware system
+architecture, which is the subject of the next section.
+
+                                                                                               v2025.12.18a
+3.2. OVERHEADS                                                                        35
+
+                   CPU 0         CPU 1           CPU 2         CPU 3
+                   Cache         Cache           Cache         Cache
+                       Interconnect                  Interconnect
+
+                  Memory          System Interconnect         Memory
+
+                       Interconnect                  Interconnect
+                   Cache         Cache           Cache         Cache
+                   CPU 4         CPU 5           CPU 6         CPU 7
+
+                     Speed−of−Light Round−Trip Distance in Vacuum
+                            for 1.8 GHz Clock Period (8 cm)
+
+                     Figure 3.12: System Hardware Architecture
+
+3.2.1    Hardware System Architecture
+Figure 3.12 shows a rough schematic of an eight-core computer system. Each die has a
+pair of CPU cores, each with its cache, as well as an interconnect allowing the pair of
+CPUs to communicate with each other. The system interconnect allows the four dies to
+communicate with each other and with main memory.
+    Data moves through this system in units of “cache lines”, which are power-of-two
+fixed-size aligned blocks of memory, usually ranging from 32 to 256 bytes in size.
+When a CPU loads a variable from memory to one of its registers, it must first load the
+cacheline containing that variable into its cache, which may be thought of as a hardware
+hash table. Similarly, when a CPU stores a value from one of its registers into memory,
+it must also load the cacheline containing that variable into its cache, but must also
+ensure that no other CPU has a copy of that cacheline.
+    For example, suppose that CPU 1 wrote to a variable x whose cacheline was in
+CPU 6’s cache. An over-simplified view of this process is illustrated by the following
+sequence of steps in conjunction with Figure 3.13, each row of which condenses
+Figure 3.12 to show only CPUs 1 and 6, their store buffers and local caches, along with
+the system interconnect denoted by the grey rectangle connecting the pair of CPUs.
+
+   1. CPU 1 checks its local cache, and does not find the cacheline. It therefore records
+      the write in its store buffer as shown in row A of Figure 3.13.
+   2. A request for this cacheline is forwarded to CPU 0’s and 1’s interconnect, which
+      checks CPU 1’s local cache, and does not find the cacheline. Because nothing
+      has changed, the system state is still as shown in row A of Figure 3.13.
+   3. This request is forwarded to the system interconnect, as shown in row B of
+      Figure 3.13, which checks with the other three dies, learning that the cacheline is
+      held by the die containing CPU 6 and 7.
+   4. This request is forwarded to CPU 6’s and 7’s interconnect, which checks both
+      CPUs’ caches, finding the value in CPU 6’s cache, as shown in row C of
+      Figure 3.13.
+
+                                                                                            v2025.12.18a
+36                          CHAPTER 3. HARDWARE AND ITS HABITS
+
+          CPU 1   Store    Cache           Cache   Store    CPU 6
+                  Buffer                           Buffer
+                                           x=3
+
+          CPU 1   Store    Cache           Cache   Store    CPU 6
+     A.           Buffer                           Buffer
+                   x=5                     x=3
+
+          CPU 1   Store    Cache           Cache   Store    CPU 6
+     B.           Buffer                           Buffer
+                                    x=?
+                   x=5                     x=3
+
+          CPU 1   Store    Cache   x=?     Cache   Store    CPU 6
+     C.           Buffer                           Buffer
+                   x=5                     x=3
+
+          CPU 1   Store    Cache           Cache   Store    CPU 6
+     D.           Buffer                           Buffer
+                                   x=3
+                   x=5
+
+          CPU 1   Store    Cache           Cache   Store    CPU 6
+                                     x=3
+     E.           Buffer                           Buffer
+                   x=5
+
+          CPU 1   Store    Cache           Cache   Store    CPU 6
+     F.           Buffer           x=3             Buffer
+                   x=5
+
+          CPU 1   Store    Cache           Cache   Store    CPU 6
+     G.           Buffer                           Buffer
+                   x=5     x=3
+
+          CPU 1   Store    Cache           Cache   Store    CPU 6
+     H.           Buffer                           Buffer
+                           x=5
+
+          Figure 3.13: Lifetime of a “Simple” Store
+
+                                                                    v2025.12.18a
+3.2. OVERHEADS                                                                          37
+
+   5. CPU 6 forwards the cacheline to its interconnect, and also flushes the cacheline
+      from its cache, and then CPU 6’s and 7’s interconnect forwards the cacheline to
+      the system interconnect, as shown in row D of Figure 3.13.
+
+   6. The system interconnect forwards the cacheline to CPU 0’s and 1’s interconnect,
+      as shown in row E of Figure 3.13.
+
+   7. CPU 0’s and 1’s interconnect forwards the cacheline to CPU 1, as shown in row F
+      of Figure 3.13.
+
+   8. The cache line is deposited into CPU 1’s cache, as shown in row G of Figure 3.13.
+
+   9. CPU 1 can now complete the write, updating the relevant portions of the newly
+      arrived cacheline from the value previously recorded in the store buffer, as shown
+      in row H of Figure 3.13.
+
+Quick Quiz 3.6: This is a simplified sequence of events? How could it possibly be any more
+complex?
+
+Quick Quiz 3.7: Why is it necessary to flush the cacheline from CPU 6’s cache?
+
+    This simplified sequence is just the beginning of a discipline called cache-coherency
+protocols [HP95, CSG99, MHS12, SHW11], which is discussed in more detail in
+Appendix C. As can be seen in the sequence of events triggered by a simple memory
+write operation, a single instruction can cause considerable protocol traffic, which can
+significantly degrade your parallel program’s performance.
+    Fortunately, if a given variable is being frequently read during a time interval during
+which it is never updated, that variable can be replicated across all CPUs’ caches.
+This replication permits all CPUs to enjoy extremely fast access to this read-mostly
+variable. Chapter 9 presents synchronization mechanisms that take full advantage of
+this important hardware read-mostly optimization.
+
+3.2.2    Costs of Operations
+The overheads of some common operations important to parallel programs are displayed
+in Table 3.1. This system’s clock period rounds to 0.5 ns. Although it is not unusual
+for modern microprocessors to be able to retire multiple instructions per clock period,
+the operations’ costs are nevertheless normalized to a clock period in the third column,
+labeled “Ratio”. The first thing to note about this table is the large values of many of
+the ratios.
+    The same-CPU compare-and-swap (CAS) operation consumes about seven nanosec-
+onds, a duration more than ten times that of the clock period. CAS is an atomic operation
+in which the hardware compares the contents of the specified memory location to a
+specified “old” value, and if they compare equal, stores a specified “new” value, in
+which case the CAS operation succeeds. If they compare unequal, the memory location
+keeps its (unexpected) value, and the CAS operation fails. The operation is atomic in
+that the hardware guarantees that the memory location will not be changed between the
+compare and the store. CAS functionality is provided by the lock;cmpxchg instruction
+on x86.
+    The “same-CPU” prefix means that the CPU now performing the CAS operation on
+a given variable was also the last CPU to access this variable, so that the corresponding
+
+                                                                                              v2025.12.18a
+38                                    CHAPTER 3. HARDWARE AND ITS HABITS
+
+Table 3.1: CPU 0 View of Synchronization Mechanisms on 8-Socket System With
+    Intel Xeon Platinum 8176 CPUs @ 2.10 GHz
+                                                            Ratio
+             Operation                 Cost (ns)     (cost/clock)     CPUs
+             Clock period                   0.5              1.0
+             Same-CPU                                                     0
+               CAS                          7.0             14.6
+               lock                        15.4             32.3
+             On-Core                                                    224
+               Blind CAS                    7.2             15.2
+               CAS                         18.0             37.7
+             Off-Core                                                  1–27
+                Blind CAS                  47.5             99.8    225–251
+                CAS                       101.9            214.0
+             Off-Socket                                              28–111
+                Blind CAS                 148.8            312.5    252–335
+                CAS                       442.9            930.1
+             Cross-Interconnect                                     112–223
+                Blind CAS                 336.6            706.8    336–447
+                CAS                       944.8          1,984.2
+             Off-System
+                Comms Fabric            5,000           10,500
+                Global Comms      195,000,000      409,500,000
+
+cacheline is already held in that CPU’s cache. Similarly, the same-CPU lock operation
+(a “round trip” pair consisting of a lock acquisition and release) consumes more than
+fifteen nanoseconds, or more than thirty clock cycles. The lock operation is more
+expensive than CAS because it requires two atomic operations on the lock data structure,
+one for acquisition and the other for release.
+     On-core operations involving interactions between the hardware threads sharing a
+single core are about the same cost as same-CPU operations. This should not be too
+surprising, given that these two hardware threads also share the full cache hierarchy.
+     In the case of the blind CAS, the software specifies the old value without looking at
+the memory location. This approach is appropriate when attempting to acquire a lock.
+If the unlocked state is represented by zero and the locked state is represented by the
+value one, then a CAS operation on the lock that specifies zero for the old value and one
+for the new value will acquire the lock if it is not already held. The key point is that
+there is only one access to the memory location, namely the CAS operation itself.
+     In contrast, a normal CAS operation’s old value is derived from some earlier load.
+For example, to implement an atomic increment, the current value in a shared variable
+is loaded into one machine register and then incremented to produce the new value in
+another machine register. Then in the CAS operation, the first register is specified as
+the old value and the second register as the new value. If the shared variable’s value
+did not change in the meantime, the CAS operation would store the new value, thus
+incrementing that shared variable. However, if the shared variable’s value did change,
+
+                                                                                             v2025.12.18a
+3.2. OVERHEADS                                                                           39
+
+Table 3.2: Cache Geometry for 8-Socket System With Intel Xeon Platinum 8176 CPUs
+    @ 2.10 GHz
+
+                Level    Scope     Line Size      Sets   Ways         Size
+                L0        Core           64        64        8       32K
+                L1        Core           64        64        8       32K
+                L2        Core           64      1024       16    1024K
+                L3       Socket          64    57,344       11   39,424K
+
+then the old value would not match, causing a miscompare that would result in the CAS
+operation failing and thus making no further change to that shared variable. The key
+point is that there are now two accesses to the memory location, the load and the CAS.
+    Thus, it is not surprising that on-core blind CAS consumes only about seven
+nanoseconds, while on-core CAS consumes about 18 nanoseconds. The non-blind
+case’s extra load does not come for free. That said, the overhead of these operations are
+similar to same-CPU CAS and lock, respectively.
+Quick Quiz 3.8: Table 3.1 shows CPU 0 sharing a core with CPU 224. However, isn’t it more
+logical for CPU 0 to share a core with CPU 1 instead of CPU 224???
+
+    A blind CAS involving CPUs in different cores but on the same socket consumes
+almost fifty nanoseconds, or almost one hundred clock cycles. The code used for this
+cache-miss measurement passes the cache line back and forth between a pair of CPUs,
+so this cache miss is satisfied not from memory, but rather from the other CPU’s cache.
+A non-blind CAS operation, which as noted earlier must look at the old value of the
+variable as well as store a new value, consumes over one hundred nanoseconds, or
+more than two hundred clock cycles. Think about this a bit. In the time required to
+do one CAS operation, the CPU could have executed more than two hundred normal
+instructions. This should demonstrate the limitations not only of fine-grained locking,
+but of any other synchronization mechanism relying on fine-grained global agreement.
+    If the pair of CPUs are on different sockets, the operations are considerably more
+expensive. A blind CAS operation consumes almost 150 nanoseconds, or more than three
+hundred clock cycles. A normal CAS operation consumes more than 400 nanoseconds,
+or almost one thousand clock cycles.
+    Worse yet, not all pairs of sockets are created equal. This particular system appears
+to be constructed as a pair of four-socket components, with additional latency penalties
+when the CPUs reside in different components. In this case, a blind CAS operation
+consumes more than three hundred nanoseconds, or more than seven hundred clock
+cycles. A CAS operation consumes almost a full microsecond, or almost two thousand
+clock cycles.
+Quick Quiz 3.9: Surely the hardware designers could be persuaded to improve this situation!
+Why have they been content with such abysmal performance for these single-instruction
+operations?
+
+Quick Quiz 3.10: Table E.1 in the answer to Quick Quiz 3.9 on page 747 says that on-core
+CAS is faster than both of same-CPU CAS and on-core blind CAS. What is happening there?
+
+    Unfortunately, the high speed of within-core and within-socket communication does
+not come for free. First, there are only two CPUs within a given core and only 56 within
+
+                                                                                              v2025.12.18a
+40                                            CHAPTER 3. HARDWARE AND ITS HABITS
+
+a given socket, compared to 448 across the system. Second, as shown in Table 3.2, the
+on-core caches are quite small compared to the on-socket caches, which are in turn
+quite small compared to the 1.4 TB of memory configured on this system. Third, again
+referring to the figure, the caches are organized as a hardware hash table with a limited
+number of items per bucket. For example, the raw size of the L3 cache (“Size”) is
+almost 40 MB, but each bucket (“Line”) can only hold 11 blocks of memory (“Ways”),
+each of which can be at most 64 bytes (“Line Size”). This means that only 12 bytes of
+memory (admittedly at carefully chosen addresses) are required to overflow this 40 MB
+cache. On the other hand, equally careful choice of addresses might make good use of
+the entire 40 MB.
+    Spatial locality of reference is clearly extremely important, as is spreading the data
+across memory.
+    I/O operations are even more expensive. As shown in the “Comms Fabric” row,
+high performance (and expensive!) communications fabric, such as InfiniBand or any
+number of proprietary interconnects, has a latency of roughly five microseconds for an
+end-to-end round trip, during which time more than ten thousand instructions might
+have been executed. Standards-based communications networks often require some
+sort of protocol processing, which further increases the latency. Of course, geographic
+distance also increases latency, with the speed-of-light through optical fiber latency
+around the world coming to roughly 195 milliseconds, or more than 400 million clock
+cycles, as shown in the “Global Comms” row of Table E.2.
+Quick Quiz 3.11: These numbers are insanely large! How can I possibly get my head around
+them?
+
+3.2.3       Hardware Optimizations
+It is only natural to ask how the hardware is helping, and the answer is “Quite a bit!”
+     One hardware optimization is large cachelines. This can provide a big performance
+boost, especially when software is accessing memory sequentially. For example, given
+a 64-byte cacheline and software accessing 64-bit variables, the first access will still be
+slow due to speed-of-light delays (if nothing else), but the remaining seven can be quite
+fast. However, this optimization has a dark side, namely false sharing, which happens
+when different variables in the same cacheline are being updated by different CPUs,
+resulting in a high cache-miss rate.3 Software can use the alignment directives available
+in many compilers to avoid false sharing, and adding such directives is a common step
+in tuning parallel software.
+     A second related hardware optimization is cache prefetching, in which the hardware
+reacts to consecutive accesses by prefetching subsequent cachelines, thereby evading
+speed-of-light delays for these subsequent cachelines. Of course, the hardware must use
+simple heuristics to determine when to prefetch, and these heuristics can be fooled by
+the complex data-access patterns in many applications. Fortunately, some CPU families
+allow for this by providing special prefetch instructions. Unfortunately, the effectiveness
+of these instructions in the general case is the subject of some dispute.
+     A third hardware optimization is the store buffer, which allows a string of store
+instructions to execute quickly even when the stores are to non-consecutive addresses
+and when none of the needed cachelines are present in the CPU’s cache. The dark side
+of this optimization is memory misordering, for which see Chapter 15.
+
+     3 This situation is sometimes referred to as “cache thrashing” or “cacheline bouncing”.
+
+                                                                                               v2025.12.18a
+3.2. OVERHEADS                                                                          41
+
+                 Figure 3.14: Hardware and Software: On Same Side
+
+     A fourth hardware optimization is speculative execution, which can allow the
+hardware to make good use of the store buffers without resulting in memory misordering.
+The dark side of this optimization can be energy inefficiency and lowered performance
+if the speculative execution goes awry and must be rolled back and retried. Worse yet,
+the advent of Spectre and Meltdown [Hor18] made it apparent that hardware speculation
+can also enable side-channel attacks that defeat memory-protection hardware so as to
+allow unprivileged processes to read memory that they should not have access to. It is
+clear that the combination of speculative execution and cloud computing needs more
+than a bit of rework!
+
+    One could argue that if people would act reasonably, mitigations for side-channel
+attacks would not be necessary. However, remotely accessible computer systems really
+are often under attack by organized crime and by nation states, to say nothing of by
+bored teenagers. There is an old saying “It only takes a few to spoil things for everyone”,
+but the reality is that remotely accessible computer systems must be actively defended
+from attack.
+
+    A fifth hardware optimization is large caches, allowing individual CPUs to operate
+on larger datasets without incurring expensive cache misses. Although large caches can
+degrade both energy efficiency and cache-miss latency, the ever-growing cache sizes on
+production microprocessors attests to the power of this optimization.
+
+    A final hardware optimization is read-mostly replication, in which data that is
+frequently read but rarely updated is present in all CPUs’ caches. This optimization
+allows the read-mostly data to be accessed exceedingly efficiently, and is the subject of
+Chapter 9.
+
+    In short, hardware and software engineers are really on the same side, with both
+trying to make computers go fast despite the best efforts of the laws of physics, as
+fancifully depicted in Figure 3.14 where our data stream is trying its best to exceed
+the speed of light, further hindered by the non-zero sizes of atoms. The next section
+discusses some additional things that the hardware engineers might (or might not) be
+able to do, depending on how well recent research translates to practice. Software’s
+contribution to this noble goal is outlined in the remaining chapters of this book.
+
+                                                                                              v2025.12.18a
+42                                       CHAPTER 3. HARDWARE AND ITS HABITS
+
+3.3       Hardware Free Lunch?
+                                              The great trouble today is that there are too many
+                                              people looking for someone else to do something for
+                                              them. The solution to most of our troubles is to be
+                                              found in everyone doing something for themselves.
+                                                                             Henry Ford, updated
+
+The major reason that concurrency has been receiving so much focus over the past few
+years is the end of Moore’s-Law induced single-threaded performance increases (or
+“free lunch” [Sut08]), as shown in Figure 2.1 on page 12. This section briefly surveys a
+few ways that hardware designers might bring back the “free lunch”.
+    However, the preceding section presented some substantial hardware obstacles to
+exploiting concurrency. One severe physical limitation that hardware designers face is
+the finite speed of light. As noted in Figure 3.12 on page 35, light can manage only
+about an 8-centimeters round trip in a vacuum during the duration of a 1.8 GHz clock
+period. This distance drops to about 3 centimeters for a 5 GHz clock. Both of these
+distances are relatively small compared to the size of modern computer systems.
+    To make matters even worse, electric waves in silicon move from three to thirty
+times more slowly than does light in a vacuum, and common clocked logic constructs
+run still more slowly, for example, a memory reference may need to wait for a local
+cache lookup to complete before the request may be passed on to the rest of the system.
+Furthermore, relatively low speed and high power drivers are required to move electrical
+signals from one silicon die to another, for example, to communicate between a CPU
+and main memory.
+ Quick Quiz 3.12: But individual electrons don’t move anywhere near that fast, even in
+ conductors!!! The electron drift velocity in a conductor under semiconductor voltage levels is
+ on the order of only one millimeter per second. What gives???
+
+    In fact, Stephen Hawking is said to have claimed that semiconductor manufacturers
+have but two fundamental problems: (1) The finite speed of light and (2) The atomic
+nature of matter [Gar07]. That is right, light is too slow and atoms are too big!!!
+    There are nevertheless some technologies (both hardware and software) that might
+help improve matters:
+
+     1. Novel materials and processes,
+     2. Substituting light for electricity,
+     3. 3D integration,
+     4. Special-purpose accelerators, and
+     5. Existing parallel software.
+
+     Each of these is described in one of the following sections.
+
+3.3.1      Novel Materials and Processes
+It is possible that Stephen Hawking is right, and that semiconductor manufacturers
+are approaching the limits implied by the finite speed of light and the non-zero sizes
+
+                                                                                                    v2025.12.18a
+3.3. HARDWARE FREE LUNCH?                                                                43
+
+of atoms. However, there are a few avenues of research and development focused on
+working around these fundamental laws of physics.
+    One workaround for the atomic nature of matter are so-called “high-K dielectric”
+materials, which allow larger devices to mimic the electrical properties of infeasibly
+small devices. These materials pose some severe fabrication challenges, but nevertheless
+may help push the frontiers out a bit farther. Another more-exotic workaround stores
+multiple bits in a single electron, relying on the fact that a given electron can exist at a
+number of energy levels. It remains to be seen if this particular approach can be made
+to work reliably in production semiconductor devices.
+    Another proposed workaround is the “quantum dot” approach that allows much
+smaller device sizes, but which is still in the research stage. Yet another proposed
+workaround is to replace the atoms making up the base of a traditional transistor with a
+vacuum, resulting in the vacuum-gap transistor.
+    One challenge is that many recent hardware-device-level breakthroughs require very
+tight control of which atoms are placed where [Kel17]. It therefore seems likely that
+whoever finds a good way to hand-place atoms on each of the billions of devices on a
+chip will have most excellent bragging rights, if nothing else!
+
+3.3.2    Light, Not Electrons
+Although the speed of light would be a hard limit, the fact is that semiconductor devices
+are limited by the speed of electricity rather than that of light, given that electric waves
+in semiconductor materials move at between 3 % and 30 % of the speed of light in a
+vacuum. The use of copper connections on silicon devices is one way to increase the
+speed of electricity, and it is quite possible that additional advances will push closer
+still to the actual speed of light. In addition, there have been some experiments with
+tiny optical fibers as interconnects within and between chips, based on the fact that the
+speed of light in glass is more than 60 % of the speed of light in a vacuum. One obstacle
+to such optical fibers is the inefficiency conversion between electricity and light and
+vice versa, resulting in both power-consumption and heat-dissipation problems.
+     That said, absent some fundamental advances in the field of physics, any exponential
+increases in the speed of data flow will be sharply limited by the actual speed of light in
+a vacuum.
+
+3.3.3    3D Integration
+3-dimensional integration (3DI) is the practice of bonding very thin silicon dies to
+each other in a vertical stack. This practice provides potential benefits, but also poses
+significant fabrication challenges [Kni08].
+    Perhaps the most important benefit of 3DI is decreased path length through the
+system, as shown in Figure 3.15. A 3-centimeter silicon die is replaced with a stack of
+four 1.5-centimeter dies, in theory decreasing the maximum path through the system by
+a factor of two, keeping in mind that each layer is quite thin. In addition, given proper
+attention to design and placement, long horizontal electrical connections (which are
+both slow and power hungry) can be replaced by short vertical electrical connections,
+which are both faster and more power efficient.
+    If you cannot make light go faster, make your devices smaller!
+    However, delays due to levels of clocked logic will not be decreased by 3D integration,
+and significant manufacturing, testing, power-supply, and heat-dissipation problems
+must be solved for 3D integration to reach production while still delivering on its
+
+                                                                                               v2025.12.18a
+44                                    CHAPTER 3. HARDWARE AND ITS HABITS
+
+                                                    70 um
+
+                       3 cm                                  1.5 cm
+
+                    Figure 3.15: Latency Benefit of 3D Integration
+
+                         Figure 3.16: Example 3D Integration
+
+promise. The heat-dissipation problems might be solved using semiconductors based
+on diamond, which is a good conductor for heat, but an electrical insulator. That said, it
+remains difficult to grow large single diamond crystals, to say nothing of slicing them
+into wafers. In addition, it seems unlikely that any of these technologies will be able to
+deliver the exponential increases to which some people have become accustomed. That
+said, they may be necessary steps on the path to the late Jim Gray’s “smoking hairy golf
+balls” [Gra02].
+    In the meantime, ca. 2020 advances in chiplet4 technology have made serious
+progress in this direction, as depicted in Figure 3.16. Some researchers are taking this
+further, stacking transistors within a single chip [Moo20, RK22].
+
+3.3.4     Special-Purpose Accelerators
+A general-purpose CPU working on a specialized problem is often spending significant
+time and energy doing work that is only tangentially related to the problem at hand. For
+example, when taking the dot product of a pair of vectors, a general-purpose CPU will
+normally use a loop (possibly unrolled) with a loop counter. Decoding the instructions,
+incrementing the loop counter, testing this counter, and branching back to the top of the
+loop are in some sense wasted effort: The real goal is instead to multiply corresponding
+elements of the two vectors. Therefore, a specialized piece of hardware designed
+specifically to multiply vectors could get the job done more quickly and with less energy
+consumed.
+    This is in fact the motivation for the vector instructions present in many commodity
+microprocessors. Because these instructions operate on multiple data items simultane-
+     4 https://en.wikipedia.org/wiki/Chiplet
+
+                                                                                             v2025.12.18a
+3.3. HARDWARE FREE LUNCH?                                                               45
+
+ously, they would permit a dot product to be computed with less instruction-decode and
+loop overhead.
+
+    Similarly, specialized hardware can more efficiently encrypt and decrypt, compress
+and decompress, encode and decode, and many other tasks besides. Unfortunately, this
+efficiency does not come for free. A computer system incorporating this specialized
+hardware will contain more transistors, which will consume some power even when
+not in use. Software must be modified to take advantage of this specialized hardware,
+and this specialized hardware must be sufficiently generally useful that the high up-
+front hardware-design costs can be spread over enough users to make the specialized
+hardware affordable. In part due to these sorts of economic considerations, specialized
+hardware has thus far appeared only for a few application areas, including graphics
+processing (GPUs), vector processors (MMX, SSE, and VMX instructions), and,
+to a lesser extent, encryption and compression. And even in these areas, it is not
+always easy to realize the expected performance gains, for example, due to thermal
+throttling [Kra17, Lem18, Dow20].
+
+    Unlike the server and PC arena, smartphones have long used a wide variety of
+hardware accelerators. These hardware accelerators are often used for media decoding,
+so much so that a high-end MP3 player might be able to play audio for several minutes—
+with its CPU fully powered off the entire time. The purpose of these accelerators is
+to improve energy efficiency and thus extend battery life: Special purpose hardware
+can often compute more efficiently than can a general-purpose CPU. This is another
+example of the principle called out in Section 2.2.3: Generality is almost never free.
+
+    Nevertheless, given the end of Moore’s-Law-induced single-threaded performance
+increases, it seems safe to assume that increasing varieties of special-purpose hardware
+will appear. For example, in the mid-2020s, many are betting on special-purpose
+accelerators for artificial-intelligence and machine-learning workloads.
+
+3.3.5    Existing Parallel Software
+
+Although multicore CPUs seem to have taken the computing industry by surprise,
+the fact remains that shared-memory parallel computer systems have been readily (if
+expensively) available since at least the 1980s. This is more than enough time for
+significant parallel software to make its appearance, and it indeed has. Parallel operating
+systems are quite commonplace, as are parallel threading libraries, parallel relational
+database management systems, and parallel numerical software. Use of existing parallel
+software can go a long ways towards solving any parallel-software crisis we might
+encounter.
+
+    Perhaps the most common example is the parallel relational database management
+system. It is not unusual for single-threaded programs, often written in high-level
+scripting languages, to access a central relational database concurrently. In the resulting
+highly parallel system, only the database need actually deal directly with parallelism. A
+very nice trick when it works!
+
+                                                                                              v2025.12.18a
+46                                    CHAPTER 3. HARDWARE AND ITS HABITS
+
+3.4      Software Design Implications
+
+                                         One ship drives east and another west
+                                         While the self-same breezes blow;
+                                         ’Tis the set of the sail and not the gail
+                                         That bids them where to go.
+                                                                           Ella Wheeler Wilcox
+
+The values of the ratios in Table 3.1 are critically important, as they limit the efficiency
+of a given parallel application. To see this, suppose that the parallel application uses
+CAS operations to communicate among threads. These CAS operations will typically
+involve a cache miss, that is, assuming that the threads are communicating primarily
+with each other rather than with themselves. Suppose further that the unit of work
+corresponding to each CAS communication operation takes 300 ns, which is sufficient
+time to compute several floating-point transcendental functions. Then about half of the
+execution time will be consumed by the CAS communication operations! This in turn
+means that a two-CPU system running such a parallel program would run no faster than
+a sequential implementation running on a single CPU.
+    The situation is even worse in the distributed-system case, where the latency of
+a single communications operation might take as long as thousands or even millions
+of floating-point operations. This illustrates how important it is for communications
+operations to be extremely infrequent and to enable very large quantities of processing.
+Quick Quiz 3.13: Given that distributed-systems communication is so horribly expensive,
+why does anyone bother with such systems?
+
+     The lesson should be quite clear: Parallel algorithms must be explicitly designed with
+these hardware properties firmly in mind. One approach is to run nearly independent
+threads. The less frequently the threads communicate, whether by atomic operations,
+locks, or explicit messages, the better the application’s performance and scalability will
+be. This approach will be touched on in Chapter 5, explored in Chapter 6, and taken to
+its logical extreme in Chapter 8.
+     Another approach is to make sure that any sharing be read-mostly, which allows the
+CPUs’ caches to replicate the read-mostly data, in turn allowing all CPUs fast access.
+This approach is touched on in Section 5.2.4, and explored more deeply in Chapter 9.
+     In short, achieving excellent parallel performance and scalability means striving for
+embarrassingly parallel algorithms and implementations, whether by careful choice of
+data structures and algorithms, use of existing parallel applications and environments,
+or transforming the problem into an embarrassingly parallel form.
+Quick Quiz 3.14: OK, if we are going to have to apply distributed-programming techniques to
+shared-memory parallel programs, why not just always use these distributed techniques and
+dispense with shared memory?
+
+     So, to sum up:
+
+     1. The good news is that multicore systems are inexpensive and readily available.
+
+     2. More good news: The overhead of many synchronization operations is much
+        lower than it was on parallel systems from the early 2000s.
+
+                                                                                                 v2025.12.18a
+3.4. SOFTWARE DESIGN IMPLICATIONS                                                      47
+
+   3. The bad news is that the overhead of cache misses is still high, especially on large
+      systems.
+
+   The remainder of this book describes ways of handling this bad news.
+   In particular, Chapter 4 will cover some of the low-level tools used for parallel
+programming, Chapter 5 will investigate problems and solutions to parallel counting,
+and Chapter 6 will discuss design disciplines that promote performance and scalability.
+
+                                                                                             v2025.12.18a
+48   CHAPTER 3. HARDWARE AND ITS HABITS
+
+                                          v2025.12.18a

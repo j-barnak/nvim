@@ -1,0 +1,1174 @@
+                                            The only difference between men and boys is the
+                                            price of their toys.
+                                                                                        M. Hébert
+
+Appendix B
+
+“Toy” RCU Implementations
+
+This appendix provides a series of RCU implementations in order of increasing sophisti-
+cation, from the viewpoint of solving the existence-guarantee problem. Appendix B.1
+presents a rudimentary RCU implementation based on simple locking, while Appen-
+dices B.2 through B.10 present a series of simple RCU implementations based on
+locking, reference counters, and free-running counters. Finally, Appendix B.11 provides
+a summary and a list of desirable RCU properties.
+    The toy RCU implementations in this appendix are designed not for high performance,
+practicality, or any kind of production use,1 but rather for clarity and for instructional
+purposes. Nevertheless, you will need a thorough understanding of Chapters 2, 3, 4, 6,
+and 9 for even these toy RCU implementations to be easily understood.
+
+B.1        Lock-Based RCU
+Perhaps the simplest RCU implementation leverages locking, as shown in Listing B.1
+(rcu_lock.h and rcu_lock.c).
+    In this implementation, rcu_read_lock() acquires a global spinlock, rcu_read_
+unlock() releases it, and synchronize_rcu() acquires it then immediately releases
+it.
+
+Listing B.1: Lock-Based RCU Implementation
+1    static void rcu_read_lock(void)
+2    {
+3            spin_lock(&rcu_gp_lock);
+4    }
+5
+6    static void rcu_read_unlock(void)
+7    {
+8            spin_unlock(&rcu_gp_lock);
+9    }
+10
+11   void synchronize_rcu(void)
+12   {
+13           spin_lock(&rcu_gp_lock);
+14           spin_unlock(&rcu_gp_lock);
+15   }
+
+  1 However, production-quality user-level RCU implementations are available [Des09b,
+
+DMS+ 12a].
+
+                                                                                                    v2025.12.18a
+666                                  APPENDIX B. “TOY” RCU IMPLEMENTATIONS
+
+Listing B.2: Per-Thread Lock-Based RCU Implementation
+1    static void rcu_read_lock(void)
+2    {
+3            spin_lock(&__get_thread_var(rcu_gp_lock));
+4    }
+5
+6    static void rcu_read_unlock(void)
+7    {
+8            spin_unlock(&__get_thread_var(rcu_gp_lock));
+9    }
+10
+11   void synchronize_rcu(void)
+12   {
+13           int t;
+14
+15           for_each_running_thread(t) {
+16                   spin_lock(&per_thread(rcu_gp_lock, t));
+17                   spin_unlock(&per_thread(rcu_gp_lock, t));
+18           }
+19   }
+
+     Because synchronize_rcu() does not return until it has acquired (and released)
+the lock, it cannot return until all prior RCU read-side critical sections have completed,
+thus faithfully implementing RCU semantics. Of course, only one RCU reader may be in
+its read-side critical section at a time, which almost entirely defeats the purpose of RCU.
+In addition, the lock operations in rcu_read_lock() and rcu_read_unlock() are
+extremely heavyweight, with read-side overhead ranging from about 100 nanoseconds
+on a single POWER5 CPU up to more than 17 microseconds on a 64-CPU system.
+Worse yet, these same lock operations permit rcu_read_lock() to participate in
+deadlock cycles. Furthermore, in absence of recursive locks, RCU read-side critical
+sections cannot be nested, and, finally, although concurrent RCU updates could in
+principle be satisfied by a common grace period, this implementation serializes grace
+periods, preventing grace-period sharing.
+ Quick Quiz B.1: Why wouldn’t any deadlock in the RCU implementation in Listing B.1 also
+ be a deadlock in any other RCU implementation?
+
+ Quick Quiz B.2: Why not simply use reader-writer locks in the RCU implementation in
+ Listing B.1 in order to allow RCU readers to proceed in parallel?
+
+    It is hard to imagine this implementation being useful in a production setting, though
+it does have the virtue of being implementable in almost any user-level application.
+Furthermore, similar implementations having one lock per CPU or using reader-writer
+locks have been used in production in the 2.4 Linux kernel.
+    A modified version of this one-lock-per-CPU approach, but instead using one lock
+per thread, is described in the next section.
+
+B.2        Per-Thread Lock-Based RCU
+Listing B.2 (rcu_lock_percpu.h and rcu_lock_percpu.c) shows an implementa-
+tion based on one lock per thread. The rcu_read_lock() and rcu_read_unlock()
+functions acquire and release, respectively, the current thread’s lock. The synchronize_
+rcu() function acquires and releases each thread’s lock in turn. Therefore, all RCU
+read-side critical sections running when synchronize_rcu() starts must have com-
+pleted before synchronize_rcu() can return.
+
+                                                                                              v2025.12.18a
+B.3. SIMPLE COUNTER-BASED RCU                                                               667
+
+    This implementation does have the virtue of permitting concurrent RCU readers, and
+does avoid the deadlock condition that can arise with a single global lock. Furthermore,
+the read-side overhead, though high at roughly 140 nanoseconds, remains at about 140
+nanoseconds regardless of the number of CPUs. However, the update-side overhead
+ranges from about 600 nanoseconds on a single POWER5 CPU up to more than 100
+microseconds on 64 CPUs.
+Quick Quiz B.3: Wouldn’t it be cleaner to acquire all the locks, and then release them all in
+the loop from lines 15–18 of Listing B.2? After all, with this change, there would be a point in
+time when there were no readers, simplifying things greatly.
+
+Quick Quiz B.4: Is the implementation shown in Listing B.2 free from deadlocks? Why or
+why not?
+
+Quick Quiz B.5: Isn’t one advantage of the RCU algorithm shown in Listing B.2 that it uses
+only primitives that are widely available, for example, in POSIX pthreads?
+
+   This approach could be useful in some situations, given that a similar approach was
+used in the Linux 2.4 kernel [MM00].
+   The counter-based RCU implementation described next overcomes some of the
+shortcomings of the lock-based implementation.
+
+B.3     Simple Counter-Based RCU
+A slightly more sophisticated RCU implementation is shown in Listing B.3 (rcu_rcg.h
+and rcu_rcg.c). This implementation makes use of a global reference counter rcu_
+refcnt defined on line 1. The rcu_read_lock() primitive atomically increments
+this counter, then executes a memory barrier to ensure that the RCU read-side critical
+section is ordered after the atomic increment. Similarly, rcu_read_unlock() executes
+a memory barrier to confine the RCU read-side critical section, then atomically
+decrements the counter. The synchronize_rcu() primitive spins waiting for the
+reference counter to reach zero, surrounded by memory barriers. The poll() on line 19
+merely provides pure delay, and from a pure RCU-semantics point of view could be
+omitted. Again, once synchronize_rcu() returns, all prior RCU read-side critical
+sections are guaranteed to have completed.
+    In happy contrast to the lock-based implementation shown in Appendix B.1, this
+implementation allows parallel execution of RCU read-side critical sections. In happy
+contrast to the per-thread lock-based implementation shown in Appendix B.2, it also
+allows them to be nested. In addition, the rcu_read_lock() primitive cannot possibly
+participate in deadlock cycles, as it never spins nor blocks.
+Quick Quiz B.6: But what if you hold a lock across a call to synchronize_rcu(), and then
+acquire that same lock within an RCU read-side critical section?
+
+    However, this implementation still has some serious shortcomings. First, the atomic
+operations in rcu_read_lock() and rcu_read_unlock() are still quite heavyweight,
+with read-side overhead ranging from about 100 nanoseconds on a single POWER5
+CPU up to almost 40 microseconds on a 64-CPU system. This means that the RCU
+read-side critical sections have to be extremely long in order to get any real read-
+side parallelism. On the other hand, in the absence of readers, grace periods elapse
+in about 40 nanoseconds, many orders of magnitude faster than production-quality
+implementations in the Linux kernel.
+
+                                                                                                   v2025.12.18a
+668                                     APPENDIX B. “TOY” RCU IMPLEMENTATIONS
+
+Listing B.3: RCU Implementation Using Single Global Reference Counter
+1    atomic_t rcu_refcnt;
+2
+3    static void rcu_read_lock(void)
+4    {
+5            atomic_inc(&rcu_refcnt);
+6            smp_mb();
+7    }
+8
+9    static void rcu_read_unlock(void)
+10   {
+11           smp_mb();
+12           atomic_dec(&rcu_refcnt);
+13   }
+14
+15   void synchronize_rcu(void)
+16   {
+17           smp_mb();
+18           while (atomic_read(&rcu_refcnt) != 0) {
+19                   poll(NULL, 0, 10);
+20           }
+21           smp_mb();
+22   }
+
+ Quick Quiz B.7: How can the grace period possibly elapse in 40 nanoseconds when
+ synchronize_rcu() contains a 10-millisecond delay?
+
+   Second, if there are many concurrent rcu_read_lock() and rcu_read_unlock()
+operations, there will be extreme memory contention on rcu_refcnt, resulting in
+expensive cache misses. Both of these first two shortcomings largely defeat a major
+purpose of RCU, namely to provide low-overhead read-side synchronization primitives.
+   Finally, a large number of RCU readers with long read-side critical sections could
+prevent synchronize_rcu() from ever completing, as the global counter might
+never reach zero. This could result in starvation of RCU updates, which is of course
+unacceptable in production settings.
+ Quick Quiz B.8:       Why not simply make rcu_read_lock() wait when a concurrent
+ synchronize_rcu() has been waiting too long in the RCU implementation in Listing B.3?
+ Wouldn’t that prevent synchronize_rcu() from starving?
+
+    Therefore, it is still hard to imagine this implementation being useful in a production
+setting, though it has a bit more potential than the lock-based mechanism, for example,
+as an RCU implementation suitable for a high-stress debugging environment. The next
+section describes a variation on the reference-counting scheme that is more favorable to
+writers.
+
+B.4        Starvation-Free Counter-Based RCU
+Listing B.5 (rcu_rcpg.h) shows the read-side primitives of an RCU implementation
+that uses a pair of reference counters (rcu_refcnt[]), along with a global index
+that selects one counter out of the pair (rcu_idx), a per-thread nesting counter (rcu_
+nesting), a per-thread snapshot of the global index (rcu_read_idx), and a global
+lock (rcu_gp_lock), which are themselves shown in Listing B.4.
+
+Design It is the two-element rcu_refcnt[] array that provides the freedom from
+starvation. The key point is that synchronize_rcu() is only required to wait for
+
+                                                                                              v2025.12.18a
+B.4. STARVATION-FREE COUNTER-BASED RCU                                                         669
+
+Listing B.4: RCU Global Reference-Count Pair Data
+1    DEFINE_SPINLOCK(rcu_gp_lock);
+2    atomic_t rcu_refcnt[2];
+3    atomic_t rcu_idx;
+4    DEFINE_PER_THREAD(int, rcu_nesting);
+5    DEFINE_PER_THREAD(int, rcu_read_idx);
+
+Listing B.5: RCU Read-Side Using Global Reference-Count Pair
+1    static void rcu_read_lock(void)
+2    {
+3            int i;
+4            int n;
+5
+6            n = __get_thread_var(rcu_nesting);
+7            if (n == 0) {
+8                    i = atomic_read(&rcu_idx);
+9                    __get_thread_var(rcu_read_idx) = i;
+10                   atomic_inc(&rcu_refcnt[i]);
+11           }
+12           __get_thread_var(rcu_nesting) = n + 1;
+13           smp_mb();
+14   }
+15
+16   static void rcu_read_unlock(void)
+17   {
+18           int i;
+19           int n;
+20
+21           smp_mb();
+22           n = __get_thread_var(rcu_nesting);
+23           if (n == 1) {
+24                   i = __get_thread_var(rcu_read_idx);
+25                   atomic_dec(&rcu_refcnt[i]);
+26           }
+27           __get_thread_var(rcu_nesting) = n - 1;
+28   }
+
+pre-existing readers. If a new reader starts after a given instance of synchronize_
+rcu() has already begun execution, then that instance of synchronize_rcu() need
+not wait on that new reader. At any given time, when a given reader enters its RCU
+read-side critical section via rcu_read_lock(), it increments the element of the
+rcu_refcnt[] array indicated by the rcu_idx variable. When that same reader exits
+its RCU read-side critical section via rcu_read_unlock(), it decrements whichever
+element it incremented, ignoring any possible subsequent changes to the rcu_idx value.
+    This arrangement means that synchronize_rcu() can avoid starvation by com-
+plementing the value of rcu_idx, as in rcu_idx = !rcu_idx. Suppose that the old
+value of rcu_idx was zero, so that the new value is one. New readers that arrive after
+the complement operation will increment rcu_refcnt[1], while the old readers that
+previously incremented rcu_refcnt[0] will decrement rcu_refcnt[0] when they
+exit their RCU read-side critical sections. This means that the value of rcu_refcnt[0]
+will no longer be incremented, and thus will be monotonically decreasing.2 This means
+that all that synchronize_rcu() need do is wait for the value of rcu_refcnt[0] to
+reach zero.
+    With the background, we are ready to look at the implementation of the actual
+primitives.
+
+    2 There is a race condition that this “monotonically decreasing” statement ignores. This
+
+race condition will be dealt with by the code for synchronize_rcu(). In the meantime, I
+suggest suspending disbelief.
+
+                                                                                                     v2025.12.18a
+670                                  APPENDIX B. “TOY” RCU IMPLEMENTATIONS
+
+Listing B.6: RCU Update Using Global Reference-Count Pair
+1    void synchronize_rcu(void)
+2    {
+3            int i;
+4
+5            smp_mb();
+6            spin_lock(&rcu_gp_lock);
+7            i = atomic_read(&rcu_idx);
+8            atomic_set(&rcu_idx, !i);
+9            smp_mb();
+10           while (atomic_read(&rcu_refcnt[i]) != 0) {
+11                   poll(NULL, 0, 10);
+12           }
+13           smp_mb();
+14           atomic_set(&rcu_idx, i);
+15           smp_mb();
+16           while (atomic_read(&rcu_refcnt[!i]) != 0) {
+17                   poll(NULL, 0, 10);
+18           }
+19           spin_unlock(&rcu_gp_lock);
+20           smp_mb();
+21   }
+
+Implementation The rcu_read_lock() primitive atomically increments the mem-
+ber of the rcu_refcnt[] pair indexed by rcu_idx, and keeps a snapshot of this index
+in the per-thread variable rcu_read_idx. The rcu_read_unlock() primitive then
+atomically decrements whichever counter of the pair that the corresponding rcu_read_
+lock() incremented. However, because only one value of rcu_idx is remembered per
+thread, additional measures must be taken to permit nesting. These additional measures
+use the per-thread rcu_nesting variable to track nesting.
+    To make all this work, line 6 of rcu_read_lock() in Listing B.5 picks up the
+current thread’s instance of rcu_nesting, and if line 7 finds that this is the outermost
+rcu_read_lock(), then lines 8–10 pick up the current value of rcu_idx, save it in this
+thread’s instance of rcu_read_idx, and atomically increment the selected element of
+rcu_refcnt. Regardless of the value of rcu_nesting, line 12 increments it. Line 13
+executes a memory barrier to ensure that the RCU read-side critical section does not
+bleed out before the rcu_read_lock() code.
+    Similarly, the rcu_read_unlock() function executes a memory barrier at line 21
+to ensure that the RCU read-side critical section does not bleed out after the rcu_read_
+unlock() code. Line 22 picks up this thread’s instance of rcu_nesting, and if line 23
+finds that this is the outermost rcu_read_unlock(), then lines 24 and 25 pick up this
+thread’s instance of rcu_read_idx (saved by the outermost rcu_read_lock()) and
+atomically decrements the selected element of rcu_refcnt. Regardless of the nesting
+level, line 27 decrements this thread’s instance of rcu_nesting.
+    Listing B.6 (rcu_rcpg.c) shows the corresponding synchronize_rcu() imple-
+mentation. Lines 6 and 19 acquire and release rcu_gp_lock in order to prevent more
+than one concurrent instance of synchronize_rcu(). Lines 7 and 8 pick up the
+value of rcu_idx and complement it, respectively, so that subsequent instances of
+rcu_read_lock() will use a different element of rcu_refcnt than did preceding
+instances. Lines 10–12 then wait for the prior element of rcu_refcnt to reach zero,
+with the memory barrier on line 9 ensuring that the check of rcu_refcnt is not
+reordered to precede the complementing of rcu_idx. Lines 13–18 repeat this process,
+and line 20 ensures that any subsequent reclamation operations are not reordered to
+precede the checking of rcu_refcnt.
+
+                                                                                           v2025.12.18a
+B.5. SCALABLE SINGLE-COUNTER RCU                                                     671
+
+Quick Quiz B.9: Why the memory barrier on line 5 of synchronize_rcu() in Listing B.6
+given that there is a spin-lock acquisition immediately after?
+
+Quick Quiz B.10: Why is the counter flipped twice in Listing B.6? Shouldn’t a single
+flip-and-wait cycle be sufficient?
+
+    This implementation avoids the update-starvation issues that could occur in the
+single-counter implementation shown in Listing B.3.
+
+Discussion There are still some serious shortcomings. First, the atomic operations in
+rcu_read_lock() and rcu_read_unlock() are still quite heavyweight. In fact, they
+are more complex than those of the single-counter variant shown in Listing B.3, with the
+read-side primitives consuming about 150 nanoseconds on a single POWER5 CPU and
+almost 40 microseconds on a 64-CPU system. The update-side synchronize_rcu()
+primitive is more costly as well, ranging from about 200 nanoseconds on a single
+POWER5 CPU to more than 40 microseconds on a 64-CPU system. This means that
+the RCU read-side critical sections have to be extremely long in order to get any real
+read-side parallelism.
+    Second, if there are many concurrent rcu_read_lock() and rcu_read_unlock()
+operations, there will be extreme memory contention on the rcu_refcnt elements, re-
+sulting in expensive cache misses. This further extends the RCU read-side critical-section
+duration required to provide parallel read-side access. These first two shortcomings
+defeat the purpose of RCU in most situations.
+    Third, the need to flip rcu_idx twice imposes substantial overhead on updates,
+especially if there are large numbers of threads.
+    Finally, despite the fact that concurrent RCU updates could in principle be satisfied
+by a common grace period, this implementation serializes grace periods, preventing
+grace-period sharing.
+Quick Quiz B.11: Given that atomic increment and decrement are so expensive, why not just
+use non-atomic increment on line 10 and a non-atomic decrement on line 25 of Listing B.5?
+
+    Despite these shortcomings, one could imagine this variant of RCU being used on
+small tightly coupled multiprocessors, perhaps as a memory-conserving implementation
+that maintains API compatibility with more complex implementations. However, it
+would not likely scale well beyond a few CPUs.
+    The next section describes yet another variation on the reference-counting scheme
+that provides greatly improved read-side performance and scalability.
+
+B.5      Scalable Single-Counter RCU
+The single global counter used in Appendix B.3 will be non-zero any time that any
+thread is executing within an RCU read-side critical section. Assuming that each thread
+spends a fixed fraction of its time in such a critical section, as threads are added, the
+probability that the global counter is non-zero approaches unity, resulting in starvation
+of the updater. One way to avoid such starvation is to use a pair of global counters,
+as discussed in Appendix B.4, however, this still suffers from memory contention as
+illustrated by Figure 5.1. Another approach is to use a per-thread counter, so that a
+given thread’s counter will be zero whenever that thread is outside of an RCU read-side
+critical section, no matter how many threads there are.
+
+                                                                                             v2025.12.18a
+672                                            APPENDIX B. “TOY” RCU IMPLEMENTATIONS
+
+Listing B.7: RCU Per-Thread Reference-Count Data
+1    DEFINE_SPINLOCK(rcu_gp_lock);
+2    DEFINE_PER_THREAD(int, rcu_nesting);
+
+Listing B.8: RCU Read-Side Using Per-Thread Reference-Count
+1    static void rcu_read_lock(void)
+2    {
+3            int n;
+4
+5                n = __get_thread_var(rcu_nesting);
+6                __get_thread_var(rcu_nesting) = n + 1;
+7                smp_mb();
+8    }
+9
+10   static void rcu_read_unlock(void)
+11   {
+12           int n;
+13
+14               smp_mb();
+15               n = __get_thread_var(rcu_nesting);
+16               __get_thread_var(rcu_nesting) = n - 1;
+17   }
+
+Listing B.9: RCU Update Using Per-Thread Reference-Count
+1    void synchronize_rcu(void)
+2    {
+3            int t;
+4
+5                smp_mb();
+6                spin_lock(&rcu_gp_lock);
+7                for_each_thread(t) {
+8                        while (per_thread(rcu_nesting, t) != 0) {
+9                                poll(NULL, 0, 10);
+10                       }
+11               }
+12               spin_unlock(&rcu_gp_lock);
+13               smp_mb();
+14   }
+
+    Listing B.8 (rcu_rcpl.h) shows the read-side primitives of an RCU implementation
+that uses per-thread reference counters.3 One benefit of per-thread rcu_nesting[]
+counter is that the rcu_read_lock() and rcu_read_unlock() primitives no longer
+execute atomic instructions, but instead execute non-atomic increments and decrements
+of per-thread counters.
+ Quick Quiz B.12: Come off it! We can see the atomic_read() primitive in rcu_read_
+ lock()!!! So why are you trying to pretend that rcu_read_lock() contains no atomic
+ operations???
+
+    Listing B.9 (rcu_rcl.c) shows the implementation of synchronize_rcu(). The
+synchronize_rcu() function resembles that shown in Listing B.3, except that the
+polling of the global counter is replaced by a scan on lines 7–11 that polls each per-thread
+counter in turn.
+    This RCU implementation imposes important new requirements on its software
+environment, namely, (1) that it be possible to declare per-thread variables, (2) that
+these per-thread variables be accessible from other threads, and (3) that it is possible
+to enumerate all threads. These requirements can be met in almost all software
+environments, but often result in fixed upper bounds on the number of threads. More-
+
+         3 Or, if you prefer, nesting-level counters.
+
+                                                                                               v2025.12.18a
+B.6. SCALABLE COUNTER-BASED RCU                                                        673
+
+Listing B.10: RCU Per-Thread Reference-Count Pair Data
+1   DEFINE_SPINLOCK(rcu_gp_lock);
+2   DEFINE_PER_THREAD(int [2], rcu_refcnt);
+3   atomic_t rcu_idx;
+4   DEFINE_PER_THREAD(int, rcu_nesting);
+5   DEFINE_PER_THREAD(int, rcu_read_idx);
+
+complex implementations might avoid such bounds, for example, by using expandable
+hash tables. Such implementations might dynamically track threads, for example, by
+adding them on their first call to rcu_read_lock().
+Quick Quiz B.13: Great, if we have 𝑁 threads, we can have 2𝑁 ten-millisecond waits (one set
+per flip_counter_and_wait() invocation, and even that assumes that we wait only once for
+each thread). Don’t we need the grace period to complete much more quickly?
+
+    This implementation still has several shortcomings. First, synchronize_rcu()
+must now examine a number of variables that increases linearly with the number of
+threads, imposing substantial overhead on applications with large numbers of threads.
+    Third, as before, although concurrent RCU updates could in principle be satisfied
+by a common grace period, this implementation serializes grace periods, preventing
+grace-period sharing.
+    Finally, as noted in the text, the need for per-thread variables and for enumerating
+threads may be problematic in some software environments.
+    That said, the read-side primitives scale very nicely, executing a fixed set of machine
+instructions that access a per-thread counter.
+    The next section describes an algorithm that prevents readers from starving even the
+most unlucky updaters.
+
+B.6       Scalable Counter-Based RCU
+Listing B.11 (rcu_rcpl.h) shows the read-side primitives of an RCU implementation
+that uses per-thread pairs of reference counters. This implementation is quite similar to
+that shown in Listing B.8, the main difference being the addition of the rcu_refcnt
+per-thread array shown in Listing B.10. As with the algorithm in Listing B.5, use of
+this two-element array prevents readers from starving even the least lucky updaters.
+     Listing B.12 (rcu_rcpl.c) shows the implementation of synchronize_rcu(),
+along with a helper function named flip_counter_and_wait(). The synchronize_
+rcu() function resembles that shown in Listing B.6, except that the repeated counter
+flip is replaced by a pair of calls on lines 22 and 23 to the new helper function.
+     The new flip_counter_and_wait() function updates the rcu_idx variable on
+line 5, executes a memory barrier on line 6, then lines 7–11 spin on each thread’s prior
+rcu_refcnt element, waiting for it to go to zero. Once all such elements have gone to
+zero, it executes another memory barrier on line 12 and returns.
+     This implementation still has several shortcomings. First, the need to flip rcu_idx
+twice imposes substantial overhead on updates, especially if there are large numbers of
+threads.
+     Second, as before, synchronize_rcu() must now examine a number of variables
+that increases linearly with the number of threads, imposing substantial overhead on
+applications with large numbers of threads.
+
+                                                                                              v2025.12.18a
+674                                    APPENDIX B. “TOY” RCU IMPLEMENTATIONS
+
+Listing B.11: RCU Read-Side Using Per-Thread Reference-Count Pair
+1    static void rcu_read_lock(void)
+2    {
+3            int i;
+4            int n;
+5
+6            n = __get_thread_var(rcu_nesting);
+7            if (n == 0) {
+8                    i = atomic_read(&rcu_idx);
+9                    __get_thread_var(rcu_read_idx) = i;
+10                   __get_thread_var(rcu_refcnt)[i]++;
+11           }
+12           __get_thread_var(rcu_nesting) = n + 1;
+13           smp_mb();
+14   }
+15
+16   static void rcu_read_unlock(void)
+17   {
+18           int i;
+19           int n;
+20
+21           smp_mb();
+22           n = __get_thread_var(rcu_nesting);
+23           if (n == 1) {
+24                   i = __get_thread_var(rcu_read_idx);
+25                   __get_thread_var(rcu_refcnt)[i]--;
+26           }
+27           __get_thread_var(rcu_nesting) = n - 1;
+28   }
+
+Listing B.12: RCU Update Using Per-Thread Reference-Count Pair
+1    static void flip_counter_and_wait(int i)
+2    {
+3            int t;
+4
+5            atomic_set(&rcu_idx, !i);
+6            smp_mb();
+7            for_each_thread(t) {
+8                    while (per_thread(rcu_refcnt, t)[i] != 0) {
+9                            poll(NULL, 0, 10);
+10                   }
+11           }
+12           smp_mb();
+13   }
+14
+15   void synchronize_rcu(void)
+16   {
+17           int i;
+18
+19           smp_mb();
+20           spin_lock(&rcu_gp_lock);
+21           i = atomic_read(&rcu_idx);
+22           flip_counter_and_wait(i);
+23           flip_counter_and_wait(!i);
+24           spin_unlock(&rcu_gp_lock);
+25           smp_mb();
+26   }
+
+                                                                               v2025.12.18a
+B.7. SCALABLE COUNTER-BASED RCU WITH SHARED GRACE PERIODS675
+
+Listing B.13: RCU Read-Side Using Per-Thread Reference-Count Pair and Shared Update Data
+1   DEFINE_SPINLOCK(rcu_gp_lock);
+2   DEFINE_PER_THREAD(int [2], rcu_refcnt);
+3   long rcu_idx;
+4   DEFINE_PER_THREAD(int, rcu_nesting);
+5   DEFINE_PER_THREAD(int, rcu_read_idx);
+
+    Third, as before, although concurrent RCU updates could in principle be satisfied
+by a common grace period, this implementation serializes grace periods, preventing
+grace-period sharing.
+    Fourth, the need to consult rcu_idx slows readers slightly compared to the
+implementation presented in sec:app:toyrcu:Scalable Single-Counter RCU.
+    Finally, as noted in the text, the need for per-thread variables and for enumerating
+threads may be problematic in some software environments.
+    That said, the read-side primitives scale very nicely, requiring about 115 nanoseconds
+regardless of whether running on a single-CPU or a 64-CPU POWER5 system. As
+noted above, the synchronize_rcu() primitive does not scale, ranging in overhead
+from almost a microsecond on a single POWER5 CPU up to almost 200 microseconds
+on a 64-CPU system. This implementation could conceivably form the basis for a
+production-quality user-level RCU implementation.
+    The next section describes an algorithm permitting more efficient concurrent RCU
+updates.
+
+B.7       Scalable Counter-Based RCU With Shared Grace
+          Periods
+Listing B.14 (rcu_rcpls.h) shows the read-side primitives for an RCU implementation
+using per-thread reference count pairs, as before, but permitting updates to share grace
+periods. The main difference from the earlier implementation shown in Listing B.11 is
+that rcu_idx is now a long that counts freely, so that line 8 of Listing B.14 must mask
+off the low-order bit. We also switched from using atomic_read() and atomic_
+set() to using READ_ONCE(). The data is also quite similar, as shown in Listing B.13,
+with rcu_idx now being a long instead of an atomic_t.
+    Listing B.15 (rcu_rcpls.c) shows the implementation of synchronize_rcu()
+and its helper function flip_counter_and_wait(). These are similar to those in
+Listing B.12. The differences in flip_counter_and_wait() include:
+
+    1. Line 6 uses WRITE_ONCE() instead of atomic_set(), and increments rather
+       than complementing.
+
+    2. A new line 7 masks the counter down to its bottom bit.
+
+     The changes to synchronize_rcu() are more pervasive:
+
+    1. There is a new oldctr local variable that captures the pre-lock-acquisition value
+       of rcu_idx on line 20.
+
+    2. Line 23 uses READ_ONCE() instead of atomic_read().
+
+    3. Lines 27–30 check to see if at least three counter flips were performed by other
+       threads while the lock was being acquired, and, if so, releases the lock, does
+
+                                                                                             v2025.12.18a
+676                                    APPENDIX B. “TOY” RCU IMPLEMENTATIONS
+
+Listing B.14: RCU Read-Side Using Per-Thread Reference-Count Pair and Shared Update
+1    static void rcu_read_lock(void)
+2    {
+3            int i;
+4            int n;
+5
+6            n = __get_thread_var(rcu_nesting);
+7            if (n == 0) {
+8                    i = READ_ONCE(rcu_idx) & 0x1;
+9                    __get_thread_var(rcu_read_idx) = i;
+10                   __get_thread_var(rcu_refcnt)[i]++;
+11           }
+12           __get_thread_var(rcu_nesting) = n + 1;
+13           smp_mb();
+14   }
+15
+16   static void rcu_read_unlock(void)
+17   {
+18           int i;
+19           int n;
+20
+21           smp_mb();
+22           n = __get_thread_var(rcu_nesting);
+23           if (n == 1) {
+24                   i = __get_thread_var(rcu_read_idx);
+25                   __get_thread_var(rcu_refcnt)[i]--;
+26           }
+27           __get_thread_var(rcu_nesting) = n - 1;
+28   }
+
+Listing B.15: RCU Shared Update Using Per-Thread Reference-Count Pair
+1    static void flip_counter_and_wait(int ctr)
+2    {
+3            int i;
+4            int t;
+5
+6            WRITE_ONCE(rcu_idx, ctr + 1);
+7            i = ctr & 0x1;
+8            smp_mb();
+9            for_each_thread(t) {
+10                   while (per_thread(rcu_refcnt, t)[i] != 0) {
+11                           poll(NULL, 0, 10);
+12                   }
+13           }
+14           smp_mb();
+15   }
+16
+17   void synchronize_rcu(void)
+18   {
+19           int ctr;
+20           int oldctr;
+21
+22           smp_mb();
+23           oldctr = READ_ONCE(rcu_idx);
+24           smp_mb();
+25           spin_lock(&rcu_gp_lock);
+26           ctr = READ_ONCE(rcu_idx);
+27           if (ctr - oldctr >= 3) {
+28                   spin_unlock(&rcu_gp_lock);
+29                   smp_mb();
+30                   return;
+31           }
+32           flip_counter_and_wait(ctr);
+33           if (ctr - oldctr < 2)
+34                   flip_counter_and_wait(ctr + 1);
+35           spin_unlock(&rcu_gp_lock);
+36           smp_mb();
+37   }
+
+                                                                                      v2025.12.18a
+B.7. SCALABLE COUNTER-BASED RCU WITH SHARED GRACE PERIODS677
+
+      a memory barrier, and returns. In this case, there were two full waits for the
+      counters to go to zero, so those other threads already did all the required work.
+
+   4. At lines 33–34, flip_counter_and_wait() is only invoked a second time if
+      there were fewer than two counter flips while the lock was being acquired. On
+      the other hand, if there were two counter flips, some other thread did one full wait
+      for all the counters to go to zero, so only one more is required.
+
+   With this approach, if an arbitrarily large number of threads invoke synchronize_
+rcu() concurrently, with one CPU for each thread, there will be a total of only three
+waits for counters to go to zero.
+    Despite the improvements, this implementation of RCU still has a few shortcomings.
+First, as before, the need to flip rcu_idx twice imposes substantial overhead on updates,
+especially if there are large numbers of threads.
+    Second, each updater still acquires rcu_gp_lock, even if there is no work to be
+done. This can result in a severe scalability limitation if there are large numbers of
+concurrent updates. There are ways of avoiding this, as was done in a production-quality
+real-time implementation of RCU for the Linux kernel [McK07a].
+    Third, this implementation requires per-thread variables and the ability to enumerate
+threads, which again can be problematic in some software environments.
+    Finally, on 32-bit machines, a given update thread might be preempted long enough
+for the rcu_idx counter to overflow. This could cause such a thread to force an
+unnecessary pair of counter flips. However, even if each grace period took only one
+microsecond, the offending thread would need to be preempted for more than an hour,
+in which case an extra pair of counter flips is likely the least of your worries.
+    As with the implementation described in Appendix B.3, the read-side primitives
+scale extremely well, incurring roughly 115 nanoseconds of overhead regardless of the
+number of CPUs. The synchronize_rcu() primitive is still expensive, ranging from
+about one microsecond up to about 16 microseconds. This is nevertheless much cheaper
+than the roughly 200 microseconds incurred by the implementation in Appendix B.6.
+So, despite its shortcomings, one could imagine this RCU implementation being used
+in production in real-life applications.
+
+Quick Quiz B.14: All of these toy RCU implementations have either atomic operations in rcu_
+read_lock() and rcu_read_unlock(), or synchronize_rcu() overhead that increases
+linearly with the number of threads. Under what circumstances could an RCU implementation
+enjoy lightweight implementations for all three of these primitives, all having deterministic
+(O (1)) overheads and latencies?
+
+    Referring back to Listing B.14, we see that there is one global-variable access and
+no fewer than four accesses to thread-local variables. Given the relatively high cost of
+thread-local accesses on systems implementing POSIX threads, it is tempting to collapse
+the three thread-local variables into a single structure, permitting rcu_read_lock()
+and rcu_read_unlock() to access their thread-local data with a single thread-local-
+storage access. However, an even better approach would be to reduce the number of
+thread-local accesses to one, as is done in the next section.
+
+                                                                                                v2025.12.18a
+678                                  APPENDIX B. “TOY” RCU IMPLEMENTATIONS
+
+Listing B.16: Data for Free-Running Counter Using RCU
+1    DEFINE_SPINLOCK(rcu_gp_lock);
+2    long rcu_gp_ctr = 0;
+3    DEFINE_PER_THREAD(long, rcu_reader_gp);
+4    DEFINE_PER_THREAD(long, rcu_reader_gp_snap);
+
+Listing B.17: Free-Running Counter Using RCU
+1    static inline void rcu_read_lock(void)
+2    {
+3            __get_thread_var(rcu_reader_gp) =
+4                    READ_ONCE(rcu_gp_ctr) + 1;
+5            smp_mb();
+6    }
+7
+8    static inline void rcu_read_unlock(void)
+9    {
+10           smp_mb();
+11           __get_thread_var(rcu_reader_gp) =
+12                   READ_ONCE(rcu_gp_ctr);
+13   }
+14
+15   void synchronize_rcu(void)
+16   {
+17           int t;
+18
+19           smp_mb();
+20           spin_lock(&rcu_gp_lock);
+21           WRITE_ONCE(rcu_gp_ctr, rcu_gp_ctr + 2);
+22           smp_mb();
+23           for_each_thread(t) {
+24                   while ((per_thread(rcu_reader_gp, t) & 0x1) &&
+25                          ((per_thread(rcu_reader_gp, t) -
+26                            rcu_gp_ctr) < 0)) {
+27                           poll(NULL, 0, 10);
+28                   }
+29           }
+30           spin_unlock(&rcu_gp_lock);
+31           smp_mb();
+32   }
+
+B.8        RCU Based on Free-Running Counter
+Listing B.17 (rcu.h and rcu.c) shows an RCU implementation based on a single
+global free-running counter that takes on only even-numbered values, with data shown
+in Listing B.16.
+    The resulting rcu_read_lock() implementation is extremely straightforward.
+Lines 3 and 4 simply add the value one to the global free-running rcu_gp_ctr variable
+and stores the resulting odd-numbered value into the rcu_reader_gp per-thread
+variable. Line 5 executes a memory barrier to prevent the content of the subsequent
+RCU read-side critical section from “leaking out”.
+    The rcu_read_unlock() implementation is similar. Line 10 executes a memory
+barrier, again to prevent the prior RCU read-side critical section from “leaking out”.
+Lines 11 and 12 then copy the rcu_gp_ctr global variable to the rcu_reader_gp
+per-thread variable, leaving this per-thread variable with an even-numbered value so
+that a concurrent instance of synchronize_rcu() will know to ignore it.
+ Quick Quiz B.15: If any even value is sufficient to tell synchronize_rcu() to ignore a given
+ task, why don’t lines 11 and 12 of Listing B.17 simply assign zero to rcu_reader_gp?
+
+    Thus, synchronize_rcu() could wait for all of the per-thread rcu_reader_gp
+variables to take on even-numbered values. However, it is possible to do much better
+
+                                                                                                v2025.12.18a
+B.9. NESTABLE RCU BASED ON FREE-RUNNING COUNTER                                                 679
+
+than that because synchronize_rcu() need only wait on pre-existing RCU read-side
+critical sections. Line 19 executes a memory barrier to prevent prior manipulations of
+RCU-protected data structures from being reordered (by either the CPU or the compiler)
+to follow the increment on line 21. Line 20 acquires the rcu_gp_lock (and line 30
+releases it) in order to prevent multiple synchronize_rcu() instances from running
+concurrently. Line 21 then increments the global rcu_gp_ctr variable by two, so that
+all pre-existing RCU read-side critical sections will have corresponding per-thread rcu_
+reader_gp variables with values less than that of rcu_gp_ctr, modulo the machine’s
+word size. Recall also that threads with even-numbered values of rcu_reader_gp are
+not in an RCU read-side critical section, so that lines 23–29 scan the rcu_reader_gp
+values until they all are either even (line 24) or are greater than the global rcu_gp_ctr
+(lines 25–26). Line 27 blocks for a short period of time to wait for a pre-existing RCU
+read-side critical section, but this can be replaced with a spin-loop if grace-period
+latency is of the essence. Finally, the memory barrier at line 31 ensures that any
+subsequent destruction will not be reordered into the preceding loop.
+Quick Quiz B.16: Why are the memory barriers on lines 19 and 31 of Listing B.17 needed?
+Aren’t the memory barriers inherent in the locking primitives on lines 20 and 30 sufficient?
+
+    This approach achieves much better read-side performance, incurring roughly
+63 nanoseconds of overhead regardless of the number of POWER5 CPUs. Updates
+incur more overhead, ranging from about 500 nanoseconds on a single POWER5 CPU
+to more than 100 microseconds on 64 such CPUs.
+Quick Quiz B.17: Couldn’t the update-side batching optimization described in Appendix B.7
+be applied to the implementation shown in Listing B.17?
+
+    This implementation suffers from some serious shortcomings in addition to the
+high update-side overhead noted earlier. First, it is no longer permissible to nest RCU
+read-side critical sections, a topic that is taken up in the next section. Second, if a
+reader is preempted at line 3 of Listing B.17 after fetching from rcu_gp_ctr but before
+storing to rcu_reader_gp, and if the rcu_gp_ctr counter then runs through more
+than half but less than all of its possible values, then synchronize_rcu() will ignore
+the subsequent RCU read-side critical section. Third and finally, this implementation
+requires that the enclosing software environment be able to enumerate threads and
+maintain per-thread variables.
+Quick Quiz B.18: Is the possibility of readers being preempted in lines 3–4 of Listing B.17 a
+real problem, in other words, is there a real sequence of events that could lead to failure? If not,
+why not? If so, what is the sequence of events, and how can the failure be addressed?
+
+B.9      Nestable RCU Based on Free-Running Counter
+Listing B.19 (rcu_nest.h and rcu_nest.c) shows an RCU implementation based on
+a single global free-running counter, but that permits nesting of RCU read-side critical
+sections. This nestability is accomplished by reserving the low-order bits of the global
+rcu_gp_ctr to count nesting, using the definitions shown in Listing B.18. This is a
+generalization of the scheme in Appendix B.8, which can be thought of as having a
+single low-order bit reserved for counting nesting depth. Two C-preprocessor macros are
+used to arrange this, RCU_GP_CTR_NEST_MASK and RCU_GP_CTR_BOTTOM_BIT. These
+
+                                                                                                       v2025.12.18a
+680                                    APPENDIX B. “TOY” RCU IMPLEMENTATIONS
+
+Listing B.18: Data for Nestable RCU Using a Free-Running Counter
+1    DEFINE_SPINLOCK(rcu_gp_lock);
+2    #define RCU_GP_CTR_SHIFT 7
+3    #define RCU_GP_CTR_BOTTOM_BIT (1 << RCU_GP_CTR_SHIFT)
+4    #define RCU_GP_CTR_NEST_MASK (RCU_GP_CTR_BOTTOM_BIT - 1)
+5    #define MAX_GP_ADV_DISTANCE (RCU_GP_CTR_NEST_MASK << 8)
+6    unsigned long rcu_gp_ctr = 0;
+7    DEFINE_PER_THREAD(unsigned long, rcu_reader_gp);
+
+Listing B.19: Nestable RCU Using a Free-Running Counter
+1    static void rcu_read_lock(void)
+2    {
+3            unsigned long tmp;
+4            unsigned long *rrgp;
+5
+6            rrgp = &__get_thread_var(rcu_reader_gp);
+7            tmp = *rrgp;
+8            if ((tmp & RCU_GP_CTR_NEST_MASK) == 0)
+9                    tmp = READ_ONCE(rcu_gp_ctr);
+10           tmp++;
+11           WRITE_ONCE(*rrgp, tmp);
+12           smp_mb();
+13   }
+14
+15   static void rcu_read_unlock(void)
+16   {
+17           smp_mb();
+18           __get_thread_var(rcu_reader_gp)--;
+19   }
+20
+21   void synchronize_rcu(void)
+22   {
+23           int t;
+24
+25           smp_mb();
+26           spin_lock(&rcu_gp_lock);
+27           WRITE_ONCE(rcu_gp_ctr, rcu_gp_ctr +
+28                      RCU_GP_CTR_BOTTOM_BIT);
+29           smp_mb();
+30           for_each_thread(t) {
+31                   while (rcu_gp_ongoing(t) &&
+32                          ((READ_ONCE(per_thread(rcu_reader_gp, t)) -
+33                            rcu_gp_ctr) < 0)) {
+34                           poll(NULL, 0, 10);
+35                   }
+36           }
+37           spin_unlock(&rcu_gp_lock);
+38           smp_mb();
+39   }
+
+are related: RCU_GP_CTR_NEST_MASK=RCU_GP_CTR_BOTTOM_BIT-1. The RCU_GP_
+CTR_BOTTOM_BIT macro contains a single bit that is positioned just above the bits
+reserved for counting nesting, and the RCU_GP_CTR_NEST_MASK has all one bits covering
+the region of rcu_gp_ctr used to count nesting. Obviously, these two C-preprocessor
+macros must reserve enough of the low-order bits of the counter to permit the maximum
+required nesting of RCU read-side critical sections, and this implementation reserves
+seven bits, for a maximum RCU read-side critical-section nesting depth of 127, which
+should be well in excess of that needed by most applications.
+    The resulting rcu_read_lock() implementation is still reasonably straightforward.
+Line 6 places a pointer to this thread’s instance of rcu_reader_gp into the local variable
+rrgp, minimizing the number of expensive calls to the pthreads thread-local-state API.
+Line 7 records the current value of rcu_reader_gp into another local variable tmp,
+and line 8 checks to see if the low-order bits are zero, which would indicate that this
+
+                                                                                             v2025.12.18a
+B.9. NESTABLE RCU BASED ON FREE-RUNNING COUNTER                                         681
+
+is the outermost rcu_read_lock(). If so, line 9 places the global rcu_gp_ctr into
+tmp because the current value previously fetched by line 7 is likely to be obsolete. In
+either case, line 10 increments the nesting depth, which you will recall is stored in the
+seven low-order bits of the counter. Line 11 stores the updated counter back into this
+thread’s instance of rcu_reader_gp, and, finally, line 12 executes a memory barrier to
+prevent the RCU read-side critical section from bleeding out into the code preceding
+the call to rcu_read_lock().
+    In other words, this implementation of rcu_read_lock() picks up a copy of
+the global rcu_gp_ctr unless the current invocation of rcu_read_lock() is nested
+within an RCU read-side critical section, in which case it instead fetches the contents of
+the current thread’s instance of rcu_reader_gp. Either way, it increments whatever
+value it fetched in order to record an additional nesting level, and stores the result in the
+current thread’s instance of rcu_reader_gp.
+    Interestingly enough, despite their rcu_read_lock() differences, the implementa-
+tion of rcu_read_unlock() is broadly similar to that shown in Appendix B.8. Line 17
+executes a memory barrier in order to prevent the RCU read-side critical section from
+bleeding out into code following the call to rcu_read_unlock(), and line 18 decre-
+ments this thread’s instance of rcu_reader_gp, which has the effect of decrementing
+the nesting count contained in rcu_reader_gp’s low-order bits. Debugging versions
+of this primitive would check (before decrementing!) that these low-order bits were
+non-zero.
+    The implementation of synchronize_rcu() is quite similar to that shown in
+Appendix B.8. There are two differences. The first is that lines 27 and 28 adds
+RCU_GP_CTR_BOTTOM_BIT to the global rcu_gp_ctr instead of adding the constant
+“2”, and the second is that the comparison on line 31 has been abstracted out to a separate
+function, where it checks the bits indicated by RCU_GP_CTR_NEST_MASK instead of
+unconditionally checking the low-order bit.
+   This approach achieves read-side performance almost equal to that shown in Ap-
+pendix B.8, incurring roughly 65 nanoseconds of overhead regardless of the number of
+POWER5 CPUs. Updates again incur more overhead, ranging from about 600 nanosec-
+onds on a single POWER5 CPU to more than 100 microseconds on 64 such CPUs.
+
+ Quick Quiz B.19: Why not simply maintain a separate per-thread nesting-level variable, as
+ was done in previous section, rather than having all this complicated bit manipulation?
+
+    This implementation suffers from the same shortcomings as does that of Appen-
+dix B.8, except that nesting of RCU read-side critical sections is now permitted. In
+addition, on 32-bit systems, this approach shortens the time required to overflow the
+global rcu_gp_ctr variable. The following section shows one way to greatly increase
+the time required for overflow to occur, while greatly reducing read-side overhead.
+
+ Quick Quiz B.20: Given the algorithm shown in Listing B.19, how could you double the time
+ required to overflow the global rcu_gp_ctr?
+
+ Quick Quiz B.21: Again, given the algorithm shown in Listing B.19, is counter overflow
+ fatal? Why or why not? If it is fatal, what can be done to fix it?
+
+                                                                                                v2025.12.18a
+682                                    APPENDIX B. “TOY” RCU IMPLEMENTATIONS
+
+Listing B.20: Data for Quiescent-State-Based RCU
+1    DEFINE_SPINLOCK(rcu_gp_lock);
+2    long rcu_gp_ctr = 0;
+3    DEFINE_PER_THREAD(long, rcu_reader_qs_gp);
+
+Listing B.21: Quiescent-State-Based RCU Read Side
+1    static void rcu_read_lock(void)
+2    {
+3    }
+4
+5    static void rcu_read_unlock(void)
+6    {
+7    }
+8
+9    static void rcu_quiescent_state(void)
+10   {
+11           smp_mb();
+12           __get_thread_var(rcu_reader_qs_gp) =
+13                   READ_ONCE(rcu_gp_ctr) + 1;
+14           smp_mb();
+15   }
+16
+17   static void rcu_thread_offline(void)
+18   {
+19           smp_mb();
+20           __get_thread_var(rcu_reader_qs_gp) =
+21                   READ_ONCE(rcu_gp_ctr);
+22           smp_mb();
+23   }
+24
+25   static void rcu_thread_online(void)
+26   {
+27           rcu_quiescent_state();
+28   }
+
+B.10         RCU Based on Quiescent States
+Listing B.21 (rcu_qs.h) shows the read-side primitives used to construct a user-
+level implementation of RCU based on quiescent states, with the data shown in
+Listing B.20. As can be seen from lines 1–7 in the listing, the rcu_read_lock()
+and rcu_read_unlock() primitives do nothing, and can in fact be expected to be
+inlined and optimized away, as they are in server builds of the Linux kernel. This
+is due to the fact that quiescent-state-based RCU implementations approximate the
+extents of RCU read-side critical sections using the aforementioned quiescent states.
+Each of these quiescent states contains a call to rcu_quiescent_state(), which
+is shown from lines 9–15 in the listing. Threads entering extended quiescent states
+(for example, when blocking) may instead call rcu_thread_offline() (lines 17–23)
+when entering an extended quiescent state and then call rcu_thread_online()
+(lines 25–28) when leaving it. As such, rcu_thread_online() is analogous to rcu_
+read_lock() and rcu_thread_offline() is analogous to rcu_read_unlock().
+In addition, rcu_quiescent_state() can be thought of as a rcu_thread_online()
+immediately followed by a rcu_thread_offline().4 It is illegal to invoke rcu_
+quiescent_state(), rcu_thread_offline(), or rcu_thread_online() from
+an RCU read-side critical section.
+
+     4 Although the code in the listing is consistent with rcu_quiescent_state() being
+
+the same as rcu_thread_online() immediately followed by rcu_thread_offline(),
+this relationship is obscured by performance optimizations.
+
+                                                                                         v2025.12.18a
+B.10. RCU BASED ON QUIESCENT STATES                                                 683
+
+Listing B.22: RCU Update Side Using Quiescent States
+1    void synchronize_rcu(void)
+2    {
+3            int t;
+4
+5            smp_mb();
+6            spin_lock(&rcu_gp_lock);
+7            WRITE_ONCE(rcu_gp_ctr, rcu_gp_ctr + 2);
+8            smp_mb();
+9            for_each_thread(t) {
+10                   while (rcu_gp_ongoing(t) &&
+11                          ((per_thread(rcu_reader_qs_gp, t)
+12                            - rcu_gp_ctr) < 0)) {
+13                           poll(NULL, 0, 10);
+14                   }
+15           }
+16           spin_unlock(&rcu_gp_lock);
+17           smp_mb();
+18   }
+
+     In rcu_quiescent_state(), line 11 executes a memory barrier to prevent any
+code prior to the quiescent state (including possible RCU read-side critical sections)
+from being reordered into the quiescent state. Lines 12–13 pick up a copy of the global
+rcu_gp_ctr, using READ_ONCE() to ensure that the compiler does not employ any
+optimizations that would result in rcu_gp_ctr being fetched more than once, and
+then adds one to the value fetched and stores it into the per-thread rcu_reader_qs_gp
+variable, so that any concurrent instance of synchronize_rcu() will see an odd-
+numbered value, thus becoming aware that a new RCU read-side critical section has
+started. Instances of synchronize_rcu() that are waiting on older RCU read-side
+critical sections will thus know to ignore this new one. Finally, line 14 executes a
+memory barrier, which prevents subsequent code (including a possible RCU read-side
+critical section) from being re-ordered with the lines 12–13.
+ Quick Quiz B.22: Doesn’t the additional memory barrier shown on line 14 of Listing B.21
+ greatly increase the overhead of rcu_quiescent_state()?
+
+    Some applications might use RCU only occasionally, but use it very heavily when
+they do use it. Such applications might choose to use rcu_thread_online() when
+starting to use RCU and rcu_thread_offline() when no longer using RCU. The
+time between a call to rcu_thread_offline() and a subsequent call to rcu_thread_
+online() is an extended quiescent state, so that RCU will not expect explicit quiescent
+states to be registered during this time.
+    The rcu_thread_offline() function simply sets the per-thread rcu_reader_
+qs_gp variable to the current value of rcu_gp_ctr, which has an even-numbered value.
+Any concurrent instances of synchronize_rcu() will thus know to ignore this thread.
+ Quick Quiz B.23: Why are the two memory barriers on lines 11 and 14 of Listing B.21
+ needed?
+
+    The rcu_thread_online() function simply invokes rcu_quiescent_state(),
+thus marking the end of the extended quiescent state.
+    Listing B.22 (rcu_qs.c) shows the implementation of synchronize_rcu(),
+which is quite similar to that of the preceding sections.
+    This implementation has blazingly fast read-side primitives, with an rcu_read_
+lock()–rcu_read_unlock() round trip incurring an overhead of roughly 50 picosec-
+onds. The synchronize_rcu() overhead ranges from about 600 nanoseconds on a
+single-CPU POWER5 system up to more than 100 microseconds on a 64-CPU system.
+
+                                                                                           v2025.12.18a
+684                                APPENDIX B. “TOY” RCU IMPLEMENTATIONS
+
+Quick Quiz B.24: To be sure, the clock frequencies of POWER systems in 2008 were
+quite high, but even a 5 GHz clock frequency is insufficient to allow loops to be executed in
+50 picoseconds! What is going on here?
+
+     However, this implementation requires that each thread either invoke rcu_quiescent_
+state() periodically or to invoke rcu_thread_offline() for extended quiescent
+states. The need to invoke these functions periodically can make this implementation
+difficult to use in some situations, such as for certain types of library functions.
+Quick Quiz B.25: Why would the fact that the code is in a library make any difference for
+how easy it is to use the RCU implementation shown in Listings B.21 and B.22?
+
+Quick Quiz B.26: But what if you hold a lock across a call to synchronize_rcu(), and then
+acquire that same lock within an RCU read-side critical section? This should be a deadlock, but
+how can a primitive that generates absolutely no code possibly participate in a deadlock cycle?
+
+   In addition, this implementation does not permit concurrent calls to synchronize_
+rcu() to share grace periods. That said, one could easily imagine a production-quality
+RCU implementation based on this version of RCU.
+
+B.11       Summary of Toy RCU Implementations
+If you made it this far, congratulations! You should now have a much clearer
+understanding not only of RCU itself, but also of the requirements of enclosing
+software environments and applications. Those wishing an even deeper under-
+standing are invited to read descriptions of production-quality RCU implementa-
+tions [DMS+ 12a, McK07a, McK08b, McK09a].
+    The preceding sections listed some desirable properties of the various RCU primitives.
+The following list is provided for easy reference for those wishing to create a new RCU
+implementation.
+
+   1. There must be read-side primitives (such as rcu_read_lock() and rcu_read_
+      unlock()) and grace-period primitives (such as synchronize_rcu() and
+      call_rcu()), such that any RCU read-side critical section in existence at the
+      start of a grace period has completed by the end of the grace period.
+
+   2. RCU read-side primitives should have minimal overhead. In particular, expensive
+      operations such as cache misses, atomic instructions, memory barriers, and
+      branches should be avoided.
+
+   3. RCU read-side primitives should have O (1) computational complexity to enable
+      real-time use. This implies that readers run concurrently with updaters. (But
+      note that preemptible Linux-kernel RCU’s rcu_read_unlock() can violate this
+      desideratum for low-priority threads and at the end of extremely long-running
+      RCU read-side critical sections.)
+
+   4. RCU read-side primitives should be usable in all contexts (in the Linux kernel,
+      they are permitted everywhere except in deep in the idle loop, from offline CPUs,
+      and in kernel entry/exit code paths). An important special case is that RCU
+      read-side primitives be usable within an RCU read-side critical section, in other
+      words, that it be possible to nest RCU read-side critical sections.
+
+                                                                                                  v2025.12.18a
+B.11. SUMMARY OF TOY RCU IMPLEMENTATIONS                                                  685
+
+   5. RCU read-side primitives should be unconditional, with no failure returns. This
+      property is extremely important, as failure checking increases complexity and
+      complicates testing and validation.
+   6. Any operation other than a quiescent state (and thus a grace period) should
+      be permitted in an RCU read-side critical section. In particular, irrevocable
+      operations such as I/O should be permitted.
+   7. It should be possible to update an RCU-protected data structure while executing
+      within an RCU read-side critical section.
+   8. Both RCU read-side and update-side primitives should be independent of memory
+      allocator design and implementation, in other words, the same RCU implementa-
+      tion should be able to protect a given data structure regardless of how the data
+      elements are allocated and freed.
+   9. RCU grace periods should not be blocked by threads that halt outside of RCU read-
+      side critical sections. (But note that most quiescent-state-based implementations
+      violate this desideratum.)
+
+Quick Quiz B.27: Given that grace periods are prohibited within RCU read-side critical
+sections, how can an RCU data structure possibly be updated while in an RCU read-side critical
+section?
+
+     Those wishing more detail on requirements for Linux-kernel RCU should refer to
+its internal documentation [McK15i].
+
+                                                                                                 v2025.12.18a
+686   APPENDIX B. “TOY” RCU IMPLEMENTATIONS
+
+                                              v2025.12.18a

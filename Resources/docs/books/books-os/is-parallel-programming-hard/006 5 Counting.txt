@@ -1,0 +1,2016 @@
+                                             As easy as 1, 2, 3!
+                                                                                           Unknown
+
+Chapter 5
+
+Counting
+
+Counting is perhaps the simplest and most natural thing a computer can do. However,
+counting efficiently and scalably on a large shared-memory multiprocessor can be quite
+challenging. Furthermore, the simplicity of the underlying concept of counting allows
+us to explore the fundamental issues of concurrency without the distractions of elaborate
+data structures or complex synchronization primitives. Counting therefore provides an
+excellent introduction to parallel programming.
+    This chapter covers a number of special cases for which there are simple, fast, and
+scalable counting algorithms. But first, let us find out how much you already know
+about concurrent counting.
+Quick Quiz 5.1: Why should efficient and scalable counting be hard??? After all, computers
+have special hardware for the sole purpose of doing counting!!!
+
+Quick Quiz 5.2: Network-packet counting problem. Suppose that you need to collect
+statistics on the number of networking packets transmitted and received. Packets might be
+transmitted or received by any CPU on the system. Suppose further that your system is capable
+of handling millions of packets per second per CPU, and that a systems-monitoring package
+reads the count every five seconds. How would you implement this counter?
+
+Quick Quiz 5.3: Approximate structure-allocation limit problem. Suppose that you need
+to maintain a count of the number of structures allocated in order to fail any allocations once
+the number of structures in use exceeds a limit (say, 10,000). Suppose further that the structures
+are short-lived, the limit is rarely exceeded, and a “sloppy” approximate limit is acceptable.
+
+Quick Quiz 5.4: Exact structure-allocation limit problem. Suppose that you need to
+maintain a count of the number of structures allocated in order to fail any allocations once the
+number of structures in use exceeds an exact limit (again, say 10,000). Suppose further that
+these structures are short-lived, and that the limit is rarely exceeded, that there is almost always
+at least one structure in use, and suppose further still that it is necessary to know exactly when
+this counter reaches zero, for example, in order to free up some memory that is not required
+unless there is at least one structure in use.
+
+Quick Quiz 5.5: Removable I/O device access-count problem. Suppose that you need to
+maintain a reference count on a heavily used removable mass-storage device, so that you can
+tell the user when it is safe to remove the device. As usual, the user indicates a desire to remove
+the device, and the system tells the user when it is safe to do so.
+
+                                                                                                       v2025.12.18a
+82                                                                CHAPTER 5. COUNTING
+
+Listing 5.1: Just Count!
+1    unsigned long counter = 0;
+2
+3    static __inline__ void inc_count(void)
+4    {
+5            WRITE_ONCE(counter, READ_ONCE(counter) + 1);
+6    }
+7
+8    static __inline__ unsigned long read_count(void)
+9    {
+10           return READ_ONCE(counter);
+11   }
+
+    Section 5.1 shows why counting is non-trivial. Sections 5.2 and 5.3 investigate
+network-packet counting and approximate structure-allocation limits, respectively.
+Section 5.4 takes on exact structure-allocation limits. Finally, Section 5.5 presents
+performance measurements and discussion.
+    Sections 5.1 and 5.2 contain introductory material, while the remaining sections are
+more advanced.
+
+5.1        Why Isn’t Concurrent Counting Trivial?
+
+                                            Seek simplicity, and distrust it.
+                                                                          Alfred North Whitehead
+
+Let’s start with something simple, for example, the straightforward use of arithmetic
+shown in Listing 5.1 (count_nonatomic.c). Here, we have a counter on line 1, we
+increment it on line 5, and we read out its value on line 10. What could be simpler?
+ Quick Quiz 5.6: One thing that could be simpler is ++ instead of that concatenation of
+ READ_ONCE() and WRITE_ONCE(). Why all that extra typing???
+
+    This approach has the additional advantage of being blazingly fast if you are doing
+lots of reading and almost no incrementing, and on small systems, the performance is
+excellent.
+    There is just one large fly in the ointment: This approach can lose counts. On my
+six-core x86 laptop, a short run invoked inc_count() 285,824,000 times, but the final
+value of the counter was only 35,385,525. Although approximation does have a large
+place in computing, loss of 87 % of the counts is a bit excessive.
+ Quick Quiz 5.7: But can’t a smart compiler prove that line 5 of Listing 5.1 is equivalent to the
+ ++ operator and produce an x86 add-to-memory instruction? And won’t the CPU cache cause
+ this to be atomic?
+
+ Quick Quiz 5.8: The 8-figure accuracy on the number of failures indicates that you really did
+ test this. Why would it be necessary to test such a trivial program, especially when the bug is
+ easily seen by inspection?
+
+    The straightforward way to count accurately is to use atomic operations, as shown
+in Listing 5.2 (count_atomic.c). Line 1 defines an atomic variable, line 5 atomically
+increments it, and line 10 reads it out. Because this is atomic, it keeps perfect count.
+
+                                                                                                    v2025.12.18a
+5.1. WHY ISN’T CONCURRENT COUNTING TRIVIAL?                                                      83
+
+Listing 5.2: Just Count Atomically!
+1    atomic_t counter = ATOMIC_INIT(0);
+2
+3    static __inline__ void inc_count(void)
+4    {
+5            atomic_inc(&counter);
+6    }
+7
+8    static __inline__ long read_count(void)
+9    {
+10           return atomic_read(&counter);
+11   }
+
+                                                    100000
+
+                          Time Per Increment (ns)
+                                                    10000
+
+                                                         1
+
+                                                             Number of CPUs (Threads)
+
+                       Figure 5.1: Atomic Increment Scalability on x86
+
+However, it is slower: On my six-core x86 laptop, it is more than twenty times slower
+than non-atomic increment, even when only a single thread is incrementing.1
+    This poor performance should not be a surprise, given the discussion in Chapter 3,
+nor should it be a surprise that the performance of atomic increment gets slower as
+the number of CPUs and threads increase, as shown in Figure 5.1. In this figure, the
+horizontal dashed line resting on the x axis is the ideal performance that would be
+achieved by a perfectly scalable algorithm: With such an algorithm, a given increment
+would incur the same overhead that it would in a single-threaded program. Atomic
+increment of a single global variable is clearly decidedly non-ideal, and gets multiple
+orders of magnitude worse with additional CPUs.
+ Quick Quiz 5.9: Why doesn’t the horizontal dashed line on the x axis meet the diagonal line
+ at 𝑥 = 1?
+
+ Quick Quiz 5.10: But atomic increment is still pretty fast. And incrementing a single variable
+ in a tight loop sounds pretty unrealistic to me, after all, most of the program’s execution should
+ be devoted to actually doing work, not accounting for the work it has done! Why should I care
+ about making this go faster?
+
+    1 Interestingly enough, non-atomically incrementing a counter will advance the counter
+
+more quickly than atomically incrementing the counter. Of course, if your only goal is to
+make the counter increase quickly, an easier approach is to simply assign a large value to the
+counter. Nevertheless, there is likely to be a role for algorithms that use carefully relaxed
+notions of correctness in order to gain greater performance and scalability [And91, ACMS03,
+Rin13, Ung11].
+
+                                                                                                      v2025.12.18a
+84                                                                    CHAPTER 5. COUNTING
+
+                    CPU 0          CPU 1             CPU 2              CPU 3
+                    Cache          Cache             Cache              Cache
+                        Interconnect                       Interconnect
+
+                   Memory            System Interconnect                Memory
+
+                        Interconnect                       Interconnect
+                    Cache          Cache             Cache              Cache
+                    CPU 4          CPU 5             CPU 6              CPU 7
+
+                 Figure 5.2: Data Flow For Global Atomic Increment
+
+                                              One one thousand.
+                                              Two one thousand.
+                                              Three one thousand...
+
+                              Figure 5.3: Waiting to Count
+
+    For another perspective on global atomic increment, consider Figure 5.2. In order
+for each CPU to get a chance to increment a given global variable, the cache line
+containing that variable must circulate among all the CPUs, as shown by the red arrows.
+Such circulation will take significant time, courtesy of the finite speed of light and the
+non-zero size of atoms, laws of physics that were discussed in Section 3.3. This slow
+circulation will in turn result in the poor performance seen in Figure 5.1, or as more
+fancifully depicted in Figure 5.3. The following sections discuss high-performance
+counting, which avoids the delays inherent in such circulation.
+
+Quick Quiz 5.11: But why can’t CPU designers simply ship the addition operation to the data,
+avoiding the need to circulate the cache line containing the global variable being incremented?
+
+                                                                                                  v2025.12.18a
+5.2. STATISTICAL COUNTERS                                                                        85
+
+Listing 5.3: Array-Based Per-Thread Statistical Counters
+1    DEFINE_PER_THREAD(unsigned long, counter);
+2
+3    static __inline__ void inc_count(void)
+4    {
+5            unsigned long *p_counter = &__get_thread_var(counter);
+6
+7            WRITE_ONCE(*p_counter, *p_counter + 1);
+8    }
+9
+10   static __inline__ unsigned long read_count(void)
+11   {
+12           int t;
+13           unsigned long sum = 0;
+14
+15           for_each_thread(t)
+16                   sum += READ_ONCE(per_thread(counter, t));
+17           return sum;
+18   }
+
+5.2        Statistical Counters
+                                            Facts are stubborn things, but statistics are pliable.
+                                                                                        Mark Twain
+
+This section covers the common special case of statistical counters, where the count
+is updated extremely frequently and the value is read out rarely, if ever. These will be
+used to solve the network-packet counting problem posed in Quick Quiz 5.2.
+
+5.2.1       Design
+Statistical counting is typically handled by providing a counter per thread (or CPU, when
+running in the kernel), so that each thread updates its own counter, as was foreshadowed
+in Section 4.3.6 on page 77. The aggregate value of the counters is read out by simply
+summing up all of the threads’ counters, relying on the commutative and associative
+properties of addition. This is an example of the Data Ownership pattern that will be
+introduced in Section 6.3.4 on page 140.
+ Quick Quiz 5.12: But doesn’t the fact that C’s “integers” are limited in size complicate things?
+
+5.2.2       Array-Based Implementation
+One way to provide per-thread variables is to allocate an array with one element per
+thread (presumably cache aligned and padded to avoid false sharing).
+ Quick Quiz 5.13: An array??? But doesn’t that limit the number of threads?
+
+    Such an array can be wrapped into per-thread primitives, as shown in Listing 5.3
+(count_stat.c). Line 1 defines an array containing a set of per-thread counters of
+type unsigned long named, creatively enough, counter.
+    Lines 3–8 show a function that increments the counters, using the __get_thread_
+var() primitive to locate the currently running thread’s element of the counter
+array. Because this element is modified only by the corresponding thread, non-atomic
+increment suffices. However, this code uses WRITE_ONCE() to prevent destructive
+
+                                                                                                      v2025.12.18a
+86                                                             CHAPTER 5. COUNTING
+
+                        CPU 0          CPU 1          CPU 2         CPU 3
+                        Cache          Cache          Cache         Cache
+                             Interconnect                 Interconnect
+
+                       Memory           System Interconnect        Memory
+
+                             Interconnect                 Interconnect
+                        Cache          Cache          Cache         Cache
+                        CPU 4          CPU 5          CPU 6         CPU 7
+
+                       Figure 5.4: Data Flow For Per-Thread Increment
+
+compiler optimizations. For but one example, the compiler is within its rights to use a
+to-be-stored-to location as temporary storage, thus writing what would be for all intents
+and purposes garbage to that location just before doing the desired store. This could
+of course be rather confusing to anything attempting to read out the count. The use of
+WRITE_ONCE() prevents this optimization and others besides.
+Quick Quiz 5.14: What other nasty optimizations could GCC apply?
+
+    Lines 10–18 show a function that reads out the aggregate value of the counter,
+using the for_each_thread() primitive to iterate over the list of currently running
+threads, and using the per_thread() primitive to fetch the specified thread’s counter.
+This code also uses READ_ONCE() to ensure that the compiler doesn’t optimize these
+loads into oblivion. For but one example, a pair of consecutive calls to read_count()
+might be inlined, and an intrepid optimizer might notice that the same locations were
+being summed and thus incorrectly conclude that it would be simply wonderful to sum
+them once and use the resulting value twice. This sort of optimization might be rather
+frustrating to people expecting later read_count() calls to account for the activities of
+other threads. The use of READ_ONCE() prevents this optimization and others besides.
+Quick Quiz 5.15: How does the per-thread counter variable in Listing 5.3 get initialized?
+
+Quick Quiz 5.16: How is the code in Listing 5.3 supposed to permit more than one counter?
+
+    This approach scales linearly with increasing number of updater threads invoking
+inc_count(). As is shown by the green arrows on each CPU in Figure 5.4, the reason
+for this is that each CPU can make rapid progress incrementing its thread’s variable,
+without any expensive cross-system communication. In other words, the updating of
+per-CPU counters is not inconvenienced by slow light and big atoms2 to anywhere near
+the degree as is the atomic incrementing of a single global counter. As such, this section
+solves the network-packet counting problem presented at the beginning of this chapter.
+Quick Quiz 5.17: The read operation takes time to sum up the per-thread values, and
+during that time, the counter could well be changing. This means that the value returned by
+read_count() in Listing 5.3 will not necessarily be exact. Assume that the counter is being
+
+     2 Again, see Section 3.3.
+
+                                                                                              v2025.12.18a
+5.2. STATISTICAL COUNTERS                                                                    87
+
+Listing 5.4: Per-Thread Statistical Counters
+1    unsigned long _Thread_local counter = 0;
+2    unsigned long *counterp[NR_THREADS] = { NULL };
+3    unsigned long finalcount = 0;
+4    DEFINE_SPINLOCK(final_mutex);
+5
+6    static inline void inc_count(void)
+7    {
+8            WRITE_ONCE(counter, counter + 1);
+9    }
+10
+11   static inline unsigned long read_count(void)
+12   {
+13           int t;
+14           unsigned long sum;
+15
+16           spin_lock(&final_mutex);
+17           sum = finalcount;
+18           for_each_thread(t)
+19                   if (counterp[t] != NULL)
+20                           sum += READ_ONCE(*counterp[t]);
+21           spin_unlock(&final_mutex);
+22           return sum;
+23   }
+24
+25   void count_register_thread(unsigned long *p)
+26   {
+27           int idx = smp_thread_id();
+28
+29           spin_lock(&final_mutex);
+30           counterp[idx] = &counter;
+31           spin_unlock(&final_mutex);
+32   }
+33
+34   void count_unregister_thread(int nthreadsexpected)
+35   {
+36           int idx = smp_thread_id();
+37
+38           spin_lock(&final_mutex);
+39           finalcount += counter;
+40           counterp[idx] = NULL;
+41           spin_unlock(&final_mutex);
+42   }
+
+ incremented at rate 𝑟 counts per unit time, and that read_count()’s execution consumes 𝛥
+ units of time. What is the expected error in the return value?
+
+    However, many implementations provide cheaper mechanisms for per-thread data
+that are free from arbitrary array-size limits. This is the topic of the next section.
+
+5.2.3       Per-Thread-Variable-Based Implementation
+The C language, since C11, features a _Thread_local storage class that provides per-
+thread storage.3 This can be used as shown in Listing 5.4 (count_end.c) to implement
+a statistical counter that not only scales well and avoids arbitrary thread-number limits,
+but that also incurs little or no performance penalty to incrementers compared to simple
+non-atomic increment.
+    Lines 1–4 define needed variables: counter is the per-thread counter variable,
+the counterp[] array allows threads to access each others’ counters, finalcount
+
+     3 GCC provides its own __thread storage class, which was used in previous versions of
+
+this book. The two methods for specifying a thread-local variable are interchangeable when
+using GCC.
+
+                                                                                                  v2025.12.18a
+88                                                             CHAPTER 5. COUNTING
+
+accumulates the total as individual threads exit, and final_mutex coordinates between
+threads accumulating the total value of the counter and exiting threads.
+Quick Quiz 5.18: Doesn’t that explicit counterp array in Listing 5.4 reimpose an arbitrary
+limit on the number of threads? Why doesn’t the C language provide a per_thread() interface,
+similar to the Linux kernel’s per_cpu() primitive, to allow threads to more easily access each
+others’ per-thread variables?
+
+    The inc_count() function used by updaters is quite simple, as can be seen on
+lines 6–9.
+    The read_count() function used by readers is a bit more complex. Line 16
+acquires a lock to exclude exiting threads, and line 21 releases it. Line 17 initializes the
+sum to the count accumulated by those threads that have already exited, and lines 18–20
+sum the counts being accumulated by threads currently running. Finally, line 22 returns
+the sum.
+Quick Quiz 5.19: Doesn’t the check for NULL on line 19 of Listing 5.4 add extra branch
+mispredictions? Why not have a variable set permanently to zero, and point unused counter-
+pointers to that variable rather than setting them to NULL?
+
+Quick Quiz 5.20: Why on earth do we need something as heavyweight as a lock guarding the
+summation in the function read_count() in Listing 5.4?
+
+    Lines 25–32 show the count_register_thread() function, which must be called
+by each thread before its first use of this counter. This function simply sets up this
+thread’s element of the counterp[] array to point to its per-thread counter variable.
+Quick Quiz 5.21: Why on earth do we need to acquire the lock in count_register_
+thread() in Listing 5.4? It is a single properly aligned machine-word store to a location that
+no other thread is modifying, so it should be atomic anyway, right?
+
+    Lines 34–42 show the count_unregister_thread() function, which must be
+called prior to exit by each thread that previously called count_register_thread().
+Line 38 acquires the lock, and line 41 releases it, thus excluding any calls to read_
+count() as well as other calls to count_unregister_thread(). Line 39 adds this
+thread’s counter to the global finalcount, and then line 40 NULLs out its counterp[]
+array entry. A subsequent call to read_count() will see the exiting thread’s count in
+the global finalcount, and will skip the exiting thread when sequencing through the
+counterp[] array, thus obtaining the correct total.
+    This approach gives updaters almost exactly the same performance as a non-atomic
+add, and also scales linearly. On the other hand, concurrent reads contend for a single
+global lock, and therefore perform poorly and scale abysmally. However, this is not
+a problem for statistical counters, where incrementing happens often and readout
+happens almost never. Of course, this approach is considerably more complex than the
+array-based scheme, due to the fact that a given thread’s per-thread variables vanish
+when that thread exits.
+Quick Quiz 5.22: Fine, but the Linux kernel doesn’t have to acquire a lock when reading out
+the aggregate value of per-CPU counters. So why should user-space code need to do this???
+
+    Both the array-based and _Thread_local-based approaches offer excellent update-
+side performance and scalability. However, these benefits result in large read-side
+expense for large numbers of threads. The next section shows one way to reduce
+read-side expense while still retaining the update-side scalability.
+
+                                                                                                 v2025.12.18a
+5.2. STATISTICAL COUNTERS                                                                 89
+
+5.2.4    Eventually Consistent Implementation
+One way to retain update-side scalability while greatly improving read-side performance
+is to weaken consistency requirements. The counting algorithm in the previous section
+is guaranteed to return a value between the value that an ideal counter would have
+taken on near the beginning of read_count()’s execution and that near the end of
+read_count()’s execution. Eventual consistency [Vog09] provides a weaker guarantee:
+In absence of calls to inc_count(), calls to read_count() will eventually return an
+accurate count.
+     We exploit eventual consistency by maintaining a global counter. However, updaters
+only manipulate their per-thread counters. A separate thread is provided to transfer
+counts from the per-thread counters to the global counter. Readers simply access the
+value of the global counter. If updaters are active, the value used by the readers will be
+out of date, however, once updates cease, the global counter will eventually converge on
+the true value—hence this approach qualifies as eventually consistent.
+     The implementation is shown in Listing 5.5 (count_stat_eventual.c). Lines 1–2
+show the per-thread variable and the global variable that track the counter’s value, and
+line 3 shows stopflag which is used to coordinate termination (for the case where
+we want to terminate the program with an accurate counter value). The inc_count()
+function shown on lines 5–10 is similar to its counterpart in Listing 5.3. The read_
+count() function shown on lines 12–15 simply returns the value of the global_count
+variable.
+     However, the count_init() function on lines 34–44 creates the eventual()
+thread shown on lines 17–32, which cycles through all the threads, summing the
+per-thread local counter and storing the sum to the global_count variable. The
+eventual() thread waits an arbitrarily chosen one millisecond between passes.
+Quick Quiz 5.23: Wouldn’t that period scan be bad for battery lifetime?
+
+    The count_cleanup() function on lines 46–51 coordinates termination. The call to
+smp_load_acquire() here and the call to smp_store_release() in eventual()
+ensure that all updates to global_count are visible to code following the call to
+count_cleanup().
+    This approach gives extremely fast counter read-out while still supporting linear
+counter-update scalability. However, this excellent read-side performance and update-
+side scalability comes at the cost of the additional thread running eventual().
+Quick Quiz 5.24: Why doesn’t inc_count() in Listing 5.5 need to use atomic instructions?
+After all, we now have multiple threads accessing the per-thread counters!
+
+Quick Quiz 5.25: Won’t the single global thread in the function eventual() of Listing 5.5
+be just as severe a bottleneck as a global lock would be?
+
+Quick Quiz 5.26: Won’t the estimate returned by read_count() in Listing 5.5 become
+increasingly inaccurate as the number of threads rises?
+
+Quick Quiz 5.27: Given that in the eventually-consistent algorithm shown in Listing 5.5 both
+reads and updates have extremely low overhead and are extremely scalable, why would anyone
+bother with the implementation described in Section 5.2.2, given its costly read-side code?
+
+Quick Quiz 5.28:     What is the accuracy of the estimate returned by read_count() in
+Listing 5.5?
+
+                                                                                               v2025.12.18a
+90                                                               CHAPTER 5. COUNTING
+
+Listing 5.5: Array-Based Per-Thread Eventually Consistent Counters
+1    DEFINE_PER_THREAD(unsigned long, counter);
+2    unsigned long global_count;
+3    int stopflag;
+4
+5    static __inline__ void inc_count(void)
+6    {
+7            unsigned long *p_counter = &__get_thread_var(counter);
+8
+9            WRITE_ONCE(*p_counter, *p_counter + 1);
+10   }
+11
+12   static __inline__ unsigned long read_count(void)
+13   {
+14           return READ_ONCE(global_count);
+15   }
+16
+17   void *eventual(void *arg)
+18   {
+19           int t;
+20           unsigned long sum;
+21
+22           while (READ_ONCE(stopflag) < 3) {
+23                   sum = 0;
+24                   for_each_thread(t)
+25                            sum += READ_ONCE(per_thread(counter, t));
+26                   WRITE_ONCE(global_count, sum);
+27                   poll(NULL, 0, 1);
+28                   if (READ_ONCE(stopflag))
+29                            smp_store_release(&stopflag, stopflag + 1);
+30           }
+31           return NULL;
+32   }
+33
+34   void count_init(void)
+35   {
+36           int en;
+37           pthread_t tid;
+38
+39           en = pthread_create(&tid, NULL, eventual, NULL);
+40           if (en != 0) {
+41                   fprintf(stderr, "pthread_create: %s\n", strerror(en));
+42                   exit(EXIT_FAILURE);
+43           }
+44   }
+45
+46   void count_cleanup(void)
+47   {
+48           WRITE_ONCE(stopflag, 1);
+49           while (smp_load_acquire(&stopflag) < 3)
+50                   poll(NULL, 0, 1);
+51   }
+
+                                                                                       v2025.12.18a
+5.3. APPROXIMATE LIMIT COUNTERS                                                                   91
+
+5.2.5     Discussion
+These three implementations show that it is possible to obtain near-uniprocessor
+performance for statistical counters, despite running on a parallel machine.
+ Quick Quiz 5.29: What fundamental difference is there between counting packets and counting
+ the total number of bytes in the packets, given that the packets vary in size?
+
+ Quick Quiz 5.30: Given that the reader must sum all the threads’ counters, this counter-read
+ operation could take a long time given large numbers of threads. Is there any way that the
+ increment operation can remain fast and scalable while allowing readers to also enjoy not only
+ reasonable performance and scalability, but also good accuracy?
+
+   Given what has been presented in this section, you should now be able to answer the
+Quick Quiz about statistical counters for networking near the beginning of this chapter.
+
+5.3      Approximate Limit Counters
+                                              An approximate answer to the right problem is worth
+                                              a good deal more than an exact answer to an
+                                              approximate problem.
+                                                                                           John Tukey
+
+Another special case of counting involves limit-checking. For example, as noted in
+the approximate structure-allocation limit problem in Quick Quiz 5.3, suppose that
+you need to maintain a count of the number of structures allocated in order to fail any
+allocations once the number of structures in use exceeds a limit, in this case, 10,000.
+Suppose further that these structures are short-lived, that this limit is rarely exceeded,
+and that this limit is approximate in that it is OK either to exceed it sometimes by some
+bounded amount or to fail to reach it sometimes, again by some bounded amount. See
+Section 5.4 if you instead need the limit to be exact.
+
+5.3.1     Design
+One possible design for limit counters is to divide the limit of 10,000 by the number
+of threads, and give each thread a fixed pool of structures. For example, given 100
+threads, each thread would manage its own pool of 100 structures. This approach is
+simple, and in some cases works well, but it does not handle the common case where
+a given structure is allocated by one thread and freed by another [MS93]. On the one
+hand, if a given thread takes credit for any structures it frees, then the thread doing most
+of the allocating runs out of structures, while the threads doing most of the freeing
+have lots of credits that they cannot use. On the other hand, if freed structures are
+credited to the CPU that allocated them, it will be necessary for CPUs to manipulate
+each others’ counters, which will require expensive atomic instructions or other means
+of communicating between threads.4
+     In short, for many important workloads, we cannot fully partition the counter. Given
+that partitioning the counters was what brought the excellent update-side performance
+for the three schemes discussed in Section 5.2, this might be grounds for some pessimism.
+    4 That said, if each structure will always be freed by the same CPU (or thread) that
+
+allocated it, then this simple partitioning approach works extremely well.
+
+                                                                                                        v2025.12.18a
+92                                                          CHAPTER 5. COUNTING
+
+However, the eventually consistent algorithm presented in Section 5.2.4 provides an
+interesting hint. Recall that this algorithm kept two sets of books, a per-thread counter
+variable for updaters and a global_count variable for readers, with an eventual()
+thread that periodically updated global_count to be eventually consistent with the
+values of the per-thread counter. The per-thread counter perfectly partitioned the
+counter value, while global_count kept the full value.
+    For limit counters, we can use a variation on this theme where we partially partition
+the counter. For example, consider four threads with each having not only a per-thread
+counter, but also a per-thread maximum value (call it countermax).
+    But then what happens if a given thread needs to increment its counter, but
+counter is equal to its countermax? The trick here is to move half of that thread’s
+counter value to a globalcount, then increment counter. For example, if a given
+thread’s counter and countermax variables were both equal to 10, we do the following:
+
+     1. Acquire a global lock.
+     2. Add five to globalcount.
+     3. To balance out the addition, subtract five from this thread’s counter.
+     4. Release the global lock.
+     5. Increment this thread’s counter, resulting in a value of six.
+
+    Although this procedure still requires a global lock, that lock need only be acquired
+once for every five increment operations, greatly reducing that lock’s level of contention.
+We can reduce this contention as low as we wish by increasing the value of countermax.
+However, the corresponding penalty for increasing the value of countermax is reduced
+accuracy of globalcount. To see this, note that on a four-CPU system, if countermax
+is equal to ten, globalcount will be in error by at most 40 counts. In contrast, if
+countermax is increased to 100, globalcount might be in error by as much as 400
+counts.
+    This raises the question of just how much we care about globalcount’s deviation
+from the aggregate value of the counter, where this aggregate value is the sum of
+globalcount and each thread’s counter variable. The answer to this question depends
+on how far the aggregate value is from the counter’s limit (call it globalcountmax).
+The larger the difference between these two values, the larger countermax can be
+without risk of exceeding the globalcountmax limit. This means that the value of a
+given thread’s countermax variable can be set based on this difference. When far from
+the limit, the countermax per-thread variables are set to large values to optimize for
+performance and scalability, while when close to the limit, these same variables are set
+to small values to minimize the error in the checks against the globalcountmax limit.
+    This design is an example of parallel fastpath, which is an important design pattern
+in which the common case executes with no expensive instructions and no interactions
+between threads, but where occasional use is also made of a more conservatively
+designed (and higher overhead) global algorithm. This design pattern is covered in
+more detail in Section 6.4.
+
+5.3.2     Simple Limit Counter Implementation
+Listing 5.6 shows both the per-thread and global variables used by this implementation.
+The per-thread counter and countermax variables are the corresponding thread’s local
+
+                                                                                              v2025.12.18a
+5.3. APPROXIMATE LIMIT COUNTERS                                                      93
+
+Listing 5.6: Simple Limit Counter Variables
+1   unsigned long __thread counter = 0;
+2   unsigned long __thread countermax = 0;
+3   unsigned long globalcountmax = 10000;
+4   unsigned long globalcount = 0;
+5   unsigned long globalreserve = 0;
+6   unsigned long *counterp[NR_THREADS] = { NULL };
+7   DEFINE_SPINLOCK(gblcnt_mutex);
+
+                                                          countermax 3
+
+                                          globalreserve
+                                                                         counter 3
+
+                                                          countermax 2   counter 2
+                         globalcountmax
+
+                                                          countermax 1   counter 1
+
+                                                          countermax 0
+                                                                         counter 0
+                                          globalcount
+
+                Figure 5.5: Simple Limit Counter Variable Relationships
+
+counter and the upper bound on that counter, respectively. The globalcountmax vari-
+able on line 3 contains the upper bound for the aggregate counter, and the globalcount
+variable on line 4 is the global counter. The sum of globalcount and each thread’s
+counter gives the aggregate value of the overall counter. The globalreserve vari-
+able on line 5 is at least the sum of all of the per-thread countermax variables. The
+relationship among these variables is shown by Figure 5.5:
+    1. The sum of globalcount and globalreserve must be less than or equal to
+       globalcountmax.
+    2. The sum of all threads’ countermax values must be less than or equal to
+       globalreserve.
+    3. Each thread’s counter must be less than or equal to that thread’s countermax.
+    Each element of the counterp[] array references the corresponding thread’s
+counter variable, and, finally, the gblcnt_mutex spinlock guards all of the global
+variables, in other words, no thread is permitted to access or modify any of the global
+variables unless it has acquired gblcnt_mutex.
+    Listing 5.7 shows the add_count(), sub_count(), and read_count() functions
+(count_lim.c).
+Quick Quiz 5.31: Why does Listing 5.7 provide add_count() and sub_count() instead of
+the inc_count() and dec_count() interfaces show in Section 5.2?
+
+                                                                                          v2025.12.18a
+94                                                             CHAPTER 5. COUNTING
+
+Listing 5.7: Simple Limit Counter Add, Subtract, and Read
+1    static __inline__ int add_count(unsigned long delta)
+2    {
+3            if (countermax - counter >= delta) {
+4                    WRITE_ONCE(counter, counter + delta);
+5                    return 1;
+6            }
+7            spin_lock(&gblcnt_mutex);
+8            globalize_count();
+9            if (globalcountmax -
+10               globalcount - globalreserve < delta) {
+11                   spin_unlock(&gblcnt_mutex);
+12                   return 0;
+13           }
+14           globalcount += delta;
+15           balance_count();
+16           spin_unlock(&gblcnt_mutex);
+17           return 1;
+18   }
+19
+20   static __inline__ int sub_count(unsigned long delta)
+21   {
+22           if (counter >= delta) {
+23                   WRITE_ONCE(counter, counter - delta);
+24                   return 1;
+25           }
+26           spin_lock(&gblcnt_mutex);
+27           globalize_count();
+28           if (globalcount < delta) {
+29                   spin_unlock(&gblcnt_mutex);
+30                   return 0;
+31           }
+32           globalcount -= delta;
+33           balance_count();
+34           spin_unlock(&gblcnt_mutex);
+35           return 1;
+36   }
+37
+38   static __inline__ unsigned long read_count(void)
+39   {
+40           int t;
+41           unsigned long sum;
+42
+43           spin_lock(&gblcnt_mutex);
+44           sum = globalcount;
+45           for_each_thread(t) {
+46                   if (counterp[t] != NULL)
+47                           sum += READ_ONCE(*counterp[t]);
+48           }
+49           spin_unlock(&gblcnt_mutex);
+50           return sum;
+51   }
+
+                                                                                     v2025.12.18a
+5.3. APPROXIMATE LIMIT COUNTERS                                                          95
+
+Listing 5.8: Intuitive Fastpath
+3         if (counter + delta <= countermax) {
+4                 WRITE_ONCE(counter, counter + delta);
+5                 return 1;
+6         }
+
+     Lines 1–18 show add_count(), which adds the specified value delta to the
+counter. Line 3 checks to see if there is room for delta on this thread’s counter, and,
+if so, line 4 adds it and line 5 returns success. This is the add_counter() fastpath, and
+it does no atomic operations, references only per-thread variables, and should not incur
+any cache misses.
+Quick Quiz 5.32: What is with the strange form of the condition on line 3 of Listing 5.7?
+Why not the more intuitive form of the fastpath shown in Listing 5.8?
+
+    If the test on line 3 fails, we must access global variables, and thus must acquire
+gblcnt_mutex on line 7, which we release on line 11 in the failure case or on line 16
+in the success case. Line 8 invokes globalize_count(), shown in Listing 5.9,
+which clears the thread-local variables, adjusting the global variables as needed, thus
+simplifying global processing. (But don’t take my word for it, try coding it yourself!)
+Lines 9 and 10 check to see if addition of delta can be accommodated, with the
+meaning of the expression preceding the less-than sign shown in Figure 5.5 as the
+difference in height of the two red (leftmost) bars. If the addition of delta cannot
+be accommodated, then line 11 (as noted earlier) releases gblcnt_mutex and line 12
+returns indicating failure.
+    Otherwise, we take the slowpath. Line 14 adds delta to globalcount, and then
+line 15 invokes balance_count() (shown in Listing 5.9) in order to update both the
+global and the per-thread variables. This call to balance_count() will usually set this
+thread’s countermax to re-enable the fastpath. Line 16 then releases gblcnt_mutex
+(again, as noted earlier), and, finally, line 17 returns indicating success.
+Quick Quiz 5.33: Why does globalize_count() zero the per-thread variables, only to
+later call balance_count() to refill them in Listing 5.7? Why not just leave the per-thread
+variables non-zero?
+
+    Lines 20–36 show sub_count(), which subtracts the specified delta from the
+counter. Line 22 checks to see if the per-thread counter can accommodate this subtraction,
+and, if so, line 23 does the subtraction and line 24 returns success. These lines form
+sub_count()’s fastpath, and, as with add_count(), this fastpath executes no costly
+operations.
+    If the fastpath cannot accommodate subtraction of delta, execution proceeds to the
+slowpath on lines 26–35. Because the slowpath must access global state, line 26 acquires
+gblcnt_mutex, which is released either by line 29 (in case of failure) or by line 34 (in
+case of success). Line 27 invokes globalize_count(), shown in Listing 5.9, which
+again clears the thread-local variables, adjusting the global variables as needed. Line 28
+checks to see if the counter can accommodate subtracting delta, and, if not, line 29
+releases gblcnt_mutex (as noted earlier) and line 30 returns failure.
+
+Quick Quiz 5.34: Given that globalreserve counted against us in add_count(), why
+doesn’t it count for us in sub_count() in Listing 5.7?
+
+                                                                                              v2025.12.18a
+96                                                          CHAPTER 5. COUNTING
+
+Listing 5.9: Simple Limit Counter Utility Functions
+1    static __inline__ void globalize_count(void)
+2    {
+3            globalcount += counter;
+4            counter = 0;
+5            globalreserve -= countermax;
+6            countermax = 0;
+7    }
+8
+9    static __inline__ void balance_count(void)
+10   {
+11           countermax = globalcountmax -
+12                        globalcount - globalreserve;
+13           countermax /= num_online_threads();
+14           globalreserve += countermax;
+15           counter = countermax / 2;
+16           if (counter > globalcount)
+17                   counter = globalcount;
+18           globalcount -= counter;
+19   }
+20
+21   void count_register_thread(void)
+22   {
+23           int idx = smp_thread_id();
+24
+25           spin_lock(&gblcnt_mutex);
+26           counterp[idx] = &counter;
+27           spin_unlock(&gblcnt_mutex);
+28   }
+29
+30   void count_unregister_thread(int nthreadsexpected)
+31   {
+32           int idx = smp_thread_id();
+33
+34           spin_lock(&gblcnt_mutex);
+35           globalize_count();
+36           counterp[idx] = NULL;
+37           spin_unlock(&gblcnt_mutex);
+38   }
+
+ Quick Quiz 5.35: Suppose that one thread invokes add_count() shown in Listing 5.7, and
+ then another thread invokes sub_count(). Won’t sub_count() return failure even though
+ the value of the counter is non-zero?
+
+    If, on the other hand, line 28 finds that the counter can accommodate subtracting
+delta, we complete the slowpath. Line 32 does the subtraction and then line 33 invokes
+balance_count() (shown in Listing 5.9) in order to update both global and per-thread
+variables (hopefully re-enabling the fastpath). Then line 34 releases gblcnt_mutex,
+and line 35 returns success.
+ Quick Quiz 5.36: Why have both add_count() and sub_count() in Listing 5.7? Why not
+ simply pass a negative number to add_count()?
+
+    Lines 38–51 show read_count(), which returns the aggregate value of the
+counter. It acquires gblcnt_mutex on line 43 and releases it on line 49, excluding
+global operations from add_count() and sub_count(), and, as we will see, also
+excluding thread creation and exit. Line 44 initializes local variable sum to the value of
+globalcount, and then the loop spanning lines 45–48 sums the per-thread counter
+variables. Line 50 then returns the sum.
+    Listing 5.9 shows a number of utility functions used by the add_count(), sub_
+count(), and read_count() primitives shown in Listing 5.7.
+    Lines 1–7 show globalize_count(), which zeros the current thread’s per-thread
+counters, adjusting the global variables appropriately. It is important to note that this
+
+                                                                                             v2025.12.18a
+5.3. APPROXIMATE LIMIT COUNTERS                                                        97
+
+function does not change the aggregate value of the counter, but instead changes how
+the counter’s current value is represented. Line 3 adds the thread’s counter variable to
+globalcount, and line 4 zeroes counter. Similarly, line 5 subtracts the per-thread
+countermax from globalreserve, and line 6 zeroes countermax. It is helpful to
+refer to Figure 5.5 when reading both this function and balance_count(), which is
+next.
+    Lines 9–19 show balance_count(), which is roughly speaking the inverse of
+globalize_count(). This function’s job is to set the current thread’s countermax
+variable to the largest value that avoids the risk of the counter exceeding the globalcountmax
+limit. Changing the current thread’s countermax variable of course requires corre-
+sponding adjustments to counter, globalcount and globalreserve, as can be seen
+by referring back to Figure 5.5. By doing this, balance_count() maximizes use of
+add_count()’s and sub_count()’s low-overhead fastpaths. As with globalize_
+count(), balance_count() is not permitted to change the aggregate value of the
+counter.
+    Lines 11–13 compute this thread’s share of that portion of globalcountmax that
+is not already covered by either globalcount or globalreserve, and assign the
+computed quantity to this thread’s countermax. Line 14 makes the corresponding
+adjustment to globalreserve. Line 15 sets this thread’s counter to the middle of
+the range from zero to countermax. Line 16 checks to see whether globalcount can
+in fact accommodate this value of counter, and, if not, line 17 decreases counter
+accordingly. Finally, in either case, line 18 makes the corresponding adjustment to
+globalcount.
+
+Quick Quiz 5.37: Why set counter to countermax / 2 in line 15 of Listing 5.9? Wouldn’t
+it be simpler to just take countermax counts?
+
+    It is helpful to look at a schematic depicting how the relationship of the counters
+changes with the execution of first globalize_count() and then balance_count(),
+as shown in Figure 5.6. Time advances from left to right, with the leftmost configuration
+roughly that of Figure 5.5. The center configuration shows the relationship of these
+same counters after globalize_count() is executed by thread 0. As can be seen from
+the figure, thread 0’s counter (“c 0” in the figure) is added to globalcount, while the
+value of globalreserve is reduced by this same amount. Both thread 0’s counter
+and its countermax (“cm 0” in the figure) are reduced to zero. The other three threads’
+counters are unchanged. Note that this change did not affect the overall value of the
+counter, as indicated by the bottommost dotted line connecting the leftmost and center
+configurations. In other words, the sum of globalcount and the four threads’ counter
+variables is the same in both configurations. Similarly, this change did not affect the
+sum of globalcount and globalreserve, as indicated by the upper dotted line.
+    The rightmost configuration shows the relationship of these counters after balance_
+count() is executed, again by thread 0. One-quarter of the remaining count, denoted
+by the vertical line extending up from all three configurations, is added to thread 0’s
+countermax and half of that to thread 0’s counter. The amount added to thread 0’s
+counter is also subtracted from globalcount in order to avoid changing the overall
+value of the counter (which is again the sum of globalcount and the three threads’
+counter variables), again as indicated by the lowermost of the two dotted lines
+connecting the center and rightmost configurations. The globalreserve variable
+is also adjusted so that this variable remains equal to the sum of the four threads’
+
+                                                                                                 v2025.12.18a
+98                                                                          CHAPTER 5. COUNTING
+
+                  globalize_count()                       balance_count()
+
+                                                                                                 cm 3
+
+                                          globalreserve
+                                                                                                        c 3
+
+                                                                                 globalreserve
+                  cm 3                                    cm 3
+  globalreserve
+
+                          c 3                                    c 3
+
+                                                                                                 cm 2
+                                                                                                        c 2
+                  cm 2                                    cm 2
+                          c 2                                    c 2
+                                                                                                 cm 1   c 1
+                  cm 1    c 1                             cm 1   c 1
+                                                                                                 cm 0
+                                                                                                        c 0
+                  cm 0    c 0
+
+                                          globalcount
+
+                                                                                 globalcount
+  globalcount
+
+                         Figure 5.6: Schematic of Globalization and Balancing
+
+countermax variables. Because thread 0’s counter is less than its countermax,
+thread 0 can once again increment the counter locally.
+Quick Quiz 5.38: In Figure 5.6, even though a quarter of the remaining count up to the limit
+is assigned to thread 0, only an eighth of the remaining count is consumed, as indicated by the
+uppermost dotted line connecting the center and the rightmost configurations. Why is that?
+
+    Lines 21–28 show count_register_thread(), which sets up state for newly
+created threads. This function simply installs a pointer to the newly created thread’s
+counter variable into the corresponding entry of the counterp[] array under the
+protection of gblcnt_mutex.
+    Finally, lines 30–38 show count_unregister_thread(), which tears down state
+for a soon-to-be-exiting thread. Line 34 acquires gblcnt_mutex and line 37 releases
+it. Line 35 invokes globalize_count() to clear out this thread’s counter state, and
+line 36 clears this thread’s entry in the counterp[] array.
+
+5.3.3               Simple Limit Counter Discussion
+This type of counter is quite fast when aggregate values are near zero, with some overhead
+due to the comparison and branch in both add_count()’s and sub_count()’s fastpaths.
+However, the use of a per-thread countermax reserve means that add_count() can
+fail even when the aggregate value of the counter is nowhere near globalcountmax.
+Similarly, sub_count() can fail even when the aggregate value of the counter is
+nowhere near zero.
+     In many cases, this is unacceptable. Even if the globalcountmax is intended to be
+an approximate limit, there is usually a limit to exactly how much approximation can be
+tolerated. One way to limit the degree of approximation is to impose an upper limit on
+
+                                                                                                              v2025.12.18a
+5.4. EXACT LIMIT COUNTERS                                                                    99
+
+Listing 5.10: Approximate Limit Counter Variables
+1    unsigned long __thread counter = 0;
+2    unsigned long __thread countermax = 0;
+3    unsigned long globalcountmax = 10000;
+4    unsigned long globalcount = 0;
+5    unsigned long globalreserve = 0;
+6    unsigned long *counterp[NR_THREADS] = { NULL };
+7    DEFINE_SPINLOCK(gblcnt_mutex);
+8    #define MAX_COUNTERMAX 100
+
+Listing 5.11: Approximate Limit Counter Balancing
+1    static void balance_count(void)
+2    {
+3            countermax = globalcountmax -
+4                         globalcount - globalreserve;
+5            countermax /= num_online_threads();
+6            if (countermax > MAX_COUNTERMAX)
+7                    countermax = MAX_COUNTERMAX;
+8            globalreserve += countermax;
+9            counter = countermax / 2;
+10           if (counter > globalcount)
+11                   counter = globalcount;
+12           globalcount -= counter;
+13   }
+
+the value of the per-thread countermax instances. This task is undertaken in the next
+section.
+
+5.3.4       Approximate Limit Counter Implementation
+Because this implementation (count_lim_app.c) is quite similar to that in the previous
+section (Listings 5.6, 5.7, and 5.9), only the changes are shown here. Listing 5.10 is
+identical to Listing 5.6, with the addition of MAX_COUNTERMAX, which sets the maximum
+permissible value of the per-thread countermax variable.
+    Similarly, Listing 5.11 is identical to the balance_count() function in Listing 5.9,
+with the addition of lines 6 and 7, which enforce the MAX_COUNTERMAX limit on the
+per-thread countermax variable.
+
+5.3.5       Approximate Limit Counter Discussion
+These changes greatly reduce the limit inaccuracy seen in the previous version, but
+present another problem: Any given value of MAX_COUNTERMAX will cause a workload-
+dependent fraction of accesses to fall off the fastpath. As the number of threads increase,
+non-fastpath execution will become both a performance and a scalability problem.
+However, we will defer this problem and turn instead to counters with exact limits.
+
+5.4        Exact Limit Counters
+                                            Exactitude can be expensive. Spend wisely.
+                                                                                         Unknown
+
+To solve the exact structure-allocation limit problem noted in Quick Quiz 5.4, we need a
+limit counter that can tell exactly when its limits are exceeded. One way of implementing
+such a limit counter is to cause threads that have reserved counts to give them up. One
+
+                                                                                                   v2025.12.18a
+100                                                             CHAPTER 5. COUNTING
+
+Listing 5.12: Atomic Limit Counter Variables and Access Functions
+1    atomic_t __thread counterandmax = ATOMIC_INIT(0);
+2    unsigned long globalcountmax = 1 << 25;
+3    unsigned long globalcount = 0;
+4    unsigned long globalreserve = 0;
+5    atomic_t *counterp[NR_THREADS] = { NULL };
+6    DEFINE_SPINLOCK(gblcnt_mutex);
+7    #define CM_BITS (sizeof(atomic_t) * 4)
+8    #define MAX_COUNTERMAX ((1 << CM_BITS) - 1)
+9
+10   static __inline__ void
+11   split_counterandmax_int(int cami, int *c, int *cm)
+12   {
+13           *c = (cami >> CM_BITS) & MAX_COUNTERMAX;
+14           *cm = cami & MAX_COUNTERMAX;
+15   }
+16
+17   static __inline__ void
+18   split_counterandmax(atomic_t *cam, int *old, int *c, int *cm)
+19   {
+20           unsigned int cami = atomic_read(cam);
+21
+22           *old = cami;
+23           split_counterandmax_int(cami, c, cm);
+24   }
+25
+26   static __inline__ int merge_counterandmax(int c, int cm)
+27   {
+28           unsigned int cami;
+29
+30           cami = (c << CM_BITS) | cm;
+31           return ((int)cami);
+32   }
+
+way to do this is to use atomic instructions. Of course, atomic instructions will slow
+down the fastpath, but on the other hand, it would be silly not to at least give them a try.
+
+5.4.1       Atomic Limit Counter Implementation
+Unfortunately, if one thread is to safely remove counts from another thread, both threads
+will need to atomically manipulate that thread’s counter and countermax variables.
+The usual way to do this is to combine these two variables into a single variable, for
+example, given a 32-bit variable, using the high-order 16 bits to represent counter and
+the low-order 16 bits to represent countermax.
+ Quick Quiz 5.39: Why is it necessary to atomically manipulate the thread’s counter and
+ countermax variables as a unit? Wouldn’t it be good enough to atomically manipulate them
+ individually?
+
+    The variables and access functions for a simple atomic limit counter are shown
+in Listing 5.12 (count_lim_atomic.c). The counter and countermax variables in
+earlier algorithms are combined into the single variable counterandmax shown on
+line 1, with counter in the upper half and countermax in the lower half. This variable
+is of type atomic_t, which has an underlying representation of int.
+    Lines 2–6 show the definitions for globalcountmax, globalcount, globalreserve,
+counterp, and gblcnt_mutex, all of which take on roles similar to their counterparts
+in Listing 5.10. Line 7 defines CM_BITS, which gives the number of bits in each half
+of counterandmax, and line 8 defines MAX_COUNTERMAX, which gives the maximum
+value that may be held in either half of counterandmax.
+
+                                                                                               v2025.12.18a
+5.4. EXACT LIMIT COUNTERS                                                            101
+
+Quick Quiz 5.40: In what way does line 7 of Listing 5.12 violate the C standard?
+
+     Lines 10–15 show the split_counterandmax_int() function, which, when
+given the underlying int from the atomic_t counterandmax variable, splits it into
+its counter (c) and countermax (cm) components. Line 13 isolates the most-significant
+half of this int, placing the result as specified by argument c, and line 14 isolates the
+least-significant half of this int, placing the result as specified by argument cm.
+     Lines 17–24 show the split_counterandmax() function, which picks up the
+underlying int from the specified variable on line 20, stores it as specified by the old
+argument on line 22, and then invokes split_counterandmax_int() to split it on
+line 23.
+Quick Quiz 5.41: Given that there is only one counterandmax variable, why bother passing
+in a pointer to it on line 18 of Listing 5.12?
+
+    Lines 26–32 show the merge_counterandmax() function, which can be thought
+of as the inverse of split_counterandmax(). Line 30 merges the counter and
+countermax values passed in c and cm, respectively, and returns the result.
+Quick Quiz 5.42: Why does merge_counterandmax() in Listing 5.12 return an int rather
+than storing directly into an atomic_t?
+
+    Listing 5.13 shows the add_count() and sub_count() functions.
+    Lines 1–32 show add_count(), whose fastpath spans lines 8–15, with the remainder
+of the function being the slowpath. Lines 8–14 of the fastpath form a compare-and-swap
+(CAS) loop, with the atomic_cmpxchg() primitive on lines 13–14 performing the
+actual CAS. Line 9 splits the current thread’s counterandmax variable into its counter
+(in c) and countermax (in cm) components, while placing the underlying int into old.
+Line 10 checks whether the amount delta can be accommodated locally (taking care
+to avoid integer overflow), and if not, line 11 transfers to the slowpath. Otherwise,
+line 12 combines an updated counter value with the original countermax value into
+new. The atomic_cmpxchg() primitive on lines 13–14 then atomically compares this
+thread’s counterandmax variable to old, updating its value to new if the comparison
+succeeds. If the comparison succeeds, line 15 returns success, otherwise, execution
+continues in the loop at line 8.
+Quick Quiz 5.43: Yecch! Why the ugly goto on line 11 of Listing 5.13? Haven’t you heard
+of the break statement???
+
+Quick Quiz 5.44: Why would the atomic_cmpxchg() primitive at lines 13–14 of Listing 5.13
+ever fail? After all, we picked up its old value on line 9 and have not changed it!
+
+    Lines 16–31 of Listing 5.13 show add_count()’s slowpath, which is protected by
+gblcnt_mutex, which is acquired on line 17 and released on lines 24 and 30. Line 18
+invokes globalize_count(), which moves this thread’s state to the global counters.
+Lines 19–20 check whether the delta value can be accommodated by the current
+global state, and, if not, line 21 invokes flush_local_count() to flush all threads’
+local state to the global counters, and then lines 22–23 recheck whether delta can be
+accommodated. If, after all that, the addition of delta still cannot be accommodated,
+then line 24 releases gblcnt_mutex (as noted earlier), and then line 25 returns failure.
+    Otherwise, line 28 adds delta to the global counter, line 29 spreads counts to the
+local state if appropriate, line 30 releases gblcnt_mutex (again, as noted earlier), and
+finally, line 31 returns success.
+
+                                                                                            v2025.12.18a
+102                                                             CHAPTER 5. COUNTING
+
+Listing 5.13: Atomic Limit Counter Add and Subtract
+1    int add_count(unsigned long delta)
+2    {
+3            int c;
+4            int cm;
+5            int old;
+6            int new;
+7
+8            do {
+9                    split_counterandmax(&counterandmax, &old, &c, &cm);
+10                   if (delta > MAX_COUNTERMAX || c + delta > cm)
+11                            goto slowpath;
+12                   new = merge_counterandmax(c + delta, cm);
+13           } while (atomic_cmpxchg(&counterandmax,
+14                                    old, new) != old);
+15           return 1;
+16   slowpath:
+17           spin_lock(&gblcnt_mutex);
+18           globalize_count();
+19           if (globalcountmax - globalcount -
+20               globalreserve < delta) {
+21                   flush_local_count();
+22                   if (globalcountmax - globalcount -
+23                       globalreserve < delta) {
+24                            spin_unlock(&gblcnt_mutex);
+25                            return 0;
+26                   }
+27           }
+28           globalcount += delta;
+29           balance_count();
+30           spin_unlock(&gblcnt_mutex);
+31           return 1;
+32   }
+33
+34   int sub_count(unsigned long delta)
+35   {
+36           int c;
+37           int cm;
+38           int old;
+39           int new;
+40
+41           do {
+42                   split_counterandmax(&counterandmax, &old, &c, &cm);
+43                   if (delta > c)
+44                            goto slowpath;
+45                   new = merge_counterandmax(c - delta, cm);
+46           } while (atomic_cmpxchg(&counterandmax,
+47                                    old, new) != old);
+48           return 1;
+49    slowpath:
+50           spin_lock(&gblcnt_mutex);
+51           globalize_count();
+52           if (globalcount < delta) {
+53                   flush_local_count();
+54                   if (globalcount < delta) {
+55                            spin_unlock(&gblcnt_mutex);
+56                            return 0;
+57                   }
+58           }
+59           globalcount -= delta;
+60           balance_count();
+61           spin_unlock(&gblcnt_mutex);
+62           return 1;
+63   }
+
+                                                                                      v2025.12.18a
+5.4. EXACT LIMIT COUNTERS                                                              103
+
+Listing 5.14: Atomic Limit Counter Read
+1    unsigned long read_count(void)
+2    {
+3            int c;
+4            int cm;
+5            int old;
+6            int t;
+7            unsigned long sum;
+8
+9            spin_lock(&gblcnt_mutex);
+10           sum = globalcount;
+11           for_each_thread(t) {
+12                   if (counterp[t] != NULL) {
+13                           split_counterandmax(counterp[t], &old, &c, &cm);
+14                           sum += c;
+15                   }
+16           }
+17           spin_unlock(&gblcnt_mutex);
+18           return sum;
+19   }
+
+    Lines 34–63 of Listing 5.13 show sub_count(), which is structured similarly to
+add_count(), having a fastpath on lines 41–48 and a slowpath on lines 49–62. A
+line-by-line analysis of this function is left as an exercise to the reader.
+    Listing 5.14 shows read_count(). Line 9 acquires gblcnt_mutex and line 17
+releases it. Line 10 initializes local variable sum to the value of globalcount, and
+the loop spanning lines 11–16 adds the per-thread counters to this sum, isolating each
+per-thread counter using split_counterandmax on line 13. Finally, line 18 returns
+the sum.
+    Listings 5.15 and 5.16 show the utility functions globalize_count(), flush_
+local_count(), balance_count(), count_register_thread(), and count_
+unregister_thread(). The code for globalize_count() is shown on lines 1–12
+of Listing 5.15, and is similar to that of previous algorithms, with the addition of line 7,
+which is now required to split out counter and countermax from counterandmax.
+    The code for flush_local_count(), which moves all threads’ local counter state
+to the global counter, is shown on lines 14–33. Line 22 checks to see if the value of
+globalreserve permits any per-thread counts, and, if not, line 23 returns. Otherwise,
+line 24 initializes local variable zero to a combined zeroed counter and countermax.
+The loop spanning lines 25–32 sequences through each thread. Line 26 checks to see if
+the current thread has counter state, and, if so, lines 27–30 move that state to the global
+counters. Line 27 atomically fetches the current thread’s state while replacing it with
+zero. Line 28 splits this state into its counter (in local variable c) and countermax (in
+local variable cm) components. Line 29 adds this thread’s counter to globalcount,
+while line 30 subtracts this thread’s countermax from globalreserve.
+ Quick Quiz 5.45: What stops a thread from simply refilling its counterandmax variable
+ immediately after flush_local_count() on line 14 of Listing 5.15 empties it?
+
+ Quick Quiz 5.46: What prevents concurrent execution of the fastpath of either add_count()
+ or sub_count() from interfering with the counterandmax variable while flush_local_
+ count() is accessing it on line 27 of Listing 5.15?
+
+    Lines 1–22 on Listing 5.16 show the code for balance_count(), which refills
+the calling thread’s local counterandmax variable. This function is quite similar
+to that of the preceding algorithms, with changes required to handle the merged
+counterandmax variable. Detailed analysis of the code is left as an exercise for the
+
+                                                                                               v2025.12.18a
+104                                                                  CHAPTER 5. COUNTING
+
+Listing 5.15: Atomic Limit Counter Utility Functions 1
+1    static void globalize_count(void)
+2    {
+3            int c;
+4            int cm;
+5            int old;
+6
+7              split_counterandmax(&counterandmax, &old, &c, &cm);
+8              globalcount += c;
+9              globalreserve -= cm;
+10             old = merge_counterandmax(0, 0);
+11             atomic_set(&counterandmax, old);
+12   }
+13
+14   static void flush_local_count(void)
+15   {
+16           int c;
+17           int cm;
+18           int old;
+19           int t;
+20           int zero;
+21
+22             if (globalreserve == 0)
+23                     return;
+24             zero = merge_counterandmax(0, 0);
+25             for_each_thread(t) {
+26                     if (counterp[t] != NULL) {
+27                             old = atomic_xchg(counterp[t], zero);
+28                             split_counterandmax_int(old, &c, &cm);
+29                             globalcount += c;
+30                             globalreserve -= cm;
+31                     }
+32             }
+33   }
+
+reader, as it is with the count_register_thread() function starting on line 24 and
+the count_unregister_thread() function starting on line 33.
+ Quick Quiz 5.47: How can line 21 of balance_count() in Listing 5.16 work correctly in
+ face of concurrent flush_local_count() updates to this variable?
+
+ Quick Quiz 5.48: Does the atomic_set() primitive in balance_count() really need to be
+ atomic?
+
+         The next section qualitatively evaluates this design.
+
+5.4.2         Atomic Limit Counter Discussion
+This is the first implementation that actually allows the counter to be run all the way
+to either of its limits, but it does so at the expense of adding atomic operations to the
+fastpaths, which slow down the fastpaths significantly on some systems. Although some
+workloads might tolerate this slowdown, it is worthwhile looking for algorithms with
+better write-side performance. One such algorithm uses a signal handler to steal counts
+from other threads. Because signal handlers run in the context of the signaled thread,
+atomic operations are not necessary, as shown in the next section.
+ Quick Quiz 5.49: But signal handlers can be migrated to some other CPU while running.
+ Doesn’t this possibility require that atomic instructions and memory barriers are required to
+ reliably communicate between a thread and a signal handler that interrupts that thread?
+
+                                                                                                 v2025.12.18a
+5.4. EXACT LIMIT COUNTERS                                                             105
+
+Listing 5.16: Atomic Limit Counter Utility Functions 2
+1    static void balance_count(void)
+2    {
+3            int c;
+4            int cm;
+5            int old;
+6            unsigned long limit;
+7
+8            limit = globalcountmax - globalcount -
+9                    globalreserve;
+10           limit /= num_online_threads();
+11           if (limit > MAX_COUNTERMAX)
+12                   cm = MAX_COUNTERMAX;
+13           else
+14                   cm = limit;
+15           globalreserve += cm;
+16           c = cm / 2;
+17           if (c > globalcount)
+18                   c = globalcount;
+19           globalcount -= c;
+20           old = merge_counterandmax(c, cm);
+21           atomic_set(&counterandmax, old);
+22   }
+23
+24   void count_register_thread(void)
+25   {
+26           int idx = smp_thread_id();
+27
+28           spin_lock(&gblcnt_mutex);
+29           counterp[idx] = &counterandmax;
+30           spin_unlock(&gblcnt_mutex);
+31   }
+32
+33   void count_unregister_thread(int nthreadsexpected)
+34   {
+35           int idx = smp_thread_id();
+36
+37           spin_lock(&gblcnt_mutex);
+38           globalize_count();
+39           counterp[idx] = NULL;
+40           spin_unlock(&gblcnt_mutex);
+41   }
+
+5.4.3       Signal-Theft Limit Counter Design
+Even though per-thread state will now be manipulated only by the corresponding thread,
+there will still need to be synchronization with the signal handlers. This synchronization
+is provided by the state machine shown in Figure 5.7.
+    The state machine starts out in the IDLE state, and when add_count() or sub_
+count() find that the combination of the local thread’s count and the global count
+cannot accommodate the request, the corresponding slowpath sets each thread’s theft
+state to REQ (unless that thread has no count, in which case it transitions directly to
+READY). Only the slowpath, which holds the gblcnt_mutex lock, is permitted to
+transition from the IDLE state, as indicated by the green color.5 The slowpath then sends
+a signal to each thread, and the corresponding signal handler checks the corresponding
+thread’s theft and counting variables. If the theft state is not REQ, then the signal
+handler is not permitted to change the state, and therefore simply returns. Otherwise, if
+the counting variable is set, indicating that the current thread’s fastpath is in progress,
+the signal handler sets the theft state to ACK, otherwise to READY.
+
+  5 For those with black-and-white versions of this book, IDLE and READY are green,
+
+REQ is red, and ACK is blue.
+
+                                                                                              v2025.12.18a
+106                                                               CHAPTER 5. COUNTING
+
+                                                IDLE
+
+                                           need   no
+                                                       flushed
+                                           flush count
+
+                                           !counting
+                                REQ                        READY
+
+                                                            done
+                                           counting
+                                                          counting
+
+                                              ACK
+
+                         Figure 5.7: Signal-Theft State Machine
+
+    If the theft state is ACK, only the fastpath is permitted to change the theft state,
+as indicated by the blue color. When the fastpath completes, it sets the theft state to
+READY.
+    Once the slowpath sees a thread’s theft state is READY, the slowpath is permitted
+to steal that thread’s count. The slowpath then sets that thread’s theft state to IDLE.
+Quick Quiz 5.50: In Figure 5.7, why is the REQ theft state colored red?
+
+Quick Quiz 5.51: In Figure 5.7, what is the point of having separate REQ and ACK theft
+states? Why not simplify the state machine by collapsing them into a single REQACK state?
+Then whichever of the signal handler or the fastpath gets there first could set the state to READY.
+
+5.4.4    Signal-Theft Limit Counter Implementation
+Listing 5.17 (count_lim_sig.c) shows the data structures used by the signal-theft
+based counter implementation. Lines 1–7 define the states and values for the per-thread
+theft state machine described in the preceding section. Lines 8–17 are similar to earlier
+implementations, with the addition of lines 14 and 15 to allow remote access to a
+thread’s countermax and theft variables, respectively.
+    Listing 5.18 shows the functions responsible for migrating counts between per-thread
+variables and the global variables. Lines 1–7 show globalize_count(), which is
+identical to earlier implementations. Lines 9–16 show flush_local_count_sig(),
+which is the signal handler used in the theft process. Lines 11 and 12 check to see if the
+theft state is REQ, and, if not returns without change. Line 13 sets the theft state
+to ACK, and, if line 14 sees that this thread’s fastpaths are not running, line 15 uses
+smp_store_release() to set the theft state to READY, further ensuring that any
+change to counter in the fastpath happens before this change of theft to READY.
+Quick Quiz 5.52:       In Listing 5.18, doesn’t flush_local_count_sig() need stronger
+memory barriers?
+
+                                                                                                      v2025.12.18a
+5.4. EXACT LIMIT COUNTERS                                                                      107
+
+Listing 5.17: Signal-Theft Limit Counter Data
+1    #define THEFT_IDLE    0
+2    #define THEFT_REQ     1
+3    #define THEFT_ACK     2
+4    #define THEFT_READY   3
+5
+6    int __thread theft = THEFT_IDLE;
+7    int __thread counting = 0;
+8    unsigned long __thread counter = 0;
+9    unsigned long __thread countermax = 0;
+10   unsigned long globalcountmax = 10000;
+11   unsigned long globalcount = 0;
+12   unsigned long globalreserve = 0;
+13   unsigned long *counterp[NR_THREADS] = { NULL };
+14   unsigned long *countermaxp[NR_THREADS] = { NULL };
+15   int *theftp[NR_THREADS] = { NULL };
+16   DEFINE_SPINLOCK(gblcnt_mutex);
+17   #define MAX_COUNTERMAX 100
+
+    Lines 18–47 show flush_local_count(), which is called from the slowpath to
+flush all threads’ local counts. The loop spanning lines 23–32 advances the theft state
+for each thread that has local count, and also sends that thread a signal. Line 24 skips
+any non-existent threads. Otherwise, line 25 checks to see if the current thread holds
+any local count, and, if not, line 26 sets the thread’s theft state to READY and line 27
+skips to the next thread. Otherwise, line 29 sets the thread’s theft state to REQ and
+line 30 sends the thread a signal.
+ Quick Quiz 5.53: In Listing 5.18, why is it safe for line 25 to directly access the other thread’s
+ countermax variable?
+
+ Quick Quiz 5.54: In Listing 5.18, why doesn’t line 30 check for the current thread sending
+ itself a signal?
+
+ Quick Quiz 5.55: The code shown in Listings 5.17 and 5.18 works with GCC and POSIX.
+ What would be required to make it also conform to the ISO C standard?
+
+     The loop spanning lines 33–46 waits until each thread reaches READY state,
+then steals that thread’s count. Lines 34–35 skip any non-existent threads, and
+the loop spanning lines 36–40 waits until the current thread’s theft state becomes
+READY. Line 37 blocks for a millisecond to avoid priority-inversion problems, and
+if line 38 determines that the thread’s signal has not yet arrived, line 39 resends the
+signal. Execution reaches line 41 when the thread’s theft state becomes READY, so
+lines 41–44 do the thieving. Line 45 then sets the thread’s theft state back to IDLE.
+ Quick Quiz 5.56: In Listing 5.18, why does line 39 resend the signal?
+
+    Lines 49–61 show balance_count(), which is similar to that of earlier examples.
+    Listing 5.19 shows the add_count() function. The fastpath spans lines 5–18, and
+the slowpath lines 19–33. Line 5 sets the per-thread counting variable to 1 so that
+any subsequent signal handlers interrupting this thread will set the theft state to ACK
+rather than READY, allowing this fastpath to complete properly. Line 6 prevents the
+compiler from reordering any of the fastpath body to precede the setting of counting.
+Lines 7 and 8 check to see if the per-thread data can accommodate the add_count()
+and if there is no ongoing theft in progress, and if so line 9 does the fastpath addition
+and line 10 notes that the fastpath was taken.
+    In either case, line 12 prevents the compiler from reordering the fastpath body
+to follow line 13, which permits any subsequent signal handlers to undertake theft.
+
+                                                                                                      v2025.12.18a
+108                                                             CHAPTER 5. COUNTING
+
+Listing 5.18: Signal-Theft Limit Counter Value-Migration Functions
+1    static void globalize_count(void)
+2    {
+3            globalcount += counter;
+4            counter = 0;
+5            globalreserve -= countermax;
+6            countermax = 0;
+7    }
+8
+9    static void flush_local_count_sig(int unused)
+10   {
+11           if (READ_ONCE(theft) != THEFT_REQ)
+12                   return;
+13           WRITE_ONCE(theft, THEFT_ACK);
+14           if (!counting)
+15                   smp_store_release(&theft, THEFT_READY);
+16   }
+17
+18   static void flush_local_count(void)
+19   {
+20           int t;
+21           thread_id_t tid;
+22
+23           for_each_tid(t, tid) {
+24                   if (theftp[t] != NULL) {
+25                           if (*countermaxp[t] == 0) {
+26                                   WRITE_ONCE(*theftp[t], THEFT_READY);
+27                                   continue;
+28                           }
+29                           WRITE_ONCE(*theftp[t], THEFT_REQ);
+30                           pthread_kill(tid, SIGUSR1);
+31                   }
+32           }
+33           for_each_tid(t, tid) {
+34                   if (theftp[t] == NULL)
+35                           continue;
+36                   while (smp_load_acquire(theftp[t]) != THEFT_READY) {
+37                           poll(NULL, 0, 1);
+38                           if (READ_ONCE(*theftp[t]) == THEFT_REQ)
+39                                   pthread_kill(tid, SIGUSR1);
+40                   }
+41                   globalcount += *counterp[t];
+42                   *counterp[t] = 0;
+43                   globalreserve -= *countermaxp[t];
+44                   *countermaxp[t] = 0;
+45                   smp_store_release(theftp[t], THEFT_IDLE);
+46           }
+47   }
+48
+49   static void balance_count(void)
+50   {
+51           countermax = globalcountmax - globalcount -
+52                        globalreserve;
+53           countermax /= num_online_threads();
+54           if (countermax > MAX_COUNTERMAX)
+55                   countermax = MAX_COUNTERMAX;
+56           globalreserve += countermax;
+57           counter = countermax / 2;
+58           if (counter > globalcount)
+59                   counter = globalcount;
+60           globalcount -= counter;
+61   }
+
+                                                                                      v2025.12.18a
+5.4. EXACT LIMIT COUNTERS                                      109
+
+Listing 5.19: Signal-Theft Limit Counter Add Function
+1    int add_count(unsigned long delta)
+2    {
+3            int fastpath = 0;
+4
+5            WRITE_ONCE(counting, 1);
+6            barrier();
+7            if (smp_load_acquire(&theft) <= THEFT_REQ &&
+8                countermax - counter >= delta) {
+9                    WRITE_ONCE(counter, counter + delta);
+10                   fastpath = 1;
+11           }
+12           barrier();
+13           WRITE_ONCE(counting, 0);
+14           barrier();
+15           if (READ_ONCE(theft) == THEFT_ACK)
+16                   smp_store_release(&theft, THEFT_READY);
+17           if (fastpath)
+18                   return 1;
+19           spin_lock(&gblcnt_mutex);
+20           globalize_count();
+21           if (globalcountmax - globalcount -
+22               globalreserve < delta) {
+23                   flush_local_count();
+24                   if (globalcountmax - globalcount -
+25                       globalreserve < delta) {
+26                            spin_unlock(&gblcnt_mutex);
+27                            return 0;
+28                   }
+29           }
+30           globalcount += delta;
+31           balance_count();
+32           spin_unlock(&gblcnt_mutex);
+33           return 1;
+34   }
+
+Listing 5.20: Signal-Theft Limit Counter Subtract Function
+1    int sub_count(unsigned long delta)
+2    {
+3            int fastpath = 0;
+4
+5            WRITE_ONCE(counting, 1);
+6            barrier();
+7            if (smp_load_acquire(&theft) <= THEFT_REQ &&
+8                counter >= delta) {
+9                    WRITE_ONCE(counter, counter - delta);
+10                   fastpath = 1;
+11           }
+12           barrier();
+13           WRITE_ONCE(counting, 0);
+14           barrier();
+15           if (READ_ONCE(theft) == THEFT_ACK)
+16                   smp_store_release(&theft, THEFT_READY);
+17           if (fastpath)
+18                   return 1;
+19           spin_lock(&gblcnt_mutex);
+20           globalize_count();
+21           if (globalcount < delta) {
+22                   flush_local_count();
+23                   if (globalcount < delta) {
+24                            spin_unlock(&gblcnt_mutex);
+25                            return 0;
+26                   }
+27           }
+28           globalcount -= delta;
+29           balance_count();
+30           spin_unlock(&gblcnt_mutex);
+31           return 1;
+32   }
+
+                                                                     v2025.12.18a
+110                                                            CHAPTER 5. COUNTING
+
+Listing 5.21: Signal-Theft Limit Counter Read Function
+1    unsigned long read_count(void)
+2    {
+3            int t;
+4            unsigned long sum;
+5
+6            spin_lock(&gblcnt_mutex);
+7            sum = globalcount;
+8            for_each_thread(t) {
+9                    if (counterp[t] != NULL)
+10                           sum += READ_ONCE(*counterp[t]);
+11           }
+12           spin_unlock(&gblcnt_mutex);
+13           return sum;
+14   }
+
+Listing 5.22: Signal-Theft Limit Counter Initialization Functions
+1    void count_init(void)
+2    {
+3            struct sigaction sa;
+4
+5            sa.sa_handler = flush_local_count_sig;
+6            sigemptyset(&sa.sa_mask);
+7            sa.sa_flags = 0;
+8            if (sigaction(SIGUSR1, &sa, NULL) != 0) {
+9                    perror("sigaction");
+10                   exit(EXIT_FAILURE);
+11           }
+12   }
+13
+14   void count_register_thread(void)
+15   {
+16           int idx = smp_thread_id();
+17
+18           spin_lock(&gblcnt_mutex);
+19           counterp[idx] = &counter;
+20           countermaxp[idx] = &countermax;
+21           theftp[idx] = &theft;
+22           spin_unlock(&gblcnt_mutex);
+23   }
+24
+25   void count_unregister_thread(int nthreadsexpected)
+26   {
+27           int idx = smp_thread_id();
+28
+29           spin_lock(&gblcnt_mutex);
+30           globalize_count();
+31           counterp[idx] = NULL;
+32           countermaxp[idx] = NULL;
+33           theftp[idx] = NULL;
+34           spin_unlock(&gblcnt_mutex);
+35   }
+
+Line 14 again disables compiler reordering, and then line 15 checks to see if the
+signal handler deferred the theft state-change to READY, and, if so, line 16 uses
+smp_store_release() to set the theft state to READY, further ensuring that any
+CPU that sees the READY state also sees the effects of line 9. If the fastpath addition at
+line 9 was executed, then line 18 returns success.
+    Otherwise, we fall through to the slowpath starting at line 19. The structure of the
+slowpath is similar to those of earlier examples, so its analysis is left as an exercise
+to the reader. Similarly, the structure of sub_count() on Listing 5.20 is the same as
+that of add_count(), so the analysis of sub_count() is also left as an exercise for the
+reader, as is the analysis of read_count() in Listing 5.21.
+
+                                                                                             v2025.12.18a
+5.4. EXACT LIMIT COUNTERS                                                                 111
+
+    Lines 1–12 of Listing 5.22 show count_init(), which set up flush_local_
+count_sig() as the signal handler for SIGUSR1, enabling the pthread_kill() calls
+in flush_local_count() to invoke flush_local_count_sig(). The code for
+thread registry and unregistry is similar to that of earlier examples, so its analysis is left
+as an exercise for the reader.
+
+5.4.5    Signal-Theft Limit Counter Discussion
+The signal-theft implementation runs more than eight times as fast as the atomic
+implementation on my six-core x86 laptop. Is it always preferable?
+    The signal-theft implementation would be vastly preferable on Pentium-4 systems,
+given their slow atomic instructions, but the old 80386-based Sequent Symmetry
+systems would do much better with the shorter path length of the atomic implementation.
+However, this increased update-side performance comes at the prices of higher read-side
+overhead: Those POSIX signals are not free. If ultimate performance is of the essence,
+you will need to measure them both on the system that your application is to be deployed
+on.
+Quick Quiz 5.57: Not only are POSIX signals slow, sending one to each thread simply does
+not scale. What would you do if you had (say) 10,000 threads and needed the read side to be
+fast?
+
+   This is but one reason why high-quality APIs are so important: They permit
+implementations to be changed as required by ever-changing hardware performance
+characteristics.
+Quick Quiz 5.58: What if you want an exact limit counter to be exact only for its lower limit,
+but to allow the upper limit to be inexact?
+
+5.4.6    Applying Exact Limit Counters
+Although the exact limit counter implementations presented in this section can be very
+useful, they are not much help if the counter’s value remains near zero at all times, as it
+might when counting the number of outstanding accesses to an I/O device. The high
+overhead of such near-zero counting is especially painful given that we normally don’t
+care how many references there are. As noted in the removable I/O device access-count
+problem posed by Quick Quiz 5.5, the number of accesses is irrelevant except in those
+rare cases when someone is actually trying to remove the device.
+    One simple solution to this problem is to add a large “bias” (for example, one
+billion) to the counter in order to ensure that the value is far enough from zero that
+the counter can operate efficiently. When someone wants to remove the device, this
+bias is subtracted from the counter value. Counting the last few accesses will be quite
+inefficient, but the important point is that the many prior accesses will have been counted
+at full speed.
+Quick Quiz 5.59: What else had you better have done when using a biased counter?
+
+    Although a biased counter can be quite helpful and useful, it is only a partial
+solution to the removable I/O device access-count problem called out on page 81. When
+attempting to remove a device, we must not only know the precise number of current
+I/O accesses, we also need to prevent any future accesses from starting. One way to
+accomplish this is to read-acquire a reader-writer lock when updating the counter, and to
+
+                                                                                                 v2025.12.18a
+ 112                                                                 CHAPTER 5. COUNTING
+
+ write-acquire that same reader-writer lock when checking the counter. Code for doing
+ I/O might be as follows:
+ 1    read_lock(&mylock);
+ 2    if (removing) {
+ 3             read_unlock(&mylock);
+ 4             cancel_io();
+ 5    } else {
+ 6             add_count(1);
+ 7             read_unlock(&mylock);
+ 8             do_io();
+ 9             sub_count(1);
+10    }
+
+      Line 1 read-acquires the lock, and either line 3 or 7 releases it. Line 2 checks to see
+ if the device is being removed, and, if so, line 3 releases the lock and line 4 cancels
+ the I/O, or takes whatever action is appropriate given that the device is to be removed.
+ Otherwise, line 6 increments the access count, line 7 releases the lock, line 8 performs
+ the I/O, and line 9 decrements the access count.
+     Quick Quiz 5.60: This is ridiculous! We are read-acquiring a reader-writer lock to update the
+     counter? What are you playing at???
+
+        The code to remove the device might be as follows:
+ 1    write_lock(&mylock);
+ 2    removing = 1;
+ 3    sub_count(mybias);
+ 4    write_unlock(&mylock);
+ 5    while (read_count() != 0)
+ 6            poll(NULL, 0, 1);
+ 7    remove_device();
+
+     Line 1 write-acquires the lock and line 4 releases it. Line 2 notes that the device is
+ being removed, and the loop spanning lines 5–6 waits for any I/O operations to complete.
+ Finally, line 7 does any additional processing needed to prepare for device removal.
+     Quick Quiz 5.61: What other issues would need to be accounted for in a real system?
+
+ 5.5         Parallel Counting Discussion
+                                               This idea that there is generality in the specific is of
+                                               far-reaching importance.
+                                                                               Douglas R. Hofstadter
+
+ This chapter has presented the reliability, performance, and scalability problems with
+ traditional counting primitives. The C-language ++ operator is not guaranteed to
+ function reliably in multithreaded code, and atomic operations to a single variable
+ neither perform nor scale well. This chapter therefore presented a number of counting
+ algorithms that perform and scale extremely well in certain special cases.
+     It is well worth reviewing the lessons from these counting algorithms. To that end,
+ Section 5.5.1 overviews requisite validation, Section 5.5.2 summarizes performance and
+ scalability, Section 5.5.3 discusses the need for specialization, and finally, Section 5.5.4
+ enumerates lessons learned and calls attention to later chapters that will expand on these
+ lessons.
+
+                                                                                                          v2025.12.18a
+5.5. PARALLEL COUNTING DISCUSSION                                                    113
+
+               Table 5.1: Statistical/Limit Counter Performance on x86
+
+                               Exact?
+                                                               Reads (ns)
+ Algorithm                              Updates
+    (count_*.c)     Section                (ns)   1 CPU   8 CPUs   64 CPUs    420 CPUs
+ stat                  5.2.2              6.3      294      303        315         612
+ stat_eventual         5.2.4              6.4        1        1          1           1
+ end                   5.2.3              2.9      301    6,309    147,594     239,683
+ end_rcu              13.5.1              2.9      454      481        508       2,317
+ lim                   5.3.2   N          3.2      435    6,678    156,175     239,422
+ lim_app               5.3.4   N          2.4      485    7,041    173,108     239,682
+ lim_atomic            5.4.1   Y         19.7      513    7,085    199,957     239,450
+ lim_sig               5.4.4   Y          4.7      519    6,805    120,000     238,811
+
+5.5.1    Parallel Counting Validation
+Many of the algorithms in this section are quite simple, so much so that it is tempting
+to declare them to be correct by construction or by inspection. Unfortunately, it
+is all too easy for those carrying out the construction or the inspection to become
+overconfident, tired, confused, or just plain sloppy, all of which can result in bugs. And
+early implementations of these limit counters have in fact contained bugs, in some cases
+aided and abetted by the complexities inherent in maintaining a 64-bit count on a 32-bit
+system. Therefore, validation is not optional, even for the simple algorithms presented
+in this chapter.
+    The statistical counters are tested for acting like counters (“counttorture.h”),
+that is, that the aggregate sum in the counter changes by the sum of the amounts added
+by the various update-side threads.
+    The limit counters are also tested for acting like counters (“limtorture.h”), and
+additionally checked for their ability to accommodate the specified limit.
+    Both of these test suites produce performance data that is used in Section 5.5.2.
+    Although this level of validation is good and sufficient for textbook implementations
+such as these, it would be wise to apply additional validation before putting similar
+algorithms into production. Chapter 11 describes additional approaches to testing,
+and given the simplicity of most of these counting algorithms, most of the techniques
+described in Chapter 12 can also be quite helpful.
+
+5.5.2    Parallel Counting Performance
+The top half of Table 5.1 shows the performance of the four parallel statistical counting
+algorithms. All four algorithms provide near-perfect linear scalability for updates. The
+per-thread-variable implementation (count_end.c) is significantly faster on updates
+than the array-based implementation (count_stat.c), but is slower at reads on large
+numbers of core, and suffers severe lock contention when there are many parallel readers.
+This contention can be addressed using the deferred-processing techniques introduced in
+Chapter 9, as shown on the count_end_rcu.c row of Table 5.1. Deferred processing
+also shines on the count_stat_eventual.c row, courtesy of eventual consistency.
+
+                                                                                             v2025.12.18a
+114                                                             CHAPTER 5. COUNTING
+
+Quick Quiz 5.62: On the count_stat.c row of Table 5.1, we see that the read-side scales
+linearly with the number of threads. How is that possible given that the more threads there are,
+the more per-thread counters must be summed up?
+
+Quick Quiz 5.63: Even on the fourth row of Table 5.1, the read-side performance of these
+statistical counter implementations is pretty horrible. So why bother with them?
+
+     The bottom half of Table 5.1 shows the performance of the parallel limit-counting
+algorithms. Exact enforcement of the limits incurs a substantial update-side performance
+penalty, although on this x86 system that penalty can be reduced by substituting signals
+for atomic operations. All of these implementations suffer from read-side lock contention
+in the face of concurrent readers.
+Quick Quiz 5.64: Given the performance data shown in the bottom half of Table 5.1, we
+should always prefer signals over atomic operations, right?
+
+Quick Quiz 5.65: Can advanced techniques be applied to address the lock contention for
+readers seen in the bottom half of Table 5.1?
+
+    In short, this chapter has demonstrated a number of counting algorithms that perform
+and scale extremely well in a number of special cases. But must our parallel counting
+be confined to special cases? Wouldn’t it be better to have a general algorithm that
+operated efficiently in all cases? The next section looks at these questions.
+
+5.5.3    Parallel Counting Specializations
+The fact that these algorithms only work well in their respective special cases might
+be considered a major problem with parallel programming in general. After all, the
+C-language ++ operator works just fine in single-threaded code, and not just for special
+cases, but in general, right?
+    This line of reasoning does contain a grain of truth, but is in essence misguided.
+The problem is not parallelism as such, but rather scalability. To understand this, first
+consider the C-language ++ operator. The fact is that it does not work in general, only
+for a restricted range of numbers. If you need to deal with 1,000-digit decimal numbers,
+the C-language ++ operator will not work for you.
+Quick Quiz 5.66: The ++ operator works just fine for 1,000-digit numbers! Haven’t you heard
+of operator overloading???
+
+    This problem is not specific to arithmetic. Suppose you need to store and query
+data. Should you use an ASCII file? XML? A relational database? A linked list? A
+dense array? A B-tree? A radix tree? Or one of the plethora of other data structures and
+environments that permit data to be stored and queried? It depends on what you need
+to do, how fast you need it done, and how large your data set is—even on sequential
+systems.
+    Similarly, if you need to count, your solution will depend on how large of numbers
+you need to work with, how many CPUs need to be manipulating a given number
+concurrently, how the number is to be used, and what level of performance and scalability
+you will need.
+    Nor is this problem specific to software. The design for a bridge meant to allow
+people to walk across a small brook might be a simple as a single wooden plank. But you
+would probably not use a plank to span the kilometers-wide mouth of the Columbia River,
+
+                                                                                                   v2025.12.18a
+5.5. PARALLEL COUNTING DISCUSSION                                                       115
+
+nor would such a design be advisable for bridges carrying concrete trucks. In short, just
+as bridge design must change with increasing span and load, so must software design
+change as the number of CPUs increases. That said, it would be good to automate this
+process, so that the software adapts to changes in hardware configuration and in workload.
+There has in fact been some research into this sort of automation [AHS+ 03, SAH+ 03],
+and the Linux kernel does some boot-time reconfiguration, including limited binary
+rewriting. This sort of adaptation will become increasingly important as the number of
+CPUs on mainstream systems continues to increase.
+    In short, as discussed in Chapter 3, the laws of physics constrain parallel software
+just as surely as they constrain mechanical artifacts such as bridges. These constraints
+force specialization, though in the case of software it might be possible to automate the
+choice of specialization to fit the hardware and workload in question.
+    Of course, even generalized counting is quite specialized. We need to do a great
+number of other things with computers. The next section relates what we have learned
+from counters to topics taken up later in this book.
+
+5.5.4    Parallel Counting Lessons
+The opening paragraph of this chapter promised that our study of counting would
+provide an excellent introduction to parallel programming. This section makes explicit
+connections between the lessons from this chapter and the material presented in a
+number of later chapters.
+    The examples in this chapter have shown that an important scalability and perfor-
+mance tool is partitioning. The counters might be fully partitioned, as in the statistical
+counters discussed in Section 5.2, or partially partitioned as in the limit counters
+discussed in Sections 5.3 and 5.4. Partitioning will be considered in far greater depth
+in Chapter 6, and partial parallelization in particular in Section 6.4, where it is called
+parallel fastpath.
+Quick Quiz 5.67: But if we are going to have to partition everything, why bother with
+shared-memory multithreading? Why not just partition the problem completely and run as
+multiple processes, each in its own address space?
+
+    The partially partitioned counting algorithms used locking to guard the global data,
+and locking is the subject of Chapter 7. In contrast, the partitioned data tended to be fully
+under the control of the corresponding thread, so that no synchronization whatsoever
+was required. This data ownership will be introduced in Section 6.3.4 and discussed in
+more detail in Chapter 8.
+    Because integer addition and subtraction are extremely cheap compared to typical
+synchronization operations, achieving reasonable scalability requires synchronization
+operations be used sparingly. One way of achieving this is to batch the addition and
+subtraction operations, so that a great many of these cheap operations are handled by
+a single synchronization operation. Batching optimizations of one sort or another are
+used by each of the counting algorithms listed in Table 5.1.
+    Finally, the eventually consistent statistical counter discussed in Section 5.2.4 showed
+how deferring activity (in that case, updating the global counter) can provide substantial
+performance and scalability benefits. This approach allows common case code to use
+much cheaper synchronization operations than would otherwise be possible. Chapter 9
+will examine a number of additional ways that deferral can improve performance,
+scalability, and even real-time response.
+    Summarizing the summary:
+
+                                                                                                v2025.12.18a
+116                                                           CHAPTER 5. COUNTING
+
+                                                                  Batch
+
+                                          Work
+                                        Partitioning
+
+                                                         Resource
+                          Parallel
+                                                       Partitioning and
+                      Access Control                     Replication
+
+                                        Interacting
+                                       With Hardware
+                   Weaken                                         Partition
+
+         Figure 5.8: Optimization and the Four Parallel-Programming Tasks
+
+   1. Partitioning promotes performance and scalability.
+   2. Partial partitioning, that is, partitioning applied only to common code paths,
+      works almost as well.
+   3. Partial partitioning can be applied to code (as in Section 5.2’s statistical counters’
+      partitioned updates and non-partitioned reads), but also across time (as in
+      Section 5.3’s and Section 5.4’s limit counters running fast when far from the limit,
+      but slowly when close to the limit).
+   4. Partitioning across time often batches updates locally in order to reduce the number
+      of expensive global operations, thereby decreasing synchronization overhead, in
+      turn improving performance and scalability. All the algorithms shown in Table 5.1
+      make heavy use of batching.
+   5. Read-only code paths should remain read-only: Spurious synchronization writes
+      to shared memory kill performance and scalability, as seen in the count_end.c
+      row of Table 5.1.
+   6. Judicious use of delay promotes performance and scalability, as seen in Sec-
+      tion 5.2.4.
+   7. Parallel performance and scalability is usually a balancing act: Beyond a certain
+      point, optimizing some code paths will degrade others. The count_stat.c and
+      count_end_rcu.c rows of Table 5.1 illustrate this point.
+   8. Different levels of performance and scalability will affect algorithm and data-
+      structure design, as do a large number of other factors. Figure 5.1 illustrates this
+      point: Atomic increment might be completely acceptable for a two-CPU system,
+      but nevertheless be completely inadequate for an eight-CPU system.
+
+   Summarizing still further, we have the “big three” methods of increasing performance
+and scalability, namely (1) partitioning over CPUs or threads, (2) batching so that more
+work can be done by each expensive synchronization operation, and (3) weakening
+synchronization operations where feasible. As a rough rule of thumb, you should
+apply these methods in this order, as was noted earlier in the discussion of Figure 2.7
+on page 22. The partitioning optimization applies to the “Resource Partitioning and
+Replication” bubble, the batching optimization to the “Work Partitioning” bubble,
+
+                                                                                               v2025.12.18a
+5.5. PARALLEL COUNTING DISCUSSION                                                   117
+
+and the weakening optimization to the “Parallel Access Control” bubble, as shown
+in Figure 5.8. Of course, if you are using special-purpose hardware such as digital
+signal processors (DSPs), field-programmable gate arrays (FPGAs), or general-purpose
+graphical processing units (GPGPUs), you may need to pay close attention to the
+“Interacting With Hardware” bubble throughout the design process. For example, the
+structure of a GPGPU’s hardware threads and memory connectivity might richly reward
+very careful partitioning and batching design decisions.
+    In short, as noted at the beginning of this chapter, the simplicity of counting have
+allowed us to explore many fundamental concurrency issues without the distraction of
+complex synchronization primitives or elaborate data structures. Such synchronization
+primitives and data structures are covered in later chapters.
+
+                                                                                           v2025.12.18a
+118   CHAPTER 5. COUNTING
+
+                            v2025.12.18a

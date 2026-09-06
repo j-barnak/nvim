@@ -1,0 +1,4621 @@
+When another developer with some Rust exposure jumps in our codebase they will immediately spot
+the conversion pattern because we are using a trait that they are already familiar with.
+
+6.15    Summary
+Validating that the email in the payload of POST /subscriptions complies with the expected format
+is good, but it is not enough.
+We now have an email that is syntactically valid but we are still uncertain about its existence: does
+anybody actually use that email address? Is it reachable?
+We have no idea and there is only one way to find out: sending an actual email.
+Confirmation emails (and how to write a HTTP client!) will be the topic of the next chapter.
+
+7     Reject Invalid Subscribers #2
+7.1     Confirmation Emails
+In the previous chapter we introduced validation for the email addresses of new subscribers - they
+must comply with the email format.
+We now have emails that are syntactically valid but we are still uncertain about their existence: does
+anybody actually use those email addresses? Are they reachable?
+We have no idea and there is only one way to find out: sending out an actual confirmation email.
+
+7.1.1   Subscriber Consent
+Your spider-senses should be going off now - do we actually need to know at this stage of the subscriber
+lifetime? Can’t we just wait for the next newsletter issue to find out if they receive our emails or not?
+If performing thorough validation was our only concern, I’d concur: we should wait for the next issue
+to go out instead of adding more complexity to our POST /subscriptions endpoint.
+There is one more thing we are concerned about though, which we cannot postpone: subscriber
+consent.
+An email address is not a password - if you have been on the Internet long enough there is a high
+chance your email is not so difficult to come by.
+Certain types of email addresses (e.g. professional emails) are outright public.
+This opens up the possibility of abuse.
+A malicious user could start subscribing an email address to all sort of newsletters across the internet,
+flooding the victim’s inbox with junk.
+A shady newsletter owner, instead, could start scraping email addresses from the web and adding
+them to its newsletter email list.
+This is why a request to POST /subscriptions is not enough to say “This person wants to receive
+my newsletter content!”.
+For example, if you are dealing with European citizens, it is a legal requirement to get explicit consent
+from the user.
+This is why it has become common practice to send confirmation emails: after entering your details
+in the newsletter HTML form you will receive an email in your inbox asking you to confirm that you
+do indeed want to subscribe to that newsletter.
+This works nicely for us - we shield our users from abuse and we get to confirm that the email
+addresses they provided actually exist before trying to send them a newsletter issue.
+
+7.1.2   The Confirmation User Journey
+Let’s look at our confirmation flow from a user perspective.
+They will receive an email with a confirmation link.
+Once they click on it something happens and they are then redirected to a success page (“You are
+now a subscriber of our newsletter! Yay!”). From that point onwards, they will receive all newsletter
+issues in their inbox.
+How will the backend work?
+We will try to keep it as simple as we can - our version will not perform a redirect on confirmation,
+we will just return a 200 OK to the browser.
+Every time a user wants to subscribe to our newsletter they fire a POST /subscriptions request.
+Our request handler will:
+    • add their details to our database in the subscriptions table, with status equal to
+      pending_confirmation;
+    • generate a (unique) subscription_token;
+    • store subscription_token in our database against their id in a subscription_tokens table;
+    • send an email to the new subscriber containing a link structured as https://<our-api-domain>/subscriptions/c
+    • return a 200 OK.
+
+Once they click on the link, a browser tab will open up and a GET request will be fired to our GET
+/subscriptions/confirm endpoint. Our request handler will:
+   • retrieve subscription_token from the query parameters;
+   • retrieve the subscriber id associated with subscription_token from the subscription_tokens
+     table;
+   • update the subscriber status from pending_confirmation to active in the subscriptions
+     table;
+   • return a 200 OK.
+There are a few other possible designs (e.g. use a JWT instead of a unique token) and we have a few
+corner cases to handle (e.g. what happens if they click on the link twice? What happens if they try
+to subscribe twice?) - we will discuss both at the most appropriate time as we make progress with
+the implementation.
+
+7.1.3   The Implementation Strategy
+There is a lot to do here, so we will split the work in three conceptual chunks:
+   • write a module to send an email;
+   • adapt the logic of our existing POST /subscriptions request handler to match the new speci-
+     fication;
+   • write a GET /subscriptions/confirm request handler from scratch.
+Let’s get started!
+
+7.2     EmailClient, Our Email Delivery Component
+7.2.1   How To Send An Email
+How do you actually send an email?
+How does it work?
+You have to look into SMTP - the Simple Mail Transfer Protocol.
+It has been around since the early days of the Internet - the first RFC dates back to 1982.
+SMTP does for emails what HTTP does for web pages: it is an application-level protocol that ensures
+that different implementations of email servers and clients can understand each other and exchange
+messages.
+Now, let’s make things clear - we will not build our own private email server, it would take too long
+and we would not gain much from the effort. We will be leveraging a third-party service.
+What do email delivery services expect these days? Do we need to talk SMTP to them?
+Not necessarily.
+SMTP is a specialised protocol: unless you have been working with emails before, it is unlikely you
+have direct experience with it. Learning a new protocol takes time and you are bound to make
+mistakes along the way - that is why most providers expose two interfaces: an SMTP and a REST
+API.
+If you are familiar with the email protocol, or you need some non-conventional configuration, go
+ahead with the SMTP interface. Otherwise, most developers will get up and running much faster
+(and more reliably) using a REST API.
+As you might have guessed, that is what we will be going for as well - we will write a REST client.
+
+7.2.1.1 Choosing An Email API There is no shortage of email API providers on the market
+and you are likely to know the names of the major ones - AWS SES, SendGrid, MailGun, Mailchimp,
+Postmark.
+I was looking for a simple enough API (e.g. how easy is it to literally just send an email?), a smooth
+onboarding flow and a free plan that does not require entering your credit card details just to test
+the service out.
+That is how I landed on Postmark.
+
+To complete the next sections you will have to sign up to Postmark and, once you are logged into
+their portal, authorise a single sender email.
+
+                                   Figure 1: Create single sender
+
+Once you are done, we can move forward!
+
+   Disclaimer: Postmark is not paying me to promote their services here.
+
+7.2.1.2 The Email Client Interface There are usually two approaches when it comes to a new
+piece of functionality: you can do it bottom-up, starting from the implementation details and slowly
+working your way up, or you can do it top-down, by designing the interface first and then figuring
+out how the implementation is going to work (to an extent).
+In this case, we will go for the second route.
+What kind of interface do we want for our email client?
+We’d like to have some kind of send_email method. At the moment we just need to send a single
+email out at a time - we will deal with the complexity of sending emails in batches when we start
+working on newsletter issues.
+What arguments should send_email accept?
+We’ll definitely need the recipient email address, the subject line and the email content. We’ll ask
+for both an HTML and a plain text version of the email content - some email clients are not able to
+
+render HTML and some users explicitly disable HTML emails. By sending both versions we err on
+the safe side.
+What about the sender email address?
+We’ll assume that all emails sent by an instance of the client are coming from the same address -
+therefore we do not need it as an argument of send_email, it will be one of the arguments in the
+constructor of the client itself.
+We also expect send_email to be an asynchronous function, given that we will be performing I/O to
+talk to a remote server.
+Stitching everything together, we have something that looks more or less like this:
+//! src/email_client.rs
+
+use crate::domain::SubscriberEmail;
+
+pub struct EmailClient {
+    sender: SubscriberEmail
+}
+
+impl EmailClient {
+    pub async fn send_email(
+        &self,
+        recipient: SubscriberEmail,
+        subject: &str,
+        html_content: &str,
+        text_content: &str
+    ) -> Result<(), String> {
+        todo!()
+    }
+}
+
+//! src/lib.rs
+
+pub mod configuration;
+pub mod domain;
+// New entry!
+pub mod email_client;
+pub mod routes;
+pub mod startup;
+pub mod telemetry;
+
+There is an unresolved question - the return type. We sketched a Result<(), String> which is a
+way to spell “I’ll think about error handling later”.
+Plenty of work left to do, but it is a start - we said we were going to start from the interface, not
+that we’d nail it down in one sitting!
+
+7.2.2   How To Write A REST Client Using reqwest
+To talk with a REST API we need an HTTP client.
+There are a few different options in the Rust ecosystem: synchronous vs asynchronous, pure Rust
+vs bindings to an underlying native library, tied to tokio or async-std, opinionated vs highly cus-
+tomisable, etc.
+We will go with the most popular option on crates.io: reqwest.
+What to say about reqwest?
+  • It has been extensively battle-tested (~8.5 million downloads);
+  • It offers a primarily asynchronous interface, with the option to enable a synchronous one via
+    the blocking feature flag;
+  • It relies on tokio as its asynchronous executor, matching what we are already using due to
+    actix-web;
+
+    • It does not depend on any system library if you choose to use rustls to back the TLS imple-
+      mentation (rustls-tls feature flag instead of default-tls), making it extremely portable.
+If you look closely, we are already using reqwest!
+It is the HTTP client we used to fire off requests at our API in the integration tests. Let’s lift it from
+a development dependency to a runtime dependency:
+#! Cargo.toml
+# [...]
+
+[dependencies]
+# [...]
+# We need the `json` feature flag to serialize/deserialize JSON payloads
+reqwest = { version = "0.11", default-features = false, features = ["json", "rustls-tls"] }
+
+[dev-dependencies]
+# Remove `reqwest`'s entry from this list
+# [...]
+
+7.2.2.1 reqwest::Client The main type you will be dealing with when working with reqwest is
+reqwest::Client - it exposes all the methods we need to perform requests against a REST API.
+We can get a new client instance by invoking Client::new or we can go with Client::builder if
+we need to tune the default configuration.
+We will stick to Client::new for the time being.
+Let’s add two fields to EmailClient:
+    • http_client, to store a Client instance;
+    • base_url, to store the URL of the API we will be making requests to.
+//! src/email_client.rs
+
+use crate::domain::SubscriberEmail;
+use reqwest::Client;
+
+pub struct EmailClient {
+    http_client: Client,
+    base_url: String,
+    sender: SubscriberEmail
+}
+
+impl EmailClient {
+    pub fn new(base_url: String, sender: SubscriberEmail) -> Self {
+        Self {
+            http_client: Client::new(),
+            base_url,
+            sender
+        }
+    }
+
+     // [...]
+}
+
+7.2.2.2 Connection Pooling Before executing an HTTP request against an API hosted on a
+remote server we need to establish a connection.
+It turns out that connecting is a fairly expensive operation, even more so if using HTTPS: creating
+a brand-new connection every time we need to fire off a request can impact the performance of our
+application and might lead to a problem known as socket exhaustion under load.
+To mitigate the issue, most HTTP clients offer connection pooling: after the first request to a remote
+server has been completed, they will keep the connection open (for a certain amount of time) and
+
+re-use it if we need to fire off another request to the same server, therefore avoiding the need to
+re-establish a connection from scratch.
+reqwest is no different - every time a Client instance is created reqwest initialises a connection
+pool under the hood.
+To leverage this connection pool we need to reuse the same Client across multiple requests.
+It is also worth pointing out that Client::clone does not create a new connection pool - we just
+clone a pointer to the underlying pool.
+
+7.2.2.3 How To Reuse The Same reqwest::Client In actix-web To re-use the same HTTP
+client across multiple requests in actix-web we need to store a copy of it in the application context
+- we will then be able to retrieve a reference to Client in our request handlers using an extractor
+(e.g. actix_web::web::Data).
+How do we pull it off? Let’s look at the code where we build a HttpServer:
+//! src/startup.rs
+// [...]
+
+pub fn run(listener: TcpListener, db_pool: PgPool) -> Result<Server, std::io::Error> {
+    let db_pool = Data::new(db_pool);
+    let server = HttpServer::new(move || {
+        App::new()
+            .wrap(TracingLogger::default())
+            .route("/health_check", web::get().to(health_check))
+            .route("/subscriptions", web::post().to(subscribe))
+            .app_data(db_pool.clone())
+    })
+    .listen(listener)?
+    .run();
+    Ok(server)
+}
+
+We have two options:
+   • derive the Clone trait for EmailClient, build an instance of it once and then pass a clone to
+     app_data every time we need to build an App:
+//! src/email_client.rs
+// [...]
+
+#[derive(Clone)]
+pub struct EmailClient {
+    http_client: Client,
+    base_url: String,
+    sender: SubscriberEmail
+}
+
+// [...]
+
+//! src/startup.rs
+use crate::email_client::EmailClient;
+// [...]
+
+pub fn run(
+    listener: TcpListener,
+    db_pool: PgPool,
+    email_client: EmailClient,
+) -> Result<Server, std::io::Error> {
+    let db_pool = Data::new(db_pool);
+    let server = HttpServer::new(move || {
+        App::new()
+            .wrap(TracingLogger::default())
+
+             .route("/health_check", web::get().to(health_check))
+             .route("/subscriptions", web::post().to(subscribe))
+             .app_data(db_pool.clone())
+             .app_data(email_client.clone())
+     })
+     .listen(listener)?
+     .run();
+     Ok(server)
+}
+
+    • wrap EmailClient in actix_web::web::Data (an Arc pointer) and pass a pointer to app_data
+      every time we need to build an App - like we are doing with PgPool:
+//! src/startup.rs
+use crate::email_client::EmailClient;
+// [...]
+
+pub fn run(
+    listener: TcpListener,
+    db_pool: PgPool,
+    email_client: EmailClient,
+) -> Result<Server, std::io::Error> {
+    let db_pool = Data::new(db_pool);
+    let email_client = Data::new(email_client);
+    let server = HttpServer::new(move || {
+        App::new()
+            .wrap(TracingLogger::default())
+            .route("/health_check", web::get().to(health_check))
+            .route("/subscriptions", web::post().to(subscribe))
+            .app_data(db_pool.clone())
+            .app_data(email_client.clone())
+    })
+    .listen(listener)?
+    .run();
+    Ok(server)
+}
+
+Which way is best?
+If EmailClient were just a wrapper around a Client instance, the first option would be preferable -
+we avoid wrapping the connection pool twice with Arc.
+This is not the case though: EmailClient has two data fields attached (base_url and sender). The
+first implementation allocates new memory to hold a copy of that data every time an App instance is
+created, while the second shares it among all App instances.
+That’s why we will be using the second strategy.
+Beware though: we are creating an App instance for each thread - the cost of a string allocation (or
+a pointer clone) is negligible when looking at the bigger picture.
+We are going through the decision-making process here as an exercise to understand the tradeoffs -
+you might have to make a similar call in the future where the cost of the two options is remarkably
+different.
+
+7.2.2.4   Configuring Our EmailClient       If you run cargo check, you will get an error:
+error[E0061]: this function takes 3 arguments but 2 arguments were supplied
+  --> src/main.rs:24:5
+   |
+24 |     run(listener, connection_pool)?.await?;
+   |     ^^^ -------- --------------- supplied 2 arguments
+   |     |
+   |     expected 3 arguments
+
+error: aborting due to previous error
+
+Let’s fix it!
+What do we have in main right now?
+//! src/main.rs
+// [...]
+
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    // [...]
+    let configuration = get_configuration().expect("Failed to read configuration.");
+    let connection_pool = PgPoolOptions::new()
+        .connect_timeout(std::time::Duration::from_secs(2))
+        .connect_lazy_with(configuration.database.with_db());
+
+    let address = format!(
+        "{}:{}",
+        configuration.application.host, configuration.application.port
+    );
+    let listener = TcpListener::bind(address)?;
+    run(listener, connection_pool)?.await?;
+    Ok(())
+}
+
+We are building the dependencies of our application using the values specified in the configuration
+we retrieved via get_configuration.
+To build an EmailClient instance we need the base URL of the API we want to fire requests to and
+the sender email address - let’s add them to our Settings struct:
+//! src/configuration.rs
+// [...]
+use crate::domain::SubscriberEmail;
+
+#[derive(serde::Deserialize)]
+pub struct Settings {
+    pub database: DatabaseSettings,
+    pub application: ApplicationSettings,
+    // New field!
+    pub email_client: EmailClientSettings,
+}
+
+#[derive(serde::Deserialize)]
+pub struct EmailClientSettings {
+    pub base_url: String,
+    pub sender_email: String,
+}
+
+impl EmailClientSettings {
+    pub fn sender(&self) -> Result<SubscriberEmail, String> {
+        SubscriberEmail::parse(self.sender_email.clone())
+    }
+}
+
+// [...]
+
+We then need to set values for them in our configuration files:
+#! configuration/base.yaml
+
+application:
+  # [...]
+database:
+# [...]
+email_client:
+
+    base_url: "localhost"
+    sender_email: "test@gmail.com"
+
+#! configuration/production.yaml
+application:
+# [...]
+database:
+# [...]
+email_client:
+  # Value retrieved from Postmark's API documentation
+  base_url: "https://api.postmarkapp.com"
+  # Use the single sender email you authorised on Postmark!
+  sender_email: "something@gmail.com"
+
+We can now build an EmailClient instance in main and pass it to the run function:
+//! src/main.rs
+// [...]
+use zero2prod::email_client::EmailClient;
+
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    // [...]
+    let configuration = get_configuration().expect("Failed to read configuration.");
+    let connection_pool = PgPoolOptions::new()
+        .connect_timeout(std::time::Duration::from_secs(2))
+        .connect_lazy_with(configuration.database.with_db());
+
+      // Build an `EmailClient` using `configuration`
+      let sender_email = configuration.email_client.sender()
+          .expect("Invalid sender email address.");
+      let email_client = EmailClient::new(
+          configuration.email_client.base_url,
+          sender_email
+      );
+
+      let address = format!(
+          "{}:{}",
+          configuration.application.host, configuration.application.port
+      );
+      let listener = TcpListener::bind(address)?;
+      // New argument for `run`, `email_client`
+      run(listener, connection_pool, email_client)?.await?;
+      Ok(())
+}
+
+cargo check should now pass, although there are a few warnings about unused variables - we will
+get to those soon enough.
+What about our tests?
+cargo check --all-targets returns a similar error to the one we were seeing before with cargo
+check:
+error[E0061]: this function takes 3 arguments but 2 arguments were supplied
+  --> tests/health_check.rs:36:18
+   |
+36 |     let server = run(listener, connection_pool.clone())
+   |                  ^^^ -------- ----------------------- supplied 2 arguments
+   |                  |
+   |                  expected 3 arguments
+
+error: aborting due to previous error
+
+You are right - it is a symptom of code duplication. We will get to refactor the initialisation logic of
+our integration tests, but not yet.
+Let’s patch it quickly to make it compile:
+//! tests/health_check.rs
+
+// [...]
+use zero2prod::email_client::EmailClient;
+// [...]
+
+async fn spawn_app() -> TestApp {
+    // [...]
+
+    let mut configuration = get_configuration()
+        .expect("Failed to read configuration.");
+    configuration.database.database_name = Uuid::new_v4().to_string();
+    let connection_pool = configure_database(&configuration.database).await;
+
+    // Build a new email client
+    let sender_email = configuration.email_client.sender()
+        .expect("Invalid sender email address.");
+    let email_client = EmailClient::new(
+        configuration.email_client.base_url,
+        sender_email
+    );
+
+    // Pass the new client to `run`!
+    let server = run(listener, connection_pool.clone(), email_client)
+        .expect("Failed to bind address");
+    let _ = tokio::spawn(server);
+    TestApp {
+        address,
+        db_pool: connection_pool,
+    }
+}
+
+// [...]
+
+cargo test should succeed now.
+
+7.2.3   How To Test A REST Client
+We have gone through most of the setup steps: we sketched an interface for EmailClient and we
+wired it up with the application, using a new configuration type - EmailClientSettings.
+To stay true to our test-driven development approach, it is now time to write a test!
+We could start from our integration tests: change the ones for POST /subscriptions to make sure
+that the endpoint conforms to our new requirements.
+It would take us a long time to turn them green though: apart from sending an email, we need to
+add logic to generate a unique token and store it.
+Let’s start smaller: we will just test our EmailClient component in isolation.
+It will boost our confidence that it behaves as expected when tested as a unit, reducing the number
+of issues we might encounter when integrating it into the larger confirmation email flow.
+It will also give us a chance to see if the interface we landed on is ergonomic and easy to test.
+What should we actually test though?
+The main purpose of our EmailClient::send_email is to perform an HTTP call: how do we know
+if it happened? How do we check that the body and the headers were populated as we expected?
+We need to intercept that HTTP request - time to spin up a mock server!
+
+7.2.3.1 HTTP Mocking With wiremock Let’s add a new module for tests at the bottom of
+src/email_client.rs with the skeleton of a new test:
+
+//! src/email_client.rs
+// [...]
+
+#[cfg(test)]
+mod tests {
+    #[tokio::test]
+    async fn send_email_fires_a_request_to_base_url() {
+        todo!()
+    }
+}
+
+This will not compile straight-away - we need to add two feature flags to tokio in our Cargo.toml:
+#! Cargo.toml
+# [...]
+
+[dev-dependencies]
+# [...]
+tokio = { version = "1", features = ["rt", "macros"] }
+We do not know enough about Postmark to make assertions about what we should see in the outgoing
+HTTP request.
+Nonetheless, as the test name says, it is reasonable to expect a request to be fired to the server at
+EmailClient::base_url!
+Let’s add wiremock to our development dependencies:
+#! Cargo.toml
+# [...]
+
+[dev-dependencies]
+# [...]
+wiremock = "0.5"
+Using wiremock, we can write send_email_fires_a_request_to_base_url as follows:
+//! src/email_client.rs
+// [...]
+
+#[cfg(test)]
+mod tests {
+    use crate::domain::SubscriberEmail;
+    use crate::email_client::EmailClient;
+    use fake::faker::internet::en::SafeEmail;
+    use fake::faker::lorem::en::{Paragraph, Sentence};
+    use fake::{Fake, Faker};
+    use wiremock::matchers::any;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn send_email_fires_a_request_to_base_url() {
+        // Arrange
+        let mock_server = MockServer::start().await;
+        let sender = SubscriberEmail::parse(SafeEmail().fake()).unwrap();
+        let email_client = EmailClient::new(mock_server.uri(), sender);
+
+        Mock::given(any())
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        let subscriber_email = SubscriberEmail::parse(SafeEmail().fake()).unwrap();
+
+         let subject: String = Sentence(1..2).fake();
+         let content: String = Paragraph(1..10).fake();
+
+         // Act
+         let _ = email_client
+             .send_email(subscriber_email, &subject, &content, &content)
+             .await;
+
+         // Assert
+    }
+}
+
+Let’s break down what is happening, step by step.
+
+let mock_server = MockServer::start().await;
+
+7.2.3.2 wiremock::MockServer wiremock::MockServer is a full-blown HTTP server.
+MockServer::start asks the operating system for a random available port and spins up the server
+on a background thread, ready to listen for incoming requests.
+How do we point our email client to our mock server? We can retrieve the address of the mock server
+using the MockServer::uri method; we can then pass it as base_url to EmailClient::new:
+let email_client = EmailClient::new(mock_server.uri(), sender);
+
+7.2.3.3 wiremock::Mock Out of the box, wiremock::MockServer returns 404 Not Found to all
+incoming requests.
+We can instruct the mock server to behave differently by mounting a Mock.
+Mock::given(any())
+    .respond_with(ResponseTemplate::new(200))
+    .expect(1)
+    .mount(&mock_server)
+    .await;
+
+When wiremock::MockServer receives a request, it iterates over all the mounted mocks to check if
+the request matches their conditions.
+The matching conditions for a mock are specified using Mock::given.
+We are passing any() to Mock::Given which, according to wiremock’s documentation,
+
+    Match all incoming requests, regardless of their method, path, headers or body. You can use it
+    to verify that a request has been fired towards the server, without making any other assertion
+    about it.
+
+Basically, it always matches, regardless of the request - which is what we want here!
+When an incoming request matches the conditions of a mounted mock, wiremock::MockServer re-
+turns a response following what was specified in respond_with.
+We passed ResponseTemplate::new(200) - a 200 OK response without a body.
+A wiremock::Mock becomes effective only after it has been mounted on a wiremock::Mockserver -
+that’s what our call to Mock::mount is about.
+
+7.2.3.4 The Intent Of A Test Should Be Clear                We then have the actual invocation of
+EmailClient::send_email:
+let subscriber_email = SubscriberEmail::parse(SafeEmail().fake()).unwrap();
+let subject: String = Sentence(1..2).fake();
+let content: String = Paragraph(1..10).fake();
+
+// Act
+let _ = email_client
+    .send_email(subscriber_email, &subject, &content, &content)
+    .await;
+
+You’ll notice that we are leaning heavily on fake here: we are generating random data for all the
+inputs to send_email (and sender, in the previous section).
+We could have just hard-coded a bunch of values, why did we choose to go all the way and make
+them random?
+A reader, skimming the test code, should be able to identify easily the property that we are trying
+to test.
+Using random data conveys a specific message: do not pay attention to these inputs, their values do
+not influence the outcome of the test, that’s why they are random!
+Hard-coded values, instead, should always give you pause: does it matter that subscriber_email is
+set to marco@gmail.com? Should the test pass if I set it to another value?
+In a test like ours, the answer is obvious. In a more intricate setup, it often isn’t.
+
+7.2.3.5 Mock expectations The end of the test looks a bit cryptic: there is an // Assert
+comment… but no assertion afterwards.
+Let’s go back to our Mock setup line:
+Mock::given(any())
+    .respond_with(ResponseTemplate::new(200))
+    .expect(1)
+    .mount(&mock_server)
+    .await;
+
+What does .expect(1) do?
+It sets an expectation on our mock: we are telling the mock server that during this test it should
+receive exactly one request that matches the conditions set by this mock.
+We could also use ranges for our expectations - e.g. expect(1..) if we want to see at least one
+request, expect(1..=3) if we expect at least one request but no more than three, etc.
+Expectations are verified when MockServer goes out of scope - at the end of our test function, indeed!
+Before shutting down, MockServer will iterate over all the mounted mocks and check if their expec-
+tations have been verified. If the verification step fails, it will trigger a panic (and fail the test).
+Let’s run cargo test:
+---- email_client::tests::send_email_fires_a_request_to_base_url stdout ----
+thread 'email_client::tests::send_email_fires_a_request_to_base_url' panicked at
+'not yet implemented', src/email_client.rs:24:9
+
+Ok, we are not even getting to the end of the test yet because we have a placeholder todo!() as the
+body of send_email.
+Let’s replace it with a dummy Ok:
+//! src/email_client.rs
+// [...]
+
+impl EmailClient {
+    // [...]
+
+    pub async fn send_email(
+        &self,
+        recipient: SubscriberEmail,
+        subject: &str,
+        html_content: &str,
+        text_content: &str
+    ) -> Result<(), String> {
+        // No matter the input
+
+           Ok(())
+     }
+}
+
+// [...]
+
+If we run cargo test again, we’ll get to see wiremock in action:
+---- email_client::tests::send_email_fires_a_request_to_base_url stdout ----
+thread 'email_client::tests::send_email_fires_a_request_to_base_url' panicked at
+'Verifications failed:
+- Mock #0.
+        Expected range of matching incoming requests: == 1
+        Number of matched incoming requests: 0
+'
+
+The server expected one request, but it received none - therefore the test failed.
+The time has come to properly flesh out EmailClient::send_email.
+
+7.2.4    First Sketch Of EmailClient::send_email
+To implement EmailClient::send_email we need to check out the API documentation of Postmark.
+Let’s start from their “Send a single email” user guide.
+Their email sending example looks like this:
+curl "https://api.postmarkapp.com/email" \
+   -X POST \
+   -H "Accept: application/json" \
+   -H "Content-Type: application/json" \
+   -H "X-Postmark-Server-Token: server token" \
+   -d '{
+   "From": "sender@example.com",
+   "To": "receiver@example.com",
+   "Subject": "Postmark test",
+   "TextBody": "Hello dear Postmark user.",
+   "HtmlBody": "<html><body><strong>Hello</strong> dear Postmark user.</body></html>"
+}'
+
+Let’s break it down - to send an email we need:
+    • a POST request to the /email endpoint;
+    • a JSON body, with fields that map closely to the arguments of send_email. We need to be
+      careful with field names, they must be pascal cased;
+    • an authorization header, X-Postmark-Server-Token, with a value set to a secret token that we
+      can retrieve from their portal.
+If the request succeeds, we get something like this back:
+HTTP/1.1 200 OK
+Content-Type: application/json
+
+{
+     "To": "receiver@example.com",
+     "SubmittedAt": "2021-01-12T07:25:01.4178645-05:00",
+     "MessageID": "0a129aee-e1cd-480d-b08d-4f48548ff48d",
+     "ErrorCode": 0,
+     "Message": "OK"
+}
+
+We have enough to implement the happy path!
+
+7.2.4.1 reqwest::Client::post reqwest::Client exposes a post method - it takes the URL
+we want to call with a POST request as argument and it returns a RequestBuilder.
+
+RequestBuilder gives us a fluent API to build out the rest of the request we want to send, piece by
+piece.
+Let’s give it a go:
+//! src/email_client.rs
+// [...]
+
+impl EmailClient {
+    // [...]
+
+    pub async fn send_email(
+        &self,
+        recipient: SubscriberEmail,
+        subject: &str,
+        html_content: &str,
+        text_content: &str
+    ) -> Result<(), String> {
+        // You can do better using `reqwest::Url::join` if you change
+        // `base_url`'s type from `String` to `reqwest::Url`.
+        // I'll leave it as an exercise for the reader!
+        let url = format!("{}/email", self.base_url);
+        let builder = self.http_client.post(&url);
+        Ok(())
+    }
+}
+
+// [...]
+
+7.2.4.2    JSON body      We can encode the request body schema as a struct:
+//! src/email_client.rs
+// [...]
+
+impl EmailClient {
+    // [...]
+
+    pub async fn send_email(
+        &self,
+        recipient: SubscriberEmail,
+        subject: &str,
+        html_content: &str,
+        text_content: &str
+    ) -> Result<(), String> {
+        let url = format!("{}/email", self.base_url);
+        let request_body = SendEmailRequest {
+            from: self.sender.as_ref().to_owned(),
+            to: recipient.as_ref().to_owned(),
+            subject: subject.to_owned(),
+            html_body: html_content.to_owned(),
+            text_body: text_content.to_owned(),
+        };
+        let builder = self.http_client.post(&url);
+        Ok(())
+    }
+}
+
+struct SendEmailRequest {
+    from: String,
+    to: String,
+    subject: String,
+    html_body: String,
+    text_body: String,
+
+}
+
+// [...]
+
+If the json feature flag for reqwest is enabled (as we did), builder will expose a json method that
+we can leverage to set request_body as the JSON body of the request:
+//! src/email_client.rs
+// [...]
+
+impl EmailClient {
+// [...]
+
+    pub async fn send_email(
+        &self,
+        recipient: SubscriberEmail,
+        subject: &str,
+        html_content: &str,
+        text_content: &str
+    ) -> Result<(), String> {
+        let url = format!("{}/email", self.base_url);
+        let request_body = SendEmailRequest {
+            from: self.sender.as_ref().to_owned(),
+            to: recipient.as_ref().to_owned(),
+            subject: subject.to_owned(),
+            html_body: html_content.to_owned(),
+            text_body: text_content.to_owned(),
+        };
+        let builder = self.http_client.post(&url).json(&request_body);
+        Ok(())
+    }
+}
+
+It almost works:
+error[E0277]: the trait bound `SendEmailRequest: Serialize` is not satisfied
+  --> src/email_client.rs:34:56
+   |
+34 |         let builder = self.http_client.post(&url).json(&request_body);
+   |                                                        ^^^^^^^^^^^^^
+          the trait `Serialize` is not implemented for `SendEmailRequest`
+
+Let’s derive serde::Serialize for SendEmailRequest to make it serializable:
+//! src/email_client.rs
+// [...]
+
+#[derive(serde::Serialize)]
+struct SendEmailRequest {
+    from: String,
+    to: String,
+    subject: String,
+    html_body: String,
+    text_body: String,
+}
+
+Awesome, it compiles!
+The json method goes a bit further than simple serialization: it will also set the Content-Type
+header to application/json - matching what we saw in the example!
+
+7.2.4.3 Authorization Token We are almost there - we need to add an authorization header,
+X-Postmark-Server-Token, to the request.
+Just like the sender email address, we want to store the token value as a field in EmailClient.
+
+Let’s amend EmailClient::new and EmailClientSettings:
+//! src/email_client.rs
+use secrecy::Secret;
+// [...]
+
+pub struct EmailClient {
+    // [...]
+    // We don't want to log this by accident
+    authorization_token: Secret<String>
+}
+
+impl EmailClient {
+    pub fn new(
+        // [...]
+        authorization_token: Secret<String>
+    ) -> Self {
+        Self {
+            // [...]
+            authorization_token
+        }
+    }
+
+    // [...]
+}
+
+//! src/configuration.rs
+// [...]
+
+#[derive(serde::Deserialize)]
+pub struct EmailClientSettings {
+    // [...]
+    // New (secret) configuration value!
+    pub authorization_token: Secret<String>
+}
+
+// [...]
+
+We can then let the compiler tell us what else needs to be modified:
+//! src/email_client.rs
+// [...]
+
+#[cfg(test)]
+mod tests {
+    use secrecy::Secret;
+    // [...]
+
+    #[tokio::test]
+    async fn send_email_fires_a_request_to_base_url() {
+        let mock_server = MockServer::start().await;
+        let sender = SubscriberEmail::parse(SafeEmail().fake()).unwrap();
+        // New argument!
+        let email_client = EmailClient::new(
+            mock_server.uri(),
+            sender,
+            Secret::new(Faker.fake())
+        );
+        // [...]
+    }
+}
+
+//! src/main.rs
+// [...]
+
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    // [...]
+    let email_client = EmailClient::new(
+        configuration.email_client.base_url,
+        sender_email,
+        // Pass argument from configuration
+        configuration.email_client.authorization_token,
+    );
+    // [...]
+}
+
+//! tests/health_check.rs
+// [...]
+
+async fn spawn_app() -> TestApp {
+    // [...]
+    let email_client = EmailClient::new(
+         configuration.email_client.base_url,
+         sender_email,
+         // Pass argument from configuration
+         configuration.email_client.authorization_token,
+    );
+    // [...]
+}
+// [...]
+
+#! configuration/base.yml
+# [...]
+email_client:
+  base_url: "localhost"
+  sender_email: "test@gmail.com"
+  # New value!
+  # We are only setting the development value,
+  # we'll deal with the production token outside of version control
+  # (given that it's a sensitive secret!)
+  authorization_token: "my-secret-token"
+
+We can now use the authorization token in send_email:
+//! src/email_client.rs
+use secrecy::{ExposeSecret, Secret};
+// [...]
+
+impl EmailClient {
+// [...]
+
+    pub async fn send_email(
+        // [...]
+    ) -> Result<(), String> {
+        // [...]
+        let builder = self
+            .http_client
+            .post(&url)
+            .header(
+                 "X-Postmark-Server-Token",
+                 self.authorization_token.expose_secret()
+            )
+            .json(&request_body);
+        Ok(())
+    }
+}
+
+It compiles straight away.
+
+7.2.4.4 Executing The Request            We have all the ingredients - we just need to fire the request
+now!
+We can use the send method:
+//! src/email_client.rs
+// [...]
+
+impl EmailClient {
+// [...]
+
+    pub async fn send_email(
+        // [...]
+    ) -> Result<(), String> {
+        // [...]
+        self
+            .http_client
+            .post(&url)
+            .header(
+                 "X-Postmark-Server-Token",
+                 self.authorization_token.expose_secret()
+            )
+            .json(&request_body)
+            .send()
+            .await?;
+        Ok(())
+    }
+}
+
+send is asynchronous, therefore we need to await the future it returns.
+send is also a fallible operation - e.g. we might fail to establish a connection to the server. We’d like
+to return an error if send fails - that’s why we use the ? operator.
+The compiler, though, is not happy:
+error[E0277]: `?` couldn't convert the error to `std::string::String`
+--> src/email_client.rs:41:19
+   |
+41 |              .await?;
+   |                    ^
+     the trait `From<reqwest::Error>` is not implemented for `std::string::String`
+
+The error variant returned by send is of type reqwest::Error, while our send_email uses String
+as error type. The compiler has looked for a conversion (an implementation of the From trait), but it
+could not find any - therefore it errors out.
+If you recall, we used String as error variant mostly as a placeholder - let’s change send_email’s
+signature to return Result<(), reqwest::Error>.
+//! src/email_client.rs
+// [...]
+
+impl EmailClient {
+// [...]
+
+    pub async fn send_email(
+        // [...]
+    ) -> Result<(), reqwest::Error> {
+        // [...]
+    }
+}
+
+The error should be gone now!
+
+cargo test should pass too: congrats!
+
+7.2.5   Tightening Our Happy Path Test
+Let’s look again at our “happy path” test:
+//! src/email_client.rs
+// [...]
+
+#[cfg(test)]
+mod tests {
+    use crate::domain::SubscriberEmail;
+    use crate::email_client::EmailClient;
+    use fake::faker::internet::en::SafeEmail;
+    use fake::faker::lorem::en::{Paragraph, Sentence};
+    use fake::{Fake, Faker};
+    use wiremock::matchers::any;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    #[tokio::test]
+    async fn send_email_fires_a_request_to_base_url() {
+        // Arrange
+        let mock_server = MockServer::start().await;
+        let sender = SubscriberEmail::parse(SafeEmail().fake()).unwrap();
+        let email_client = EmailClient::new(
+            mock_server.uri(),
+            sender,
+            Secret::new(Faker.fake())
+        );
+
+        let subscriber_email = SubscriberEmail::parse(SafeEmail().fake()).unwrap();
+        let subject: String = Sentence(1..2).fake();
+        let content: String = Paragraph(1..10).fake();
+
+        Mock::given(any())
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        // Act
+        let _ = email_client
+            .send_email(subscriber_email, &subject, &content, &content)
+            .await;
+
+        // Assert
+        // Mock expectations are checked on drop
+    }
+}
+
+To ease ourselves into the world of wiremock we started with something very basic - we are just
+asserting that the mock server gets called once. Let’s beef it up to check that the outgoing request
+looks indeed like we expect it to.
+
+7.2.5.0.1 Headers, Path And Method any is not the only matcher offered by wiremock out
+of the box: there are handful available in wiremock’s matchers module.
+We can use header_exists to verify that the X-Postmark-Server-Token is set on the request to the
+server:
+//! src/email_client.rs
+// [...]
+
+#[cfg(test)]
+mod tests {
+    // [...]
+    // We removed `any` from the import list
+    use wiremock::matchers::header_exists;
+
+    #[tokio::test]
+    async fn send_email_fires_a_request_to_base_url() {
+        // [...]
+
+        Mock::given(header_exists("X-Postmark-Server-Token"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        // [...]
+    }
+}
+
+We can chain multiple matchers together using the and method.
+Let’s add header to check that the Content-Type is set to the correct value, path to assert on the
+endpoint being called and method to verify the HTTP verb:
+//! src/email_client.rs
+// [...]
+
+#[cfg(test)]
+mod tests {
+    // [...]
+    use wiremock::matchers::{header, header_exists, path, method};
+
+    #[tokio::test]
+    async fn send_email_fires_a_request_to_base_url() {
+        // [...]
+
+        Mock::given(header_exists("X-Postmark-Server-Token"))
+            .and(header("Content-Type", "application/json"))
+            .and(path("/email"))
+            .and(method("POST"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        // [...]
+    }
+}
+
+7.2.5.0.2 Body So far, so good: cargo test still passes.
+What about the request body?
+We could use body_json to match exactly the request body.
+We probably do not need to go as far as that - it would be enough to check that the body is valid
+JSON and it contains the set of field names shown in Postmark’s example.
+There is no out-of-the-box matcher that suits our needs - we need to implement our own!
+wiremock exposes a Match trait - everything that implements it can be used as a matcher in given
+and and.
+Let’s stub it out:
+
+//! src/email_client.rs
+// [...]
+
+#[cfg(test)]
+mod tests {
+    use wiremock::Request;
+    // [...]
+
+    struct SendEmailBodyMatcher;
+
+    impl wiremock::Match for SendEmailBodyMatcher {
+        fn matches(&self, request: &Request) -> bool {
+            unimplemented!()
+        }
+    }
+
+    // [...]
+}
+
+We get the incoming request as input, request, and we need to return a boolean value as output:
+true, if the mock matched, false otherwise.
+We need to deserialize the request body as JSON - let’s add serde-json to the list of our development
+dependencies:
+#! Cargo.toml
+# [...]
+
+[dev-dependencies]
+# [...]
+serde_json = "1"
+We can now write matches’ implementation:
+//! src/email_client.rs
+// [...]
+
+#[cfg(test)]
+mod tests {
+    // [...]
+
+    struct SendEmailBodyMatcher;
+
+    impl wiremock::Match for SendEmailBodyMatcher {
+        fn matches(&self, request: &Request) -> bool {
+            // Try to parse the body as a JSON value
+            let result: Result<serde_json::Value, _> =
+                serde_json::from_slice(&request.body);
+            if let Ok(body) = result {
+                // Check that all the mandatory fields are populated
+                // without inspecting the field values
+                body.get("From").is_some()
+                    && body.get("To").is_some()
+                    && body.get("Subject").is_some()
+                    && body.get("HtmlBody").is_some()
+                    && body.get("TextBody").is_some()
+            } else {
+                // If parsing failed, do not match the request
+                false
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn send_email_fires_a_request_to_base_url() {
+        // [...]
+
+        Mock::given(header_exists("X-Postmark-Server-Token"))
+            .and(header("Content-Type", "application/json"))
+            .and(path("/email"))
+            .and(method("POST"))
+            // Use our custom matcher!
+            .and(SendEmailBodyMatcher)
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        // [...]
+    }
+}
+
+It compiles!
+But our tests are failing now…
+---- email_client::tests::send_email_fires_a_request_to_base_url stdout ----
+thread 'email_client::tests::send_email_fires_a_request_to_base_url' panicked at
+'Verifications failed:
+- Mock #0.
+        Expected range of matching incoming requests: == 1
+        Number of matched incoming requests: 0
+'
+
+Why is that?
+Let’s add a dbg! statement to our matcher to inspect the incoming request:
+//! src/email_client.rs
+// [...]
+
+#[cfg(test)]
+mod tests {
+    // [...]
+
+    impl wiremock::Match for SendEmailBodyMatcher {
+        fn matches(&self, request: &Request) -> bool {
+             // [...]
+             if let Ok(body) = result {
+                 dbg!(&body);
+                 // [...]
+             } else {
+                 false
+             }
+        }
+    }
+    // [...]
+}
+
+If you run the test again with cargo test send_email you will get something that looks like this:
+--- email_client::tests::send_email_fires_a_request_to_base_url stdout ----
+[src/email_client.rs:71] &body = Object({
+    "from": String("[...]"),
+    "to": String("[...]"),
+    "subject": String("[...]"),
+    "html_body": String("[...]"),
+    "text_body": String("[...]"),
+})
+
+thread 'email_client::tests::send_email_fires_a_request_to_base_url' panicked at '
+Verifications failed:
+- Mock #0.
+        Expected range of matching incoming requests: == 1
+        Number of matched incoming requests: 0
+'
+
+It seems we forgot about the casing requirement - field names must be pascal cased!
+We can fix it easily by adding an annotation on SendEmailRequest:
+//! src/email_client.rs
+// [...]
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "PascalCase")]
+struct SendEmailRequest {
+    from: String,
+    to: String,
+    subject: String,
+    html_body: String,
+    text_body: String,
+}
+
+The test should pass now.
+Before we move on, let’s rename the test to send_email_sends_the_expected_request - it captures
+better the test purpose at this point.
+
+7.2.5.1 Refactoring: Avoid Unnecessary Memory Allocations We focused on getting
+send_email to work - now we can look at it again to see if there is any room for improvement.
+Let’s zoom on the request body:
+//! src/email_client.rs
+// [...]
+
+impl EmailClient {
+// [...]
+
+    pub async fn send_email(
+        // [...]
+    ) -> Result<(), reqwest::Error> {
+        // [...]
+        let request_body = SendEmailRequest {
+            from: self.sender.as_ref().to_owned(),
+            to: recipient.as_ref().to_owned(),
+            subject: subject.to_owned(),
+            html_body: html_content.to_owned(),
+            text_body: text_content.to_owned(),
+        };
+        // [...]
+    }
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "PascalCase")]
+struct SendEmailRequest {
+    from: String,
+    to: String,
+    subject: String,
+    html_body: String,
+    text_body: String,
+}
+
+For each field we are allocating a bunch of new memory to store a cloned String - it is wasteful. It
+
+would be more efficient to reference the existing data without performing any additional allocation.
+We can pull it off by restructuring SendEmailRequest: instead of String we have to use a string
+slice (&str) as type for all fields.
+A string slice is a just pointer to a memory buffer owned by somebody else. To store a reference in
+a struct we need to add a lifetime parameter: it keeps track of how long those references are valid
+for - it’s the compiler’s job to make sure that references do not stay around longer than the memory
+buffer they point to!
+Let’s do it!
+//! src/email_client.rs
+// [...]
+
+impl EmailClient {
+// [...]
+
+     pub async fn send_email(
+         // [...]
+     ) -> Result<(), reqwest::Error> {
+         // [...]
+         // No more `.to_owned`!
+         let request_body = SendEmailRequest {
+             from: self.sender.as_ref(),
+             to: recipient.as_ref(),
+             subject,
+             html_body: html_content,
+             text_body: text_content,
+         };
+         // [...]
+     }
+}
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "PascalCase")]
+// Lifetime parameters always start with an apostrophe, `'`
+struct SendEmailRequest<'a> {
+    from: &'a str,
+    to: &'a str,
+    subject: &'a str,
+    html_body: &'a str,
+    text_body: &'a str,
+}
+
+That’s it, quick and painless - serde does all the heavy lifting for us and we are left with more
+performant code!
+
+7.2.6   Dealing With Failures
+We have a good grip on the happy path - what happens instead if things don’t go as expected?
+We will look at two scenarios:
+    • non-success status codes (e.g. 4xx, 5xx, etc.);
+    • slow responses.
+
+7.2.6.1 Error Status Codes Our current happy path test is only making assertions on the side-
+effect performed by send_email - we are not actually inspecting the value it returns!
+Let’s make sure that it is an Ok(()) if the server returns a 200 OK:
+//! src/email_client.rs
+// [...]
+
+#[cfg(test)]
+mod tests {
+
+    // [...]
+    use wiremock::matchers::any;
+    use claim::assert_ok;
+    // [...]
+
+    // New happy-path test!
+    #[tokio::test]
+    async fn send_email_succeeds_if_the_server_returns_200() {
+        // Arrange
+        let mock_server = MockServer::start().await;
+        let sender = SubscriberEmail::parse(SafeEmail().fake()).unwrap();
+        let email_client = EmailClient::new(
+            mock_server.uri(),
+            sender,
+            Secret::new(Faker.fake())
+        );
+
+        let subscriber_email = SubscriberEmail::parse(SafeEmail().fake()).unwrap();
+        let subject: String = Sentence(1..2).fake();
+        let content: String = Paragraph(1..10).fake();
+
+        // We do not copy in all the matchers we have in the other test.
+        // The purpose of this test is not to assert on the request we
+        // are sending out!
+        // We add the bare minimum needed to trigger the path we want
+        // to test in `send_email`.
+        Mock::given(any())
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        // Act
+        let outcome = email_client
+            .send_email(subscriber_email, &subject, &content, &content)
+            .await;
+
+        // Assert
+        assert_ok!(outcome);
+    }
+}
+
+No surprises, the test passes.
+Let’s look at the opposite case now - we expect an Err variant if the server returns a 500 Internal
+Server Error.
+//! src/email_client.rs
+// [...]
+
+#[cfg(test)]
+mod tests {
+    // [...]
+    use claim::assert_err;
+    // [...]
+
+    #[tokio::test]
+    async fn send_email_fails_if_the_server_returns_500() {
+        // Arrange
+        let mock_server = MockServer::start().await;
+        let sender = SubscriberEmail::parse(SafeEmail().fake()).unwrap();
+        let email_client = EmailClient::new(
+            mock_server.uri(),
+
+              sender,
+              Secret::new(Faker.fake())
+         );
+
+         let subscriber_email = SubscriberEmail::parse(SafeEmail().fake()).unwrap();
+         let subject: String = Sentence(1..2).fake();
+         let content: String = Paragraph(1..10).fake();
+
+         Mock::given(any())
+             // Not a 200 anymore!
+             .respond_with(ResponseTemplate::new(500))
+             .expect(1)
+             .mount(&mock_server)
+             .await;
+
+         // Act
+         let outcome = email_client
+             .send_email(subscriber_email, &subject, &content, &content)
+             .await;
+
+         // Assert
+         assert_err!(outcome);
+    }
+}
+
+We got some work to do here instead:
+--- email_client::tests::send_email_fails_if_the_server_returns_500 stdout ----
+thread 'email_client::tests::send_email_fails_if_the_server_returns_500' panicked at
+'assertion failed, expected Err(..), got Ok(())', src/email_client.rs:163:9
+
+Let’s look again at send_email:
+//! src/email_client.rs
+// [...]
+
+impl EmailClient {
+    //[...]
+    pub async fn send_email(
+        //[...]
+    ) -> Result<(), reqwest::Error> {
+        //[...]
+        self.http_client
+            .post(&url)
+            .header(
+                "X-Postmark-Server-Token",
+                self.authorization_token.expose_secret()
+            )
+            .json(&request_body)
+            .send()
+            .await?;
+        Ok(())
+    }
+}
+//[...]
+
+The only step that might return an error is send - let’s check reqwest’s docs!
+
+    This method fails if there was an error while sending request, redirect loop was detected or
+    redirect limit was exhausted.
+
+Basically, send returns Ok as long as it gets a valid response from the server - no matter the status
+
+code!
+To get the behaviour we want we need to look at the methods available on reqwest::Response - in
+particular, error_for_status:
+
+   Turn a response into an error if the server returned an error.
+
+It seems to suit our needs, let’s try it out.
+//! src/email_client.rs
+// [...]
+
+impl EmailClient {
+    //[...]
+    pub async fn send_email(
+        //[...]
+    ) -> Result<(), reqwest::Error> {
+        //[...]
+        self.http_client
+            .post(&url)
+            .header(
+                "X-Postmark-Server-Token",
+                self.authorization_token.expose_secret()
+            )
+            .json(&request_body)
+            .send()
+            .await?
+            .error_for_status()?;
+        Ok(())
+    }
+}
+//[...]
+
+Awesome, the test passes!
+
+7.2.6.2 Timeouts What happens instead if the server returns a 200 OK, but it takes ages to send
+it back?
+We can instruct our mock server to wait a configurable amount of time before sending a response
+back.
+Let’s experiment a little with a new integration test - what if the server takes 3 minutes to respond!?
+//! src/email_client.rs
+// [...]
+
+#[cfg(test)]
+mod tests {
+    // [...]
+
+    #[tokio::test]
+    async fn send_email_times_out_if_the_server_takes_too_long() {
+        // Arrange
+        let mock_server = MockServer::start().await;
+        let sender = SubscriberEmail::parse(SafeEmail().fake()).unwrap();
+        let email_client = EmailClient::new(
+            mock_server.uri(),
+            sender,
+            Secret::new(Faker.fake())
+        );
+
+         let subscriber_email = SubscriberEmail::parse(SafeEmail().fake()).unwrap();
+         let subject: String = Sentence(1..2).fake();
+         let content: String = Paragraph(1..10).fake();
+
+         let response = ResponseTemplate::new(200)
+             // 3 minutes!
+             .set_delay(std::time::Duration::from_secs(180));
+         Mock::given(any())
+             .respond_with(response)
+             .expect(1)
+             .mount(&mock_server)
+             .await;
+
+         // Act
+         let outcome = email_client
+             .send_email(subscriber_email, &subject, &content, &content)
+             .await;
+
+         // Assert
+         assert_err!(outcome);
+    }
+}
+
+After a while, you should see something like this:
+test email_client::tests::send_email_times_out_if_the_server_takes_too_long ...
+test email_client::tests::send_email_times_out_if_the_server_takes_too_long
+has been running for over 60 seconds
+
+This is far from ideal: if the server starts misbehaving we might start to accumulate several “hanging”
+requests.
+We are not hanging up on the server, so the connection is busy: every time we need to send an email
+we will have to open a new connection. If the server does not recover fast enough, and we do not close
+any of the open connections, we might end up with socket exhaustion/performance degradation.
+As a rule of thumb: every time you are performing an IO operation, always set a timeout!
+If the server takes longer than the timeout to respond, we should fail and return an error.
+Choosing the right timeout value is often more an art than a science, especially if retries are involved:
+set it too low and you might overwhelm the server with retried requests; set it too high and you risk
+again to see degradation on the client side.
+Nonetheless, better to have a conservative timeout threshold than to have none.
+reqwest gives us two options: we can either add a default timeout on the Client itself, which applies
+to all outgoing requests, or we can specify a per-request timeout.
+Let’s go for a Client-wide timeout: we’ll set it in EmailClient::new.
+//! src/email_client.rs
+// [...]
+impl EmailClient {
+    pub fn new(
+         // [...]
+    ) -> Self {
+         let http_client = Client::builder()
+             .timeout(std::time::Duration::from_secs(10))
+             .build()
+             .unwrap();
+         Self {
+             http_client,
+             base_url,
+             sender,
+             authorization_token,
+         }
+    }
+}
+// [...]
+
+If we run the test again, it should pass (after 10 seconds have elapsed).
+
+7.2.6.3 Refactoring: Test Helpers There is a lot of duplicated code in our four tests for
+EmailClient - let’s extract the common bits in a set of test helpers.
+//! src/email_client.rs
+// [...]
+
+#[cfg(test)]
+mod tests {
+    // [...]
+
+    /// Generate a random email subject
+    fn subject() -> String {
+        Sentence(1..2).fake()
+    }
+
+    /// Generate a random email content
+    fn content() -> String {
+        Paragraph(1..10).fake()
+    }
+
+    /// Generate a random subscriber email
+    fn email() -> SubscriberEmail {
+        SubscriberEmail::parse(SafeEmail().fake()).unwrap()
+    }
+
+    /// Get a test instance of `EmailClient`.
+    fn email_client(base_url: String) -> EmailClient {
+        EmailClient::new(base_url, email(), Secret::new(Faker.fake()))
+    }
+
+    // [...]
+}
+
+Let’s use them in send_email_sends_the_expected_request:
+//! src/email_client.rs
+// [...]
+
+#[cfg(test)]
+mod tests {
+    // [...]
+
+    #[tokio::test]
+    async fn send_email_sends_the_expected_request() {
+        // Arrange
+        let mock_server = MockServer::start().await;
+        let email_client = email_client(mock_server.uri());
+
+        Mock::given(header_exists("X-Postmark-Server-Token"))
+            .and(header("Content-Type", "application/json"))
+            .and(path("/email"))
+            .and(method("POST"))
+            .and(SendEmailBodyMatcher)
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&mock_server)
+            .await;
+
+        // Act
+        let _ = email_client
+            .send_email(email(), &subject(), &content(), &content())
+
+             .await;
+
+         // Assert
+    }
+}
+
+Way less visual noise - the intent of the test is front and center.
+Go ahead and refactor the other three!
+
+7.2.6.4 Refactoring: Fail fast        The timeout on our HTTP client is currently hard-coded to 10
+seconds:
+//! src/email_client.rs
+// [...]
+impl EmailClient {
+    pub fn new(
+         // [...]
+    ) -> Self {
+         let http_client = Client::builder()
+             .timeout(std::time::Duration::from_secs(10))
+         // [...]
+    }
+}
+
+This implies that our timeout test takes roughly 10 seconds to fail - that is a long time, especially if
+you are running tests after every little change.
+Let’s make the timeout threshold configurable to keep our test suite responsive.
+//! src/email_client.rs
+// [...]
+impl EmailClient {
+    pub fn new(
+         // [...]
+         // New argument!
+         timeout: std::time::Duration,
+    ) -> Self {
+         let http_client = Client::builder()
+             .timeout(timeout)
+         // [...]
+    }
+}
+
+//! src/configuration.rs
+// [...]
+
+#[derive(serde::Deserialize)]
+pub struct EmailClientSettings {
+    // [...]
+    // New configuration value!
+    pub timeout_milliseconds: u64
+}
+
+impl EmailClientSettings {
+    // [...]
+    pub fn timeout(&self) -> std::time::Duration {
+        std::time::Duration::from_millis(self.timeout_milliseconds)
+    }
+}
+
+//! src/main.rs
+// [...]
+
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    // [...]
+    let timeout = configuration.email_client.timeout();
+    let email_client = EmailClient::new(
+        configuration.email_client.base_url,
+        sender_email,
+        configuration.email_client.authorization_token,
+        // Pass new argument from configuration
+        timeout
+    );
+    // [...]
+}
+
+#! configuration/base.yaml
+# [...]
+email_client:
+  # [...]
+  timeout_milliseconds: 10000
+
+The project should compile.
+We still need to edit the tests though!
+//! src/email_client.rs
+// [...]
+
+#[cfg(test)]
+mod tests {
+    // [...]
+    fn email_client(base_url: String) -> EmailClient {
+        EmailClient::new(
+             base_url,
+             email(),
+             Secret::new(Faker.fake()),
+             // Much lower than 10s!
+             std::time::Duration::from_millis(200),
+        )
+    }
+}
+
+//! tests/health_check.rs
+// [...]
+
+async fn spawn_app() -> TestApp {
+    // [...]
+    let timeout = configuration.email_client.timeout();
+    let email_client = EmailClient::new(
+        configuration.email_client.base_url,
+        sender_email,
+        configuration.email_client.authorization_token,
+        timeout
+    );
+}
+
+All tests should succeed - and the overall execution time should be down to less than a second for the
+whole test suite.
+
+7.3   Skeleton And Principles For A Maintainable Test Suite
+It took us a bit of work, but we now have a pretty decent REST client for Postmark’s API.
+EmailClient is just the first ingredient for our confirmation email flow: we have yet to find a way
+to generate unique confirmation links, which we will then have to embed in the body of the outgoing
+
+confirmation emails.
+Both tasks will have to wait a bit longer.
+We have used a test-driven approach to write all new pieces of functionality throughout the book.
+While this strategy has served us well, we have not invested a lot of time into refactoring our test
+code. As a result, our tests folder is a bit of mess at this point.
+Before moving forward, we will restructure our integration test suite to support us as our application
+grows in complexity and the number of tests increases.
+
+7.3.1   Why Do We Write Tests?
+Is writing tests a good use of developers’ time?
+A good test suite is, first and foremost, a risk-mitigation measure.
+Automated tests reduce the risk associated with changes to an existing codebase - most regressions
+and bugs are caught in the continuous integration pipeline and never reach users. The team is
+therefore empowered to iterate faster and release more often.
+Tests act as documentation as well.
+The test suite is often the best starting point when deep-diving in an unknown code base - it shows
+you how the code is supposed to behave and what scenarios are considered relevant enough to have
+dedicated tests for.
+“Write a test suite!” should definitely be on your to-do list if you want to make your project more
+welcoming to new contributors.
+There are other positive side-effects often associated with good tests - modularity, decoupling. These
+are harder to quantify, as we have yet to agree as an industry on what “good code” looks like.
+
+7.3.2   Why Don’t We Write Tests?
+Although there are compelling reasons to invest time and effort in writing a good test suite, reality
+is somewhat messier.
+First, the development community did not always believe in the value of testing.
+We can find examples of test-driven development throughout the history of the discipline, but it is
+only with the “Extreme Programming” (XP) book that the practice entered the mainstream debate
+- in 1999!
+Paradigm shifts do not happen overnight - it took years for the test-driven approach to gain traction
+as a “best practice” within the industry.
+If test-driven development has won the minds and hearts of developers, the battle with management
+is often still undergoing.
+Good tests build technical leverage, but writing tests takes time. When a deadline is pressing, testing
+is often the first to be sacrificed.
+As a consequence, most of the material you find around is either an introduction to testing or a guide
+on how to pitch its value to stakeholders.
+There is very little about testing at scale - what happens if you stick to the book and keep writing
+tests as the codebase grows to tens of thousands of lines, with hundreds of test cases?
+
+7.3.3   Test Code Is Still Code
+All test suites start in the same way: an empty file, a world of possibilities.
+You go in, you add the first test. Easy, done.
+Then the second. Boom.
+The third. You just had to copy a few lines from the first, all good.
+The fourth…
+After a while, test coverage starts to go down: new code is less thoroughly tested than the code you
+wrote at the very beginning of the project. Have you started to doubt the value of tests?
+Absolutely not, tests are great!
+
+Yet, you are writing fewer tests as the project moves forward.
+It’s because of friction - it got progressively more cumbersome to write new tests as the codebase
+evolved.
+
+   Test code is still code.
+
+It has to be modular, well-structured, sufficiently documented. It requires maintenance.
+If we do not actively invest in the health of our test suite, it will rot over time.
+Coverage goes down and soon enough we will find critical paths in our application code that are never
+exercised by automated tests.
+You need to regularly step back to take a look at your test suite as a whole.
+Time to look at ours, isn’t it?
+
+7.3.4   Our Test Suite
+All our integration tests live within a single file, tests/health_check.rs:
+//! tests/health_check.rs
+// [...]
+
+// Ensure that the `tracing` stack is only initialised once using `once_cell`
+static TRACING: Lazy<()> = Lazy::new(|| {
+    // [...]
+});
+
+pub struct TestApp {
+    pub address: String,
+    pub db_pool: PgPool,
+}
+
+async fn spawn_app() -> TestApp {
+    // [...]
+}
+
+pub async fn configure_database(config: &DatabaseSettings) -> PgPool {
+    // [...]
+}
+
+#[tokio::test]
+async fn health_check_works() {
+    // [...]
+}
+
+#[tokio::test]
+async fn subscribe_returns_a_200_for_valid_form_data() {
+    // [...]
+}
+
+#[tokio::test]
+async fn subscribe_returns_a_400_when_data_is_missing() {
+    // [...]
+}
+
+#[tokio::test]
+async fn subscribe_returns_a_400_when_fields_are_present_but_invalid() {
+    // [...]
+}
+
+7.3.5   Test Discovery
+There is only one test dealing with our health check endpoint - health_check_works.
+The other three tests are probing our POST /subscriptions endpoint while the rest of the code deals
+with shared setup steps (spawn_app, TestApp, configure_database, TRACING).
+Why have we shoved everything in tests/health_check.rs?
+Because it was convenient!
+The setup functions were already there - it was easier to add another test case within the same file
+than figuring out how to share that code properly across multiple test modules.
+Our main goal in this refactoring is discoverability:
+   • given an application endpoint, it should be easy to find the corresponding integration tests
+     within the tests folder;
+   • when writing a test, it should be easy to find the relevant test helper functions.
+We will focus on folder structure, but that is definitely not the only tool available when it comes to
+test discovery.
+Test coverage tools can often tell you which tests triggered the execution of a certain line of application
+code.
+You can rely on techniques such as coverage marks to create an obvious link between test and
+application code.
+As always, a multi-pronged approach is likely to give you the best results as the complexity of your
+test suite increases.
+
+7.3.6   One Test File, One Crate
+Before we start moving things around, let’s nail down a few facts about integration testing in Rust.
+The tests folder is somewhat special - cargo knows to look into it searching for integration tests.
+Each file within the tests folder gets compiled as its own crate.
+We can check this out by running cargo build --tests and then looking under target/debug/deps:
+# Build test code, without running tests
+cargo build --tests
+# Find all files with a name starting with `health_check`
+ls target/debug/deps | grep health_check
+
+health_check-fc23645bf877da35
+health_check-fc23645bf877da35.d
+
+The trailing hashes will likely be different on your machine, but there should be two entries starting
+with health_check-*.
+What happens if you try to run it?
+./target/debug/deps/health_check-fc23645bf877da35
+
+running 4 tests
+test health_check_works ... ok
+test subscribe_returns_a_400_when_fields_are_present_but_invalid ... ok
+test subscribe_returns_a_400_when_data_is_missing ... ok
+test subscribe_returns_a_200_for_valid_form_data ... ok
+
+test result: ok. 4 passed; finished in 0.44s
+
+That’s right, it runs our integration tests!
+If we had five *.rs files under tests, we’d find five executables in target/debug/deps.
+
+7.3.7   Sharing Test Helpers
+If each integration test file is its own executable, how do we share test helpers functions?
+
+The first option is to define a stand-alone module - e.g. tests/helpers/mod.rs54 .
+You can add common functions in mod.rs (or define other sub-modules in there) and then refer to
+helpers in your test file (e.g. tests/health_check.rs) with:
+//! tests/health_check.rs
+// [...]
+mod helpers;
+
+// [...]
+
+helpers is bundled in the health_check test executable as a sub-module and we get access to the
+functions it exposes in our test cases.
+This approach works fairly well to start out, but it leads to annoying function is never used
+warnings down the line.
+The issue is that helpers is bundled as a sub-module, it is not invoked as a third-party crate: cargo
+compiles each test executable in isolation and warns us if, for a specific test file, one or more public
+functions in helpers have never been invoked. This is bound to happen as your test suite grows -
+not all test files will use all your helper methods.
+The second option takes full advantage of that each file under tests is its own executable - we can
+create sub-modules scoped to a single test executable!
+Let’s create an api folder under tests, with a single main.rs file inside:
+tests/
+  api/
+    main.rs
+  health_check.rs
+
+First, we gain clarity: we are structuring api in the very same way we would structure a binary
+crate. Less magic - it builds on the same knowledge of the module system you built while working
+on application code.
+If you run cargo build --tests you should be able to spot
+Running target/debug/deps/api-0a1bfb817843fdcf
+
+running 0 tests
+
+test result: ok. 0 passed; finished in 0.00s
+
+in the output - cargo compiled api as a test executable, looking for tests cases.
+There is no need to define a main function in main.rs - the Rust test framework adds one for us
+behind the scenes55 .
+We can now add sub-modules in main.rs:
+//! tests/api/main.rs
+
+mod helpers;
+mod health_check;
+mod subscriptions;
+
+Add three empty files - tests/api/helpers.rs, tests/api/health_check.rs and tests/api/subscriptions.rs.
+Time to delete tests/health_check.rs and re-distribute its content:
+//! tests/api/helpers.rs
+use sqlx::{Connection, Executor, PgConnection, PgPool};
+use std::net::TcpListener;
+use uuid::Uuid;
+use zero2prod::configuration::{get_configuration, DatabaseSettings};
+use zero2prod::email_client::EmailClient;
+use zero2prod::startup::run;
+ 54 Refer to the test organization chapter in the Rust book for more details.
+ 55 You can actually override the default test framework and plug your own. Look at libtest-mimic as an example!
+
+use zero2prod::telemetry::{get_subscriber, init_subscriber};
+
+// Ensure that the `tracing` stack is only initialised once using `once_cell`
+static TRACING: Lazy<()> = Lazy::new(|| {
+    // [...]
+});
+
+pub struct TestApp {
+    // [...]
+}
+
+// Public!
+pub async fn spawn_app() -> TestApp {
+    // [...]
+}
+
+// Not public anymore!
+async fn configure_database(config: &DatabaseSettings) -> PgPool {
+    // [...]
+}
+
+//! tests/api/health_check.rs
+use crate::helpers::spawn_app;
+
+#[tokio::test]
+async fn health_check_works() {
+    // [...]
+}
+
+//! tests/api/subscriptions.rs
+use crate::helpers::spawn_app;
+
+#[tokio::test]
+async fn subscribe_returns_a_200_for_valid_form_data() {
+    // [...]
+}
+
+#[tokio::test]
+async fn subscribe_returns_a_400_when_data_is_missing() {
+    // [...]
+}
+
+#[tokio::test]
+async fn subscribe_returns_a_400_when_fields_are_present_but_invalid() {
+    // [...]
+}
+
+cargo test should succeed, with no warnings.
+Congrats, you have broken down your test suite in smaller and more manageable modules!
+There are a few positive side-effects to the new structure: - it is recursive.
+If tests/api/subscriptions.rs grows too unwieldy, we can turn it into a module, with
+tests/api/subscriptions/helpers.rs holding subscription-specific test helpers and one or more
+test files focused on a specific flow or concern; - the implementation details of our helpers function
+are encapsulated.
+It turns out that our tests only need to know about spawn_app and TestApp - no need to expose
+configure_database or TRACING, we can keep that complexity hidden away in the helpers module;
+- we have a single test binary.
+If you have large test suite with a flat file structure, you’ll soon be building tens of executable
+every time you run cargo test. While each executable is compiled in parallel, the linking phase is
+instead entirely sequential! Bundling all your test cases in a single executable reduces the time spent
+
+compiling your test suite in CI56 .
+If you are running Linux, you might see errors like
+thread 'actix-rt:worker' panicked at
+'Can not create Runtime: Os { code: 24, kind: Other, message: "Too many open files" }',
+
+when you run cargo test after the refactoring.
+This is due to a limit enforced by the operating system on the maximum number of open file descriptors
+(including sockets) for each process - given that we are now running all tests as part of a single binary,
+we might be exceeding it. The limit is usually set to 1024, but you can raise it with ulimit -n X
+(e.g. ulimit -n 10000) to resolve the issue.
+
+7.3.8   Sharing Startup Logic
+Now that we have reworked the layout of our test suite it’s time to zoom in on the test logic itself.
+We will start with spawn_app:
+//! tests/api/helpers.rs
+// [...]
+
+pub struct TestApp {
+    pub address: String,
+    pub db_pool: PgPool,
+}
+
+pub async fn spawn_app() -> TestApp {
+    Lazy::force(&TRACING);
+
+    let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind random port");
+    let port = listener.local_addr().unwrap().port();
+    let address = format!("http://127.0.0.1:{}", port);
+
+    let mut configuration = get_configuration().expect("Failed to read configuration.");
+    configuration.database.database_name = Uuid::new_v4().to_string();
+    let connection_pool = configure_database(&configuration.database).await;
+
+    let sender_email = configuration
+        .email_client
+        .sender()
+        .expect("Invalid sender email address.");
+    let email_client = EmailClient::new(
+        configuration.email_client.base_url,
+        sender_email,
+        configuration.email_client.authorization_token,
+    );
+
+    let server = run(listener, connection_pool.clone(), email_client)
+        .expect("Failed to bind address");
+    let _ = tokio::spawn(server);
+    TestApp {
+        address,
+        db_pool: connection_pool,
+    }
+}
+
+// [...]
+
+Most of the code we have here is extremely similar to what we find in our main entrypoint:
+  56 See this article as an example with some numbers (1.9x speedup!). You should always benchmark the approach on
+
+your specific codebase before committing.
+
+//! src/main.rs
+use sqlx::postgres::PgPoolOptions;
+use std::net::TcpListener;
+use zero2prod::configuration::get_configuration;
+use zero2prod::email_client::EmailClient;
+use zero2prod::startup::run;
+use zero2prod::telemetry::{get_subscriber, init_subscriber};
+
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    let subscriber = get_subscriber("zero2prod".into(), "info".into(), std::io::stdout);
+    init_subscriber(subscriber);
+
+    let configuration = get_configuration().expect("Failed to read configuration.");
+    let connection_pool = PgPoolOptions::new()
+        .connect_timeout(std::time::Duration::from_secs(2))
+        .connect_lazy_with(configuration.database.with_db());
+
+    let sender_email = configuration
+        .email_client
+        .sender()
+        .expect("Invalid sender email address.");
+    let email_client = EmailClient::new(
+        configuration.email_client.base_url,
+        sender_email,
+        configuration.email_client.authorization_token,
+    );
+
+    let address = format!(
+        "{}:{}",
+        configuration.application.host, configuration.application.port
+    );
+    let listener = TcpListener::bind(address)?;
+    run(listener, connection_pool, email_client)?.await?;
+    Ok(())
+}
+
+Every time we add a dependency or modify the server constructor, we have at least two places to
+modify - we have recently gone through the motions with EmailClient. It’s mildly annoying.
+More importantly though, the startup logic in our application code is never tested.
+As the codebase evolves, they might start to diverge subtly, leading to different behaviour in our tests
+compared to our production environment.
+We will first extract the logic out of main and then figure out what hooks we need to leverage the
+same code paths in our test code.
+
+7.3.8.1 Extracting Our Startup Code From a structural perspective, our startup logic is a
+function taking Settings as input and returning an instance of our application as output.
+It follows that our main function should look like this:
+//! src/main.rs
+use zero2prod::configuration::get_configuration;
+use zero2prod::startup::build;
+use zero2prod::telemetry::{get_subscriber, init_subscriber};
+
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    let subscriber = get_subscriber("zero2prod".into(), "info".into(), std::io::stdout);
+    init_subscriber(subscriber);
+
+    let configuration = get_configuration().expect("Failed to read configuration.");
+    let server = build(configuration).await?;
+
+    server.await?;
+    Ok(())
+}
+
+We first perform some binary-specific logic (i.e. telemetry initialisation), then we build a set of con-
+figuration values from the supported sources (files + environment variables) and use it to spin up an
+application. Linear.
+Let’s define that build function then:
+//! src/startup.rs
+// [...]
+// New imports!
+use crate::configuration::Settings;
+use sqlx::postgres::PgPoolOptions;
+
+pub async fn build(configuration: Settings) -> Result<Server, std::io::Error> {
+    let connection_pool = PgPoolOptions::new()
+        .connect_timeout(std::time::Duration::from_secs(2))
+        .connect_lazy_with(configuration.database.with_db());
+
+    let sender_email = configuration
+        .email_client
+        .sender()
+        .expect("Invalid sender email address.");
+    let email_client = EmailClient::new(
+        configuration.email_client.base_url,
+        sender_email,
+        configuration.email_client.authorization_token,
+    );
+
+    let address = format!(
+        "{}:{}",
+        configuration.application.host, configuration.application.port
+    );
+    let listener = TcpListener::bind(address)?;
+    run(listener, connection_pool, email_client)
+}
+
+pub fn run(
+    listener: TcpListener,
+    db_pool: PgPool,
+    email_client: EmailClient,
+) -> Result<Server, std::io::Error> {
+    // [...]
+}
+
+Nothing too surprising - we have just moved around the code that was previously living in main.
+Let’s make it test-friendly now!
+
+7.3.8.2   Testing Hooks In Our Startup Logic            Let’s look at our spawn_app function again:
+//! tests/api/helpers.rs
+// [...]
+use zero2prod::startup::build;
+// [...]
+
+pub async fn spawn_app() -> TestApp {
+    // The first time `initialize` is invoked the code in `TRACING` is executed.
+    // All other invocations will instead skip execution.
+    Lazy::force(&TRACING);
+
+     let listener = TcpListener::bind("127.0.0.1:0").expect("Failed to bind random port");
+     // We retrieve the port assigned to us by the OS
+     let port = listener.local_addr().unwrap().port();
+     let address = format!("http://127.0.0.1:{}", port);
+
+     let mut configuration = get_configuration().expect("Failed to read configuration.");
+     configuration.database.database_name = Uuid::new_v4().to_string();
+     let connection_pool = configure_database(&configuration.database).await;
+
+     let sender_email = configuration
+         .email_client
+         .sender()
+         .expect("Invalid sender email address.");
+     let email_client = EmailClient::new(
+         configuration.email_client.base_url,
+         sender_email,
+         configuration.email_client.authorization_token,
+     );
+
+     let server = run(listener, connection_pool.clone(), email_client)
+         .expect("Failed to bind address");
+     let _ = tokio::spawn(server);
+     TestApp {
+         address,
+         db_pool: connection_pool,
+     }
+}
+
+// [...]
+
+At a high-level, we have the following phases:
+    • Execute test-specific setup (i.e. initialise a tracing subscriber);
+    • Randomise the configuration to ensure tests do not interfere with each other (i.e. a different
+      logical database for each test case);
+    • Initialise external resources (e.g. create and migrate the database!);
+    • Build the application;
+    • Launch the application as a background task and return a set of resources to interact with it.
+Can we just throw build in there and call it a day?
+Not really, but let’s try to see where it falls short:
+//! tests/api/helpers.rs
+// [...]
+// New import!
+use zero2prod::startup::build;
+
+pub async fn spawn_app() -> TestApp {
+    Lazy::force(&TRACING);
+
+     // Randomise configuration to ensure test isolation
+     let configuration = {
+         let mut c = get_configuration().expect("Failed to read configuration.");
+         // Use a different database for each test case
+         c.database.database_name = Uuid::new_v4().to_string();
+         // Use a random OS port
+         c.application.port = 0;
+         c
+     };
+
+     // Create and migrate the database
+     configure_database(&configuration.database).await;
+
+    // Launch the application as a background task
+    let server = build(configuration).await.expect("Failed to build application.");
+    let _ = tokio::spawn(server);
+
+    TestApp {
+        // How do we get these?
+        address: todo!(),
+        db_pool: todo!()
+    }
+}
+
+// [...]
+
+It almost works - the approach falls short at the very end: we have no way to retrieve the random
+address assigned by the OS to the application and we don’t really know how to build a connection
+pool to the database, needed to perform assertions on side-effects impacting the persisted state.
+Let’s deal with the connection pool first: we can extract the initialisation logic from build into a
+stand-alone function and invoke it twice.
+//! src/startup.rs
+// [...]
+use crate::configuration::DatabaseSettings;
+
+// We are taking a reference now!
+pub async fn build(configuration: &Settings) -> Result<Server, std::io::Error> {
+    let connection_pool = get_connection_pool(&configuration.database);
+    // [...]
+}
+
+pub fn get_connection_pool(
+    configuration: &DatabaseSettings
+) -> PgPool {
+    PgPoolOptions::new()
+        .connect_timeout(std::time::Duration::from_secs(2))
+        .connect_lazy_with(configuration.with_db())
+}
+
+//! tests/api/helpers.rs
+// [...]
+use zero2prod::startup::{build, get_connection_pool};
+// [...]
+
+pub async fn spawn_app() -> TestApp {
+    // Notice the .clone!
+    let server = build(configuration.clone())
+        .await
+        .expect("Failed to build application.");
+    // [...]
+    TestApp {
+        address: todo!(),
+        db_pool: get_connection_pool(&configuration.database),
+    }
+}
+
+// [...]
+
+You’ll have to add a #[derive(Clone)] to all the structs in src/configuration.rs to make the
+compiler happy, but we are done with the database connection pool.
+How do we get the application address instead?
+actix_web::dev::Server, the type returned by build, does not allow us to retrieve the application
+port.
+
+We need to do a bit more legwork in our application code - we will wrap actix_web::dev::Server
+in a new type that holds on to the information we want.
+//! src/startup.rs
+// [...]
+
+// A new type to hold the newly built server and its port
+pub struct Application {
+    port: u16,
+    server: Server,
+}
+
+impl Application {
+    // We have converted the `build` function into a constructor for
+    // `Application`.
+    pub async fn build(configuration: Settings) -> Result<Self, std::io::Error> {
+        let connection_pool = get_connection_pool(&configuration.database);
+
+           let sender_email = configuration
+               .email_client
+               .sender()
+               .expect("Invalid sender email address.");
+           let email_client = EmailClient::new(
+               configuration.email_client.base_url,
+               sender_email,
+               configuration.email_client.authorization_token,
+           );
+
+           let address = format!(
+               "{}:{}",
+               configuration.application.host, configuration.application.port
+           );
+           let listener = TcpListener::bind(&address)?;
+           let port = listener.local_addr().unwrap().port();
+           let server = run(listener, connection_pool, email_client)?;
+
+           // We "save" the bound port in one of `Application`'s fields
+           Ok(Self { port, server })
+    }
+
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    // A more expressive name that makes it clear that
+    // this function only returns when the application is stopped.
+    pub async fn run_until_stopped(self) -> Result<(), std::io::Error> {
+        self.server.await
+    }
+}
+
+// [...]
+
+//! tests/api/helpers.rs
+// [...]
+// New import!
+use zero2prod::startup::Application;
+
+pub async fn spawn_app() -> TestApp {
+    // [...]
+
+    let application = Application::build(configuration.clone())
+        .await
+
+        .expect("Failed to build application.");
+    // Get the port before spawning the application
+    let address = format!("http://127.0.0.1:{}", application.port());
+    let _ = tokio::spawn(application.run_until_stopped());
+
+    TestApp {
+        address,
+        db_pool: get_connection_pool(&configuration.database),
+    }
+}
+
+// [...]
+
+//! src/main.rs
+// [...]
+// New import!
+use zero2prod::startup::Application;
+
+#[tokio::main]
+async fn main() -> std::io::Result<()> {
+    // [...]
+    let application = Application::build(configuration).await?;
+    application.run_until_stopped().await?;
+    Ok(())
+}
+
+It’s done - run cargo test if you want to double-check!
+
+7.3.9   Build An API Client
+All of our integration tests are black-box: we launch our application at the beginning of each test
+and interact with it using an HTTP client (i.e. reqwest).
+As we write tests, we necessarily end up implementing a client for our API.
+That’s great!
+It gives us a prime opportunity to see what it feels like to interact with the API as a user.
+We just need to be careful not to spread the client logic all over the test suite - when the API changes,
+we don’t want to go through tens of tests to remove a trailing s from the path of an endpoint.
+Let’s look at our subscriptions tests:
+//! tests/api/subscriptions.rs
+use crate::helpers::spawn_app;
+
+#[tokio::test]
+async fn subscribe_returns_a_200_for_valid_form_data() {
+    // Arrange
+    let app = spawn_app().await;
+    let client = reqwest::Client::new();
+    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+
+    // Act
+    let response = client
+        .post(&format!("{}/subscriptions", &app.address))
+        .header("Content-Type", "application/x-www-form-urlencoded")
+        .body(body)
+        .send()
+        .await
+        .expect("Failed to execute request.");
+
+    // Assert
+    assert_eq!(200, response.status().as_u16());
+
+    let saved = sqlx::query!("SELECT email, name FROM subscriptions",)
+        .fetch_one(&app.db_pool)
+        .await
+        .expect("Failed to fetch saved subscription.");
+
+    assert_eq!(saved.email, "ursula_le_guin@gmail.com");
+    assert_eq!(saved.name, "le guin");
+}
+
+#[tokio::test]
+async fn subscribe_returns_a_400_when_data_is_missing() {
+    // Arrange
+    let app = spawn_app().await;
+    let client = reqwest::Client::new();
+    let test_cases = vec![
+        ("name=le%20guin", "missing the email"),
+        ("email=ursula_le_guin%40gmail.com", "missing the name"),
+        ("", "missing both name and email"),
+    ];
+
+    for (invalid_body, error_message) in test_cases {
+        // Act
+        let response = client
+            .post(&format!("{}/subscriptions", &app.address))
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(invalid_body)
+            .send()
+            .await
+            .expect("Failed to execute request.");
+
+        // Assert
+        assert_eq!(
+            400,
+            response.status().as_u16(),
+            // Additional customised error message on test failure
+            "The API did not fail with 400 Bad Request when the payload was {}.",
+            error_message
+        );
+    }
+}
+
+#[tokio::test]
+async fn subscribe_returns_a_400_when_fields_are_present_but_invalid() {
+    // Arrange
+    let app = spawn_app().await;
+    let client = reqwest::Client::new();
+    let test_cases = vec![
+        ("name=&email=ursula_le_guin%40gmail.com", "empty name"),
+        ("name=Ursula&email=", "empty email"),
+        ("name=Ursula&email=definitely-not-an-email", "invalid email"),
+    ];
+
+    for (body, description) in test_cases {
+        // Act
+        let response = client
+            .post(&format!("{}/subscriptions", &app.address))
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(body)
+            .send()
+            .await
+            .expect("Failed to execute request.");
+
+           // Assert
+           assert_eq!(
+               400,
+               response.status().as_u16(),
+               "The API did not return a 400 Bad Request when the payload was {}.",
+               description
+           );
+    }
+}
+
+We have the same calling code in each test - we should pull it out and add a helper method to our
+TestApp struct:
+//! tests/api/helpers.rs
+// [...]
+
+pub struct TestApp {
+    // [...]
+}
+
+impl TestApp {
+    pub async fn post_subscriptions(&self, body: String) -> reqwest::Response {
+        reqwest::Client::new()
+            .post(&format!("{}/subscriptions", &self.address))
+            .header("Content-Type", "application/x-www-form-urlencoded")
+            .body(body)
+            .send()
+            .await
+            .expect("Failed to execute request.")
+    }
+}
+
+// [...]
+
+//! tests/api/subscriptions.rs
+use crate::helpers::spawn_app;
+
+#[tokio::test]
+async fn subscribe_returns_a_200_for_valid_form_data() {
+    // [...]
+    // Act
+    let response = app.post_subscriptions(body.into()).await;
+    // [...]
+}
+
+#[tokio::test]
+async fn subscribe_returns_a_400_when_data_is_missing() {
+    // [...]
+    for (invalid_body, error_message) in test_cases {
+        let response = app.post_subscriptions(invalid_body.into()).await;
+        // [...]
+    }
+}
+
+#[tokio::test]
+async fn subscribe_returns_a_400_when_fields_are_present_but_invalid() {
+    // [...]
+    for (body, description) in test_cases {
+        let response = app.post_subscriptions(body.into()).await;
+        // [...]
+    }
+}
+
+We could add another method for the health check endpoint, but it’s only used once - there is no
+need right now.
+
+7.3.10    Summary
+We started with a single file test suite, we finished with a modular test suite and a robust set of
+helpers.
+Just like application code, test code is never finished: we will have to keep working on it as the project
+evolves, but we have laid down solid foundations to keep moving forward without losing momentum.
+We are now ready to tackle the remaining pieces of functionality needed to dispatch a confirmation
+email.
+
+7.4     Refocus
+Time to go back to the plan we drafted at the beginning of the chapter:
+
+        • write a module to send an email;
+        • adapt the logic of our existing POST /subscriptions request handler to match the new
+          requirements;
+        • write a GET /subscriptions/confirm request handler from scratch.
+
+The first item is done, time to move on to the remaining two on the list.
+We had a sketch of how the two handlers should work:
+
+   POST /subscriptions will:
+     • add the subscriber details to the database in the subscriptions table, with status
+        equal to pending_confirmation;
+     • generate a (unique) subscription_token;
+     • store subscription_token in our database against the subscriber id in a
+        subscription_tokens table;
+     • send an email to the new subscriber containing a link structured as
+        https://<our-api-domain>/subscriptions/confirm?token=<subscription_token>;
+     • return a 200 OK.
+   Once they click on the link, a browser tab will open up and a GET request will be fired to our
+   GET /subscriptions/confirm endpoint. The request handler will:
+     • retrieve subscription_token from the query parameters;
+     • retrieve the subscriber id associated with subscription_token from the
+        subscription_tokens table;
+     • update the subscriber status from pending_confirmation to active in the
+        subscriptions table;
+     • return a 200 OK.
+
+This gives us a fairly precise picture of how the application is going to work once we are done with
+the implementation.
+It does not help us much to figure out how to get there.
+Where should we start from?
+Should we immediately tackle the changes to /subscriptions?
+Should we get /subscriptions/confirm out of the way?
+We need to find an implementation route that can be rolled out with zero downtime.
+
+7.5     Zero Downtime Deployments
+7.5.1    Reliability
+In Chapter 5 we deployed our application to a public cloud provider.
+It is live: we are not sending out newsletter issues yet, but people can subscribe while we figure that
+part out.
+
+Once an application is serving production traffic, we need to make sure it is reliable.
+Reliable means different things in different contexts. If you are selling a data storage solution, for
+example, it should not lose (or corrupt!) customers’ data.
+In a commercial setting, the definition of reliability for your application will often be encoded in a
+Service Level Agreement (SLA).
+An SLA is a contractual obligation: you guarantee a certain level of reliability and commit to com-
+pensate your customers (usually with discounts or credits) if your service fails to live up to the
+expectations.
+If you are selling access to an API, for example, you will usually have something related to availability
+- e.g. the API should successfully respond to at least 99.99% of well-formed incoming requests, often
+referred to as “four nines of availability”.
+Phrased differently (and assuming a uniform distribution of incoming requests over time), you can
+only afford up to 52 minutes of downtime over a whole year. Achieving four nines of availability is
+tough.
+There is no silver bullet to build a highly available solution: it requires work from the application
+layer all the way down to the infrastructure layer.
+One thing is certain, though: if you want to operate a highly available service, you should master
+zero downtime deployments - users should be able to use the service before, during and after the
+rollout of a new version of the application to production.
+This is even more important if you are practising continuous deployment: you cannot release multiple
+times a day if every release triggers a small outage.
+
+7.5.2   Deployment Strategies
+7.5.2.1 Naive Deployment Before diving deeper into zero downtime deployments, let’s have a
+look at the “naive” approach.
+Version A of our service is running in production and we want to roll out version B:
+   • We switch off all instances of version A running the cluster;
+   • We spin up new instances of our application running version B;
+   • We start serving traffic using version B.
+There is a non-zero amount of time where there is no application running in the cluster able to serve
+user traffic - we are experiencing downtime!
+To do better we need to take a closer look at how our infrastructure is set up.
+
+                                        Figure 2: Load balancer
+
+7.5.2.2 Load Balancers We have multiple copies57 of our application running behind a load
+balancer.
+Each replica of our application is registered with the load balancer as a backend.
+Every time somebody sends a request to our API, they hit our load balancer which is then in charge
+of choosing one of the available backends to fulfill the incoming request.
+Load balancers usually support adding (and removing) backends dynamically.
+This enables a few interesting patterns.
+
+7.5.2.2.1 Horizontal Scaling We can add more capacity when experiencing a traffic spike by
+spinning up more replicas of our application (i.e. horizontal scaling).
+It helps to spread the load until the work expected of a single instance becomes manageable.
+We will get back to this topic later in the book when discussing metrics and autoscaling.
+
+7.5.2.2.2 Health Checks We can ask the load balancer to keep an eye on the health of the
+registered backends.
+Oversimplifying, health checking can be:
+   • Passive - the load balancer looks at the distribution of status codes/latency for each backend
+     to determine if they are healthy or not;
+   • Active - the load balancer is configured to send a health check request to each backend on a
+     schedule. If a backend fails to respond with a success status code for a long enough time period
+     it is marked as unhealthy and removed.
+This is a critical capability to achieve self-healing in a cloud-native environment: the platform can
+detect if an application is not behaving as expected and automatically remove it from the list of
+available backends to mitigate or nullify the impact on users58 .
+
+7.5.2.3 Rolling Update Deployments We can leverage our load balancer to perform zero down-
+time deployments.
+Let’s look at a snapshot of our production environments: we have three replicas of version A of our
+application registered as backends for our load balancer.
+We want to deploy version B.
+
+                                 Figure 3: System before the roll out begins.
+
+We start by spinning up one replica of version B of our application.
+When the application is ready to serve traffic (i.e. a few health check requests have succeeded) we
+register it as a backend with our load balancer.
+  57 You might recall that we set the number of replicas to 1 in chapter 5 to reduce the bill while experimenting. Even
+
+if you are running a single replica there is load balancer between your users and your application. Deployments are
+still performed using a rolling update strategy.
+  58 This is true as long as the platform is also capable of automatically provisioning a new replica of the application
+
+when the number of healthy instances falls below a pre-determined threshold.
+
+                          Figure 4: One operational instance of version B.
+
+We have four replicas of our application now: 3 running version A, 1 running version B. All four are
+serving live traffic.
+If all is well, we switch off one of the replicas running version A.
+
+                   Figure 5: One instance of version A has been decommissioned.
+
+We follow the same process to replace all replicas running version A until all registered backends are
+running version B.
+This deployment strategy is called rolling update: we run the old and the new version of the
+application side by side, serving live traffic with both.
+Throughout the process we always have three or more healthy backends: users should not experience
+any kind of service degradation (assuming version B is not buggy).
+
+7.5.2.4 Digital Ocean App Platform We are running our application on Digital Ocean App
+Platform.
+Their documentation boasts of offering zero downtime deployments out of the box, but they do not
+provide details on how it is achieved.
+A few experiments confirmed that they are indeed relying on a rolling update deployment strategy.
+A rolling update is not the only possible strategy for a zero downtime deployment - blue-green and
+canary deployments are equally popular variations over the same underlying principles.
+Choose the most appropriate solution for your application based on the capabilities offered by your
+platform and your requirements.
+
+7.6     Database Migrations
+7.6.1   State Is Kept Outside The Application
+Load balancing relies on a strong assumption: no matter which backend is used to serve an incoming
+request, the outcome will be the same.
+This is something we discussed already in Chapter 3: to ensure high availability in a fault-prone envi-
+ronment, cloud-native applications are stateless - they delegate all persistence concerns to external
+systems (i.e. databases).
+That’s why load balancing works: all backends are talking to the same database to query and manip-
+ulate the same state.
+Think of a database as a single gigantic global variable. Continuously accessed and mutated by all
+replicas of our application.
+State is hard.
+
+7.6.2   Deployments And Migrations
+During a rolling update deployment, the old and the new version of the application are both serving
+live traffic, side by side.
+From a different perspective: the old and the new version of the application are using the same
+database at the same time.
+To avoid downtime, we need a database schema that is understood by both versions.
+This is not an issue for most of our deployments, but it is a serious constraint when we need to evolve
+the schema.
+Let’s circle back to the job we set out to do, confirmation emails.
+To move forward with the implementation strategy we identified, we need to evolve our database
+schema as follows:
+  • add a new table, subscription_tokens;
+  • add a new mandatory column, status, to the existing subscriptions table.
+Let’s go over the possible scenarios to convince ourselves that we cannot possibly deploy confirmation
+emails all at once without incurring downtime.
+We could first migrate the database and then deploy the new version.
+This implies that the current version is running against the migrated database for some time: our
+current implementation of POST /subscriptions does not know about status and it tries to insert
+new rows into subscriptions without populating it. Given that status is constrained to be NOT
+NULL (i.e. it’s mandatory), all inserts would fail - we would not be able to accept new subscribers
+until the new version of the application is deployed.
+Not good.
+We could first deploy the new version and then migrate the database.
+We get the opposite scenario: the new version of the application is running against the old database
+schema. When POST /subscriptions is called, it tries to insert a row into subscriptions with
+a status field that does not exist - all inserts fail and we cannot accept new subscribers until the
+database is migrated.
+Once again, not good.
+
+7.6.3   Multi-step Migrations
+A big bang release won’t cut it - we need to get there in multiple, smaller steps.
+The pattern is somewhat similar to what we see in test-driven development: we don’t change code
+and tests at the same time - one of the two needs to stay still while the other changes.
+The same applies to database migrations and deployments: if we want to evolve the database schema
+we cannot change the application behaviour at the same time.
+Think of it as a database refactoring: we are laying down the foundations in order to build the
+behaviour we need later on.
+
+7.6.4   A New Mandatory Column
+Let’s start by looking at the status column.
+
+7.6.4.1 Step 1: Add As Optional We start by keeping the application code stable.
+On the database side, we generate a new migration script:
+sqlx migrate add add_status_to_subscriptions
+
+Creating migrations/20210307181858_add_status_to_subscriptions.sql
+
+We can now edit the migration script to add status as an optional column to subscriptions:
+ALTER TABLE subscriptions ADD COLUMN status TEXT NULL;
+
+Run the migration against your local database (SKIP_DOCKER=true ./scripts/init_db.sh): we
+can now run our test suite to make sure that the code works as is even against the new database
+schema.
+It should pass: go ahead and migrate the production database.
+
+7.6.4.2 Step 2: Start Using The New Column status now exists: we can start using it!
+To be precise, we can start writing to it: every time a new subscriber is inserted, we will set status
+to confirmed.
+We just need to change our insertion query from
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn insert_subscriber([...]) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"INSERT INTO subscriptions (id, email, name, subscribed_at)
+        VALUES ($1, $2, $3, $4)"#,
+        // [...]
+    )
+    // [...]
+}
+
+to
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn insert_subscriber([...]) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"INSERT INTO subscriptions (id, email, name, subscribed_at, status)
+        VALUES ($1, $2, $3, $4, 'confirmed')"#,
+        // [...]
+    )
+    // [...]
+}
+
+Tests should pass - deploy the new version of the application to production.
+
+7.6.4.3 Step 3: Backfill And Mark As NOT NULL The latest version of the application ensures
+that status is populated for all new subscribers.
+To mark status as NOT NULL we just need to backfill the value for historical records: we’ll then be
+free to alter the column.
+Let’s generate a new migration script:
+sqlx migrate add make_status_not_null_in_subscriptions
+
+Creating migrations/20210307184428_make_status_not_null_in_subscriptions.sql
+
+The SQL migration looks like this:
+-- We wrap the whole migration in a transaction to make sure
+-- it succeeds or fails atomically. We will discuss SQL transactions
+-- in more details towards the end of this chapter!
+-- `sqlx` does not do it automatically for us.
+BEGIN;
+    -- Backfill `status` for historical entries
+    UPDATE subscriptions
+        SET status = 'confirmed'
+        WHERE status IS NULL;
+    -- Make `status` mandatory
+    ALTER TABLE subscriptions ALTER COLUMN status SET NOT NULL;
+COMMIT;
+
+We can migrate our local database, run our test suite and then deploy our production database.
+We made it, we added status as a new mandatory column!
+
+7.6.5   A New Table
+What about subscription_tokens? Do we need three steps there as well?
+No, it is much simpler: we add the new table in a migration while the application keeps ignoring it.
+We can then deploy a new version of the application that uses it to enable confirmation emails.
+Let’s generate a new migration script:
+sqlx migrate add create_subscription_tokens_table
+
+Creating migrations/20210307185410_create_subscription_tokens_table.sql
+
+The migration is similar to the very first one we wrote to add subscriptions:
+-- Create Subscription Tokens Table
+CREATE TABLE subscription_tokens(
+   subscription_token TEXT NOT NULL,
+   subscriber_id uuid NOT NULL
+      REFERENCES subscriptions (id),
+   PRIMARY KEY (subscription_token)
+);
+
+Pay attention to the details here: the subscriber_id column in subscription_tokens is a foreign
+key.
+For each row in subscription_tokens there must exist a row in subscriptions whose id field has
+the same value of subscriber_id, otherwise the insertion fails. This guarantees that all tokens are
+attached to a legitimate subscriber.
+Migrate the production database again - we are done!
+
+7.7     Sending A Confirmation Email
+It took us a while, but the groundwork is done: our production database is ready to accommodate
+the new feature we want to build, confirmation emails.
+Time to focus on the application code.
+We will build the whole feature in a proper test-driven fashion: small steps in a tight red-green-refactor
+loop. Get ready!
+
+7.7.1   A Static Email
+We will start simple: we will test that POST /subscriptions is sending out an email.
+We will not be looking, at this stage, at the body of the email - in particular, we will not check that
+
+it contains a confirmation link.
+
+7.7.1.1   Red test    To write this test we need to enhance our TestApp.
+It currently holds our application and a handle to a pool of connections to the database:
+//! tests/api/helpers.rs
+// [...]
+
+pub struct TestApp {
+  pub address: String,
+  pub db_pool: PgPool,
+}
+
+We need to spin up a mock server to stand in for Postmark’s API and intercept outgoing requests,
+just like we did when we built the email client.
+Let’s edit spawn_app accordingly:
+//! tests/api/helpers.rs
+
+// New import!
+use wiremock::MockServer;
+// [...]
+
+pub struct TestApp {
+    pub address: String,
+    pub db_pool: PgPool,
+    // New field!
+    pub email_server: MockServer,
+}
+
+pub async fn spawn_app() -> TestApp {
+    // [...]
+    // Launch a mock server to stand in for Postmark's API
+    let email_server = MockServer::start().await;
+
+    // Randomise configuration to ensure test isolation
+    let configuration = {
+        let mut c = get_configuration().expect("Failed to read configuration.");
+        // [...]
+        // Use the mock server as email API
+        c.email_client.base_url = email_server.uri();
+        c
+    };
+
+    // [...]
+
+    TestApp {
+        // [...],
+        email_server,
+    }
+}
+
+We can now write the new test case:
+//! tests/api/subscriptions.rs
+// New imports!
+use wiremock::matchers::{method, path};
+use wiremock::{Mock, ResponseTemplate};
+// [...]
+
+#[tokio::test]
+async fn subscribe_sends_a_confirmation_email_for_valid_data() {
+
+    // Arrange
+    let app = spawn_app().await;
+    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+
+    Mock::given(path("/email"))
+            .and(method("POST"))
+            .respond_with(ResponseTemplate::new(200))
+            .expect(1)
+            .mount(&app.email_server)
+            .await;
+
+    // Act
+    app.post_subscriptions(body.into()).await;
+
+    // Assert
+    // Mock asserts on drop
+}
+
+The test, as expected, fails:
+failures:
+
+---- subscriptions::subscribe_sends_a_confirmation_email_for_valid_data stdout ----
+thread 'subscriptions::subscribe_sends_a_confirmation_email_for_valid_data' panicked at
+'Verifications failed:
+- Mock #0.
+        Expected range of matching incoming requests: == 1
+        Number of matched incoming requests: 0'
+
+Notice that, on failure, wiremock gives us a detailed breakdown of what happened: we expected an
+incoming request, we received none.
+Let’s fix that.
+
+7.7.1.2     Green test   Our handler looks like this right now:
+//! src/routes/subscriptions.rs
+// [...]
+
+#[tracing::instrument([...])]
+pub async fn subscribe(form: web::Form<FormData>, pool: web::Data<PgPool>) -> HttpResponse {
+    let new_subscriber = match form.0.try_into() {
+        Ok(form) => form,
+        Err(_) => return HttpResponse::BadRequest().finish(),
+    };
+    match insert_subscriber(&pool, &new_subscriber).await {
+        Ok(_) => HttpResponse::Ok().finish(),
+        Err(_) => HttpResponse::InternalServerError().finish(),
+    }
+}
+
+To send an email we need to get our hands on an instance of EmailClient.
+As part of the work we did when writing the module, we also registered it in the application context:
+//! src/startup.rs
+// [...]
+
+fn run([...]) -> Result<Server, std::io::Error> {
+    // [...]
+    let email_client = Data::new(email_client);
+    let server = HttpServer::new(move || {
+        App::new()
+             .wrap(TracingLogger::default())
+             // [...]
+
+             // Here!
+             .app_data(email_client.clone())
+    })
+    .listen(listener)?
+    .run();
+    Ok(server)
+}
+
+We can therefore access it in our handler using web::Data, just like we did for pool:
+//! src/routes/subscriptions.rs
+// New import!
+use crate::email_client::EmailClient;
+// [...]
+
+#[tracing::instrument(
+    name = "Adding a new subscriber",
+    skip(form, pool, email_client),
+    fields(
+        subscriber_email = %form.email,
+        subscriber_name= %form.name
+    )
+)]
+pub async fn subscribe(
+    form: web::Form<FormData>,
+    pool: web::Data<PgPool>,
+    // Get the email client from the app context
+    email_client: web::Data<EmailClient>,
+) -> HttpResponse {
+    // [...]
+    if insert_subscriber(&pool, &new_subscriber).await.is_err() {
+        return HttpResponse::InternalServerError().finish();
+    }
+    // Send a (useless) email to the new subscriber.
+    // We are ignoring email delivery errors for now.
+    if email_client
+        .send_email(
+             new_subscriber.email,
+             "Welcome!",
+             "Welcome to our newsletter!",
+             "Welcome to our newsletter!",
+        )
+        .await
+        .is_err()
+    {
+        return HttpResponse::InternalServerError().finish();
+    }
+    HttpResponse::Ok().finish()
+}
+
+subscribe_sends_a_confirmation_email_for_valid_data now passes, but subscribe_returns_a_200_for_valid_f
+fails:
+thread 'subscriptions::subscribe_returns_a_200_for_valid_form_data' panicked at
+'assertion failed: `(left == right)`
+  left: `200`,
+ right: `500`'
+
+It is trying to send an email but it is failing because we haven’t setup a mock in that test. Let’s fix
+it:
+//! tests/api/subscriptions.rs
+// [...]
+
+#[tokio::test]
+async fn subscribe_returns_a_200_for_valid_form_data() {
+    // Arrange
+    let app = spawn_app().await;
+    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+
+    // New section!
+    Mock::given(path("/email"))
+        .and(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&app.email_server)
+        .await;
+
+    // Act
+    let response = app.post_subscriptions(body.into()).await;
+
+    // Assert
+    assert_eq!(200, response.status().as_u16());
+
+    // [...]
+}
+
+All good, the test passes now.
+There is not much to refactor at the moment, let’s press forward.
+
+7.7.2   A Static Confirmation Link
+Let’s raise the bar a bit - we will scan the body of the email to retrieve a confirmation link.
+
+7.7.2.1 Red Test We don’t care (yet) about the link being dynamic or actually meaningful - we
+just want to be sure that there is something in the body that looks like a link.
+We should also have the same link in both the plain text and the HTML version of the email body.
+How do we get the body of a request intercepted by wiremock::MockServer?
+We can use its received_requests method - it returns a vector of all the requests intercepted by
+the server as long as request recording was enabled (the default).
+//! tests/api/subscriptions.rs
+// [...]
+
+#[tokio::test]
+async fn subscribe_sends_a_confirmation_email_with_a_link() {
+    // Arrange
+    let app = spawn_app().await;
+    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+
+    Mock::given(path("/email"))
+        .and(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        // We are not setting an expectation here anymore
+        // The test is focused on another aspect of the app
+        // behaviour.
+        .mount(&app.email_server)
+        .await;
+
+    // Act
+    app.post_subscriptions(body.into()).await;
+
+    // Assert
+    // Get the first intercepted request
+    let email_request = &app.email_server.received_requests().await.unwrap()[0];
+
+    // Parse the body as JSON, starting from raw bytes
+    let body: serde_json::Value = serde_json::from_slice(&email_request.body).unwrap();
+}
+
+We now need to extract links out of it.
+The most obvious way forward would be a regular expression. Let’s face it though: regexes are a
+messy business and it takes a while to get them right.
+Once again, we can leverage the work done by the larger Rust ecosystem - let’s add linkify as a
+development dependency:
+#! Cargo.toml
+# [...]
+[dev-dependencies]
+linkify = "0.8"
+# [...]
+We can use linkify to scan text and return an iterator of extracted links.
+//! tests/api/subscriptions.rs
+// [...]
+
+#[tokio::test]
+async fn subscribe_sends_a_confirmation_email_with_a_link() {
+    // [...]
+    let body: serde_json::Value = serde_json::from_slice(&email_request.body).unwrap();
+
+    // Extract the link from one of the request fields.
+    let get_link = |s: &str| {
+        let links: Vec<_> = linkify::LinkFinder::new()
+            .links(s)
+            .filter(|l| *l.kind() == linkify::LinkKind::Url)
+            .collect();
+            assert_eq!(links.len(), 1);
+        links[0].as_str().to_owned()
+    };
+
+    let html_link = get_link(&body["HtmlBody"].as_str().unwrap());
+    let text_link = get_link(&body["TextBody"].as_str().unwrap());
+    // The two links should be identical
+    assert_eq!(html_link, text_link);
+}
+
+If we run the test suite, we should see the new test case failing:
+failures:
+
+thread 'subscriptions::subscribe_sends_a_confirmation_email_with_a_link'
+panicked at 'assertion failed: `(left == right)`
+  left: `0`,
+ right: `1`', tests/api/subscriptions.rs:71:9
+
+7.7.2.2     Green Test We need to tweak our request handler again to satisfy the new test case:
+//! src/routes/subscriptions.rs
+// [...]
+
+#[tracing::instrument([...])]
+pub async fn subscribe(/* */) -> HttpResponse {
+    // [...]
+    let confirmation_link =
+        "https://my-api.com/subscriptions/confirm";
+    if email_client
+        .send_email(
+
+            new_subscriber.email,
+            "Welcome!",
+            &format!(
+                "Welcome to our newsletter!<br />\
+                Click <a href=\"{}\">here</a> to confirm your subscription.",
+                confirmation_link
+            ),
+            &format!(
+                "Welcome to our newsletter!\nVisit {} to confirm your subscription.",
+                confirmation_link
+            ),
+        )
+        .await
+        .is_err()
+    {
+        return HttpResponse::InternalServerError().finish();
+    }
+    HttpResponse::Ok().finish()
+}
+
+The test should pass straight away.
+
+7.7.2.3 Refactor Our request handler is getting a bit busy - there is a lot of code dealing with
+our confirmation email now.
+Let’s extract it into a separate function:
+//! src/routes/subscriptions.rs
+// [...]
+
+#[tracing::instrument([...])]
+pub async fn subscribe(/* */) -> HttpResponse {
+    let new_subscriber = match form.0.try_into() {
+        Ok(form) => form,
+        Err(_) => return HttpResponse::BadRequest().finish(),
+    };
+    if insert_subscriber(&pool, &new_subscriber).await.is_err() {
+        return HttpResponse::InternalServerError().finish();
+    }
+    if send_confirmation_email(&email_client, new_subscriber)
+        .await
+        .is_err()
+    {
+        return HttpResponse::InternalServerError().finish();
+    }
+    HttpResponse::Ok().finish()
+}
+
+#[tracing::instrument(
+    name = "Send a confirmation email to a new subscriber",
+    skip(email_client, new_subscriber)
+)]
+pub async fn send_confirmation_email(
+    email_client: &EmailClient,
+    new_subscriber: NewSubscriber,
+) -> Result<(), reqwest::Error> {
+    let confirmation_link = "https://my-api.com/subscriptions/confirm";
+    let plain_body = format!(
+        "Welcome to our newsletter!\nVisit {} to confirm your subscription.",
+        confirmation_link
+    );
+    let html_body = format!(
+        "Welcome to our newsletter!<br />\
+
+        Click <a href=\"{}\">here</a> to confirm your subscription.",
+      confirmation_link
+    );
+    email_client
+        .send_email(
+            new_subscriber.email,
+            "Welcome!",
+            &html_body,
+            &plain_body,
+        )
+       .await
+}
+
+subscribe is once again focused on the overall flow, without bothering with details of any of its steps.
+
+7.7.3     Pending Confirmation
+Let’s look at the status for a new subscriber now.
+We are currently setting their status to confirmed in POST /subscriptions, while it should be
+pending_confirmation until they click on the confirmation link.
+Time to fix it.
+
+7.7.3.1    Red test   We can start by having a second look at our first “happy path” test:
+//! tests/api/subscriptions.rs
+// [...]
+
+#[tokio::test]
+async fn subscribe_returns_a_200_for_valid_form_data() {
+    // Arrange
+    let app = spawn_app().await;
+    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+
+    Mock::given(path("/email"))
+        .and(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&app.email_server)
+        .await;
+
+    // Act
+    let response = app.post_subscriptions(body.into()).await;
+
+    // Assert
+    assert_eq!(200, response.status().as_u16());
+
+    let saved = sqlx::query!("SELECT email, name FROM subscriptions",)
+        .fetch_one(&app.db_pool)
+        .await
+        .expect("Failed to fetch saved subscription.");
+
+    assert_eq!(saved.email, "ursula_le_guin@gmail.com");
+    assert_eq!(saved.name, "le guin");
+}
+
+The name is a bit of a lie - it is checking the status code and performing some assertions against the
+state stored in the database.
+Let’s split it into two separate test cases:
+//! tests/api/subscriptions.rs
+// [...]
+
+#[tokio::test]
+
+async fn subscribe_returns_a_200_for_valid_form_data() {
+    // Arrange
+    let app = spawn_app().await;
+    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+    Mock::given(path("/email"))
+        .and(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&app.email_server)
+        .await;
+
+    // Act
+    let response = app.post_subscriptions(body.into()).await;
+
+    // Assert
+    assert_eq!(200, response.status().as_u16());
+}
+
+#[tokio::test]
+async fn subscribe_persists_the_new_subscriber() {
+    // Arrange
+    let app = spawn_app().await;
+    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+    Mock::given(path("/email"))
+        .and(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&app.email_server)
+        .await;
+
+    // Act
+    app.post_subscriptions(body.into()).await;
+
+    // Assert
+    let saved = sqlx::query!("SELECT email, name FROM subscriptions",)
+        .fetch_one(&app.db_pool)
+        .await
+        .expect("Failed to fetch saved subscription.");
+
+    assert_eq!(saved.email, "ursula_le_guin@gmail.com");
+    assert_eq!(saved.name, "le guin");
+}
+
+We can now modify the second test case to check the status as well.
+//! tests/api/subscriptions.rs
+// [...]
+
+#[tokio::test]
+async fn subscribe_persists_the_new_subscriber() {
+    // [...]
+
+    // Assert
+    let saved = sqlx::query!("SELECT email, name, status FROM subscriptions",)
+        .fetch_one(&app.db_pool)
+        .await
+        .expect("Failed to fetch saved subscription.");
+
+    assert_eq!(saved.email, "ursula_le_guin@gmail.com");
+    assert_eq!(saved.name, "le guin");
+    assert_eq!(saved.status, "pending_confirmation");
+}
+
+The test fails as expected:
+
+failures:
+
+---- subscriptions::subscribe_persists_the_new_subscriber stdout ----
+thread 'subscriptions::subscribe_persists_the_new_subscriber'
+panicked at 'assertion failed: `(left == right)`
+  left: `"confirmed"`,
+ right: `"pending_confirmation"`'
+
+7.7.3.2     Green Test We can turn it green by touching again our insert query:
+//! src/routes/subscriptions.rs
+
+#[tracing::instrument([...])]
+pub async fn insert_subscriber([...]) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"INSERT INTO subscriptions (id, email, name, subscribed_at, status)
+        VALUES ($1, $2, $3, $4, 'confirmed')"#,
+        // [...]
+    )
+    // [...]
+}
+
+We just need to change confirmed into pending_confirmation:
+//! src/routes/subscriptions.rs
+
+#[tracing::instrument([...])]
+pub async fn insert_subscriber([...]) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"INSERT INTO subscriptions (id, email, name, subscribed_at, status)
+        VALUES ($1, $2, $3, $4, 'pending_confirmation')"#,
+        // [...]
+    )
+  // [...]
+}
+
+Tests should be green.
+
+7.7.4     Skeleton of GET /subscriptions/confirm
+We have done most of the groundwork on POST /subscriptions - time to shift our focus to the
+other half of the journey, GET /subscriptions/confirm.
+We want to build up the skeleton of the endpoint - we need to register the handler against the
+path in src/startup.rs and reject incoming requests without the required query parameter,
+subscription_token.
+This will allow us to then build the happy path without having to write a massive amount of code
+all at once - baby steps!
+
+7.7.4.1 Red Test Let’s add a new module to our tests project to host all test cases dealing with
+the confirmation callback.
+//! tests/api/main.rs
+
+mod health_check;
+mod helpers;
+mod subscriptions;
+// New module!
+mod subscriptions_confirm;
+
+//! tests/api/subscriptions_confirm.rs
+use crate::helpers::spawn_app;
+
+#[tokio::test]
+async fn confirmations_without_token_are_rejected_with_a_400() {
+    // Arrange
+    let app = spawn_app().await;
+
+    // Act
+    let response = reqwest::get(&format!("{}/subscriptions/confirm", app.address))
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status().as_u16(), 400);
+}
+
+Which fails as expected, given that we have no handler yet:
+---- subscriptions_confirm::confirmations_without_token_are_rejected_with_a_400 stdout ----
+thread 'subscriptions_confirm::confirmations_without_token_are_rejected_with_a_400'
+panicked at 'assertion failed: `(left == right)`
+  left: `404`,
+ right: `400`'
+
+7.7.4.2 Green Test Let’s start with a dummy handler that returns 200 OK regardless of the
+incoming request:
+//! src/routes/mod.rs
+
+mod health_check;
+mod subscriptions;
+// New module!
+mod subscriptions_confirm;
+
+pub use health_check::*;
+pub use subscriptions::*;
+pub use subscriptions_confirm::*;
+
+//! src/routes/subscriptions_confirm.rs
+
+use actix_web::HttpResponse;
+
+#[tracing::instrument(
+    name = "Confirm a pending subscriber",
+)]
+pub async fn confirm() -> HttpResponse {
+    HttpResponse::Ok().finish()
+}
+
+//! src/startup.rs
+// [...]
+use crate::routes::confirm;
+
+fn run([...]) -> Result<Server, std::io::Error> {
+    // [...]
+    let server = HttpServer::new(move || {
+        App::new()
+             // [...]
+             .route("/subscriptions/confirm", web::get().to(confirm))
+             // [...]
+    })
+    // [...]
+}
+
+We should get a different error now when running cargo test:
+
+---- subscriptions_confirm::confirmations_without_token_are_rejected_with_a_400 stdout ----
+thread 'subscriptions_confirm::confirmations_without_token_are_rejected_with_a_400'
+panicked at 'assertion failed: `(left == right)`
+  left: `200`,
+ right: `400`'
+
+It worked!
+Time to turn that 200 OK in a 400 Bad Request.
+We want to ensure that there is a subscription_token query parameter: we can rely on another
+one actix-web’s extractors - Query.
+//! src/routes/subscriptions_confirm.rs
+use actix_web::{HttpResponse, web};
+
+#[derive(serde::Deserialize)]
+pub struct Parameters {
+    subscription_token: String
+}
+
+#[tracing::instrument(
+    name = "Confirm a pending subscriber",
+    skip(_parameters)
+)]
+pub async fn confirm(_parameters: web::Query<Parameters>) -> HttpResponse {
+    HttpResponse::Ok().finish()
+}
+
+The Parameters struct defines all the query parameters that we expect to see in the incoming request.
+It needs to implement serde::Deserialize to enable actix-web to build it from the incoming
+request path. It is enough to add a function parameter of type web::Query<Parameter> to confirm
+to instruct actix-web to only call the handler if the extraction was successful. If the extraction failed
+a 400 Bad Request is automatically returned to the caller.
+Our test should now pass.
+
+7.7.5   Connecting The Dots
+Now that we have a GET /subscriptions/confirm handler we can try to perform the full journey!
+
+7.7.5.1 Red Test We will behave like a user: we will call POST /subscriptions, we will extract
+the confirmation link from the outgoing email request (using the linkify machinery we already built)
+and then call it to confirm our subscription - expecting a 200 OK.
+We will not be checking the status from the database (yet) - that is going to be our grand finale.
+Let’s write it down:
+//! tests/api/subscriptions_confirm.rs
+// [...]
+use reqwest::Url;
+use wiremock::{ResponseTemplate, Mock};
+use wiremock::matchers::{path, method};
+
+#[tokio::test]
+async fn the_link_returned_by_subscribe_returns_a_200_if_called() {
+    // Arrange
+    let app = spawn_app().await;
+    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+
+    Mock::given(path("/email"))
+        .and(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&app.email_server)
+
+         .await;
+
+    app.post_subscriptions(body.into()).await;
+    let email_request = &app.email_server.received_requests().await.unwrap()[0];
+    let body: serde_json::Value = serde_json::from_slice(&email_request.body).unwrap();
+
+    // Extract the link from one of the request fields.
+    let get_link = |s: &str| {
+        let links: Vec<_> = linkify::LinkFinder::new()
+            .links(s)
+            .filter(|l| *l.kind() == linkify::LinkKind::Url)
+            .collect();
+        assert_eq!(links.len(), 1);
+        links[0].as_str().to_owned()
+    };
+    let raw_confirmation_link = &get_link(&body["HtmlBody"].as_str().unwrap());
+    let confirmation_link = Url::parse(raw_confirmation_link).unwrap();
+    // Let's make sure we don't call random APIs on the web
+    assert_eq!(confirmation_link.host_str().unwrap(), "127.0.0.1");
+
+    // Act
+    let response = reqwest::get(confirmation_link)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status().as_u16(), 200);
+}
+
+It fails with
+thread 'subscriptions_confirm::the_link_returned_by_subscribe_returns_a_200_if_called'
+panicked at 'assertion failed: `(left == right)`
+  left: `"my-api.com"`,
+ right: `"127.0.0.1"`'
+
+There is a fair amount of code duplication going on here, but we will take care of it in due time.
+Our primary focus is getting the test to pass now.
+
+7.7.5.2 Green Test Let’s begin by taking care of that URL issue.
+It is currently hard-coded in
+//! src/routes/subscriptions.rs
+// [...]
+
+#[tracing::instrument([...])]
+pub async fn send_confirmation_email([...]) -> Result<(), reqwest::Error> {
+    let confirmation_link = "https://my-api.com/subscriptions/confirm";
+    // [...]
+}
+
+The domain and the protocol are going to vary according to the environment the application is
+running into: it will be http://127.0.0.1 for our tests, it should be a proper DNS record with
+HTTPS when our application is running in production.
+The easiest way to get it right is to pass the domain in as a configuration value.
+Let’s add a new field to ApplicationSettings:
+//! src/configuration.rs
+// [...]
+
+#[derive(serde::Deserialize, Clone)]
+pub struct ApplicationSettings {
+    #[serde(deserialize_with = "deserialize_number_from_string")]
+
+    pub port: u16,
+    pub host: String,
+    // New field!
+    pub base_url: String
+}
+
+# configuration/local.yaml
+application:
+    base_url: "http://127.0.0.1"
+# [...]
+
+#! spec.yaml
+# [...]
+services:
+  - name: zero2prod
+    # [...]
+    envs:
+      # We use DO's APP_URL to inject the dynamically
+      # provisioned base url as an environment variable
+      - key: APP_APPLICATION__BASE_URL
+        scope: RUN_TIME
+        value: ${APP_URL}
+        # [...]
+# [...]
+
+    Remember to apply the changes to DigitalOcean every time we touch spec.yaml: grab
+    your app identifier via doctl apps list --format ID and then run doctl apps update
+    $APP_ID --spec spec.yaml.
+
+We now need to register the value in the application context - you should be familiar with the process
+at this point:
+//! src/startup.rs
+// [...]
+
+impl Application {
+    pub async fn build(configuration: Settings) -> Result<Self, std::io::Error> {
+        // [...]
+        let server = run(
+            listener,
+            connection_pool,
+            email_client,
+            // New parameter!
+            configuration.application.base_url,
+        )?;
+
+        Ok(Self { port, server })
+    }
+
+    // [...]
+}
+
+// We need to define a wrapper type in order to retrieve the URL
+// in the `subscribe` handler.
+// Retrieval from the context, in actix-web, is type-based: using
+// a raw `String` would expose us to conflicts.
+pub struct ApplicationBaseUrl(pub String);
+
+fn run(
+    listener: TcpListener,
+    db_pool: PgPool,
+
+    email_client: EmailClient,
+    // New parameter!
+    base_url: String,
+) -> Result<Server, std::io::Error> {
+    // [...]
+    let base_url = Data::new(ApplicationBaseUrl(base_url));
+    let server = HttpServer::new(move || {
+        App::new()
+             // [...]
+             .app_data(base_url.clone())
+    })
+    // [...]
+}
+
+We can now access it in the request handler:
+//! src/routes/subscriptions.rs
+use crate::startup::ApplicationBaseUrl;
+// [...]
+
+#[tracing::instrument(
+    skip(form, pool, email_client, base_url),
+    [...]
+)]
+pub async fn subscribe(
+    // [...]
+    // New parameter!
+    base_url: web::Data<ApplicationBaseUrl>,
+) -> HttpResponse {
+    // [...]
+    // Pass the application url
+    if send_confirmation_email(
+        &email_client,
+        new_subscriber,
+        &base_url.0
+    )
+    .await
+    .is_err()
+    {
+        return HttpResponse::InternalServerError().finish();
+    }
+    // [...]
+}
+
+#[tracing::instrument(
+    skip(email_client, new_subscriber, base_url)
+    [...]
+)]
+pub async fn send_confirmation_email(
+    // [...]
+    // New parameter!
+    base_url: &str,
+) -> Result<(), reqwest::Error> {
+    // Build a confirmation link with a dynamic root
+    let confirmation_link = format!("{}/subscriptions/confirm", base_url);
+    // [...]
+}
+
+Let’s run the test suite again:
+thread 'subscriptions_confirm::the_link_returned_by_subscribe_returns_a_200_if_called'
+panicked at 'called `Result::unwrap()` on an `Err` value:
+    reqwest::Error {
+
+         kind: Request,
+         url: Url {
+             scheme: "http",
+             host: Some(Ipv4(127.0.0.1)),
+             port: None,
+             path: "/subscriptions/confirm",
+             query: None,
+             fragment: None },
+         source: hyper::Error(
+             Connect,
+             ConnectError(
+                 "tcp connect error",
+                 Os {
+                      code: 111,
+                      kind: ConnectionRefused,
+                      message: "Connection refused"
+                 }
+             )
+         )
+    }'
+
+The host is correct, but the reqwest::Client in our test is failing to establish a connection. What
+is going wrong?
+If you look closely, you’ll notice port: None - we are sending our request to http://127.0.0.1/subscriptions/confirm
+without specifying the port our test server is listening on.
+The tricky bit, here, is the sequence of events: we pass in the application_url configuration value
+before spinning up the server, therefore we do not know what port it is going to listen to (given that
+the port is randomised using 0!).
+This is non-issue for production workloads where the DNS domain is enough - we’ll just patch it in
+the test.
+Let’s store the application port in its own field within TestApp:
+//! tests/api/helpers.rs
+// [...]
+
+pub struct TestApp {
+    // New field!
+    pub port: u16,
+    // [...]
+}
+
+pub async fn spawn_app() -> TestApp {
+    // [...]
+
+    let application = Application::build(configuration.clone())
+        .await
+        .expect("Failed to build application.");
+    let application_port = application.port();
+    let _ = tokio::spawn(application.run_until_stopped());
+
+    TestApp {
+        address: format!("http://localhost:{}", application_port),
+        port: application_port,
+        db_pool: get_connection_pool(&configuration.database),
+        email_server,
+    }
+}
+
+We can then use it in the test logic to edit the confirmation link:
+//! tests/api/subscriptions_confirm.rs
+// [...]
+
+#[tokio::test]
+async fn the_link_returned_by_subscribe_returns_a_200_if_called() {
+    // [...]
+    let mut confirmation_link = Url::parse(raw_confirmation_link).unwrap();
+    assert_eq!(confirmation_link.host_str().unwrap(), "127.0.0.1");
+    // Let's rewrite the URL to include the port
+    confirmation_link.set_port(Some(app.port)).unwrap();
+
+    // [...]
+}
+
+Not the prettiest, but it gets the job done.
+Let’s run the test again:
+thread 'subscriptions_confirm::the_link_returned_by_subscribe_returns_a_200_if_called'
+panicked at 'assertion failed: `(left == right)`
+  left: `400`,
+ right: `200`'
+
+We get a 400 Bad Request back because our confirmation link does not have a subscription_token
+query parameter attached.
+Let’s fix it by hard-coding one for the time being:
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn send_confirmation_email([...]) -> Result<(), reqwest::Error> {
+    let confirmation_link = format!(
+        "{}/subscriptions/confirm?subscription_token=mytoken",
+        base_url
+    );
+    // [...]
+}
+
+The test passes!
+
+7.7.5.3 Refactor The logic to extract the two confirmation links from the outgoing email request
+is duplicated across two of our tests - we will likely add more that rely on it as we flesh out the
+remaining bits and pieces of this feature. It makes sense to extract it in its own helper function.
+//! tests/api/helpers.rs
+// [...]
+
+/// Confirmation links embedded in the request to the email API.
+pub struct ConfirmationLinks {
+    pub html: reqwest::Url,
+    pub plain_text: reqwest::Url
+}
+
+impl TestApp {
+    // [...]
+
+    /// Extract the confirmation links embedded in the request to the email API.
+    pub fn get_confirmation_links(
+        &self,
+        email_request: &wiremock::Request
+    ) -> ConfirmationLinks {
+        let body: serde_json::Value = serde_json::from_slice(
+            &email_request.body
+        ).unwrap();
+
+        // Extract the link from one of the request fields.
+
+        let get_link = |s: &str| {
+            let links: Vec<_> = linkify::LinkFinder::new()
+                .links(s)
+                .filter(|l| *l.kind() == linkify::LinkKind::Url)
+                .collect();
+            assert_eq!(links.len(), 1);
+            let raw_link = links[0].as_str().to_owned();
+            let mut confirmation_link = reqwest::Url::parse(&raw_link).unwrap();
+            // Let's make sure we don't call random APIs on the web
+            assert_eq!(confirmation_link.host_str().unwrap(), "127.0.0.1");
+            confirmation_link.set_port(Some(self.port)).unwrap();
+            confirmation_link
+        };
+
+        let html = get_link(&body["HtmlBody"].as_str().unwrap());
+        let plain_text = get_link(&body["TextBody"].as_str().unwrap());
+        ConfirmationLinks {
+            html,
+            plain_text
+        }
+    }
+}
+
+We are adding it as a method on TestApp in order to get access to the application port, which we
+need to inject into the links.
+It could as well have been a free function taking both wiremock::Request and TestApp (or u16) as
+parameters - a matter of taste.
+We can now massively simplify our two test cases:
+//! tests/api/subscriptions.rs
+// [...]
+
+#[tokio::test]
+async fn subscribe_sends_a_confirmation_email_with_a_link() {
+    // Arrange
+    let app = spawn_app().await;
+    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+
+    Mock::given(path("/email"))
+        .and(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&app.email_server)
+        .await;
+
+    // Act
+    app.post_subscriptions(body.into()).await;
+
+    // Assert
+    let email_request = &app.email_server.received_requests().await.unwrap()[0];
+    let confirmation_links = app.get_confirmation_links(&email_request);
+
+    // The two links should be identical
+    assert_eq!(confirmation_links.html, confirmation_links.plain_text);
+}
+
+//! tests/api/subscriptions_confirm.rs
+// [...]
+
+#[tokio::test]
+async fn the_link_returned_by_subscribe_returns_a_200_if_called() {
+    // Arrange
+    let app = spawn_app().await;
+
+    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+
+    Mock::given(path("/email"))
+        .and(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&app.email_server)
+        .await;
+
+    app.post_subscriptions(body.into()).await;
+    let email_request = &app.email_server.received_requests().await.unwrap()[0];
+    let confirmation_links = app.get_confirmation_links(&email_request);
+
+    // Act
+    let response = reqwest::get(confirmation_links.html)
+        .await
+        .unwrap();
+
+    // Assert
+    assert_eq!(response.status().as_u16(), 200);
+}
+
+The intent of those two test cases is much clearer now.
+
+7.7.6   Subscription Tokens
+We are ready to tackle the elephant in the room: we need to start generating subscription tokens.
+
+7.7.6.1 Red Test We will add a new test case which builds on top of the work we just did: instead
+of asserting against the returned status code we will check the status of the subscriber stored in the
+database.
+//! tests/api/subscriptions_confirm.rs
+// [...]
+
+#[tokio::test]
+async fn clicking_on_the_confirmation_link_confirms_a_subscriber() {
+    // Arrange
+    let app = spawn_app().await;
+    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+
+    Mock::given(path("/email"))
+        .and(method("POST"))
+        .respond_with(ResponseTemplate::new(200))
+        .mount(&app.email_server)
+        .await;
+
+    app.post_subscriptions(body.into()).await;
+    let email_request = &app.email_server.received_requests().await.unwrap()[0];
+    let confirmation_links = app.get_confirmation_links(&email_request);
+
+    // Act
+    reqwest::get(confirmation_links.html)
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap();
+
+    // Assert
+    let saved = sqlx::query!("SELECT email, name, status FROM subscriptions",)
+        .fetch_one(&app.db_pool)
+        .await
+        .expect("Failed to fetch saved subscription.");
+
+    assert_eq!(saved.email, "ursula_le_guin@gmail.com");
+    assert_eq!(saved.name, "le guin");
+    assert_eq!(saved.status, "confirmed");
+}
+
+The test fails, as expected:
+thread 'subscriptions_confirm::clicking_on_the_confirmation_link_confirms_a_subscriber'
+panicked at 'assertion failed: `(left == right)`
+  left: `"pending_confirmation"`,
+ right: `"confirmed"`'
+
+7.7.6.2 Green Test To get the previous test case to pass, we hard-coded a subscription token in
+the confirmation link:
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn send_confirmation_email([...]) -> Result<(), reqwest::Error> {
+    let confirmation_link = format!(
+        "{}/subscriptions/confirm?subscription_token=mytoken",
+        base_url
+    );
+    // [...]
+}
+
+Let’s refactor send_confirmation_email to take the token as a parameter - it will make it easier to
+add the generation logic upstream.
+//! src/routes/subscriptions.rs
+// [...]
+
+#[tracing::instrument([...])]
+pub async fn subscribe([...]) -> HttpResponse {
+    // [...]
+    if send_confirmation_email(
+        &email_client,
+        new_subscriber,
+        &base_url.0,
+        // New parameter!
+        "mytoken"
+    )
+    .await
+    .is_err() {
+        return HttpResponse::InternalServerError().finish();
+    }
+    // [...]
+}
+
+#[tracing::instrument(
+    name = "Send a confirmation email to a new subscriber",
+    skip(email_client, new_subscriber, base_url, subscription_token)
+)]
+pub async fn send_confirmation_email(
+    email_client: &EmailClient,
+    new_subscriber: NewSubscriber,
+    base_url: &str,
+    // New parameter!
+    subscription_token: &str
+) -> Result<(), reqwest::Error> {
+    let confirmation_link = format!(
+        "{}/subscriptions/confirm?subscription_token={}",
+
+            base_url,
+            subscription_token
+       );
+       // [...]
+}
+
+Our subscription tokens are not passwords: they are single-use and they do not grant access to
+protected information.59 We need them to be hard enough to guess while keeping in mind that the
+worst-case scenario is an unwanted newsletter subscription landing in someone’s inbox.
+Given our requirements it should be enough to use a cryptographically secure pseudo-random number
+generator - a CSPRNG, if you are into obscure acronyms.
+Every time we need to generate a subscription token we can sample a sufficiently-long sequence of
+alphanumeric characters.
+To pull it off we need to add rand as a dependency:
+#! Cargo.toml
+# [...]
+
+[dependencies]
+# [...]
+# We need the `std_rng` to get access to the PRNG we want
+rand = { version = "0.8", features=["std_rng"] }
+//! src/routes/subscriptions.rs
+use rand::distributions::Alphanumeric;
+use rand::{thread_rng, Rng};
+// [...]
+
+/// Generate a random 25-characters-long case-sensitive subscription token.
+fn generate_subscription_token() -> String {
+  let mut rng = thread_rng();
+  std::iter::repeat_with(|| rng.sample(Alphanumeric))
+          .map(char::from)
+          .take(25)
+          .collect()
+}
+
+Using 25 characters we get roughly ~10^45 possible tokens - it should be more than enough for our
+use case.
+To check if a token is valid in GET /subscriptions/confirm we need POST /subscriptions to store
+the newly minted tokens in the database.
+The table we added for this purpose, subscription_tokens, has two columns: subscription_token
+and subscriber_id.
+We are currently generating the subscriber identifier in insert_subscriber but we never return it
+to the caller:
+#[tracing::instrument([...])]
+pub async fn insert_subscriber([...]) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"[...]"#,
+        // The subscriber id, never returned or bound to a variable
+        Uuid::new_v4(),
+        // [...]
+    )
+    // [...]
+}
+
+Let’s refactor insert_subscriber to give us back the identifier:
+    59 You could say that our token is a nonce.
+
+#[tracing::instrument([...])]
+pub async fn insert_subscriber([...]) -> Result<Uuid, sqlx::Error> {
+    let subscriber_id = Uuid::new_v4();
+    sqlx::query!(
+        r#"[...]"#,
+        subscriber_id,
+        // [...]
+    )
+    // [...]
+    Ok(subscriber_id)
+}
+
+We can now tie everything together:
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn subscribe([...]) -> HttpResponse {
+    // [...]
+    let subscriber_id = match insert_subscriber(&pool, &new_subscriber).await {
+        Ok(subscriber_id) => subscriber_id,
+        Err(_) => return HttpResponse::InternalServerError().finish(),
+    };
+    let subscription_token = generate_subscription_token();
+    if store_token(&pool, subscriber_id, &subscription_token)
+        .await
+        .is_err()
+    {
+        return HttpResponse::InternalServerError().finish();
+    }
+    if send_confirmation_email(
+        &email_client,
+        new_subscriber,
+        &base_url.0,
+        &subscription_token,
+    )
+    .await
+    .is_err()
+    {
+        return HttpResponse::InternalServerError().finish();
+    }
+    HttpResponse::Ok().finish()
+}
+
+#[tracing::instrument(
+    name = "Store subscription token in the database",
+    skip(subscription_token, pool)
+)]
+pub async fn store_token(
+    pool: &PgPool,
+    subscriber_id: Uuid,
+    subscription_token: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"INSERT INTO subscription_tokens (subscription_token, subscriber_id)
+        VALUES ($1, $2)"#,
+        subscription_token,
+        subscriber_id
+    )
+    .execute(pool)
+    .await
+
+     .map_err(|e| {
+          tracing::error!("Failed to execute query: {:?}", e);
+          e
+     })?;
+     Ok(())
+}
+
+We are done on POST /subscriptions, let’s shift to GET /subscription/confirm:
+//! src/routes/subscriptions_confirm.rs
+use actix_web::{HttpResponse, web};
+
+#[derive(serde::Deserialize)]
+pub struct Parameters {
+    subscription_token: String
+}
+
+#[tracing::instrument(
+    name = "Confirm a pending subscriber",
+    skip(_parameters)
+)]
+pub async fn confirm(_parameters: web::Query<Parameters>) -> HttpResponse {
+    HttpResponse::Ok().finish()
+}
+
+We need to:
+    • get a reference to the database pool;
+    • retrieve the subscriber id associated with the token (if one exists);
+    • change the subscriber status to confirmed.
+Nothing we haven’t done before - let’s get cracking!
+use actix_web::{web, HttpResponse};
+use sqlx::PgPool;
+use uuid::Uuid;
+
+#[derive(serde::Deserialize)]
+pub struct Parameters {
+    subscription_token: String,
+}
+
+#[tracing::instrument(
+    name = "Confirm a pending subscriber",
+    skip(parameters, pool)
+)]
+pub async fn confirm(
+    parameters: web::Query<Parameters>,
+    pool: web::Data<PgPool>,
+) -> HttpResponse {
+    let id = match get_subscriber_id_from_token(&pool, &parameters.subscription_token).await {
+        Ok(id) => id,
+        Err(_) => return HttpResponse::InternalServerError().finish(),
+    };
+    match id {
+        // Non-existing token!
+        None => HttpResponse::Unauthorized().finish(),
+        Some(subscriber_id) => {
+            if confirm_subscriber(&pool, subscriber_id).await.is_err() {
+                return HttpResponse::InternalServerError().finish();
+            }
+            HttpResponse::Ok().finish()
+        }
+
+    }
+}
+
+#[tracing::instrument(
+    name = "Mark subscriber as confirmed",
+    skip(subscriber_id, pool)
+)]
+pub async fn confirm_subscriber(
+    pool: &PgPool,
+    subscriber_id: Uuid
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+        r#"UPDATE subscriptions SET status = 'confirmed' WHERE id = $1"#,
+        subscriber_id,
+        )
+        .execute(pool)
+        .await
+        .map_err(|e| {
+            tracing::error!("Failed to execute query: {:?}", e);
+            e
+        })?;
+    Ok(())
+}
+
+#[tracing::instrument(
+    name = "Get subscriber_id from token",
+    skip(subscription_token, pool)
+)]
+pub async fn get_subscriber_id_from_token(
+    pool: &PgPool,
+    subscription_token: &str,
+) -> Result<Option<Uuid>, sqlx::Error> {
+    let result = sqlx::query!(
+      r#"SELECT subscriber_id FROM subscription_tokens WHERE subscription_token = $1"#,
+      subscription_token,
+    )
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| {
+         tracing::error!("Failed to execute query: {:?}", e);
+         e
+    })?;
+    Ok(result.map(|r| r.subscriber_id))
+}
+
+Is it enough? Did we miss anything during the journey?
+There is only one way to find out.
+cargo test
+
+     Running target/debug/deps/api-5a717281b98f7c41
+running 10 tests
+[...]
+
+test result: ok. 10 passed; 0 failed; finished in 0.92s
+
+Oh, yes! It works!
+
+7.8     Database Transactions
+7.8.1   All Or Nothing
+It is too soon to declare victory though.
+Our POST /subscriptions handler has grown in complexity - we are now performing two INSERT
+queries against our Postgres database: one to store the details of the new subscriber, one to store the
+newly generated subscription token.
+What happens if the application crashes between those two operations?
+The first query might complete successfully, but the second one might never be executed.
+There are three possible states for our database after an invocation of POST /subscriptions:
+  • a new subscriber and its token have been persisted;
+  • a new subscriber has been persisted, without a token;
+  • nothing has been persisted.
+The more queries you have, the worse it gets to reason about the possible end states of our database.
+Relational databases (and a few others) provide a mechanism to mitigate this issue: transactions.
+Transactions are a way to group together related operations in a single unit of work.
+The database guarantees that all operations within a transaction will succeed or fail together: the
+database will never be left in a state where the effect of only a subset of the queries in a transaction
+is visible.
+Going back to our example, if we wrap the two INSERT queries in a transaction we now have two
+possible end states:
+  • a new subscriber and its token have been persisted;
+  • nothing has been persisted.
+Much easier to deal with.
+
+7.8.2   Transactions In Postgres
+To start a transaction in Postgres you use a BEGIN statement. All queries after BEGIN are part of the
+transaction.
+The transaction is then finalised with a COMMIT statement.
+We have actually already used a transaction in one of our migration scripts!
+BEGIN;
+UPDATE subscriptions SET status = 'confirmed' WHERE status IS NULL;
+ALTER TABLE subscriptions ALTER COLUMN status SET NOT NULL;
+COMMIT;
+
+If any of the queries within a transaction fails the database rolls back: all changes performed by
+previous queries are reverted, the operation is aborted.
+You can also explicitly trigger a rollback with the ROLLBACK statement.
+Transactions are a deep topic: they not only provide a way to convert multiple statements into an
+all-or-nothing operation, they also hide the effect of uncommitted changes from other queries that
+might be running, concurrently, against the same tables.
+As your needs evolves, you will often want to explicitly choose the isolation level of your transactions
+to fine-tune the concurrency guarantees provided by the database on your operations. Getting a
+good grip on the different kinds of concurrency-related issues (e.g. dirty reads, phantom reads, etc.)
+becomes more and more important as your system grows in scale and complexity.
+I can’t recommend “Designing Data Intensive Applications” enough if you want to learn more about
+these topics.
+
+7.8.3   Transactions In Sqlx
+Back to the code: how do we leverage transactions in sqlx?
+You don’t have to manually write a BEGIN statement: transactions are so central to the usage of
+relational databases that sqlx provides a dedicated API.
+By calling begin on our pool we acquire a connection from the pool and kick off a transaction:
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn subscribe([...]) -> HttpResponse {
+    let new_subscriber = // [...]
+    let mut transaction = match pool.begin().await {
+        Ok(transaction) => transaction,
+        Err(_) => return HttpResponse::InternalServerError().finish(),
+    };
+    // [...]
+
+begin, if successful, returns a Transaction struct.
+A mutable reference to a Transaction implements sqlx’s Executor trait therefore it can be used to
+run queries. All queries run using a Transaction as executor become of the transaction.
+Let’s pass transaction down to insert_subscriber and store_token instead of pool:
+//! src/routes/subscriptions.rs
+use sqlx::{Postgres, Transaction};
+// [...]
+
+#[tracing::instrument([...])]
+pub async fn subscribe([...]) -> HttpResponse {
+    // [...]
+    let mut transaction = match pool.begin().await {
+        Ok(transaction) => transaction,
+        Err(_) => return HttpResponse::InternalServerError().finish(),
+    };
+    let subscriber_id = match insert_subscriber(&mut transaction, &new_subscriber).await {
+        Ok(subscriber_id) => subscriber_id,
+        Err(_) => return HttpResponse::InternalServerError().finish(),
+    };
+    let subscription_token = generate_subscription_token();
+    if store_token(&mut transaction, subscriber_id, &subscription_token)
+        .await
+        .is_err()
+    {
+        return HttpResponse::InternalServerError().finish();
+    }
+    // [...]
+}
+
+#[tracing::instrument(
+    name = "Saving new subscriber details in the database",
+    skip(new_subscriber, transaction)
+)]
+pub async fn insert_subscriber(
+    transaction: &mut Transaction<'_, Postgres>,
+    new_subscriber: &NewSubscriber,
+) -> Result<Uuid, sqlx::Error> {
+    let subscriber_id = Uuid::new_v4();
+    sqlx::query!([...])
+        .execute(transaction)
+    // [...]
+}
+
+#[tracing::instrument(
+    name = "Store subscription token in the database",
+    skip(subscription_token, transaction)
+)]
+pub async fn store_token(
+    transaction: &mut Transaction<'_, Postgres>,
+    subscriber_id: Uuid,
+    subscription_token: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!([..])
+        .execute(transaction)
+    // [...]
+}
+
+If you run cargo test now you will see something funny: some of our tests are failing!
+Why is that happening?
+As we discussed, a transaction has to either be committed or rolled back.
+Transaction exposes two dedicated methods: Transaction::commit, to persist changes, and
+Transaction::rollback, to abort the whole operation.
+We are not calling either - what happens in that case?
+We can look at sqlx’s source code to understand better.
+In particular, Transaction’s Drop implementation:
+impl<'c, DB> Drop for Transaction<'c, DB>
+where
+    DB: Database,
+{
+    fn drop(&mut self) {
+        if self.open {
+            // starts a rollback operation
+
+            // what this does depends on the database but generally
+            // this means we queue a rollback operation that will
+            // happen on the next asynchronous invocation of the
+            // underlying connection (including if the connection
+            // is returned to a pool)
+            DB::TransactionManager::start_rollback(&mut self.connection);
+        }
+    }
+}
+
+self.open is an internal boolean flag attached to the connection used to begin the transaction and
+run the queries attached to it.
+When a transaction is created, using begin, it is set to true until either rollback or commit are
+called:
+impl<'c, DB> Transaction<'c, DB>
+where
+    DB: Database,
+{
+    pub(crate) fn begin(
+        conn: impl Into<MaybePoolConnection<'c, DB>>,
+    ) -> BoxFuture<'c, Result<Self, Error>> {
+        let mut conn = conn.into();
+
+        Box::pin(async move {
+            DB::TransactionManager::begin(&mut conn).await?;
+
+            Ok(Self {
+                connection: conn,
+                open: true,
+
+               })
+          })
+     }
+
+     pub async fn commit(mut self) -> Result<(), Error> {
+         DB::TransactionManager::commit(&mut self.connection).await?;
+         self.open = false;
+
+          Ok(())
+     }
+
+     pub async fn rollback(mut self) -> Result<(), Error> {
+         DB::TransactionManager::rollback(&mut self.connection).await?;
+         self.open = false;
+
+          Ok(())
+     }
+}
+
+In other words: if commit or rollback have not been called before the Transaction object goes
+out of scope (i.e. Drop is invoked), a rollback command is queued to be executed as soon as an
+opportunity arises.60
+That is why our tests are failing: we are using a transaction but we are not explicitly committing the
+changes. When the connection goes back into the pool, at the end of our request handler, all changes
+are rolled back and our test expectations are not met.
+We can fix it by adding a one-liner to subscribe:
+//! src/routes/subscriptions.rs
+use sqlx::{Postgres, Transaction};
+// [...]
+
+#[tracing::instrument([...])]
+pub async fn subscribe([...]) -> HttpResponse {
+    // [...]
+    let mut transaction = match pool.begin().await {
+        Ok(transaction) => transaction,
+        Err(_) => return HttpResponse::InternalServerError().finish(),
+    };
+    let subscriber_id = match insert_subscriber(&mut transaction, &new_subscriber).await {
+        Ok(subscriber_id) => subscriber_id,
+        Err(_) => return HttpResponse::InternalServerError().finish(),
+    };
+    let subscription_token = generate_subscription_token();
+    if store_token(&mut transaction, subscriber_id, &subscription_token)
+        .await
+        .is_err()
+    {
+        return HttpResponse::InternalServerError().finish();
+    }
+    if transaction.commit().await.is_err() {
+        return HttpResponse::InternalServerError().finish();
+    }
+    // [...]
+}
+
+The test suite should succeed once again.
+  60 Rust does not currently support asynchronous destructors, a.k.a. AsyncDrop. There have been some discussions
+
+on the topic, but there is no consensus yet. This is a constraint on sqlx: when Transaction goes out of scope it can
+enqueue a rollback operation, but it cannot execute it immediately! Is it ok? Is it a sound API? There are different
+views - see diesel’s async issue for an overview. My personal view is that the benefits brought by sqlx to the table
+offset the risks, but you should make an informed decision taking into account the tradeoffs of your application and
+use case.
+

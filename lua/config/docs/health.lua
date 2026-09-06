@@ -61,7 +61,9 @@ function M.check()
 	else
 		health.warn("rust/book/listings missing: The Rust Programming Language will show {{#rustdoc_include}} markers")
 	end
-	for _, w in ipairs({ { "learncpp", 356 }, { "rayanfam", 8 } }) do
+	-- Every frozen web provider, so a truncated or missing index is reported
+	-- rather than passing silently.
+	for _, w in ipairs({ { "learncpp", 356 }, { "osdev", 778 }, { "rust-atomics", 13 }, { "rayanfam", 8 }, { "herd7", 3 } }) do
 		local idx = fr .. "/" .. w[1] .. "/index.tsv"
 		if vim.fn.filereadable(idx) == 1 then
 			local n = #vim.fn.readfile(idx)

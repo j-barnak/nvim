@@ -1,0 +1,1578 @@
+Go ahead and deploy the application: seeing a feature working in a live environment adds a whole
+new level of satisfaction!
+
+7.9   Summary
+This chapter was a long journey, but you have come a long way as well!
+The skeleton of our application has started to shape up, starting with our test suite. Features are
+moving along as well: we now have a functional subscription flow, with a proper confirmation email.
+More importantly: we are getting into the rhythm of writing Rust code.
+The very end of the chapter has been a long pair programming session where we have made significant
+progress without introducing many new concepts.
+This is a great moment to go off and explore a bit on your own: improve on what we built so far!
+There are plenty of opportunities:
+  • What happens if a user tries to subscribe twice? Make sure that they receive two confirmation
+    emails;
+  • What happens if a user clicks on a confirmation link twice?
+  • What happens if the subscription token is well-formatted but non-existent?
+  • Add validation on the incoming token, we are currently passing the raw user input straight into
+    a query (thanks sqlx for protecting us from SQL injections <3);
+  • Use a proper templating solution for our emails (e.g. tera);
+  • Anything that comes to your mind!
+It takes deliberate practice to achieve mastery.
+
+8     Error Handling
+To send a confirmation email we had to stitch together multiple operations: validation of user input,
+email dispatch, various database queries.
+They all have one thing in common: they may fail.
+In Chapter 6 we discussed the building blocks of error handling in Rust - Result and the ? operator.
+We left many questions unanswered: how do errors fit within the broader architecture of our appli-
+cation? What does a good error look like? Who are errors for? Should we use a library? Which
+one?
+An in-depth analysis of error handling patterns in Rust will be the sole focus of this chapter.
+
+8.1     What Is The Purpose Of Errors?
+Let’s start with an example:
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn store_token(
+    transaction: &mut Transaction<'_, Postgres>,
+    subscriber_id: Uuid,
+    subscription_token: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query!(
+         r#"
+    INSERT INTO subscription_tokens (subscription_token, subscriber_id)
+    VALUES ($1, $2)
+         "#,
+         subscription_token,
+         subscriber_id
+    )
+    .execute(transaction)
+    .await
+    .map_err(|e| {
+         tracing::error!("Failed to execute query: {:?}", e);
+         e
+    })?;
+    Ok(())
+}
+
+We are trying to insert a row into the subscription_tokens table in order to store a newly-generated
+token against a subscriber_id.
+execute is a fallible operation: we might have a network issue while talking to the database, the row
+we are trying to insert might violate some table constraints (e.g. uniqueness of the primary key), etc.
+
+8.1.1   Internal Errors
+8.1.1.1 Enable The Caller To React The caller of execute most likely wants to be informed
+if a failure occurs - they need to react accordingly, e.g. retry the query or propagate the failure
+upstream using ?, as in our example.
+Rust leverages the type system to communicate that an operation may not succeed: the return type
+of execute is Result, an enum.
+pub enum Result<Success, Error> {
+    Ok(Success),
+    Err(Error)
+}
+
+The caller is then forced by the compiler to express how they plan to handle both scenarios - success
+and failure.
+
+If our only goal was to communicate to the caller that an error happened, we could use a simpler
+definition for Result:
+pub enum ResultSignal<Success> {
+    Ok(Success),
+    Err
+}
+
+There would be no need for a generic Error type - we could just check that execute returned the
+Err variant, e.g.
+let outcome = sqlx::query!(/* ... */)
+    .execute(transaction)
+    .await;
+if outcome == ResultSignal::Err {
+    // Do something if it failed
+}
+
+This works if there is only one failure mode. Truth is, operations can fail in multiple ways and we
+might want to react differently depending on what happened.
+Let’s look at the skeleton of sqlx::Error, the error type for execute:
+//! sqlx-core/src/error.rs
+
+pub enum Error {
+    Configuration(/* */),
+    Database(/* */),
+    Io(/* */),
+    Tls(/* */),
+    Protocol(/* */),
+    RowNotFound,
+    TypeNotFound {/* */},
+    ColumnIndexOutOfBounds {/* */},
+    ColumnNotFound(/* */),
+    ColumnDecode {/* */},
+    Decode(/* */),
+    PoolTimedOut,
+    PoolClosed,
+    WorkerCrashed,
+    Migrate(/* */),
+}
+
+Quite a list, ain’t it?
+sqlx::Error is implemented as an enum to allow users to match on the returned error and be-
+have differently depending on the underlying failure mode. For example, you might want to retry a
+PoolTimedOut while you will probably give up on a ColumnNotFound.
+
+8.1.1.2 Help An Operator To Troubleshoot             What if an operation has a single failure mode
+- should we just use () as error type?
+Err(()) might be enough for the caller to determine what to do - e.g. return a 500 Internal Server
+Error to the user.
+But control flow is not the only purpose of errors in an application.
+We expect errors to carry enough context about the failure to produce a report for an operator
+(e.g. the developer) that contains enough details to go and troubleshoot the issue.
+What do we mean by report?
+In a backend API like ours it will usually be a log event.
+In a CLI it could be an error message shown in the terminal when a --verbose flag is used.
+The implementation details may vary, the purpose stays the same: help a human understand what
+is going wrong.
+That’s exactly what we are doing in the initial code snippet:
+
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn store_token(/* */) -> Result<(), sqlx::Error> {
+    sqlx::query!(/* */)
+        .execute(transaction)
+        .await
+        .map_err(|e| {
+             tracing::error!("Failed to execute query: {:?}", e);
+             e
+        })?;
+    // [...]
+}
+
+If the query fails, we grab the error and emit a log event. We can then go and inspect the error logs
+when investigating the database issue.
+
+8.1.2   Errors At The Edge
+8.1.2.1 Help A User To Troubleshoot So far we focused on the internals of our API - functions
+calling other functions and operators trying to make sense of the mess after it happened.
+What about users?
+Just like operators, users expect the API to signal when a failure mode is encountered.
+What does a user of our API see when store_token fails?
+We can find out by looking at the request handler:
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn subscribe(/* */) -> HttpResponse {
+    // [...]
+    if store_token(&mut transaction, subscriber_id, &subscription_token)
+        .await
+        .is_err()
+    {
+        return HttpResponse::InternalServerError().finish();
+    }
+    // [...]
+}
+
+They receive an HTTP response with no body and a 500 Internal Server Error status code.
+The status code fulfills the same purpose of the error type in store_token: it is a machine-parsable
+piece of information that the caller (e.g. the browser) can use to determine what to do next (e.g. retry
+the request assuming it’s a transient failure).
+What about the human behind the browser? What are we telling them?
+Not much, the response body is empty.
+That is actually a good implementation: the user should not have to care about the internals of the
+API they are calling - they have no mental model of it and no way to determine why it is failing.
+That’s the realm of the operator.
+We are omitting those details by design.
+In other circumstances, instead, we need to convey additional information to the human user. Let’s
+look at our input validation for the same endpoint:
+//! src/routes/subscriptions.rs
+
+#[derive(serde::Deserialize)]
+pub struct FormData {
+    email: String,
+    name: String,
+
+}
+
+impl TryFrom<FormData> for NewSubscriber {
+    type Error = String;
+
+     fn try_from(value: FormData) -> Result<Self, Self::Error> {
+         let name = SubscriberName::parse(value.name)?;
+         let email = SubscriberEmail::parse(value.email)?;
+         Ok(Self { email, name })
+     }
+}
+
+We received an email address and a name as data attached to the form submitted by the user.
+Both fields are going through an additional round of validation - SubscriberName::parse and
+SubscriberEmail::parse. Those two methods are fallible - they return a String as error type
+to explain what has gone wrong:
+//! src/domain/subscriber_email.rs
+// [...]
+
+impl SubscriberEmail {
+    pub fn parse(s: String) -> Result<SubscriberEmail, String> {
+        if validate_email(&s) {
+            Ok(Self(s))
+        } else {
+            Err(format!("{} is not a valid subscriber email.", s))
+        }
+    }
+}
+
+It is, I must admit, not the most useful error message: we are telling the user that the email address
+they entered is wrong, but we are not helping them to determine why.
+In the end, it doesn’t matter: we are not sending any of that information to the user as part of the
+response of the API - they are getting a 400 Bad Request with no body.
+//! src/routes/subscription.rs
+// [...]
+
+pub async fn subscribe(/* */) -> HttpResponse {
+    let new_subscriber = match form.0.try_into() {
+        Ok(form) => form,
+        Err(_) => return HttpResponse::BadRequest().finish(),
+    };
+    // [...]
+
+This is a poor error: the user is left in the dark and cannot adapt their behaviour as required.
+
+8.1.3    Summary
+Let’s summarise what we uncovered so far.
+Errors serve two61 main purposes:
+    • Control flow (i.e. determine what do next);
+    • Reporting (e.g. investigate, after the fact, what went wrong on).
+We can also distinguish errors based on their location:
+    • Internal (i.e. a function calling another function within our application);
+    • At the edge (i.e. an API request that we failed to fulfill).
+  61 We are borrowing the terminology introduced by Jane Lusby in “Error handling Isn’t All About Errors”, a talk
+
+from RustConf 2020. If you haven’t watched it yet, close the book and open YouTube - you will not regret it.
+
+Control flow is scripted: all information required to take a decision on what to do next must be
+accessible to a machine.
+We use types (e.g. enum variants), methods and fields for internal errors.
+We rely on status codes for errors at the edge.
+Error reports, instead, are primarily consumed by humans.
+The content has to be tuned depending on the audience.
+An operator has access to the internals of the system - they should be provided with as much context
+as possible on the failure mode.
+A user sits outside the boundary of the application62 : they should only be given the amount of
+information required to adjust their behaviour if necessary (e.g. fix malformed inputs).
+We can visualise this mental model using a 2x2 table with Location as columns and Purpose as rows:
+
+                                                Internal                        At the edge
+                          Control Flow          Types, methods, fields          Status codes
+                          Reporting             Logs/traces                     Response body
+
+We will spend the rest of the chapter improving our error handling strategy for each of the cells in
+the table.
+
+8.2     Error Reporting For Operators
+Let’s start with error reporting for operators.
+Are we doing a good job with logging right now when it comes to errors?
+Let’s write a quick test to find out:
+//! tests/api/subscriptions.rs
+// [...]
+
+#[tokio::test]
+async fn subscribe_fails_if_there_is_a_fatal_database_error() {
+    // Arrange
+    let app = spawn_app().await;
+    let body = "name=le%20guin&email=ursula_le_guin%40gmail.com";
+    // Sabotage the database
+    sqlx::query!("ALTER TABLE subscription_tokens DROP COLUMN subscription_token;",)
+        .execute(&app.db_pool)
+        .await
+        .unwrap();
+
+      // Act
+      let response =       app.post_subscriptions(body.into()).await;
+
+      // Assert
+      assert_eq!(response.status().as_u16(), 500);
+}
+
+The test passes straight away - let’s look at the log emitted by the application63 .
+  62 It is good to keep in mind that the line between a user and an operator can be blurry - e.g. a user might have
+
+access to the source code or they might be running the software on their own hardware. They might have to wear the
+operator’s hat at times. For similar scenarios there should be configuration knobs (e.g. --verbose or an environment
+variable for a CLI) to clearly inform the software of the human intent so that it can provide diagnostics at the right
+level of detail and abstraction.
+  63 In an ideal scenario we would actually be writing a test to verify the properties of the logs emitted by our application.
+
+This is somewhat cumbersome to do today - I am looking forward to revising this chapter when better tooling becomes
+available (or I get nerd-sniped into writing it).
+
+   Make    sure   you    are    running    on   tracing-actix-web                0.4.0-beta.8,
+   tracing-bunyan-formatter 0.2.4 and actix-web 4.0.0-beta.8!
+
+# sqlx logs are a bit spammy, cutting them out to reduce noise
+export RUST_LOG="sqlx=error,info"
+export TEST_LOG=enabled
+cargo t subscribe_fails_if_there_is_a_fatal_database_error | bunyan
+
+The output, once you focus on what matters, is the following:
+ INFO: [HTTP REQUEST - START]
+ INFO: [ADDING A NEW SUBSCRIBER - START]
+ INFO: [SAVING NEW SUBSCRIBER DETAILS IN THE DATABASE - START]
+ INFO: [SAVING NEW SUBSCRIBER DETAILS IN THE DATABASE - END]
+ INFO: [STORE SUBSCRIPTION TOKEN IN THE DATABASE - START]
+ERROR: [STORE SUBSCRIPTION TOKEN IN THE DATABASE - EVENT] Failed to execute query:
+        Database(PgDatabaseError {
+           severity: Error,
+           code: "42703",
+           message:
+             "column 'subscription_token' of relation
+              'subscription_tokens' does not exist",
+           ...
+        })
+    target=zero2prod::routes::subscriptions
+ INFO: [STORE SUBSCRIPTION TOKEN IN THE DATABASE - END]
+ INFO: [ADDING A NEW SUBSCRIBER - END]
+ERROR: [HTTP REQUEST - EVENT] Error encountered while
+        processing the incoming HTTP request: ""
+    exception.details="",
+    exception.message="",
+    target=tracing_actix_web::middleware
+ INFO: [HTTP REQUEST - END]
+    exception.details="",
+    exception.message="",
+    target=tracing_actix_web::root_span_builder,
+    http.status_code=500
+How do you read something like this?
+Ideally, you start from the outcome: the log record emitted at the end of request processing. In our
+case, that is:
+ INFO: [HTTP REQUEST - END]
+    exception.details="",
+    exception.message="",
+    target=tracing_actix_web::root_span_builder,
+    http.status_code=500
+What does that tell us?
+The request returned a 500 status code - it failed.
+We don’t learn a lot more than that: both exception.details and exception.message are empty.
+The situation does not get much better if we look at the next log, emitted by tracing_actix_web:
+ERROR: [HTTP REQUEST - EVENT] Error encountered while
+        processing the incoming HTTP request: ""
+    exception.details="",
+    exception.message="",
+    target=tracing_actix_web::middleware
+
+No actionable information whatsoever. Logging “Oops! Something went wrong!” would have been
+just as useful.
+We need to keep looking, all the way to the last remaining error log:
+ERROR: [STORE SUBSCRIPTION TOKEN IN THE DATABASE - EVENT] Failed to execute query:
+        Database(PgDatabaseError {
+           severity: Error,
+           code: "42703",
+           message:
+             "column 'subscription_token' of relation
+              'subscription_tokens' does not exist",
+           ...
+        })
+    target=zero2prod::routes::subscriptions
+Something went wrong when we tried talking to the database - we were expecting to see a
+subscription_token column in the subscription_tokens table but, for some reason, it was not
+there.
+This is actually useful!
+Is it the cause of the 500 though?
+Difficult to say just by looking at the logs - a developer will have to clone the codebase, check where
+that log line is coming from and make sure that it’s indeed the cause of the issue.
+It can be done, but it takes time: it would be much easier if the [HTTP REQUEST - END] log
+record reported something useful about the underlying root cause in exception.details and
+exception.message.
+
+8.2.1   Keeping Track Of The Error Root Cause
+To understand why the log records coming out tracing_actix_web are so poor we need to inspect
+(again) our request handler and store_token:
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn subscribe(/* */) -> HttpResponse {
+    // [...]
+    if store_token(&mut transaction, subscriber_id, &subscription_token)
+        .await
+        .is_err()
+    {
+        return HttpResponse::InternalServerError().finish();
+    }
+    // [...]
+}
+
+pub async fn store_token(/* */) -> Result<(), sqlx::Error> {
+    sqlx::query!(/* */)
+        .execute(transaction)
+        .await
+        .map_err(|e| {
+             tracing::error!("Failed to execute query: {:?}", e);
+             e
+        })?;
+    // [...]
+}
+
+The useful error log we found is indeed the one emitted by that tracing::error call - the error
+message includes the sqlx::Error returned by execute.
+We propagate the error upwards using the ? operator, but the chain breaks in subscribe - we discard
+the error we received from store_token and build a bare 500 response.
+
+HttpResponse::InternalServerError().finish() is the only thing that actix_web and
+tracing_actix_web::TracingLogger get to access when they are about to emit their respective log
+records. The error does not contain any context about the underlying root cause, therefore the
+log records are equally useless.
+How do we fix it?
+We need to start leveraging the error handling machinery exposed by actix_web - in particular,
+actix_web::Error. According to the documentation:
+
+      actix_web::Error is used to carry errors from std::error through actix_web in a conve-
+      nient way.
+
+It sounds exactly like what we are looking for. How do we build an instance of actix_web::Error?
+The documentation states that
+
+      actix_web::Error can be created by converting errors with into().
+
+A bit indirect, but we can figure it out64 .
+The only From/Into implementation that we can use, browsing the ones listed in the documentation,
+seems to be this one:
+/// Build an `actix_web::Error` from any error that implements `ResponseError`
+impl<T: ResponseError + 'static> From<T> for Error {
+    fn from(err: T) -> Error {
+        Error {
+            cause: Box::new(err),
+        }
+    }
+}
+
+ResponseError is a trait exposed by actix_web:
+/// Errors that can be converted to `Response`.
+pub trait ResponseError: fmt::Debug + fmt::Display {
+    /// Response's status code.
+    ///
+    /// The default implementation returns an internal server error.
+    fn status_code(&self) -> StatusCode;
+
+       /// Create a response from the error.
+       ///
+       /// The default implementation returns an internal server error.
+       fn error_response(&self) -> Response;
+}
+
+We just need to implement it for our errors!
+actix_web provides a default implementation for both methods that returns a 500 Internal Server
+Error - exactly what we need. Therefore it’s enough to write:
+//! src/routes/subscriptions.rs
+use actix_web::ResponseError;
+// [...]
+
+impl ResponseError for sqlx::Error {}
+
+The compiler is not happy:
+error[E0117]: only traits defined in the current crate
+              can be implemented for arbitrary types
+   --> src/routes/subscriptions.rs:162:1
+
+    64 I pinky-swear that I am going to submit a PR to actix_web to improve this section of the documentation.
+
+    |
+162 | impl ResponseError for sqlx::Error {}
+    | ^^^^^^^^^^^^^^^^^^^^^^^-----------
+    | |                      |
+    | |                      `sqlx::Error` is not defined in the current crate
+    | impl doesn't use only types from inside the current crate
+    |
+    = note: define and implement a trait or new type instead
+
+We just bumped into Rust’s orphan rule: it is forbidden to implement a foreign trait for a foreign
+type, where foreign stands for “from another crate”.
+This restriction is meant to preserve coherence: imagine if you added a dependency that defined its
+own implementation of ResponseError for sqlx::Error - which one should the compiler use when
+the trait methods are invoked?
+Orphan rule aside, it would still be a mistake for us to implement ResponseError for sqlx::Error.
+We want to return a 500 Internal Server Error when we run into a sqlx::Error while trying to
+persist a subscriber token.
+In another circumstance we might wish to handle a sqlx::Error differently.
+We should follow the compiler’s suggestion: define a new type to wrap sqlx::Error.
+//! src/routes/subscriptions.rs
+// [...]
+
+//                                     Using the new error type!
+pub async fn store_token(/* */) -> Result<(), StoreTokenError> {
+    sqlx::query!(/* */)
+    .execute(transaction)
+    .await
+    .map_err(|e| {
+         // [...]
+         // Wrapping the underlying error
+         StoreTokenError(e)
+    })?;
+    // [...]
+}
+
+// A new error type, wrapping a sqlx::Error
+pub struct StoreTokenError(sqlx::Error);
+
+impl ResponseError for StoreTokenError {}
+
+It doesn’t work, but for a different reason:
+error[E0277]: `StoreTokenError` doesn't implement `std::fmt::Display`
+   --> src/routes/subscriptions.rs:164:6
+    |
+164 | impl ResponseError for StoreTokenError {}
+    |      ^^^^^^^^^^^^^
+    `StoreTokenError` cannot be formatted with the default formatter
+    |
+    |
+59 | pub trait ResponseError: fmt::Debug + fmt::Display {
+    |                                       ------------
+    |           required by this bound in `ResponseError`
+    |
+    = help: the trait `std::fmt::Display` is not implemented for `StoreTokenError`
+
+error[E0277]: `StoreTokenError` doesn't implement `std::fmt::Debug`
+   --> src/routes/subscriptions.rs:164:6
+    |
+164 | impl ResponseError for StoreTokenError {}
+
+     |      ^^^^^^^^^^^^^
+     `StoreTokenError` cannot be formatted using `{:?}`
+     |
+     |
+59   | pub trait ResponseError: fmt::Debug + fmt::Display {
+     |                          ----------
+                 required by this bound in `ResponseError`
+     |
+     = help: the trait `std::fmt::Debug` is not implemented for `StoreTokenError`
+     = note: add `#[derive(Debug)]` or manually implement `std::fmt::Debug`
+
+We are missing two trait implementations on StoreTokenError: Debug and Display.
+Both traits are concerned with formatting, but they serve a different purpose.
+Debug should return a programmer-facing representation, as faithful as possible to the underlying type
+structure, to help with debugging (as the name implies). Almost all public types should implement
+Debug.
+Display, instead, should return a user-facing representation of the underlying type. Most types do
+not implement Display and it cannot be automatically implemented with a #[derive(Display)]
+attribute.
+When working with errors, we can reason about the two traits as follows: Debug returns as much
+information as possible while Display gives us a brief description of the failure we encountered, with
+the essential amount of context.
+Let’s give it a go for StoreTokenError:
+//! src/routes/subscriptions.rs
+// [...]
+
+// We derive `Debug`, easy and painless.
+#[derive(Debug)]
+pub struct StoreTokenError(sqlx::Error);
+
+impl std::fmt::Display for StoreTokenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "A database error was encountered while \
+            trying to store a subscription token."
+        )
+    }
+}
+
+It compiles!
+We can now leverage it in our request handler:
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn subscribe(/* */) -> Result<HttpResponse, actix_web::Error> {
+    // You will have to wrap (early) returns in `Ok(...)` as well!
+    // [...]
+    // The `?` operator transparently invokes the `Into` trait
+    // on our behalf - we don't need an explicit `map_err` anymore.
+    store_token(/* */).await?;
+    // [...]
+}
+
+Let’s look at our logs again:
+# sqlx logs are a bit spammy, cutting them out to reduce noise
+export RUST_LOG="sqlx=error,info"
+export TEST_LOG=enabled
+
+cargo t subscribe_fails_if_there_is_a_fatal_database_error | bunyan
+
+...
+ INFO: [HTTP REQUEST - END]
+    exception.details= StoreTokenError(
+        Database(
+             PgDatabaseError {
+                 severity: Error,
+                 code: "42703",
+                 message:
+                     "column 'subscription_token' of relation
+                      'subscription_tokens' does not exist",
+                 ...
+             }
+        )
+    )
+    exception.message=
+        "A database failure was encountered while
+          trying to store a subscription token.",
+    target=tracing_actix_web::root_span_builder,
+    http.status_code=500
+Much better!
+The log record emitted at the end of request processing now contains both an in-depth and brief
+description of the error that caused the application to return a 500 Internal Server Error to the
+user.
+It is enough to look at this log record to get a pretty accurate picture of everything that matters for
+this request.
+
+8.2.2   The Error Trait
+So far we moved forward by following the compiler suggestions, trying to satisfy the constraints
+imposed on us by actix-web when it comes to error handling.
+Let’s step back to look at the bigger picture: what should an error look like in Rust (not considering
+the specifics of actix-web)?
+Rust’s standard library has a dedicated trait, Error.
+pub trait Error: Debug + Display {
+    /// The lower-level source of this error, if any.
+    fn source(&self) -> Option<&(dyn Error + 'static)> {
+        None
+    }
+}
+
+It requires an implementation of Debug and Display, just like ResponseError.
+It also gives us the option to implement a source method that returns the underlying cause of the
+error, if any.
+What is the point of implementing the Error trait at all for our error type?
+It is not required by Result - any type can be used as error variant there.
+pub enum Result<T, E> {
+    /// Contains the success value
+    Ok(T),
+
+    /// Contains the error value
+    Err(E),
+}
+
+The Error trait is, first and foremost, a way to semantically mark our type as being an error. It
+
+helps a reader of our codebase to immediately spot its purpose.
+It is also a way for the Rust community to standardise on the minimum requirements for a good
+error:
+   • it should provide different representations (Debug and Display), tuned to different audiences;
+   • it should be possible to look at the underlying cause of the error, if any (source).
+This list is still evolving - e.g. there is an unstable backtrace method.
+Error handling is an active area of research in the Rust community - if you are interested in staying
+on top of what is coming next I strongly suggest you to keep an eye on the Rust Error Handling
+Working Group.
+By providing a good implementation of all the optional methods we can fully leverage the error
+handling ecosystem - functions that have been designed to work with errors, generically. We will be
+writing one in a couple of sections!
+
+8.2.2.1 Trait Objects Before we work on implementing source, let’s take a closer look at its
+return - Option<&(dyn Error + 'static)>.
+dyn Error is a trait object65 - a type that we know nothing about apart from the fact that it
+implements the Error trait.
+Trait objects, just like generic type parameters, are a way to achieve polymorphism in Rust: invoke
+different implementations of the same interface. Generic types are resolved at compile-time (static
+dispatch), trait objects incur a runtime cost (dynamic dispatch).
+Why does the standard library return a trait object?
+It gives developers a way to access the underlying root cause of current error while keeping it opaque.
+It does not leak any information about the type of the underlying root cause - you only get access to
+the methods exposed by the Error trait66 : different representations (Debug, Display), the chance to
+go one level deeper in the error chain using source.
+
+8.2.2.2    Error::source        Let’s implement Error for StoreTokenError:
+//! src/routes/subscriptions.rs
+// [..]
+
+impl std::error::Error for StoreTokenError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        // The compiler transparently casts `&sqlx::Error` into a `&dyn Error`
+        Some(&self.0)
+    }
+}
+
+source is useful when writing code that needs to handle a variety of errors: it provides a structured
+way to navigate the error chain without having to know anything about the specific error type you
+are working with.
+If we look at our log record, the causal relationship between StoreTokenError and sqlx::Error is
+somewhat implicit - we infer one is the cause of the other because it is a part of it.
+...
+ INFO: [HTTP REQUEST - END]
+    exception.details= StoreTokenError(
+        Database(
+            PgDatabaseError {
+                severity: Error,
+                code: "42703",
+                message:
+ 65 Check out the relevant chapter in the Rust book for an in-depth introduction to trait objects.
+  66 The Error trait provides a downcast_ref which can be used to obtain a concrete type back from dyn Error,
+
+assuming you know what type to downcast to. There are legitimate usecases for downcasting, but if you find yourself
+reaching for it too often it might be a sign that something is not quite right in your design/error handling strategy.
+
+                         "column 'subscription_token' of relation
+                          'subscription_tokens' does not exist",
+                   ...
+              }
+        )
+    )
+    exception.message=
+        "A database failure was encountered while
+          trying to store a subscription token.",
+    target=tracing_actix_web::root_span_builder,
+    http.status_code=500
+Let’s go for something more explicit:
+//! src/routes/subscriptions.rs
+
+// Notice that we have removed `#[derive(Debug)]`
+pub struct StoreTokenError(sqlx::Error);
+
+impl std::fmt::Debug for StoreTokenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}\nCaused by:\n\t{}", self, self.0)
+    }
+}
+
+The log record leaves nothing to the imagination now:
+...
+ INFO: [HTTP REQUEST - END]
+    exception.details=
+        "A database failure was encountered
+        while trying to store a subscription token.
+
+        Caused by:
+            error returned from database: column 'subscription_token'
+            of relation 'subscription_tokens' does not exist"
+    exception.message=
+        "A database failure was encountered while
+         trying to store a subscription token.",
+    target=tracing_actix_web::root_span_builder,
+    http.status_code=500
+exception.details is easier to read and still conveys all the relevant information we had there
+before.
+Using source we can write a function that provides a similar representation for any type that imple-
+ments Error:
+//! src/routes/subscriptions.rs
+// [...]
+
+fn error_chain_fmt(
+    e: &impl std::error::Error,
+    f: &mut std::fmt::Formatter<'_>,
+) -> std::fmt::Result {
+    writeln!(f, "{}\n", e)?;
+    let mut current = e.source();
+    while let Some(cause) = current {
+        writeln!(f, "Caused by:\n\t{}", cause)?;
+        current = cause.source();
+    }
+    Ok(())
+
+}
+
+It iterates over the whole chain of errors67 that led to the failure we are trying to print.
+We can then change our implementation of Debug for StoreTokenError to use it:
+//! src/routes/subscriptions.rs
+// [...]
+
+impl std::fmt::Debug for StoreTokenError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        error_chain_fmt(self, f)
+    }
+}
+
+The result is identical - and we can reuse it when working with other errors if we want a similar Debug
+representation.
+
+8.3       Errors For Control Flow
+8.3.1      Layering
+We achieved the outcome we wanted (useful logs), but I am not too fond of the solution: we imple-
+mented a trait from our web framework (ResponseError) for an error type returned by an opera-
+tion that is blissfully unaware of REST or the HTTP protocol, store_token. We could be calling
+store_token from a different entrypoint (e.g. a CLI) - nothing should have to change in its imple-
+mentation.
+Even assuming we are only ever going to be invoking store_token in the context of a REST API,
+we might add other endpoints that rely on that routine - they might not want to return a 500 when
+it fails.
+Choosing the appropriate HTTP status code when an error occurs is a concern of the request handler,
+it should not leak elsewhere.
+Let’s delete
+//! src/routes/subscriptions.rs
+// [...]
+
+// Nuke it!
+impl ResponseError for StoreTokenError {}
+
+To enforce a proper separation of concerns we need to introduce another error type, SubscribeError.
+We will use it as failure variant for subscribe and it will own the HTTP-related logic
+(ResponseError’s implementation).
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn subscribe(/* */) -> Result<HttpResponse, SubscribeError> {
+    // [...]
+}
+
+#[derive(Debug)]
+struct SubscribeError {}
+
+impl std::fmt::Display for SubscribeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Failed to create a new subscriber."
+        )
+    }
+    67 There is a chain method on Error that fulfills the same purpose - it has not been stabilised yet.
+
+}
+
+impl std::error::Error for SubscriberError {}
+
+impl ResponseError for SubscribeError {}
+
+If you run cargo check you will see an avalanche of '?' couldn't convert the error to
+'SubscribeError' - we need to implement conversions from the error types returned by our
+functions and SubscribeError.
+
+8.3.2   Modelling Errors as Enums
+An enum is the most common approach to work around this issue: a variant for each error type we
+need to deal with.
+//! src/routes/subscriptions.rs
+// [...]
+
+#[derive(Debug)]
+pub enum SubscribeError {
+    ValidationError(String),
+    DatabaseError(sqlx::Error),
+    StoreTokenError(StoreTokenError),
+    SendEmailError(reqwest::Error),
+}
+
+We can then leverage the ? operator in our handler by providing a From implementation for each of
+wrapped error types:
+//! src/routes/subscriptions.rs
+// [...]
+
+impl From<reqwest::Error> for SubscribeError {
+    fn from(e: reqwest::Error) -> Self {
+        Self::SendEmailError(e)
+    }
+}
+
+impl From<sqlx::Error> for SubscribeError {
+    fn from(e: sqlx::Error) -> Self {
+        Self::DatabaseError(e)
+    }
+}
+
+impl From<StoreTokenError> for SubscribeError {
+    fn from(e: StoreTokenError) -> Self {
+        Self::StoreTokenError(e)
+    }
+}
+
+impl From<String> for SubscribeError {
+    fn from(e: String) -> Self {
+        Self::ValidationError(e)
+    }
+}
+
+We can now clean up our request handler by removing all those match / if fallible_function().is_err()
+lines:
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn subscribe(/* */) -> Result<HttpResponse, SubscribeError> {
+
+    let new_subscriber = form.0.try_into()?;
+    let mut transaction = pool.begin().await?;
+    let subscriber_id = insert_subscriber(/* */).await?;
+    let subscription_token = generate_subscription_token();
+    store_token(/* */).await?;
+    transaction.commit().await?;
+    send_confirmation_email(/* */).await?;
+    Ok(HttpResponse::Ok().finish())
+}
+
+The code compiles, but one of our tests is failing:
+thread 'subscriptions::subscribe_returns_a_400_when_fields_are_present_but_invalid'
+panicked at 'assertion failed: `(left == right)`
+  left: `400`,
+ right: `500`: The API did not return a 400 Bad Request when the payload was empty name.'
+
+We are still using the default implementation of ResponseError - it always returns 500.
+This is where enums shine: we can use a match statement for control flow - we behave differently
+depending on the failure scenario we are dealing with.
+//! src/routes/subscriptions.rs
+use actix_web::http::StatusCode;
+// [...]
+
+impl ResponseError for SubscribeError {
+    fn status_code(&self) -> StatusCode {
+        match self {
+            SubscribeError::ValidationError(_) => StatusCode::BAD_REQUEST,
+            SubscribeError::DatabaseError(_)
+            | SubscribeError::StoreTokenError(_)
+            | SubscribeError::SendEmailError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+}
+
+The test suite should pass again.
+
+8.3.3   The Error Type Is Not Enough
+What about our logs?
+Let’s look again:
+export RUST_LOG="sqlx=error,info"
+export TEST_LOG=enabled
+cargo t subscribe_fails_if_there_is_a_fatal_database_error | bunyan
+
+...
+ INFO: [HTTP REQUEST - END]
+    exception.details="StoreTokenError(
+            A database failure was encountered while trying to
+            store a subscription token.
+
+         Caused by:
+             error returned from database: column 'subscription_token'
+             of relation 'subscription_tokens' does not exist)"
+     exception.message="Failed to create a new subscriber.",
+     target=tracing_actix_web::root_span_builder,
+     http.status_code=500
+We are still getting a great representation for the underlying StoreTokenError in exception.details,
+but it shows that we are now using the derived Debug implementation for SubscribeError. No loss
+of information though.
+
+The same cannot be said for exception.message - no matter the failure mode, we always get Failed
+to create a new subscriber. Not very useful.
+Let’s refine our Debug and Display implementations:
+//! src/routes/subscriptions.rs
+// [...]
+
+// Remember to delete `#[derive(Debug)]`!
+impl std::fmt::Debug for SubscribeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        error_chain_fmt(self, f)
+    }
+}
+
+impl std::error::Error for SubscribeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            // &str does not implement `Error` - we consider it the root cause
+            SubscribeError::ValidationError(_) => None,
+            SubscribeError::DatabaseError(e) => Some(e),
+            SubscribeError::StoreTokenError(e) => Some(e),
+            SubscribeError::SendEmailError(e) => Some(e),
+        }
+    }
+}
+
+impl std::fmt::Display for SubscribeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SubscribeError::ValidationError(e) => write!(f, "{}", e),
+            // What should we do here?
+            SubscribeError::DatabaseError(_) => write!(f, "???"),
+            SubscribeError::StoreTokenError(_) => write!(
+                f,
+                "Failed to store the confirmation token for a new subscriber."
+            ),
+            SubscribeError::SendEmailError(_) => {
+                write!(f, "Failed to send a confirmation email.")
+            },
+        }
+    }
+}
+
+Debug is easily sorted: we implemented the Error trait for SubscribeError, including source, and
+we can use again the helper function we wrote earlier for StoreTokenError.
+We have a problem when it comes to Display - the same DatabaseError variant is used for errors
+encountered when:
+  • acquiring a new Postgres connection from the pool;
+  • inserting a subscriber in the subscribers table;
+  • committing the SQL transaction.
+When implementing Display for SubscribeError we have no way to distinguish which of those three
+cases we are dealing with - the underlying error type is not enough.
+Let’s disambiguate by using a different enum variant for each operation:
+//! src/routes/subscriptions.rs
+// [...]
+
+pub enum SubscribeError {
+    // [...]
+    // No more `DatabaseError`
+
+    PoolError(sqlx::Error),
+    InsertSubscriberError(sqlx::Error),
+    TransactionCommitError(sqlx::Error),
+}
+
+impl std::fmt::Display for SubscribeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            // [...]
+            SubscribeError::PoolError(_) => {
+                write!(f, "Failed to acquire a Postgres connection from the pool")
+            }
+            SubscribeError::InsertSubscriberError(_) => {
+                write!(f, "Failed to insert new subscriber in the database.")
+            }
+            SubscribeError::TransactionCommitError(_) => {
+                write!(
+                     f,
+                     "Failed to commit SQL transaction to store a new subscriber."
+                )
+            }
+        }
+    }
+}
+
+impl std::error::Error for SubscribeError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            // [...]
+            // No more DatabaseError
+            SubscribeError::PoolError(e) => Some(e),
+            SubscribeError::InsertSubscriberError(e) => Some(e),
+            SubscribeError::TransactionCommitError(e) => Some(e),
+            // [...]
+        }
+    }
+}
+
+impl ResponseError for SubscribeError {
+    fn status_code(&self) -> StatusCode {
+        match self {
+            SubscribeError::ValidationError(_) => StatusCode::BAD_REQUEST,
+            SubscribeError::PoolError(_)
+            | SubscribeError::TransactionCommitError(_)
+            | SubscribeError::InsertSubscriberError(_)
+            | SubscribeError::StoreTokenError(_)
+            | SubscribeError::SendEmailError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+}
+
+DatabaseError is used in one more place:
+//! src/routes/subscriptions.rs
+// [..]
+
+impl From<sqlx::Error> for SubscribeError {
+    fn from(e: sqlx::Error) -> Self {
+        Self::DatabaseError(e)
+    }
+}
+
+The type alone is not enough to distinguish which of the new variants should be used; we cannot
+
+implement From for sqlx::Error.
+We have to use map_err to perform the right conversion in each case.
+//! src/routes/subscriptions.rs
+// [..]
+
+pub async fn subscribe(/* */) -> Result<HttpResponse, SubscribeError> {
+    // [...]
+    let mut transaction = pool.begin().await.map_err(SubscribeError::PoolError)?;
+    let subscriber_id = insert_subscriber(&mut transaction, &new_subscriber)
+        .await
+        .map_err(SubscribeError::InsertSubscriberError)?;
+    // [...]
+    transaction
+        .commit()
+        .await
+        .map_err(SubscribeError::TransactionCommitError)?;
+    // [...]
+}
+
+The code compiles and exception.message is useful again:
+...
+ INFO: [HTTP REQUEST - END]
+    exception.details="Failed to store the confirmation token
+        for a new subscriber.
+
+        Caused by:
+            A database failure was encountered while trying to store
+            a subscription token.
+        Caused by:
+            error returned from database: column 'subscription_token'
+            of relation 'subscription_tokens' does not exist"
+    exception.message="Failed to store the confirmation token for a new subscriber.",
+    target=tracing_actix_web::root_span_builder,
+    http.status_code=500
+
+8.3.4   Removing The Boilerplate With thiserror
+It took us roughly 90 lines of code to implement SubscriberError and all the machinery that
+surrounds it in order to achieve the desired behaviour and get useful diagnostic in our logs.
+That is a lot of code, with a ton of boilerplate (e.g. source’s or From implementations).
+Can we do better?
+Well, I am not sure we can write less code, but we can find a different way out: we can generate all
+that boilerplate using a macro!
+As it happens, there is already a great crate in the ecosystem for this purpose: thiserror. Let’s add
+it to our dependencies:
+#! Cargo.toml
+
+[dependencies]
+# [...]
+thiserror = "1"
+It provides a derive macro to generate most of the code we just wrote by hand.
+Let’s see it in action:
+//! src/routes/subscriptions.rs
+// [...]
+
+#[derive(thiserror::Error)]
+
+pub enum SubscribeError {
+    #[error("{0}")]
+    ValidationError(String),
+    #[error("Failed to acquire a Postgres connection from the pool")]
+    PoolError(#[source] sqlx::Error),
+    #[error("Failed to insert new subscriber in the database.")]
+    InsertSubscriberError(#[source] sqlx::Error),
+    #[error("Failed to store the confirmation token for a new subscriber.")]
+    StoreTokenError(#[from] StoreTokenError),
+    #[error("Failed to commit SQL transaction to store a new subscriber.")]
+    TransactionCommitError(#[source] sqlx::Error),
+    #[error("Failed to send a confirmation email.")]
+    SendEmailError(#[from] reqwest::Error),
+}
+
+// We are still using a bespoke implementation of `Debug`
+// to get a nice report using the error source chain
+impl std::fmt::Debug for SubscribeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        error_chain_fmt(self, f)
+    }
+}
+
+pub async fn subscribe(/* */) -> Result<HttpResponse, SubscribeError> {
+    // We no longer have `#[from]` for `ValidationError`, so we need to
+    // map the error explicitly
+    let new_subscriber = form.0.try_into().map_err(SubscribeError::ValidationError)?;
+    // [...]
+}
+
+We cut it down to 21 lines - not bad!
+Let’s break down what is happening now.
+thiserror::Error is a procedural macro used via a #[derive(/* */)] attribute.
+We have seen and used these before - e.g. #[derive(Debug)] or #[derive(serde::Serialize)].
+The macro receives, at compile-time, the definition of SubscribeError as input and returns another
+stream of tokens as output - it generates new Rust code, which is then compiled into the final binary.
+Within the context of #[derive(thiserror::Error)] we get access to other attributes to achieve
+the behaviour we are looking for:
+  • #[error(/* */)] defines the Display representation of the enum variant it is applied to. E.g.
+    Display will return Failed to send a confirmation email. when invoked on an instance
+    of SubscribeError::SendEmailError. You can interpolate values in the final representation
+    - e.g. the {0} in #[error("{0}")] on top of ValidationError is referring to the wrapped
+    String field, mimicking the syntax to access fields on tuple structs (i.e. self.0).
+  • #[source] is used to denote what should be returned as root cause in Error::source;
+  • #[from] automatically derives an implementation of From for the type it has been applied
+    to into the top-level error type (e.g. impl From<StoreTokenError> for SubscribeError {/*
+    */}). The field annotated with #[from] is also used as error source, saving us from having to
+    use two annotations on the same field (e.g. #[source] #[from] reqwest::Error).
+I want to call your attention on a small detail: we are not using either #[from] or #[source] for the
+ValidationError variant. That is because String does not implement the Error trait, therefore it
+cannot be returned in Error::source - the same limitation we encountered before when implementing
+Error::source manually, which led us to return None in the ValidationError case.
+
+8.4   Avoid “Ball Of Mud” Error Enums
+In SubscribeError we are using enum variants for two purposes:
+
+   • Determine the response that should be returned to the caller of our API (ResponseError);
+   • Provide relevant diagnostic (Error::source, Debug, Display).
+SubscribeError, as currently defined, exposes a lot of the implementation details of subscribe: we
+have a variant for every fallible function call we make in the request handler!
+It is not a strategy that scales very well.
+We need to think in terms of abstraction layers: what does a caller of subscribe need to know?
+They should be able to determine what response to return to a user (via ResponseError). That’s it.
+The caller of subscribe does not understand the intricacies of the subscription flow: they don’t
+know enough about the domain to behave differently for a SendEmailError compared to a
+TransactionCommitError (by design!). subscribe should return an error type that speaks at the
+right level of abstraction.
+The ideal error type would look like this:
+//! src/routes/subscriptions.rs
+
+#[derive(thiserror::Error)]
+pub enum SubscribeError {
+    #[error("{0}")]
+    ValidationError(String),
+    #[error(/* */)]
+    UnexpectedError(/* */),
+}
+
+ValidationError maps to a 400 Bad Request, UnexpectedError maps to an opaque 500 Internal
+Server Error.
+What should we store in the UnexpectedError variant?
+We need to map multiple error types into it - sqlx::Error, StoreTokenError, reqwest::Error.
+We do not want to expose the implementation details of the fallible routines that get mapped to
+UnexpectedError by subscribe - it must be opaque.
+We bumped into a type that fulfills those requirements when looking at the Error trait from Rust’s
+standard library: Box<dyn std::error::Error>!68
+Let’s give it a go:
+//! src/routes/subscriptions.rs
+
+#[derive(thiserror::Error)]
+pub enum SubscribeError {
+    #[error("{0}")]
+    ValidationError(String),
+    // Transparent delegates both `Display`'s and `source`'s implementation
+    // to the type wrapped by `UnexpectedError`.
+    #[error(transparent)]
+    UnexpectedError(#[from] Box<dyn std::error::Error>),
+}
+
+We can still generate an accurate response for the caller:
+//! src/routes/subscriptions.rs
+// [...]
+
+impl ResponseError for SubscribeError {
+    fn status_code(&self) -> StatusCode {
+        match self {
+  68 We are wrapping dyn std::error::Error into a Box because the size of trait objects is not known at compile-time:
+
+trait objects can be used to store different types which will most likely have a different layout in memory. To use Rust’s
+terminology, they are unsized - they do not implement the Sized marker trait. A Box stores the trait object itself on
+the heap, while we store the pointer to its heap location in SubscribeError::UnexpectedError - the pointer itself has
+a known size at compile-time - problem solved, we are Sized again.
+
+                SubscribeError::ValidationError(_) => StatusCode::BAD_REQUEST,
+                SubscribeError::UnexpectedError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+          }
+      }
+}
+
+We just need to adapt subscribe to properly convert our errors before using the ? operator:
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn subscribe(/* */) -> Result<HttpResponse, SubscribeError> {
+    // [...]
+    let mut transaction = pool
+        .begin()
+        .await
+        .map_err(|e| SubscribeError::UnexpectedError(Box::new(e)))?;
+    let subscriber_id = insert_subscriber(/* */)
+        .await
+        .map_err(|e| SubscribeError::UnexpectedError(Box::new(e)))?;
+    // [...]
+    store_token(/* */)
+        .await
+        .map_err(|e| SubscribeError::UnexpectedError(Box::new(e)))?;
+    transaction
+        .commit()
+        .await
+        .map_err(|e| SubscribeError::UnexpectedError(Box::new(e)))?;
+    send_confirmation_email(/* */)
+        .await
+        .map_err(|e| SubscribeError::UnexpectedError(Box::new(e)))?;
+    // [...]
+}
+
+There is some code repetition, but let it be for now.
+The code compiles and our tests pass as expected.
+Let’s change the test we have used so far to check the quality of our log messages: let’s trigger a
+failure in insert_subscriber instead of store_token.
+//! tests/api/subscriptions.rs
+// [...]
+
+#[tokio::test]
+async fn subscribe_fails_if_there_is_a_fatal_database_error() {
+    // [...]
+    // Break `subscriptions` instead of `subscription_tokens`
+    sqlx::query!("ALTER TABLE subscriptions DROP COLUMN email;",)
+        .execute(&app.db_pool)
+        .await
+        .unwrap();
+
+      // [..]
+}
+
+The test passes, but we can see that our logs have regressed:
+    INFO: [HTTP REQUEST - END]
+       exception.details:
+           "error returned from database: column 'email' of
+            relation 'subscriptions' does not exist"
+       exception.message:
+           "error returned from database: column 'email' of
+
+          relation 'subscriptions' does not exist"
+We do not see a cause chain anymore.
+We lost the operator-friendly error message that was previously attached to the InsertSubscriberError
+via thiserror:
+//! src/routes/subscriptions.rs
+// [...]
+
+#[derive(thiserror::Error)]
+pub enum SubscribeError {
+    #[error("Failed to insert new subscriber in the database.")]
+    InsertSubscriberError(#[source] sqlx::Error),
+    // [...]
+}
+
+That is to be expected: we are forwarding the raw error now to Display (via #[error(transparent)]),
+we are not attaching any additional context to it in subscribe.
+We can fix it - let’s add a new String field to UnexpectedError to attach contextual information
+to the opaque error we are storing:
+//! src/routes/subscriptions.rs
+// [...]
+
+#[derive(thiserror::Error)]
+pub enum SubscribeError {
+    #[error("{0}")]
+    ValidationError(String),
+    #[error("{1}")]
+    UnexpectedError(#[source] Box<dyn std::error::Error>, String),
+}
+
+impl ResponseError for SubscribeError {
+    fn status_code(&self) -> StatusCode {
+        match self {
+            // [...]
+            // The variant now has two fields, we need an extra `_`
+            SubscribeError::UnexpectedError(_, _) => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+}
+
+We need to adjust our mapping code in subscribe accordingly - we will reuse the error descriptions
+we had before refactoring SubscribeError:
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn subscribe(/* */) -> Result<HttpResponse, SubscribeError> {
+    // [..]
+    let mut transaction = pool.begin().await.map_err(|e| {
+         SubscribeError::UnexpectedError(
+             Box::new(e),
+             "Failed to acquire a Postgres connection from the pool".into(),
+         )
+    })?;
+    let subscriber_id = insert_subscriber(/* */)
+         .await
+         .map_err(|e| {
+             SubscribeError::UnexpectedError(
+                 Box::new(e),
+                 "Failed to insert new subscriber in the database.".into(),
+             )
+         })?;
+
+      // [..]
+      store_token(/* */)
+           .await
+           .map_err(|e| {
+               SubscribeError::UnexpectedError(
+                   Box::new(e),
+                   "Failed to store the confirmation token for a new subscriber.".into(),
+               )
+           })?;
+      transaction.commit().await.map_err(|e| {
+           SubscribeError::UnexpectedError(
+               Box::new(e),
+               "Failed to commit SQL transaction to store a new subscriber.".into(),
+           )
+      })?;
+      send_confirmation_email(/* */)
+           .await
+           .map_err(|e| {
+               SubscribeError::UnexpectedError(
+                   Box::new(e),
+                   "Failed to send a confirmation email.".into()
+               )
+           })?;
+      // [..]
+}
+
+It is somewhat ugly, but it works:
+    INFO: [HTTP REQUEST - END]
+       exception.details=
+           "Failed to insert new subscriber in the database.
+
+          Caused by:
+              error returned from database: column 'email' of
+              relation 'subscriptions' does not exist"
+      exception.message="Failed to insert new subscriber in the database."
+
+8.4.1    Using anyhow As Opaque Error Type
+We could spend more time polishing the machinery we just built, but it turns out it is not necessary:
+we can lean on the ecosystem, again.
+The author of thiserror69 has another crate for us - anyhow.
+#! Cargo.toml
+
+[dependencies]
+# [...]
+anyhow = "1"
+The type we are looking for is anyhow::Error. Quoting the documentation:
+
+     anyhow::Error is a wrapper around a dynamic error type. anyhow::Error works a lot like
+     Box<dyn std::error::Error>, but with these differences:
+       • anyhow::Error requires that the error is Send, Sync, and 'static.
+       • anyhow::Error guarantees that a backtrace is available, even if the underlying error
+          type does not provide one.
+       • anyhow::Error is represented as a narrow pointer — exactly one word in size instead
+          of two.
+
+  69 It turns out that we are speaking of the same person that authored serde, syn, quote and many other foundational
+
+crates in the Rust ecosystem - @dtolnay. Consider sponsoring their OSS work.
+
+The additional constraints (Send, Sync and 'static) are not an issue for us.
+We appreciate the more compact representation and the option to access a backtrace, if we were to
+be interested in it.
+Let’s replace Box<dyn std::error::Error> with anyhow::Error in SubscribeError:
+//! src/routes/subscriptions.rs
+// [...]
+
+#[derive(thiserror::Error)]
+pub enum SubscribeError {
+    #[error("{0}")]
+    ValidationError(String),
+    #[error(transparent)]
+    UnexpectedError(#[from] anyhow::Error),
+}
+
+impl ResponseError for SubscribeError {
+    fn status_code(&self) -> StatusCode {
+        match self {
+            // [...]
+            // Back to a single field
+            SubscribeError::UnexpectedError(_) => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+}
+
+We got rid of the second String field as well in SubscribeError::UnexpectedError - it is no longer
+necessary.
+anyhow::Error provides the capability to enrich an error with additional context out of the box.
+//! src/routes/subscriptions.rs
+use anyhow::Context;
+// [...]
+
+pub async fn subscribe(/* */) -> Result<HttpResponse, SubscribeError> {
+    // [...]
+    let mut transaction = pool
+        .begin()
+        .await
+        .context("Failed to acquire a Postgres connection from the pool")?;
+    let subscriber_id = insert_subscriber(/* */)
+        .await
+        .context("Failed to insert new subscriber in the database.")?;
+    // [..]
+    store_token(/* */)
+        .await
+        .context("Failed to store the confirmation token for a new subscriber.")?;
+    transaction
+        .commit()
+        .await
+        .context("Failed to commit SQL transaction to store a new subscriber.")?;
+    send_confirmation_email(/* */)
+        .await
+        .context("Failed to send a confirmation email.")?;
+    // [...]
+}
+
+The context method is performing double duties here:
+  • it converts the error returned by our methods into an anyhow::Error;
+  • it enriches it with additional context around the intentions of the caller.
+
+context is provided by the Context trait - anyhow implements it for Result70 , giving us access to a
+fluent API to easily work with fallible functions of all kinds.
+
+8.4.2   anyhow Or thiserror?
+We have covered a lot of ground - time to address a common Rust myth:
+
+   anyhow is for applications, thiserror is for libraries.
+
+It is not the right framing to discuss error handling.
+You need to reason about intent.
+Do you expect the caller to behave differently based on the failure mode they encountered?
+Use an error enumeration, empower them to match on the different variants. Bring in thiserror to
+write less boilerplate.
+Do you expect the caller to just give up when a failure occurs? Is their main concern reporting the
+error to an operator or a user?
+Use an opaque error, do not give the caller programmatic access to the error inner details. Use anyhow
+or eyre if you find their API convenient.
+The misunderstanding arises from the observation that most Rust libraries return an error enum
+instead of Box<dyn std::error::Error> (e.g. sqlx::Error).
+Library authors cannot (or do not want to) make assumptions on the intent of their users. They steer
+away from being opinionated (to an extent) - enums give users more control, if they need it.
+Freedom comes at a price - the interface is more complex, users need to sift through 10+ variants
+trying to figure out which (if any) deserve special handling.
+Reason carefully about your usecase and the assumptions you can afford to make in order to design
+the most appropriate error type - sometimes Box<dyn std::error::Error> or anyhow::Error are
+the most appropriate choice, even for libraries.
+
+8.5     Who Should Log Errors?
+Let’s look again at the logs emitted when a request fails.
+# sqlx logs are a bit spammy, cutting them out to reduce noise
+export RUST_LOG="sqlx=error,info"
+export TEST_LOG=enabled
+cargo t subscribe_fails_if_there_is_a_fatal_database_error | bunyan
+
+There are three error-level log records:
+   • one emitted by our code in insert_subscriber
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn insert_subscriber(/* */) -> Result<Uuid, sqlx::Error> {
+    // [...]
+    sqlx::query!(/* */)
+        .execute(transaction)
+        .await
+        .map_err(|e| {
+             tracing::error!("Failed to execute query: {:?}", e);
+             e
+        })?;
+    // [...]
+}
+
+   • one emitted by actix_web when converting SubscribeError into an actix_web::Error;
+  70 This is a common pattern in the Rust community, known as extension trait, to provide additional methods for
+
+types exposed by the standard library (or other common crates in the ecosystem).
+
+  • one emitted by tracing_actix_web::TracingLogger, our telemetry middleware.
+We do not need to see the same information three times - we are emitting unnecessary log records
+which, instead of helping, make it more confusing for operators to understand what is happening (are
+those logs reporting the same error? Am I dealing with three different errors?).
+As a rule of thumb,
+
+   errors should be logged when they are handled.
+
+If your function is propagating the error upstream (e.g. using the ? operator), it should not log the
+error. It can, if it makes sense, add more context to it.
+If the error is propagated all the way up to the request handler, delegate logging to a dedicated
+middleware - tracing_actix_web::TracingLogger in our case.
+The log record emitted by actix_web is going to be removed in the next release. Let’s ignore it for
+now.
+Let’s review the tracing::error statements in our own code:
+//! src/routes/subscriptions.rs
+// [...]
+
+pub async fn insert_subscriber(/* */) -> Result<Uuid, sqlx::Error> {
+    // [...]
+    sqlx::query!(/* */)
+        .execute(transaction)
+        .await
+        .map_err(|e| {
+             // This needs to go, we are propagating the error via `?`
+             tracing::error!("Failed to execute query: {:?}", e);
+             e
+        })?;
+    // [..]
+}
+
+pub async fn store_token(/* */) -> Result<(), StoreTokenError> {
+    sqlx::query!(/* */)
+        .execute(transaction)
+        .await
+        .map_err(|e| {
+            // This needs to go, we are propagating the error via `?`
+            tracing::error!("Failed to execute query: {:?}", e);
+            StoreTokenError(e)
+        })?;
+    Ok(())
+}
+
+Check the logs again to confirm they look pristine.
+
+8.6   Summary
+We used this chapter to learn error handling patterns “the hard way” - building an ugly but working
+prototype first, refining it later using popular crates from the ecosystem.
+You should now have:
+  • a solid grasp on the different purposes fulfilled by errors in an application;
+  • the most appropriate tools to fulfill them.
+Internalise the mental model we discussed (Location as columns, Purpose as rows):
+

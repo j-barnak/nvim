@@ -1,0 +1,1423 @@
+                                                                                              151
+
+Memory - I - The System View
+
+    Sooner or later, everything a process does amounts to manipulating bits in
+memory. The very definition of a "process" is, primarily, the isolated, virtual memory
+within which it operates.
+
+    This work begins its examination of memory by first looking at from the OS
+perspective: The management of the physical memory and its abstraction, virtual
+memory, through paging . We examine the page lifecycle, and the attributes of paging
+which affects memory management.
+
+    Next, we look into the POSIX virtual management APls, which both the Linux and
+Darwin platforms offer as APls, with the usual minor deviations from the standard to
+allow for OS idiosyncrasies. We then look at specific extensions Darwin allows - such as
+tagging allocations and automatically purging memory. The section concludes with a
+discussion of how both Linux and Darwin deal with low memory conditions ("Memory
+Pressure"), and how Android further builds on Linux with its Low Memory Killer daemon.
+
+    Finally, we look at the standardized metrics, as seen through the Linux / proc/memin fo
+and Darwin's system utilities.
+
+                Every process uses RAM, but none use it directly. Virtual Memory serves as an
+           abstraction over the physical memory, ena blin g every process to operate in its own
+           private memory space, isolated from other processes in the syste m . Indeed, it is the
+           virtu al memory space that is the de facto definition of a process, along with its
+           descriptors.
+
+           1.1. Pages
+
+               Virtual memory spaces are trea ted as huge arrays of fixed size blocks, called
+           pages . Physical memory is also divided into pages, so that virtual memory pages ca n
+           be mapped onto the physi ca l ones. Pages conti guous in virtual memory need not
+           necessaril y be so in physical memory. Multiple processes can be mapped alongside each
+           othe r, while remaining separate:
+
+                                             figure 5[1 -1: A high level view of paging
+                                                                                                              Virtual
+               Address Space I                       Address Space II                     Address Space III
+
+      ---------- - --- - --------~ --------------
+
+                                                                                                 Physical (RAM)
+      Legend:
+
+           U           Free (unallocated)
+
+           8           Lazy allocated (allocated , but not yet backed)
+
+           II          Shared (between Address Space I and II)
+
+       ~~              Paged out (allocated, but not in RAM)
+
+       •        -      Both Virtually & Physically Contiguous
+
+               Using virtual mem ory further enabl es a far greater address space limit than the
+           physical wou ld allow. Today's processors sport RAM in the 4-32GB range, but virtual
+           mem ory in A64 could (hypothetically) address the full 64-bit address space, i.e. 264 =
+           16EB. Even the more practical limit of 40-bits (as is the case on Linux) is far more than
+           the availabl e RAM. This is so lved by a few simple principles:
+
+             •      Paging Out: Th e system normally maps memory to and from files on disk . Such
+                    memory is refered to as named memory. If the physical RAM runs low, pages not
+                    in use can be freed, in favor of their on-disk copy. Pages that have not been
+                    modified from their disk copy can simply be discarded as marked free. Pages that
+                    have been modified - so called "dirty" pages - need to be written - paged out -
+                    to a backing store (e.g. disk or other device) first. Thi s process is also known as
+                    syncing . Syncing happens periodically, and may also be triggered by mea ns of a
+                    system call.
+             •      Paging In: Paging also works in reverse - that is, if virtua l memory is needed but
+                    is not mapped to RAM, a page fault occurs. The faulting thread is t empora rily
+                    sto pped, whil e the necessary page is paged in .
+             •      SwaP-Ring,;, When memory that is not mapped to/from a file (called anonymous
+                    memory) needs to be paged out, it is written to a dedicated large file (or
+                    partition), cal led the swap . In some OS confi gurations (notably, Android and
+                    iOS), the swap space may be another segment of RAM, using compression to
+                    reduce pag e utilization.
+
+  •   Lazy. allocations: Memory that is allocated, but not yet used, need not be
+      backed by any physical or disk pages. Only a reservation exists, until the memory
+      is actually accessed. It is then that a page fault happens, and the initial mapping
+      of the page is created, claiming the actual RAM. This helps defer and amortize the
+      cost of the allocation.
+  •   Memory' sharing,;. By translating virtual address A in one process and virtual
+      address B in another to same physical address P, the system can provide shared
+      memory between the two. This makes for a powerful interprocess communication
+      (IPC) facility: Once set up, processes can continue simply reading and writing to
+      their respective virtual addresses, as only one sole physical copy, shared by both
+      processes.
+  •   Imp-licit sharing,;. When two processes map the same file, the system can opt to
+      reuse the same physical memory page and map it into the different virtual
+      memory spaces. Unbeknownst to the processes (which 'think' they mapped the
+      pages privately), they thus share the same mapping, implicitly. This provides a
+      dramatic reduction in overall physical memory (RAM) utilization, as commonly
+      used files (notably, runtime libraries) are only mapped once.
+
+          So long as the mapping remains read-only (that is, unmodified by either
+      process), no further handling is required, save for tracking the number of
+      references on the physical page (so that it may be eventually freed). If one
+      process modifies its virtual copy, however, its mapping has to be re-established,
+      by cloning the original physical mapping - i.e. allocating a new page and copying
+      the contents. This "Copy-on-Write" operation is costly, but fairly infrequent.
+
+     These tenets of memory management go a very long way in enabling efficient use
+of the available RAM. Most processes only use a small working set of their full virtual
+memory space, so lazy allocations already provide a huge reduction in the amount of
+physical RAM required. Of this RAM, a large part of it is from files, and is thus pageable
+(and likely implicitly shared), while the rest is swappable. Disk space is orders of
+magnitude larger than RAM (and easy to hot-swap), meaning that virtual memory is
+practically near-limitless .
+
+     The translation of virtual memory to physical is done by a hardware component
+called the memory management unit (MMU). The MMU performs the translation
+according to page table entries (PTEs). The entries are looked up in a multi-level table,
+using a process discussed in ARM 's documentation [mmul, and later in 13/2.3, which
+remains largely invisible to the operating system .
+
+    The salient pOint, however, is that kernel maintains a separate table for each
+process (in the TTBR0_ELl register). The table (read: the register value pointing to it) is
+swapped every time a process enters execution. Processes can't control their page
+tables - that is up to the kernel to maintain (and, in Apple Silicon, now placed even
+outside the kernel's reach, in the Secure Page Table Manager, SPTM). In other words, a
+user mode process has no means (outside of any OS API) to access memory belonging
+to other processes. Thus, physical memory isolation can be maintained.
+
+1.2. Page Lifecycle
+
+    Sooner or later RAM will be exhausted, which will force pages to be somehow
+reused (or else the system will crash). It follows, therefore, that (most) RAM pages will
+be in a state machine with respect to their virtual memory contents. There are several
+possible states to consider:
+
+  •   Free: The physical page is not presently used. Its contents are undefined - may
+      be zeroed out, or left over from some previous non-free state of the lifecycle.
+      Free pages can immediately be repurposed for virtual memory.
+  •   Active: The physical page is in use, or has been used recently. Its contents are
+      virtual memory of whichever process, or the kernel itself. The OS's virtual
+      memory manager keeps track of these pages and orders in a Least Recently Used
+      (LRU) list.
+  •   Inactive: The physical page is still in use by some process, or the kernel (as per
+      "Active"), but has not been used recently. This makes the page a likelier
+      candidate for removal.
+
+                       figure 5 [ 1- 2: Free , Acti ve and Inactive state transitions for memory pages
+
+             A FREE physical page does not contain                                          An ACTIVE physical page contains the
+             any virtual memory of any process, and                                         virtual memory mapped to one (or more)
+             may be reused at any time                                                      processes, the kernel, or the cache
+                                                               mmap(2 ) , etc.
+
+                                                                                                           I
+                                                                                                       I
+                                                                                                   / / Time Out
+
+                                                                                       A page is reduced to INACTIVE state
+                                                                                       if it is not accessed frequently enough
+
+                 INACTIVE pages may be FREEd
+                 explicitly or reclaimed by system
+                 (unless they are mlock(2)ed or ·wired")
+
+          Another importa nt d istin ct ion, independent of t he li fecycle stag es, is whethe r a
+      given pa ge is clea n or dirty :
+
+         •     Clean pages are pages which are either all zeroed out, or thei r content has not
+               been modified since they were loaded from the backing store (file, device, swap,
+               etc). Read-on ly pages are thus clean by definition. Clean pages may be freed at
+               an y given time, since it is easy to reload them.
+         •     Dirty" pages are pa ges whi ch have been modified since they were loaded. Unlike
+               clean pages, d irty ones must be somehow saved to a backing st ore before being
+               freed, or else their contents would be lost.
+
+                            figure 5 [ 1-3: Clean and Dirty state transitions for memory pages
+
+             A CLEAN page is either
+             empty (all zeroes) or                              write                          A DIRTY page has
+             remains unmodified                                                                been modified
+
+                          Clean                                                                  Dirty
+
+                                                                        Ti meout
+
+                                                 -I         Flush/Swap                ~--                  Sync
+
+                          ~--------=======;;;==~
+                           The DIRTY pages can be "laundered" automatically
+                               (on timeout) or explicitly (through syncing).
+                            "Laundering" (also known as "writeback") flushes
+                           the contents back to their origin, or to the swap file .
+
+           Lastly, a page ma y be locked in memory, mean ing th at, irres pective of its
+      cleanliness or (in)activity, it wil l not be freed. In Darwin's Mach parlance, the term
+      "w ired" is sometimes used.
+
+         Puttin g together Figures 5/1 - 2 and 5/1-3 we end up in a complet e page state
+      machine diagram, as show n here:
+L.()
+L.()
+                          figure SLl-4: The pag e lifecycle
+                                                   Page In                                                              Write
+                                               Explicit Free
+3Q)
+:>                                                                                                                                                                        I
+E
+Q)
+                                                                                                                  sync(2)/fsync(2)                                    I
+U;                                                                                                                                                                I
+>-                                                                                                    I
+Cf)
+Q)                                                                                                I                                                           /
+.r:
+I-                                                                                            /             Page Out                                      /
+                                                                                   --     /                                                          ;'
+o
+                                                                                     ."
+ ~
+o                                                                                                                                             ;'
+                                                                              ."
+E                                                                                                                                         /
+Q)
+2                                                                     /
+                                                                          /
+                                                                              lime Out                                                /
+                                                                                                                                                   lime Out
+Lri                                                               I
+Q;
+                                                                                                                                  I
+C.                                                            I                                                               I
+co
+.r:           Implicit Free
+o                                                                                                                         I
+       (Page notmlock(2)ed or wired)
+                                                                                    Flush/Swap            j Page Out
+
+      1.3. Swapping
+
+           When more memory is needed, least recently used pages are paged out. In the
+      case of named memory pages - those obtained from files - they are written back to the
+      files whence they came (if dirty), or simply purged (if clean, since they are identical to
+      the already existing file). In the case of anonymous memory, however, this requires the
+      use of swap space.
+
+          Swap consists of any number of areas, designated as a store for anonymous pages.
+      Commonly, a single swap file or partition suffices. Linux supports either configuration,
+      and provides swap destination control through the swapon (2) /swapoff (2) system cal l
+      and the swapon (S) utility. Darwin, on the other hand, swaps only to 1GB files (in the
+      hardcoded paths of /System/Volumes/VM (on macOS * ) or / private/var/vm (*OS) . Darwin
+      further hardens its swap files - both by encrypting them on disk, and applying a
+      "swapfile pager" to return NUL bytes if directly read from .
+
+           In systems with flash storage, however, swapping can prove detrimental to the
+      flash , due to the high number of write operations, which wear down the flash with PIE
+      cycles. As an alternative, Darwin introduced the Compressor Pager - which
+      compressing the contents of swapped pages, and stores them elsewhere in RAM.
+      Although this still weighs on RAM usage, it is significantly lighter, since multiple pages
+      can be compressed in this way, and the compression ratio is commonly very efficient.
+
+          Compressed RAM is used across all Darwin variants (though, in some cases, macOS
+      and iPadOS do also swap to flash, in the paths mentioned above). Linux adopted similar
+      ideas - zram (as a virtual block device) or zswap (as a compressed cache for swap pages)
+      - which are used in Android.
+
+          System administrators often keep a close eye on swap usage, since running out of
+      swap space is tantamount to an out of memory condition . As discussed later, this
+      involves killing or "jettisoning" processes to quickly reclaim memory. In Darwin, the
+      swap utilization is shown through the vm. swapusage sysctUS) MIB. In Linu x/Android,
+      the information is in / proc/meminfo and /proc/swaps . The / proc/sys/v m/swa ppiness pseudofile
+      (or vm. swappiness sysctUS) indicates a value between 0 (avoid swap) to 100 (swap
+      agg ressively).
+
+      1.4. Page Size
+
+          An important aspect of paging is determining the size of a page . This has
+      traditionally been 2 12 =4,096 bytes, or 4KB, but conte mporary OSes and CPUs have
+      begun to deviate from that .
+
+          ARM refers to the page size as the "translation granule", and can configure it at the
+      processor level through the TGn bits of TCR_ELl. Apple has long opted to use a larger
+      page size of 214 = 16,384 (16KB), which is now also supported in Android (as of
+      Android 15) .
+
+           Page addresses must be aligned - in both physical and virtual memory. This means
+      that a 4K page address will usually end with 3 zero hex digits (i.e. 0x ... 000), since 12
+      bits (= 3 hex digits) define the page size . With 16K pages this increases to 14 bits, so
+      page addresses end with either 0x ... 0000, 0x .. .4000, 0x ...S000 or 0x ... C000 . **
+
+          A larger page size provides both benefits and drawbacks. On the one hand,
+      performance is improved due to reduced paging and small page tables . On the other,
+      the minimal amount of memory required for a physical allocation is quadrupled . The
+      Android Deyelopers Blog [abI16k] cites a 5-10 % performance boost, at the cost of about
+      9% additional memory.
+
+          Using the heap (in user mode) and zones/slabs (in kernel) helps offset some of the
+      overhead. Most user-mode applications remain agnostic to the page size, and well
+      coded ones that do rely on page size can call getpagesize(3). The binaries, however,
+      need to be rebuilt to reoptimize segmentatio for the larger page size .
+
+          There are cases wherein a program might want huge pages: These are pages
+      which take up entire L2 or L1 page table entries (discussed in Chapter 13). The page
+      sizes can range into the GBs. Linux provides the MAP_HUGETLB mmap (2) flag for this
+      purpose, but Darwin's XNU does not offer this at present.
+
+      * - The legacy path of /var/vm/ swapfile was used in macOS until Darwin 21 and XNU-8792 (as indicated
+      in M-II/ 11).
+      ** - Note, that the ADRP instruction still concatenates and masks 12 bits, and not 14, eve n on Apple's
+      processors.
+
+    2.1. POSIX Memory Management APIs
+
+        POSIX defines several system calls related to memory management, and both Linux
+    and Darwin add their own extentions*. These are summarized in Table 5/2-1 :
+
+                                Table
+                                -  --  5L2-1: Memory-related syste m calls
+                Syscall                                        Usage
+                mmap( 2)       allocate memory pages, possibly mapping them from a file descriptor
+                mmap2(2)                Unux: As mmap (2), but with offset specified in pages
+               madvise( 2)                       give advice about use of memory
+               mincore (2)                     determine residency of memory pages
+              m[unllock(2)                    lock (un lock) physical pages in memory
+               mlock2(2)                  Unux: lock (unlock) physical pages in memory
+               mremap(2)                         Unux: remap an existing mapping
+           remap_file-pages(2)       Unux: sparse/non-linear file mappings (deprecated in 4.0)
+              m[un)lockall            lock (unlock) all process physical pages in memory. -ENOSYS
+               minherit(2)                      Darwin: control the inheritance of pages
+               mprotect(2)                          contro l the protection of pages
+           msync[_nocancel] (2)               synchronize a mapped region (bac k to a fil e)
+               m[un]map(2)         allocate/remove memory, or un/map fi les or devices into memory
+
+       Darwin additionally allows page manipu lation through the vm_map/mach_vm MIG
+    subsystems and traps. Those, however, are seldom used (q.v. review questions).
+
+    2.1.1. mmap(2)/munmap(2)
+
+       Most programmers use *a Hoc variants to allocate memory from the heap, yet it is
+    eventually mmap(2)/munmap(2) which do the actual work behind the scenes. There are,
+    however, instances wherein one might want to map pages directly:
+
+       •   Memory' Map-p-ed ItO: mmap (2) ing memory over a file is more effective than a
+           read(2)/write(2), especially in cases wherein th e file is relatively small (on
+           ord er of MB or less), and when there is benefit t o be gained from buffering. Th e
+           mmap(2)ed file pages are claimed by (Linux's) Pag e Cache or (Darwin's) Unified
+           Buffer Cache, and paging is handled transparently by the system.
+       •   Shared Memory.: Given that mmap(2 ) fil e pages can be cached, if two processes
+           open the same file, they will "see" the same pages . This makes mmap (2) ing pages
+           ideal for shared memory.
+       •   DMA[Device memory- : mmap ( 2 ) ing memory over a device node is common
+           practice wh en read/write access to the device m emory (usually, through DMA) is
+           required. The textbook case is the platform's GPU(s), but certain drivers (notably
+           Android's Binder) also support the notion of "devi ce memory" or (in Binder's
+           case) memory given to the driver to manage.
+       •   Anony-mous map-p-ings: (i.e . with -1 as the file descriptor and/or the MAP_ANON
+           flag) are useful for requesting at least one page of virtually contiguous memory.
+           This is what the heap allocator does in order to grow the heap.
+
+                    Outp-ut 5L2-2: A JTrace of mmap (2)/mp rote ct (2)s used to load a library
+#  Open library file, get stats (primarily, size) and read header
+openat (ATJDCWD,"/syst em/ lib64/ libdl.so",5 24288) = descripto r 6
+readlinkat (ATJDCWD, , " /apex/com. and roid. runtime/lib64/bionic/libm. 50" ,4096)               47
+fstat(64) (6,{ device: 1,2 inode: 26 mod e : 0100644 _ size: 50760} ) = 0
+fstatfs     (6 ,0x7ff45c7ad0) = 0
+p read64    (6, "\x7fELF\x02 ... ", 64, @0) = 64
+# Map individual segments, per ELF header's PT_* entries
+mmap (0x7058680000,275044, PROT_READ,MAP_PRIVATEIMAP_FIXED ,4 ,0 ) = 0x7058680000
+mmap (0x70586c4000,621744, PROT_READIPROT_EXEC,MAP_PRIVATEIMAP_FIXED ,4 ,278528) = 0x70586 c4000
+madvise (0x7058759000,12288,4) = 0
+mmap (0x705875c000,15920, PROT_READIPROT_WRITE,MAP_PRIVATEIMAP_FIXED ,4 ,901120) = 0x705875c000
+mmap (0x7058760000,1440, PROT_READ I PROT_WRITE, MAP_PRIVATE IMAP_FIXED ,4 ,917504) = 0x7058760000
+mmap (0x7058761000, 106496 , PROT_READ I... _WRITE, MAP_PRIVATE I... _ANONYMOUS I...JIXED , ... , 0) = 0x7058761000
+prctl (PR_SET_VMA, PR_SET_VMA_ANON_NAME, 0x7058761000, 106496, '.bss')                 0
+mmap (0x0,520192, PROT_NONE,MAP_PRIVATE IMAP_ANONYMO US, - MAP_ANONYMOUS,0) = 0x7058601000
+munmap (0x7058601000,0x72000) = 0
+    * - lInux add s syscalls (mblnd (2), mg ra te_pages (2), and move_pa ges (2)) for NUMA, not covered here.
+
+          Linux offers the non-standard mremap( 2), which allows remapping a (page aligned)
+      address from its old_size to a new_size according to a mask ofMREMAP_* flags. This
+      system call is more efficient than manually performing a remapping, as it attempts to
+      resize the existing mapping, whenever possible. If there is not enough virtual address
+      space to do so (and when MREMAP _MAYMOVE was specified), the kernel will relocate the
+      mapping, and return a new address. In case of such relocation, the original address is
+      usually invalidated (unless MREMAP _DONTUNMAP was specified as well) .
+
+           Darwin offers the [mach_l vm_a llocate Mach APIs, as a direct interface to page
+      allocation. This is rarely used directly, since it can only support anonymous mappings,
+      and thus the BSD layer mmap (2) has to be used for the more frequent file mappings .
+      Darwin also allows the use of virtual memory tags for anonymous mappings (via the fd
+      argument), as discussed later in this chapter.
+
+      2.1.2. madvise(2)
+
+          The madvise(2) system ca lls is intended to "give advice about use of memory", so
+      that the pager can better service memory requests in the range of the specified
+      address and length according to the advice prov ided . The advice is a constant from
+      the following:
+
+                           Listing2L2-3: The possible advice constants of madvise( 2)
+      II Common to Darwin and Linux:
+      # define MADV_NORMAL              0      1* No further special treatment. *1
+      # define MADV_RANDOM              1      1* Expect random page references. *1
+      # define MADV_SEQUENTIAL          2      1* Expect sequential page references. *1
+      # define MADV_WILLNEED            3      1* Will need these pages. *1
+      # define MADV_DONTNEED            4      1* Don't need these pages. *1
+      II Darwin Specific:
+      #define MADV_FREE                        5          1* pages unneeded, discard contents *1
+      #define MADV_ZERO_WIRED_PAGES            6          1* zero the wired pages that have not been
+                                                             unwired before the entry is deleted *1
+      #define MADV_FREE _REUSABLE              7          1* pages can be reused (by anyone) *1
+      #define MADVJREE_REUSE                   8          1* caller wants to reuse those pages *1
+      #define MADV_CAN_REUSE                   9
+      #define MADV_PAGEOUT                     10         f* page out now (internal only)          *1
+      II Linux Specific
+      # define MADV_FREE        8     1* Free pages only if memory pressure. *1
+      # define MADV_REMOVE      9     1* Remove these pages and resources. *1
+      # define MADV_DONTFORK    10    1* Do not inherit across fork. *1
+      # define MADV_DOFORK      11    1* Do inherit across fork. *1
+      # define MADV_MERGEABLE   12    1* KSM may merge identical pages. *1
+      # define MADV_UNMERGEABLE 13    1* KSM may not merge identical pages. *1
+      # define MADV_HUGEPAGE    14    1* Worth backing with hugepages. *1
+      # define MADV_NOHUGEPAGE 15     1* Not worth backing with hugepages. *1
+      # define MADV_DONTDUMP    16    1* Explicity exclude from the core dump,
+                                         overrides the coredump filter bits. *1
+      # define MADV_DODUMP       17   1* Clear the MADV_DONTDUMP flag. *1
+      # define MADV_WIPEONFORK 18     1* Zero memory on fork, child only. *1
+      # define MADV_KEEPONFORK 19     1* Undo MADV_WIPEONFORK. *1
+      # define MADV_COLD         20   1* Deactivate these pages. *1
+      # define MADV_PAGEOUT      21   1* Reclaim these pages. *1
+      # define MADV_POPULATE _READ 22 1* Populate (prefault) page tables readable.
+      # define MADV_POPULATE_WRITE 23 1* Populate (prefault) page tables writable.
+      # define MADV_HWPOISON     lee 1* Poison a page for testing. *1
+
+      2.1.3. mprotect(2)
+
+           The mp rotect (2) system call control memory access (read/write/execute)
+      protections on a given set of (previously mmap(2)ed) pages . It is used only in cases
+      where the memory protection needs to change past the initial mmap (2). An example of
+      that is Darwin's dyld, which initially mmap(2)s _DATA_CONST as rw-, but (following
+      linking) mprotect(2)s the segment to r--*.
+
+          Darwin's [mach_l vm_protect offers a direct interface (which the BSD layer
+      mprotect(2) calls internally. The useful of the Mach APIs is in their ability to be used on
+      other processes, as discussed later in 10/2.2 .
+
+      * - This will presumably be further augmented in Darwin 25+ by TPRO, per the following case study.
+
+       Case Study: Dealing with writable executable memory
+    Special consideration must be given to memory mappings protected simultaneously by both
+PROT_WRITE and PROT_EXECUTE. This allows the powerful capabilities of self-modifying or Just-
+In-Time compiled (JIT) code.
+
+    Most benign applications would likely not need self-modification, but JIT code is a strict
+requirement for scripting language runtime environments (notably, Chrome's V8 or Safari's Nitro),
+since evaluation of script code is often far more expensive, both in terms of memory and
+performance.
+
+    Allowing PROT_WRITE and PROT_EXECUTE on the same memory region, however, is nowadays
+considered extremely dangerous. Memory corruption attacks can wreak havoc by modifying their
+target process' memory, either rewriting its code or adding entirely new functionality in
+"shellcode" .
+
+      In the Darwin case, Apple goes to great lengths to restrict wx code mappings:
+
+  • The non-standard MAP JIT flag.;. This marks the region as rwx-capable, and is the only
+    allowed way by means of which XNU's mprotect(2) allows these flags to coe xist - silently
+    dropping PROT_EXEC otherwise .
+  •     Entitlements: are added, both for the scripting processes (dynamic-codesigning and
+        com. app leo secu ri ty. cs. a llow-j it) that modify their own code, and for debuggers
+        (com.apple.private.cs.debugger) which modify the code of their inferiors.
+  • Tighter Sandboxing.;. Safa ri's com. app le. WebKi t. WebContent processes, XPC services
+    which are responsible for the DHTMLjJS/CSS, are tightly sand boxed by a dedicated sandbox
+    ("seatbelt") profile, which is much more restrictive than that of the Safa ri master process.
+  •     Code in lIT mallgings is ag.g resivelv. restricted: XNU's sources are redacted, by the
+        kernel binary reveals references to "jitbox", which defines no less than six MSR
+        IMPLEMENTATION DEFINED registers, presumably for enablement, range control, and
+        possibly even dedicated PAC signing keys(!). At least one of these, S3_4_Cl5_Cl5_6 is
+        known (through XNU's tests/ to be JCTL_ EL0, but others found were S3_ 4_Cl5_Cl5_ 4 and
+        S3_ 4_Cl5_Cl5_1 (apparently holding the box "range") .
+  •     An additional, undocumented flag.;. is coupled with MAP_JIT in mmap (2). This flag
+        requires an entitlement of com.apple.private.verified-jit
+  •     Custom hardware excegtions: An "Unexpected jitbox fault in the kernel" panic message
+        reveals that Apple has proprietary ESR_ELl values used for JITBox (and AMX).
+  •     A user mode API to determine lIT behavior: The non-standard
+        pthread_jit_write_[with_callbackLnp( ) both enable writing to JIT regions in macOS.
+        As explained by AQ.Qle's documentation [dajitl, the two routines internally calls
+        os_thread_selCrestrict_rwx_to_rx() or ..._to_ro(), which calls another proprietary
+        register, S3_6_Cl5_Cl_5.
+
+            The ca llback variant requires the com. app le. secu ri ty. cS. j i t-wri te-a llowlist
+        entitlement, and allows the implementation of a callback function (using
+        PTHREAD_JIT_WRITE_ALLOW_CALLBACKS_NP which places the callback pointer in
+        __ DATA_CONST, __ pth_jit_func).
+
+    The S3_6_Cl5_Cl_5 MSR is apparently also used in the implementation of "TPRO"*, another
+redacted feature, which toggles the read-only/read-write attributes of memory regions. This has
+some similarities to XNU's "read only zones" (see 13/2.2.2.4), which can be made writable only
+through trusted code paths.
+
+     At the time of writing (Darwin 24), dyld is the only user of TPRO, recognizing the reserved
+__TPRO_CONST segment, but dyld is known to be an early adopter, so TPRO is likely to be more
+widely used in Darwin 25. The kernel signals TPRO availability to dyld by setting dyld_hw_tpro=l
+in the app le [1 argument vector, and possibly through some bits in the commpage.
+
+    In Linux mmap(2) and mprotect(2) with PROT_WRITE and PROT_EXEC work just fine by default.
+Linux 6.3 addresses the problem through the PR_[SET/GETLMDWE cmds of prctl(2). These
+Memory-Deny-Write-Execute bits can be set only once, with a bitmask of
+PR_MDWE_REFUSE_EXECGAIN (refuses -wx or +x) and PR_MDWE_NO_INHERIT (block inheritance over
+fork(2)).
+
+      * - According to XNU-11 21S's bsd/ kern/ kern_exec.c TPRO = Trusted Path Read Only, presumably
+      referring to code path. Another (possibly more apt) acronym cou ld be Toggleable Protected Read Only.
+
+      2.1.4. mincore(2)
+
+           Developers rarely need to worry about the residency of virtual memory, since page
+      faults are transparent. Excessive page faults , however, can impact performance, and so
+      the minco re (2) system call can be used to query residency status. The system call
+      interface is the same across all architectures - taking in an addr and len and returning
+      (through an out parameter) a vector, in which every byte corresponds to a page of the
+      range . The vector contents, however, differ slightly:
+
+        •    Linux uses the least significant bit of each byte to indicate residency.
+         •   Darwin uses 5 bits, to indicate not just residency (in the least significant bit), but
+             also several other statuses:
+                            Table
+                            - - -5l-2 -4:
+                                       - The possible status bits of minco re (2) in Darwin
+                         Mask        MINCORE * constant               Indicates
+                          0xl           MINCORE_INCORE          Page is incore (reSident)
+                          0x2         MINCORE_REFERENCEO    Page has been referenced by us
+                          0x4          MINCORE MOOIFIEO      Page has been modified by us
+                          0x8      MINCORE_REFERENCED_OTHER    Page has been referenced
+                         0x10       MINCORE_MODIFIED_OTHER            Page has been modified
+
+      2.1.5. m[un]lock[all](2)
+
+          Paging is normally transparent to a process, since page faults occur outside its
+      schedul ing quanta. There are rare instances, however, in which page fau lts are better
+      avoided. One such case is when handling secret data in memory, which may be at risk if
+      swapped to persistent media . Another is when the scheduling overhead associated with
+      a page fault (i.e . the cost of the resulting context switch while the fault is serviced) is
+      deemed too high.
+
+           The m[un Jlock*( 2) function pair can be used to restrict paging on a given memory
+      address of size bytes, rounded up to the nearest PAGE_SIZE . Calling mlock(2) locks or
+      "w ires" (in Mach parlance) the memory, so it cannot be paged out until explicitly
+      munlock(2)ed, munmap(2)ed, or the process is killed.
+
+          Outside the rare cases wherein it might be justified, locking memory is generally
+      frowned upon. RAM is limited, and mlock(2)ing too many pages can adversely affect
+      other processes, causing them to vie for less available physical memory, and thus cause
+      excess swapping . To prevent a process from mlock(2)ing too much memory, the
+      resource limit of RLIMIT_MEMLOCK (set by a call to set rlimit (2») cannot be exceeded.
+      Darwin also imposes a system wide limit - vm.global_user_wire_limit. Linux, by
+      contrast, no longer (as of 2.6.9) limits privileged processes .
+
+          POSIX also defines m[un Jlocka ll( 2) , but those are deemed as such bad practice
+      that Darwin does not support them at all, instead returning -ENOSYS . Darwin's Mach
+      APls allow locking through vm_wire, thread_wire and task_wire, though the first two
+      are part of the host_priv subsystem, and thus require root.
+
+      2. 1 .6 . msync(2)/f s ync(2)/sy nc(2)
+
+          The system normally flushes pages to the backing store periodically, finding the
+      delicate balance between not introducing overhead (by doing it too frequently) and
+      potential ly losing data (risking a crash without a previous flush). User mode can
+      override this practice by requesting a flush, known as a sy nc operation.
+
+          Several system calls handle syncing. The first is sync( 2), which takes an addr, len,
+      and MS_* flags specifying either MS_SYNC (a blocking operation) or MS_ASYNC (non-
+      blocking), and (optional ly) MS_INVALIDATE (to invalidate all mappings of the the synced
+      data in the I/O caches .
+
+          It usually makes sense to flush an entire file, so msync (2) is rarely used. Instead,
+      fsync(2) takes a fi le descriptor, and iterates in kerne l over all its associated mappings,
+      performing msync (2) internally.
+
+          In rare cases, the sync(2) takes no arguments, but flushes al l cached data blocks -
+      not just those of the ca ll ing process. Thus, a process wi ll rarely have need of this
+      system call, which can block for a considerable time . The only use case of this is the
+      sync(8) utility, which an administrator would use before ejecting removable media, or
+      emergency maintenance of the system.
+
+     2.2. Darwin specific memory extensions
+
+         Darwin's unique design and Apple's ongoing improvements have evolved the OS
+     significantly beyond POSIX standards. In addition to the standard system calls
+     discussed earlier, there are several powerful features of the virtual memory subsystem
+     which open up significant functionality.
+
+     2.2.1. The mach_vm/vm_map MIG subsystems
+
+         Recall, that Darwin's XNU is a hybrid kernel, with a BSD layer on top of the original
+     Mach microkernel. As such, many BSD system calls are implemented over Mach traps
+     and messages. Since most developers target POSIX, they can remain unaware of Mach
+     APIs, and thus get away without having to use Mach at all.
+
+         Under the hood, however, Mach does not only provide BSD with functionality, but
+     also exports a rich set of APIs to user mode. This is the case with memory
+     management, wherein two MIG su bsystem s - the legacy vm_map. def s and the newer
+     mach_vm. defs - provide VM-related message sets. This comes at a cost of portability,
+     but opens up exciting new features that neither POSIX nor BSD ever implemented.
+
+         Table 5/2-5 shows the API parallels between BSD and Mach. The Mach messages
+     shown in the table are intentionally a subset of the full range available, focusing on
+     those shown earlier in 5/2-1. Additional messages, of a far more invasive nature, are
+     discussed later in Chapter 10 (Table 10/2-10).
+               Table
+               - --    -- mach - vm. defs messages, and their relation to the POSIX ca lls of Table 2-1
+                     5[2-5:
+POSIX call          MIG message                                        Notes
+ mmap(2)              mach_vm_map     mach_vm_map only allocates the pages (unlike mmap(2), cannot map file data)
+                    mach_vm_allocate                As mach_vm_map, but clears (zeroes) memory
+ madvise(2)         vm_behavior_set                 Specifies VM_BEHAVIOR_* hint, akin to MADV_*
+ mincore( 2)       mach_vm_page_query           MIG provides much finer metadata than the POSIX call
+                      mach_vm_wire          From host_priv.defs - [un]wire size bytes of address in task
+m[un)lock(2)          thread_wire      From host_priv.defs - set subsequent allocations in thread to be wired
+                       task_wire           From vm_map.defs - must_wire all subsequent allocations in task
+mprotect(2)          mach_vm_protect                         VM_PROT_* flags from osfmk/mach/vm_prot.h
+ munmap(2)         mach_vm_deallocate                                           Free mapping
+
+     2.2.2. VM Tags
+
+         XNU's Mach memory manager supports Virtual Memory Tags (VM Tags) - a littl e
+     documented, yet highly useful feature. This allows memory regions (i.e, mappings,
+     rather than individual pages) to be associated with an 8-bit value.
+
+         Mach VM region introspection APIs can then be used to enum erate not just regions,
+     but their tags. This is useful in assigning some "blame" to the region allocation, so as to
+     see what was its intended purpose. Apple's vmmap(l) and the Author's pro cexp( j) can
+     display the tags, resolved to a human readabl e name through the VM_MEMORY _                                   *
+     constants in <mach/vm_statistics.h>.
+
+                 Outp-ut 5[2-6: correlating procex p(j)/vm_map(l) with <mach/vm_statistics.h >
+       fliMl&M;IGf§jlMOEprocexp 1 regions
+                             0x7fba5150 000100e68000-000100ee0000 [ 480K] r-x/r-x cow /sbin/launchd
+                             0xf9b83004 000100ee0000-000100ee8000 [ 32K] r--/rw- cow
+                             0x7fba5150 000100ee8000- 000100eec000 [ 16K] rw-/ rw- PRY /sbin / launchd
+                             0x7fba5150 000100eec000-000100f00000 [ 80K] r--/r-- COW /sbin/launchd
+     - OYLO                  0x75efd4ac 000100f00000-000100f44000 [ 272K] r--/rwx PRY
+       VM ALLOCATE           0xd39fcbed 000100f44000- 000100f54000 [ 64K] rw- /rwx COW
+       Kernel Allo c Once    0x508f52fc 000100f54000- 000100f5c000 [ 32K] rw-/rwx COW...---- - -.- -                 . - -'L
+       MALLOC metadata       0x653a33b3 000100f5c000-000100f60 .define "" MEMORY MALLOC 1         <maCh/VllLstatl Stl cs . h> I
+       MALLOC metadata       0x653a33b3 000100f60000- 000100f64 .define ""=MEMORY =MALLOC_SMALL 2
+                                                                        Itdefine VM_MEMORY _MAllOC_ LARGE 3
+
+                                                                        #define VM_MEMORY _SBRK 5 // uni nteresting -- no one s hould call
+       MALLOC_SMALL             0x4a95d93b 000137800000- 000138000 'define VM _MEMORY_REALLOC 6
+       MALLOC_MEOIUM            0xdaa0ecde 000138000000-000140000 :~:;~~: :=~:::~ =~~~~~~=~!~~E~REUSABLE 8
+                                                                         #define VM_MEMORY _MAllOC_lARGE_REUSED 9
+                                                                         #define VM_MEMORY_ANALYSIS. TOOL 19
+
+       Stack                    0x73aae7f5 00016ef90000- 00016ef98 :~:;~~: ~~=~~~~:~ =~~~~~~=~~~~U~\2
+
+                                                                         #define VM_MEHORY _MACH_MSG 20
+                                                                         #define VM_MEMORY _IOKIT 21
+      L - - - - - - - - - -- -- - - - - - -- -- --1 #define VM_MEMORY,STACK                        30
+                                                                         #define VM_MEMORY _GUARD 31
+                                                                         #dafine VM_MEMORY SHARED_PMAP 32
+
+                                                                         /* memory allocated by the dynamic loader for itself */
+     '--- -- - - - - - - - - - - - - - -- -- ---f #define VM MEMORY_DYLO 60
+
+          Although VM tagging is performed by Mach, this feature is so useful that Darwin
+      extends mmap (2) to support it. When mapping anonymous memory the MAP_ANON must
+      be specified, making the fd (fifth) argument irrelevant (since anonymous memory has
+      no backing file) . Normally, the convention would be to pass -1 as an invalid descriptor.
+      Darwin, however, allows passing a memory tag here using the VM_MAKE_TAG macro, with
+      a user specified tag (preferably from the 240-255 range). Note, that the use of the
+      macro is needed because additional Mach extensions (namely, purgable memory,
+      discussed next) can also be specified in this argument.
+
+                                  Listing.1!L2-7: Demonstrating Darwin's VM Tags
+      #include <stdio.h>                                   II for printf(3)
+      #include <sys/mman.h>                                II for mmap(2)
+      #include <unistd.h>                                  II for sleep(3)
+      #include <mach/vm_statistics.h>                      II for VM_MAKE_TAG
+      void main ( int argc, char **argv){
+            II map and tag a page
+            void *vmtaggedMapping =
+
+                                                         0 ) ;;
+
+              sleep( 100 ); II so we can run vmmap(l) or procexp(j) on this
+      }
+
+          Darwin's libsystem_ma Hoc. dylib uses these tags 1-13 for its arenas.
+
+      2.2.3. Purgable Memory
+
+          Darwin's XNU (again, technically Mach) offers a unique classificatio n of memory as
+      purgable*. Purgablememory is such which can be automatically evicted by the kernel,
+      at a simple request by user mode. This is especially useful in cases of memory
+      pressure, wherein freeing physical memory is critical.
+
+          The undocumented kernelrpc_mach_vm_purgable_control_trap (#-11), and the
+      similarly undocumented [mach_l vm_pu rgab le_cont ro l MIG calls (#3830 and #4818),
+      can be used to VM_PURGABLE_[GET/STATELSTATE on the individual memory objects.
+      Darwin's libsystem_malloc.dylib exposes this through the
+      ma Hoc_make_ [non 1pu rgeab le (3 ! ) APIs, both of which take ptr value, and set the
+      purgable state to VM_PURGABLE_ [NON] VOLATILE (respective ly) . Another option still is, as
+      with VM Tags, to use mmap (2) 's fd argument and specify VMJLAGS_PURGABLE.
+
+          Using the trap with VM_PURGABLE_PURGE_ALL code will automatically purge objects
+      marked as purgable. The latter code is usually requested when user mode is notified of
+      memory pressure, such as by the vm_pressure_monitor system call (#296), the
+      DISPATCH_SOURCE_TYPE_MEMORYPRESSURE of GCD, or the APPLE: SYSTEM: MEMORYSTATUS
+      system socket.
+
+          The main client of this facility is libcache (3), though most developers may be
+      more familiar with the NSCache API s of Objective- C. The library enables its ca llers to set
+      up memory caches with reference counting, while internally setting the purgeable state
+      of their underlying VM objects. The libcache also registers for memorystatus
+      notifications, so as to evict items from the cache on memory pressure. Items evicted
+      can then be reloaded if they are needed again.
+
+          The undocumented task_purgable_info MIG ca ll can be used to get task-level
+      purgable memory statistics. The host_info MIG call can be used (with the
+      HOST_ VM_PURGABLE flavor) to get host-level statistics.
+
+      * - or, sometimes purgeable. This section describes the structures and APls the way Darwin uses them,
+      so these typos and inconsistencies are Apple' s, not the Author's ..
+
+          2.3. Memory Pressure
+
+               With RAM being the limited resource, it will inevitably run low or out. Such low
+          memory conditions are effectively a system emergency, because memory allocations
+          will fail, crashing processes left and right. The kernel, therefore, has to avoid low
+          memory conditions, and respond to memory pressure as early as possible.
+
+          2.3.1. Linux: OOM
+
+               Linux assigns every process in the system an oom_score, which is an indirect
+          function of the actual memory consumption, yielding a value between 0 and 1,000. The
+          score can be seen in the process' / proc/pid/ oom_ score entry. It is calculated as a function
+          of the process' runtime and memory utilization, increasing with the latter.
+
+               Normally, the score is just another metric . When the system encounters memory
+          pressure, however, the kernel's page fault handling logic diverts to oom_ki ll_process.
+          This routine iterates over the process list, and select the one whose oom_score is the
+          highest, killing it outright with a SIGKILL . This triggers the process reaping logic, which
+          (among other things) frees up that process' physical memory footprint . As a result,
+          menory is made available for the page fault to be retried, and satisfied. The OOM Killer
+          is an in-kernel facility, leaving traces only in the kernel log, in the output of dmesg (1) :
+
+                             Out~ut 5[2-8:   The output of dmesg (1 ), showing an OOM kill
+L.. J m invoked oom-killer: gfp_mask=..., order=0, oom_score_adj=0
+[_J CPU: 0 UIO: 0 PIO: 104024 Comm: m Not tainted 6.11.0-21-generic #21-Ubuntu
+L.. J Ha rdwa re name: ...
+#
+# Kernel stack trace. Stack is Last In First Out (LIFO), so bottoms up!
+#
+[. .. J Call trace:
+[. .. J dump_backtrace+0x104/0x160
+[. .. J show_stack+0x24/0x50
+L.. J    dump_stack_lvl+0x84/0xc0
+[. .. J  dump_stack+0x1c/0x40
+L.. J    dump_header+0x4c/0x1a8
+[. .. J  oom_kill_process+0x328/0x3c8
+[. .. J out_of_memory+0xe8/0x390
+[. .. J __ alloc_pages_may_oom+0x140/0 x218
+[. ..J __ alloc_pages_slowpath.constprop.0+0x460/0xa50
+[. ..J __ alloc_pages_noprof+0x2ec/0x3a0
+L.. J alloc_pages_mpol_noprof+0x9c/0x290
+L.. J folio_alloc_mpol_noprof+0x20/ 0xb0
+[. .. J vma_alloc_folio_noprof+0x8c/0x100
+[. .• J vma_alloc_zeroed_movable_folio+0x44/0x80
+[...J    alloc_anon_folio+0x1bc/0x580
+[ ..• J do_anonymous_page+0xf4/0x618
+[. .. J handle_pte_fault+0x21c/0x240
+[. .•J      handle_mm_fault+0x1e4/0x460
+L.. J handle_mm_fault+0xa4/0x280
+L.. J do_page_fault+0x130/0x5f0
+[ .•• J do_translation_fault+0x7 c/0xf0
+[. •• J do_mem_abort+0 x4c/0xd0
+[. •• J e10_da+0x4c/0x188
+[. •• J e10t_64_sync_handler+0xdc/0x160
+[. .. J e10t_64_sync+0x1b0/0x1b8
+[. •. J Mem-Info:
+[. •• J active anon:238401 inactive anon:136402 isolated anon:0
+               -      active_file:199 inactive_file:451 isolated file:0
+                      unevictable:7048 dirty:0 writeback:10
+                      slab_reclaimable:7453 slab_unreclaimable:14428
+                      mapped:1542 shmem:866 pagetables:2536
+                      sec_pagetables:0 bounce:0
+                      kernel_misc_ reclaimable:0
+                      free:3853 free_pcp:2158 free_cma:50
+#
+# Various memory statistics ...
+#
+[... J Tasks state (memory values in pages) :
+[... J [ pid J uid tgid total_vm rss rss_anon ... pgtables swapents ..._adj name
+L..J [ 314J      0 314      22696 580         32 ... 163840     288       -250 systemd-journal
+L.. J [ 370J     0 370      72176 6219      4736 ... 118784       0      -1000 multipathd
+[. .. J [ 618J 992   618     5391 573         64 ...  94208     480          o systemd-resolve
+           process list, sorted by tgid
+[... J [ 104024J         0 104024 1049144 368121 ... 6983680         496832        0 m
+[. .. J oom- ki 11: const raint=CONSTRAINT_NONE, nodemask= (null) ,cpuset=/ ,mems_allowed=0, globa l_oom,
+                 task_memcg=/user,slice/user-1000,slice/session-1580,scope,task=m,pid=104024,uid=0
+[-J Out of memory: Killed process 104024 (m) total-vm:4196576kB, anon-rss:1471744kB.
+                                   file-rss:740kB, shmem-rss:0kB, UID:0 pgtables:6820kB oom_score_adj:0
+
+          The heuristic proves quite efficient, but isn't perfect. Normally, the process killed
+      "deserved to die", since its score was the highest, implying inefficient, irresponsible, or
+      just plain excessive memory utilization. Sometimes, however, the OOM killer might
+      inadvertently slay innocents . To make matters worse, the processes thus terminated
+      have no recourse, and their death (by a SIGKILL) leaves no trace .
+
+           To help the grim reaper tell the damned from the righteous, the oom_score allows a
+      modifier, in the form of oom[_scoreL adj. These two files allow specifying a number which
+      will be added to the score (oom_score_adj), or a bit shift of the score (oom_adj) .
+
+          Using a positive number as an adjustment greatly increases the "killability" of the
+      process. But the adjustment can also be set to a negative number. This pushes the
+      process further down the list, making it less killable. In the most extreme case, an
+      adjustment of -1000 effectively sets the oom_score to always be 0, irrespective of the
+      process memory utilization . Android sets that for in it and its progeny.
+
+      2.3.2. Android: Low Memory Killer Daemon (jsystem/bin/lmkd)
+
+           Once Android's system_server has finished booting and the system UI starts,
+      Android applications follow the Activity Lifecycle . A better discussion of the lifecycle can
+      be found in the Android documentation and A-II/3, but the salient point is that only a
+      limited number of activities (usually, just one) can be "active" at any time - that is, be
+      visible and command the UI.
+
+          Users are well familiar with this model, as the limited screen space of a mobile
+      device forces them to actively task switch between applications. At the system level, it
+      does not make sense to keep activities running in the background (Android defines the
+      "service" components for that). Activities not in the foreground are therefore
+      suspended, so as not to consume unnecessary CPU cycles.
+
+          But what of the memory of applications in the background? With RAM being a
+      precious resource (and limited swap, if any), it is only a matter of time before too many
+      background applications will weigh on available RAM, depleting it. Normally, this is
+      where the underlying Linux OOM killer would come into play. The problem, however, is
+      that it is heuristic driven - and may therefore kill the wrong processes, negatively
+      impacting the user experience, or - worse - system stability.
+
+           The init process and his daemonic cabal need not worry much, since they are all
+      pre - set with an oom_sco re_adj of -1000. But that only solves part of the problem .
+      Android therefore considers Applications to be "managed" processes . The manager on
+      duty is ActivityManager (part of system_server). Android applications register all
+      their components (that is, activities, but also services, receivers and providers) with it.
+      This enables the ActivityManager to be aware at all times of their usage, and visibility
+      (in the case of Activities) or (service) bindings.
+
+           The ActivityManager then informs a dedicated Android daemon - the Low Memory
+      Killer Daemon (lmkd) of the application state changes in the form of messages (over
+      /dev/socket/lmkd) . Each message informs lmkd of the victim PID and the requested
+      oom_sco re_adj value. The daemon directly writes to that PID's /proc/pid/oom_score_adj.
+
+               B.gure 5L2-9: The Android Acti vity Lifecycle and its interaction with lmkd, illustrated
+
+                                                                                                                 2) ActivityManager
+                                                       1) App component (e.g. Activity)                          conveys IIfecycle state
+                                                           IIfecycle Is managed by                             changes as LMK_PROCPRIO
+                                                        Acti vi tyManager, who lives                                          to lmkd
+                                                           Inside system_server
+
+                                                                                ActMtyManager
+                       onSlinO          4 __       _
+                                                                              (systell\...server)
+
+                                                                                   3) 1mkd writes the values       /proc/pi d/OOlLScor--.adj
+
+                      =
+                 """"'"'-""""
+                   fllor-.Ior.-qrovnd                                              from the message Into the
+                           I                                                        process oom_score_adj
+
+      -=[~
+                            I
+                1lIe.cIWrtyPSJ\nthfo'g Of
+              beI"\IONltO'yedbytn.1yt1e'Yl                                           +----+ Bi nder messages
+                           I                  4) This Is why the official
+                                                documentation states                  - - / dev/socket/ lmkd
+                                             process may die at any time
+                                                                                      - - / proc/ pid/ oom_score_adj file write
+
+     The collaboration between ActivityManager and lmkd helps ensure that, in a low
+  memory condition, there is greater probability of killing background processes,
+  according to the OOM score adjustment values. The adjustment classes and the
+  managed processes can both be displayed through dumpsys activity oom:
+
+          Outp-ut 5[2-10: The output of dumpsys activity oom, showing OOM score adjustments
+
+tokay:1 $ Qym~y's activity~
+  OOM levels:
+    -900: SYSTEM_AOJ (   73,728K)
+    -800: PERSISTENT_PROC_ADJ (    73,728K)
+    -700: PERSISTENT_SERVICE_ADJ (    73,728K)
+      0: FOREGROUND_APP_ADJ (   73,728K)
+     100: VISIBLE_APP_ADJ (   92,160K)
+     200: PERCEPTIBLE_APP_ADJ ( 110,592K)
+     225: PERCEPTIBLE_MEDIUM_APP_ADJ ( 129,024K)
+     250: PERCEPTIBLE_LOW_APP_ADJ ( 129,024K)
+     300: BACKUP_APP_ADJ ( 221,184K)
+     400: HEAVY_WEIGHT_APP_ADJ ( 221,184K)
+     500: SERVICE_ADJ ( 221,184K)
+     600: HOME_APP_ADJ ( 221,184K)
+     700: PREVIOUS_APP_ADJ ( 221,184K)
+     800: SERVICE_B_ADJ ( 221,184K)
+     900: CACHED_APP_MIN_ADJ ( 221,184K)
+     999: CACHED_APP_MAX_ADJ ( 322,560K)
+
+ Process OOM control (127 total, non-act at 1, non-svc at 1):
+   PERS #126: sys         FI IPER LCMNFUA t: 0 958:system/1000 (provider)
+    com. and roid. p rov ide rs. sett ing 51. Sett ingsProv ide r<=P roc{2252: com. and raid. netwo rkstack ... }
+    oom: max=-900 curRaw=-900 setRaw=-900 cur=-900 set=-900
+    state: cur=PER set=PER lastRss=832MB lastCachedRss=0.00
+    cached=false empty=false hasAboveCl i ent=false
+
+ mHomeProcess: ProcessRecord{a6ee4dc 2577:com.google.android.apps.nexuslauncher/u0a235}
+ mPreviousProcess: null
+
+      An interesting side effect of this facility is that by iterating over all spawn of Zygote
+  and inspecting their oom_sco re_adj s, one can figure out the foreground (0) visible
+  (100) and other apps.
+
+  2.3.3. Darwin: MemoryStatus (macOS) and Jetsam (elsewhere)
+
+       Darwin's take on memory pressure differs between the more lenient mac05, and
+  the other * 05 variants. The two fa cilities - memorystatus and Jetsam - were once
+  distinctly separate, but with Apple's move to arm64, and like other aspects of the *05
+  variants, they are slowly merging together. XNU's otherwise sparse documentation
+  devotes a substantial amount (= 3 files) to covering aspects of both these facilities, in
+  doc/vm/me morystatus * .md files .
+
+  2.3.3.1. macOS: MemoryStatus
+
+      Darwin maintains a metric called MemoryStatus to keep track of the memory
+  pressure level. Memorystatus is a number between the hypotheticals of 0 and 100,
+  indicating the system-wide memory free percentage .
+
+      Three undocumented system calls can be used to interact and control the facility:
+
+                        Table
+                        -     - - - Darwin memory st atus related system calls
+                          - -5[2-11:
+     #                 System Call                                           Purpose
+    440     memorystatus_control (cmd, pid, flag s ,       Apply cmd to pid with optional flags and buffer
+                         but, butSize);                                   of bufSize bytes
+    453         memorystatus_get_level (level)                     Get memory status level, 0-100
+    534        memorystatus available memory ()                         Get available memory
+
+      The memo rystatus_cont ro l( 2!) system call is an ioctl (2) style, originally
+  discussed in M-I/9-27 . Back then (Darwin 19) it supported some 21 command codes,
+  but the number has since increased to 34, many used for development.
+
+     memo rystatus_get_leve 1 (2) returns the current amount of free memory, and is
+  essentially the same as calling sysctl(2) with the kern.memorystatus_level MIB.
+
+      mac05 's memorystatus will attempt to quietly idle-exit applications whenever
+  possible. This occurs whenever application memory is clean and the processes in
+  question aren't involved in any transaction . The kill is Silent, and for applications has the
+  subtle effect of removing the small dot on the dock icon, indicating application activity.
+  The kernel generates an os_log message, specifying: kernel: memorystatus:
+  killing_idle_ process pid ### [ ... J jetsam_reason->osr_ code: 9
+
+               "Code 9" is one of several possible codes . XNU's bsd/ sys/kern_memory-status. h lists the
+           various JETSAM_REASON_* codes, and doc/vm/memorystatus_kill s. md further documents
+           them .
+
+            Listing.2L2-12: The JETSAM_REASON_* codes (from XNU 11215.81.4'5 bsd/sys/kern_memorystatus.h)
+      /*
+       * Jetsam exit reason definitions - related to memorystatus
+
+       ** When adding new exit reasons also update:
+        *      JETSAM_REASON_MEMORYSTATUS_MAX
+               kMemorystatusKilled ••• Cause enum
+        *      memorystatus_kill_cause_name[J
+        *
+       */
+      #define JETSAM_REASON_INVALID                             0
+      #define JETSAM_REASON_GENERIC                             1
+      #def ine J ETSAM_REASON_MEMORY _HIGHWATER                 2
+      #define JETSAM_REASON_VNODE                               3
+      #define JETSAM_REASON_MEMORY_VMPAGESHORTAGE               4
+      #define JETSAM_REASON_MEMORY_PROCTHRASHING                5
+      #define JETSAM_REASON_MEMORY_FCTHRASHING                  6
+      #define JETSAM_REASON_MEMORY_PERPROCESSLIMIT              7
+      #define JETSAM_REASON_MEMORY_DISK_SPACE_SHORTAGE          8
+      #define JETSAM_REASON_MEMORY_IDLE_EXIT                    9
+      #define JETSAM_REASON_ZONE_MAP_EXHAUSTION                 10
+      #define JETSAM_REASON_MEMORY_VMCOMPRESSOR_THRASHING       11
+      #define JETSAM_REASON_MEMORY_VMCOMPRESSOR_ SPACE_SHORTAGE 12
+      #define JETSAM_REASON_LOWSWAP                             13
+      #define JETSAM_REASON_MEMORY_SUSTAINED_PRESSURE           14
+      #define JETSAM_REASON_MEMORY_VMPAGEOUT_STARVATION         15
+      #define JETSAM_REASON_MEMORYSTATUS_MAX JETSAM_REASON_MEMORY_VMPAGEOUT_STARVATION
+      /* non-memorystatus jetsam reasons */
+      #define JETSAM_REASON_CPULIMIT                            100
+
+                The memory_pressure( 1) utility (part of th e ope n source system_cmds project) will
+           display the memory status level under "System - wide memory free percentage", in its
+           last line of output. The tool can also be used for inducing memory pressure, either by
+           allocating until a certain percentage (-p) , or level (-1 [warn/critical]), or simulating
+           it (-S), which uses the kern.memorypressure_manual_trigger sysctl(8) MIB.
+
+               The Author's procexp(j) uses memorystatus_control(2! )'s
+           MEMORYSTATUS_ CMD_GET_PRIORITY _LIST (code #1) to get the list and memory status
+           scores of all processes in the system.
+
+           2.3.3.2. Jetsam
+
+                Darwin's mobile variants are much more tightly constrainted than macOS, so a
+           facility as gentle as MemoryStatus simply won't suffice . Instead, the * 05 variants use
+           Jetsam , which - like its namesake - jettiso ns processes in a desperate effort to keep
+           the overall system afloat.
+
+               Jetsam defines priority bands (in XNU's bsd/sys/kern_memorystatus.h). Not unlike
+           Linux OOM scores, a process' priority band value directly affects its "killability". Though
+           already discussed in M-I/9, the bands have since undergone a revision (to the present
+           day JETSAM_PRIORITY_REVISION 2), whi ch preserved the affinity of the range (roughly)
+           by a factor of 10, to the present 0-210 , shown in the Figure (next page) .
+
+               Darwin's runningboardd functions somewhat similarly to lmkd, moving processes in
+           between Jetsam priority bands. This is a privileged opeation, for which purpose it holds
+           the com.apple.private.jetsam.modify-priority entitlement (set to 100) . These
+           processes are marked through a call to memory st atus_controU2!) with the
+           MEMORYSTATUS_CMD_SET_PROCESS_IS_MANAGED flag .
+
+                         .Ei.gure 5[2-13: Jetsam priority band s
+
+       MAX(210)
+
+        (200)
+
+    CRITICAL (190)
+
+   IMPORTANT (180)
+
+   EXECUTIVE (170)
+
+      HOME (160)
+
+ DRIVER-APPLE (150)
+
+   CONDUCTOR (130)
+
+   UI_SUPPORT (80)
+
+     FREEZER (75)
+
+      PHONE (50)
+
+ELEVATED_INACTIVE
+
+   BACKGROUND (30)
+
+   AGIN~D2        (20)
+
+AGING-BAND1-STUCK (15)
+
+   AGING-BAND1 (10)
+
+       IDLE (0)
+
+          At the system level, there is no sense to the term "memory layout" . RAM is shared
+      by the kernel and so many processes, each of which in their own distinct virtual address
+      space. While in some rare cases RAM layout may be interesting, the rapid frequency of
+      paging makes it far too volatile to consider, outside predefined reservations.
+
+          What are commonly observed at the system level, therefore, are memory metrics .
+      These present statistics on just how much overall memory is used by which subsystem,
+      and whether the system as a whole is fine, or under "memory pressure", wherein more
+      RAM is needed.
+
+      3.1.     Linux: /proc/meminfo
+
+          Linux provides system-wide memory statistics in /proc/meminfo. This pseudofile * is
+      both human readable and easily 9 rep (1) -able. It ca n be read by any uid able to read
+      proc files (i.e. on Linux, any user, and on Android, members of AID 3009, readproc).
+      The following listing provides an annotated example:
+
+                                     Outp-ut 5[3-1: The /proc/meminfo pseufofile
+
+                morpheus@Forge:~$ ~Lp-rocLmeminfo
+               MemTotal:             1674276 kB
+               MemFree:               260588 kB
+               MemAvailable:         1323756 kB
+               #
+               # Cached Memory Statistics
+               #
+                Buffers:              194708 kB
+                Cached:               881596 kB
+                SwapCached:             9316 kB
+               #
+               # Active/Inactive breakdown
+               #
+               Active:                236528 kB
+               Inactive:              870828 kB
+               Active(anon) :          30732 kB
+               Inactive(anon):         80100 kB
+               Active(file) :         205796 kB
+               Inactive(file) :       790728 kB
+               Unevictable:            28192 kB
+               Mlocked:                25120 kB
+               #
+               # Swap statistics
+               #
+               SwapTotal:        2097148 kB
+               SwapFree:         1828840 kB
+               Zswap:                  o kB
+               Zswapped:               o kB
+               #
+               # General classifications
+               #
+               Dirty:                  o kB
+               Writeback:              o kB
+               AnonPages:          54116 kB
+               Mapped:             60600 kB
+               Shmem:              73672 kB
+               #
+               # Kernel memory statistics begin here with "KReclaimable"
+               # (not shown)
+
+      3.1.1. High-Level memory statistics
+
+             High-Level memory statistics consist of three elements:
+
+         •    MemTotal: is the total amount of RAM usable by the platform. This is commonly
+              the amount of the device installed RAM, minus any reservations made by other
+              hardware components, or in the platform's device tree.
+         •    MemFree: is the total amount of RAM which is presently unused. In other words,
+              MemTota l - MemF ree is in use .
+         •    MemAvailable: is the total amount of RAM which is available for use.
+
+         It might seem odd that in some cases (like the above), MemAvai lab le is larger than
+      MemF ree. This is because of cache memory, which we discuss next.
+
+      * - As with other files in /proc, /proc/meminfo is not a real file - but a pseudofile generated by
+      meminfo_proc_show( ... ), from the kernel's fs/procjmeminfo.c
+
+3.1.2. Cached memory statistics
+
+    The OS normally uses memory first and foremost for the kernel, and then for
+whichever user processes require it. This does, however, normally leave large amounts
+of RAM unused. The OS therefore takes liberty in repurpos ing this otherwise unused
+memory for caching.
+
+   Traditionally, I/O has always been a slow operation. Legacy hard drives spin at some
+7200RPM, which puts their average seek delay at around 69ms. While but an instant by
+human standards, this is on order of years fo r a processor running in nanoseconds.
+Even solid state drive (SSD) access can similarly seem like days at a time .
+
+     The solution, therefore, is to minimize I/O device access as much as possible . The
+initial access cannot be avoided. But, once data is read, it can be cached in memory, so
+that subsequent reads of the same I/O block need not access the device again.
+
+      Linux keeps two I/O caches:
+
+  •     The Page Cache : is a cache of RAM pages, which are associated with file I/O. A
+        file read will populate that file's read data in the page cache, possibly (at the
+        filesystem's discretion) reading ahead more of all of the file's contents. The user
+        process' mmap(2)ed pages wi ll be mapped over the page cache pages (but with a
+        virtual address in that process' address space).
+  •     The Buffer Cache: is a cache of blocks, which are not directly associated with
+        file I/O. This is usually for directory entries, supporting metadata, or raw blocks
+        (such as those accessed by fd is k (1) or dd ( 1) over the raw device.
+
+     The caches are transparent from user mode, but nonetheless have a profound effect
+on system performance, since they can minimize block device access. A hi gh level v iew
+of this is demonstrated in the following figure :
+
+                                                figure 5[3-2: I/ O caching
+
+       l   1) Process perfoms an 1/0 J
+           system call (read,write, ... )
+
+   2) VFS abstracts I/O so
+ everything can be treated as                                                                     a) Devices can also be     ]
+  an inode with some offset                                       Virtual FJIeeyatem SWItch        accessed as "nodes"
+                                                                                                 through devfs filesystem
+   3) Filesystem driver uses                  Filesystem Driver                                         devfs filesystem
+   FS metadata to figure out
+   block device and block list
+
+                                   --'~-'---                         c) Non-inode related
+                                                                   access to block devices
+      4) Filesystem and Inode
+                                                                  is cached in buffer cache
+      serves to index buffered
+          data of file, if any
+
+                                                                                                             I
+                                                                       au«erCache
+
+                                               I1                                b) Character device
+                                                                                 access is unbuffered
+ 5) If cache cannot satisfy request,        Block Device
+                                                                                      and direct
+       block device is accessed                                                                               Character Device
+
+     The system will seek to use as much memory as required for caches, by leaving
+cached pages and blocks and memory for as long as possible. In the event a process
+(or the kernel proper) demands more memory, it would get priority over the caches,
+first taking up free memory (if possible), and then causing the caches to be shrunk.
+This is shown in the following experiment.
+
+              A low value of MemFree is act ually desira ble, when coupled with high Buffers
+              and Ca ched values. A high value usually indicative of recovery from memory
+              pressure, which had shrun k caches in favor of process demands for memory.
+
+           Experiment: Looking into caches
+         To demonstrate the file (inode) cache, we create a temporary file, large enough to "move the
+      needle". We note the cache sizes before and after:
+
+                                    Out[!ut 5L3-3-a: Demonstrating caching of files
+       #
+       # Cache sizes before:
+       #
+       morpheus@Forge :"'$ ~L~Lmeminfo            L.~gL!UL..:.:.(Buffers I~)":"
+       Buffe rs:           195048 kB
+       Cached:             898528 kB
+       #
+       # Create f He, using /dev/urandom for junk random data
+       #
+       morpheus@Forge:"'$ ~~Lyrandom of=LtmQLtestfitel bs=1024 count=10240
+       10485760 bytes (10 MB, 10 MiB) copied, 0.0258668 5, 405 MB/s
+       #
+       # Check again
+       #
+       morpheus@Forge:"'$ ~L~Lmeminfo             l~g~ ~(Buffersl~)":"
+       Buffers:           195048 kB
+       Cached:            908768 kB
+
+          The Buffer Cache is unmodified, but the Page Cache has increased by exactly l0240K! This is
+      because as soon as it is created, the file contents populate the cache. Copying the file to another
+      temporary file will likewise increase the cache (since the contents do not matter - only the inode
+      association does). The contents will remain in the cache until a forced purge, or if the file is
+      deleted (and all handles to it are closed):
+
+                              Out[!ut 5L3-3-b: Demonstrating decaching of files on removal
+       morpheus@Forge:"'$ IID-Ltmp-Ltestfilel
+       morpheus@Forge:"'$ ~ L P-[Q£Lmeminfo       I egre ~(BuffersICached)":"
+       Buffers:           195052 kB
+       Cached:            898528 kB
+
+           Throughout this, the Buffers entry remained largely unmodified. To demonstrate its use, we
+      need to look at I/O which is not associated with a file . One example would be to co ndu ct a mass
+      filesystem search, but a simpler example can be shown with a direct read of a block device (for
+      which root access is needed:
+
+                                    2!!![!ut 5L3-3-c: Demonstrating the buffer cache
+       root@ubu# dd if=LdevLsdal bs=1024 count=10240 of=~Lnyll
+       10485760 bytes (10 MB, 10 MiB) copied, 0.0183512 5, 571 MB/s
+       root@ubu# cat /proc/meminfo I egrep ' ft (BuffersICached)'
+       Buffers:           205380 kB
+       Cached:           898784 kB
+       #
+       # Example using a mass filesystem search:
+       #
+       root@Forge# ~ L -size +lM >~Lnytt 2 > ~LnYll
+       root@Fo rge# .t..a.L L~Lmeminfo I~g~~( Byffers I~)":"
+       Buffers:               261236 kB
+       Cached:                814952 kB
+
+          Unlike cached files, cached buffers cannot be explicitly removed, but will be automatically
+      purged when the cache shrinks due to memory pressure.
+
+          To finish this example, we can take a large enough file which we did not handle before - the
+      kernel's initrd makes for a suitable candidate - and time reading it twice in succession:
+
+                             Out[!ut 5L3-3-d: Demonstrating the time benefits of cached I/O
+       morpheus@Forge:",$ time cat LbQQ!Linitrd . img-6.11 . 0-8-generic >~LnYll
+       real    0m0.043s
+       user    0m0.000s
+       sys     0m0.021s
+       morpheus@Forge:"'$ time cat LbQQ!Linitrd . img-6 . 11.0-8-generic > ~LnYll
+       real    0m0.020s
+       user    0m0.000s
+       sys     0m0.020s
+
+          The time in the initial attempt is substantially (above, twice as) longer than in repeated
+      attempts . The difference in times will increase dramatically with larger files, so you might want to
+      retry with a 100MB or even a 1GB file .
+
+3.1.3. Memory Activity Statistics
+
+    The kernel provides a view of page active/inactive state. These metrics are amongst
+the most frequently modified ones. In any case, the following formulae hold:
+
+• Active(file) + Inactive(file) = All file backed memory
+• Active(anon) + Inactive(anon) = All anonymous memory
+• Active + Inactive = All memory used
+
+3.1.4. Unevictable/Locked Memory Statistics
+
+    Memory can be made unevictable when it is used by DMA, ramfs, or is part of
+System V shared memory marked as SHM_LOCK. A subset of unevictable memory is
+Mlocked memory, which processes acquire using mlock(2). Unevictable or locked (in
+Darwin-speak, "Wired") memory must be explicitly munlock(2). Otherwise, it will
+remain resident and never be swapped or purged, until the death of its process.
+
+               Using mlock(2) is generally considered bad practice, as it appropriates
+               RAM, a shared resource, exclusively for the caller* . The maximum
+               amount of RAM lockable by a process can (and definietly should) be
+               limited through setrlimit(2)'s RLIMIT_MEMLOCK (or ulimit -1).
+
+3.1.5. Swap/Compressed RAM Statistics
+
+     The SwapTotal and SwapFree are in line with the amount reported by swapon(1),
+which takes its data from the /proc/swaps psuedofile. The swap figures account to both
+physical swap (i.e. swap files or devices) as well as compressed RAM. ZSwap or Zram
+(if present) refer to compressed RAM footprint only.
+
+3.2. Darwin-specific metrics
+
+    Darwin 's metrics are largely like those of the other operating systems, with two
+notable exceptions being compressor statistics, and purgeable memory.
+
+3.2.1. vm_stat(l}
+
+     The vm_stat (1) utility (part of the open source system_cmds project) is a simple
+program to display virtual memory statistics. The code cal ls host_statistics64( ... )
+(from <mach/mach_host.defs>, MIG message 219) with an argument of HOST_VM_INF064.
+It then parses the returned struct vm_statistics64 (from <mach/vm_statistics.h). Two
+fields not displayed are lookups and hits, used for object cache.
+
+   A sample of the values returned is shown in Output 5/3-4, with the structure fields
+commented.
+
+                         OutRut 5[3-4: The annotated output of vm_stat (1)
+
+ Mach Virtual Memory Stat istics : (page size of 16384 bytes)
+ Pages free:                                290406.   # free_count
+ Pages active:                              696187.
+ Pages inactive:                            668631.
+ Pages speculative:                          26635. # speCUlative_count
+ Pages throttled:                                0.
+ Pages wired down:                          159748.
+ Pages purgeable:                            90701.
+ "Translation faults":                  1148423002. # faults
+ Pages copy-on-write:                     31391594.
+ Pages zero filled:                      750761300.
+ Pages reactivated:                       13067418.
+ Pages purged:                            25450033. # purges
+ File-backed pages:                         448858.
+ Anonymous pages:                           942595.
+ Pages stored in compressor:                551504. # total_uncompressed_pages_in_compre
+ Pages occupied by compressor:              203466. # compressor_page_count
+ Decompressions:                           8038665.
+ Compressions:                            13034731.
+ Pageins:                                 45037804.
+ Pageouts:                                  220230.
+ Swapins:                                       16.
+ Swapouts:                                      16. # swapouts
+
+* - The mlockall(2) system call is considered worse, and is not even supported in Darwin.
+
+      3.2.2. memory_pressure(l)
+
+          The aforementioned memo ry-p ressu re (1) utility, with no arguments, will display
+      similar output to vm_stat (1).
+
+                                 Outp-ut 5[3-5: The memory-pressure tool
+
+       morpheus@eM1nent ( ~ )$ ~y'_pressure
+       The system has 34359738368 (2097152 pages with a page size of 16384).
+       Stats:
+       Pages free: 24411
+       Pages purgeable: 123902
+       Pages purged: 6073782
+       Swap I/O:
+       Swapins: 0
+       Swapouts: 0
+       Page Q counts:
+       Page s active: 932374
+       Page s inactive: 782512
+       Page s speculative : 153768
+       Pages throttled: 0
+       Pages wired down: 123466
+       Compressor Stats:
+       Pages used by compressor: 28377
+       Pages decompressed: 240293
+       Pages compressed: 470580
+       File I/O:
+       Pageins: 11228295
+       Pageouts: 19551
+       System-wide memory free percentage: 92%
+
+          XNU exports swap statistics through sysctl(8) MIBs.
+
+                           Outp-ut 5[3-6: Displaying swap information on Darwin
+
+       morpheus@eM1nent (~) % jy.sctl -A I QLeP ym,swap
+       vm.swapusage: total = 11264.00M used = 10934.94M         free = 329.06M    (encrypted)
+       vm.swap_enabled: 1
+       vm.swapfileprefix: /System/Volumes/VM/swapfile
+
+4. Re'\tijew'! Que;s1i~Qmls;
+          -         "- -     -
+    1.   If given a choice between a 25% faster processor or a doubling of system RAM,
+         which would be preferable? Describe the metrics which would affect the decision.
+    2.   What would be a legitimate need to use (very sparingly) mlock(2)
+    3.   What is a potential complication of using a system with flash-based, rather than
+         hard drive storage, with very little free disk space?
+    4.   What are the advantages of using the Darwin mach_vm_* Mach traps (e.g.
+         mach_vm_allocate_trap, or mach_vm_protect_trap) instead of the
+         corresponding higher level BSD system calls (e.g. mmap(2) or mprotect(2))?
+         What are the disadvantages?
+    5.   One could devise a way to use ARMvS . 5 Memory Tagging Extensions (MTE) along
+         with Mach VM Tags. What would be such a use case? What would be the
+         limitations?
+    6.   Android's "Zygote" (jsystem/bin/app_ process) is a pre-initialized Android RunTime
+         environment, stopped short of loading the application class. Explain the two main
+         benefits of this model, and contrast it with the traditional model of virtual
+         machine startup (i.e. java dassName).
+    7.   As an experiment, write a small program to allocate memory in a loop.
+            o What is the disparity that quickly emerges between RSS and VSS?
+           o   Add to the program a statement to memset (3) the allocated memory. How
+               does change the disparity?
+           o   Try the program on Linux, and - While the program is running - adjust the
+               oom_score_adj to -1000. What happens not too long after?
+
+    S.   Android's lmkd is not root, but can nonetheless access any /proc/pid/oom _score_adj
+         file it wants. Explain how that is possible, (if possible, with evidence from an
+         actual Android device).
+    9.   What is there to prevent a process from attempting to fool the Linux OOM into
+         letting it go, by modifying its oom_sco re_adj? Would that be possible in Android?
+   10.   In the caching experiment, try to use sync( 8), to flush the caches, then check
+         the statistics again. Explain the observed behavior.

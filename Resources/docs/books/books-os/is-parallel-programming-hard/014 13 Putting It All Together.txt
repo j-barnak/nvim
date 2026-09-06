@@ -1,0 +1,1696 @@
+                                       You don’t learn how to shoot and then learn how to
+                                       launch and then learn to do a controlled spin—you
+                                       learn to launch-shoot-spin.
+                                                         Ender’s Shadow, Orson Scott Card
+
+Chapter 13
+
+Putting It All Together
+
+This chapter gives some hints on concurrent-programming puzzles. Section 13.1 consid-
+ers counter conundrums, Section 13.2 refurbishes reference counting, Section 13.3 helps
+with hazard pointers, Section 13.4 surmises on sequence-locking specials, Section 13.5
+and reflects on RCU rescues. Finally, although the best performance and scalability
+results from design rather than after-the-fact micro-optimization, micro-optimization
+is nevertheless necessary for the absolute best possible performance and scalability.
+Therefore, Section 13.6 meanders through a few micro-optimizations.
+
+13.1      Counter Conundrums
+
+                                       Ford carried on counting quietly. This is about the
+                                       most aggressive thing you can do to a computer, the
+                                       equivalent of going up to a human being and saying
+                                       “Blood . . . blood . . . blood . . . blood . . .”
+                                                                            Douglas Adams
+
+This section outlines solutions to counter conundrums.
+
+13.1.1    Counting Updates
+Suppose that Schrödinger (see Section 10.1) wants to count the number of updates for
+each animal, and that these updates are synchronized using a per-data-element lock.
+How can this counting best be done?
+    Of course, any number of counting algorithms from Chapter 5 might qualify, but
+the optimal approach is quite simple. Just place a counter in each data element, and
+increment it under the protection of that element’s lock!
+    If readers access the count locklessly, then updaters should use WRITE_ONCE() to
+update the counter and lockless readers should use READ_ONCE() to load it.
+
+13.1.2    Counting Lookups
+Suppose that Schrödinger also wants to count the number of lookups for each animal,
+where lookups are protected by RCU. How can this counting best be done?
+
+                                                                                             v2025.12.18a
+430                                  CHAPTER 13. PUTTING IT ALL TOGETHER
+
+    One approach would be to protect a lookup counter with the per-element lock, as
+discussed in Section 13.1.1. Unfortunately, this would require all lookups to acquire
+this lock, which would be a severe bottleneck on large systems.
+    Another approach is to “just say no” to counting, following the example of the
+noatime mount option. If this approach is feasible, it is clearly the best: After all,
+nothing is faster than doing nothing. If the lookup count cannot be dispensed with, read
+on!
+    Any of the counters from Chapter 5 could be pressed into service, with the statistical
+counters described in Section 5.2 being perhaps the most common choice. However,
+this results in a large memory footprint: The number of counters required is the number
+of data elements multiplied by the number of threads.
+    If this memory overhead is excessive, then one approach is to keep per-core or
+even per-socket counters rather than per-CPU counters, with an eye to the hash-table
+performance results depicted in Figure 10.3. This will require that the counter increments
+be atomic operations, especially for user-mode execution where a given thread could
+migrate to another CPU at any time.
+    If some elements are looked up very frequently, there are a number of approaches
+that batch updates by maintaining a per-thread log, where multiple log entries for a given
+element can be merged. After a given log entry has a sufficiently large increment or
+after sufficient time has passed, the log entries may be applied to the corresponding data
+elements. Silas Boyd-Wickizer has done some work formalizing this notion [BW14].
+
+13.2      Refurbish Reference Counting
+                                        Counting is the religion of this generation. It is its
+                                        hope and its salvation.
+                                                                                 Gertrude Stein
+
+Although reference counting is a conceptually simple technique, many devils hide in
+the details when it is applied to concurrent software. After all, if the object was not
+subject to premature disposal, there would be no need for the reference counter in the
+first place. But if the object can be disposed of, what prevents disposal during the
+reference-acquisition process itself?
+     There are a number of ways to refurbish reference counters for use in concurrent
+software, including:
+
+   1. A lock residing outside of the object must be held while manipulating the reference
+      count.
+
+   2. The object is created with a non-zero reference count, and new references may be
+      acquired only when the current value of the reference counter is non-zero. If a
+      thread does not have a reference to a given object, it might seek help from another
+      thread that already has a reference.
+
+   3. In some cases, hazard pointers may be used as a drop-in replacement for reference
+      counters.
+
+   4. An existence guarantee is provided for the object, thus preventing it from being
+      freed while some other entity might be attempting to acquire a reference. Existence
+
+                                                                                                  v2025.12.18a
+13.2. REFURBISH REFERENCE COUNTING                                                  431
+
+                   Table 13.1: Synchronizing Reference Counting
+
+                                                Release
+                                         Reference   Hazard
+                  Acquisition   Locks                            RCU
+                                         Counts      Pointers
+                  Locks           −        CAM            M       CA
+                  Reference
+                                  A        AM             M        A
+                  Counts
+                  Hazard
+                                  M         M             M        M
+                  Pointers
+                  RCU            CA        MCA            M       CA
+
+      guarantees are often provided by automatic garbage collectors, and, as is seen in
+      Sections 9.3 and 9.5, by hazard pointers and RCU, respectively.
+
+   5. A type-safety guarantee is provided for the object. An additional identity check
+      must be performed once the reference is acquired. Type-safety guarantees can
+      be provided by special-purpose memory allocators, for example, by the SLAB_
+      TYPESAFE_BY_RCU feature within the Linux kernel, as is seen in Section 9.5.
+
+   Of course, any mechanism that provides existence guarantees by definition also
+provides type-safety guarantees. This results in four general categories of reference-
+acquisition protection: Reference counting, hazard pointers, sequence locking, and
+RCU.
+Quick Quiz 13.1: Why not implement reference-acquisition using a simple compare-and-swap
+operation that only acquires a reference if the reference counter is non-zero?
+
+    Given that the key reference-counting issue is synchronization between acquisition of
+a reference and freeing of the object, we have nine possible combinations of mechanisms,
+as shown in Table 13.1. This table divides reference-counting mechanisms into the
+following broad categories:
+
+   1. Simple counting with neither atomic operations, memory barriers, nor alignment
+      constraints (“−”).
+
+   2. Atomic counting without memory barriers (“A”).
+
+   3. Atomic counting, with memory barriers required only on release (“AM”).
+
+   4. Atomic counting with a check combined with the atomic acquisition operation,
+      and with memory barriers required only on release (“CAM”).
+
+   5. Atomic counting with a check combined with the atomic acquisition operation
+      (“CA”).
+
+   6. Simple counting with a check combined with full memory barriers (“M”).
+
+   7. Atomic counting with a check combined with the atomic acquisition operation,
+      and with memory barriers also required on acquisition (“MCA”).
+
+                                                                                            v2025.12.18a
+432                                         CHAPTER 13. PUTTING IT ALL TOGETHER
+
+However, because all Linux-kernel atomic operations that return a value are defined
+to contain memory barriers,1 all release operations contain memory barriers, and all
+checked acquisition operations also contain memory barriers. Therefore, cases “CA”
+and “MCA” are equivalent to “CAM”, so that there are sections below for only the
+first four cases and the sixth case: “−”, “A”, “AM”, “CAM”, and “M”. Later sections
+describe optimizations that can improve performance if reference acquisition and release
+is very frequent, and the reference count need be checked for zero only very rarely.
+
+13.2.1      Implementation of Reference-Counting Categories
+Simple counting protected by locking (“−”) is described in Section 13.2.1.1, atomic
+counting with no memory barriers (“A”) is described in Section 13.2.1.2, atomic
+counting with acquisition memory barrier (“AM”) is described in Section 13.2.1.3,
+and atomic counting with check and release memory barrier (“CAM”) is described in
+Section 13.2.1.4. Use of hazard pointers is described in Section 9.3 on page 213 and in
+Section 13.3.
+
+13.2.1.1    Simple Counting
+Simple counting, with neither atomic operations nor memory barriers, can be used
+when the reference-counter acquisition and release are both protected by the same
+lock. In this case, it should be clear that the reference count itself may be manipulated
+non-atomically, because the lock provides any necessary exclusion, memory barriers,
+atomic instructions, and disabling of compiler optimizations. This is the method of
+choice when the lock is required to protect other operations in addition to the reference
+count, but where a reference to the object must be held after the lock is released.
+Listing 13.1 shows a simple API that might be used to implement simple non-atomic
+reference counting—although simple reference counting is almost always open-coded
+instead.
+
+13.2.1.2    Atomic Counting
+Simple atomic counting may be used in cases where any CPU acquiring a reference
+must already hold a reference. This style is used when a single CPU creates an object for
+its own private use, but must allow for accesses from other CPUs, tasks, timer handlers,
+and so on. Any CPU that hands the object off must first acquire a new reference on
+behalf of the recipient on the one hand, or refrain from further accesses after the handoff
+on the other. In the Linux kernel, the kref primitives are used to implement this style
+of reference counting, as shown in Listing 13.2.2
+     Atomic counting is required in this case because locking does not protect all
+reference-count operations, which means that two different CPUs might concurrently
+manipulate the reference count. If normal increment and decrement were used, a pair of
+CPUs might both fetch the reference count concurrently, perhaps both obtaining the
+value “3”. If both of them increment their value, they will both obtain “4”, and both
+will store this value back into the counter. Since the new value of the counter should
+
+    1 With atomic_read() and ATOMIC_INIT() being the exceptions that prove the rule.
+    2 As of Linux v4.10. Linux v4.11 introduced a refcount_t API that improves efficiency
+
+weakly ordered platforms, but which is functionally equivalent to the atomic_t that it
+replaced.
+
+                                                                                              v2025.12.18a
+13.2. REFURBISH REFERENCE COUNTING                                                  433
+
+Listing 13.1: Simple Reference-Count API
+1    struct sref {
+2            int refcount;
+3    };
+4
+5    void sref_init(struct sref *sref)
+6    {
+7            sref->refcount = 1;
+8    }
+9
+10   void sref_get(struct sref *sref)
+11   {
+12           sref->refcount++;
+13   }
+14
+15   int sref_put(struct sref *sref,
+16                void (*release)(struct sref *sref))
+17   {
+18           WARN_ON(release == NULL);
+19           WARN_ON(release == (void (*)(struct sref *))kfree);
+20
+21           if (--sref->refcount == 0) {
+22                   release(sref);
+23                   return 1;
+24           }
+25           return 0;
+26   }
+
+instead be “5”, one of the increments has been lost. Therefore, atomic operations must
+be used both for counter increments and for counter decrements.
+    If releases are guarded by locking, hazard pointers, or RCU, memory barriers are
+not required, but for different reasons. In the case of locking, the locks provide any
+needed memory barriers (and disabling of compiler optimizations), and the locks also
+prevent a pair of releases from running concurrently. In the case of hazard pointers
+and RCU, cleanup will be deferred, and any needed memory barriers or disabling of
+compiler optimizations will be provided by the hazard-pointers or RCU infrastructure.
+Therefore, if two CPUs release the final two references concurrently, the actual cleanup
+will be deferred until both CPUs have released their hazard pointers or exited their RCU
+read-side critical sections, respectively.
+ Quick Quiz 13.2: Why isn’t it necessary to guard against cases where one CPU acquires a
+ reference just after another CPU releases the last reference?
+
+    The kref structure itself, consisting of a single atomic data item, is shown in
+lines 1–3 of Listing 13.2. The kref_init() function on lines 5–8 initializes the
+counter to the value “1”. Note that the atomic_set() primitive is a simple assignment,
+the name stems from the data type of atomic_t rather than from the operation. The
+kref_init() function must be invoked during object creation, before the object has
+been made available to any other CPU.
+    The kref_get() function on lines 10–14 unconditionally atomically increments the
+counter. The atomic_inc() primitive does not necessarily explicitly disable compiler
+optimizations on all platforms, but the fact that the kref primitives are in a separate
+module and that the Linux kernel build process does no cross-module optimizations has
+the same effect.
+    The kref_sub() function on lines 16–28 atomically decrements the counter, and if
+the result is zero, line 24 invokes the specified release() function and line 25 returns,
+informing the caller that release() was invoked. Otherwise, kref_sub() returns
+zero, informing the caller that release() was not called.
+
+                                                                                            v2025.12.18a
+434                                        CHAPTER 13. PUTTING IT ALL TOGETHER
+
+Listing 13.2: Linux Kernel kref API
+1    struct kref {
+2            atomic_t refcount;
+3    };
+4
+5    void kref_init(struct kref *kref)
+6    {
+7            atomic_set(&kref->refcount, 1);
+8    }
+9
+10   void kref_get(struct kref *kref)
+11   {
+12           WARN_ON(!atomic_read(&kref->refcount));
+13           atomic_inc(&kref->refcount);
+14   }
+15
+16   static inline int
+17   kref_sub(struct kref *kref, unsigned int count,
+18            void (*release)(struct kref *kref))
+19   {
+20           WARN_ON(release == NULL);
+21
+22           if (atomic_sub_and_test((int) count,
+23                                   &kref->refcount)) {
+24                   release(kref);
+25                   return 1;
+26           }
+27           return 0;
+28   }
+
+ Quick Quiz 13.3: Suppose that just after the atomic_sub_and_test() on line 22 of
+ Listing 13.2 is invoked, that some other CPU invokes kref_get(). Doesn’t this result in that
+ other CPU now having an illegal reference to a released object?
+
+ Quick Quiz 13.4: Suppose that kref_sub() returns zero, indicating that the release()
+ function was not invoked. Under what conditions can the caller rely on the continued existence
+ of the enclosing object?
+
+ Quick Quiz 13.5: Why not just pass kfree() as the release function?
+
+13.2.1.3      Atomic Counting With Release Memory Barrier
+Atomic reference counting with release memory barriers is used by the Linux kernel’s
+networking layer to track the destination caches that are used in packet routing. The
+actual implementation is quite a bit more involved; this section focuses on the aspects
+of struct dst_entry reference-count handling that matches this use case, shown in
+Listing 13.3.3
+    The dst_clone() primitive may be used if the caller already has a reference to the
+specified dst_entry, in which case it obtains another reference that may be handed
+off to some other entity within the kernel. Because a reference is already held by the
+caller, dst_clone() need not execute any memory barriers. The act of handing the
+dst_entry to some other entity might or might not require a memory barrier, but if
+such a memory barrier is required, it will be embedded in the mechanism used to hand
+the dst_entry off.
+    The dst_release() primitive may be invoked from any environment, and the
+caller might well reference elements of the dst_entry structure immediately prior
+   3 As of Linux v4.13. Linux v4.14 added a level of indirection to permit more compre-
+
+hensive debugging checks, but the overall effect in the absence of bugs is identical.
+
+                                                                                                  v2025.12.18a
+13.2. REFURBISH REFERENCE COUNTING                                                             435
+
+Listing 13.3: Linux Kernel dst_clone API
+1    static inline
+2    struct dst_entry * dst_clone(struct dst_entry * dst)
+3    {
+4            if (dst)
+5                    atomic_inc(&dst->__refcnt);
+6            return dst;
+7    }
+8
+9    static inline
+10   void dst_release(struct dst_entry * dst)
+11   {
+12           if (dst) {
+13                   WARN_ON(atomic_read(&dst->__refcnt) < 1);
+14                   smp_mb__before_atomic_dec();
+15                   atomic_dec(&dst->__refcnt);
+16           }
+17   }
+
+to the call to dst_release(). The dst_release() primitive therefore contains a
+memory barrier on line 14 preventing both the compiler and the CPU from misordering
+accesses.
+    Please note that the programmer making use of dst_clone() and dst_release()
+need not be aware of the memory barriers, only of the rules for using these two primitives.
+
+13.2.1.4      Atomic Counting With Check and Release Memory Barrier
+Consider a situation where the caller must be able to acquire a new reference to an
+object to which it does not already hold a reference, but where that object’s existence is
+guaranteed. The fact that initial reference-count acquisition can now run concurrently
+with reference-count release adds further complications. Suppose that a reference-count
+release finds that the new value of the reference count is zero, signaling that it is now
+safe to clean up the reference-counted object. We clearly cannot allow a reference-count
+acquisition to start after such clean-up has commenced, so the acquisition must include
+a check for a zero reference count. This check must be part of the atomic increment
+operation, as shown below.
+ Quick Quiz 13.6: Why can’t the check for a zero reference count be made in a simple “if”
+ statement with an atomic increment in its “then” clause?
+
+    The Linux kernel’s fget() and fput() primitives use this style of reference
+counting. Simplified versions of these functions are shown in Listing 13.4.4
+    Line 4 of fget() fetches the pointer to the current process’s file-descriptor table,
+which might well be shared with other processes. Line 6 invokes rcu_read_lock(),
+which enters an RCU read-side critical section. The callback function from any subse-
+quent call_rcu() primitive will be deferred until a matching rcu_read_unlock() is
+reached (line 10 or 14 in this example). Line 7 looks up the file structure corresponding
+to the file descriptor specified by the fd argument, as will be described later. If there
+is an open file corresponding to the specified file descriptor, then line 9 attempts to
+atomically acquire a reference count. If it fails to do so, lines 10–11 exit the RCU
+read-side critical section and report failure. Otherwise, if the attempt is successful,
+lines 14–15 exit the read-side critical section and return a pointer to the file structure.
+
+    4 As of Linux v2.6.38. Additional O_PATH functionality was added in v2.6.39, refactoring
+
+was applied in v3.14, and mmap_sem contention was reduced in v4.1.
+
+                                                                                                     v2025.12.18a
+436                                      CHAPTER 13. PUTTING IT ALL TOGETHER
+
+Listing 13.4: Linux Kernel fget/fput API
+1    struct file *fget(unsigned int fd)
+2    {
+3            struct file *file;
+4            struct files_struct *files = current->files;
+5
+6            rcu_read_lock();
+7            file = fcheck_files(files, fd);
+8            if (file) {
+9                    if (!atomic_inc_not_zero(&file->f_count)) {
+10                            rcu_read_unlock();
+11                            return NULL;
+12                   }
+13           }
+14           rcu_read_unlock();
+15           return file;
+16   }
+17
+18   struct file *
+19   fcheck_files(struct files_struct *files, unsigned int fd)
+20   {
+21           struct file * file = NULL;
+22           struct fdtable *fdt = rcu_dereference((files)->fdt);
+23
+24           if (fd < fdt->max_fds)
+25                   file = rcu_dereference(fdt->fd[fd]);
+26           return file;
+27   }
+28
+29   void fput(struct file *file)
+30   {
+31           if (atomic_dec_and_test(&file->f_count))
+32                   call_rcu(&file->f_u.fu_rcuhead, file_free_rcu);
+33   }
+34
+35   static void file_free_rcu(struct rcu_head *head)
+36   {
+37           struct file *f;
+38
+39           f = container_of(head, struct file, f_u.fu_rcuhead);
+40           kmem_cache_free(filp_cachep, f);
+41   }
+
+     The fcheck_files() primitive is a helper function for fget(). Line 22 uses
+rcu_dereference() to safely fetch an RCU-protected pointer to this task’s current
+file-descriptor table, and line 24 checks to see if the specified file descriptor is in range. If
+so, line 25 fetches the pointer to the file structure, again using the rcu_dereference()
+primitive. Line 26 then returns a pointer to the file structure or NULL in case of failure.
+
+    The fput() primitive releases a reference to a file structure. Line 31 atomically
+decrements the reference count, and, if the result was zero, line 32 invokes the call_
+rcu() primitives in order to free up the file structure (via the file_free_rcu()
+function specified in call_rcu()’s second argument), but only after all currently-
+executing RCU read-side critical sections complete, that is, after an RCU grace period
+has elapsed.
+
+    Once the grace period completes, the file_free_rcu() function obtains a pointer
+to the file structure on line 39, and frees it on line 40.
+
+   This code fragment thus demonstrates how RCU can be used to guarantee existence
+while an in-object reference count is being incremented.
+
+                                                                                                    v2025.12.18a
+13.3. HAZARD-POINTER HELPERS                                                                437
+
+13.2.2     Counter Optimizations
+In some cases where increments and decrements are common, but checks for zero
+are rare, it makes sense to maintain per-CPU or per-task counters, as was discussed
+in Chapter 5. For example, see the paper on sleepable read-copy update (SRCU),
+which applies this technique to RCU [McK06]. This approach eliminates the need for
+atomic instructions or memory barriers on the increment and decrement primitives,
+but still requires that code-motion compiler optimizations be disabled. In addition, the
+primitives such as synchronize_srcu() that check for the aggregate reference count
+reaching zero can be quite slow. This underscores the fact that these techniques are
+designed for situations where the references are frequently acquired and released, but
+where it is rarely necessary to check for a zero reference count.
+    However, it is usually the case that use of reference counts requires writing (often
+atomically) to a data structure that is otherwise read only. In this case, reference counts
+are imposing expensive cache misses on readers.
+    It is therefore worthwhile to look into synchronization mechanisms that do not
+require readers to write to the data structure being traversed. One possibility is the hazard
+pointers covered in Section 9.3 and another is RCU, which is covered in Section 9.5.
+
+13.3      Hazard-Pointer Helpers
+                                         It’s the little things that count, hundreds of them.
+                                                                                     Cliff Shaw
+
+This section looks at some issues that can be addressed with the help of hazard pointers.
+In addition, hazard pointers can sometimes be used to address the issues called out in
+Section 13.5, and vice versa.
+
+13.3.1     Scalable Reference Count
+Suppose a reference count is becoming a performance or scalability bottleneck. What
+can you do?
+    One approach is to instead use hazard pointers.
+    There are some differences, perhaps most notably that with hazard pointers it is
+extremely expensive to determine when the corresponding reference count has reached
+zero.
+    One way to work around this problem is to split the load between reference counters
+and hazard pointers. Each data element has a reference counter that tracks the number
+of other data elements referencing this element on the one hand, and readers use hazard
+pointers on the other.
+    Making this arrangement work both efficiently and correctly can be quite chal-
+lenging, and so interested readers are invited to examine the UnboundedQueue and
+ConcurrentHashMap data structures implemented in Folly open-source library.5
+
+   5 https://github.com/facebook/folly
+
+                                                                                                  v2025.12.18a
+438                                    CHAPTER 13. PUTTING IT ALL TOGETHER
+
+13.3.2     Long-Duration Accesses
+Suppose a reader-writer-locking reader is holding the lock for so long that updates are
+excessively delayed. If that reader can reasonably be converted to use reference counting
+instead of reader-writer locking, but if performance and scalability considerations
+prevent use of actual reference counters, then hazard pointers provides a scalable variant
+of reference counting.
+     The key point is that where reader-writer locking readers block all updates for that
+lock, hazard pointers instead simply hang onto the data that is actually needed, while
+still allowing updates to proceed.
+     If the reader cannot be reasonably be converted to use reference counting, the tricks
+in Section 13.5.8 might be helpful.
+
+13.4      Sequence-Locking Specials
+                                         The girl who can’t dance says the band can’t play.
+                                                                              Yiddish proverb
+
+This section looks at some special uses of sequence locks.
+
+13.4.1     Dueling Sequence Locks
+The classic sequence-locking use case enables a reader to see a consistent snapshot of a
+small collection of variables, for example, calibration constants for timekeeping. This
+works quite well in practice because calibration constants are rarely updated and, when
+updated, are updated quickly. Readers therefore almost never need to retry.
+    However, if the updater is delayed during the update, readers will also be delayed.
+Such delays might be due to interrupts, NMIs, or even virtual-CPU preemption.
+    One way to prevent updater delays from causing reader delays is to maintain two
+sets of calibration constants. Each set is updated in turn, but frequently enough that
+readers can make good use of either set. Each set has its own sequence lock (seqlock_t
+structure).
+    The updater alternates between the two sets, so that an delayed updater delays
+readers of at most one of the sets.
+    Each reader attempts to access the first set, but upon retry attempts to access the
+second set. If the second set also forces a retry, the reader repeats starting again from
+the first set. If the updater is stuck, only one of the two sets will force readers to retry,
+and therefore readers will succeed as soon as they attempt to access the other set.
+Quick Quiz 13.7: Why don’t all sequence-locking use cases replicate the data in this fashion?
+
+13.4.2     Correlated Data Elements
+Suppose we have a hash table where we need correlated views of two or more of the
+elements. These elements are updated together, and we do not want to see an old
+version of the first element along with new versions of the other elements. For example,
+Schrödinger decided to add his extended family to his in-memory database along with
+all his animals. Although Schrödinger understands that marriages and divorces do not
+
+                                                                                                v2025.12.18a
+13.4. SEQUENCE-LOCKING SPECIALS                                                       439
+
+happen instantaneously, he is also a traditionalist. As such, he absolutely does not want
+his database ever to show that the bride is now married, but the groom is not, and vice
+versa. Plus, if you think Schrödinger is a traditionalist, you just try conversing with
+some of his family members! In other words, Schrödinger wants to be able to carry out
+a wedlock-consistent traversal of his database.
+    One approach is to use sequence locks (see Section 9.4), so that wedlock-related
+updates are carried out under the protection of write_seqlock(), while reads requiring
+wedlock consistency are carried out within a read_seqbegin() / read_seqretry()
+loop. Note that sequence locks are not a replacement for RCU protection: Sequence
+locks protect against concurrent modifications, but RCU is still needed to protect against
+concurrent deletions.
+    This approach works quite well when the number of correlated elements is small,
+the time to read these elements is short, and the update rate is low. Otherwise, updates
+might happen so quickly that readers might never complete. Although Schrödinger
+does not expect that even his least-sane relatives will marry and divorce quickly enough
+for this to be a problem, he does realize that this problem could well arise in other
+situations. One way to avoid this reader-starvation problem is to have the readers use
+the update-side primitives if there have been too many retries, but this can degrade
+both performance and scalability. Another way to avoid starvation is to have multiple
+sequence locks, in Schrödinger’s case, perhaps one per species.
+    In addition, if the update-side primitives are used too frequently, poor performance
+and scalability will result due to lock contention. One way to avoid this is to maintain a
+per-element sequence lock, and to hold both spouses’ locks when updating their marital
+status. Readers can do their retry looping on either of the spouses’ locks to gain a stable
+view of any change in marital status involving both members of the pair. This avoids
+contention due to high marriage and divorce rates, but complicates gaining a stable view
+of all marital statuses during a single scan of the database.
+    If the element groupings are well-defined and persistent, which marital status is
+hoped to be, then one approach is to add pointers to the data elements to link together
+the members of a given group. Readers can then traverse these pointers to access all the
+data elements in the same group as the first one located.
+    This technique is used heavily in the Linux kernel, perhaps most notably in the
+dcache subsystem [Bro15b]. Note that it is likely that similar schemes also work with
+hazard pointers.
+    This approach provides sequential consistency to successful readers, each of which
+will either see the effects of a given update or not, with any partial updates resulting in
+a read-side retry. Sequential consistency is an extremely strong guarantee, incurring
+equally strong restrictions and equally high overheads. In this case, we saw that readers
+might be starved on the one hand, or might need to acquire the update-side lock on
+the other. Although this works very well in cases where updates are infrequent, it
+unnecessarily forces read-side retries even when the update does not affect any of the
+data that a retried reader accesses. Section 13.5.4 therefore covers a much weaker
+form of consistency that not only avoids reader starvation, but also avoids any form of
+read-side retry. The next section instead presents a weaker form of consistency that can
+be provided with much lower probabilities of reader starvation.
+
+13.4.3     Atomic Move
+Suppose that individual data elements are moved from one data structure to another, and
+that readers look up only single data structures. However, when a data element moves,
+
+                                                                                              v2025.12.18a
+440                                   CHAPTER 13. PUTTING IT ALL TOGETHER
+
+readers must must never see it as being in both structures at the same time and must
+also never see it as missing from both structures at the same time. At the same time, any
+reader seeing the element in its new location must never subsequently see it in its old
+location. In addition, the move may be implemented by inserting a new copy of the old
+data element into the destination location.
+     For example, consider a hash table that supports an atomic-to-readers rename
+operation. Expanding on Schrödinger’s zoo, suppose that an animal’s name changes,
+for example, each of the brides in Schrödinger’s traditionalist family might change their
+last name to match that of their groom.
+     But changing their name might change the hash value, and might also require that
+the bride’s element move from one hash chain to another. The consistency set forth
+above requires that if a reader successfully looks up the new name, then any subsequent
+lookup of the old name by that reader must result in failure. Similarly, if a reader’s
+lookup of the old name results in lookup failure, then any subsequent lookup of the
+new name by that reader must succeed. In short, a given reader should not see a bride
+momentarily blinking out of existence, nor should that reader lookup a bride under her
+new name and then later lookup that bride under her old name.
+     This consistency guarantee could be enforced with a single global sequence lock as
+described in Section 13.4.2, but this can result in reader starvation even for readers that
+are not looking up a bride who is currently undergoing a name change. This guarantee
+could also be enforced by requiring that readers acquire a per-hash-chain lock, but
+reviewing Figure 10.2 shows that this results in poor performance and scalabilty, even
+for single-socket systems.
+     Another more reader-friendly way to implement this is to use RCU and to place a
+sequence lock on each element. Readers looking up a given element act as sequence-lock
+readers across their full set of accesses to that element. Note that these sequence-lock
+operations will order each reader’s lookups.
+     Renaming an element can then proceed roughly as follows:
+   1. Acquire a global lock protecting rename operations.
+   2. Allocate and initialize a copy of the element with the new name.
+   3. Write-acquire the sequence lock on the element with the old name, which has the
+      side effect of ordering this acquisition with the following insertion. Concurrent
+      lookups of the old name will now repeatedly retry.
+   4. Insert the copy of the element with the new name. Lookups of the new name will
+      now succeed.
+   5. Execute smp_wmb() to order the prior insertion with the subsequent removal.
+   6. Remove the element with the old name. Concurrent lookups of the old name will
+      now fail.
+   7. Write-release the sequence lock if necessary, for example, if required by lock
+      dependency checkers.
+   8. Release the global lock.
+   Thus, readers looking up the old name will retry until the new name is available, at
+which point their final retry will fail. Any subsequent lookups of the new name will
+succeed. Any reader succeeding in looking up the new name is guaranteed that any
+subsequent lookup of the old name will fail, perhaps after a series of retries.
+
+                                                                                              v2025.12.18a
+13.5. RCU RESCUES                                                                       441
+
+Quick Quiz 13.8: Is it possible to write-acquire the sequence lock on the new element before
+it is inserted instead of acquiring that of the old element before it is removed?
+
+Quick Quiz 13.9: Is it possible to avoid the global lock?
+
+    It is of course possible to instead implement this procedure somewhat more efficiently
+using simple flags. However, this can be thought of as a simplified variant of sequence
+locking that relies on the fact that a given element’s sequence lock is never write-acquired
+more than once.
+
+13.4.4     Upgrade to Writer
+As discussed in Section 9.5.4.9, RCU permits readers to upgrade to writers. This
+capability can be quite useful when a reader scanning an RCU-protected data structure
+notices that the current element needs to be updated. What happens when you try this
+trick with sequence locking?
+    It turns out that this sequence-locking trick is actually used in the Linux kernel, for
+example, by the sdma_flush() function in drivers/infiniband/hw/hfi1/sdma.c.
+The effect is to doom the enclosing reader to retry. This trick is therefore used when the
+reader detects some condition that requires a retry.
+
+13.5       RCU Rescues
+                                         With great doubts comes great understanding, with
+                                         little doubts comes little understanding.
+                                                                             Chinese proverb
+
+This section shows how to apply RCU to some examples discussed earlier in this book.
+In some cases, RCU provides simpler code, in other cases better performance and
+scalability, and in still other cases, both.
+
+13.5.1     RCU and Per-Thread-Variable-Based Statistical Counters
+Section 5.2.3 described an implementation of statistical counters that provided excellent
+performance, roughly that of simple increment (as in the C ++ operator), and linear
+scalability—but only for incrementing via inc_count(). Unfortunately, threads
+needing to read out the value via read_count() were required to acquire a global
+lock, and thus incurred high overhead and suffered poor scalability. The code for the
+lock-based implementation is shown in Listing 5.4 on page 87.
+Quick Quiz 13.10: Why on earth did we need that global lock in the first place?
+
+13.5.1.1   Design
+The hope is to use RCU rather than final_mutex to protect the thread traversal in
+read_count() in order to obtain excellent performance and scalability from read_
+count(), rather than just from inc_count(). However, we do not want to give
+up any accuracy in the computed sum. In particular, when a given thread exits, we
+absolutely cannot lose the exiting thread’s count, nor can we double-count it. Such
+
+                                                                                               v2025.12.18a
+442                                   CHAPTER 13. PUTTING IT ALL TOGETHER
+
+an error could result in inaccuracies equal to the full precision of the result, in other
+words, such an error would make the result completely useless. And in fact, one of the
+purposes of final_mutex is to ensure that threads do not come and go in the middle
+of read_count() execution.
+    Therefore, if we are to dispense with final_mutex, we will need to come up with
+some other method for ensuring consistency. One approach is to place the total count
+for all previously exited threads and the array of pointers to the per-thread counters into
+a single structure. Such a structure, once made available to read_count(), is held
+constant, ensuring that read_count() sees consistent data.
+
+13.5.1.2   Implementation
+Lines 1–4 of Listing 13.5 show the countarray structure, which contains a ->total
+field for the count from previously exited threads, and a counterp[] array of pointers
+to the per-thread counter for each currently running thread. This structure allows a
+given execution of read_count() to see a total that is consistent with the indicated set
+of running threads.
+     Lines 6–8 contain the definition of the per-thread counter variable, the global
+pointer countarrayp referencing the current countarray structure, and the final_
+mutex spinlock.
+     Lines 10–13 show inc_count(), which is unchanged from Listing 5.4.
+     Lines 15–31 show read_count(), which has changed significantly. Lines 22
+and 29 substitute rcu_read_lock() and rcu_read_unlock() for acquisition and
+release of final_mutex. Line 23 uses rcu_dereference() to snapshot the current
+countarray structure into local variable cap. Proper use of RCU will guarantee that
+this countarray structure will remain with us through at least the end of the current
+RCU read-side critical section at line 29. Line 24 initializes sum to cap->total, which
+is the sum of the counts of threads that have previously exited. Lines 25–27 add up the
+per-thread counters corresponding to currently running threads, and, finally, line 30
+returns the sum.
+     The initial value for countarrayp is provided by count_init() on lines 33–41.
+This function runs before the first thread is created, and its job is to allocate and zero
+the initial structure, and then assign it to countarrayp.
+     Lines 43–50 show the count_register_thread() function, which is invoked by
+each newly created thread. Line 45 picks up the current thread’s index, line 47 acquires
+final_mutex, line 48 installs a pointer to this thread’s counter, and line 49 releases
+final_mutex.
+Quick Quiz 13.11: Hey!!! Line 48 of Listing 13.5 modifies a value in a pre-existing
+countarray structure! Didn’t you say that this structure, once made available to read_
+count(), remained constant???
+
+    Lines 52–72 show count_unregister_thread(), which is invoked by each
+thread just before it exits. Lines 58–62 allocate a new countarray structure, line 63
+acquires final_mutex and line 69 releases it. Line 64 copies the contents of the current
+countarray into the newly allocated version, line 65 adds the exiting thread’s counter
+to new structure’s ->total, and line 66 NULLs the exiting thread’s counterp[] array
+element. Line 67 then retains a pointer to the current (soon to be old) countarray
+structure, and line 68 uses rcu_assign_pointer() to install the new version of the
+countarray structure. Line 70 waits for a grace period to elapse, so that any threads
+that might be concurrently executing in read_count(), and thus might have references
+
+                                                                                              v2025.12.18a
+13.5. RCU RESCUES                                                 443
+
+Listing 13.5: RCU and Per-Thread Statistical Counters
+1    struct countarray {
+2            unsigned long total;
+3            unsigned long *counterp[NR_THREADS];
+4    };
+5
+6    unsigned long __thread counter = 0;
+7    struct countarray *countarrayp = NULL;
+8    DEFINE_SPINLOCK(final_mutex);
+9
+10   static __inline__ void inc_count(void)
+11   {
+12           WRITE_ONCE(counter, counter + 1);
+13   }
+14
+15   unsigned long read_count(void)
+16   {
+17           struct countarray *cap;
+18           unsigned long *ctrp;
+19           unsigned long sum;
+20           int t;
+21
+22           rcu_read_lock();
+23           cap = rcu_dereference(countarrayp);
+24           sum = cap->total;
+25           for_each_thread(t) {
+26                   ctrp = READ_ONCE(cap->counterp[t]);
+27                   if (ctrp != NULL) sum += READ_ONCE(*ctrp);
+28           }
+29           rcu_read_unlock();
+30           return sum;
+31   }
+32
+33   void count_init(void)
+34   {
+35           countarrayp = malloc(sizeof(*countarrayp));
+36           if (countarrayp == NULL) {
+37                   fprintf(stderr, "Out of memory\n");
+38                   exit(EXIT_FAILURE);
+39           }
+40           memset(countarrayp, '\0', sizeof(*countarrayp));
+41   }
+42
+43   void count_register_thread(unsigned long *p)
+44   {
+45           int idx = smp_thread_id();
+46
+47           spin_lock(&final_mutex);
+48           countarrayp->counterp[idx] = &counter;
+49           spin_unlock(&final_mutex);
+50   }
+51
+52   void count_unregister_thread(int nthreadsexpected)
+53   {
+54           struct countarray *cap;
+55           struct countarray *capold;
+56           int idx = smp_thread_id();
+57
+58           cap = malloc(sizeof(*countarrayp));
+59           if (cap == NULL) {
+60                   fprintf(stderr, "Out of memory\n");
+61                   exit(EXIT_FAILURE);
+62           }
+63           spin_lock(&final_mutex);
+64           *cap = *countarrayp;
+65           cap->total += counter;
+66           cap->counterp[idx] = NULL;
+67           capold = countarrayp;
+68           rcu_assign_pointer(countarrayp, cap);
+69           spin_unlock(&final_mutex);
+70           synchronize_rcu();
+71           free(capold);
+72   }
+
+                                                                        v2025.12.18a
+ 444                                      CHAPTER 13. PUTTING IT ALL TOGETHER
+
+ to the old countarray structure, will be allowed to exit their RCU read-side critical
+ sections, thus dropping any such references. Line 71 can then safely free the old
+ countarray structure.
+     Quick Quiz 13.12: Given the fixed-size counterp array, exactly how does this code avoid a
+     fixed upper bound on the number of threads???
+
+ 13.5.1.3      Discussion
+
+     Quick Quiz 13.13: Wow! Listing 13.5 contains 70 lines of code, compared to only 42 in
+     Listing 5.4. Is this extra complexity really worth it?
+
+     Use of RCU enables exiting threads to wait until other threads are guaranteed
+ to be done using the exiting threads’ __thread variables. This allows the read_
+ count() function to dispense with locking, thereby providing excellent performance
+ and scalability for both the inc_count() and read_count() functions. However, this
+ performance and scalability come at the cost of some increase in code complexity. It is
+ hoped that compiler and library writers employ user-level RCU [Des09b] to provide
+ safe cross-thread access to __thread variables, greatly reducing the complexity seen
+ by users of __thread variables.
+
+ 13.5.2        RCU and Counters for Removable I/O Devices
+ Section 5.4.6 showed a fanciful pair of code fragments for dealing with counting I/O
+ accesses to removable devices. These code fragments suffered from high overhead on
+ the fastpath (starting an I/O) due to the need to acquire a reader-writer lock.
+      This section shows how RCU may be used to avoid this overhead.
+      The code for performing an I/O is quite similar to the original, with an RCU read-side
+ critical section being substituted for the reader-writer lock read-side critical section in
+ the original:
+
+ 1    rcu_read_lock();
+ 2    if (removing) {
+ 3             rcu_read_unlock();
+ 4             cancel_io();
+ 5    } else {
+ 6             add_count(1);
+ 7             rcu_read_unlock();
+ 8             do_io();
+ 9             sub_count(1);
+10    }
+
+     The RCU read-side primitives have minimal overhead, thus speeding up the fastpath,
+ as desired.
+     The updated code fragment removing a device is as follows:
+
+ 1    spin_lock(&mylock);
+ 2    removing = 1;
+ 3    sub_count(mybias);
+ 4    spin_unlock(&mylock);
+ 5    synchronize_rcu();
+ 6    while (read_count() != 0) {
+ 7            poll(NULL, 0, 1);
+ 8    }
+ 9    remove_device();
+
+                                                                                                 v2025.12.18a
+13.5. RCU RESCUES                                                                      445
+
+   Here we replace the reader-writer lock with an exclusive spinlock and add a
+synchronize_rcu() to wait for all of the RCU read-side critical sections to complete.
+Because of the synchronize_rcu(), once we reach line 6, we know that all remaining
+I/Os have been accounted for.
+   Of course, the overhead of synchronize_rcu() can be large, but given that device
+removal is quite rare, this is usually a good tradeoff.
+
+13.5.3      Array and Length
+Suppose we have an RCU-protected variable-length array, as shown in Listing 13.6.
+The length of the array ->a[] can change dynamically, and at any given time, its length
+is given by the field ->length. Of course, this introduces the following race condition:
+
+    1. The array is initially 16 characters long, and thus ->length is equal to 16.
+    2. CPU 0 loads the value of ->length, obtaining the value 16.
+    3. CPU 1 shrinks the array to be of length 8, and assigns a pointer to a new 8-character
+       block of memory into ->a[].
+    4. CPU 0 picks up the new pointer from ->a[], and stores a new value into element
+       12. Because the array has only 8 characters, this results in a SEGV or (worse yet)
+       memory corruption.
+
+    How can we prevent this?
+    One approach is to make careful use of memory barriers, which are covered in
+Chapter 15. This works, but incurs read-side overhead and, perhaps worse, requires use
+of explicit memory barriers.
+    A better approach is to put the value and the array into the same structure, as shown
+in Listing 13.7 [ACMS03]. Allocating a new array (foo_a structure) then automatically
+provides a new place for the array length. This means that if any CPU picks up a
+reference to ->fa, it is guaranteed that the ->length will match the ->a[].
+
+    1. The array is initially 16 characters long, and thus ->length is equal to 16.
+    2. CPU 0 loads the value of ->fa, obtaining a pointer to the structure containing the
+       value 16 and the 16-byte array.
+    3. CPU 0 loads the value of ->fa->length, obtaining the value 16.
+
+Listing 13.6: RCU-Protected Variable-Length Array
+1   struct foo {
+2           int length;
+3           char *a;
+4   };
+
+Listing 13.7: Improved RCU-Protected Variable-Length Array
+1   struct foo_a {
+2           int length;
+3           char a[0];
+4   };
+5
+6   struct foo {
+7           struct foo_a *fa;
+8   };
+
+                                                                                               v2025.12.18a
+446                                           CHAPTER 13. PUTTING IT ALL TOGETHER
+
+Listing 13.8: Uncorrelated Measurement Fields
+1    struct animal {
+2            char name[40];
+3            double age;
+4            double meas_1;
+5            double meas_2;
+6            double meas_3;
+7            char photo[0]; /* large bitmap. */
+8    };
+
+Listing 13.9: Correlated Measurement Fields
+1    struct measurement {
+2            double meas_1;
+3            double meas_2;
+4            double meas_3;
+5    };
+6
+7    struct animal {
+8            char name[40];
+9            double age;
+10           struct measurement *mp;
+11           char photo[0]; /* large bitmap. */
+12   };
+
+     4. CPU 1 shrinks the array to be of length 8, and assigns a pointer to a new foo_a
+        structure containing an 8-character block of memory into ->fa.
+     5. CPU 0 picks up the new pointer from ->a[], and stores a new value into element
+        12. But because CPU 0 is still referencing the old foo_a structure that contains
+        the 16-byte array, all is well.
+
+    Of course, in both cases, CPU 1 must wait for a grace period before freeing the old
+array.
+    A more general version of this approach is presented in the next section.
+
+13.5.4       Correlated Fields
+Suppose that each of Schödinger’s animals is represented by the data element shown
+in Listing 13.8. The meas_1, meas_2, and meas_3 fields are a set of correlated
+measurements that are updated periodically. It is critically important that readers see
+these three values from a single measurement update: If a reader sees an old value
+of meas_1 but new values of meas_2 and meas_3, that reader will become fatally
+confused. How can we guarantee that readers will see coordinated sets of these three
+values?6
+    One approach would be to allocate a new animal structure, copy the old structure
+into the new structure, update the new structure’s meas_1, meas_2, and meas_3 fields,
+and then replace the old structure with a new one by updating the pointer. This does
+guarantee that all readers see coordinated sets of measurement values, but it requires
+copying a large structure due to the ->photo[] field. This copying might incur
+unacceptably large overhead.
+    Another approach is to impose a level of indirection, as shown in Listing 13.9 [McK04,
+Section 5.3.4]. When a new measurement is taken, a new measurement structure is
+
+    6 This situation is similar to that described in Section 13.4.2, except that here readers
+
+need only see a consistent view of a given single data element, not the consistent view of a
+group of data elements that was required in that earlier section.
+
+                                                                                                v2025.12.18a
+13.5. RCU RESCUES                                                                            447
+
+allocated, filled in with the measurements, and the animal structure’s ->mp field is
+updated to point to this new measurement structure using rcu_assign_pointer().
+After a grace period elapses, the old measurement structure can be freed.
+Quick Quiz 13.14: But cant’t the approach shown in Listing 13.9 result in extra cache misses,
+in turn resulting in additional read-side overhead?
+
+    This approach enables readers to see correlated values for selected fields, but while
+incurring minimal read-side overhead. This per-data-element consistency suffices in the
+common case where a reader looks only at a single data element.
+
+13.5.5      Update-Friendly Traversal
+Suppose that a statistical scan of all elements in a hash table is required. For example,
+Schrödinger might wish to compute the average length-to-weight ratio over all of his
+animals.7 Suppose further that Schrödinger is willing to ignore slight errors due to
+animals being added to and removed from the hash table while this statistical scan is
+being carried out. What should Schrödinger do to control concurrency?
+    One approach is to enclose the statistical scan in an RCU read-side critical section.
+This permits updates to proceed concurrently without unduly impeding the scan. In
+particular, the scan does not block the updates and vice versa, which allows scan of hash
+tables containing very large numbers of elements to be supported gracefully, even in the
+face of very high update rates.
+Quick Quiz 13.15: But how does this scan work while a resizable hash table is being resized?
+In that case, neither the old nor the new hash table is guaranteed to contain all the elements in
+the hash table!
+
+13.5.6      Scalable Reference Count Two
+Suppose a reference count is becoming a performance or scalability bottleneck. What
+can you do?
+    One approach is to use per-CPU counters for each reference count, somewhat similar
+to the algorithms in Chapter 5, in particular, the exact limit counters described in
+Section 5.4. The need to switch between per-CPU and global modes for these counters
+results either in expensive increments and decrements on the one hand (Section 5.4.1)
+or in the use of POSIX signals on the other (Section 5.4.3).
+    Another approach is to use RCU to mediate the switch between per-CPU and global
+counting modes. Each update is carried out within an RCU read-side critical section,
+and each update checks a flag to determine whether to update the per-CPU counters on
+the one hand or the global on the other. To switch modes, update the flag, wait for a
+grace period, and then move any remaining counts from the per-CPU counters to the
+global counter or vice versa.
+    The Linux kernel uses this RCU-mediated approach in its percpu_ref style of
+reference counter. Code using this reference counter must initialize the percpu_
+ref structure using percpu_ref_init(), which takes as arguments a pointer to the
+structure, a pointer to a function to invoke when the reference count reaches zero, a
+set of mode flags, and a set of kmalloc() GFP_ flags. After normal initialization, the
+structure has one reference and is in per-CPU mode.
+
+   7 Why would such a quantity be useful? Beats me! But group statistics are often useful.
+
+                                                                                                    v2025.12.18a
+448                                   CHAPTER 13. PUTTING IT ALL TOGETHER
+
+    The mode flags are usually zero, but can include the PERCPU_REF_INIT_ATOMIC
+bit if the counter is to start in slow non-per-CPU (that is, atomic) mode. There is
+also a PERCPU_REF_ALLOW_REINIT bit that allows a given percpu_ref counter to be
+reused via a call to percpu_ref_reinit() without needing to be freed and reallocated.
+Regardless of how the percpu_ref structure is initialized, percpu_ref_get() may be
+used to acquire a reference and percpu_ref_put() may be used to release a reference.
+    When in per-CPU mode, the percpu_ref structure cannot determine whether or
+not its value has reached zero. When such a determination is necessary, percpu_ref_
+kill() may be invoked. This function switches the structure into atomic mode and
+removes the initial reference installed by the call to percpu_ref_init(). Of course,
+when in atomic mode, calls to percpu_ref_get() and percpu_ref_put() are quite
+expensive, but percpu_ref_put() can tell when the value reaches zero.
+    Readers desiring more percpu_ref information are referred to the Linux-kernel
+documentation and source code.
+
+13.5.7     Retriggered Grace Periods
+There is no call_rcu_cancel(), so once an rcu_head structure is passed to call_
+rcu(), there is no calling it back. It must be left alone until the callback is invoked. In
+the common case, this is as it should be because the rcu_head structure is on a one-way
+journey to deallocation.
+    However, there are use cases that combine RCU and explicit open() and close()
+calls. After a close() call, readers are not supposed to begin new accesses to the data
+structure, but there might well be readers completing their traversal. This situation can
+be handled in the usual manner: Wait for a grace period following the close() call
+before freeing the data structures.
+    But what if open() is called before the grace period ends?
+    Again, there is no call_rcu_cancel(), so another approach is to set a flag that
+is checked by the callback function, which can opt out of actually freeing anything.
+Problem solved!
+    But what if open() and then another close() are both called before the grace
+period ends?
+    One approach is to have a second value for the flag that causes the callback to
+requeue itself.
+    But what if there is not only a open() and then another close(), but also another
+open() before the grace period ends?
+    In this case, the callback needs to set state to reflect that last open() still being in
+effect.
+    Continuing this line of thought leads us to the state machine shown in Figure 13.1.
+The initial state is CLOSED and the operational state is OPEN. The diamond-shaped
+arrowheads denote call_rcu() invocation, while the arrows labeled “CB” denote
+callback invocation.
+    The normal path through this state machine traverses the states CLOSED, OPEN,
+CLOSING (with an invocation of call_rcu()), and back to CLOSED once the callback
+has been invoked. If open() is invoked before the grace period completes, the state
+machine traverses the cycle OPEN, CLOSING (with an invocation of call_rcu()),
+REOPENING, and back to OPEN once the callback has been invoked. If open() and
+then close() are invoked before the grace period completes, the state machine traverses
+the cycle OPEN, CLOSING (with an invocation of call_rcu()), REOPENING,
+RECLOSING, and back to CLOSING once the callback has been invoked.
+
+                                                                                               v2025.12.18a
+13.5. RCU RESCUES                                                                  449
+
+                                      open()
+                        CLOSED                        OPEN
+
+                             CB            close()       CB
+
+                                      open()
+                        CLOSING                   REOPENING
+
+                                     CB     close()   open()
+
+                                     RECLOSING
+
+                 Figure 13.1: Retrigger-Grace-Period State Machine
+
+    Given an indefinite alternating sequence of close() and open() invocations, the
+state machine would traverse OPEN, and CLOSING (with an invocation of call_
+rcu()), followed by alternating sojourns in the REOPENING and RECLOSING states.
+Once the grace period ends, the state machine would transition to either of the CLOSING
+or the OPEN state, depending on which of the RECLOSING or REOPENING states the
+callback was invoked in.
+    Rough pseudocode of this state machine is shown in Listing 13.10. The five states
+are shown on lines 1–5, the current state is held in rtrg_status on line 7, which is
+protected by the lock on line 8.
+    The three CB transitions (emanating from states CLOSING, REOPENING, and
+RECLOSING) are implemented by the close_cb() function shown on lines 11–26.
+Line 15 invokes a user-supplied close_cleanup() to take any final cleanup actions
+such as freeing memory when transitioning to the CLOSED state. Line 21 contains the
+call_rcu() invocation that causes a later transition to the CLOSED state.
+    The open() function on lines 28–42 implements the transitions to the OPEN,
+CLOSING, and REOPENING states, with line 40 invoking a do_open() function to
+implement any allocation and initialization of any needed data structures.
+    The close() function on lines 44–58 implements the transitions to the CLOSING
+and RECLOSING states, with line 56 invoking a do_close() function to take any
+actions that might be required to finalize this transition, for example, causing later
+read-only traversals to return errors. Line 49 contains the call_rcu() invocation that
+causes a later transition to the CLOSED state.
+    This state machine and pseudocode shows how to get the effect of a call_rcu_
+cancel() in those rare situations needing such semantics.
+
+13.5.8    Long-Duration Accesses Two
+Suppose a reader-writer-locking reader is holding the lock for so long that updates are
+excessively delayed. Suppose further that this reader cannot reasonably be converted to
+use reference counting (otherwise, see Section 13.3.2).
+
+                                                                                          v2025.12.18a
+450                                       CHAPTER 13. PUTTING IT ALL TOGETHER
+
+Listing 13.10: Retriggering a Grace Period (Pseudocode)
+1    #define RTRG_CLOSED    0
+2    #define RTRG_OPEN      1
+3    #define RTRG_CLOSING   2
+4    #define RTRG_REOPENING 3
+5    #define RTRG_RECLOSING 4
+6
+7    int rtrg_status;
+8    DEFINE_SPINLOCK(rtrg_lock);
+9    struct rcu_head rtrg_rh;
+10
+11   void close_cb(struct rcu_head *rhp)
+12   {
+13           spin_lock(rtrg_lock);
+14           if (rtrg_status = RTRG_CLOSING) {
+15                    close_cleanup();
+16                    rtrg_status = RTRG_CLOSED;
+17           } else if (rtrg_status == RTRG_REOPENING) {
+18                    rtrg_status = RTRG_OPEN;
+19           } else if (rtrg_status == RTRG_RECLOSING) {
+20                    rtrg_status = RTRG_CLOSING;
+21                    call_rcu(&rtrg_rh, close_cb);
+22           } else {
+23                    WARN_ON_ONCE(1);
+24           }
+25           spin_unlock(rtrg_lock);
+26   }
+27
+28   int open(void)
+29   {
+30           spin_lock(rtrg_lock);
+31           if (rtrg_status == RTRG_CLOSED) {
+32                    rtrg_status = RTRG_OPEN;
+33           } else if (rtrg_status == RTRG_CLOSING ||
+34                       rtrg_status == RTRG_RECLOSING) {
+35                    rtrg_status = RTRG_REOPENING;
+36           } else {
+37                    spin_unlock(rtrg_lock);
+38                    return -EBUSY;
+39           }
+40           do_open();
+41           spin_unlock(rtrg_lock);
+42   }
+43
+44   int close(void)
+45   {
+46           spin_lock(rtrg_lock);
+47           if (rtrg_status == RTRG_OPEN) {
+48                    rtrg_status = RTRG_CLOSING;
+49                    call_rcu(&rtrg_rh, close_cb);
+50           } else if (rtrg_status == RTRG_REOPENING) {
+51                    rtrg_status = RTRG_RECLOSING;
+52           } else {
+53                    spin_unlock(rtrg_lock);
+54                    return -ENOENT;
+55           }
+56           do_close();
+57           spin_unlock(rtrg_lock);
+58   }
+
+                                                                                v2025.12.18a
+13.5. RCU RESCUES                                                                     451
+
+    If that reader can be reasonably converted to use RCU, that might solve the problem.
+The reason is that RCU readers do not completely block updates, but rather block only
+the cleanup portions of those updates (including memory reclamation). Therefore, if
+the system has ample memory, converting the reader-writer lock to RCU may suffice.
+    However, converting to RCU does not always suffice. For example, the code might
+traverse an extremely large linked data structure within a single RCU read-side critical
+section, which might so greatly extend the RCU grace period that the system runs out of
+memory. These situations can be handled in a couple of different ways: (1) Use SRCU
+instead of RCU and (2) Acquire a reference to exit the RCU reader.
+
+13.5.8.1   Use SRCU
+In the Linux kernel, RCU is global. In other words, any long-running RCU reader
+anywhere in the kernel will delay the current RCU grace period. If the long-running
+RCU reader is traversing a small data structure, that small amount of data is delaying
+freeing of all other data structures, which can result in memory exhaustion.
+     One way to avoid this problem is to use SRCU for that long-running RCU reader’s
+data structure, with its own srcu_struct structure. The resulting long-running SRCU
+readers will then delay only that srcu_struct structure’s grace periods, and not those
+of RCU, thus avoiding memory exhaustion. For more details, see the SRCU API in
+Section 9.5.3.
+     Unfortunately, this approach does have some drawbacks. For one thing, SRCU
+readers are not subject to priority boosting, which can result in additional delays to low-
+priority SRCU readers on busy systems. Worse yet, defining a separate srcu_struct
+structure reduces the number of RCU updaters, which in turn increases the grace-period
+overhead per updater. This means that giving each current Linux-kernel RCU use case
+its own srcu_struct structure could multiply system-wide grace-period overhead by
+the number of such structures.
+     Therefore, it is often better to acquire some sort of non-RCU reference on the needed
+data to permit a momentary exit from the RCU read-side critical section, as described
+in the next section.
+
+13.5.8.2   Acquire a Reference
+If the RCU read-side critical section is too long, shorten it!
+     In some cases, this can be done trivially. For example, code that scans all of the
+hash chains of a statically allocated array of hash buckets can just as easily scan each
+hash chain within its own critical section.
+     This works because hash chains are normally quite short, and by design. When
+traversing long linked structures, it is necessary to have some way of stopping in the
+middle and resuming later.
+     For example, in Linux kernel v5.16, the khugepaged_scan_file() function
+checks to see if some other task needs the current CPU using need_resched(), and if
+so invokes xas_pause() to adjust the traversal’s iterator appropriately, and then invokes
+cond_resched_rcu() to yield the CPU. In turn, the cond_resched_rcu() function
+invokes rcu_read_unlock(), cond_resched(), and finally rcu_read_lock() to
+drop out of the RCU read-side critical section in order to yield the CPU.
+     When this sort of trivial critical-section shortening is infeasible, another approach
+is to acquire a reference to the object, then exit the RCU read-side critical section. The
+
+                                                                                              v2025.12.18a
+452                                         CHAPTER 13. PUTTING IT ALL TOGETHER
+
+Listing 13.11: Configuration-Update Example
+1    C C-MP+o-xchg-rcusync-o+o-xchg-rcusync-o+rl-o-o-rul
+2
+3    {
+4            int a=1;
+5            int b;
+6            int c;
+7            int *p=a;
+8    }
+9
+10   P0(int *a, int *b, int *c, int **p)
+11   {
+12           int *r1;
+13
+14           *b = 1;
+15           r1 = xchg(p, b);
+16           synchronize_rcu();
+17           *r1 = 0; // Emulate kfree();
+18   }
+19
+20   P1(int *a, int *b, int *c, int **p)
+21   {
+22           int *r1;
+23
+24           *c = 1;
+25           r1 = xchg(p, c);
+26           synchronize_rcu();
+27           *r1 = 0; // Emulate kfree();
+28   }
+29
+30   P2(int *a, int *b, int *c, int **p)
+31   {
+32           int *r1;
+33           int r2;
+34
+35           rcu_read_lock();
+36           r1 = rcu_dereference(*p);
+37           r2 = *r1;
+38           rcu_read_unlock();
+39   }
+40
+41   locations [0:r1; 1:r1; 2:r1; 2:r2; a; b; c; p]
+42   (* Better not be freed!!! *)
+43   exists (2:r2=0 \/ a=1 \/
+44           (* Better be only one in use! *)
+45           (b=1 /\ c=1) \/ (b=0 /\ c=0))
+
+txopt_get() function in the v6.17 kernel takes this approach, using refcount_inc_
+not_zero() to attempt to acquire the reference. If the resulting memory contention is
+excessive, one further fix is to use hazard pointers instead of an explicit reference count.
+    Of course, where feasible, another approach would be to switch to a data structure
+such as a hash table that is more friendly to momentarily dropping out of an RCU
+read-side critical section.
+ Quick Quiz 13.16: But how would this work with a resizable hash table, such as the one
+ described in Section 10.4?
+
+13.5.9       Lockless Configuration Update
+Suppose that you have a single global pointer that is either NULL or points to a singleton
+data structure that provides configuration information, similar to that discussed in
+Section 9.5.1.1. The twist being added in this section is allowing concurrent lockless
+updates.
+
+                                                                                               v2025.12.18a
+13.5. RCU RESCUES                                                                               453
+
+     At first glance, the updates in that section are lockless, given that they use rcu_
+assign_pointer(). However, if we have concurrent lockless updates, one update’s
+rcu_assign_pointer() can be silently overwritten by the next update, resulting in a
+memory leak. One way to avoid this is to use an atomic xchg() instruction, as shown
+on lines 15 and 25 of Listing 13.11. This way, the pointer from the overwritten xchg()
+is returned by the next xchg(), allowing the caller to free it after an RCU grace period
+(lines 16 and 26). Because the Linux-kernel memory model does not support dynamic
+allocation, this code emulates freeing by storing the value zero.
+ Quick Quiz 13.17: Wait!!! Isn’t it necessary for lines 17 and 27 of Listing 13.11 to check for
+ a NULL pointer returned from lines 15 and 25?
+
+ Quick Quiz 13.18: Do we really need xchg() in Listing 13.11? Why not a simple load
+ followed by a simple store?
+
+    The reader can then be written as a straightforward RCU reader (lines 35–38),
+loading the current pointer on line 36 and dereferencing it on line 37.
+    Running this example (CodeSamples/formal/herd/C-MP+o-xchg-rcusync-
+o+o-xchg-rcusync-o+rl-o-o-rul.litmus) through herd (see Section 12.3) veri-
+fies that this algorithm avoid use-after-free errors (line 43) and that it emulates freeing
+of all but one of the objects a, b, and c (line 45), thus also avoiding memory leaks.
+
+13.5.10        Lockless Double-Checked Locking
+Double-check locking is a well-known pattern that provides first-use initialization of
+shared state. But consider an extreme low-latency environment in which any and all
+use of locking is forbidden. How can first-use initialization (and subsequent update) be
+implemented under such constraints?
+     One approach is to use RCU to protect the lookup operation, and to use an atomic
+xchg() operation to carry out the update. As on the prior section, an overwritten object
+is RCU-freed in order to avoid disrupting concurrent readers, for example, as shown in
+Listing 13.12 (C-double-check-rcu-2.litmus).8
+     The fastpath covers the common case where initialization has already completed.
+Line 14 begins an RCU read-side critical section, and line 15 fetches the current pointer.
+If line 16 determines that this pointer is non-NULL, then initialization is complete, so
+that line 17 fetches the element’s contents and line 18 exits the critical section.
+     Otherwise, line 16 will see the pre-initialization NULL pointer and transfer control to
+line 20, which exits the RCU read-side critical section. Line 21 initializes the element
+(abstracting away any required allocation), line 22 atomically exchanges the pointer
+to this element with the global pointer p, returning the old value in r1. If line 23
+determines that r1 was non-NULL, then line 24 waits for any readers accessing the old
+element to finish and line 25 emulates a kfree(). Either way, r2 is set to the initial
+value of 1.
+     Lines 31–51 operate in the same manner, but using element b instead of a.
+     Line 53 displays all variables to ease debugging of the litmus test. Line 55 verifies
+that both processes obtain an initialized value, and line 57 verifies that there are no
+    8 Those unconvinced by a two-process example are invited to look at a three-process
+
+example (C-double-check-rcu-3.litmus). Those unconvinced by a three-process
+example are invited to construct a larger example, but be advised that on Paul’s laptop, herd
+takes about 20 minutes to analyze a four-process example compared to about 2 seconds for a
+three-process example.
+
+                                                                                                      v2025.12.18a
+454                                       CHAPTER 13. PUTTING IT ALL TOGETHER
+
+Listing 13.12: Two-Process Double-Check RCU
+1    C C-double-check-rcu-2
+2
+3    {
+4            int a;
+5            int b;
+6            int *p=0;
+7    }
+8
+9    P0(int *a, int *b, int **p)
+10   {
+11           int *r1;
+12           int r2;
+13
+14           rcu_read_lock();
+15           r1 = rcu_dereference(*p);
+16           if (r1) {
+17                    r2 = *r1;
+18                    rcu_read_unlock();
+19           } else {
+20                    rcu_read_unlock();
+21                    *a = 1;
+22                    r1 = xchg(p, a);
+23                    if (r1) {
+24                            synchronize_rcu();
+25                            *r1 = 0; // Emulate kfree();
+26                    }
+27                    r2 = 1;
+28           }
+29   }
+30
+31   P1(int *a, int *b, int **p)
+32   {
+33           int *r1;
+34           int r2;
+35
+36           rcu_read_lock();
+37           r1 = rcu_dereference(*p);
+38           if (r1) {
+39                    r2 = *r1;
+40                    rcu_read_unlock();
+41           } else {
+42                    rcu_read_unlock();
+43                    *b = 1;
+44                    r1 = xchg(p, b);
+45                    if (r1) {
+46                            synchronize_rcu();
+47                            *r1 = 0; // Emulate kfree();
+48                    }
+49                    r2 = 1;
+50           }
+51   }
+52
+53   locations [0:r1; 1:r1; a; b; p]
+54   (* Reader better not see freed element!!! *)
+55   exists (0:r2=0 \/ 1:r2=0 \/
+56           (* Better only be one in use! *)
+57           (a=1 /\ b=1) \/ (a=0 /\ b=0))
+
+                                                                                v2025.12.18a
+13.5. RCU RESCUES                                                                    455
+
+Listing 13.13: Two-Process Double-Check CAS
+1    C C-double-check-cas-2
+2
+3    {
+4            int a;
+5            int b;
+6            int *p=0;
+7    }
+8
+9    P0(int *a, int *b, int **p)
+10   {
+11           int *r1;
+12           int r2;
+13
+14           r1 = READ_ONCE(*p);
+15           if (r1) {
+16                    r2 = *r1;
+17           } else {
+18                    *a = 1;
+19                    r1 = cmpxchg(p, 0, a);
+20                    if (r1) {
+21                            *a = 0; // Emulate kfree();
+22                    }
+23                    r2 = 1;
+24           }
+25   }
+26
+27   P1(int *a, int *b, int **p)
+28   {
+29           int *r1;
+30           int r2;
+31
+32           r1 = rcu_dereference(*p);
+33           if (r1) {
+34                    r2 = *r1;
+35           } else {
+36                    *b = 1;
+37                    r1 = cmpxchg(p, 0, b);
+38                    if (r1) {
+39                            *b = 0; // Emulate kfree();
+40                    }
+41                    r2 = 1;
+42           }
+43   }
+44
+45   locations [0:r1; 1:r1; a; b; p]
+46   (* Reader better not see freed element!!! *)
+47   exists (0:r2=0 \/ 1:r2=0 \/
+48           (* Better only be one in use! *)
+49           (a=1 /\ b=1) \/ (a=0 /\ b=0))
+
+memory leaks and that at least one element remains in use. Running herd confirms
+that this code satisfies these constraints.
+ Quick Quiz 13.19: But wouldn’t memory allocation also be forbidden in such a low-latency
+ environment?
+
+13.5.11        Lockless Double-Checked Initialization
+Suppose we have the situation described in Section 13.5.10 but without the need for
+subsequent updates. What is the best way to implement first-use initialization (but
+without subsequent update) under such constraints?
+    In this case, we only ever need to set pointer p the one time. This means that if any
+would-be initializing process finds that this pointer in non-NULL, it can simply abandon
+its attempt at initialization. This in turn means that any reader will only ever get a
+
+                                                                                            v2025.12.18a
+456                                        CHAPTER 13. PUTTING IT ALL TOGETHER
+
+reference to the one (immortal) element, removing any need for any sort of deferred
+reclamation. This initialization procedure can therefore be implemented using a simple
+cmpxchg() in Listing 13.13.
+     Line 14 fetches the pointer, and if line 15 sees that it is non-NULL, line 16 picks up
+the value.
+     Otherwise, line 18 initializes an element and line 19 attempts to install it at pointer p.
+If this attempt fails, it means that some other process has already done the initialization,
+so line 21 frees this process’s element.
+Quick Quiz 13.20: Doesn’t that READ_ONCE() on line 14 Listing 13.13 need to be smp_
+load_acquire() in order to prevent early readers running concurrently with the initialization
+from seeing pre-initialization garbage?
+
+    This example underscores the need to thoroughly understand the requirements. In
+this example, dropping the requirement for runtime update simplified the synchronization
+by removing the need for RCU.9
+Quick Quiz 13.21: Given an algorithm like that shown in Listing 13.13, why would anyone
+use double-checked locking?
+
+13.6       Micro-Optimization
+                                              The devil is in the details.
+                                                                                     Unknown
+
+The data structures shown in this book were coded straightforwardly, with no adaptation
+to the underlying system’s cache hierarchy. In addition, many of the implementations
+used pointers to functions for key-to-hash conversions and other frequent operations.
+Although this approach provides simplicity and portability, in many cases it does give
+up some performance.
+    The following sections touch on specialization, memory conservation, and hardware
+considerations. Please do not mistake these short sections for a definitive treatise on
+this subject. Whole books have been written on optimizing for a specific CPU, let alone
+to the wide variety of CPU families in common use today.
+
+13.6.1     Specialization
+The resizable hash table presented in Section 10.4 on page 313 used an opaque type for
+the key. This allows great flexibility, permitting any sort of key to be used, but it also
+incurs significant overhead due to the calls via of pointers to functions. Now, modern
+hardware uses sophisticated branch-prediction techniques to minimize this overhead,
+but on the other hand, real-world software is often larger than can be accommodated
+even by today’s large hardware branch-prediction tables. This is especially the case for
+calls via pointers, in which case the branch prediction hardware must record a pointer in
+addition to branch-taken/branch-not-taken information.
+    This overhead can be eliminated by specializing a hash-table implementation to
+a given key type and hash function, for example, by using C++ templates. Doing so
+eliminates the ->ht_cmp(), ->ht_gethash(), and ->ht_getkey() function pointers
+   9 Kudos to Denis Yaroshevskiy for pointing this out.
+
+                                                                                                  v2025.12.18a
+13.6. MICRO-OPTIMIZATION                                                               457
+
+in the ht structure shown in Listing 10.9 on page 315. It also eliminates the corresponding
+calls through these pointers, which could allow the compiler to inline the resulting fixed
+functions, eliminating not only the overhead of the call instruction, but the argument
+marshalling as well.
+Quick Quiz 13.22: How much do these specializations really save? Are they really worth it?
+
+    All that aside, one of the great benefits of modern hardware compared to that
+available when I first started learning to program back in the early 1970s is that much
+less specialization is required. This allows much greater productivity than was possible
+back in the days of four-kilobyte address spaces.
+
+13.6.2     Bits and Bytes
+The hash tables discussed in this chapter made almost no attempt to conserve memory.
+For example, the ->ht_idx field in the ht structure in Listing 10.9 on page 315 always
+has a value of either zero or one, yet takes up a full 32 bits of memory. It could be
+eliminated, for example, by stealing a bit from the ->ht_resize_key field. This works
+because the ->ht_resize_key field is large enough to address every byte of memory
+and the ht_bucket structure is more than one byte long, so that the ->ht_resize_key
+field must have several bits to spare.
+    This sort of bit-packing trick is frequently used in data structures that are highly
+replicated, as is the page structure in the Linux kernel. However, the resizable hash
+table’s ht structure is not all that highly replicated. It is instead the ht_bucket
+structures we should focus on. There are two major opportunities for shrinking the
+ht_bucket structure: (1) Placing the ->htb_lock field in a low-order bit of one of
+the ->htb_head pointers and (2) Reducing the number of pointers required.
+    The first opportunity might make use of bit-spinlocks in the Linux kernel, which
+are provided by the include/linux/bit_spinlock.h header file. These are used in
+space-critical data structures in the Linux kernel, but are not without their disadvantages:
+
+   1. They are significantly slower than the traditional spinlock primitives.
+
+   2. They cannot participate in the lockdep deadlock detection tooling in the Linux
+      kernel [Cor06a].
+
+   3. They do not record lock ownership, further complicating debugging.
+
+   4. They do not participate in priority boosting in -rt kernels, which means that
+      preemption must be disabled when holding bit spinlocks, which can degrade
+      real-time latency.
+
+    Despite these disadvantages, bit-spinlocks are extremely useful when memory is at
+a premium.
+    One aspect of the second opportunity was covered in Section 10.4.4 on page 323,
+which presented resizable hash tables that require only one set of bucket-list pointers in
+place of the pair of sets required by the resizable hash table presented in Section 10.4 on
+page 313. Another approach would be to use singly linked bucket lists in place of the
+doubly linked lists used in this chapter. One downside of this approach is that deletion
+would then require additional overhead, either by marking the outgoing pointer for later
+removal or by searching the bucket list for the element being deleted.
+
+                                                                                               v2025.12.18a
+458                                       CHAPTER 13. PUTTING IT ALL TOGETHER
+
+Listing 13.14: Alignment for 64-Byte Cache Lines
+1   struct hash_elem {
+2           struct ht_elem e;
+3           long __attribute__ ((aligned(64))) counter;
+4   };
+
+    In short, there is a tradeoff between minimal memory overhead on the one hand,
+and performance and simplicity on the other. Fortunately, the relatively large memories
+available on modern systems have allowed us to prioritize performance and simplicity
+over memory overhead. However, even though the year 2022’s pocket-sized smartphones
+sport many gigabytes of memory and its mid-range servers sport terabytes, it is sometimes
+necessary to take extreme measures to reduce memory overhead.
+
+13.6.3      Hardware Considerations
+Modern computers typically move data between CPUs and main memory in fixed-sized
+blocks that range in size from 32 bytes to 256 bytes. These blocks are called cache
+lines, and are extremely important to high performance and scalability, as was discussed
+in Section 3.2. One timeworn way to kill both performance and scalability is to place
+incompatible variables into the same cacheline. For example, suppose that a resizable
+hash table data element had the ht_elem structure in the same cacheline as a frequently
+incremented counter. The frequent incrementing would cause the cacheline to be present
+at the CPU doing the incrementing, but nowhere else. If other CPUs attempted to
+traverse the hash bucket list containing that element, they would incur expensive cache
+misses, degrading both performance and scalability.
+    One way to solve this problem on systems with 64-byte cache line is shown in
+Listing 13.14. Here GCC’s aligned attribute is used to force the ->counter and the
+ht_elem structure into separate cache lines. This would allow CPUs to traverse the
+hash bucket list at full speed despite the frequent incrementing.
+    Of course, this raises the question “How did we know that cache lines are 64
+bytes in size?” On a Linux system, this information may be obtained from the
+/sys/devices/system/cpu/cpu*/cache/ directories, and it is even possible to
+make the installation process rebuild the application to accommodate the system’s
+hardware structure. However, this would be more difficult if you wanted your application
+to also run on a variety of environments, including non-Linux systems. Furthermore,
+even if you were content to run only on Linux, such a self-modifying installation poses
+validation challenges. For example, systems with 32-byte cachelines might work well,
+but performance might suffer on systems with 64-byte cachelines due to false sharing.
+    Fortunately, there are some rules of thumb that work reasonably well in practice,
+which were gathered into a 1995 paper [GKPS95].10 The first group of rules involve
+rearranging structures to accommodate cache geometry:
+
+    1. Place read-mostly data far from frequently updated data. For example, place
+       read-mostly data at the beginning of the structure and frequently updated data at
+       the end. Place data that is rarely accessed in between.
+    2. If the structure has groups of fields such that each group is updated by an
+       independent code path, separate these groups from each other. Again, it can be
+
+  10 A number of these rules are paraphrased and expanded on here with permission from
+
+Orran Krieger.
+
+                                                                                            v2025.12.18a
+13.6. MICRO-OPTIMIZATION                                                              459
+
+      helpful to place rarely accessed data between the groups. In some cases, it might
+      also make sense to place each such group into a separate structure referenced by
+      the original structure.
+   3. Where possible, associate update-mostly data with a CPU, thread, or task. We saw
+      several very effective examples of this rule of thumb in the counter implementations
+      in Chapter 5.
+   4. Going one step further, partition your data on a per-CPU, per-thread, or per-task
+      basis, as was discussed in Chapter 8.
+
+     There has been some work towards automated trace-based rearrangement of structure
+fields [GDZE10]. This work might well ease one of the more painstaking tasks required
+to get excellent performance and scalability from multithreaded software.
+     An additional set of rules of thumb deal with locks:
+
+   1. Given a heavily contended lock protecting data that is frequently modified, take
+      one of the following approaches:
+
+        (a) Place the lock in a different cacheline than the data that it protects.
+       (b) Use a lock that is adapted for high contention, such as a queued lock.
+        (c) Redesign to reduce lock contention. (This approach is best, but is not always
+            trivial.)
+
+   2. Place uncontended locks into the same cache line as the data that they protect.
+      This approach means that the cache miss that brings the lock to the current CPU
+      also brings its data.
+   3. Protect read-mostly data with hazard pointers, RCU, or, for long-duration critical
+      sections, reader-writer locks.
+
+     Of course, these are rules of thumb rather than absolute rules. Some experimentation
+is required to work out which are most applicable to a given situation.
+
+                                                                                             v2025.12.18a
+460   CHAPTER 13. PUTTING IT ALL TOGETHER
+
+                                            v2025.12.18a

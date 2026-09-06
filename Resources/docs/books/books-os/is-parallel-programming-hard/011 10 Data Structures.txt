@@ -1,0 +1,1654 @@
+                                        Bad programmers worry about the code. Good
+                                        programmers worry about data structures and their
+                                        relationships.
+                                                                             Linus Torvalds
+
+Chapter 10
+
+Data Structures
+
+Serious discussions of algorithms include time complexity of their data structures [CLRS01].
+However, for parallel programs, the time complexity includes concurrency effects be-
+cause these effects can be overwhelmingly large, as shown in Chapter 3. In other
+words, a good programmer’s data-structure relationships include those aspects related
+to concurrency.
+   This chapter will expose a number of complications:
+
+   1. Data structures designed in full accordance with the good advice given in Chapter 6
+      can nonetheless abjectly fail to scale on some types of systems.
+
+   2. Data structures designed in full accordance with the good advice given in both
+      Chapter 6 and Chapter 9 can still abjectly fail to scale on some types of systems.
+
+   3. Even read-only synchronization-free data-structure traversal can fail to scale on
+      some types of systems.
+
+   4. Data-structure traversals avoiding the aforementioned complications can still be
+      impeded by concurrent updates.
+
+   This chapter will investigate these complications and demostrate some ways of
+unraveling them.
+    Section 10.1 presents the motivating application for this chapter’s data structures.
+Chapter 6 showed how partitioning improves scalability, so Section 10.2 discusses
+partitionable data structures. Chapter 9 described how deferring some actions can
+greatly improve both performance and scalability, a topic taken up by Section 10.3.
+Section 10.4 looks at a non-partitionable data structure, splitting it into read-mostly and
+partitionable portions, which improves both performance and scalability. Because this
+chapter cannot delve into the details of every concurrent data structure, Section 10.5
+surveys a few of the important ones. Finally, Section 10.6 presents a summary of this
+chapter.
+
+                                                                                               v2025.12.18a
+298                                               CHAPTER 10. DATA STRUCTURES
+
+10.1      Motivating Application
+
+                                         The art of doing mathematics consists in finding that
+                                         special case which contains all the germs of
+                                         generality.
+                                                                                  David Hilbert
+
+We will use the Schrödinger’s Zoo application to evaluate performance [McK13].
+Schrödinger has a zoo containing a large number of animals, and he would like to track
+them using an in-memory database with each animal in the zoo represented by a data
+item in this database. Each animal has a unique name that is used as a key, with a variety
+of data tracked for each animal.
+    Births, captures, and purchases result in insertions, while deaths, releases, and
+sales result in deletions. Because Schrödinger’s zoo contains a large quantity of short-
+lived animals, including mice and insects, the database must handle high update rates.
+Those interested in Schrödinger’s animals can query them, and Schrödinger has noted
+suspiciously query rates for his cat, so much so that he suspects that his mice might be
+checking up on their nemesis. Whatever their source, Schrödinger’s application must
+handle high query rates to a single data element.
+    As we will see, this simple application can pose a challenge to traditional concurrent
+data structures.
+
+10.2      Partitionable Data Structures
+
+                                         Finding a way to live the simple life today is the
+                                         most complicated task.
+                                                                   Henry A. Courtney, updated
+
+There are a huge number of data structures in use today, so much so that there are
+multiple textbooks covering them. This section focuses on a single data structure,
+namely the hash table. This focused approach allows a much deeper investigation of
+how concurrency interacts with data structures, and also focuses on a data structure that
+is heavily used in practice. Section 10.2.1 overviews the design, and Section 10.2.2
+presents the implementation. Finally, Section 10.2.3 discusses the resulting performance
+and scalability.
+
+10.2.1     Hash-Table Design
+Chapter 6 emphasized the need to apply partitioning in order to attain respectable
+performance and scalability, so partitionability must be a first-class criterion when
+selecting data structures. This criterion is well satisfied by that workhorse of parallelism,
+the hash table. Hash tables are conceptually simple, consisting of an array of hash
+buckets. A hash function maps from a given element’s key to the hash bucket that this
+element will be stored in. Each hash bucket therefore heads up a linked list of elements,
+called a hash chain. When properly configured, these hash chains will be quite short,
+permitting a hash table to access its elements extremely efficiently.
+
+                                                                                                  v2025.12.18a
+10.2. PARTITIONABLE DATA STRUCTURES                                                     299
+
+Listing 10.1: Hash-Table Data Structures
+1    struct ht_elem {
+2            struct cds_list_head hte_next;
+3            unsigned long hte_hash;
+4    };
+5
+6    struct ht_bucket {
+7            struct cds_list_head htb_head;
+8            spinlock_t htb_lock;
+9    };
+10
+11   struct hashtab {
+12           unsigned long ht_nbuckets;
+13           int (*ht_cmp)(struct ht_elem *htep, void *key);
+14           struct ht_bucket ht_bkt[0];
+15   };
+
+ Quick Quiz 10.1: But chained hash tables are but one type of many. Why the focus on chained
+ hash tables?
+
+    In addition, each bucket has its own lock, so that elements in different buckets of the
+hash table may be added, deleted, and looked up completely independently. A large
+hash table with a large number of buckets (and thus locks), with each bucket containing
+a small number of elements should therefore provide excellent scalability.
+    This approach solves the element-count issue called out in Section 2.4.6 by refraining
+from returning any count of the number of elements in the hash table from either
+hashtab_add() or hashtab_del(). It further simplifies the API by allowing duplicate
+elements and by passing a pointer to the element to be deleted to hashtab_del().
+These two changes eliminate the possibility of error returns, which means that the
+hashtab_add() and hashtab_del() functions’ return types can be void.
+
+10.2.2       Hash-Table Implementation
+Listing 10.1 (hash_bkt.c) shows a set of data structures used in a simple fixed-sized
+hash table using chaining and per-hash-bucket locking, and Figure 10.1 diagrams
+how they fit together. Note that the cds_ functions and data structures may be found
+in the userspace RCU library [Des09b, MDJ13d, MDJ13e, MDJ13a]. The hashtab
+structure (lines 11–15 in Listing 10.1) contains four ht_bucket structures (lines 6–9
+in Listing 10.1), with the ->ht_nbuckets field controlling the number of buckets
+and the ->ht_cmp field holding the pointer to key-comparison function. Each such
+bucket contains a list header ->htb_head and a lock ->htb_lock. The list headers
+chain ht_elem structures (lines 1–4 in Listing 10.1) through their ->hte_next fields,
+and each ht_elem structure also caches the corresponding element’s hash value in
+the ->hte_hash field. The ht_elem structure is included in a larger structure which
+might contain a complex key. Figure 10.1 shows bucket 0 containing two elements and
+bucket 2 containing one.
+    Listing 10.2 shows mapping and locking functions. Lines 1 and 2 show the macro
+HASH2BKT(), which maps from a hash value to the corresponding ht_bucket structure.
+This macro uses a simple modulus: If more aggressive hashing is required, the caller
+needs to implement it when mapping from key to hash value. The remaining two
+functions acquire and release the ->htb_lock corresponding to the specified hash
+value.
+    Listing 10.3 shows hashtab_lookup(), which returns a pointer to the element
+with the specified hash and key, or NULL if that element does not exist. This function
+
+                                                                                               v2025.12.18a
+300                                                    CHAPTER 10. DATA STRUCTURES
+
+                    struct hashtab
+                     −>ht_nbuckets = 4
+                     −>ht_cmp
+                     −>ht_bkt[0]            struct ht_elem      struct ht_elem
+                       −>htb_head            −>hte_next          −>hte_next
+                       −>htb_lock            −>hte_hash          −>hte_hash
+                     −>ht_bkt[1]
+                       −>htb_head
+                       −>htb_lock
+                     −>ht_bkt[2]            struct ht_elem
+                       −>htb_head            −>hte_next
+                       −>htb_lock            −>hte_hash
+                     −>ht_bkt[3]
+                       −>htb_head
+                       −>htb_lock
+
+                     Figure 10.1: Hash-Table Data-Structure Diagram
+
+Listing 10.2: Hash-Table Mapping and Locking
+1    #define HASH2BKT(htp, h) \
+2            (&(htp)->ht_bkt[h % (htp)->ht_nbuckets])
+3
+4    static void hashtab_lock(struct hashtab *htp,
+5                             unsigned long hash)
+6    {
+7            spin_lock(&HASH2BKT(htp, hash)->htb_lock);
+8    }
+9
+10   static void hashtab_unlock(struct hashtab *htp,
+11                              unsigned long hash)
+12   {
+13           spin_unlock(&HASH2BKT(htp, hash)->htb_lock);
+14   }
+
+takes both a hash value and a pointer to the key because this allows users of this function
+to use arbitrary keys and arbitrary hash functions. Line 8 maps from the hash value
+to a pointer to the corresponding hash bucket. Each pass through the loop spanning
+lines 9–14 examines one element of the bucket’s hash chain. Line 10 checks to see if
+the hash values match, and if not, line 11 proceeds to the next element. Line 12 checks
+to see if the actual key matches, and if so, line 13 returns a pointer to the matching
+element. If no element matches, line 15 returns NULL.
+ Quick Quiz 10.2: But isn’t the double comparison on lines 10–13 in Listing 10.3 inefficient in
+ the case where the key fits into an unsigned long?
+
+    Listing 10.4 shows the hashtab_add() and hashtab_del() functions that add
+and delete elements from the hash table, respectively.
+    The hashtab_add() function simply sets the element’s hash value on line 4, then
+adds it to the corresponding bucket on lines 5 and 6. The hashtab_del() function
+simply removes the specified element from whatever hash chain it is on, courtesy of the
+doubly linked nature of the hash-chain lists. Before calling either of these two functions,
+the caller is required to ensure that no other thread is accessing or modifying this same
+bucket, for example, by invoking hashtab_lock() beforehand.
+    Listing 10.5 shows hashtab_alloc() and hashtab_free(), which do hash-table
+allocation and freeing, respectively. Allocation begins on lines 8–9 with allocation of the
+underlying memory. If line 10 detects that memory has been exhausted, line 11 returns
+
+                                                                                                  v2025.12.18a
+10.2. PARTITIONABLE DATA STRUCTURES                                      301
+
+Listing 10.3: Hash-Table Lookup
+1    struct ht_elem *
+2    hashtab_lookup(struct hashtab *htp, unsigned long hash,
+3                   void *key)
+4    {
+5            struct ht_bucket *htb;
+6            struct ht_elem   *htep;
+7
+8            htb = HASH2BKT(htp, hash);
+9            cds_list_for_each_entry(htep, &htb->htb_head, hte_next) {
+10                   if (htep->hte_hash != hash)
+11                           continue;
+12                   if (htp->ht_cmp(htep, key))
+13                           return htep;
+14           }
+15           return NULL;
+16   }
+
+Listing 10.4: Hash-Table Modification
+1    void hashtab_add(struct hashtab *htp, unsigned long hash,
+2                     struct ht_elem *htep)
+3    {
+4            htep->hte_hash = hash;
+5            cds_list_add(&htep->hte_next,
+6                         &HASH2BKT(htp, hash)->htb_head);
+7    }
+8
+9    void hashtab_del(struct ht_elem *htep)
+10   {
+11           cds_list_del_init(&htep->hte_next);
+12   }
+
+Listing 10.5: Hash-Table Allocation and Free
+1    struct hashtab *
+2    hashtab_alloc(unsigned long nbuckets,
+3                   int (*cmp)(struct ht_elem *htep, void *key))
+4    {
+5            struct hashtab *htp;
+6            int i;
+7
+8            htp = malloc(sizeof(*htp) +
+9                         nbuckets * sizeof(struct ht_bucket));
+10           if (htp == NULL)
+11                   return NULL;
+12           htp->ht_nbuckets = nbuckets;
+13           htp->ht_cmp = cmp;
+14           for (i = 0; i < nbuckets; i++) {
+15                   CDS_INIT_LIST_HEAD(&htp->ht_bkt[i].htb_head);
+16                   spin_lock_init(&htp->ht_bkt[i].htb_lock);
+17           }
+18           return htp;
+19   }
+20
+21   void hashtab_free(struct hashtab *htp)
+22   {
+23           free(htp);
+24   }
+
+                                                                               v2025.12.18a
+302                                                                             CHAPTER 10. DATA STRUCTURES
+
+                                                     1.4x10
+                                                           6
+
+                     Total Lookups per Millisecond
+                                                     1.2x10
+
+                                                      1x106
+
+                                                     800000
+                                                                                        ideal
+                                                     600000
+
+                                                     400000
+
+                                                     200000
+                                                                                          bucket
+                                                          0
+                                                                     5   10     15     20    25
+                                                                     Number of CPUs (Threads)
+
+      Figure 10.2: Read-Only Hash-Table Performance For Schrödinger’s Zoo
+
+                                                     250000
+                     Total Lookups per Millisecond
+
+                                                     200000
+
+                                                     150000
+
+                                                     100000
+
+                                                     50000
+
+                                                               0   50 100 150 200 250 300 350 400 450
+                                                                    Number of CPUs (Threads)
+
+Figure 10.3: Read-Only Hash-Table Performance For Schrödinger’s Zoo, 448 CPUs
+
+NULL to the caller. Otherwise, lines 12 and 13 initialize the number of buckets and
+the pointer to key-comparison function, and the loop spanning lines 14–17 initializes
+the buckets themselves, including the chain list header on line 15 and the lock on
+line 16. Finally, line 18 returns a pointer to the newly allocated hash table. The
+hashtab_free() function on lines 21–24 is straightforward.
+
+10.2.3     Hash-Table Performance
+The performance results for a single 28-core socket of a 2.1 GHz Intel Xeon system
+using a bucket-locked hash table with 262,144 buckets are shown in Figure 10.2.
+The performance does scale nearly linearly, but falls far short ideal, even at only
+28 CPUs. Part of this shortfall is due to the fact that lock acquisitions and releases incur
+communications cache misses only on two or more CPUs.
+    And things only get worse with more CPUs, as can be seen in Figure 10.3. We
+do not need to show ideal performance: The performance for 29 CPUs and beyond is
+abysmal. This clearly underscores the dangers of extrapolating performance from a
+modest number of CPUs.
+
+                                                                                                              v2025.12.18a
+10.2. PARTITIONABLE DATA STRUCTURES                                                                     303
+
+                                                      250000
+
+                      Total Lookups per Millisecond
+                                                      200000
+
+                                                      150000
+
+                                                      100000
+
+                                                      50000
+
+                                                               0   50 100 150 200 250 300 350 400 450
+                                                                    Number of CPUs (Threads)
+
+Figure 10.4: Read-Only Hash-Table Performance For Schrödinger’s Zoo, Varying
+    Buckets
+
+   Of course, one possible reason for the collapse in performance might be that more
+hash buckets are needed. We can test this by increasing the number of hash buckets.
+Quick Quiz 10.3: Instead of simply increasing the number of hash buckets, wouldn’t it be
+better to cache-align the existing hash buckets?
+
+    However, as can be seen in Figure 10.4, changing the number of buckets has almost
+no effect: Scalability is still abysmal. In particular, we still see a sharp dropoff at
+29 CPUs and beyond, clearly demonstrating the complication put forward by item 1 of
+the list of complications on page 297. Clearly, something else is going on.
+    The problem is that this is a multi-socket system, with CPUs 0–27 and 224–251
+mapped to the first socket as shown in Table 10.1. Test runs confined to the first 28 CPUs
+therefore perform quite well, but tests that involve socket 0’s CPUs 0–27 as well as
+socket 1’s CPU 28 incur the overhead of passing data across socket boundaries. This
+can severely degrade performance, as was discussed in Section 3.2.1. In short, large
+multi-socket systems require good locality of reference in addition to full partitioning.
+The remainder of this chapter will discuss ways of providing good locality of reference
+within the hash table itself, but in the meantime please note that one other way to provide
+good locality of reference would be to place large data elements in the hash table. For
+example, Schrödinger might attain excellent cache locality by placing photographs or
+even videos of his animals in each element of the hash table. But for those needing hash
+tables containing small data elements, please read on!
+Quick Quiz 10.4: Given the negative scalability of the Schrödinger’s Zoo application across
+sockets, why not just run multiple copies of the application, with each copy having a subset of
+the animals and confined to run on a single socket?
+
+     One key property of these Schrödinger’s-zoo experiments is they are all read-only.
+This makes the performance degradation due to lock-acquisition-induced cache misses
+all the more painful. Even though we are not updating the underlying hash table itself,
+we are still paying the price for writing to memory. Of course, if the hash table was
+never going to be updated, we could dispense entirely with mutual exclusion. This
+approach is quite straightforward and is left as an exercise for the reader. But even with
+the occasional update, avoiding writes avoids cache misses, and allows the read-mostly
+data to be replicated across all the caches, which in turn promotes locality of reference.
+
+                                                                                                              v2025.12.18a
+304                                             CHAPTER 10. DATA STRUCTURES
+
+                 Table 10.1: NUMA Topology of System Under Test
+
+                                           Hyperthread
+                            Socket         0         1
+                                  0       0–27     224–251
+                                  1      28–55     252–279
+                                  2      56–83     280–307
+                                  3     84–111     308–335
+                                  4    112–139     336–363
+                                  5    140–167     364–391
+                                  6    168–195     392–419
+                                  7    196–223     420–447
+
+    The next section therefore examines optimizations that can be carried out in
+read-mostly cases where updates are rare, but could happen at any time.
+
+10.3      Read-Mostly Data Structures
+                                        Adapt the remedy to the disease.
+                                                                           Chinese proverb
+
+Although partitioned data structures can offer excellent scalability, NUMA effects can
+result in severe degradations of both performance and scalability. In addition, the
+need for read-side synchronization can degrade performance in read-mostly situations.
+However, we can achieve both performance and scalability by using RCU, which
+was introduced in Section 9.5. Similar results can be achieved using hazard pointers
+(hazptr.c) [Mic04a], which will be included in the performance results shown in this
+section [McK13].
+
+10.3.1    RCU-Protected Hash Table Implementation
+For an RCU-protected hash table with per-bucket locking, updaters use locking as shown
+in Section 10.2, but readers use RCU. The data structures remain as shown in Listing 10.1,
+and the HASH2BKT(), hashtab_lock(), and hashtab_unlock() functions remain
+as shown in Listing 10.2. However, readers use the lighter-weight concurrency-control
+embodied by hashtab_lock_lookup() and hashtab_unlock_lookup() shown in
+Listing 10.6.
+    Listing 10.7 shows hashtab_lookup() for the RCU-protected per-bucket-locked
+hash table. This is identical to that in Listing 10.3 except that cds_list_for_
+each_entry() is replaced by cds_list_for_each_entry_rcu(). Both of these
+primitives traverse the hash chain referenced by htb->htb_head but cds_list_for_
+each_entry_rcu() also correctly enforces memory ordering in case of concurrent
+insertion. This is an important difference between these two hash-table implementations:
+Unlike the pure per-bucket-locked implementation, the RCU protected implementation
+allows lookups to run concurrently with insertions and deletions, and RCU-aware
+primitives like cds_list_for_each_entry_rcu() are required to correctly handle
+
+                                                                                             v2025.12.18a
+10.3. READ-MOSTLY DATA STRUCTURES                                                       305
+
+Listing 10.6: RCU-Protected Hash-Table Read-Side Concurrency Control
+1    static void hashtab_lock_lookup(struct hashtab *htp,
+2                                    unsigned long hash)
+3    {
+4            rcu_read_lock();
+5    }
+6
+7    static void hashtab_unlock_lookup(struct hashtab *htp,
+8                                      unsigned long hash)
+9    {
+10           rcu_read_unlock();
+11   }
+
+Listing 10.7: RCU-Protected Hash-Table Lookup
+1    struct ht_elem *hashtab_lookup(struct hashtab *htp,
+2                                   unsigned long hash,
+3                                   void *key)
+4    {
+5            struct ht_bucket *htb;
+6            struct ht_elem *htep;
+7
+8           htb = HASH2BKT(htp, hash);
+9           cds_list_for_each_entry_rcu(htep,
+10                                      &htb->htb_head,
+11                                      hte_next) {
+12                  if (htep->hte_hash != hash)
+13                          continue;
+14                  if (htp->ht_cmp(htep, key))
+15                          return htep;
+16          }
+17          return NULL;
+18   }
+
+Listing 10.8: RCU-Protected Hash-Table Modification
+1    void hashtab_add(struct hashtab *htp,
+2                     unsigned long hash,
+3                     struct ht_elem *htep)
+4    {
+5            htep->hte_hash = hash;
+6            cds_list_add_rcu(&htep->hte_next,
+7                             &HASH2BKT(htp, hash)->htb_head);
+8    }
+9
+10   void hashtab_del(struct ht_elem *htep)
+11   {
+12           cds_list_del_rcu(&htep->hte_next);
+13   }
+
+this added concurrency. Note also that hashtab_lookup()’s caller must be within an
+RCU read-side critical section, for example, the caller must invoke hashtab_lock_
+lookup() before invoking hashtab_lookup() (and of course invoke hashtab_
+unlock_lookup() some time afterwards).
+ Quick Quiz 10.5: But if elements in a hash table can be removed concurrently with lookups,
+ doesn’t that mean that a lookup could return a reference to a data element that was removed
+ immediately after it was looked up?
+
+    Listing 10.8 shows hashtab_add() and hashtab_del(), both of which are quite
+similar to their counterparts in the non-RCU hash table shown in Listing 10.4. The
+hashtab_add() function uses cds_list_add_rcu() instead of cds_list_add()
+in order to ensure proper ordering when an element is added to the hash table at the
+same time that it is being looked up. The hashtab_del() function uses cds_list_
+del_rcu() instead of cds_list_del_init() to allow for the case where an element
+
+                                                                                               v2025.12.18a
+306                                              CHAPTER 10. DATA STRUCTURES
+
+is looked up just before it is deleted. Unlike cds_list_del_init(), cds_list_del_
+rcu() leaves the forward pointer intact, so that hashtab_lookup() can traverse to the
+newly deleted element’s successor.
+     Of course, after invoking hashtab_del(), the caller must wait for an RCU grace
+period (e.g., by invoking synchronize_rcu()) before freeing or otherwise reusing
+the memory for the newly deleted element.
+
+10.3.2     RCU-Protected Hash Table Validation
+Although the topic of validation is covered in detail in Chapter 11, the fact is that a hash
+table with lockless RCU-protected lookups needs special attention to validation sooner
+rather than later.
+    The test suite (“hashtorture.h”) contains a smoketest() function that verifies
+that a specific series of single-threaded additions, deletions, and lookups give the
+expected results.
+    Concurrent test runs put each updater thread in control of its portion of the elements,
+which allows assertions checking for the following issues:
+
+   1. A just-now-to-be-added element already being in the table according to hastab_
+      lookup().
+
+   2. A just-now-to-be-added element being marked as being in the table by its ->in_
+      table flag.
+
+   3. A just-now-to-be-deleted element not being in the table according to hastab_
+      lookup().
+
+   4. A just-now-to-be-deleted element being marked as not being in the table by its
+      ->in_table flag.
+
+    In addition, concurrent test runs run lookups concurrently with updates in order to
+catch all manner of data-structure corruption problems. Some runs also continually
+resize the hash table concurrently with both lookups and updates to verify correct
+behavior, and also to verify that resizes do not unduly delay either readers or updaters.
+    Finally, the concurrent tests output statistics that can be used to track down
+performance and scalabilty issues, which provides the raw data used by Section 10.3.3.
+Quick Quiz 10.6: The hashtorture.h file contains more than 1,000 lines! Is that a
+comprehensive test or what???
+
+   All code requires significant validation effort, and high-performance concurrent
+code requires more validation than most.
+
+10.3.3     RCU-Protected Hash Table Performance
+Figure 10.5 shows the read-only performance of RCU-protected and hazard-pointer-
+protected hash tables against the previous section’s per-bucket-locked implementation.
+As you can see, both RCU and hazard pointers perform and scale much better than
+per-bucket locking because read-only replication avoids NUMA effects. The difference
+increases with larger numbers of threads. Results from a globally locked implementation
+are also shown, and as expected the results are even worse than those of the per-bucket-
+locked implementation. RCU does slightly better than hazard pointers.
+
+                                                                                               v2025.12.18a
+10.3. READ-MOSTLY DATA STRUCTURES                                                                       307
+
+                                                    1x108
+
+                  Total Lookups per Millisecond
+                                                    1x107
+                                                                                ideal           U
+                                                                                              RC zptr
+                                                    1x106                                       ha
+
+                                                  100000                                  bucket
+
+                                                   10000                   global
+
+                                                              1           10           100
+                                                                    Number of CPUs (Threads)
+
+Figure 10.5: Read-Only RCU-Protected Hash-Table Performance For Schrödinger’s
+    Zoo
+
+                                                  2.2x107
+                                                   2x107
+                  Total Lookups per Millisecond
+
+                                                  1.8x107
+                                                  1.6x107
+                                                  1.4x107                                  ideal
+                                                  1.2x107
+                                                   1x107
+                                                   8x106
+                                                   6x106
+                                                          6
+                                                   4x10                                 RCU
+                                                   2x106                                hazptr
+                                                       0
+                                                              0   50 100 150 200 250 300 350 400 450
+                                                                   Number of CPUs (Threads)
+
+Figure 10.6: Read-Only RCU-Protected Hash-Table Performance For Schrödinger’s
+    Zoo, Linear Scale
+
+                                                                                                              v2025.12.18a
+308                                                                               CHAPTER 10. DATA STRUCTURES
+
+                                                     2.2x107
+                                                      2x107
+
+                     Total Lookups per Millisecond
+                                                             7
+                                                     1.8x10
+                                                     1.6x107
+                                                             7
+                                                     1.4x10                                 ideal
+                                                     1.2x107
+                                                      1x107
+                                                      8x106
+                                                             6
+                                                      6x10
+                                                      4x106                      QSBR,RCU
+                                                             6
+                                                      2x10                               hazptr
+                                                          0
+                                                                 0   50 100 150 200 250 300 350 400 450
+                                                                      Number of CPUs (Threads)
+
+Figure 10.7: Read-Only RCU-Protected Hash-Table Performance For Schrödinger’s
+    Zoo including QSBR, Linear Scale
+
+     Figure 10.6 shows the same data on a linear scale. This drops the global-locking
+trace into the x-axis, but allows the non-ideal performance of RCU and hazard pointers
+to be more readily discerned. Both show a change in slope at 224 CPUs, and this is due
+to hardware multithreading. At 224 and fewer CPUs, each thread has a core to itself. In
+this regime, RCU does better than does hazard pointers because the latter’s read-side
+memory barriers result in dead time within the core. In short, RCU is better able to
+utilize a core from a single hardware thread than is hazard pointers.
+     This situation changes above 224 CPUs. Because RCU is using more than half of
+each core’s resources from a single hardware thread, RCU gains relatively little benefit
+from the second hardware thread in each core. The slope of the hazard-pointers trace
+also decreases at 224 CPUs, but less dramatically, because the second hardware thread
+is able to fill in the time that the first hardware thread is stalled due to memory-barrier
+latency. As we will see in later sections, this second-hardware-thread advantage depends
+on the workload.
+     But why is RCU’s performance a factor of five less than ideal? One possibility is that
+the per-thread counters manipulated by rcu_read_lock() and rcu_read_unlock()
+are slowing things down. Figure 10.7 therefore adds the results for the QSBR variant
+of RCU, whose read-side primitives do nothing. And although QSBR does perform
+slightly better than does RCU, it is still about a factor of five short of ideal.
+     Figure 10.8 adds completely unsynchronized results, which works because this is
+a read-only benchmark with nothing to synchronize. Even with no synchronization
+whatsoever, performance still falls far short of ideal, thus demonstrating items 2 and 3
+of the list of complications on page 297.
+     The problem is that this system has sockets with 28 cores, which have the modest
+cache sizes shown in Table 3.2 on page 39. Each hash bucket (struct ht_bucket)
+occupies 56 bytes and each element (struct zoo_he) occupies 72 bytes for the RCU
+and QSBR runs. The benchmark generating Figure 10.8 used 262,144 buckets and
+up to 262,144 elements, for a total of 33,554,448 bytes, which not only overflows the
+1,048,576-byte L2 caches by more than a factor of thirty, but is also uncomfortably
+close to the L3 cache size of 40,370,176 bytes, especially given that this cache has
+only 11 ways. This means that L2 cache collisions will be the rule and also that L3
+cache collisions will not be uncommon, so that the resulting cache misses will degrade
+
+                                                                                                                v2025.12.18a
+10.3. READ-MOSTLY DATA STRUCTURES                                                                         309
+
+                                                     2.2x107
+                                                      2x107
+
+                     Total Lookups per Millisecond
+                                                             7
+                                                     1.8x10
+                                                     1.6x107
+                                                             7
+                                                     1.4x10                                 ideal
+                                                     1.2x107
+                                                      1x107
+                                                      8x106
+                                                             6
+                                                      6x10                     unsync,QSBR,RCU
+                                                      4x106
+                                                             6
+                                                      2x10                               hazptr
+                                                          0
+                                                                 0   50 100 150 200 250 300 350 400 450
+                                                                      Number of CPUs (Threads)
+
+Figure 10.8: Read-Only RCU-Protected Hash-Table Performance For Schrödinger’s
+    Zoo including QSBR and Unsynchronized, Linear Scale
+
+performance. In this case, the bottleneck is not in the CPU, but rather in the memory
+system.
+    Additional evidence for this memory-system bottleneck may be found by examining
+the unsynchronized code. This code does not need locks, so each hash bucket occupies
+only 16 bytes compared to the 56 bytes for RCU and QSBR. Similarly, each hash-table
+element occupies only 56 bytes compared to the 72 bytes for RCU and QSBR. So it is
+unsurprising that the single-CPU unsynchronized run performs up to about half again
+faster than that of either QSBR or RCU.
+Quick Quiz 10.7: How can we be so sure that the hash-table size is at fault here, especially
+given that Figure 10.4 on page 303 shows that varying hash-table size has almost no effect?
+Might the problem instead be something like false sharing?
+
+    What if the memory footprint is reduced still further? Figure E.5 on page 821 shows
+that RCU attains very nearly ideal performance on the much smaller data structure
+represented by the pre-BSD routing table.
+Quick Quiz 10.8: The memory system is a serious bottleneck on this big system. Why bother
+putting 448 CPUs on a system without giving them enough memory bandwidth to do something
+useful???
+
+    As noted earlier, Schrödinger is surprised by the popularity of his cat [Sch35], but
+recognizes the need to reflect this popularity in his design. Figure 10.9 shows the results
+of 64-CPU runs, varying the number of CPUs that are doing nothing but looking up the
+cat. Both RCU and hazard pointers respond well to this challenge, but bucket locking
+scales negatively, eventually performing as badly as global locking. This should not
+be a surprise because if all CPUs are doing nothing but looking up the cat, the lock
+corresponding to the cat’s bucket is for all intents and purposes a global lock.
+    This cat-only benchmark illustrates one potential problem with fully partitioned
+sharding approaches. Only the CPUs associated with the cat’s partition is able to access
+the cat, limiting the cat-only throughput. Of course, a great many applications have
+good load-spreading properties, and for these applications sharding works quite well.
+However, sharding does not handle “hot spots” very well, with the hot spot exemplified
+by Schrödinger’s cat being but one case in point.
+
+                                                                                                                v2025.12.18a
+310                                                                           CHAPTER 10. DATA STRUCTURES
+
+                                                 1x107
+
+                                                 1x106
+
+                  Cat Lookups per Millisecond
+                                                                             RCU
+                                                100000                          hazptr
+
+                                                10000
+                                                                     bucket
+                                                 1000
+
+                                                  100             global
+
+                                                            1                10
+                                                            Number of CPUs Looking Up The Cat
+
+Figure 10.9: Read-Side Cat-Only RCU-Protected Hash-Table Performance For Schrö-
+    dinger’s Zoo at 64 CPUs
+
+                                                 1x107
+                                                                                            RCU
+                                                        6
+                                                 1x10
+                  Lookups per Millisecond
+
+                                                                                   hazptr
+
+                                                100000                     bucket
+
+                                                 10000
+
+                                                  1000              global
+
+                                                            1            10          100
+                                                                Number of CPUs Doing Updates
+
+Figure 10.10: Read-Side RCU-Protected Hash-Table Performance For Schrödinger’s
+    Zoo in the Presence of Updates
+
+                                                                                                            v2025.12.18a
+10.3. READ-MOSTLY DATA STRUCTURES                                                              311
+
+                                                 1x10
+                                                                                      bucket
+                                                100000
+
+                      Updates per Millisecond
+                                                                             hazptr
+
+                                                10000                                  RCU
+
+                                                                          global
+                                                  100
+
+                                                            1            10          100
+                                                                Number of CPUs Doing Updates
+
+Figure 10.11: Update-Side RCU-Protected Hash-Table Performance For Schrödinger’s
+    Zoo
+
+     If we were only ever going to read the data, we would not need any concurrency
+control to begin with. Figure 10.10 therefore shows the effect of updates on readers.
+At the extreme left-hand side of this graph, all but one of the CPUs are doing lookups,
+while to the right all 448 CPUs are doing updates. For all four implementations, the
+number of lookups per millisecond decreases as the number of updating CPUs increases,
+of course reaching zero lookups per millisecond when all 448 CPUs are updating. Both
+hazard pointers and RCU do well compared to per-bucket locking because their readers
+do not increase update-side lock contention. RCU does well relative to hazard pointers
+as the number of updaters increases due to the latter’s read-side memory barriers, which
+incur greater overhead, especially in the presence of updates, and particularly when
+execution involves more than one socket. It therefore seems likely that modern hardware
+heavily optimizes memory-barrier execution, greatly reducing memory-barrier overhead
+in the read-only case.
+     Where Figure 10.10 showed the effect of increasing update rates on lookups,
+Figure 10.11 shows the effect of increasing update rates on the updates themselves.
+Again, at the left-hand side of the figure all but one of the CPUs are doing lookups and
+at the right-hand side of the figure all 448 CPUs are doing updates. Hazard pointers and
+RCU start off with a significant advantage because, unlike bucket locking, readers do not
+exclude updaters. However, as the number of updating CPUs increases, the update-side
+deferred-execution overhead starts to make its presence known, first for RCU and then
+for hazard pointers. Of course, all three of these implementations beat global locking,
+and by more than an order of magnitude.
+     It is quite possible that the differences in lookup performance observed in Figure 10.10
+are affected by the differences in update rates. One way to check this is to artificially
+throttle the update rates of per-bucket locking and hazard pointers to match that of
+RCU. Doing so does not significantly improve the lookup performance of per-bucket
+locking, nor does it close the gap between hazard pointers and RCU. However,
+removing the read-side memory barriers from hazard pointers (thus resulting in an
+unsafe implementation) does nearly close the gap between hazard pointers and RCU.
+Although this unsafe hazard-pointer implementation will usually be reliable enough for
+benchmarking purposes, it is absolutely not recommended for production use.
+
+                                                                                                     v2025.12.18a
+312                                              CHAPTER 10. DATA STRUCTURES
+
+                       Figure 10.12: Even Veterinarians Disagree!
+
+Quick Quiz 10.9: The dangers of extrapolating from 28 CPUs to 448 CPUs was made quite
+clear in Section 10.2.3. Would extrapolating up from 448 CPUs be any safer?
+
+      And this situation demonstrates item 4 in the list complications on page 297.
+
+10.3.4      RCU-Protected Hash Table Discussion
+One consequence of the RCU and hazard-pointer implementations is that a pair of
+concurrent readers might disagree on the state of the cat. For example, one of the readers
+might have fetched the pointer to the cat’s data structure just before it was removed,
+while another reader might have fetched this same pointer just afterwards. The first
+reader would then believe that the cat was alive, while the second reader would believe
+that the cat was dead.
+     This situation is completely fitting for Schrödinger’s cat, but it turns out that it is
+quite reasonable for normal non-quantum cats as well. After all, it is impossible to
+determine exactly when an animal is born or dies.
+     To see this, let’s suppose that we detect a cat’s death by heartbeat. This raise the
+question of exactly how long we should wait after the last heartbeat before declaring
+death. It is clearly ridiculous to wait only one millisecond, because then a healthy living
+cat would have to be declared dead—and then resurrected—more than once per second.
+It is equally ridiculous to wait a full month, because by that time the poor cat’s death
+would be unmistakeably apparent to olfactory sensors.
+     Because an animal’s heart can stop for some seconds and then start up again, there
+is a tradeoff between timely recognition of death and probability of false alarms. It is
+quite possible that a pair of veterinarians might disagree on the time to wait between the
+last heartbeat and the declaration of death. For example, one veterinarian might declare
+death thirty seconds after the last heartbeat, while another might insist on waiting a full
+minute. In this case, the two veterinarians would disagree on the state of the cat for the
+second period of thirty seconds following the last heartbeat, as fancifully depicted in
+Figure 10.12.
+     Heisenberg taught us to live with this sort of uncertainty [Hei27], which is a good
+thing because computing hardware and software acts similarly. For example, how do
+you know that a piece of computing hardware has failed? Often because it does not
+respond in a timely fashion. Just like the cat’s heartbeat, this results in a window of
+
+                                                                                               v2025.12.18a
+10.4. NON-PARTITIONABLE DATA STRUCTURES                                                     313
+
+                          Figure 10.13: Partitioning Problems
+
+uncertainty as to whether or not the hardware has really failed, as opposed to just being
+slow.
+    Furthermore, most computing systems are intended to interact with the outside world.
+Consistency with the outside world is therefore of paramount importance. However,
+as we saw in Figure 9.28 on page 274, increased internal consistency can come at the
+expense of degraded external consistency. Techniques such as RCU and hazard pointers
+give up some degree of internal consistency to attain improved external consistency.
+    In short, internal consistency is not necessarily a natural part of all problem domains,
+and often incurs great expense in terms of performance, scalability, consistency with
+the outside world [HKLP12, HHK+ 13, Rin13], or all of the above.
+
+10.4      Non-Partitionable Data Structures
+
+                                         Don’t be afraid to take a big step if one is indicated.
+                                         You can’t cross a chasm in two small steps.
+                                                                            David Lloyd George
+
+Fixed-size hash tables are perfectly partitionable, but resizable hash tables pose parti-
+tioning challenges when growing or shrinking, as fancifully depicted in Figure 10.13.
+However, it turns out that it is possible to construct high-performance scalable RCU-
+protected hash tables, as described in the following sections.
+
+10.4.1     Resizable Hash Table Design
+In happy contrast to the situation in the early 2000s, there are now several different types
+of scalable RCU-protected hash tables. The first (and simplest) was developed for the
+Linux kernel by Herbert Xu [Xu10], and is described in the following sections. Two
+others are covered briefly in Section 10.4.4.
+    The key insight behind the first hash-table implementation is that each data element
+can have two sets of list pointers, with one set currently being used by RCU readers (as
+well as by non-RCU updaters) and the other being used to construct a new resized hash
+
+                                                                                                   v2025.12.18a
+314                                                           CHAPTER 10. DATA STRUCTURES
+
+                  Bucket 0   Bucket 1
+
+                  Links 0               Links 0                Links 0   Links 0
+
+                  Links 1               Links 1                Links 1   Links 1
+
+                     A                    B                      C         D
+
+              Figure 10.14: Growing a Two-List Hash Table, State (a)
+
+                  Bucket 0   Bucket 1
+
+                  Links 0               Links 0                Links 0   Links 0
+
+                  Links 1               Links 1                Links 1   Links 1
+
+                     A                    B                      C         D
+
+                  Bucket 0   Bucket 1   Bucket 2   Bucket 3
+
+              Figure 10.15: Growing a Two-List Hash Table, State (b)
+
+                  Bucket 0   Bucket 1
+
+                  Links 0               Links 0                Links 0   Links 0
+
+                  Links 1               Links 1                Links 1   Links 1
+
+                     A                    B                      C         D
+
+                  Bucket 0   Bucket 1   Bucket 2   Bucket 3
+
+              Figure 10.16: Growing a Two-List Hash Table, State (c)
+
+table. This approach allows lookups, insertions, and deletions to all run concurrently
+with a resize operation (as well as with each other).
+    The resize operation proceeds as shown in Figures 10.14–10.17, with the initial
+two-bucket state shown in Figure 10.14 and with time advancing from figure to figure.
+The initial state uses the zero-index links to chain the elements into hash buckets. A
+four-bucket array is allocated, and the one-index links are used to chain the elements
+into these four new hash buckets. This results in state (b) shown in Figure 10.15, with
+readers still using the original two-bucket array.
+    The new four-bucket array is exposed to readers and then a grace-period operation
+waits for all readers, resulting in state (c), shown in Figure 10.16. In this state, all
+readers are using the new four-bucket array, which means that the old two-bucket array
+may now be freed, resulting in state (d), shown in Figure 10.17.
+
+                                                                                            v2025.12.18a
+10.4. NON-PARTITIONABLE DATA STRUCTURES                                               315
+
+                      Links 0              Links 0               Links 0   Links 0
+
+                      Links 1              Links 1               Links 1   Links 1
+
+                        A                    B                     C         D
+
+                     Bucket 0   Bucket 1   Bucket 2   Bucket 3
+
+                  Figure 10.17: Growing a Two-List Hash Table, State (d)
+
+Listing 10.9: Resizable Hash-Table Data Structures
+1    struct ht_elem {
+2            struct rcu_head rh;
+3            struct cds_list_head hte_next[2];
+4    };
+5
+6    struct ht_bucket {
+7            struct cds_list_head htb_head;
+8            spinlock_t htb_lock;
+9    };
+10
+11   struct ht {
+12           long ht_nbuckets;
+13           long ht_resize_cur;
+14           struct ht *ht_new;
+15           int ht_idx;
+16           int (*ht_cmp)(struct ht_elem *htep, void *key);
+17           unsigned long (*ht_gethash)(void *key);
+18           void *(*ht_getkey)(struct ht_elem *htep);
+19           struct ht_bucket ht_bkt[0];
+20   };
+21
+22   struct ht_lock_state {
+23           struct ht_bucket *hbp[2];
+24           int hls_idx[2];
+25   };
+26
+27   struct hashtab {
+28           struct ht *ht_cur;
+29           spinlock_t ht_lock;
+30   };
+
+    This design leads to a relatively straightforward implementation, which is the subject
+of the next section.
+
+10.4.2       Resizable Hash Table Implementation
+Resizing is accomplished by the classic approach of inserting a level of indirection,
+in this case, the ht structure shown on lines 11–20 of Listing 10.9 (hash_resize.c).
+The hashtab structure shown on lines 27–30 contains only a pointer to the current
+ht structure along with a spinlock that is used to serialize concurrent attempts to
+resize the hash table. If we were to use a traditional lock- or atomic-operation-based
+implementation, this hashtab structure could become a severe bottleneck from both
+performance and scalability viewpoints. However, because resize operations should be
+relatively infrequent, we should be able to make good use of RCU.
+    The ht structure represents a specific size of the hash table, as specified by the
+->ht_nbuckets field on line 12. The size is stored in the same structure containing
+the array of buckets (->ht_bkt[] on line 19) in order to avoid mismatches between
+the size and the array. The ->ht_resize_cur field on line 13 is equal to −1 unless
+
+                                                                                             v2025.12.18a
+316                                             CHAPTER 10. DATA STRUCTURES
+
+a resize operation is in progress, in which case it indicates the index of the bucket
+whose elements are being inserted into the new hash table, which is referenced by the
+->ht_new field on line 14. If there is no resize operation in progress, ->ht_new is NULL.
+Thus, a resize operation proceeds by allocating a new ht structure and referencing it
+via the ->ht_new pointer, then advancing ->ht_resize_cur through the old table’s
+buckets. When all the elements have been added to the new table, the new table is linked
+into the hashtab structure’s ->ht_cur field. Once all old readers have completed, the
+old hash table’s ht structure may be freed.
+    The ->ht_idx field on line 15 indicates which of the two sets of list pointers are
+being used by this instantiation of the hash table, and is used to index the ->hte_next[]
+array in the ht_elem structure on line 3.
+    The ->ht_cmp(), ->ht_gethash(), and ->ht_getkey() fields on lines 16–18
+collectively define the per-element key and the hash function. The ->ht_cmp() function
+compares a specified key with that of the specified element, the ->ht_gethash()
+calculates the specified key’s hash, and ->ht_getkey() extracts the key from the
+enclosing data element.
+    The ht_lock_state shown on lines 22–25 is used to communicate lock state from
+a new hashtab_lock_mod() to hashtab_add(), hashtab_del(), and hashtab_
+unlock_mod(). This state prevents the algorithm from being redirected to the wrong
+bucket during concurrent resize operations.
+    The ht_bucket structure is the same as before, and the ht_elem structure differs
+from that of previous implementations only in providing a two-element array of list
+pointer sets in place of the prior single set of list pointers.
+    In a fixed-sized hash table, bucket selection is quite straightforward: Simply
+transform the hash value to the corresponding bucket index. In contrast, when resizing,
+updaters must also determine which of the old and new sets of buckets to select from. If
+the bucket that would be selected from the old table has already been distributed into
+the new table, then the bucket should be selected from the new table as well as from the
+old table. Conversely, if the bucket that would be selected from the old table has not yet
+been distributed, then the bucket should be selected from the old table.
+    Bucket selection is shown in Listing 10.10, which shows ht_get_bucket()
+on lines 1–11 and ht_search_bucket() on lines 13–28. The ht_get_bucket()
+function returns a reference to the bucket corresponding to the specified key in the
+specified hash table, without making any allowances for resizing. It also stores the
+bucket index corresponding to the key into the location referenced by parameter b on
+line 7, and the corresponding hash value corresponding to the key into the location
+referenced by parameter h (if non-NULL) on line 9. Line 10 then returns a reference to
+the corresponding bucket.
+    The ht_search_bucket() function searches for the specified key within the
+specified hash-table version. Line 20 obtains a reference to the bucket corresponding to
+the specified key. The loop spanning lines 21–26 searches that bucket, so that if line 24
+detects a match, line 25 returns a pointer to the enclosing data element. Otherwise, if
+there is no match, line 27 returns NULL to indicate failure.
+Quick Quiz 10.10: How does the code in Listing 10.10 protect against the resizing process
+progressing past the selected bucket?
+
+   This implementation of ht_get_bucket() and ht_search_bucket() permits
+lookups and modifications to run concurrently with a resize operation.
+
+                                                                                             v2025.12.18a
+10.4. NON-PARTITIONABLE DATA STRUCTURES                               317
+
+Listing 10.10: Resizable Hash-Table Bucket Selection
+1    static struct ht_bucket *
+2    ht_get_bucket(struct ht *htp, void *key,
+3                  long *b, unsigned long *h)
+4    {
+5            unsigned long hash = htp->ht_gethash(key);
+6
+7            *b = hash % htp->ht_nbuckets;
+8            if (h)
+9                    *h = hash;
+10           return &htp->ht_bkt[*b];
+11   }
+12
+13   static struct ht_elem *
+14   ht_search_bucket(struct ht *htp, void *key)
+15   {
+16           long b;
+17           struct ht_elem *htep;
+18           struct ht_bucket *htbp;
+19
+20           htbp = ht_get_bucket(htp, key, &b, NULL);
+21           cds_list_for_each_entry_rcu(htep,
+22                                       &htbp->htb_head,
+23                                       hte_next[htp->ht_idx]) {
+24                   if (htp->ht_cmp(htep, key))
+25                           return htep;
+26           }
+27           return NULL;
+28   }
+
+Listing 10.11: Resizable Hash-Table Update-Side Concurrency Control
+1    static void
+2    hashtab_lock_mod(struct hashtab *htp_master, void *key,
+3                     struct ht_lock_state *lsp)
+4    {
+5            long b;
+6            unsigned long h;
+7            struct ht *htp;
+8            struct ht_bucket *htbp;
+9
+10           rcu_read_lock();
+11           htp = rcu_dereference(htp_master->ht_cur);
+12           htbp = ht_get_bucket(htp, key, &b, &h);
+13           spin_lock(&htbp->htb_lock);
+14           lsp->hbp[0] = htbp;
+15           lsp->hls_idx[0] = htp->ht_idx;
+16           if (b > READ_ONCE(htp->ht_resize_cur)) {
+17                   lsp->hbp[1] = NULL;
+18                   return;
+19           }
+20           htp = rcu_dereference(htp->ht_new);
+21           htbp = ht_get_bucket(htp, key, &b, &h);
+22           spin_lock(&htbp->htb_lock);
+23           lsp->hbp[1] = htbp;
+24           lsp->hls_idx[1] = htp->ht_idx;
+25   }
+26
+27   static void
+28   hashtab_unlock_mod(struct ht_lock_state *lsp)
+29   {
+30           spin_unlock(&lsp->hbp[0]->htb_lock);
+31           if (lsp->hbp[1])
+32                   spin_unlock(&lsp->hbp[1]->htb_lock);
+33           rcu_read_unlock();
+34   }
+
+                                                                            v2025.12.18a
+318                                              CHAPTER 10. DATA STRUCTURES
+
+     Read-side concurrency control is provided by RCU as was shown in Listing 10.6, but
+the update-side concurrency-control functions hashtab_lock_mod() and hashtab_
+unlock_mod() must now deal with the possibility of a concurrent resize operation as
+shown in Listing 10.11.
+     The hashtab_lock_mod() spans lines 1–25 in the listing. Line 10 enters an
+RCU read-side critical section to prevent the data structures from being freed during
+the traversal, line 11 acquires a reference to the current hash table, and then line 12
+obtains a reference to the bucket in this hash table corresponding to the key. Line 13
+acquires that bucket’s lock, which will prevent any concurrent resizing operation from
+distributing that bucket, though of course it will have no effect if that bucket has already
+been distributed. Lines 14–15 store the bucket pointer and pointer-set index into their
+respective fields in the ht_lock_state structure, which communicates the information
+to hashtab_add(), hashtab_del(), and hashtab_unlock_mod(). Line 16 then
+checks to see if a concurrent resize operation has already distributed this bucket across
+the new hash table, and if not, line 17 indicates that there is no already-resized hash
+bucket and line 18 returns with the selected hash bucket’s lock held (thus preventing
+a concurrent resize operation from distributing this bucket) and also within an RCU
+read-side critical section. Deadlock is avoided because the old table’s locks are always
+acquired before those of the new table, and because the use of RCU prevents more than
+two versions from existing at a given time, thus preventing a deadlock cycle.
+     Otherwise, a concurrent resize operation has already distributed this bucket, so
+line 20 proceeds to the new hash table, line 21 selects the bucket corresponding to the
+key, and line 22 acquires the bucket’s lock. Lines 23–24 store the new-table bucket
+pointer and pointer-set index into their respective fields in the ht_lock_state structure,
+which again communicates this information to hashtab_add(), hashtab_del(), and
+hashtab_unlock_mod(). Because this bucket has already been resized and because
+hashtab_add() and hashtab_del() affect both the old and the new ht_bucket
+structures, two locks are held, one on each of the two buckets. Additionally, both
+elements of each array in ht_lock_state structure are used, with the [0] element
+pertaining to the old ht_bucket structure and the [1] element pertaining to the new
+structure. Once again, hashtab_lock_mod() exits within an RCU read-side critical
+section.
+     The hashtab_unlock_mod() function releases the lock(s) acquired by hashtab_
+lock_mod(). Line 30 releases the lock on the old ht_bucket structure. In the unlikely
+event that line 31 determines that a resize operation is in progress, line 32 releases the
+lock on the new ht_bucket structure. Either way, line 33 exits the RCU read-side
+critical section.
+
+Quick Quiz 10.11: Suppose that one thread is inserting an element into the hash table during
+a resize operation. What prevents this insertion from being lost due to a subsequent resize
+operation completing before the insertion does?
+
+    Now that we have bucket selection and concurrency control in place, we are ready to
+search and update our resizable hash table. The hashtab_lookup(), hashtab_add(),
+and hashtab_del() functions are shown in Listing 10.12.
+    The hashtab_lookup() function on lines 1–10 of the listing does hash lookups.
+Line 7 fetches the current hash table and line 8 searches the bucket corresponding to the
+specified key. Line 9 returns a pointer to the searched-for element or NULL when the
+search fails. The caller must be within an RCU read-side critical section.
+
+                                                                                               v2025.12.18a
+10.4. NON-PARTITIONABLE DATA STRUCTURES                                                         319
+
+Listing 10.12: Resizable Hash-Table Access Functions
+1    struct ht_elem *
+2    hashtab_lookup(struct hashtab *htp_master, void *key)
+3    {
+4            struct ht *htp;
+5            struct ht_elem *htep;
+6
+7            htp = rcu_dereference(htp_master->ht_cur);
+8            htep = ht_search_bucket(htp, key);
+9            return htep;
+10   }
+11
+12   void hashtab_add(struct ht_elem *htep,
+13                    struct ht_lock_state *lsp)
+14   {
+15           struct ht_bucket *htbp = lsp->hbp[0];
+16           int i = lsp->hls_idx[0];
+17
+18           cds_list_add_rcu(&htep->hte_next[i], &htbp->htb_head);
+19           if ((htbp = lsp->hbp[1])) {
+20                   cds_list_add_rcu(&htep->hte_next[!i], &htbp->htb_head);
+21           }
+22   }
+23
+24   void hashtab_del(struct ht_elem *htep,
+25                    struct ht_lock_state *lsp)
+26   {
+27           int i = lsp->hls_idx[0];
+28
+29           cds_list_del_rcu(&htep->hte_next[i]);
+30           if (lsp->hbp[1])
+31                   cds_list_del_rcu(&htep->hte_next[!i]);
+32   }
+
+ Quick Quiz 10.12: The hashtab_lookup() function in Listing 10.12 ignores concurrent
+ resize operations. Doesn’t this mean that readers might miss an element that was previously
+ added during a resize operation?
+
+    The hashtab_add() function on lines 12–22 of the listing adds new data elements
+to the hash table. Line 15 picks up the current ht_bucket structure into which the
+new element is to be added, and line 16 picks up the index of the pointer pair. Line 18
+adds the new element to the current hash bucket. If line 19 determines that this bucket
+has been distributed to a new version of the hash table, then line 20 also adds the new
+element to the corresponding new bucket. The caller is required to handle concurrency,
+for example, by invoking hashtab_lock_mod() before the call to hashtab_add()
+and invoking hashtab_unlock_mod() afterwards.
+    The hashtab_del() function on lines 24–32 of the listing removes an existing
+element from the hash table. Line 27 picks up the index of the pointer pair and line 29
+removes the specified element from the current table. If line 30 determines that this
+bucket has been distributed to a new version of the hash table, then line 31 also removes
+the specified element from the corresponding new bucket. As with hashtab_add(),
+the caller is responsible for concurrency control and this concurrency control suffices
+for synchronizing with a concurrent resize operation.
+ Quick Quiz 10.13: The hashtab_add() and hashtab_del() functions in Listing 10.12
+ can update two hash buckets while a resize operation is progressing. This might cause poor
+ performance if the frequency of resize operation is not negligible. Isn’t it possible to reduce the
+ cost of updates in such cases?
+
+    The actual resizing itself is carried out by hashtab_resize(), shown in List-
+ing 10.13 on page 320. Line 16 conditionally acquires the top-level ->ht_lock, and
+
+                                                                                                       v2025.12.18a
+320                                                 CHAPTER 10. DATA STRUCTURES
+
+Listing 10.13: Resizable Hash-Table Resizing
+1    int hashtab_resize(struct hashtab *htp_master,
+2                       unsigned long nbuckets,
+3                       int (*cmp)(struct ht_elem *htep, void *key),
+4                       unsigned long (*gethash)(void *key),
+5                       void *(*getkey)(struct ht_elem *htep))
+6    {
+7          struct ht *htp;
+8          struct ht *htp_new;
+9          int i;
+10         int idx;
+11         struct ht_elem *htep;
+12         struct ht_bucket *htbp;
+13         struct ht_bucket *htbp_new;
+14         long b;
+15
+16         if (!spin_trylock(&htp_master->ht_lock))
+17               return -EBUSY;
+18         htp = htp_master->ht_cur;
+19         htp_new = ht_alloc(nbuckets,
+20                            cmp ? cmp : htp->ht_cmp,
+21                            gethash ? gethash : htp->ht_gethash,
+22                            getkey ? getkey : htp->ht_getkey);
+23         if (htp_new == NULL) {
+24               spin_unlock(&htp_master->ht_lock);
+25               return -ENOMEM;
+26         }
+27         idx = htp->ht_idx;
+28         htp_new->ht_idx = !idx;
+29         rcu_assign_pointer(htp->ht_new, htp_new);
+30         synchronize_rcu();
+31         for (i = 0; i < htp->ht_nbuckets; i++) {
+32               htbp = &htp->ht_bkt[i];
+33               spin_lock(&htbp->htb_lock);
+34               cds_list_for_each_entry(htep, &htbp->htb_head, hte_next[idx]) {
+35                     htbp_new = ht_get_bucket(htp_new, htp_new->ht_getkey(htep), &b, NULL);
+36                     spin_lock(&htbp_new->htb_lock);
+37                     cds_list_add_rcu(&htep->hte_next[!idx], &htbp_new->htb_head);
+38                     spin_unlock(&htbp_new->htb_lock);
+39               }
+40               WRITE_ONCE(htp->ht_resize_cur, i);
+41               spin_unlock(&htbp->htb_lock);
+42         }
+43         rcu_assign_pointer(htp_master->ht_cur, htp_new);
+44         synchronize_rcu();
+45         spin_unlock(&htp_master->ht_lock);
+46         free(htp);
+47         return 0;
+48   }
+
+                                                                                                v2025.12.18a
+10.4. NON-PARTITIONABLE DATA STRUCTURES                                                    321
+
+if this acquisition fails, line 17 returns -EBUSY to indicate that a resize is already
+in progress. Otherwise, line 18 picks up a reference to the current hash table, and
+lines 19–22 allocate a new hash table of the desired size. If a new set of hash/key
+functions have been specified, these are used for the new table, otherwise those of the
+old table are preserved. If line 23 detects memory-allocation failure, line 24 releases
+->ht_lock and line 25 returns a failure indication.
+     Line 27 picks up the current table’s index and line 28 stores its inverse to the new
+hash table, thus ensuring that the two hash tables avoid overwriting each other’s linked
+lists. Line 29 then starts the bucket-distribution process by installing a reference to the
+new table into the ->ht_new field of the old table. Line 30 ensures that all readers who
+are not aware of the new table complete before the resize operation continues.
+     Each pass through the loop spanning lines 31–42 distributes the contents of one of
+the old hash table’s buckets into the new hash table. Line 32 picks up a reference to the
+old table’s current bucket and line 33 acquires that bucket’s spinlock.
+ Quick Quiz 10.14: In the hashtab_resize() function in Listing 10.13, what guarantees
+ that the update to ->ht_new on line 29 will be seen as happening before the update to ->ht_
+ resize_cur on line 40 from the perspective of hashtab_add() and hashtab_del()? In
+ other words, what prevents hashtab_add() and hashtab_del() from dereferencing a NULL
+ pointer loaded from ->ht_new?
+
+    Each pass through the loop spanning lines 34–39 adds one data element from the
+current old-table bucket to the corresponding new-table bucket, holding the new-table
+bucket’s lock during the add operation. Line 40 updates ->ht_resize_cur to indicate
+that this bucket has been distributed. Finally, line 41 releases the old-table bucket lock.
+    Execution reaches line 43 once all old-table buckets have been distributed across
+the new table. Line 43 installs the newly created table as the current one, and line 44
+waits for all old readers (who might still be referencing the old table) to complete. Then
+line 45 releases the resize-serialization lock, line 46 frees the old hash table, and finally
+line 47 returns success.
+ Quick Quiz 10.15: Why is there a WRITE_ONCE() on line 40 in Listing 10.13?
+
+10.4.3      Resizable Hash Table Discussion
+Figure 10.18 compares resizing hash tables to their fixed-sized counterparts for 262,144
+and 2,097,152 elements in the hash table. The figure shows three traces for each
+element count, one for a fixed-size 262,144-bucket hash table, another for a fixed-size
+524,288-bucket hash table, and a third for a resizable hash table that shifts back and
+forth between 262,144 and 524,288 buckets, with a one-millisecond pause between each
+resize operation.
+    The uppermost three traces are for the 262,144-element hash table.1 The dashed
+trace corresponds to the two fixed-size hash tables, and the solid trace to the resizable
+hash table. In this case, the short hash chains cause normal lookup overhead to be so
+low that the overhead of resizing dominates over most of the range. In particular, the
+entire hash table fits into L3 cache.
+    The lower three traces are for the 2,097,152-element hash table. The upper dashed
+trace corresponds to the 262,144-bucket fixed-size hash table, the solid trace in the
+
+    1 You see only two traces? The dashed one is composed of two traces that differ only
+
+slightly, hence the irregular-looking dash pattern.
+
+                                                                                                 v2025.12.18a
+322                                                                CHAPTER 10. DATA STRUCTURES
+
+                                              1x107
+
+                   Lookups per Millisecond
+                                              1x106
+                                                            262,144
+
+                                             100000
+
+                                             10000               2,097,152
+
+                                                      1         10           100
+                                                          Number of CPUs (Threads)
+
+Figure 10.18: Overhead of Resizing Hash Tables Between 262,144 and 524,288 Buckets
+    vs. Total Number of Elements
+
+middle for low CPU counts and at the bottom for high CPU counts to the resizable
+hash table, and the other trace to the 524,288-bucket fixed-size hash table. The fact that
+there are now an average of eight elements per bucket can only be expected to produce
+a sharp decrease in performance, as in fact is shown in the graph. But worse yet, the
+hash-table elements occupy 128 MB, which overflows each socket’s 39 MB L3 cache,
+with performance consequences analogous to those described in Section 3.2.2. The
+resulting cache overflow means that the memory system is involved even for a read-only
+benchmark, and as you can see from the sublinear portions of the lower three traces, the
+memory system can be a serious bottleneck.
+Quick Quiz 10.16: How much of the difference in performance between the large and small
+hash tables shown in Figure 10.18 was due to long hash chains and how much was due to
+memory-system bottlenecks?
+
+     Referring to the last column of Table 3.1, we recall that the first 28 CPUs are in
+the first socket, on a one-CPU-per-core basis, which explains the sharp decrease in
+performance of the resizable hash table beyond 28 CPUs. Sharp though this decrease
+is, please recall that it is due to constant resizing back and forth. It would clearly be
+better to resize once to 524,288 buckets, or, even better, do a single eight-fold resize to
+2,097,152 elements, thus dropping the average number of elements per bucket down to
+the level enjoyed by the runs producing the upper three traces.
+     The key point from this data is that the RCU-protected resizable hash table performs
+and scales almost as well as does its fixed-size counterpart. The performance during
+an actual resize operation of course suffers somewhat due to the cache misses causes
+by the updates to each element’s pointers, and this effect is most pronounced when the
+memory system becomes a bottleneck. This indicates that hash tables should be resized
+by substantial amounts, and that hysteresis should be applied to prevent performance
+degradation due to too-frequent resize operations. In memory-rich environments,
+hash-table sizes should furthermore be increased much more aggressively than they are
+decreased.
+     Another key point is that although the hashtab structure is non-partitionable, it
+is also read-mostly, which suggests the use of RCU. Given that the performance and
+
+                                                                                                 v2025.12.18a
+10.4. NON-PARTITIONABLE DATA STRUCTURES                                                323
+
+scalability of this resizable hash table is very nearly that of RCU-protected fixed-sized
+hash tables, we must conclude that this approach was quite successful.
+    Finally, it is important to note that insertions, deletions, and lookups can proceed
+concurrently with a resize operation. This concurrency is critically important when
+resizing large hash tables, especially for applications that must meet severe response-time
+constraints.
+    Of course, the ht_elem structure’s pair of pointer sets does impose some memory
+overhead, which is taken up in the next section.
+
+10.4.4     Other Resizable Hash Tables
+One shortcoming of the resizable hash table described earlier in this section is memory
+consumption. Each data element has two pairs of linked-list pointers rather than just
+one. Is it possible to create an RCU-protected resizable hash table that makes do with
+just one pair?
+    It turns out that the answer is “yes”. Josh Triplett et al. [TMW11] produced a
+relativistic hash table that incrementally splits and combines corresponding hash chains
+so that readers always see valid hash chains at all points during the resizing operation.
+This incremental splitting and combining relies on the fact that it is harmless for a reader
+to see a data element that should be in some other hash chain: When this happens, the
+reader will simply ignore the extraneous data element due to key mismatches.
+    The process of shrinking a relativistic hash table by a factor of two is shown in
+Figure 10.19, in this case shrinking a two-bucket hash table into a one-bucket hash table,
+otherwise known as a linear list. This process works by coalescing pairs of buckets
+in the old larger hash table into single buckets in the new smaller hash table. For this
+process to work correctly, we clearly need to constrain the hash functions for the two
+tables. One such constraint is to use the same underlying hash function for both tables,
+but to throw out the low-order bit when shrinking from large to small. For example,
+the old two-bucket hash table would use the two top bits of the value, while the new
+one-bucket hash table could use the top bit of the value. In this way, a given pair of
+adjacent even and odd buckets in the old large hash table can be coalesced into a single
+bucket in the new small hash table, while still having a single hash value cover all of the
+elements in that single bucket.
+    The initial state is shown at the top of the figure, with time advancing from top to
+bottom, starting with initial state (a). The shrinking process begins by allocating the
+new smaller array of buckets, and having each bucket of this new smaller array reference
+the first element of one of the buckets of the corresponding pair in the old large hash
+table, resulting in state (b).
+    Then the two hash chains are linked together, resulting in state (c). In this state,
+readers looking up an even-numbered element see no change, and readers looking up
+elements 1 and 3 likewise see no change. However, readers looking up some other odd
+number will also traverse elements 0 and 2. This is harmless because any odd number
+will compare not-equal to these two elements. There is some performance loss, but on
+the other hand, this is exactly the same performance loss that will be experienced once
+the new small hash table is fully in place.
+    Next, the new small hash table is made accessible to readers, resulting in state (d).
+Note that older readers might still be traversing the old large hash table, so in this state
+both hash tables are in use.
+
+                                                                                               v2025.12.18a
+324                                               CHAPTER 10. DATA STRUCTURES
+
+                         even           0          2
+                  (a)
+                         odd            1          3
+
+                         even           0          2
+                  (b)
+                         odd            1          3
+
+                          all
+
+                         even           0          2
+                  (c)
+                         odd            1          3
+
+                          all
+
+                         even           0          2
+                  (d)
+                         odd            1          3
+
+                          all
+
+                         even           0          2
+                  (e)
+                         odd            1          3
+
+                          all
+
+                  (f)     all           1          3          0          2
+
+                    Figure 10.19: Shrinking a Relativistic Hash Table
+
+    The next step is to wait for all pre-existing readers to complete, resulting in state (e).
+In this state, all readers are using the new small hash table, so that the old large hash
+table’s buckets may be freed, resulting in the final state (f).
+    Growing a relativistic hash table reverses the shrinking process, but requires more
+grace-period steps, as shown in Figure 10.20. The initial state (a) is at the top of this
+figure, with time advancing from top to bottom.
+    We start by allocating the new large two-bucket hash table, resulting in state (b).
+Note that each of these new buckets references the first element destined for that bucket.
+These new buckets are published to readers, resulting in state (c). After a grace-period
+operation, all readers are using the new large hash table, resulting in state (d). In this
+state, only those readers traversing the even-values hash bucket traverse element 0,
+which is therefore now colored white.
+    At this point, the old small hash buckets may be freed, although many imple-
+mentations use these old buckets to track progress “unzipping” the list of items into
+their respective new buckets. The last even-numbered element in the first consecutive
+run of such elements now has its pointer-to-next updated to reference the following
+even-numbered element. After a subsequent grace-period operation, the result is state (e).
+The vertical arrow indicates the next element to be unzipped, and element 1 is now
+colored black to indicate that only those readers traversing the odd-values hash bucket
+may reach it.
+
+                                                                                                 v2025.12.18a
+10.4. NON-PARTITIONABLE DATA STRUCTURES                            325
+
+           (a)        all          0        1         2        3
+
+                     even
+
+           (b)        odd
+
+                      all          0        1         2        3
+
+                     even
+
+           (c)        odd
+
+                      all          0        1         2        3
+
+                     even
+
+           (d)        odd
+
+                      all          0        1         2        3
+
+                     even          0        1         2        3
+           (e)
+                      odd
+
+                     even          0        1         2        3
+           (f)
+                      odd
+
+                     even          0        2
+           (g)
+                      odd          1        3
+
+                 Figure 10.20: Growing a Relativistic Hash Table
+
+                                                                         v2025.12.18a
+326                                              CHAPTER 10. DATA STRUCTURES
+
+     Next, the last odd-numbered element in the first consecutive run of such elements
+now has its pointer-to-next updated to reference the following odd-numbered element.
+After a subsequent grace-period operation, the result is state (f). A final unzipping
+operation (including a grace-period operation) results in the final state (g).
+     In short, the relativistic hash table reduces the number of per-element list pointers
+at the expense of additional grace periods incurred during resizing. These additional
+grace periods are usually not a problem because insertions, deletions, and lookups may
+proceed concurrently with a resize operation.
+     However, when a hash table is growing quickly, the large numbers of grace periods
+might delay the beginning of the next resize operation. One way to reduce the number
+of grace periods is to unzip all the buckets concurrently, so that the number of grace
+periods will be limited by the largest number of elements in a single bucket instead
+of by the total number of elements in the hash table. Another approach, also by Josh
+Triplett, is to maintain a separate pointer to the element currently being moved from the
+old bucket to the new bucket. Readers then check the old bucket, the separate pointer,
+and the new bucket in order. This requires read-side memory ordering, which slows
+readers, but it greatly reduces the required number of resize-time grace periods. This
+approach is used within the Linux kernel.
+     It turns out that it is possible to reduce the per-element memory overhead from a pair
+of pointers to a single pointer, while still retaining O (1) deletions. This is accomplished
+by augmenting split-order list [SS06] with RCU protection [Des09b, MDJ13c]. The
+data elements in the hash table are arranged into a single sorted linked list, with each
+hash bucket referencing the first element in that bucket. Elements are deleted by setting
+low-order bits in their pointer-to-next fields, and these elements are removed from the
+list by later traversals that encounter them.
+     This RCU-protected split-order list is complex, but offers lock-free progress guaran-
+tees for all insertion, deletion, and lookup operations. Such guarantees can be important
+in real-time applications. However, one downside is that the keys must be bit-reversed
+during lookup, which slows down readers. But for those for whom this slowdown is not
+a problem, an implementation is available from recent versions of the userspace RCU
+library [Des09b].
+
+10.5      Other Data Structures
+
+                                         All life is an experiment. The more experiments you
+                                         make the better.
+                                                                       Ralph Waldo Emerson
+
+The preceding sections have focused on data structures that enhance concurrency due
+to partitionability (Section 10.2), efficient handling of read-mostly access patterns
+(Section 10.3), or application of read-mostly techniques to avoid non-partitionability
+(Section 10.4). This section gives a brief review of other data structures.
+    One of the hash table’s greatest advantages for parallel use is that it is fully
+partitionable, at least while not being resized. One way of preserving the partitionability
+and the size independence is to use a radix tree, which is also called a trie. Tries
+partition the search key, using each successive key partition to traverse the next level of
+the trie. As such, a trie can be thought of as a set of nested hash tables, thus providing
+the required partitionability. One disadvantage of tries is that a sparse key space can
+
+                                                                                               v2025.12.18a
+10.6. SUMMARY                                                                              327
+
+result in inefficient use of memory. There are a number of compression techniques that
+may be used to work around this disadvantage, including hashing the key value to a
+smaller keyspace before the traversal [ON07]. Radix trees are heavily used in practice,
+including in the Linux kernel [Pig06].
+    One important special case of both a hash table and a trie is what is perhaps the
+oldest of data structures, the array and its multi-dimensional counterpart, the matrix.
+The fully partitionable nature of matrices is exploited heavily in concurrent numerical
+algorithms.
+    Self-balancing trees are heavily used in sequential code, with AVL trees and red-
+black trees being perhaps the most well-known examples [CLRS01]. Early attempts
+to parallelize AVL trees were complex and not necessarily all that efficient [Ell80],
+however, more recent work on red-black trees provides better performance and scalability
+by using RCU for readers and hashed arrays of locks2 to protect reads and updates,
+respectively [HW11, HW14]. It turns out that red-black trees rebalance aggressively,
+which works well for sequential programs, but not necessarily so well for parallel use.
+Recent work has therefore made use of RCU-protected “bonsai trees” that rebalance less
+aggressively [CKZ12], trading off optimal tree depth to gain more efficient concurrent
+updates.
+    Concurrent skip lists lend themselves well to RCU readers, and in fact represents an
+early academic use of a technique resembling RCU [Pug90].
+    Concurrent double-ended queues were discussed in Section 6.1.2, and concurrent
+stacks and queues have a long history [Tre86], though not normally the most impressive
+performance or scalability. They are nevertheless a common feature of concurrent
+libraries [MDJ13d]. Researchers have recently proposed relaxing the ordering constraints
+of stacks and queues [Sha11], with some work indicating that relaxed-ordered queues
+actually have better ordering properties than do strict FIFO queues [HKLP12, KLP12,
+HHK+ 13].
+    It seems likely that continued work with concurrent data structures will produce
+novel algorithms with surprising properties.
+
+10.6       Summary
+                                            There’s only one thing more painful than learning
+                                            from experience, and that is not learning from
+                                            experience.
+                                                                             Archibald MacLeish
+
+This chapter has focused primarily on hash tables, including resizable hash tables, which
+are not fully partitionable. Section 10.5 gave a quick overview of a few non-hash-table
+data structures. Nevertheless, this exposition of hash tables is an excellent introduction
+to the many issues surrounding high-performance scalable data access, including:
+
+   1. Fully partitioned data structures work well on small systems, for example, single-
+      socket systems.
+   2. Larger systems require locality of reference as well as full partitioning.
+
+   2 In the guise of swissTM [DFGG11], which is a variant of software transactional
+
+memory in which the developer flags non-shared accesses.
+
+                                                                                                  v2025.12.18a
+328                                              CHAPTER 10. DATA STRUCTURES
+
+   3. Read-mostly techniques, such as hazard pointers and RCU, provide good locality
+      of reference for read-mostly workloads, and thus provide excellent performance
+      and scalability even on larger systems.
+   4. Read-mostly techniques also work well on some types of non-partitionable data
+      structures, such as resizable hash tables.
+   5. Large data structures can overflow CPU caches, reducing performance and
+      scalability.
+   6. Additional performance and scalability can be obtained by specializing the data
+      structure to a specific workload, for example, by replacing a general key with a
+      32-bit integer.
+   7. Although requirements for portability and for extreme performance often conflict,
+      there are some data-structure-layout techniques that can strike a good balance
+      between these two sets of requirements.
+
+   That said, performance and scalability are of little use without reliability, so the next
+chapter covers validation.
+
+                                                                                               v2025.12.18a
