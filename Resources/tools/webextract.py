@@ -53,6 +53,27 @@ elif mode == "content":
         code.string = codeel.get_text()
         pre.append(code)
         cont.replace_with(pre)
+    # An attribute-less <pre> becomes an INDENTED block in pandoc's gfm output,
+    # not a fenced one, so the reader gets no language label and no syntax
+    # highlighting (marabos.nl/atomics marks every listing this way). Give each
+    # bare <pre> a language class, guessed from its own text, so it fences.
+    _RUST = ("fn ", "let ", "impl ", "pub fn", "use std", "->", "unsafe", "&self", "static ", "match ")
+    _ASM = ("mov ", "ldr ", "str ", "ldxr", "stxr", "dmb ", "lock ", "cmpxchg", "xchg", "%rax", "x0,")
+    for pre in el.find_all("pre"):
+        if pre.find("code") is not None or pre.get("class"):
+            continue  # already labelled, or pandoc can read the label itself
+        body = pre.get_text()
+        low = body.lower()
+        asm = sum(k in low for k in _ASM)
+        rust = sum(k in body for k in _RUST)
+        lang = "asm" if asm > rust else ("rust" if rust else None)
+        if lang:
+            code = s.new_tag("code")
+            code["class"] = "language-" + lang
+            code.string = body
+            pre.clear()
+            pre.append(code)
+
     # Flatten block-content tables so pandoc's gfm writer never drops them to a
     # bare "[TABLE]": a table with block content is linearized (each row -> its
     # text, then its <pre> code) so nothing is discarded; a simple table is

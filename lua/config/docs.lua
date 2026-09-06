@@ -1076,6 +1076,18 @@ local simple = {
 		exts = "-e md -e rst -e py -e c -e cc -e h -e lua -e txt",
 		prompt = "BCC> ",
 	},
+	-- The tools' own tree: herd/libdir holds the .cat memory models (aarch64,
+	-- x86tso, riscv, linux-kernel, C11 ...), doc holds the manual sources and
+	-- 47 worked .litmus examples, catalogue holds the per-model test suites.
+	-- Read with the manuals in the herd7 provider.
+	herdtools7 = {
+		url = "https://github.com/herd/herdtools7",
+		sparse = "/doc /herd/libdir /catalogue /README.md /INSTALL.md /CHANGES.txt",
+		marker = "herd/libdir",
+		browse = "",
+		exts = "-e cat -e litmus -e md -e txt -e tex -e cfg -e def -e bell",
+		prompt = "herdtools7> ",
+	},
 	qemu = {
 		url = "https://github.com/qemu/qemu",
 		sparse = "/docs",
@@ -2114,6 +2126,12 @@ end
 local pick_learncpp = frozen_web_provider("learncpp", "Learn C++ lesson> ")
 -- rayanfam.com: the full Hypervisor From Scratch series (8 parts).
 local pick_rayanfam = frozen_web_provider("rayanfam", "Hypervisor From Scratch> ")
+-- marabos.nl/atomics: Rust Atomics and Locks (Mara Bos), free to read by the
+-- author's arrangement with O'Reilly. Foreword, preface, 10 chapters, index.
+local pick_rust_atomics = frozen_web_provider("rust-atomics", "Rust Atomics and Locks> ")
+-- diy.inria.fr: the herd7, litmus7 and diy7 reference manuals. The memory
+-- models and litmus tests they describe are in the herdtools7 provider.
+local pick_herd7 = frozen_web_provider("herd7", "herd7 manual> ")
 
 -- ── Ghidra: versioned API/docs (pick a release tag, all versions) ────────
 local function pick_ghidra()
@@ -2716,6 +2734,9 @@ local providers = {
 	{ name = "CppReference", key = "cppman", run = pick_cppman },
 	{ name = "learncpp.com", key = "cpp", run = pick_learncpp },
 	{ name = "Hypervisor From Scratch", key = "rayanfam", run = pick_rayanfam },
+	{ name = "Rust Atomics and Locks (book)", key = "atomics", run = pick_rust_atomics },
+	{ name = "herd7 / litmus7 manuals", key = "herd7", run = pick_herd7 },
+	{ name = "herdtools7 (cat models, litmus tests)", key = "herdtools7", run = make_simple("herdtools7", simple.herdtools7) },
 	{ name = "NetBSD kernel internals (man 9)", key = "nbsd9", run = function() pick_nbsd(9) end },
 	{ name = "NetBSD drivers (man 4)", key = "nbsd4", run = function() pick_nbsd(4) end },
 	{ name = "OCaml (stdlib)", key = "ocaml", run = pick_ocaml },
