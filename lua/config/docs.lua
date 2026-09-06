@@ -2132,6 +2132,11 @@ local pick_rust_atomics = frozen_web_provider("rust-atomics", "Rust Atomics and 
 -- diy.inria.fr: the herd7, litmus7 and diy7 reference manuals. The memory
 -- models and litmus tests they describe are in the herdtools7 provider.
 local pick_herd7 = frozen_web_provider("herd7", "herd7 manual> ")
+-- wiki.osdev.org: the whole OSDev wiki (778 articles), from the official
+-- offline dump. Titles are grouped and ordered like the Expanded Main Page
+-- ("Hardware / APIC"), with everything the main page does not link under
+-- "Other". The wiki is CC0, so the text is ours to carry.
+local pick_osdev = frozen_web_provider("osdev", "OSDev wiki> ")
 
 -- ── Ghidra: versioned API/docs (pick a release tag, all versions) ────────
 local function pick_ghidra()
@@ -2514,6 +2519,7 @@ local BOOKS = {
 	} },
 	{ module = "C++", key = "books-cpp", items = {
 		{ title = "Beautiful C++ (30 Core Guidelines)", fmt = "pdf", file = "Beautiful C++ _ 30 Core Guidelines for Writing Clean, Safe, -- J_ Guy Davidson & Kate Gregory -- 1, 2021 -- Pearson Education, Limited; Addison-Wesley -- 9780137647842 -- 3d6251a17d7996d9091349de.pdf" },
+		{ title = "C++ Concurrency in Action", fmt = "pdf", file = "Anthony Williams - C++ Concurrency in Action (2019, Manning) - libgen.li.pdf" },
 		{ title = "C++ Move Semantics (The Complete Guide)", fmt = "pdf", file = "C++ Move Semantics - The Complete Guide -- Nicolai M_ Josuttis -- 2022 -- c6f2c4fe3e0701d95a17354ad517147a -- Anna’s Archive.pdf" },
 		{ title = "C++ Initialization Story", fmt = "epub", file = "C__ Initialization Story - Bartłomiej Filipek.epub" },
 		{ title = "C++ Templates: The Complete Guide (2e)", fmt = "pdf", file = "CppTemplates-CompleteGuide-2e.pdf" },
@@ -2528,6 +2534,10 @@ local BOOKS = {
 		{ title = "Rust by Example", fmt = "mdbook", url = "https://github.com/rust-lang/rust-by-example" },
 		{ title = "Learn Rust With Entirely Too Many Linked Lists", fmt = "mdbook", url = "https://github.com/rust-unofficial/too-many-lists" },
 	} },
+	{ module = "Assembly", key = "books-asm", items = {
+		{ title = "Modern x86 Assembly Language Programming", fmt = "pdf", file = "Daniel Kusswurm - Modern X86 Assembly Language Programming_ Covers X86 64-bit, AVX, AVX2, and AVX-512 (2023, Apress) [10.1007_978-1-4842-9603-5] - libgen.li.pdf" },
+		{ title = "The Art of ARM Assembly, Volume 1", fmt = "pdf", file = "[The BOOK of…] The Art of ARM Assembly. Volume 1_ 64-Bit ARM Machine Organization and Programming{Randall Hyde}(2025, No Starch Press){108023809} libgen.li.pdf" },
+	} },
 	{ module = "Operating Systems", key = "books-os", items = {
 		{ title = "Operating Systems: Three Easy Pieces", fmt = "pdf", file = "OSTEP.pdf" },
 		{ title = "xv6 (x86)", fmt = "epub", file = "x86-xv6.epub" },
@@ -2539,6 +2549,7 @@ local BOOKS = {
 		{ title = "Crafting Interpreters", fmt = "epub", file = "Crafting Interpreters -- Robert Nystrom -- United States_] _, 2021 -- Genever Benning -- isbn13 9780990582939 -- c96d09f7d0933fc5c9b75228f7f3e2a3 -- Anna’s Archive.epub" },
 		{ title = "Writing a C Compiler", fmt = "epub", file = "WritingaCCompiler.epub" },
 		{ title = "SSA-based Compiler Design", fmt = "pdf", file = "Fabrice Rastello, Florent Bouchez Tichadou - SSA-based Compiler Design-Springer (2022).pdf" },
+		{ title = "Talking Compilers with ChatGPT", fmt = "pdf", file = "TalkingCompilersWithGPT.pdf" },
 	} },
 	{ module = "Databases", key = "books-db", items = {
 		{ title = "Build Your Own SQLite (CodeCrafters)", fmt = "md", slug = "build-your-own-sqlite", file = "https://github.com/codecrafters-io/build-your-own-sqlite" },
@@ -2546,6 +2557,7 @@ local BOOKS = {
 	} },
 	{ module = "Linux / Drivers", key = "books-linux", items = {
 		{ title = "eBPF Developer Tutorial (eunomia)", fmt = "md", slug = "ebpf-developer-tutorial", file = "https://github.com/eunomia-bpf/bpf-developer-tutorial" },
+		{ title = "Linux Insides (0xAX)", fmt = "md", slug = "linux-insides", file = "https://github.com/0xAX/linux-insides" },
 		{ title = "Linux Device Driver Development (Madieu)", fmt = "epub", file = "Linux Device Driver Development_ Everything you need to -- John Madieu -- Packt Publishing, [Place of publication not identified], -- Packt -- isbn13 9781803235943 -- e409561761c67e6644a54ed53a248850 -- Anna’s (1).epub" },
 		{ title = "Linux Device Drivers, 3rd Edition", fmt = "epub", file = "Linux Device Drivers, 3rd Edition -- Jonathan Corbet, Alessandro Rubini, and Greg Kroah-Hartman -- 3rd Edition, 2009 -- O'Reilly Media, Incorporated -- isbn13 9780596159740 -- f4346a4d961cc1b0cb12d88c75e50c50 -- A.epub" },
 		{ title = "The Linux Memory Manager", fmt = "epub", file = "The Linux Memory Manager - Lorenzo Stoakes.epub" },
@@ -2559,6 +2571,8 @@ local BOOKS = {
 	} },
 	{ module = "Security", key = "books-security", items = {
 		{ title = "Nightmare: Binary Exploitation Course", fmt = "md", slug = "nightmare-binary-exploitation", file = "https://github.com/guyinatuxedo/nightmare" },
+		{ title = "Heap Exploitation (Dhaval Kapil)", fmt = "md", slug = "heap-exploitation-dhaval-kapil", file = "https://github.com/DhavalKapil/heap-exploitation" },
+		{ title = "ir0nstone: Binary Exploitation Notes", fmt = "md", slug = "ir0nstone-binary-exploitation", file = "https://github.com/ir0nstone/cybersec-notes" },
 		{ title = "Serious Cryptography (2e)", fmt = "epub", file = "Serious Cryptography, 2nd Edition_ A Practical Introduction -- Jean-Philippe Aumasson -- 2, 2024 -- No Starch Press, Incorporated -- isbn13 9781718503847 -- 98baee034c0a929a742dfde69353a637 -- Anna’s Archive.epub" },
 		{ title = "Fuzzing Against the Machine", fmt = "pdf", file = "FuzzingAgainstTheMachine.pdf" },
 	} },
@@ -2569,6 +2583,7 @@ local BOOKS = {
 		{ title = "Windows Kernel Programming (2e)", fmt = "pdf", file = "WindowsKernelProgramming.pdf" },
 	} },
 	{ module = "Haskell", key = "books-haskell", items = {
+		{ title = "Haskell Programming from First Principles", fmt = "pdf", file = "Haskell Programming from First Principles -- Chris Allen, Julie Moronuki -- 1_0RC2, 2017 -- 0073d1100c226de172fca6fa9b2809d9 -- Anna’s Archive.pdf" },
 		{ title = "Programming in Haskell (2e)", fmt = "epub", file = "Programming in Haskell (9781316876152) -- Hutton, Graham -- Second Edition, 5th printing, 2018;2015 -- Cambridge University Press (Virtual Publishing) -- 9781139637534 -- f80c6f606a590ab38c7340907cab3be5 -- Anna’s.epub" },
 	} },
 	{ module = "OCaml", key = "books-ocaml", items = {
@@ -2742,6 +2757,7 @@ local providers = {
 	{ name = "Hypervisor From Scratch", key = "rayanfam", run = pick_rayanfam },
 	{ name = "Rust Atomics and Locks (book)", key = "atomics", run = pick_rust_atomics },
 	{ name = "herd7 / litmus7 manuals", key = "herd7", run = pick_herd7 },
+	{ name = "OSDev wiki", key = "osdev", run = pick_osdev },
 	{ name = "herdtools7 (cat models, litmus tests)", key = "herdtools7", run = make_simple("herdtools7", simple.herdtools7) },
 	{ name = "NetBSD kernel internals (man 9)", key = "nbsd9", run = function() pick_nbsd(9) end },
 	{ name = "NetBSD drivers (man 4)", key = "nbsd4", run = function() pick_nbsd(4) end },

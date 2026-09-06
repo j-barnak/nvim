@@ -1,0 +1,193 @@
+|                                                                                                                     |     |
+|---------------------------------------------------------------------------------------------------------------------|-----|
+| The factual accuracy of this article or section is disputed . Please see the relevant discussion on the talk page . |     |
+
+|                                                                                                                                    |
+|------------------------------------------------------------------------------------------------------------------------------------|
+| This page or section refers to its readers or editors using I , my , we or us . It should be edited to be in an encyclopedic tone. |
+
+|                                                                                                                                                                              |
+|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| This tutorial needs to explain what the code does as tutorials are not just copy paste. You can help out by editing this page to include more context to what the code does. |
+
+|                                                                                               |
+|-----------------------------------------------------------------------------------------------|
+| WAIT! Have you read Getting Started , Beginner Mistakes , and some of the related OS theory ? |
+
+| Difficulty level |
+|------------------|
+| Medium           |
+
+Here is some sample code for a kernel that is loaded by GRUB and is mapped in the upper half of memory. In this case, the kernel is loaded at 1MB in the physical address space (0x00100000), but is mapped at 3GB + 1MB in the virtual address space (0xC0100000). It is recommended that you have a firm grasp of the contents within the [Bare bones tutorial](https://wiki.osdev.org/Bare_bones "Bare bones") and [Paging](https://wiki.osdev.org/Paging "Paging") before attempting this.
+
+## loader.asm
+
+This piece of code is taking over control from the Multiboot bootloader. It sets up a page directory with page table entries that identity map the first 4MB, and also map the first 4MB to virtual 3GB. After setting up paging, it unmaps the identity mapping so that the kernel is entirely in the higher half and jumps into the kernel proper.
+
+``` asm
+global _loader                          ; Make entry point visible to linker.
+extern _main                            ; _main is defined elsewhere
+
+; setting up the Multiboot header - see GRUB docs for details
+MODULEALIGN equ  1<<0             ; align loaded modules on page boundaries
+MEMINFO     equ  1<<1             ; provide memory map
+FLAGS       equ  MODULEALIGN | MEMINFO  ; this is the Multiboot 'flag' field
+MAGIC       equ    0x1BADB002     ; 'magic number' lets bootloader find the header
+CHECKSUM    equ -(MAGIC + FLAGS)  ; checksum required
+
+; This is the virtual base address of kernel space. It must be used to convert virtual
+; addresses into physical addresses until paging is enabled. Note that this is not
+; the virtual address where the kernel image itself is loaded -- just the amount that must
+; be subtracted from a virtual address to get a physical address.
+KERNEL_VIRTUAL_BASE equ 0xC0000000                  ; 3GB
+KERNEL_PAGE_NUMBER equ (KERNEL_VIRTUAL_BASE >> 22)  ; Page directory index of kernel's 4MB PTE.
+
+
+section .data
+align 0x1000
+BootPageDirectory:
+    ; This page directory entry identity-maps the first 4MB of the 32-bit physical address space.
+    ; All bits are clear except the following:
+    ; bit 7: PS The kernel page is 4MB.
+    ; bit 1: RW The kernel page is read/write.
+    ; bit 0: P  The kernel page is present.
+    ; This entry must be here -- otherwise the kernel will crash immediately after paging is
+    ; enabled because it can't fetch the next instruction! It's ok to unmap this page later.
+    dd 0x00000083
+    times (KERNEL_PAGE_NUMBER - 1) dd 0                 ; Pages before kernel space.
+    ; This page directory entry defines a 4MB page containing the kernel.
+    dd 0x00000083
+    times (1024 - KERNEL_PAGE_NUMBER - 1) dd 0  ; Pages after the kernel image.
+
+
+section .text
+align 4
+MultiBootHeader:
+    dd MAGIC
+    dd FLAGS
+    dd CHECKSUM
+
+; reserve initial kernel stack space -- that's 16k.
+STACKSIZE equ 0x4000
+
+; setting up entry point for linker
+loader equ (_loader - 0xC0000000)
+global loader
+
+_loader:
+    ; NOTE: Until paging is set up, the code must be position-independent and use physical
+    ; addresses, not virtual ones!
+    mov ecx, (BootPageDirectory - KERNEL_VIRTUAL_BASE)
+    mov cr3, ecx                                        ; Load Page Directory Base Register.
+
+    mov ecx, cr4
+    or ecx, 0x00000010                          ; Set PSE bit in CR4 to enable 4MB pages.
+    mov cr4, ecx
+
+    mov ecx, cr0
+    or ecx, 0x80000000                          ; Set PG bit in CR0 to enable paging.
+    mov cr0, ecx
+
+    ; Start fetching instructions in kernel space.
+    ; Since eip at this point holds the physical address of this command (approximately 0x00100000)
+    ; we need to do a long jump to the correct virtual address of StartInHigherHalf which is
+    ; approximately 0xC0100000.
+    lea ecx, [StartInHigherHalf]
+    jmp ecx                                                     ; NOTE: Must be absolute jump!
+
+StartInHigherHalf:
+    ; Unmap the identity-mapped first 4MB of physical address space. It should not be needed
+    ; anymore.
+    mov dword [BootPageDirectory], 0
+    invlpg [0]
+
+    ; NOTE: From now on, paging should be enabled. The first 4MB of physical address space is
+    ; mapped starting at KERNEL_VIRTUAL_BASE. Everything is linked to this address, so no more
+    ; position-independent code or funny business with virtual-to-physical address translation
+    ; should be necessary. We now have a higher-half kernel.
+    mov esp, stack+STACKSIZE           ; set up the stack
+    push eax                           ; pass Multiboot magic number
+
+    ; pass Multiboot info structure -- WARNING: This is a physical address and may not be
+    ; in the first 4MB!
+    push ebx
+
+    call  _main                  ; call kernel proper
+    hlt                          ; halt machine should kernel return
+
+
+section .bss
+align 32
+stack:
+    resb STACKSIZE      ; reserve 16k stack on a uint64_t boundary
+```
+
+## linker.ld
+
+This is a little trickier than it was for the [C kernel tutorial](https://wiki.osdev.org/Bare_bones "Bare bones"), since you need to distinguish between virtual addresses (which will be in the higher half) and load addresses, which GRUB needs to decide where to put your kernel.
+
+``` c
+ENTRY(loader)
+OUTPUT_FORMAT(elf32-i386)
+
+SECTIONS {
+   /* The kernel will live at 3GB + 1MB in the virtual
+      address space, which will be mapped to 1MB in the
+      physical address space. */
+   . = 0xC0100000;
+
+   .text : AT(ADDR(.text) - 0xC0000000) {
+       *(.text)
+       *(.rodata*)
+   }
+
+   .data ALIGN (0x1000) : AT(ADDR(.data) - 0xC0000000) {
+       *(.data)
+   }
+
+   .bss : AT(ADDR(.bss) - 0xC0000000) {
+       _sbss = .;
+       *(COMMON)
+       *(.bss)
+       _ebss = .;
+   }
+}
+```
+
+Note that we use loader (and not \_loader) as our entry point. This is due to the fact that \_loader's address is approximately 0xC0100000, if we try to set our eip to that address it will not find our loader function. Also note our entry point is not being converted to physical address. GRUB does this conversion when calculating starting value of EIP, and if you attempt to do the translation, you may get your execution when you don't want it or get "entry point isn't in a segment" error.
+
+## kernel.c
+
+Using the [kernel.c code](https://wiki.osdev.org/Bare_bones#Writing_a_kernel_in_C "Bare bones") from the original bare bones tutorial will work fine, with one small change. On the fourth line in terminal_initialize(), change:
+
+``` c
+terminal_buffer = (uint16_t*) 0xB8000;
+```
+
+to
+
+``` c
+terminal_buffer = (uint16_t*) 0xC00B8000;
+```
+
+This accomodates for the kernel's new offset into higher-half space. Any direct memory access by the kernel at this point should take place with respect to this offset where necessary.
+
+## Troubleshooting
+
+I got a page fault (#PF) when accessing my GRUB Multiboot info structure
+
+The address passed by loader.s is physical, you have to make it virtual to add your virtual base to it. For example, in your loader.s:
+
+``` asm
+   add ebx, KERNEL_VIRTUAL_BASE ; make the address virtual
+   push ebx ; push it on the stack for _main()
+```
+
+Don't forget to make all addresses pointing to memory locations in the Multiboot info structure also virtual.
+
+## See Also
+
+### Articles
+
+- [Bare bones](https://wiki.osdev.org/Bare_bones "Bare bones")
+- An [alternate](https://wiki.osdev.org/User:Glauxosdever/Higher_Half_x86_Bare_Bones "User:Glauxosdever/Higher Half x86 Bare Bones") higher half Bare Bones.

@@ -1,0 +1,110 @@
+Undefined Behavior occurs when running code whose behavior is not described by the programming language specification. Languages like C and C++ have quite a lot of undefined behavior to allow compilers the opportunity to generate efficient code for different architectures. When compilers encounter undefined behavior may generate code which does unexpected things, or may even do nothing at all. Fortunately, GCC can generate code to analyze a program at runtime and catch certain types of undefined behavior using a library called `ubsan`. `ubsan` can catch runtime bugs such as dereferencing NULL or non-canonical addresses, certain undefined overflow errors, shifting or multiplying data which is out of bounds, and other errors. Adding ubsan support for a hobbyist operating system is as simple as defining a few hooks which are called when the kernel detects undefined behavior, and re-compiling with special flags.
+
+## GCC's Libsanitizer `ubsan` Implementation
+
+GCC provides a library called Libsanitizer with a C++ implementation of the `ubsan` hooks for userland programs in the [libsanitizer/ubsan/ directory](https://github.com/gcc-mirror/gcc/tree/master/libsanitizer/ubsan) of the GCC repository. Attempting to link libsanitizer into a kernel may be problematic, so it is instead recommended to implement ones own hooks by looking at the GCC structure and function definitions and rewriting them. [Sortix](https://gitlab.com/sortix/sortix/blob/master/libc/ubsan/ubsan.c) and the Kernel of Truth have good pure C implementations of these hooks as examples.
+
+## Compiling With `ubsan`
+
+Compiling a kernel with `ubsan` support is as simple as adding `-fsanitize=undefined` to the flags provided to GCC. Note that adding undefined behavior sanitization will bulk up the kernel and result in lots of inefficient runtime checks. However, it's easy to add a debug specific phony target using a Makefile which builds the kernel with debug information and undefined behavior sanitization. To make a normal build, use `make all` and to build a special debug build use `make debug`
+
+``` c
+CFLAGS := -O2 -Werror -Wall
+ASFLAGS := -O2 -Werror -Wall
+CC := x86_64-elf-gcc
+
+debug: CFLAGS += -g -fsanitize=undefined
+debug: ASFLAGS += -g
+debug: all
+
+all:
+    # Invoke GCC, GAS, etc.
+    $(CC) -c myos.c -o myos.elf $(CFLAGS)
+```
+
+## `ubsan` Data Structures
+
+`ubsan` defines a few data structures for determining the cause and location of the error. One of the most helpful of these is the structure which holds the source location of the original code. It has a pointer to a C string with the file name which caused the error, as well as the exact line and column where it happened. There is also a type descriptor for types which may have been involved in undefined behavior, which includes a C string representing the type name. Each specific type of behavior, such as type mismatches, overflows, or out of bounds errors, has its own structure type which always begins with an embedded source location structure.
+
+``` c
+struct source_location {
+    const char *file;
+    uint32_t line;
+    uint32_t column;
+};
+
+struct type_descriptor {
+    uint16_t kind;
+    uint16_t info;
+    char name[];
+};
+
+struct type_mismatch_info {
+    struct source_location location;
+    struct type_descriptor *type;
+    uintptr_t alignment;
+    uint8_t type_check_kind;
+};
+
+struct out_of_bounds_info {
+    struct source_location location;
+    struct type_descriptor left_type;
+    struct type_descriptor right_type;
+};
+```
+
+## Example Hook Implementation
+
+One particularly helpful hook is called `__ubsan_handle_type_mismatch`. As of this writing, this hook handles three different types of errors: NULL pointer access, unaligned memory access, or accessing memory from a pointer whose data is an insufficient size. This also catches non-canonical address dereferences on x86_64. This function takes two arguments, a pointer to a type mismatch info structure, and a pointer to the original data. We can check the data to diagnose the error, and log it for the user, and kernel panic.
+
+``` c
+// Alignment must be a power of 2.
+#define is_aligned(value, alignment) !(value & (alignment - 1))
+
+struct type_mismatch_info {
+    struct source_location location;
+    struct type_descriptor *type;
+    uintptr_t alignment;
+    uint8_t type_check_kind;
+};
+
+
+const char *Type_Check_Kinds[] = {
+    "load of",
+    "store to",
+    "reference binding to",
+    "member access within",
+    "member call on",
+    "constructor call on",
+    "downcast of",
+    "downcast of",
+    "upcast of",
+    "cast to virtual base of",
+};
+
+static void log_location(struct source_location *location) {
+    logf("\tfile: %s\n\tline: %i\n\tcolumn: %i\n",
+         location->file, location->line, location->column);
+}
+
+
+void __ubsan_handle_type_mismatch(struct type_mismatch_info *type_mismatch,
+                                  uintptr_t pointer) {
+    struct source_location *location = &type_mismatch->location;
+    if (pointer == 0) {
+        log("Null pointer access");
+    } else if (type_mismatch->alignment != 0 &&
+               is_aligned(pointer, type_mismatch->alignment)) {
+        // Most useful on architectures with stricter memory alignment requirements, like ARM.
+        log("Unaligned memory access");
+    } else {
+        log("Insufficient size");
+        logf("%s address %p with insufficient space for object of type %s\n",
+             Type_Check_Kinds[type_mismatch->type_check_kind], (void *)pointer,
+             type_mismatch->type->name);
+    }
+    log_location(location);
+
+    kernel_panic();
+}
+```

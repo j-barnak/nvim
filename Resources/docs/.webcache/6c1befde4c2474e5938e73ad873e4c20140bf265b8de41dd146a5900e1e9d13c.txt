@@ -1,0 +1,180 @@
+## Debugging a POSIX-UEFI Bootloader under QEMU
+
+This article describes how to debug a [POSIX‑UEFI](https://wiki.osdev.org/index.php?title=POSIX%E2%80%91UEFI&action=edit&redlink=1 "POSIX‑UEFI (page does not exist)") bootloader (or any EFI app) under QEMU without hard‑coding a load address. By having your [EFI](https://wiki.osdev.org/UEFI "UEFI") binary write a “magic marker” and its runtime base address into known RAM locations, you can set a watchpoint and then report to GDB exactly where your code lives in memory, then load symbols automatically.
+
+## QEMU Setup
+
+- Use the `-serial` option to have a serial console available for the virtual machine. You will have console logs in your terminal and a possibility to use simple ports writing to output debug tracing to serial console.
+- Use the `-s` option to enable the built-in GDB stub which will wait for connection on TCP port 1234.
+- Use the `-S` option to pause the virtual CPU at startup until a debugger is connected.
+
+Launch QEMU as usual, providing the path to your firmware and disk image. For example:
+
+``` bash
+qemu-system-x86_64 -drive file=boot.img
+-bios firmware/OVMF.fd
+-m 256M
+-smp 4
+-machine q35
+-net none
+-s -S
+-serial mon:stdio
+```
+
+QEMU will start and wait for an incoming GDB connection on port 1234. The VM will not begin executing until you connect with GDB and issue a continue command.
+
+  
+If you're using libvirt, the following can be added to the \<domain\> section of an XML config file in /etc/libvirt/qemu/ to enable the gdb server for a VM:
+
+``` xml
+  <qemu:commandline>
+    <qemu:arg value='-s'/>
+    <qemu:arg value='-S'/>
+  </qemu:commandline>
+```
+
+## Sample application using POSIX UEFI library
+
+Debugging UEFI binaries can be challenging because you typically don't know the address where your image will be loaded at runtime, complicating both getting an initial breakpoint and symbol loading. One workaround is have your application write its loaded base address to a known memory location, together with a marker value, so GDB can watch for it and reload symbols at the correct address.
+
+This example is written using [POSIX-UEFI](https://wiki.osdev.org/POSIX-UEFI "POSIX-UEFI") in a 64 bit environment though the method should be modifiable to apply to any implementation.
+
+``` c
+int main(int argc, char **argv){
+    efi_loaded_image_protocol_t *loaded_image;
+    efi_status_t status;
+    // Define the GUID variable (cannot pass macro directly)
+    efi_guid_t LoadedImageProtocolGUID = EFI_LOADED_IMAGE_PROTOCOL_GUID;
+
+    // Retrieve the Loaded Image Protocol using HandleProtocol
+    status = BS->HandleProtocol(IM, &LoadedImageProtocolGUID, (void **)&loaded_image);
+    if (EFI_ERROR(status)) {
+        printf("HandleProtocol failed: 0x%lx\n", status);
+        return status;
+    }
+
+    // Print the actual base address of the loaded image
+    printf("Image loaded at: 0x%lx\n", (uint64_t)loaded_image->ImageBase);
+
+    // Write image base and marker for GDB
+    volatile uint64_t *marker_ptr = (uint64_t *)0x10000;
+    volatile uint64_t *image_base_ptr = (uint64_t *)0x10008;
+    *image_base_ptr = (uint64_t)loaded_image->ImageBase;  // Store ImageBase
+    *marker_ptr = 0xDEADBEEF;   // Set marker
+
+    printf("Hello, world!\n");
+
+    return EFI_SUCCESS;
+}
+```
+
+When this code is executed, it will write 0xDEADBEEF to address 0x10000 and the image base to address 0x10008, allowing you to detect the moment and address for symbol reloading in GDB.
+
+The next thing required for GDB is executable image with symbols. If you carefully examined build log and Makefiles you should note that when EFI executable is created from ELF shared object file only limited set of sections are copied to the resulted image:
+
+``` text
+.text .sdata .reloc .data .dynamic .dynsym
+```
+
+For having debug symbols we need additionally these sections (in case you have compiled files with "-ggdb" option):
+
+``` text
+.debug_info .debug_abbrev .debug_loc .debug_aranges .debug_line .debug_macinfo .debug_str etc
+```
+
+But if you create EFI binary which additionally contains these sections the EFI firmware will be unable to execute it. Fortunately, we do not need the debug symbols on the target machine since we will use remote debugging with gdb anyway. Instead we can create two EFI binaries - one with only required sections to upload it to target system and another one with debug symbols to use it with GDB. In practice, this just requires running objcopy utility a second time with different set of sections, conveniently provided by the --only-keep-debug flag to copy and different output files. Here is an example with modifying the POSIX-UEFI makefile:
+
+``` make
+ifneq ($(USE_GCC),)
+    $(OBJCOPY) -j .text -j .sdata -j .data -j .dynamic -j .dynsym  -j .rel -j .rela -j .rel.* -j .rela.* -j .reloc --output-target $(EFIARCH) --subsystem=10 $^ $(addprefix $(OUTDIR),$@) || echo target: $(EFIARCH)
+    $(OBJCOPY) --only-keep-debug $^ $(addprefix $(OUTDIR),$@.debug)
+    @rm $(addprefix $(OUTDIR),$(TARGET).so)
+endif
+```
+
+  
+Now you can launch GDB. Because your image will be relocated by the firmware, you need to let GDB know the correct addresses.
+
+  
+
+``` bash
+$ gdb
+(gdb) target remote localhost:1234
+
+# Set a watchpoint for the marker write
+(gdb) watch *(unsigned long long*)0x10000 == 0xDEADBEEF
+(gdb) continue
+
+# Execution will break as soon as the marker is written.
+# Now, fetch the relocated base address:
+(gdb) set $base = *(unsigned long long*)0x10008
+
+# Reload symbols for the image at the correct address:
+(gdb) add-symbol-file bootloader/main.efi.debug -o $base
+
+# Now you can step, set breakpoints, etc.
+(gdb) si
+```
+
+``` text
+$ gdb
+GNU gdb (GDB) 16.3
+Copyright (C) 2024 Free Software Foundation, Inc.
+License GPLv3+: GNU GPL version 3 or later <http://gnu.org/licenses/gpl.html>
+This is free software: you are free to change and redistribute it.
+There is NO WARRANTY, to the extent permitted by law.
+Type "show copying" and "show warranty" for details.
+This GDB was configured as "x86_64-pc-linux-gnu".
+Type "show configuration" for configuration details.
+For bug reporting instructions, please see:
+<https://www.gnu.org/software/gdb/bugs/>.
+Find the GDB manual and other documentation resources online at:
+    <http://www.gnu.org/software/gdb/documentation/>.
+
+--Type <RET> for more, q to quit, c to continue without paging--
+rd".
+(gdb) target remote localhost:1234
+Remote debugging using localhost:1234
+warning: No executable has been specified and target does not support
+determining executable automatically.  Try using the "file" command.
+0x000000000000fff0 in ?? ()
+(gdb) watch *(unsigned long long*)0x10000 == 0xDEADBEEF
+Hardware watchpoint 1: *(unsigned long long*)0x10000 == 0xDEADBEEF
+(gdb) continue
+Continuing.
+
+Thread 1 hit Hardware watchpoint 1: *(unsigned long long*)0x10000 == 0xDEADBEEF
+
+Old value = 0
+New value = 1
+0x000000000e059518 in ?? ()
+(gdb) set $base = *(unsigned long long*)0x10008
+(gdb) add-symbol-file bootloader/main.efi.debug -o $base
+add symbol table from file "bootloader/main.efi.debug" with all sections offset by 0xe056000
+(y or n) y
+Reading symbols from bootloader/main.efi.debug...
+(gdb) si
+0x000000000e05951f  265     printf("Hello, world!\n");
+(gdb) list
+260     volatile uint64_t *marker_ptr = (uint64_t *)0x10000;
+261     volatile uint64_t *image_base_ptr = (uint64_t *)0x10008;
+262     *image_base_ptr = (uint64_t)loaded_image->ImageBase;  // Store ImageBase
+263     *marker_ptr = 0xDEADBEEF;   // Set marker
+264 
+265     printf("Hello, world!\n");
+266 
+267     return EFI_SUCCESS;
+268 }
+269
+(gdb)
+```
+
+Or if you want to avoid entering in these commands manually each time, you can also place them in a `.gdbinit` file in your project directory. GDB will automatically execute these commands when it starts, streamlining your debugging workflow.
+
+For example:
+
+    target remote localhost:1234
+    watch *(unsigned long long)0x10000 == 0xDEADBEEF
+    continue
+    set $base = *(unsigned long long)0x10008
+    add-symbol-file bootloader/main.efi.debug -o $base

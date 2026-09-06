@@ -1,0 +1,153 @@
+For the most part, the information in [Libsupcxx](https://wiki.osdev.org/Libsupcxx "Libsupcxx") seems to be broken at the moment as GCC has changed a lot since this article was first written. One alternative is to use libc++ instead. libc++ is the c++ library provided by the llvm/clang compiler. Although this could be used with with clang, the following information is with respect to GCC.
+
+## Prerequisites
+
+Before you can compile anything, your going to need a cross compiler. The following assumes that you have created a GCC cross compiler using [GCC_Cross-Compiler](https://wiki.osdev.org/GCC_Cross-Compiler "GCC Cross-Compiler") with the following:
+
+``` text
+   export PREFIX="$HOME/opt/cross"
+   export TARGET=x86_64-elf
+   export PATH="$PREFIX/bin:$PATH"
+```
+
+Note that you might also want to configure GCC to use multilib support so that you can turn off the red zone with respect to x86_64 [Libgcc_without_red_zone](https://wiki.osdev.org/Libgcc_without_red_zone "Libgcc without red zone"). The code in this tutorial assumes that you have done that as it's pretty much needed if you want to run code in your kernel using x86_64.
+
+Finally you will also need a libc as libc++ uses libc functions. You can create your own libc if you want, or you can use an existing one [C_Library](https://wiki.osdev.org/C_Library "C Library"). This article assumes that your using newlib, so you will see some \#defines that are specific to newlib which you can ignore if your using your own libc or something else. The main point here is you need to have a libc available of libc++ to use as needed.
+
+To compile libc++ you will need both libcxx and libcxxabi. Libcxxabi provides all of the abi functions that are needed to make libcxx work. Note that this is similar to libsupc++.
+
+## Donwload
+
+Before we can start, download all of the sources that we need, and setup our build environment
+
+``` text
+   wget ftp://sourceware.org/pub/newlib/newlib-2.3.0.20160104.tar.gz
+   git clone http://llvm.org/git/libcxxabi
+   git clone http://llvm.org/git/libcxx
+```
+
+``` text
+   tar xvf newlib*.tar.gz    
+   mv newlib-*/ newlib/
+```
+
+``` text
+   mkdir build-newlib
+```
+
+## Flags
+
+Your going to want to keep everything consistent. The newlib \#defines setup newlib to compile for x86_64, as well as enable the portions of newlib that are needed by libc++. For example, libc++ will need functions like strtold, which on x86_64 requires you to enable long double support in newlib (likely you will never use this in a kernel, but it's needed to compile). Libc++ also needs a timer of some sort, and it's likely that you will be providing your own malloc/free. In addition, we disable threading support (also not usually needed in a kernel), and we tell libc++ to use posix timers and enable support for them in newlib.
+
+``` text
+   export NEWLIB_DEFINES="-D_HAVE_LONG_DOUBLE -D_LDBL_EQ_DBL -D_POSIX_TIMERS -U__STRICT_ANSI__ -DMALLOC_PROVIDED"
+   export LIBCXXABI_DEFINES="-DLIBCXXABI_HAS_NO_THREADS"
+   export LIBCXX_DEFINES="-D_LIBCPPABI_VERSION=1002 -D_NEWLIB_VERSION -D_LIBCPP_HAS_NO_THREADS -D_LIBCPP_HAS_NO_MONOTONIC_CLOCK"
+```
+
+With respect to cflags, since we are on x86_64 we need -fpic, and since this is a kernel, we need -mno-red-zone. Since this is a custom GCC cross compiler, we use -ffreestanding to enable GCC's built-in includes like stdint.h etc... And then finally we disable thread statics which prevents GCC from creating calls to thread guards, and disable cxa-atexit in favor of newlib's version (which could be removed if you have your own global constructor / destructor logic that is more c++ friendly).
+
+``` text
+   export CFLAGS="-ffreestanding -fpic -mno-red-zone $NEWLIB_DEFINES"
+   export CXXFLAGS="-std=c++14 -fno-use-cxa-atexit -fno-threadsafe-statics $CFLAGS"
+```
+
+## Patch Libcxx
+
+At the time of writing, there are two issues with libcxx that need to be addressed. The first is libcxx assumes that some cmath functions are actually functions and not macros, while newlib uses macros, so we need to remove the use of "using" for these functions. Finally, libcxx has some c++17 functions that don't have a clean way to \#define them out, and GCC currently doesn't have support for these (specifically uncaught exceptions). The following patch cleans these issues up:
+
+``` text
+   diff -Naur libcxx/include/cmath libcxx_patched/include/cmath
+   --- libcxx/include/cmath 2016-01-13 09:54:11.630532663 -0800
+   +++ libcxx_patched/include/cmath 2016-01-13 09:53:42.351909907 -0800
+   @@ -306,6 +306,7 @@
+    
+    _LIBCPP_BEGIN_NAMESPACE_STD
+    
+   +#ifndef _NEWLIB_VERSION
+    using ::signbit;
+    using ::fpclassify;
+    using ::isfinite;
+   @@ -326,6 +327,7 @@
+    #ifndef _AIX
+    using ::abs;
+    #endif
+   +#endif
+    
+    #ifndef __sun__
+    using ::acos;
+   diff -Naur libcxx/src/exception.cpp libcxx_patched/src/exception.cpp
+   --- libcxx/src/exception.cpp 2016-01-13 09:54:11.658531346 -0800
+   +++ libcxx_patched/src/exception.cpp 2016-01-13 09:52:59.885914438 -0800
+   @@ -106,22 +106,22 @@
+    
+    int uncaught_exceptions() _NOEXCEPT
+    {
+   -#if defined(__APPLE__) || defined(_LIBCPPABI_VERSION)
+   -   // on Darwin, there is a helper function so __cxa_get_globals is private
+   -# if _LIBCPPABI_VERSION > 1101
+   -    return __cxa_uncaught_exceptions();
+   -# else
+   -    return __cxa_uncaught_exception() ? 1 : 0;
+   -# endif
+   -#else  // __APPLE__
+   -#   if defined(_MSC_VER) && ! defined(__clang__)
+   -        _LIBCPP_WARNING("uncaught_exceptions not yet implemented")
+   -#   else
+   -#       warning uncaught_exception not yet implemented
+   -#   endif
+   +// #if defined(__APPLE__) || defined(_LIBCPPABI_VERSION)
+   +//    // on Darwin, there is a helper function so __cxa_get_globals is private
+   +// # if _LIBCPPABI_VERSION > 1101
+   +//     return __cxa_uncaught_exceptions();
+   +// # else
+   +//     return __cxa_uncaught_exception() ? 1 : 0;
+   +// # endif
+   +// #else  // __APPLE__
+   +// #   if defined(_MSC_VER) && ! defined(__clang__)
+   +//         _LIBCPP_WARNING("uncaught_exceptions not yet implemented")
+   +// #   else
+   +// #       warning uncaught_exception not yet implemented
+   +// #   endif
+        fprintf(stderr, "uncaught_exceptions not yet implemented\n");
+        ::abort();
+   -#endif  // __APPLE__
+   +// #endif  // __APPLE__
+    }
+    
+```
+
+## Compile NewLib
+
+``` text
+   pushd build-newlib
+   ../newlib/configure --target=$TARGET --prefix=$PREFIX
+   make all
+   popd
+```
+
+## Compile Libcxxabi
+
+``` text
+   pushd libcxxabi/src
+   ~/opt/cross/bin/x86_64-elf-g++ -I../../libcxx/include/ -I../../newlib/newlib/libc/include/ -I../include/ $LIBCXXABI_DEFINES $CXXFLAGS -c *.cpp
+   ~/opt/cross/bin/x86_64-elf-ar rcs libcxxabi.a *.o
+   popd
+```
+
+## Compile Libcxx
+
+``` text
+   pushd libcxx/src
+   ~/opt/cross/bin/x86_64-elf-g++ -I../../libcxxabi/include/ -I../../newlib/newlib/libc/include/ -I../include/ $LIBCXX_DEFINES $CXXFLAGS -c *.cpp
+   ~/opt/cross/bin/x86_64-elf-ld -shared *.o -o libcxx.so -L../../libcxxabi/src/ -lcxxabi -L/home/user/sandbox/build-newlib/x86_64-elf/no-red-zone/newlib -lc -L/home/user/opt/cross/lib/gcc/x86_64-elf/5.2.0/no-red-zone/ -lgcc
+   popd
+```
+
+## Notes
+
+From here you have a lot of options. The above code compiles libc++ as a shared library, but you could compile it as a static library if thats what you need (the command would be similar to how we compiled libcxxabi). Likely these includes / libraries should be copied to your systroot, and then recompile GCC to see your new sysroot using "--with-sysroot=". Keep in mind that the majority of libc++ is a set of headers, and a lot of these headers can be used without compiling any code at all. For example, if all you need is the stdlib containers, you probably could use libc++ without any compilation at all (libcxxabi does this). Also note that, even though we use newlib here, there are still some functions that you will have to implement yourself. An easy way to see what symbols have left to be defined would be to:
+
+``` text
+   readelf libcxx.so -aW | grep UND
+```

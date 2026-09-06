@@ -18,7 +18,12 @@ output under `Resources/docs`):
 - `webextract.py`: article HTML -> body HTML for pandoc
   (`curl -fsSL <url> | python3 webextract.py content <css-selector> | pandoc -f html -t gfm-raw_html --wrap=none`).
   Flattens tables (outermost table, direct rows/cells only) so nothing is
-  dropped or duplicated.
+  dropped or duplicated. The `mediawiki` mode does the same for a rendered
+  MediaWiki page (`python3 webextract.py mediawiki "" https://wiki.osdev.org`):
+  it keeps `div.mw-parser-output`, drops the table of contents and the other
+  in-body chrome, turns SyntaxHighlight `div.mw-highlight` wrappers back into
+  language-tagged fences, and absolutises the relative wiki links. It built the
+  frozen OSDev wiki provider from the site's offline dump.
 
 Loaded on demand by `lua/config/docs.lua` (`tool_script()`), only when a live
 provider builds its cache for the first time:

@@ -1,0 +1,392 @@
+| ACPI                                      |
+|-------------------------------------------|
+|                                           |
+| RSDP                                      |
+| Fixed Tables                              |
+| BGRT FADT MADT MCFG RSDT / XSDT SRAT WAET |
+| Differentiated Tables                     |
+| DSDT SSDT AML                             |
+| Tools/Libs                                |
+| ACPICA uACPI LAI                          |
+
+[**uACPI**](https://github.com/UltraOS/uACPI) is a portable and easy-to-integrate implementation of the Advanced Configuration and Power Interface (ACPI).
+
+Its main focuses are full NT compatibility, safety, and minimization of stack usage by avoiding recursion entirely.
+
+Extra documentation can be found in the project's [GitHub repo](https://github.com/UltraOS/uACPI).
+
+## Features
+
+- A complete & well-tested AML interpreter
+- Operation region subsystem, support for user-defined address space handlers & builtin handlers for SystemMemory/SystemIO/PCI_Config/TableData
+- User-defined device notify handlers & dispatch
+- A complete resource subsystem. Every resource defined by ACPI 6.5 (last release) is supported
+- Sleep API, allowing reset, transition to any sleep state, wake vector programming API
+- An advanced event subsystem, supporting GPE/fixed events, wake, implicit notify, AML handlers
+- PCI routing table retrieval & interrupt model API
+- Device search API
+
+uACPI has been tested and confirmed to work on many real computers, both new and old, desktops and laptops. It has also been extensively fuzzed against both real world AML blobs & its own test suite.
+
+The test suite runs on every commit and tests multiple types of configuration, including 64 and 32 bit builds on Windows (MSVC), Linux (GCC), MacOS (AppleClang), and OpenWatcom.
+
+### Why use uACPI if ACPICA is a thing?
+
+This is discussed in great detail in the project's [README](https://github.com/UltraOS/uACPI?tab=readme-ov-file#why-would-i-use-this-over-acpica).
+
+## Integrating into a kernel
+
+Refer to the project's [README](https://github.com/UltraOS/uACPI?tab=readme-ov-file#integrating-into-a-kernel) for detailed instructions on how to do it.
+
+## Initialization
+
+Below is an example of basic uACPI initialization sequence that enters ACPI mode, parses tables, brings the event system online, and finally loads & initializes the namespace.
+
+``` c
+#include <uacpi/uacpi.h>
+#include <uacpi/utilities.h>
+#include <uacpi/event.h>
+
+int acpi_init(void) {
+    /*
+     * Start with this as the first step of the initialization. This loads all
+     * tables, brings the event subsystem online, and enters ACPI mode. We pass
+     * in 0 as the flags as we don't want to override any default behavior for now.
+     */
+    uacpi_status ret = uacpi_initialize(0);
+    if (uacpi_unlikely_error(ret)) {
+        log_error("uacpi_initialize error: %s", uacpi_status_to_string(ret));
+        return -ENODEV;
+    }
+
+    /*
+     * Load the AML namespace. This feeds DSDT and all SSDTs to the interpreter
+     * for execution.
+     */
+    ret = uacpi_namespace_load();
+    if (uacpi_unlikely_error(ret)) {
+        log_error("uacpi_namespace_load error: %s", uacpi_status_to_string(ret));
+        return -ENODEV;
+    }
+
+    /*
+     * Initialize the namespace. This calls all necessary _STA/_INI AML methods,
+     * as well as _REG for registered operation region handlers.
+     */
+    ret = uacpi_namespace_initialize();
+    if (uacpi_unlikely_error(ret)) {
+        log_error("uacpi_namespace_initialize error: %s", uacpi_status_to_string(ret));
+        return -ENODEV;
+    }
+    
+    /*
+     * Tell the firmware the interrupt model we're planning to use.
+     * (Use UACPI_INTERRUPT_MODEL_PIC if you're planning to use PIC, or any
+     *  other value depending on the architecture).
+     */
+    uacpi_set_interrupt_model(UACPI_INTERRUPT_MODEL_IOAPIC);
+
+    /*
+     * Tell uACPI that we have marked all GPEs we wanted for wake (even though we haven't
+     * actually marked any, as we have no power management support right now). This is
+     * needed to let uACPI enable all unmarked GPEs that have a corresponding AML handler.
+     * These handlers are used by the firmware to dynamically execute AML code at runtime
+     * to e.g. react to thermal events or device hotplug.
+     */
+    ret = uacpi_finalize_gpe_initialization();
+    if (uacpi_unlikely_error(ret)) {
+        log_error("uACPI GPE initialization error: %s", uacpi_status_to_string(ret));
+        return -ENODEV;
+    }
+
+    /*
+     * That's it, uACPI is now fully initialized and working! You can proceed to
+     * using any public API at your discretion. The next recommended step is namespace
+     * enumeration and device discovery so you can bind drivers to ACPI objects.
+     */
+    return 0;
+}
+```
+
+## Code examples
+
+### Namespace Enumeration & Finding Devices
+
+There are multiple ways to implement device discovery for an ACPI namespace, below we will discuss the most common ways and their pros and cons.
+
+#### Let Devices Discover Themselves
+
+In this approach, we don't use a centralized bus system, but instead write ad-hoc find/discover() function for each supported device, then register it somewhere so that it's called by kernel code during initialization.
+
+``` c
+// ps2k.c
+#include <uacpi/utilities.h>
+#include <uacpi/resources.h>
+
+#define PS2K_PNP_ID "PNP0303"
+
+static uacpi_iteration_decision match_ps2k(void *user, uacpi_namespace_node *node)
+{
+    // Found a PS2 keyboard! Do initialization below.
+    uacpi_resources *kb_res;
+
+    uacpi_status ret = uacpi_get_current_resources(node, &kb_res);
+    if (uacpi_unlikely_error(ret)) {
+        log_error("unable to retrieve PS2K resources: %s", uacpi_status_to_string(ret));
+        return UACPI_ITERATION_DECISION_NEXT_PEER;
+    }
+
+    // Parse the resources to find the IRQ and IO ports the keyboard is connected to
+    // ...uacpi_for_each_resource()
+
+    ps2k_create_device(...);
+
+    uacpi_free_resources(kb_res);
+
+    return UACPI_ITERATION_DECISION_CONTINUE;
+}
+
+void find_ps2_keyboard()
+{
+    uacpi_find_devices(PS2K_PNP_ID, match_ps2k, NULL);
+}
+```
+
+``` c
+// acpi_init.c
+void find_acpi_devices(void) {
+    find_ps2_keyboard();
+    find_ps2_mouse();
+    find_i2c();
+    find_power_button();
+    // ...and more
+}
+```
+
+As you can see it's a very simple approach, but it has lots of drawbacks:
+
+- Very slow: we have to enumerate the entire namespace every time
+- Binary bloat: more devices, more ad-hoc find methods
+- Error-prone: more code duplication, more space for errors
+
+#### Treat ACPI Namespace as a Bus
+
+In this approach, we treat the ACPI namespace as a bus in our kernel, and let devices provide a way to identify them.
+
+``` c
+// acpi_bus.h
+#include <uacpi/uacpi.h>
+#include <uacpi/namespace.h>
+#include <uacpi/utilities.h>
+#include <uacpi/resources.h>
+
+struct acpi_driver {
+    const char *device_name;
+    const char *const *pnp_ids;
+    int (*device_probe)(uacpi_namespace_node *node, uacpi_namespace_node_info *info);
+
+    struct acpi_driver *next;    
+};
+
+void acpi_register_driver(struct acpi_driver *driver);
+```
+
+``` c
+// ps2k.c
+#include <acpi_bus.h>
+
+#define PS2K_PNP_ID "PNP0303"
+
+static const char *const ps2k_pnp_ids[] = {
+    PS2K_PNP_ID,
+    NULL,
+};
+
+static int ps2k_probe(uacpi_namespace_node *node, uacpi_namespace_node_info *info)
+{
+    uacpi_resources *kb_res;
+
+    /* Parse the resources to find the IRQ and IO ports the keyboard is connected to
+     * 
+     * Note that for a centralized system like that the resources could be passed
+     * to the device probe callback from common enumeration code at this point as
+     * well!
+     */
+    uacpi_status st = uacpi_get_current_resources(node, &kb_res);
+    if (uacpi_unlikely_error(st)) {
+        log_error("unable to retrieve PS2K resources: %s", uacpi_status_to_string(st));
+        return -ENODEV;
+    }
+
+    // Actually instantiate the device
+    int ret = ps2k_create_device(...);
+
+    uacpi_free_resources(kb_res);
+    return ret;
+}
+
+static acpi_driver ps2k_driver = {
+    .device_name = "PS2 Keyboard",
+    .pnp_ids = ps2k_pnp_ids,
+    .device_probe = ps2k_probe,
+};
+
+/*
+ * This is called either manually by the kernel, or put in the linker script
+ * in some known section, and executed by the kernel as part of driver initcalls.
+ * If it's a dynamically loadable module, then this is called on module load.
+ */
+int ps2k_init(void)
+{
+    acpi_register_driver(&ps2k_driver);
+    return 0;
+}
+```
+
+``` c
+// acpi_bus.c
+#include <acpi_bus.h>
+
+static struct acpi_driver *acpi_drivers_head
+
+void acpi_register_driver(struct acpi_driver *driver)
+{
+    struct acpi_driver *next = acpi_drivers_head;
+    acpi_drivers_head = driver;
+    driver->next = next;
+}
+
+static uacpi_iteration_decision acpi_init_one_device(
+    void *ctx, uacpi_namespace_node *node, uacpi_u32 node_depth
+)
+{
+    uacpi_namespace_node_info *info;
+    (void)node_depth;
+
+    uacpi_status ret = uacpi_get_namespace_node_info(node, &info);
+    if (uacpi_unlikely_error(ret)) {
+        const char *path = uacpi_namespace_node_generate_absolute_path(node);
+        log_error("unable to retrieve node %s information: %s",
+                  path, uacpi_status_to_string(ret));
+        uacpi_free_absolute_path(path);
+        return UACPI_ITERATION_DECISION_CONTINUE;
+    }
+
+    struct acpi_driver *drv = NULL;
+
+    if (info->flags & UACPI_NS_NODE_INFO_HAS_HID) {
+        // Match the HID against every existing acpi_driver pnp id list
+    }
+
+    if (drv == NULL && (info->flags & UACPI_NS_NODE_INFO_HAS_CID)) {
+        // Match the CID list against every existing acpi_driver pnp id list
+    }
+
+    if (drv != NULL) {
+         // Probe the driver and do something with the error code if desired
+         drv->device_probe(node, info);
+    }
+
+    uacpi_free_namespace_node_info(info);
+    return UACPI_ITERATION_DECISION_CONTINUE;
+}
+
+void acpi_bus_enumerate()
+{
+    uacpi_namespace_for_each_child(
+        uacpi_namespace_root(), acpi_init_one_device, UACPI_NULL,
+        UACPI_OBJECT_DEVICE_BIT, UACPI_MAX_DEPTH_ANY, UACPI_NULL
+    );
+}
+```
+
+As you can see above, this approach is more scalable, faster, and involves way less code duplication. It does require a lot mode code and design to get going initially though.
+
+### Shutting Down the System
+
+``` c
+#include <uacpi/sleep.h>
+
+int system_shutdown(void) {
+    /*
+     * This helper essentially performs a two stage shutdown.
+     * 
+     * Stage 1:
+     * - Runs the \_PTS & \_SST methods, if they exist
+     * - Fetches the \_S5 and \_S0 values to make system wake possible later on
+     *
+     * Stage 2:
+     * Actually enter the sleep state by writing to the hardware registers with
+     * the values from stage 1. This also disables runtime events and enables
+     * only those that are needed for wake.
+     */
+    ret = uacpi_enter_sleep_state_simple(UACPI_SLEEP_STATE_S5);
+    if (uacpi_unlikely_error(ret)) {
+        log_error("failed to enter sleep: %s", uacpi_status_to_string(ret));
+        return -EIO;
+    }
+
+    /*
+     * Technically unreachable code, but leave it here to prevent the compiler
+     * from complaining.
+     */
+    return 0;
+}
+```
+
+### Hooking Up the Power Button
+
+The example below hooks up the power button press using a fixed event callback.
+
+``` c
+#include <uacpi/event.h>
+
+/*
+ * This handler will be called by uACPI from an interrupt context,
+ * whenever a power button press is detected.
+ */
+static uacpi_interrupt_ret handle_power_button(uacpi_handle ctx) {
+    /*
+     * Shut down right here using the helper we have defined above.
+     *
+     * Note that it's generally terrible practice to run any AML from
+     * an interrupt handler, as it's allowed to allocate, map, sleep,
+     * stall, acquire mutexes, etc. So, if possible in your kernel,
+     * instead schedule the shutdown callback to be run in a normal
+     * preemptible context later.
+     */
+    system_shutdown();
+    return UACPI_INTERRUPT_HANDLED;
+}
+
+int power_button_init(void) {
+    uacpi_status ret = uacpi_install_fixed_event_handler(
+        UACPI_FIXED_EVENT_POWER_BUTTON,
+        handle_power_button, UACPI_NULL
+    );
+    if (uacpi_unlikely_error(ret)) {
+        log_error("failed to install power button event callback: %s", uacpi_status_to_string(ret));
+        return -ENODEV;
+    }
+
+    return 0;
+}
+```
+
+Note that some of the more modern hardware routes the power button in a more complicated way, via an embedded controller.
+
+In order to hook that up you will need to:
+
+- Write an [embedded controller](https://uefi.org/specs/ACPI/6.5/12_Embedded_Controller_Interface_Specification.html) driver
+- Find the EC device in the AML namespace (PNP ID "PNP0C09" or ECDT table), attach an address space handler
+- Find a power button object in the namespace, attach a notify handler
+- Detect the general purpose event number used by the embedded controller (\_GPE method), install a handler for it
+- In the event handler, execute the QR_EC command to find out the index of the query requested by the EC
+- Run the requested query by executing the corresponding "EC.\_QXX" control method in AML
+- If this query was for a power button press, you will receive a notifications with value 0x80 (S0 Power Button Pressed)
+
+Refer to [managarm kernel EC driver](https://github.com/managarm/managarm/blob/master/kernel/thor/system/acpi/ec.cpp) to see an example of how this may be done.
+
+### More Examples
+
+You can look at the [managarm kernel source](https://github.com/managarm/managarm/tree/master/kernel/thor/system/acpi) to see more examples of how you might use uACPI to implement various kernel features.

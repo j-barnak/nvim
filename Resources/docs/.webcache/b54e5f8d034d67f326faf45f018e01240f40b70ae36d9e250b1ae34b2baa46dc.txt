@@ -1,0 +1,140 @@
+| Real numbers, coprocessors and vector units |
+|---------------------------------------------|
+| Technical                                   |
+| Floating Point Number                       |
+| X86 implementations                         |
+| X87 FPU MMX SSE AVX                         |
+
+The x86 FPU was originally an optional addition to the processor that was able to perform floating point math in hardware, but has since been integrated into the CPU proper and has collected over the years the majority of math-heavy instructions. The modern FPU has become a legacy term for what is actually the vector processing units, which just happens to include the original floating point operations.
+
+## x86 FPU Legacy
+
+Originally, the FPU was a dedicated coprocessor chip placed on top of the actual processor. Since it was performing calculations asynchronously from the core logic, its results would have been available after the main processor has executed several other instructions. Since errors would also become available asynchronously, the original PC had the error line of the FPU wired to the [interrupt controller](https://wiki.osdev.org/PIC "PIC"). When the 486 added multiprocessor support, it became impossible to detect which of the FPUs has raised an exception, after which they integrated the FPU on-die and added an option to signal a regular exception rather than an interrupt. To provide backwards compatibility, the 486 was given a pin to replace the original FPU error line, which would be routed to the PIC and then back into the CPU's IRQ line to simulate the original setup with a dedicated coprocessor. This has the unfortunate consequence that by default, floating point exceptions will not operate as recommended by the manual.
+
+## FPU configuration
+
+Due to the many forms of FPUs and vector units, some logic is required to get them in the expected state.
+
+## Detecting an FPU
+
+On x86 processors up to the 386, FPUs were external and strictly optional. They allowed the use of different floating-point units, including those which did not strictly correspond to the processor's generation. For example, the 386 was capable of operating with both a 287 (the FPU corresponding to the 286), and the 387 (the contemporary FPU). The 486 line of microprocessors was bifurcated into the 486DX, which included an on-chip floating-point unit, and the 486SX, which did not. The external 487 coprocessor was essentially a modified 486DX that disabled the installed CPU. All x86 CPUs from the Pentium onward have an integrated FPU present (excluding the [NexGen 5x86](https://en.wikipedia.org/wiki/NexGen)).
+
+There are two ways to detect an FPU:
+
+1.  Check the FPU bit in CPUID
+2.  Check the EM bit in CR0, if it is set then the FPU is not meant to be used.
+3.  Check the ET bit in CR0, if it is clear, then the CPU did not detect an 80387 on boot
+4.  Probe for an FPU
+
+The correct order is a bit doubtful. The current official manuals state that attempts to use the FPU when one is not present will lock up the CPU. There are however many sources that contain probing code to various degrees of complexity, with the common consensus that fwait or actual calculations are not to be performed. Similarly, the EM and ET bits can be modified by code and might not have the right values. Different wirings on actual hardware may also cause 386s to not detect an FPU as a 80386, causing the ET bit to have the wrong value on boot.
+
+The common way of testing the presence of an FPU is to have it write it's status somewhere and then check if it actually did.
+
+``` asm
+MOV EDX, CR0                            ; Start probe, get CR0
+AND EDX, (-1) - (CR0_TS + CR0_EM)       ; clear TS and EM to force fpu access
+MOV CR0, EDX                            ; store control word
+FNINIT                                  ; load defaults to FPU
+FNSTSW [.testword]                      ; store status word
+CMP word [.testword], 0                 ; compare the written status with the expected FPU state
+JNE .nofpu                              ; jump if the FPU hasn't written anything (i.e. it's not there)
+JMP .hasfpu
+
+.testword: DW 0x55AA                    ; store garbage to be able to detect a change
+```
+
+To distinguish a 287 and a 387 FPU, you can try if it can see the difference between +infinity and -infinity.
+
+## FPU control
+
+If an FPU is found to be present, you should set up the control registers accordingly. If an FPU is not present, you should also set up the registers accordingly.
+
+**CR0.EM** (bit 2; counting starts at bit 0 making this the third bit)
+
+If the EM bit is set, all FPU and vector operations will cause a \#UD so they can be **EM**ulated in software. Should be off to be actually able to use the FPU
+
+**CR0.ET** (bit 4)
+
+This bit is used on the 386 to tell it how to communicate with the coprocessor, which is 0 for an 287, and 1 for a 387 or later. This bit is hardwired to 1 on 486+
+
+**CR0.NE** (bit 5)
+
+When set, enables **N**ative **E**xception handling which will use the FPU exceptions. When cleared, an exception is sent via the interrupt controller. Should be on for 486+, but not on 386s because they lack that bit.
+
+**CR0.TS** (bit 3)
+
+Task switched. The FPU state is designed to be lazily switched to save read and write cycles. If set, all meaningful operations will cause a \#NM exception so that the OS can backup the FPU state. This bit is automatically set on a hardware task switch, and can be cleared with the CLTS opcode. Software task switching may want to manually set this bit on a reschedule if they want to lazily store FPU state.
+
+**CR0.MP** (bit 1)
+
+This does little else other than saying if an FWAIT opcode is exempted from responding to the TS bit. Since FWAIT will force serialisation of exceptions, it should normally be set to the inverse of the EM bit, so that FWAIT will actually cause a FPU state update when FPU instructions are asynchronous, and not when they are emulated.
+
+**CR4.OSFXSR** (bit 9)
+
+Enables 128-bit SSE support. When clear, most SSE instructions will cause an invalid opcode, and FXSAVE and FXRSTOR will only include the legacy FPU state. When set, SSE is allowed and the XMM and MXCSR registers are accessible, which also means that your OS should maintain those additional registers. Trying to set this bit on a CPU without SSE will cause an exception, so you should check for SSE (or long mode) support first.
+
+**CR4.OSXMMEXCPT** (bit 10)
+
+Enables the \#XF exception. When clear, SSE will work until an exception is generated, after which all SSE instructions will fail with an invalid opcode. When set, the exception handler is called instead and the problem may be diagnosed and reported. Again, you can't set this bit without ensuring SSE support is present
+
+**CR4.OSXSAVE** (bit 18)
+
+Enables the XSAVE extension, which is able to save SSE state as well as other next-generation register states. Again, check CPUID before setting: Long mode support is not sufficient in this case.
+
+## Vector unit
+
+MMX, 3DNow and the rare EMMI reuse the old FPU registers as vector units, aliasing them into 64 bit data registers. This means that they can be used safely without modifications of the FPU handling. SSE however adds a whole new set of registers, and therefore is disabled by default. To allow SSE instructions, CR4.OSFXSR should be set. Be careful though since writing it on a processor without SSE support causes an exception. When SSE is enabled, FXSAVE and FXRSTOR should be used to store the entire FPU and vector register file. It is good practice to enable the other SSE bit (CR4.OSXMMEXCPT) as well so that SSE exceptions are routed to the \#XF handler, instead of your vector unit automatically disabling itself when an exception occurs. The state of the art includes AVX, which adds
+
+## Long Mode
+
+Long mode demands that SSE and SSE2 are available, and compilers are free to use the SSE registers instead of the old FPU registers for floating point operations. This means that your kernel will need to have SSE enabled before using any floating point operations, whereas 32-bit mode might just happen to work without touching CR0/CR4. Also, long mode doubles the registers for SSE, giving you 16 XMM registers rather than the 8 available in 32-bit mode, which implies that more data is in need of saving.
+
+  
+
+## FPU state
+
+When the FPU is configured, the only thing left to do is to initialize its registers to their proper states. FNINIT will reset the user-visible part of the FPU stack. This will set precision to 64-bit and rounding to nearest, which should be correct for most operations. It will also mask all exceptions from causing an interrupt. You can change the control by issuing an FLDCW. To diagnose broken code, you usually want to enable exceptions for invalid operands and stack overflows (bit 0). Bit 2 allows you to catch divisions by zero as well. Some examples:
+
+``` asm
+; FLDCW requires a 16-bit memory operand, immediates do not work
+FLDCW [value_37F]   ; writes 0x37f into the control word: the value written by F(N)INIT
+FLDCW [value_37E]   ; writes 0x37e, the default with invalid operand exceptions enabled
+FLDCW [value_37A]   ; writes 0x37a, both division by zero and invalid operands cause exceptions.
+```
+
+  
+Using the MMX aliases for the FPU registers will cause those registers to be invalidated for floating point use. The EMMS instruction will reset the registers to non-vector use. The x86 calling convention assumes that the stack is usable for either floating point or vector use, so you will need to call EMMS before calling or returning to regular compiler-generated code. Both MMX instructions and EMMS preserves the control word you set with FLDCW so you don't need to adjust it manually afterwards.
+
+SSE operates mostly independent of the FPU registers. It has a separate MXCSR register which deals with control and exceptions, which should be written separately.
+
+## Programming the FPU
+
+The x87 FPU contains 8 floating point registers. Each floating point register holds an 80-bit extended double value (1-bit sign, 15-bit exponent, and 64-bit fractional value), and each register has a matching 2-bit "tag" value in the Tag Register that acts as that registers flags. The Tag Register contains information about whether each register is empty or not, whether its value is accurate or not, and whether its value is a special value, like "infinity" or "Nan" (Not a number).
+
+The 8 floating point registers are organized in a "stack" configuration, and most FPU instructions operate on the current "top" of the stack, (which is register 0 by default). The current "top" register index is stored in the FPU Status Register, and is updated automatically by the FPU when a PUSH (FLD) or POP (FST) instruction is executed. When all 8 stack registers are full (i.e. all 8 tag registers are not marked as "empty"), and a PUSH instruction is executed, a FPU stack-overflow exception will occur. If the stack-overflow exception interrupt has been enabled, the main CPU will also receive an interrupt.
+
+Because the x87 FPU is a separate processor (and has its own clock), it can execute FPU instructions in parallel, at the same time as the CPU is executing its own instructions. Applications that use the x87 FPU must first execute one or more FPU commands, then at some later point, it must instruct the main CPU to wait for the FPU to finish processing (FWAIT) in order to ensure that the FPU has finished executing those instructions. Most of the x87 FPU instructions have a "wait" version and a "no wait" version, so that the programmer can specify at which points in the application that the two processors need to be synchronized. After the FWAIT CPU instruction is executed (or a "wait" instruction is executed), any calculations performed by the FPU (or any exceptions that have been detected by the FPU) can be addressed by the application at that point.
+
+Sending data to, and pulling data from the 8 FPU registers, ST(0) through ST(7), must be performed using system memory. It is not possible to directly copy values from a CPU register to an FPU register. The FPU can copy data from/to system memory in the following formats: 16-Bit Integer, 32-Bit Integer, 32-Bit Float (single), 64-Bit Float (double), and 80-bit Float (extended double). The FPU also supports reading and writing a 80-bit Binary Coded Decimal (BCD) format, which contains a single "sign" bit, 7 reserved bits, and 18 four-bit hexadecimal "characters".
+
+When reading values from system memory, the extended double format is copied directly into the FPU register, while the other formats are converted to the 80-Bit extended double format before being stored in the FPU register. When writing values to system memory, the 80-bit value is copied directly when storing the extended double format, and is converted to the appropriate structure for the other formats. This conversion includes rounding the value based on the current rounding settings in the FPU Control Register.
+
+## Rent-a-coder
+
+These functions can be used with GCC (or TCC) to perform some FPU operations without resorting to dedicated assembly:
+
+``` c
+void fpu_load_control_word(const uint16_t control)
+{
+    asm volatile("fldcw %0;"::"m"(control)); 
+}
+```
+
+## See Also
+
+### External Links
+
+- [Simply FPU](http://www.website.masmforum.com/tutorials/fptute/), a practical guide covering the FPU basics in a userland perspective
+- [Intel 80387 Programmer's Reference Manual](http://www.ragestorm.net/downloads/387intel.txt), complete with example code
+- [AMD Programmer's Manuals](http://developer.amd.com/documentation/guides/pages/default.aspx#manuals), has FPU instruction reference conveniently ordered by processor component.
+- [Intel 64-bit Manuals](http://www.intel.com/products/processor/manuals/), the Intel version of the manuals. More complete, but also more bloated.

@@ -1,0 +1,172 @@
+|                                                                                          |     |
+|------------------------------------------------------------------------------------------|-----|
+| This page or section is a stub . You can help the wiki by accurately contributing to it. |     |
+
+The **ATI Rage 128** is a series of graphics cards from the late 1990s. It's noteworthy as a candidate for device driver development as the **Rage 128 Pro** is emulated in [QEMU](https://wiki.osdev.org/QEMU "QEMU").
+
+Models sharing this register programming interface include:
+
+- ATI Rage 128 VR
+- ATI Rage 128 GL
+- ATI Rage 128 Pro
+- ATI Rage 128 Ultra
+- ATI Rage Fury MAXX
+
+It has the usual three compatibility programming modes, which won't be discussed further here:
+
+- VGA BIOS
+- [VESA BIOS Extensions](https://wiki.osdev.org/VBE "VBE")
+- [VGA Registers](https://wiki.osdev.org/VGA_Hardware "VGA Hardware")
+
+Apart from that, it has its own programming mode exposed on the PCI/AGP bus. This is what the rest of this article will focus on.
+
+We will focus on the 2D framebuffer and 2D drawing engine.
+
+## Card Initialisation
+
+Before the framebuffer or the 2D or 3D engines can be used, the card must be initialised into a known state. This is complicated by the fact that depending on whether this card is the primary video card in the system it may or may not have had its VGA BIOS (PCI bootable ROM) executed by the BIOS.
+
+Initialising the card involves:
+
+1.  Detect the card via [PCI](https://wiki.osdev.org/PCI "PCI") and read BAR0 (framebuffer memory) and BAR2 (memory mapped I/O). BAR1 can be ignored as it just provides a subset of BAR2.
+2.  (Optional) enable [AGP](https://wiki.osdev.org/AGP "AGP") speed
+3.  If using paging, map the MMIO, PCI BIOS ROM, and framebuffer into accessible address space.
+4.  Read the memory specifications and clock specifications from the PCI ROM (aty128_get_pllinfo() in the Linux fbdev source is a good start).
+5.  Unless you are certain the VGA BIOS has been executed, program the card's primary GPU clock (XCLK), memory clock (MCLK), and memory information into the card's registers.
+
+## Getting a 2D Framebuffer
+
+Prerequisites: PCI Bus Probing, knowledge of VGA signal timing.
+
+Basically, you want to do the following things:
+
+1.  Determine the mode settings to use (either making assumptions, or using DDC/EDID).
+2.  Enable the accelerator, turn off the CRTC and pixel clock.
+3.  Set the pixel clock settings (if using real hardware, QEMU doesn't care about the pixel clock). This is VCLK in the documentation.
+4.  Turn on the pixel clock and wait for it to stabilise.
+5.  Set the CRTC with VGA timings that will work.
+6.  Turn on CRTC.
+7.  Start drawing pixels
+
+### Determining Mode Settings
+
+See [\[1\]](http://www.tinyvga.com/vga-timing) and the [Video Signals And Timing](https://wiki.osdev.org/Video_Signals_And_Timing "Video Signals And Timing") page.
+
+These timings are in pixels, and should be usable across different video adapters (as long as they are supported by the video card and the monitor, an exercise left to the reader). Video cards will be limited mostly by their maximum pixel clock and memory size.
+
+``` c
+typedef struct {
+    uint16 hRes;
+    uint16 vRes;
+
+    uint16 hFront;
+    uint16 hSync;
+    uint16 hBack;
+
+    /// @brief Horizontal Sync Polarity. 1 is positive.
+    bool hSyncPolarity;
+
+    uint16 vFront;
+    uint16 vSync;
+    uint16 vBack;
+
+    /// @brief Vertical sync polarity. 1 is positive.
+    bool vSyncPolarity;
+
+    /// @brief Pixel clock in Hz.
+    uint32 pixelClock;
+
+    /// @brief Number of bits per pixel.
+    uint8 depth;
+} VideoMode;
+
+const VideoMode videoMode1024x768 = {
+    1024, 768, 
+    24, 136, 160, 0,
+    3, 6, 29, 0,
+    65000000, 32
+};
+
+const VideoMode videoMode640x480 = {
+    640, 480,
+    16, 96, 48, 0,
+    10, 2, 33, 0,
+    25175000, 32
+};
+```
+
+### CRTC Setup
+
+First we determine a number of intermediate variables. For the Rage 128, most horizontal measurements are done in 'characters', blocks of 8 pixels.
+
+``` c
+// Pick our video mode.
+VideoMode mode = videoMode640x480;
+
+uint32 hSyncStart = (mode.hRes + mode.hFront) / 8;
+uint32 hSyncWidth = mode.hSync / 8;
+uint32 hTotal = (mode.hRes + mode.hFront + mode.hSync + mode.hBack) / 8;
+uint32 hEnd = (mode.hRes / 8) -1;
+
+uint32 vSyncStart = (mode.vRes + mode.vFront);
+uint32 vSyncWidth = mode.vSync;
+uint32 vTotal = (mode.vRes + mode.vFront + mode.vSync + mode.vBack);
+uint32 vEnd = (mode.vRes) -1;
+
+uint8 hSyncPol = 1 - mode.hSyncPolarity;
+uint8 vSyncPol = 1 - mode.vSyncPolarity;
+
+uint32 depth = 0;
+
+switch(mode.depth) {
+    case 32:
+        depth = 6;
+        break;
+
+    default:
+        return ERROR;
+}
+```
+
+Next we write these values to the CRTC registers. Note that the two sync pulse registers are ignored by QEMU, but are very much required by real hardware.
+
+``` c
+regs[ATIRAGE128_REGOFFSET_CRTC_H_TOTAL_DISP] = hTotal | (hEnd << 16);
+regs[ATIRAGE128_REGOFFSET_CRTC_V_TOTAL_DISP] = vTotal | (vEnd << 16);
+
+regs[ATIRAGE128_REGOFFSET_CRTC_H_SYNC_STRT_WID] = (hSyncStart << 3) | (hSyncWidth << 16) | (hSyncPol << 23);   // QEMU does not use this register at all.
+
+regs[ATIRAGE128_REGOFFSET_CRTC_V_SYNC_STRT_WID] = (vSyncStart) | (vSyncWidth << 16) | (vSyncPol << 23);        // QEMU deso not use this register at all.
+
+// Number of characters the screen is wide.
+regs[ATIRAGE128_REGOFFSET_CRTC_PITCH] = (mode.hRes) / 8;
+```
+
+### Setting the Pixel Clock
+
+TODO. The pixel clock is completely ignored by QEMU, only used by real hardware.
+
+### Enabling the CRTC
+
+``` c
+// Enable, 32bpp, extended.
+regs[ATIRAGE128_REGOFFSET_CRTC_GEN_CTRL] = (depth << 8) | (1 << 24) | (1 << 25);
+```
+
+## See Also
+
+### Hardware Specifications
+
+- [Rage 128 GL/VR Register Reference Manual](http://www.bitsavers.org/components/ati/Rage_128/Rage_128_Reg_Ref_Guide.pdf)
+- [Rage 128 Pro Register Reference Manual](http://www.bitsavers.org/components/ati/Rage_128/RRG-G04500-C_RAGE_128_PRO_Register_Reference_Guide_Rev_1.01_200001.pdf)
+
+### Emulator and Driver Source
+
+- [QEMU Emulator Soure Code](https://github.com/qemu/qemu/blob/master/hw/display/ati.c)
+- [xFree86 Driver Source Code](https://gitlab.freedesktop.org/xorg/driver/xf86-video-r128)
+- [Linux Kernel FBDev Source Code](https://github.com/torvalds/linux/blob/master/drivers/video/fbdev/aty/aty128fb.c)
+
+### Other
+
+- [Wikipedia Page - Useful overview of model range](https://en.wikipedia.org/wiki/ATI_Rage)
+- [VGA Timing Reference](http://www.tinyvga.com/vga-timing)

@@ -1,0 +1,167 @@
+[QEMU](https://wiki.osdev.org/QEMU "QEMU") provides a facility for passing strings and files into the VM. This facility is useful for passing kernel parameters, files, or other resources into a guest.
+
+  
+
+## QEMU command line
+
+To pass strings or files into QEMU to appear in the fw_cfg device, use one or more command line parameters like those shown below:
+
+``` text
+ -fw_cfg name=opt/com.name.domain.your.example,string=1
+ -fw_cfg name=opt/com.name.domain.your.example,file=example_filename.png
+ -fw_cfg opt/com.name.domain.your.example,file=example_filename.png
+```
+
+Names that begin with "opt/" are reserved for users. It is strongly recommended to use a RFQDN (Reversed Fully Qualified Domain Name) as a prefix for the resource name. In the example above, it is assumed you are the owner of the domain "your.domain.name.com", and your resource is named "example". Following this advice guarantees that there will never be a conflict, since only one entity can own a given domain name. The name may be up to 55 characters long, including the "opt/" prefix. The "name=" part of the argument may be omitted, as shown in the third example above.
+
+## Detecting QEMU
+
+It is a very good idea for your OS to first make sure it is running under QEMU, before attempting to access the fw_cfg device. Accessing I/O ports for devices that don't exist on a real machine may have undefined behavior. To detect the presence of QEMU, you should read CPUID leaf 0x40000000 and check for the hypervisor signature in the ebx, ecx, edx registers. Under QEMU, those registers will contain the signature "TCGTCGTCGTCG" or "KVMKVMKVM\0\0\0". A link to a CPUID hypervisor leaf reference is at the end of the article.
+
+Since the hypervisor leaf can be disabled in QEMU, an alternate way to detect QEMU is to look for ACPI PnP ID "QEMU0002" in the ACPI tables. This is required to detect the fw_cfg MMIO address on non-x86 architectures, and is a reliable way to auto-detect the I/O port base addresses, in case they are changed in the future.
+
+## Accessing the device from your OS
+
+QEMU provides three I/O ports on x86, or three MMIO addresses on other architectures (*details for other architectures are omitted in this article for now, see the QEMU documentation file below if you need to use fw_cfg on another architecture*).
+
+``` c
+  #define FW_CFG_PORT_SEL     0x510
+  #define FW_CFG_PORT_DATA    0x511
+  #define FW_CFG_PORT_DMA     0x514
+```
+
+*FW_CFG_PORT_SEL* is a 16-bit port at I/O address 0x510. You write a "selector" to this port to control which data will be read when reading *FW_CFG_PORT_DATA*. More about selectors below.
+
+*FW_CFG_PORT_DATA* is an 8-bit port at I/O address 0x511. You read one byte at a time of the file from this port, after selecting a file by writing a value to *FW_CFG_PORT_SEL*.
+
+*FW_CFG_PORT_DMA* is a 32-bit port at I/O address 0x514. DMA is covered later in this article.
+
+### Selectors
+
+``` c
+  #define FW_CFG_SIGNATURE    0x0000
+  #define FW_CFG_ID           0x0001
+  #define FW_CFG_FILE_DIR     0x0019
+```
+
+Listed above are a few fixed-purpose selectors for probing for the existence of the device, and for getting the number of files present in the device. Besides those selectors, each file will be assigned a selector. You determine the selector to use for a file you wish to read by reading the directory file *FW_CFG_FILE_DIR*.
+
+You should ensure that the fw_cfg device is present by outputting *FW_CFG_SIGNATURE* to I/O port *FW_CFG_PORT_SEL*, then read four bytes from *FW_CFG_PORT_DATA*. If you read "QEMU" from the data port, the fw_cfg device is present.
+
+### Enumerating Files
+
+The first four bytes of the *FW_CFG_FILE_DIR* selector will be a 32-bit big-endian number which is the number of files present in the directory.
+
+Following the count, there is a sequence of entries with the following structure:
+
+``` c
+  struct FWCfgFile {      /* an individual file entry, 64 bytes total */
+      uint32_t size;        /* size of referenced fw_cfg item, big-endian */
+      uint16_t select;      /* selector key of fw_cfg item, big-endian */
+      uint16_t reserved;
+      char name[56];        /* fw_cfg item name, NUL-terminated ascii */
+  };
+```
+
+These can be read one at a time by reading *sizeof(FWCfgFile)* bytes into a single variable of type *FWCfgFile* and examined one by one until you find a structure with the desired name. There is no requirement to read one entry at a time, you may read multiple entries, or even all entries, in a single operation.
+
+### Reading files
+
+Once you have found the *FWCfgFile* structure which has the desired name, read the *select* field from the structure. It will contain the big-endian selector for the file. After byte-swapping the selector, output it to *FW_CFG_PORT_SEL*, then read *size* bytes from *FW_CFG_PORT_DATA* and write them to the desired location in memory.
+
+An example implementation is provided in the references below.
+
+## Advanced Usage
+
+The information provided earlier in this article is sufficient to use fw_cfg. The following sections describe DMA mode, which provides increased performance, the ability to seek to an offset within a file before doing a data access. Early versions of QEMU (before 2.4) allowed you to write changes back into the firmware.
+
+### DMA
+
+Without DMA, you would be writing an I/O port to select a file then repeating I/O to read each byte. DMA replaces that with a more efficient operation, you put a 16 byte descriptor in memory for an operation, then write the physical address of that descriptor to the DMA register. The command descriptors must have the following memory layout:
+
+``` c
+// fw_cfg DMA commands
+typedef enum fw_cfg_ctl_t {
+    fw_ctl_error = 1,
+    fw_ctl_read = 2,
+    fw_ctl_skip = 4,
+    fw_ctl_select = 8,
+    fw_ctl_write = 16
+} fw_cfg_ctl_t;
+
+typedef struct FWCfgDmaAccess {
+    uint32_t control;
+    uint32_t length;
+    uint64_t address;
+} FWCfgDmaAccess;
+```
+
+#### Commands
+
+Commands are specified in the *control* field. Some commands use the upper 16 bits of the *control* field to hold a file selector. Some or all of the other fields may be unused depending upon which command is being issued, and should be initialized to zeros unless they hold usable information.
+
+NOTE: All three fields must be in big-endian order. You can ensure that the values written are in big-endian "network" order using *htonl* and *htobe64* byte swapping functions. Those functions will pass the value through unmodified on big-endian machines, and will byte swap the input on little-endian machines.
+
+##### Select
+
+The select command selects the file specified in the upper 16 bits of the *control* field. Selecting a file also resets its seek position to the beginning of the file.
+
+##### Skip
+
+The skip command advances the seek position through the file by the amount specified in the *length* field.
+
+##### Read
+
+The read command copies *length* bytes from the current seek position of the currently selected file into memory at the physical memory address *address*, and advances the seek position of the file appropriately.
+
+##### Write
+
+The write command writes *length* bytes to the current seek position of the currently selected file from physical memory address *address*, and advances the seek position of the file appropriately.
+
+NOTE: Writing is not supported in QEMU starting at version 2.4. Earlier versions allowed writes.
+
+#### Command Errors
+
+If any I/O operation goes outside the bounds of the selected file, then the entire operation is cancelled immediately before changing any memory or firmware values, and the *error* bit (bit 0) of the command descriptor is updated to be nonzero.
+
+#### Command Completion
+
+Currently QEMU will immediately complete every command (whether it succeeds or fails) during the time that your driver is writing to the DMA register. QEMU documentation warns that fw_cfg may become asynchronous some day (meaning, it may not continue to complete commands instantly in the future). Your driver should enter a loop that reads the command field until it becomes zero after issuing a command, just in case. Typically it will check the command field and it will already be zero, and it won't run one iteration of the loop. You must also break out of the loop if bit 0 of the *control* field becomes set, which occurs in an error condition.
+
+#### DMA I/O Ports
+
+The value written to the DMA port must be in big-endian byte order. The upper 32 bits of the command descriptor physical address must be written to the DMA port if the value is nonzero. Then, the lower 32 bits of the address must be written to (DMA port + 4). For example:
+
+``` c
+        FWCfgDmaAccess cmd;
+
+        cmd.control = htonl(fw_ctl_read);
+        cmd.address = htobe64(buffer_ptr);
+        cmd.length = htonl(size);
+
+        // Assumes identity mapping - replace this with
+        // virt-to-phys translation if necessary
+        uintptr_t cmd_physaddr = uintptr_t(&cmd);
+
+        // Split it into halves and avoid warning for upper bits in 32 bit build
+        uint32_t cmd_physaddr_lo = uint32_t(cmd_physaddr & 0xFFFFFFFFU);
+        uint32_t cmd_physaddr_hi = sizeof(uintptr_t) > sizeof(uint32_t)
+                ? uint32_t(cmd_physaddr >> 32)
+                : 0;
+
+        // Skip writing high half if unnecessary.
+        if (cmd_physaddr_hi)
+            outl(FW_CFG_PORT_DMA, htonl(cmd_physaddr_hi));
+        outl(FW_CFG_PORT_DMA + 4, htonl(cmd_physaddr_lo));
+
+        // Hardware loads zero into the entire command address register
+        // after executing a command. In particular, subsequent commands
+        // can skip writing the upper half of the address if their value
+        // is all zeros
+```
+
+## References
+
+- [QEMU fw_cfg documentation on GitHub](https://github.com/qemu/qemu/blob/master/docs/specs/fw_cfg.rst)
+- [Example implementation](https://github.com/doug65536/dgos/blob/master/boot/x86/qemu_x86.cc)
+- [CPUID hypervisor leaf](http://www.sandpile.org/x86/cpuid.htm#level_4000_0000h)

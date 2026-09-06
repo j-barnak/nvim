@@ -1,0 +1,151 @@
+Creating a [Filesystem in Userspace](https://en.wikipedia.org/wiki/Filesystem_in_Userspace) driver is easy. It consist of three parts:
+
+- kernel side module (don't care for now)
+- libfuse, a standard user space library, you'll have to link your application with it (otherwise don't care for now)
+- your application, which implements the file system hooks expected by libfuse.
+
+  
+It's worth mentioning that the first part has been ported to almost every mainline operating systems (Linux, MacOSX, BSDs, Minix etc.), and there's also a Windows port. The second part was originally written for C, but has been ported to many programming languages, so you can write the third part in C, Python, NodeJS etc. This page focuses on the original C implementation.
+
+Once you have a FUSE driver for your own file system, then you can mount a file system image in your build environment, create files and directories in it etc. Also because FUSE is well structured, you'll be able to re-use significant parts of your driver when you finally implement a native VFS driver in your kernel.
+
+## FUSE Skeleton
+
+In it's simplest form, a FUSE driver looks like this:
+
+``` c
+#define FUSE_USE_VERSION 29
+#include <fuse.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <string.h>
+
+static struct fuse_operations myfs_ops = {
+};
+
+char *devfile = NULL;
+
+int main(int argc, char **argv)
+{
+  int i;
+
+  // get the device or image filename from arguments
+  for (i = 1; i < argc && argv[i][0] == '-'; i++);
+  if (i < argc) {
+    devfile = realpath(argv[i], NULL);
+    memcpy(&argv[i], &argv[i+1], (argc-i) * sizeof(argv[0]));
+    argc--;
+  }
+  // leave the rest to FUSE
+  return fuse_main(argc, argv, &myfs_ops, NULL);
+}
+```
+
+Let's examine this source line by line.
+
+The first line defines the FUSE API compatibility level. That's libfuse 2.9 as of writing.
+
+Then we include some C headers, fuse.h among others.
+
+The *myfs_ops* structure is very important, this struct holds the hooks that we implement for our file system. All hooks are optional, but the driver is disfunctional without some of them. Right now the list is empty.
+
+The *devfile* is the name of the device or image file where the file system resides. Because FUSE was designed in a way to work without a device file too, there's no standard way to get this.
+
+The main() function is the heart of the file system driver. Before we can pass the control to FUSE, we have to save the device file, and remove it from the arguments. The for() loop skips any options on the command line (should not be needed, just a precaution). After that the *i*th argument will be the device that we convert to an absolute path using realpath(). This also checks if the given path is valid, and returns NULL on non-existent files. The memcpy() and the argc-- removes the device from command line arguments.
+
+Finally, we pass control to the FUSE library with fuse_main().
+
+You should be able to compile this driver with:
+
+``` bash
+gcc -I/usr/include/fuse -lfuse myfs.c -o myfs
+```
+
+To test and mount I recommend to use the following flags:
+
+``` bash
+./myfs -d -f -s myfsimage.bin somedir
+```
+
+Here -d means print debug messages. The -s tells FUSE to use single thread, and -f to keep it in the foreground so that if you printf() something in your application you can read it. Then cames the name of the image, "myfsimage.bin" which should be a partition image, and "somedir" which is a standard directory where we want to mount the file system in the image. Pressing \[Ctrl\]+\[C\] will umount. If you start FUSE in the background (without -f), then you can unmount with
+
+``` bash
+fusermount -u somedir
+```
+
+### Adding File Stats
+
+First and most important part of the file system driver is to get the attributes of a file (or directory). This hook is called when the user opens the file, lists a directory or calls stat(). It receives a path and an empty stat buffer which you have to fill in according to your file system. If everything was ok, the function returns 0, otherwise a **negative** errno, like "return -ENOENT;".
+
+``` c
+int myfs_getattr(const char *path, struct stat *st)
+{
+  if (!strcmp(path, "/")) {
+    // it's the root directory (just an example, you probably have more directories)
+    st->st_mode = S_IFDIR | 0755; // access rights and directory type
+    st->st_nlink = 2;             // number of hard links, for directories this is at least 2
+    st->st_size = 4096;           // file size
+  } else {
+    st->st_mode = S_IFREG | 0644; // access rights and regular file type
+    st->st_nlink = 2;             // number of hard links
+    st->st_size = 4096;           // file size
+  }
+  // user and group. we use the user's id who is executing the FUSE driver
+  st->st_uid = getuid();
+  st->st_gid = getgid();
+  return 0;
+}
+```
+
+This is a very minimal example, you should open *devfile*, read and parse your file system structures in it and fill in *st* fields accordingly.
+
+Of course, we have to tell FUSE that we have implemented a hook by adding it to myfs_opts:
+
+``` c
+static struct fuse_operations myfs_ops = {
+  .getattr = myfs_getattr
+};
+```
+
+### Add Directory Listings
+
+Very similar to the first hook, but this time we got a function as argument:
+
+``` c
+int myfs_readdir(const char *path, void *buffer, fuse_fill_dir_t filler, off_t offset, struct fuse_file_info *fi)
+{
+  filler(buffer, ".", NULL, 0);       // current directory reference
+  filler(buffer, "..", NULL, 0);      // parent directory reference
+  filler(buffer, "abc.txt", NULL, 0); // any filename at path in your image
+  return 0;
+}
+```
+
+If you also implement the "opendir" hook, then *fi-\>fh* will hold the file handle for the opened directory, and you have to read the entry at *offset*. Otherwise you have to use the *path* argument to get the directory entries in that directory.
+
+Of course, we have to tell FUSE that we have implemented a hook by adding it to myfs_opts:
+
+``` c
+static struct fuse_operations myfs_ops = {
+  .getattr = myfs_getattr,
+  .readdir = myfs_readdir
+};
+```
+
+### Adding More Hooks
+
+These are the basics. There are hooks like "open", "read", "write", "mkdir", "unlink" etc. which should be implemented. The detailed description of these is out of the scope of this introductionary article, but the available hooks (along with a long a very detailed description in comments) can be found [in the fuse.h C header](https://github.com/libfuse/libfuse/blob/master/include/fuse.h#L277).
+
+## Porting FUSE to your OS
+
+This is not that easy, but not particularly hard either. There's a FUSE protocol between the kernel and libfuse which you have to implement in your VFS. The protocol is not really documented, but you can take a look at the source which is well commented and uses /dev/fuse pseudo device file. After that kernel part you'll have to port libfuse which depends on libc, so should be straightforward. If you manage to port both, then you'll get access to almost all file systems out there at once. There are many drivers, for archives like tar, zip, z7, for file systems like iso9660, ext4, HFS+, [NTFS](https://wiki.osdev.org/NTFS "NTFS") etc. which you can compile and use on your OS just as-is.
+
+## See Also
+
+### External Links
+
+- [Filesystem in Userspace](https://en.wikipedia.org/wiki/Filesystem_in_Userspace) on wikipedia
+- [github page](https://github.com/libfuse/libfuse) of libfuse with examples
+- [Tutorial on FUSE](https://engineering.facile.it/blog/eng/write-filesystem-fuse/)
+- [BMFS implementation](https://github.com/ReturnInfinity/BMFS/blob/master/utils/bmfs-fuse.c) from Return Infinity, implements [BMFS](https://wiki.osdev.org/BMFS "BMFS") with FUSE
+- [FUSE Windows port](http://www.secfs.net/winfsp/) (requires Cygwin)

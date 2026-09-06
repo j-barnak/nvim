@@ -1,0 +1,142 @@
+The **Ne2000 network card chipset** was a reference design that was never meant to go into mainstream production, but after Novell used it as cheap hardware to go with their software it became popular. It is a good first network card to program because it follows a simple design (making it helpful for learning), they're probably dirt-cheap, and it is supported by most PC emulators. Both [Bochs](https://wiki.osdev.org/Bochs "Bochs") and [QEMU](https://wiki.osdev.org/QEMU "QEMU") provide ISA and PCI implementations.
+
+Ne2000 is not technically a card, it is a standard that several implementors follow. The best available description of the initial standard was located [DP8390D/NS32490D NIC Network Interface Controller](http://www.national.com/pf/DP/DP8390D.html) ([archive](https://web.archive.org/web/20010612150713/http://www.national.com/ds/DP/DP8390D.pdf)) and was published by National Semiconductor.
+
+## Quick Overview of the NIC design
+
+The Ne2000 network card uses two *ring buffers* for packet handling. These are circular buffers made of 256-byte *pages* that the chip's [DMA](https://wiki.osdev.org/DMA "DMA") logic will use to store received packets or to get received packets.
+
+Note that a packet will *always* start on a page boundary, thus there may be unused bytes at the end of a page.
+
+#### Ring Buffer
+
+Two registers `PSTART` and `PSTOP` define a set of 256-byte pages in the *buffer memory* that will be used for the ring buffer. As soon as the DMA attempts to read/write to `PSTOP`, it will be sent back to `PSTART`
+
+``` text
+PSTART                                                                       PSTOP
+####+-8------+-9------+-a------+-b------+-c------+-d------+-e------+-f------+####
+####| Packet 3 (cont) |########|########|Packet1#|   Packet  2#####|Packet 3|####
+####+--------+--------+--------+--------+--------+--------+--------+--------+####
+
+An 8-page ring buffer with 3 packets and 2 free slots.
+```
+
+While receiving, the NIC has 2 additional registers that point to the first packet that's still to be read and to the start of the currently written packet (named *boundary pointer* and *current page* respectively).
+
+### Register Pages
+
+Programming registers of the NE2000 are collected in *pages*. Page 0 contains most of the *control and status* registers while page 1 contains physical (PAR0..PAR5) and multicast addresses (MAR0..MAR7) to be checked by the card.
+
+Note that the same register number could have a different meaning depending whether you *read* or *write* to it. For instance, register 0x0C on page 0 is the *receive configuration register* in *write* mode and "receive status register" in *read* mode. Most of the *configuration* registers can still be read on page 2 though. Each register is a single byte and the page is selected by highest 2 bits of the COMMAND register (which is available in all pages)
+
+``` text
+Ne2K_registers (page=0, read) {
+   COMMAND=0,          //!< the master command register
+   CLDA0,              //!< Current Local DMA Address 0
+   CLDA1,              //!< Current Local DMA Address 1
+   BNRY,               //!< Boundary Pointer (for ringbuffer)
+   TSR,                //!< Transmit Status Register
+   NCR,                //!< collisions counter
+   FIFO,               //!< (for what purpose ??)
+   ISR,                //!< Interrupt Status Register
+   CRDA0,              //!< Current Remote DMA Address 0
+   CRDA1,              //!< Current Remote DMA Address 1
+   RSR=0x0c,           //!< Receive Status Register
+};
+
+/*Registers that are the same in read & write are omitted.*/
+Ne2K_registers (page=0, write) {
+   PTART=1,            //!< page start (init only)
+   PSTOP,              //!< page stop  (init only)
+   TPSR=4,             //!< transmit page start address
+   TBCR0,              //!< transmit byte count (low)
+   TBCR1,              //!< transmit byte count (high)
+   RSAR0=8,            //!< remote start address (lo)
+   RSAR1,              //!< remote start address (hi)
+   RBCR0,              //!< remote byte count (lo)
+   RBCR1,              //!< remote byte count (hi)
+   RCR,                //!< receive config register
+   TCR,                //!< transmit config register
+   DCR,                //!< data config register    (init)
+   IMR,                //!< interrupt mask register (init)
+};
+```
+
+### Initialization and MAC Address
+
+This wasn't exactly obvious, but by looking at the *ne2k-pci* module from Linux I managed to figure out how to initilize the card and read its MAC address:
+
+``` text
+nif->iobase = nif->pcidev->bar[0] & ~0x3;
+
+outb(nif->iobase + 0x1F, inb(nif->iobase + 0x1F));  // write the value of RESET into the RESET register
+while ((inb(nif->iobase + 0x07) & 0x80) == 0);      // wait for the RESET to complete
+outb(nif->iobase + 0x07, 0xFF);                     // mask interrupts
+
+uint8_t prom[32];
+outb(nif->iobase, (1 << 5) | 1);   // page 0, no DMA, stop
+outb(nif->iobase + 0x0E, 0x49);      // set word-wide access
+outb(nif->iobase + 0x0A, 0);     // clear the count regs
+outb(nif->iobase + 0x0B, 0);
+outb(nif->iobase + 0x0F, 0);     // mask completion IRQ
+outb(nif->iobase + 0x07, 0xFF);
+outb(nif->iobase + 0x0C, 0x20);      // set to monitor
+outb(nif->iobase + 0x0D, 0x02);      // and loopback mode.
+outb(nif->iobase + 0x0A, 32);        // reading 32 bytes
+outb(nif->iobase + 0x0B, 0);     // count high
+outb(nif->iobase + 0x08, 0);     // start DMA at 0
+outb(nif->iobase + 0x09, 0);     // start DMA high
+outb(nif->iobase, 0x0A);     // start the read
+
+int i;
+for (i=0; i<32; i++)
+{
+  prom[i] = inb(nif->iobase + 0x10);
+};
+
+// program the PAR0..PAR5 registers to listen for packets to our MAC address!       
+for (i=0; i<6; i++)
+{
+  writeRegister(nif, 1, 0x01+i, prom[i]);
+};
+```
+
+The first 6 bytes of "prom" extracted here are the MAC address.
+
+### Sending a Packet
+
+The following sequence is the one observed by the *ne2k-pci* module in linux. Note that some odd cards needs a patch (read-before-write) that isn't covered here. The *data configuration* is initialized at 0x49 (word transfer, 8086 byte order, dual 16bit DMA, loopback disabled). Note that the weird driver doesn't seem to use interrupts for completion notification.
+
+1.  `COMMAND` register set to "start" and "nodma" (0x22)
+2.  `RBCRx` are loaded with the packet size
+3.  "Remote DMA complete?" bit is cleared by writing a 1 in bit 6 of `ISR` (that's odd, but that's the way it works)
+4.  `RSARx` are loaded with 0x00 (low) and target page number (high) respectively. At this stage, the chip is ready receiving packet data and storing it in the ring buffer for emission.
+5.  `COMMAND` register set to "start" and "remote write DMA" (0x12)
+6.  Packets data is now written to the "data port" (that is register 0x10) of the NIC in a loop (or using an "outsx" if available). The NIC will then update its remote DMA logic after each written 16-bit value/32-bit value and places bytes in the transmit ring buffer.
+7.  Poll `ISR` register until bit 6 (Remote DMA completed) is set.
+
+## ISA configuration information
+
+### Ne2000 Registers
+
+The base register number can be anywhere from 0x280 to 0x380, as I've found, but I usually configure bochs to operate with port 0x300 as a base.
+
+### Ne2000 Interrupts
+
+I have configured my ne2000 card in bochs to signal interrupts on [IRQ](https://wiki.osdev.org/IRQ "IRQ") 3.
+
+### Ne2000 Reset
+
+Before transmitting data with the ne2000, it must be reset and data in the ring buffer cleared. This can be done by writing out the contents of the reset register to the reset register.
+
+## See Also
+
+### External Links
+
+- [DP8390D/NS32490D NIC Network Interface Controller (PDF)](https://web.archive.org/web/20010612150713/http://www.national.com/ds/DP/DP8390D.pdf) datasheet for the 8390 chip on the NE2000
+- [https://bitsavers.org/components/national/\_dataBooks/1988_National_Data_Communications_Local_Area_Networks_UARTs_Handbook.pdf](https://bitsavers.org/components/national/_dataBooks/1988_National_Data_Communications_Local_Area_Networks_UARTs_Handbook.pdf), early description of NE1000(?) boards (including PROM and memory map), starting on page 124 ("DP839EB Network Evaluation Board - Application Note 479")
+- [DP8390D Additional application notes](https://web.archive.org/web/20091223070134/http://www.national.com/pf/DP/DP8390D.html#Documents) from NatSemi
+- [http://www.ethernut.de/pdf/8019asds.pdf](http://www.ethernut.de/pdf/8019asds.pdf), the RTL8019 is one of the PCI-based NE2K compliant cards.
+- [http://www.bcgreen.com/gnu-linux/ne2k-diag.c](http://www.bcgreen.com/gnu-linux/ne2k-diag.c), a diagnostic tool that needs to be inspected to see if it helps in understanding the manuals
+- [http://www.cs.usfca.edu/~cruse/cs326/RTL8139_ProgrammersGuide.pdf](http://www.cs.usfca.edu/~cruse/cs326/RTL8139_ProgrammersGuide.pdf), saved here for later use.
+- [https://github.com/torokernel/torokernel/blob/7d6df4c40fa4cc85febd5fd5799404592ffdff53/rtl/drivers/Ne2000.pas](https://github.com/torokernel/torokernel/blob/7d6df4c40fa4cc85febd5fd5799404592ffdff53/rtl/drivers/Ne2000.pas), example of a driver for Ne2000 in Freepascal.

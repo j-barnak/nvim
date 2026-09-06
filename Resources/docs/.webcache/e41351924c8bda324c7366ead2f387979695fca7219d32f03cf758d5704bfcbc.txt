@@ -1,0 +1,178 @@
+SMBIOS (System Management [BIOS](https://wiki.osdev.org/BIOS "BIOS")) is a standard developed by [DMTF](https://www.dmtf.org) whose purpose is to deliver information about the hardware, by relying on the system firmware. Once booted, SMBIOS will let the OS access a table that contains a series of entries with various hardware information, separated in different structures of variable length.
+
+It was first designed for Intel, and released in 1995. Nowadays it supports most desktop architectures, and its last specification was published the 21 of July, 2023.
+
+## Entry Point Structure
+
+SMBIOS provides a searchable (or querryable) structure called Entry Point Structure (or EPS) that contains a pointer to the SMBIOS Structure Table and some additional information, like its length, version, or number of structures.
+
+### Format
+
+**32-bit Entry Point Structure Format**
+
+|                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |     |                                                                                                                                                                                                                                                                                                                                                               |
+|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|-----|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 32-bit Entry Point Structure Format Offset Name Size 0x00 Anchor String 4 BYTEs 0x04 Entry Point Checksum BYTE 0x05 Entry Point Lenght BYTE 0x06 SMBIOS Major Version BYTE 0x07 SMBIOS Minor Version BYTE 0x08 SMBIOS Structure Maximum Size WORD 0x0A Entry Point Revision BYTE 0x0B Formatted Area 5 BYTEs 0x10 Intermediate Anchor String 5 BYTEs 0x15 Intermediate Checksum BYTE 0x16 Structure Table Length WORD 0x18 Structure Table Address DWORD 0x1C Number of Structures WORD 0x1E BCD Revision BYTE |     | 64-bit Entry Point Structure Format Offset Name Size 0x00 Anchor String 5 BYTEs 0x05 Entry Point Checksum BYTE 0x06 Entry Point Lenght BYTE 0x07 SMBIOS Major Version BYTE 0x08 SMBIOS Minor Version BYTE 0x09 SMBIOS Docrev BYTE 0x0A Entry Point Revision BYTE 0x0B Reserved BYTE 0x0C Structure Table Maximum Size DWORD 0x10 Structure Table Adress QWORD |
+
+### Locating the entry point structure
+
+#### Non-UEFI systems
+
+Under systems without UEFI, the Entry Point Structure is located somewhere in physical memory from address 0x000F0000 to 0x00FFFFF, with a 16 byte alignment.
+
+- In 32-bit architectures, the SMBIOS EPS first contains (with offset 0) a string with the value "\_SM\_". This is what will help us search the location of the EPS.
+
+&nbsp;
+
+- In 64-bit architectures, as in 32-bit, it first contains a string, but with the value "\_SM3\_" (The 3 stands for SMBIOS 3, which is the version in 64-bit machines).
+
+This example C code searches the entry point in a 64-bit architecture. All it does is iterate for every 16-byte aligned memory addresses (from 0x000F0000 to 0x000FFFFF) and comparing 4 bytes from that address with the string "\_SM3\_". To acomplish that, it is needed to verify the checksum value (add all bytes and see if the lowest 8 bits of the result are zero):
+
+``` c
+    /* Start address */
+    char *eps = 0x000F0000;
+
+    int length, i;
+    uint8_t checksum = 0;
+
+    while (eps <= (char*) 0x000FFFFF) {
+
+        /* Check Anchor String (64-bit version) */
+        if (!memcmp(eps, "_SM3_", 5)) {
+
+            length = eps[5];
+            checksum = 0;
+
+            /* Add all bytes */
+            for (i = 0; i < length; i++)
+                checksum += eps[i];
+
+            if (checksum == 0)
+                /* Done! */
+                break;
+        }
+
+        /* Next 16-byte-aligned address */
+        eps += 16;
+    }
+```
+
+Now, *eps* contains the address of the Entry Point Structure. Some systems may not have the SMBIOS, so an error check may be a good idea:
+
+``` c
+    if ((unsigned int) eps == 0x00100000) {
+        /* Error, SMBIOS could not be located */
+        return -1;
+    }
+```
+
+#### UEFI systems
+
+On UEFI systems, the search-for-a-string method is not used to obtain the EPS. Instead, it is located by looking in the EFI Configuration Table for the SMBIOS Version 3 GUID (SMBIOS3_TABLE_GUID), which will contain a pointer to the structure.
+
+This C code shows how that could get implemented using [GNU-EFI](https://wiki.osdev.org/GNU-EFI "GNU-EFI"):
+
+``` c
+    /* Will contain the address of the Entry Point Structure */
+    void *SMBIOS_Pointer = NULL;
+    UINTN status = LibGetSystemConfigurationTable(&SMBIOS3TableGuid, (void **)(&SMBIOS_Pointer));
+
+    /* Check all posible errors (maybe is not needed?) */
+    if (status != EFI_SUCCESS || SMBIOS_Pointer == NULL ||
+        CompareMem(SMBIOS_Pointer, "_SM3_", 5) ) {
+
+        /* Error, SMBIOS could not be located */
+        return -1;
+
+    }
+```
+
+## Structure Table
+
+Once the EPS is located in memory, information about the SMBIOS table can already be obtained. The most important one is the **Structure Table Adress**, which is the address of the table that contains all the SMBIOS structures. The structures are located directly adjacent to each other in memory, with a new structure beginning as soon as another one ends. Each structure is composed of a header, a structure specific table, and a string table of variable length.
+
+The first SMBIOS header is located at the **Structure Table Adress**. The value of *type* indicates what element the structure contains information about. *length* indicates the size of **header + data table**. The strings are not included in the length.
+
+``` c
+struct SMBIOSHeader {
+    uint8_t type;
+    uint8_t length;
+    uint16_t handle;
+};
+```
+
+Immediately after the end of the header, is the data table. At the end of the data table (header address + length), the strings section starts. Each string is NULL terminated and is limited to 64 characters. Strings are referenced within tables by using an index into the string table (index 0 means that the string is effectively a NULL pointer and should be ignored). The first string begins immediately after the data, and the second string begins immediately after that, and so on. The string section itself is terminated by two consecutive zero bytes.
+
+So, the end (and therefore the length) of the SMBIOS structure can be calculated by finding the two [Null Characters](https://wiki.osdev.org/Null_Character "Null Character") in the string section. Your code might look like:
+
+``` c
+size_t smbios_struct_len(struct SMBIOSHeader *hd)
+{
+    size_t i;
+    const char *strtab = (char *)hd + hd->len;
+    // Scan until we find a double zero byte
+    for (i = 1; strtab[i - 1] != '\0' || strtab[i] != '\0'; i++)
+        ;
+    return hd->len + i + 1;
+}
+```
+
+The final table is denoted by a *type* field of value 127.
+
+As an example, the BIOS Struct (Type 0) might look like this:
+
+``` asm
+ db 0 ; Indicates BIOS Structure Type            |
+ db 13h ; Length of information in bytes         | HEADER
+ dw ? ; Reserved for handle                      |
+
+ db 01h ; String 1 is the Vendor Name            |
+ db 02h ; String 2 is the BIOS version           |
+ dw 0E800h ; BIOS Starting Address               |
+ db 03h ; String 3 is the BIOS Build Date        | DATA
+ db 1 ; Size of BIOS ROM is 128K (64K * (1 + 1)) |
+ dq BIOS_Char ; BIOS Characteristics             |
+ db 0 ; BIOS Characteristics Extension Byte 1    |
+
+ db ‘System BIOS Vendor Name’,0 ;                |
+ db ‘4.04’,0 ;                                   | STRINGS
+ db ‘00/00/0000’,0 ;                             |
+
+ db 0 ; End of structure
+```
+
+## Header Types
+
+| Code | Description                                              |
+|------|----------------------------------------------------------|
+| 0    | BIOS Information                                         |
+| 1    | System Information                                       |
+| 2    | Mainboard Information                                    |
+| 3    | Enclosure/Chasis Information                             |
+| 4    | Processor Information                                    |
+| 7    | Cache Information                                        |
+| 9    | System Slots Information                                 |
+| 16   | Physical Memory Array                                    |
+| 17   | Memory Device Information                                |
+| 19   | Memory Array Mapped Address                              |
+| 20   | Memory Device Mapped Address (optional as of SMBIOS 2.5) |
+| 32   | System Boot Information                                  |
+
+More details can be found in the Specification (see External Links)
+
+  
+
+## See Also
+
+### Articles
+
+- [ACPI](https://wiki.osdev.org/ACPI "ACPI")
+- [DMI](https://wiki.osdev.org/DMI "DMI")
+
+### Forum Threads
+
+- [http://www.osdev.org/phpBB2/viewtopic.php?t=16687](http://www.osdev.org/phpBB2/viewtopic.php?t=16687) Info (saved here through lack of info)
+
+### External Links
+
+- [SMBIOS Specification](http://www.dmtf.org/standards/smbios/)

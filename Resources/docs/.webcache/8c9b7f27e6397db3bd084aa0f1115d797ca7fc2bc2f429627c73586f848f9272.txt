@@ -1,0 +1,165 @@
+This is the new standard for UEFI that superseded [VESA](https://wiki.osdev.org/VESA "VESA") (BIOS) and UGA (EFI 1.0).
+
+## Graphics Output Protocol
+
+It has basically the same functions as VESA, you can query the modes, set the modes. It also provides an efficient BitBlitter function, which you can't use from your OS unfortunately. GOP is an EFI Boot Time Service, meaning you can't access it after you call ExitBootServices(). However, the framebuffer provided by GOP persists, so you can continue to use it for graphics output in your OS.
+
+NOTE: UEFI uses its own ABI. You can either configure your build environment to use that globally, or you must use a wrapper function. These examples use the latter for compatibility reasons. Omit uefi_call_wrapper if you have configured your build system for the former. See [GNU-EFI](https://wiki.osdev.org/GNU-EFI "GNU-EFI") for more information.
+
+### Detecting GOP
+
+As with other UEFI protocols, you have to locate a structure with the function pointers first using the protocol's GUID.
+
+``` c
+  EFI_GUID gopGuid = EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID;
+  EFI_GRAPHICS_OUTPUT_PROTOCOL *gop;
+
+  status = uefi_call_wrapper(BS->LocateProtocol, 3, &gopGuid, NULL, (void**)&gop);
+  if(EFI_ERROR(status))
+    PrintLn(L"Unable to locate GOP");
+```
+
+GOP is the default protocol, so you should be able to locate it on all UEFI firmware. It can probably only fail if you're on an old EFI (pre-UEFI) machine, like an Itanium-based computer or a Mac released before 2009.
+
+If your kernel uses GRUB, you need to insert a module called "all_video" before loading the kernel to add UEFI GOP compatibility. Not doing so will display a message saying "WARNING: no console will be available to OS".
+
+``` c
+insmod all_video
+
+menuentry "Example OS" {
+  multiboot2  /boot/kernel.bin
+  boot
+}
+```
+
+### Get the Current Mode
+
+In order to get the mode code for the current video mode, you must set the mode as well to circumvent some buggy UEFI firmware. Otherwise this is done using the QueryMode function, and then gop-\>Mode-\>Mode will contain the code.
+
+``` c
+  EFI_GRAPHICS_OUTPUT_MODE_INFORMATION *info;
+  UINTN SizeOfInfo, numModes, nativeMode;
+
+  status = uefi_call_wrapper(gop->QueryMode, 4, gop, gop->Mode==NULL?0:gop->Mode->Mode, &SizeOfInfo, &info);
+  // this is needed to get the current video mode
+  if (status == EFI_NOT_STARTED)
+    status = uefi_call_wrapper(gop->SetMode, 2, gop, 0);
+  if(EFI_ERROR(status)) {
+    PrintLn(L"Unable to get native mode");
+  } else {
+    nativeMode = gop->Mode->Mode;
+    numModes = gop->Mode->MaxMode;
+  }
+```
+
+### Query Available Video Modes
+
+Similarly to VESA, there's no standard mode codes, rather you have a function to query the available modes. Now you know how many modes there are (numModes above), and which one is currently set (nativeMode). You can iterate on the modes and query the information structure for each:
+
+``` c
+for (i = 0; i < numModes; i++) {
+  status = uefi_call_wrapper(gop->QueryMode, 4, gop, i, &SizeOfInfo, &info);
+  PrintLn(L"mode %03d width %d height %d format %x%s",
+    i,
+    info->HorizontalResolution,
+    info->VerticalResolution,
+    info->PixelFormat,
+    i == nativeMode ? "(current)" : ""
+  );
+}
+```
+
+### Set Video Mode and Get the Framebuffer
+
+This is pretty easy. The mode argument is between 0 and numModes.
+
+``` c
+  status = uefi_call_wrapper(gop->SetMode, 2, gop, mode);
+  if(EFI_ERROR(status)) {
+    PrintLn(L"Unable to set mode %03d", mode);
+  } else {
+    // get framebuffer
+    PrintLn(L"Framebuffer address %x size %d, width %d height %d pixelsperline %d",
+      gop->Mode->FrameBufferBase,
+      gop->Mode->FrameBufferSize,
+      gop->Mode->Info->HorizontalResolution,
+      gop->Mode->Info->VerticalResolution,
+      gop->Mode->Info->PixelsPerScanLine
+    );
+  }
+```
+
+To get the same value as scanline in VESA (also commonly called pitch in many graphics libraries), you have to multiply PixelsPerScanLine by the number of bytes per pixel. That can be detected by examining the gop-\>Mode-\>Info-\>PixelFormat field. For example with 32 bit packed pixel formats,
+
+``` c
+  pitch = 4 * gop->Mode->Info->PixelsPerScanLine;
+```
+
+### Plotting Pixels
+
+*Main article:* [Drawing In Protected Mode](https://wiki.osdev.org/Drawing_In_Protected_Mode "Drawing In Protected Mode")
+
+Now you can use the returned framebuffer exactly the same way as you would with VESA, there's absolutely no difference. To calculate the offset for an (X,Y) coordinate on screen, do pitch\*Y+pixelbytes\*X. For example for 32 bit true-color (where pixelbytes is 4):
+
+``` c
+static inline void PlotPixel_32bpp(int x, int y, uint32_t pixel)
+{
+   *((uint32_t*)(gop->Mode->FrameBufferBase + 4 * gop->Mode->Info->PixelsPerScanLine * y + 4 * x)) = pixel;
+}
+```
+
+For drawing characters, you can use the same method described in [VGA Fonts](https://wiki.osdev.org/VGA_Fonts "VGA Fonts").
+
+### Don't Read From Video Memory
+
+Reading from the video memory is very slow. Use [double buffering](https://wiki.osdev.org/Double_Buffering "Double Buffering") instead.
+
+## Acceleration
+
+EFI GOP provides some rudimentary accelerated 2D Graphics functions. **These are only available as** **BootServices**, so once you call ExitBootServices(), you need to use the Framebuffer directly (easy, but slow), or load your own graphics card driver (fast, but hard).
+
+An alternative approach might be to frankenstein the GOP driver (which typically can be found in a BAR on the graphics adapter, or you can query UEFI with *LocateProtocol* and then use IMAGE_LOADED_PROTOCOL to find the image. This would be a massive hack, though, for some fairly rudimentary display services.
+
+Acceleration is provided through one function, **Block Transfer**. It has several modes.
+
+``` c
+typedef
+EFI_STATUS
+(EFIAPI *EFI_GRAPHICS_OUTPUT_PROTOCOL_BLT) (
+  IN  EFI_GRAPHICS_OUTPUT_PROTOCOL            *This,
+  IN  EFI_GRAPHICS_OUTPUT_BLT_PIXEL           *BltBuffer,   OPTIONAL
+  IN  EFI_GRAPHICS_OUTPUT_BLT_OPERATION       BltOperation,
+  IN  UINTN                                   SourceX,
+  IN  UINTN                                   SourceY,
+  IN  UINTN                                   DestinationX,
+  IN  UINTN                                   DestinationY,
+  IN  UINTN                                   Width,
+  IN  UINTN                                   Height,
+  IN  UINTN                                   Delta         OPTIONAL
+  );
+```
+
+### Modes
+
+| Name                   | Description                                                                            |
+|------------------------|----------------------------------------------------------------------------------------|
+| EfiBltVideoFill        | Fills the specified area of the screen with the pixel value in the BltBuffer at (0, 0) |
+| EfiBltVideoToBltBuffer | Copies the specified source rectangle from the display to the BltBuffer at (Dx, Dy)    |
+| EfiBltBufferToVideo    | Copies from the BltBuffer to the video display at (Dx, Dy)                             |
+| EfiBltVideoToVideo     | Copies from one rectangle of the display to another.                                   |
+
+**Delta** should be set to the length of a line of the BltBuffer when using it in a copy mode, although if the (X,Y) are zero and delta is zero, the GOP will assume that the Width parameter is the length of a line.
+
+## See Also
+
+### Articles
+
+- [VESA](https://wiki.osdev.org/VESA "VESA") - the former video standard
+
+### External Links
+
+- GOP description in the [UEFI Specification](https://uefi.org/specs/UEFI/2.11/12_Protocols_Console_Support.html#graphics-output-protocol)
+- GOP at [Wikipedia](https://en.wikipedia.org/wiki/Graphics_Output_Protocol)
+- UEFI Graphic Features at [Wikipedia](https://en.wikipedia.org/wiki/Unified_Extensible_Firmware_Interface#Graphics_features)
+- [EDK2 on implementing GOP](https://tianocore-docs.github.io/edk2-UefiDriverWritersGuide/draft/23_graphics_driver_design_guidelines/232_graphics_output_protocol_implementation)
+- [Intel documentation on GOP](https://www.intel.com/content/dam/doc/guide/uefi-driver-graphics-controller-guide.pdf)

@@ -1,0 +1,101 @@
+There are several methods for rebooting, including
+
+1.  ACPI Reset command
+2.  load a 0-sized IDT and issue an interrupt (that'll triple fault and reset)
+3.  Use the 8042 keyboard controller to pulse the CPU's RESET pin
+4.  Use the ResetSystem runtime [UEFI](https://wiki.osdev.org/UEFI "UEFI") service, if available.
+5.  Far jump to the reset vector (0xFFFF:0000)/ Triple fault
+
+## ACPI reset command
+
+ACPI 2.0+ defines a "reset register" that can be used to reset the PC. According to the ACPI specification, ***all*** hardware must be reset after using this mechanism. In the FADT, there are several General Address Structures. Take a look at the [FADT](https://wiki.osdev.org/FADT#GenericAddressStructure "FADT") page for details. The FADT structure contains a generic address structure called ResetReg, followed by a byte called ResetValue. This is an optional feature and software must check support for it by checking if the FADT is version 2 or newer, and then testing if bit 10 of the Flags field in the FADT is set. After that, software can reset the system by writing the value in ResetValue into the area pointed to by ResetReg. ACPI says the ResetReg can only be located in I/O bus, PCI bus or memory-mapped. If it is in the I/O bus, simply do:
+
+``` c
+outportb(FADT->ResetReg.Address, FADT->ResetValue);
+```
+
+If it is memory-mapped, simply map the memory pointed by ResetReg-\>Address somewhere in the virtual address space, and write ResetValue there as an 8-bit operation. Like:
+
+``` c
+vmm_map(FADT->ResetReg.Address, 1); // Map 1 byte
+uint8_t *reg = (uint8_t *)((uintptr_t)FADT->ResetReg.Address);
+*reg = FADT->ResetValue;
+```
+
+But if it is on the PCI Configuration Space, you need to write ResetValue as a byte on:
+
+- Segment: 0
+- Bus: 0
+- Slot: (address \>\> 32) & 0xFFFF
+- Function: (address \>\> 16) & 0xFFFF
+- Offset: address & 0xFFFF
+
+That operation in C looks like:
+
+``` c
+pci_writeb(0, 0, (FADT->ResetReg.Address >> 32) & 0xFFFF, (FADT->ResetReg.Address >> 16) & 0xFFFF, FADT->ResetReg.Address & 0xFFFF, FADT->ResetValue);
+```
+
+## Short code to do a 8042 reset
+
+``` c
+void reboot()
+{
+    uint8_t good = 0x02;
+    while (good & 0x02)
+        good = inb(0x64);
+    outb(0x64, 0xFE);
+    halt();
+}
+```
+
+## Annotated code for reboot()
+
+``` c
+/* keyboard interface IO port: data and control
+   READ:   status port
+   WRITE:  control register */
+#define KBRD_INTRFC 0x64
+
+/* keyboard interface bits */
+#define KBRD_BIT_KDATA 0 /* keyboard data is in buffer (output buffer is empty) (bit 0) */
+#define KBRD_BIT_UDATA 1 /* user data is in buffer (command buffer is empty) (bit 1) */
+
+#define KBRD_IO 0x60 /* keyboard IO port */
+#define KBRD_RESET 0xFE /* reset CPU command */
+
+#define bit(n) (1<<(n)) /* Set bit n to 1 */
+
+/* Check if bit n in flags is set */
+#define check_flag(flags, n) ((flags) & bit(n))
+
+void reboot()
+{
+    uint8_t temp;
+
+    asm volatile ("cli"); /* disable all interrupts */
+
+    /* Clear all keyboard buffers (output and command buffers) */
+    do
+    {
+        temp = inb(KBRD_INTRFC); /* empty user data */
+        if (check_flag(temp, KBRD_BIT_KDATA) != 0)
+            inb(KBRD_IO); /* empty keyboard data */
+    } while (check_flag(temp, KBRD_BIT_UDATA) != 0);
+
+    outb(KBRD_INTRFC, KBRD_RESET); /* pulse CPU reset line */
+loop:
+    asm volatile ("hlt"); /* if that didn't work, halt the CPU */
+    goto loop; /* if a NMI is received, halt again */
+}
+```
+
+## Far jump to the reset vector/Triple fault
+
+Probably the easiest way.
+
+``` asm
+JMP 0xFFFF:0
+```
+
+It'll far jump to the reset vector if you're in real mode, and triple faults if you're in protected mode and removed/haven't setup the gpf handler before.

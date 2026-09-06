@@ -43,11 +43,13 @@ emit() {
   # converter banners, and (book mode) two more pieces of page furniture that
   # are whole lines on their own: the "Page N" footer of CHM-converted books
   # (Unix Network Programming) and the print edition's "Click here to view
-  # code image" link line (OpenGL SuperBible, Beautiful C++). Control
-  # characters are mapped to "?" as before.
+  # code image" link line (OpenGL SuperBible, Beautiful C++). $FURN adds the
+  # per-book banner a few PDFs stamp on every single page (see below); it is
+  # empty for every other book, so nothing else changes. Control characters
+  # are mapped to "?" as before.
   pdftotext -layout -f "$1" -l "$2" "$PDF" - 2>/dev/null \
     | sed 's/\f//g' | tr '\000-\010\013-\037' '[?*]' | sed "$LIG" \
-    | awk -v book="$MODE" '{o=$0; gsub(/\[Trial version\]/,""); t=$0; gsub(/^[ \t]+|[ \t]+$/,"",t); pb=prevblank; prevblank=(t=="")} o!=$0 && t==""{next} book!="book" && t ~ /^ISO\/IEC [0-9]/{next} book!="book" && t ~ /^© ISO\/IEC/{next} t ~ /^[0-9]{1,4}$/ && pb{next} t ~ /ABC Amber|Team LiB|processtext\.com/{next} book=="book" && t ~ /^Page [0-9]+$/{next} book=="book" && t=="Click here to view code image"{next} {print}' \
+    | awk -v book="$MODE" -v furn="$FURN" '{o=$0; gsub(/\[Trial version\]/,""); t=$0; gsub(/^[ \t]+|[ \t]+$/,"",t); pb=prevblank; prevblank=(t=="")} o!=$0 && t==""{next} book!="book" && t ~ /^ISO\/IEC [0-9]/{next} book!="book" && t ~ /^© ISO\/IEC/{next} t ~ /^[0-9]{1,4}$/ && pb{next} t ~ /ABC Amber|Team LiB|processtext\.com/{next} book=="book" && t ~ /^Page [0-9]+$/{next} book=="book" && t=="Click here to view code image"{next} furn!="" && t ~ furn{next} {print}' \
     | cat -s > "$OUT/$n $f.txt"
 }
 # Book mode ($4=book): pick chapter/part/appendix boundaries from the outline by
@@ -56,7 +58,26 @@ emit() {
 # some PDF tools stamp on every bookmark. Spec PDFs (C/C++/DWARF/ABI/... which
 # have bare numbered clauses, no Chapter/Part) keep the depth heuristic below.
 SLUG=$(basename "$OUT")
-if [ "$4" = book ] && [ "$SLUG" = operating-systems-three-easy-pieces ]; then
+# Per-slug page furniture: a whole line, repeated on every page, that carries no
+# content. Two books need it and no other book has one, so it is keyed by slug
+# rather than added to the shared filter above.
+#   c-concurrency-in-action: a distributor watermark on all 592 pages.
+#   talking-compilers-with-chatgpt: a two-line licence/contact notice at the top
+#   of all 916 pages (its first page words the second line differently).
+FURN=
+case "$SLUG" in
+  c-concurrency-in-action) FURN='^https://avxhm\.se/' ;;
+  talking-compilers-with-chatgpt) FURN='^(This material is freely available|For typos or suggestions, please contact Fernando|Send comments, typos and suggestions to)' ;;
+esac
+if [ "$4" = book ] && [ "$SLUG" = talking-compilers-with-chatgpt ]; then
+  # These lecture notes are transcribed ChatGPT sessions, and every numbered
+  # item of every answer ("1. Front-End (Language Independence)") is bookmarked,
+  # so the title patterns below matched 240 of them and shredded the book. The
+  # 25 chapters of the printed table of contents are exactly the outline's
+  # depth-0 nodes (plus the title and contents pages), so leave .ch.tsv unwritten
+  # and let the depth fallback split there.
+  :
+elif [ "$4" = book ] && [ "$SLUG" = operating-systems-three-easy-pieces ]; then
   # OSTEP's chapters are topic-titled (no Chapter N / number / Part keyword), so
   # no title pattern can find them; the split follows the outline's shape.
   # Depth-0 nodes are the preface pieces, the two opening chapters and the
@@ -115,9 +136,12 @@ elif [ "$4" = book ]; then
   [ "$(wc -l < "$OUT/.ch.tsv")" -ge 5 ] || : > "$OUT/.ch.tsv"
 fi
 # Fallback / spec mode: split at the shallowest outline depth with >= 5 entries.
+# Trim the title the way the book branch above already does: some outlines pad
+# every entry with a trailing space, which would end up in the file name as
+# "003 Introduction .txt".
 if [ ! -s "$OUT/.ch.tsv" ]; then
   D=$(awk -F'\t' '{c[$1]++} END{for(d=0;d<8;d++) if(c[d]>=5){print d; exit}}' "$OUT/.all.tsv")
-  [ -n "$D" ] && awk -F'\t' -v D="$D" '$1==D{print $2"\t"$3}' "$OUT/.all.tsv" > "$OUT/.ch.tsv"
+  [ -n "$D" ] && awk -F'\t' -v D="$D" '$1==D{t=$3; sub(/^[ \t]+/,"",t); sub(/[ \t]+$/,"",t); print $2"\t"t}' "$OUT/.all.tsv" > "$OUT/.ch.tsv"
 fi
 if [ -s "$OUT/.ch.tsv" ]; then
   # Pages before the first outline boundary (a preface, foreword, or an

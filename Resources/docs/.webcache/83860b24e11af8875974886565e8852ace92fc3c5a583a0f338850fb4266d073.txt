@@ -1,0 +1,280 @@
+|                                                                                                                       |     |
+|-----------------------------------------------------------------------------------------------------------------------|-----|
+| This page or section is a work in progress and may thus be incomplete. Its content may be changed in the near future. |     |
+
+Building a UEFI toolchain from the ground up is wide-scoped work, requiring custom compiler flags, linker scripts, and runtime support. This tutorial is targeted at C/C++ but will provide enough information and be generic enough that you can apply it to any language. This tutorial assumes a solid foundation of standard C/C++ build systems
+
+## Required Reading
+
+[https://uefi.org/specifications](https://uefi.org/specifications) As of this writing. The latest version is 2.11 (Dec 2024). Minimum required readings are the following
+
+1.  Chapter 2 (Overview) - Provides expected calling conventions, memory layout/ownership, driver/protocol model, and basic typedefs
+2.  Chapter 4 (System Table) - Data structure for the definition of boot & runtime services provided by the firmware
+3.  Chapter 8.4 (SimpleTextOutputProtocol) - Basic character screen output
+
+This tutorial will cover any details described in the specification because you should be following the spec during your implementation. If you are unsure of something or get stuck, double check the specification as its pretty messy and easy to miss stuff.
+
+## Target
+
+When building a UEFI toolchain, you will need to pick a specific architecture that you intend to target as each one has subtle differences that need to be accounted for. A unified library is possible but outside the scope of this tutorial. You will also need to choose what kind of EFI binary you are targeting. Whether it be an application, boottime driver, or runtime driver.
+
+You will also need to pick a host environment. UEFI derives alot of its base specification and implementation from windows so other operating systems may require additional additional efforts to get going
+
+The target choosen for this tutorial is an x86_64 Application compiled via linux cross-compiler
+
+## Compiler
+
+x86_64 UEFI uses the C calling convention for its firmware calling convention but follows the MSVC ABI over SystemV. This means your compiler either needs to support ms_abi attribute tags, setup an MSVC cross compiler, or create assembly trampolines to manage calls into and out of the UEFI firmware.
+
+The compiler choosen for this tutorial is a GCC MSVC cross compiler. This significantly reduces headaches and overheads of dealing with a dual ABI program, while allowing easier debugging as it can still emit DWARF debug symbols instead of PDB.
+
+There are several required compiler flags, mostly to stop the compiler from trying to abuse UB.
+
+- -ffreestanding - No host kernel
+- -fshort-wchar - 16 instead of 32bit wchar_t
+- -fPIC - Relocatable code
+- -fPIE
+- -mno-red-zone - Prevents stack abuse
+
+Without the required runtime support, the following compiler flags will also need to be added. It is possible to eventually implement enough runtime to remove all of these, but it is outside the scope of this guide
+
+- -nostdlib - Missing new and delete
+- -fno-exceptions - No stack unwinder
+- -fno-rtti
+- -fno-stack-protector - Missing glibc intrinsics
+- -fno-threadsafe-statics - Single Threaded until MP protocol is called
+- -fno-asynchronous-unwind-tables
+
+## Linker
+
+UEFI uses the windows PE+ file format, and since UEFI is a non-standard target, we will also need to provide our own linker script. This tutorial does not cover the concept of writing a linker script so one is provided at the end of this section.
+
+There are also several required linker flags that must be used to properly flag the binary
+
+- -m i386pep - x86_64 bit target
+- --subsystem 10 - UEFI Application
+- -e \_start - Entry point for your CRT before calling EFI_MAIN()
+- --image-base=0x400000 - Tells the firmware preferred location. Only useful for debugging and ensuring address stability between reboots
+
+Final compiler + linker commands should look like the following
+
+``` bash
+x86_64-w64-mingw32-g++ -nostdlib -ffreestanding -c -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-asynchronous-unwind-tables -fno-stack-protector -mno-red-zone -fPIC -fPIE -fshort-wchar main.cpp -o main.o
+
+x86_64-w64-mingw32-g++ -nostdlib -ffreestanding -Wl,-T linker.ld -Wl,--image-base 0x400000 -Wl,-m i386pep -Wl,--subsystem 10 -Wl,-e _start main.o -o output/BOOTX64.efi
+```
+
+    OUTPUT_FORMAT(pei-x86-64)
+
+    SECTIONS
+    {
+      /* ------------------------------------------------------------ */
+      /* PE HEADERS */
+      /* ------------------------------------------------------------ */
+      . = SIZEOF_HEADERS;
+      . = ALIGN(__section_alignment__);
+
+      /* ------------------------------------------------------------ */
+      /* TEXT */
+      /* ------------------------------------------------------------ */
+      .text __image_base__ + ( __section_alignment__ < 0x1000 ? . : __section_alignment__ ) :
+      {
+        /* Custom ASSERT infrastructure */
+        KEEP(*(.assert_marker))
+        KEEP(*(.assert_value))
+        KEEP(*(.assert_msg))
+
+        KEEP(*(SORT_NONE(.init)))
+        *(.text)
+        *(.text.*)
+        *(.gnu.linkonce.t.*)
+
+        . = ALIGN(16);
+        KEEP(*(SORT_NONE(.fini)))
+
+        PROVIDE(etext = .);
+      }
+
+      /* ------------------------------------------------------------ */
+      /* C++ CONSTRUCTORS / DESTRUCTORS */
+      /* ------------------------------------------------------------ */
+      .init_array ALIGN(8) :
+      {
+        __init_array_start = .;
+        KEEP(*(.init_array))
+        KEEP(*(SORT(.init_array.*)))
+        KEEP(*(.ctors))
+        KEEP(*(SORT_BY_NAME(.ctors.*)))
+        __init_array_end = .;
+      }
+
+      .fini_array ALIGN(8) :
+      {
+        __fini_array_start = .;
+        KEEP(*(.fini_array))
+        KEEP(*(SORT(.fini_array.*)))
+        KEEP(*(.dtors))
+        KEEP(*(SORT_BY_NAME(.dtors.*)))
+        __fini_array_end = .;
+      }
+
+      /* ------------------------------------------------------------ */
+      /* READ-ONLY DATA */
+      /* ------------------------------------------------------------ */
+      .rdata BLOCK(__section_alignment__) :
+      {
+        *(.rdata)
+        *(.rdata.*)
+      }
+
+      /* ------------------------------------------------------------ */
+      /* DATA */
+      /* ------------------------------------------------------------ */
+      .data BLOCK(__section_alignment__) :
+      {
+        __data_start__ = .;
+        *(.data)
+        *(.data.*)
+        __data_end__ = .;
+      }
+
+      /* ------------------------------------------------------------ */
+      /* BSS */
+      /* ------------------------------------------------------------ */
+      .bss BLOCK(__section_alignment__) :
+      {
+        __bss_start__ = .;
+        *(.bss)
+        *(COMMON)
+        __bss_end__ = .;
+      }
+
+      /* ------------------------------------------------------------ */
+      /* UNWINDING / STACK TRACING */
+      /* ------------------------------------------------------------ */
+
+      /* DWARF CFI (used by your own unwinder / debug output) */
+      .eh_frame BLOCK(__section_alignment__) :
+      {
+        KEEP(*(.eh_frame*))
+      }
+
+      /* PE x64 exception metadata (REQUIRED if exceptions enabled) */
+      .pdata BLOCK(__section_alignment__) :
+      {
+        KEEP(*(.pdata*))
+      }
+
+      .xdata BLOCK(__section_alignment__) :
+      {
+        KEEP(*(.xdata*))
+      }
+
+      /* ------------------------------------------------------------ */
+      /* TLS */
+      /* ------------------------------------------------------------ */
+      .tls BLOCK(__section_alignment__) :
+      {
+        ___tls_start__ = .;
+        *(.tls)
+        *(.tls.*)
+        ___tls_end__ = .;
+      }
+
+      /* ------------------------------------------------------------ */
+      /* RESOURCES */
+      /* ------------------------------------------------------------ */
+      .rsrc BLOCK(__section_alignment__) : SUBALIGN(4)
+      {
+        *(.rsrc)
+        *(.rsrc.*)
+      }
+
+      /* ------------------------------------------------------------ */
+      /* RELOCATIONS */
+      /* ------------------------------------------------------------ */
+      .reloc BLOCK(__section_alignment__) :
+      {
+        *(.reloc)
+      }
+
+      /* ------------------------------------------------------------ */
+      /* DEBUG INFORMATION (Runtime Stacktraces) */
+      /* ------------------------------------------------------------ */
+
+      /* DWARF 2–5 */
+      .debug_aranges     BLOCK(__section_alignment__) : { *(.debug_aranges) }
+      .debug_info        BLOCK(__section_alignment__) : { *(.debug_info .gnu.linkonce.wi.*) }
+      .debug_abbrev      BLOCK(__section_alignment__) : { *(.debug_abbrev) }
+      .debug_line        BLOCK(__section_alignment__) : { *(.debug_line) }
+      .debug_frame       BLOCK(__section_alignment__) : { *(.debug_frame*) }
+      .debug_str         BLOCK(__section_alignment__) : { *(.debug_str) }
+      .debug_loc         BLOCK(__section_alignment__) : { *(.debug_loc) }
+      .debug_ranges      BLOCK(__section_alignment__) : { *(.debug_ranges) }
+
+      /* DWARF 5 */
+      .debug_addr        BLOCK(__section_alignment__) : { *(.debug_addr) }
+      .debug_line_str    BLOCK(__section_alignment__) : { *(.debug_line_str) }
+      .debug_loclists    BLOCK(__section_alignment__) : { *(.debug_loclists) }
+      .debug_rnglists    BLOCK(__section_alignment__) : { *(.debug_rnglists) }
+      .debug_str_offsets BLOCK(__section_alignment__) : { *(.debug_str_offsets) }
+      .debug_names       BLOCK(__section_alignment__) : { *(.debug_names) }
+
+      /* ------------------------------------------------------------ */
+      /* END SYMBOLS */
+      /* ------------------------------------------------------------ */
+      .endjunk BLOCK(__section_alignment__) :
+      {
+        PROVIDE(end = .);
+        PROVIDE(_end = .);
+        __end__ = .;
+      }
+
+      /* ------------------------------------------------------------ */
+      /* DISCARD */
+      /* ------------------------------------------------------------ */
+      /DISCARD/ :
+      {
+        *(.drectve)
+        *(.note.GNU-stack)
+        *(.gnu.lto_*)
+        *(.comment)
+      }
+    }
+
+## Runtime
+
+You should now be able to build a bootable and valid image. But without a valid C/C++ runtime environment, none of the standard library is available for you to use and certain language features like global constructors may have to be explicitly called in your code as that is normally handled by it.
+
+### TODO
+
+- Constructors/Destructors
+- Asserts
+- \_\_cxa\_ glibc instrisics
+- exit() & panic() handlers
+- Accessing firmware protocols and resources
+
+## Debugging
+
+If your using the provided linker script and are on linux, then debugging is super easy with QEMU & GDB. Debug symbols are already setup to be included in the image. Simply add the -s -S arguments to tell it to halt the CPU on startup and setup a GDB stub server on localhost:1234. Only thing extra todo is build with debug symbols enabled
+
+- -g
+- -gdwarf64
+- -gdwarf-5
+- -ggdb
+
+If your using OVMF, be warned that it will eat your breakpoints unless you unregister the \#BP and \#DB interrupt handlers via the DebugSupport protocol. An easy way around this is to use hardware breakpoints instead so you bypass the OVMF interrupt handler
+
+OVMF has to run before your application can, so you will need to set a breakpoint at whatever you define your start point to be and let the firmware run its code first.
+
+I highly reccomend setting up a .gdbinit as it will save you a ton of time
+
+    set arch i386:x86-64
+    set pagination off
+    target remote localhost:1234
+    add-symbol-file output/BOOTX64.efi -readnow
+    break efi_main
+    set tui compact-source on
+    tui enable
+    focus cmd
+    continue

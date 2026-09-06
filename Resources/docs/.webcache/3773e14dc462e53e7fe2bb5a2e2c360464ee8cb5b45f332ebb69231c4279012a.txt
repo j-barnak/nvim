@@ -1,0 +1,285 @@
+Non-Volatile Memory Express is a controller interface for (usually solid-state) storage and used in most modern PCs. Its design is tailored towards modern hardware and software scenarios, allowing parallel and asynchronous enqueueing and completion of commands via queues composed of submission and completion ring buffers. While NVMe is typically used to access drives over [PCI Express](https://wiki.osdev.org/PCI_Express "PCI Express"), newer revisions of the specification also support a NVMe-over-fabrics (NVMe-oF) transport that encapsulates NVMe commands, allowing them to be transmitted to a controller via TCP or Infiniband. The real advantage of this is realised when paired with an enterprise-class network adapter like the [Intel E810](https://wiki.osdev.org/index.php?title=Intel_E810&action=edit&redlink=1 "Intel E810 (page does not exist)"), which supports RDMA, thus freeing the CPU from this transmission.
+
+It is generally advisable to refer to the specifications for details. This is especially relevant when targeting NVMe drives that support previous revisions of the specification, where some features might not have been supported yet. While newer revisions of the specifications (2.0 and later) have added many new features, they are not really useful for basic operation of the device. For avoiding this added complexity (and the hard-to-follow nature of the spec now being broken up into parts), it is generally recommended to start by working with the 1.3d revision, as this predates the new complexity while offering the features expected of a NVMe driver.
+
+## Overview
+
+- NVMe controllers can be found as [PCI](https://wiki.osdev.org/PCI "PCI") devices with class code 1 and subclass code 8.
+- Its registers are accessible through BAR 0 (it should be 64-bit memory IO).
+- The controller processes commands submitted to it from "submission queues". The driver prepares commands in the queue's circular buffer in memory, and then updates the tail pointer register for the queue.
+- The controller may process commands in any order it likes.
+- When the controller has finished processing a command, it appends an entry to a "completion queue". The completion queue to use is specified when a submission queue is created. The controller sends an interrupt when a completion queue has available commands. The driver processes all new entries in the queue's circular buffer, and then updates the head pointer register for the queue.
+- At reset, only one submission queue and one completion queue exists. These are the admin queues. The driver sets their base addresses in the ASQ and ACQ registers.
+- The admin queues can process admin commands, such as creating IO queues (used to submit IO commands, like read/write sectors), and query information about the controller and drives (called "namespaces") connected to it.
+- The admin queues always use the Queue Identifier of 0.
+
+## Controller registers
+
+**References**
+
+- NVMe specification 1.3d, Chapter 3.1 "Register Definition"
+- NVMe Base Specification 2.3, Chapter 3.1.4 "Controller Properties": newer revisions abstract away MMIO registers as "Controller Properties", which is useful for using NVMe-over-Fabrics. For now, you only need to worry about the "I/O Controller" column and what it supports.
+
+| Offset               | Name    | Description                       |
+|----------------------|---------|-----------------------------------|
+| 0x00-0x07            | CAP     | Controller capabilities.          |
+| 0x08-0x0B            | VS      | Version.                          |
+| 0x0C-0x0F            | INTMS   | Interrupt mask set.               |
+| 0x10-0x13            | INTMC   | Interrupt mask clear.             |
+| 0x14-0x17            | CC      | Controller configuration.         |
+| 0x1C-0x1F            | CSTS    | Controller status.                |
+| 0x24-0x27            | AQA     | Admin queue attributes.           |
+| 0x28-0x2F            | ASQ     | Admin submission queue.           |
+| 0x30-0x37            | ACQ     | Admin completion queue.           |
+| 0x1000+(2Y)\*DSTRD   | SQxTDBL | Submission queue X tail doorbell. |
+| 0x1000+(2Y+1)\*DSTRD | CQxHDBL | Completion queue X head doorbell. |
+
+`Y` is a Queue Identifier, which is zero for the Admin Queue. `DSTRD` is the doorbell stride, which is specified in the controller capabilities (`CAP`) register.
+
+Note that some fields are what the specification refers to as "0's based values". In this case, the numbering is offset by one, so that a value of zero cannot be represented. Setting a value of `0` encodes the number 1, a value of `1` encodes the number 2 and so forth.
+
+Also note that the specification lays down some notable restrictions for MMIO:
+
+- The MMIO access to the register space is defined by a 64-bit BAR, i.e. BAR0 contains the lower 32 bits and BAR1 the upper 32 bits of the `Memory Register Base Address`.
+- The MMIO space should be mapped as uncachable, as usual.
+- Accesses to the MMIO space should either be using the registers native width, or aligned 32-bit accesses. Anything else is undefined behavior.
+- Accesses to more than a single register at a time are not allowed.
+
+## Data structures
+
+### NVMe Queue
+
+An NVMe queue is 128 bytes can represent both Admin and IO queues. This isn't standard but is a good way to keep track of your queues (And it's used in the examples below).
+
+|        |               |
+|--------|---------------|
+| Bits   | Contents      |
+| 0-63   | Queue Address |
+| 64-127 | Queue Size    |
+
+### Submission queue entry
+
+A submission queue entry - a command - is 64 bytes, arranged in 16 DWORDs.
+
+| DWORD | Contents                                       |
+|-------|------------------------------------------------|
+| 0     | Command DWORD 0 (see below)                    |
+| 1     | NSID (namespace identifier). If n/a, set to 0. |
+| 2-3   | Reserved.                                      |
+| 4-5   | Metadata pointer.                              |
+| 6-9   | Data pointer. 2 PRPs (see next section).       |
+| 10-15 | Command specific.                              |
+
+Format of the Command DWORD 0:
+
+| Bits  | Contents                                                       |
+|-------|----------------------------------------------------------------|
+| 0-7   | Opcode.                                                        |
+| 8-9   | Fused operation. 0 indicates normal operation.                 |
+| 10-13 | Reserved.                                                      |
+| 14-15 | PRP or SGL selection. 0 indicates PRPs.                        |
+| 16-31 | Command identifier. This is put in the completion queue entry. |
+
+### PRP
+
+A PRP (physical region page) is a 64-bit physical memory address. It must be DWORD aligned. A list of PRPs is used in a data transfer to specify where data is transferred from/to in memory. A PRP list is subject to the follow rules:
+
+- The size of the region specified by a given PRP is the minimum of: the amount of data that can be transferred without crossing a page boundary; and the amount of data remaining to be transferred.
+- Only the first entry in a PRP list can be page misaligned.
+- If a PRP list is not long enough to cover the entire transfer, then the last entry chains to a page containing more PRP entries.
+
+### Completion queue entry
+
+A completion queue entry is 16 bytes.
+
+| Bits    | Contents                               |
+|---------|----------------------------------------|
+| 0-31    | Command specific.                      |
+| 32-63   | Reserved.                              |
+| 64-79   | Submission queue head pointer.         |
+| 80-95   | Submission queue identifier.           |
+| 96-111  | Command identifier.                    |
+| 112     | Phase bit. Toggled when entry written. |
+| 113-127 | Status field. 0 on success.            |
+
+Where new entries end in the completion queue can be determined by inspecting the phase bit.
+
+## Commands
+
+### Queue Types
+
+As you saw near the beginning of this page, you have access to two types of command queues - Admin queues and IO queues. For common purposes, you will need one Admin completion queue and one Admin submission queue, and you will need at least one IO completion queue and one IO submission queue - though, some developers may wish to include multiple IO queues. Admin queues are used to create IO queues and retrieve information about the controller or namespace as shown below, and IO queues are used to perform IO actions on your NVMe controller (Such as reading or writing sectors). To create your admin queues, you need to allocate memory for their addresses. I like to allocate one page for both. You then need to write the addresses of both queues to the appropriate registers.
+
+#### Example
+
+- *nvme_queue* represents an NVMe queue described near the beginning of this page.
+- In this example, we are using a queue size of 64. (It's zero-based, so we'd set the size field to 63)
+
+``` c
+bool create_admin_submission_queue(nvme_queue *sq) {
+    sq->address = (uint64_t)malloc(PAGE_SIZE);
+    if (sq->address == 0)
+        return false;
+    sq->size = 63;
+    // 0x28 is the Admin Submission queue register
+    nvme_write_reg(0x28, sq->address);
+    return true;
+}
+
+bool create_admin_completion_queue(nvme_queue *cq) {
+    cq->address = (uint64_t)malloc(PAGE_SIZE);
+    if (cq->address == 0)
+        return false;
+    cq->size = 63;
+    // 0x30 is the Admin Completion queue register
+    nvme_write_reg(0x30, cq->address);
+    return true;
+}
+```
+
+### Sending commands
+
+This example shows how you can read and write sectors from an NVMe disk. This assumes you have already used your admin completion queues to create **two** IO completion queues.
+
+- *QUEUE_SIZE* is the size of your queues. This value should not be zero-based.
+- *nvme_command_entry* is a **submission** queue entry - this example doesn't handle completion queue entries.
+- *completion_queue_head* is the IO completion queue head.
+- *submission_queue_tail* is the IO submission queue tail.
+- *nvme_doorbell_strd* is the NVMe doorbell stride.
+
+``` c
+bool nvme_send_command(uint8_t opcode, uint32_t nsid, void *data, uint64_t lba, uint16_t num_blocks, nvme_completion *completion) {
+    uint64_t sq_entry_addr = submission_queue.address + (submission_queue_tail * sizeof(nvme_command_entry));
+    uint64_t cq_entry_addr = completion_queue.address + (completion_queue_head * sizeof(nvme_completion));
+    nvme_command_entry command_entry;
+    command_entry.opcode = opcode;
+    command_entry.nsid = nsid;
+    command_entry.prp1 = (uintptr_t)data;
+    command_entry.prp2 = 0;
+    command_entry.command_specific[0] = (uint32_t)lba;
+    command_entry.command_specific[1] = (uint32_t)((uint64_t)lba >> 32);
+    command_entry.command_specific[2] = (uint16_t)(num_blocks - 1);
+    memcpy((void *)sq_entry_addr, &command_entry, sizeof(nvme_command_entry));
+    submission_queue_tail++;
+    nvme_write_reg(0x1000 + 2 * (4 << nvme_doorbell_strd), submission_queue_tail);
+    if (submission_queue_tail == QUEUE_SIZE)
+        submission_queue_tail = 0;
+    // You should wait for completion here
+    map_page(cq_entry_addr);
+    completion = (nvme_completion *)cq_entry_addr;
+    completion_queue_head++;
+    nvme_write_reg(0x1000 + 3 * (4 << nvme_doorbell_strd), completion_queue_head);
+    if (completion_queue_head == QUEUE_SIZE)
+        completion_queue_head = 0;
+    return completion->status != 0;
+}
+
+bool nvme_read(uint64_t lba, uint32_t sector_count, void *buffer) {
+    nvme_completion *completion = NULL;
+    if (nvme_send_command(0x02, nsid, buffer, lba, sector_count, completion) != NVME_SUCCESS)
+    return true;
+    if (completion->status != NVME_SUCCESS)
+        return true;
+    return false;
+}
+
+bool nvme_write(uint64_t lba, uint32_t sector_count, void *buffer) {
+    nvme_completion *completion = NULL;
+    if (nvme_send_command(0x01, nsid, buffer, lba, sector_count, completion) != NVME_SUCCESS)
+    return true;
+    if (completion->status != NVME_SUCCESS)
+        return true;
+    return false;
+}
+```
+
+### Admin commands
+
+#### Create IO submission queue
+
+- Opcode is 0x01.
+- The base address of the queue should be put in the DWORDs 6 and 7 of the commands.
+- Command DWORD 10 contains the queue identifier in the low word, and the queue size in the high word. The queue size should be given as one less than the actual value.
+- Command DWORD 11 contains flags in the low word, and the completion queue identifier in the high word (where completion entries for this submission queue will be posted). Flag (1 \<\< 0) indicates the queue is physically contiguous (recommended; non-contiguous are not supported by all controllers).
+
+#### Create IO completion queue
+
+- Opcode is 0x05.
+- The base address of the queue should be put in the DWORDs 6 and 7 of the commands.
+- Command DWORD 10 contains the queue identifier in the low word, and the queue size in the high word. The queue size should be given as one less than the actual value.
+- Command DWORD 11 contains flags in the low word, and the interrupt vector in the high word. Please note that if you are using MSI/MSI-X the interrupt vector should be the MSI vector + 1 (MSI vector 0 is reserved for the admin completion queues) - the NVMe also specification recommends you use MSI-X unless it isn't available, otherwise you can use regular MSI. Flag (1 \<\< 0) indicates the queue is physically contiguous (recommended; non-contiguous are not supported by all controllers), and flag (1 \<\< 1) enables interrupts.
+
+#### Identify
+
+- Opcode is 0x06.
+- The base address of the output (a single page) should be put in the DWORDs 6 and 7 of the command.
+- The low byte of command DWORD 10 indicates what is to be identified: 0 - a namespace, 1 - the controller, 2 - the namespace list.
+- If identifying a namespace, set DWORD 1 to the namespace ID.
+
+### IO commands
+
+#### Read
+
+- Opcode is 0x02.
+- DWORD 1 contains the NSID.
+- DWORDs 6-9 contain the PRP list for the data transfer.
+- DWORDs 10-11 contain the starting LBA.
+- The low word of DWORD 12 contains the number of blocks to transfer. This should be given as one less than the actual value.
+
+#### Write
+
+- Opcode is 0x01.
+- DWORD 1 contains the NSID.
+- DWORDs 6-9 contain the PRP list for the data transfer.
+- DWORDs 10-11 contain the starting LBA.
+- The low word of DWORD 12 contains the number of blocks to transfer. This should be given as one less than the actual value.
+
+## Checklist
+
+### Initialisation
+
+- Find PCI function with class code 0x01 and subclass code 0x08.
+- Enable interrupts, bus-mastering DMA, and memory space access in the PCI configuration space for the function.
+- Map BAR0.
+- Check the controller version is supported.
+- Check the capabilities register for support of the NVMe command set.
+- Check the capabilities register for support of the host's page size.
+- Reset the controller.
+- Set the controller configuration, and admin queue base addresses.
+- Start the controller.
+- Enable interrupts and register a handler.
+- Send the identify command to the controller. Check it is an IO controller. Record the maximum transfer size.
+- Reset the software progress marker, if implemented.
+- Create the first IO completion queue, and the first IO submission queue.
+- Identify active namespace IDs, and then identify individual namespaces. Record their block size, capacity and whether they are read-only.
+
+### Shutdown
+
+- Delete IO queues.
+- Inform the controller of shutdown.
+- Wait until CSTS.SHST updates.
+
+### Submitting a command
+
+- Build PRP lists.
+- Wait for space in the submission queue. The controller indicates its internal head pointer in completion queue entries.
+- Setup the command.
+- Update the queue tail doorbell register.
+
+### IRQ handler
+
+- For each completion queue, read all entries where the phase bit has been toggled.
+- Check the status of the commands.
+- Use the submission queue ID and command ID to work out which submitted command corresponds to this completion entry.
+- Update the completion queue head doorbell register.
+
+## See Also
+
+### External Links
+
+- [NVMe Specifications](https://nvmexpress.org/specifications/)
+  - [Older specification revisions](https://nvmexpress.org/nvm-express-specification-archives/#nvm-express-base-specification)
+
+### Forum Threads
+
+- [here](https://forum.osdev.org/viewtopic.php?f=8&t=36366)

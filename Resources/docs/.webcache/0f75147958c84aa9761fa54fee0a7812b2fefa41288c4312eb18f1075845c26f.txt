@@ -1,0 +1,119 @@
+Thread Local Storage (TLS) are per-thread global variables. Compilers such as [GCC](https://wiki.osdev.org/GCC "GCC") provide a `__thread` keyword to mark global variables as per-thread. Support is required in the program loader and thread creator.
+
+``` c
+__thread int errno;
+int get_errno() { return errno; }
+```
+
+A [x86-64](https://wiki.osdev.org/X86-64 "X86-64") [System V ABI](https://wiki.osdev.org/System_V_ABI "System V ABI") compiler would compile this code into assembly like this:
+
+``` text
+   .globl  errno
+    .section    .tbss,"awT",@nobits
+    .align 4
+    .type   errno, @object
+    .size   errno, 4
+errno:
+    .zero   4
+...
+    movl    %fs:errno@tpoff, %eax
+```
+
+The `errno` global variable is put into a special thread local bss section (.tbss) (or .tdata if initialized) and special actions occur at program link time and program load time. A per-thread allocation (containing the thread local storage, the user-space thread structure and perhaps other things) is made when the thread is created. Each per-thread variable is located at a fixed offset inside this allocation. In the above example, the %fs segment starts at the thread's user-space thread structure (%fs thus works as an extra register), and the special `errno@tpoff` linker symbol is the offset from the thread's userspace thread structure to the per-thread errno value.
+
+## Design
+
+### Master TLS Copy
+
+The program contains a master copy of its thread local storage (with its initialized-at-compile-time values) which is used when creating threads. This special segment is created by the linker from the `.tdata` (initialized tls) and `.tbss` (zero-initialized tls) sections. You can find it by searching the [ELF](https://wiki.osdev.org/ELF "ELF") program headers for a segment with type `PT_TLS` (decimal value 7) (as opposed to the normal `PT_LOAD`).
+
+The virtual address of the thread local storage master segment is meaningless as it isn't loaded anywhere specific, you decide where you wish to load it. Mind that the segment does have alignment constraints like normal segments (but the linker placed those for you). Besides deciding yourself where to load the segment, you load this segment like a normal `PT_LOAD` segment.
+
+### Per-thread allocation
+
+Each thread has a memory allocation associated with it. It contains the user-space thread structure, the thread local storage, and potentially other things. Each thread has a thread-self-pointer register that points to the thread's user-space thread structure, which is used to quickly determine which thread the current is, as well as providing quick access to the thread local storage. The exact semantics of the per-thread depends on the architecture and its ABI, as well as whether the executable is statically or dynamically linked.
+
+The layout of the user-space thread structure is partially mandated by the ABI. On some platforms (i386 and x86-64), there must be a pointer at the start of it that points to itself. Besides those mandatory parts, the rest of the structure is up to you, it is useful for many things such as remembering allocations that must be deallocated when the thread terminates.
+
+The thread local storage is located at a fixed offset from the user-space thread structure, therefore each variable in the thread local storage is also at a fixed offset. This offset is determined at link time and accessible through the special `foo@tpoff` linker symbols. Locating a particular thread local variable is as simple as getting the thread-self-pointer and adding a fixed offset.
+
+## ABI
+
+This is a summary of the actual details in the [System V ABI](https://wiki.osdev.org/System_V_ABI "System V ABI").
+
+### i386
+
+The thread-self-pointer register is the base of the %gs segment. It is set to the address of the current thread's user-space thread structure. When you switch the thread on the current CPU, you change the base of the gs segment of that CPU's [GDT](https://wiki.osdev.org/GDT "GDT") and reload the gs register. A pointer to the user-space thread structure itself is the first member of the user-space thread structure.
+
+The thread local storage (after having its size rounded up to its alignment) is located immediately prior to the user-space thread structure. The offsets are negative. To place the user-space thread structure and the thread local storage, do this:
+
+``` c
+size_t allocation_alignment = max(master_tls_alignment, alignof(struct uthread));
+size_t allocation_size = alignup(master_tls_size, allocation_alignment) + sizeof(struct uthread);
+unsigned char* allocation = allocate(allocation_size, allocation_alignment);
+struct uthread* uthread = allocation + alignup(master_tls_size, allocation_alignment);
+unsigned char* tls = ((unsigned char*) uthread) - alignup(master_tls_size, master_tls_alignment);
+```
+
+Do note that the thread local structure might not be at the beginning of the per-thread allocation if it its alignment is less of that than struct uthread. It is crucial that both the thread local storage and the user-space thread structure are properly aligned. You then initialize the user-space thread structure's self pointer and the thread local storage:
+
+``` c
+uthread->self_pointer = uthread;
+memcpy(tls, master_tls, master_tls_size);
+```
+
+### x86-64
+
+The thread-self-pointer register is the base of the %fs segment. It is set to the address of the current thread's user-space thread structure. When you switch thread, you set the FSBASE [MSR](https://wiki.osdev.org/MSR "MSR") (0xC0000100). A pointer to the user-space thread structure itself is the first member of the user-space thread structure.
+
+The per-thread allocation is arranged and placed as described under [\#i386](https://wiki.osdev.org/Thread_Local_Storage#i386).
+
+### Other
+
+See the `tls.pdf` document below and please document the specifics here afterwards. :)
+
+## Implementation
+
+Your kernel should bootstrap the thread local storage for the main thread after having loaded a program:
+
+1.  During program load, locate the thread local storage segment among the program headers, and load it somewhere.
+2.  Create the per-thread allocation for the main thread.
+3.  Copy the master thread local storage to the thread local storage of main thread.
+4.  In the main thread's user-space thread structure, store: The location/size of the per-thread allocation, master thread local storage location/size/alignment, main thread's thread local storage location/size, the main thread's stack location/size, and so on. This allows the thread to make new threads and to clean up after itself.
+5.  Set the thread-self-pointer register of the main thread to the main thread's user-space thread structure.
+
+This approach allows thread local storage to be operational immediately when a program is loaded and makes it simple to create new thread.
+
+Setting up thread local storage for a new thread is simple:
+
+1.  Create a per-thread allocation for the new thread.
+2.  Copy the master thread local storage to the thread local storage of new thread.
+3.  Initialize the user-space thread structure for the new thread.
+4.  Set the thread-self-pointer register of the new thread to the new thread's user-space thread structure.
+
+Some Unix kernels such as Linux actually doesn't set up the thread local storage for the main thread. The libc is required to parse the ELF executable of the program to locate and load the master thread local storage copy itself and bootstrap the main thread. This has the obvious disadvantages of having early times where language features doesn't work and that every executable gets linked in an ELF loader (in case it uses thread local storage).
+
+## See Also
+
+### Standards
+
+- [ELF Handling For Thread-Local Storage](http://www.akkadia.org/drepper/tls.pdf)
+
+### Articles
+
+- [ELF](https://wiki.osdev.org/ELF "ELF")
+- [GDT](https://wiki.osdev.org/GDT "GDT")
+- [MSR](https://wiki.osdev.org/MSR "MSR")
+- [System V ABI](https://wiki.osdev.org/System_V_ABI "System V ABI")
+
+### Topics
+
+- [Minimal Static Link](http://forum.osdev.org/viewtopic.php?f=15&t=28339) - [sortie](https://wiki.osdev.org/User:Sortie "User:Sortie") posts about reducing startup libc bloat such as thread local storage initialization by moving it into the kernel to much success.
+
+### IRC
+
+- [\#osdev 2014-11-17](http://bespin.org/~qz/search/?view=1&c=osdev&y=14&m=11&d=17) - `sortie` and `maxdev` have a conversation about thread local storage.
+
+### Implementations
+
+- [Sortix Thread Local Storage Implementation](https://wiki.osdev.org/User:Sortie/Sortix_Thread_Local_Storage "User:Sortie/Sortix Thread Local Storage") - Notes on [sortie](https://wiki.osdev.org/User:Sortie "User:Sortie")'s implementation.

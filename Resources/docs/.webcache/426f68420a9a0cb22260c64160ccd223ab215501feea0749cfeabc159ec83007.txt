@@ -1,0 +1,215 @@
+|                                                                                                                                    |
+|------------------------------------------------------------------------------------------------------------------------------------|
+| This page or section refers to its readers or editors using I , my , we or us . It should be edited to be in an encyclopedic tone. |
+
+|                                                                                               |
+|-----------------------------------------------------------------------------------------------|
+| WAIT! Have you read Getting Started , Beginner Mistakes , and some of the related OS theory ? |
+
+| Difficulty level |
+|------------------|
+| Advanced         |
+
+This tutorial directly follows [Raspberry Pi Bare Bones](https://wiki.osdev.org/Raspberry_Pi_Bare_Bones "Raspberry Pi Bare Bones") to accomplish the same task using Rust instead of C.
+
+#### Prerequisites
+
+The following instructions assume you have all the tools to, and successfully followed [Raspberry Pi Bare Bones](https://wiki.osdev.org/Raspberry_Pi_Bare_Bones "Raspberry Pi Bare Bones") and ran your kernel in QEMU. It also assumes you are familiar with Rust and Cargo.
+
+We will use [rustup](https://rustup.rs) to manage Rust.
+
+#### Overview
+
+In the C tutorial, you created a reference to a symbol "kernel_main" in boot.S.
+
+``` asm
+    // Call kernel_main
+    ldr r3, =kernel_main
+```
+
+At the end of that tutorial, the compiled kernel.c object file kernel.o provided a definition for this symbol using its function "kernel_main" to the linker when creating kernel.elf.
+
+We will create a Rust library (.rlib) which defines the symbol kernel_main instead.
+
+#### Setup
+
+For brevity we will assume our environment has no Rust installation.
+
+``` bash
+ curl https://sh.rustup.rs -sSf | sh
+```
+
+This installs rustup, which will manage the Rust compiler and Cargo.
+
+``` bash
+ rustup component add rust-src
+```
+
+We will need to recompile some of the Rust language later, so we need this component.
+
+``` bash
+ cargo install xargo
+```
+
+We will use [xargo](https://github.com/japaric/xargo) to build our project, which works just like a drop-in replacement for Cargo. xargo automatically handles the significant task of compiling and linking in components of the Rust language we will need (such as libcore.rs) for our target.
+
+``` bash
+xargo new kernel
+cd kernel
+rustup override set nightly
+```
+
+This creates our crate and tells rustup to use the nightly Rust toolchain for it. We will need features of Rust that are not available in stable.
+
+In this directory create a file called arm-none-eabihf.json with this content:
+
+``` python
+{
+    "llvm-target": "arm-none-eabihf",
+    "target-endian": "little",
+    "target-pointer-width": "32",
+    "target-c-int-width": "32",
+    "os": "none",
+    "env": "eabi",
+    "vendor": "unknown",
+    "arch": "arm",
+
+    "linker-flavor": "gcc",
+    "linker": "arm-none-eabi-gcc",
+    "data-layout": "e-m:e-p:32:32-i64:64-v128:64:128-a:0:32-n32-S64",
+    "executables": true,
+    "relocation-model": "static",
+    "no-compiler-rt": true
+}
+```
+
+Rust uses LLVM as a backend, which expects this kind of specification file for non-standard (has no triple) compilation targets. Filling out the values of this is beyond the scope of this tutorial; more information can be found in [rust-cross](https://github.com/japaric/rust-cross) which covers cross compiling Rust in detail.
+
+In your Cargo.toml, add
+
+``` text
+[profile.dev]
+panic = "abort"
+```
+
+This tells rustc not to compile in stack unwinding. This allows recovery from panics, but when a kernel panics there is nothing to make a recovery attempt.
+
+Edit src/lib.rs to contain
+
+``` text
+#![no_std]
+
+#[no_mangle]
+pub extern fn kernel_main() {}
+```
+
+We can build our rlib with a definition of kernel_main now:
+
+``` bash
+ xargo build --target arm-none-eabihf
+```
+
+.
+
+Now, revisit the command which built kernel.elf in the C tutorial, but instead of kernel.o, provide the libkernel.rlib xargo just built in the target directory.
+
+``` bash
+arm-none-eabi-gcc -T linker.ld -o myos.elf -ffreestanding -O2 -nostdlib boot.o path/to/libkernel.rlib
+```
+
+This is it! You've built Rust code for bare metal arm that will run on the Raspberry Pi!
+
+#### Hello
+
+The C tutorial used the UART to say hello. The code below accomplishes the same in Rust. It does not configure the UART like the C code does because QEMU's raspi2 machine has a default state that will work. To work on real hardware, take care to configure the UART to your use case. You can read about this in the [bcm2835 manual](https://www.raspberrypi.org/documentation/hardware/raspberrypi/bcm2835/README.md). Put the following in src/lib.rs and rebuild your ELF:
+
+``` text
+#![no_std]
+#![feature(core_intrinsics, lang_items)]
+
+use core::intrinsics::abort;
+use core::intrinsics::volatile_load;
+use core::intrinsics::volatile_store;
+use core::panic::PanicInfo;
+
+// raspi2 and raspi3 have peripheral base address 0x3F000000,
+// but raspi1 has peripheral base address 0x20000000. Ensure
+// you are using the correct peripheral address for your
+// hardware.
+const UART_DR: u32 = 0x3F201000;
+const UART_FR: u32 = 0x3F201018;
+
+fn mmio_write(reg: u32, val: u32) {
+    unsafe { volatile_store(reg as *mut u32, val) }
+}
+
+fn mmio_read(reg: u32) -> u32 {
+    unsafe { volatile_load(reg as *const u32) }
+}
+
+fn transmit_fifo_full() -> bool {
+    mmio_read(UART_FR) & (1 << 5) > 0
+}
+
+fn receive_fifo_empty() -> bool {
+    mmio_read(UART_FR) & (1 << 4) > 0
+}
+
+fn writec(c: u8) {
+    while transmit_fifo_full() {}
+    mmio_write(UART_DR, c as u32);
+}
+
+fn getc() -> u8 {
+    while receive_fifo_empty() {}
+    mmio_read(UART_DR) as u8
+}
+
+fn write(msg: &str) {
+    for c in msg.chars() {
+        writec(c as u8)
+    }
+}
+
+#[no_mangle]
+pub extern fn kernel_main() {
+    write("Hello Rust Kernel world!");
+    loop {
+        writec(getc())
+    }
+}
+
+// These functions below provide definitions for symbols libcore
+// expects which are not present on our bare metal target. You
+// will not encounter linker errors until you use a part of
+// libcore that references them, such as iterators in this program.
+// In the future you may need to provide real implementations for
+// these functions.
+
+#[no_mangle]
+pub extern fn __aeabi_unwind_cpp_pr0() {}
+
+#[lang = "eh_personality"]
+pub extern fn eh_personality() {}
+
+#[panic_handler]
+fn panic(_info: &PanicInfo) -> ! {
+    unsafe { abort() }
+}
+
+#[allow(non_snake_case)]
+#[no_mangle]
+pub extern fn _Unwind_Resume() { loop {} }
+```
+
+If you run this you will see your text printed out on the virtual serial port:
+
+``` bash
+qemu-system-arm -M raspi2 -kernel myos.elf -serial stdio
+```
+
+#### External Resources
+
+1.  [Rust programming language](https://www.rust-lang.org/)
+2.  [rustup, Rust components manager](https://rustup.rs)
+3.  [rust-raspi3-tutorials](https://github.com/rust-embedded/rust-raspi3-OS-tutorials) rewrite of bzt's [C tutorials](https://github.com/bztsrc/raspi3-tutorial) in the Rust language

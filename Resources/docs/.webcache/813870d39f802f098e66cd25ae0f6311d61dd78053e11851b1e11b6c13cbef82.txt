@@ -1,0 +1,296 @@
+|                                                                                                                       |     |
+|-----------------------------------------------------------------------------------------------------------------------|-----|
+| This page or section is a work in progress and may thus be incomplete. Its content may be changed in the near future. |     |
+
+## Introduction
+
+This page covers implementing driver support for Intel's integrated graphics technology. At the moment this only covers first generation 'Intel HD graphics’, codename Ironlake. Please note that graphics drivers are complex and while Intel's is on the simpler side, it is still a difficult topic not intended for newcomers, some experience writing drivers for other modern hardware is suggested before attempting this. Additionally, the reader is responsible for any damage due to inaccuracies in this documentation.
+
+  
+
+## Experimenting with the device
+
+There are various tools available to study the behavior of the graphics device for simpler tasks in order to gain an understanding of how something is done. One way to do so is to use Intel's graphics debugging utilities (The intel-gpu-tools package), which allow reading and writing to the device registers from the terminal. This can be very useful, for instance, this method proved invaluable when studying the GMBUS. The same can be done using GRUB2’s built in terminal by obtaining the MMIO base address using `lspci` and then using the read/write commands (read_byte/read_word/read_dword and write_byte/write_word/write_dword) to perform the associated operation on the desired register.
+
+## Register Locations and Definitions
+
+Many registers may move between generations or may be replaced completely with a different set of registers, an appropriate note will be made where possible, but it is recommended that this document be read alongside the programming reference manuals for the intended generation. Additionally, the register location definitions for the driver for Cardinal can be found [Cardinal GitHub](https://github.com/himanshugoel2797/Cardinal/blob/master/drivers/display/ihd/common/include/ihd_regs.h).
+
+  
+
+## Recommended reading
+
+Some additional reading is highly recommended before tackling graphics/display drivers which will help clarify a lot of the designs and terminology used in the official PRMs. Understanding the following is recommended:
+
+- EDID
+- I2C
+- DisplayPort
+- Intel Integrated graphics Programming Reference Manuals (PRMs)
+- OpenGL 4.0+/Vulkan/DirectX 9+: This is only really necessary if you intend to implement 3d acceleration. Understanding how the graphics pipeline functions and is structured at a higher level will help with understanding the hardware level structure exposed the graphics chipset.
+
+  
+
+## Graphics Northbridge and Southbridge
+
+The display controller pipeline structure is split among two components depending on their speed requirements and overall use. The Northbridge is connected directly to the processor, and is used for the built-in display as well as the display pipes and various planes. The Southbridge contains the external ports and the GMBUS (Graphics Management Bus). The GMBUS is an I2C compatible protocol used to communicate with devices to obtain information from them (such as the display's EDID). The two bridges communicate through a transmitter and receiver mechanism; this is done by assigning FDIs to displays on the Southbridge and configuring the display pipes on the Northbridge to receive from the assigned FDI. This system is discussed in detail in the [\#Display Pipeline Structure](https://wiki.osdev.org/Intel_HD_Graphics#Display_Pipeline_Structure) section.
+
+## PCI interface and graphics memory
+
+The PCI BARs 0 (offset 0x10) and 2 (offset 0x18) contains the 64bit addresses for the MMIO region and snooped graphics memory respectively.
+
+  
+
+## Built-in display backlight
+
+The display backlight is controlled by a PWM (pulse width modulation) unit. For the built in LVDS display, the PWM initialization registers are present on the south bridge, while the actual control value is specified on a register on the North bridge.
+
+  
+
+## Display detection
+
+Display detection can be done by either polling or using interrupts. The interrupt method will be discussed here.
+
+  
+
+## GMBUS registers and the EDID
+
+The **GMBUS** (Graphics Management Bus) is an [I2C](https://wiki.osdev.org/I2C "I2C") compatible protocol used to communicate with the attached displays to obtain their information such as the [EDID](https://wiki.osdev.org/EDID "EDID"). This method cannot be used to read the EDID of a [DisplayPort](https://wiki.osdev.org/DisplayPort "DisplayPort") device, instead the AUX CH should be used.
+
+To obtain the [EDID](https://wiki.osdev.org/EDID "EDID") for a device, we want to read 0x80 bytes from the [I2C](https://wiki.osdev.org/I2C "I2C") device index 0 of the desired device from an offset of 0x50.
+
+The following execution sequence demonstrates how the first 8 bytes can be retrieved:
+
+``` c
+void igfx_gmbus_reset(igfx_dev_state_t *driver)
+{
+   igfx_write32(driver, driver->display_mmio_base + IGFX_GMBUS1, 0);
+   igfx_gmbus_enable_writeprot(driver);
+   igfx_gmbus_disable_writeprot(driver);
+}
+
+void igfx_gmbus_wait(igfx_dev_state_t *driver)
+{
+   while (!(igfx_read32(driver, driver->display_mmio_base + IGFX_GMBUS2) & (1 << 11)))
+       ;
+}
+
+void igfx_gmbus_stoptransaction(igfx_dev_state_t *driver)
+{
+   igfx_write32(driver, driver->display_mmio_base + IGFX_GMBUS1, (1 << 30) | (1 << 27));
+}
+
+void igfx_gmbus_read(igfx_dev_state_t *driver, uint32_t disp_idx, uint8_t offset,
+                    uint16_t sz, uint8_t *buf)
+{
+   uint32_t gmbus0_val = 0;
+   uint32_t gmbus1_val = 0;
+
+   if (driver->device->arch == IGFX_CHERRYTRAIL)
+   {
+       if (disp_idx == 0)
+           gmbus0_val = 3;
+   }
+
+   gmbus1_val = (1 << 30) /*SW Ready*/ | (1 << 25) /*WAIT*/ |
+                (1 << 26) /*INDEX*/ | (sz & 511) << 16 | ((offset & 127) << 1) |
+                1 /*READ*/;
+   igfx_gmbus_reset(driver);
+
+   igfx_write32(driver, driver->display_mmio_base + IGFX_GMBUS0, gmbus0_val);
+   igfx_write32(driver, driver->display_mmio_base + IGFX_GMBUS1, gmbus1_val);
+
+   for (int i = 0; i < sz; i += 4)
+   {
+       igfx_gmbus_wait(driver);
+
+       uint32_t bytes = igfx_read32(driver, driver->display_mmio_base + IGFX_GMBUS3);
+
+       buf[i] = bytes & 0xFF;
+       if (sz > i + 1)
+           buf[i + 1] = (bytes >> 8) & 0xFF;
+       if (sz > i + 2)
+           buf[i + 2] = (bytes >> 16) & 0xFF;
+       if (sz > i + 3)
+           buf[i + 3] = (bytes >> 24) & 0xFF;
+   }
+
+   igfx_gmbus_stoptransaction(driver);
+
+   print_hexdump(buf, sz);
+}
+```
+
+### Getting the EDID from a [DisplayPort](https://wiki.osdev.org/DisplayPort "DisplayPort") device
+
+To communicate with a [DisplayPort](https://wiki.osdev.org/DisplayPort "DisplayPort") device you'll need to use the following registers:
+
+| Register     | Description                                                     |
+|--------------|-----------------------------------------------------------------|
+| DDI_AUX_CTL  | A register to initiate AUX CH requests                          |
+| DP_AUX_CTL   |                                                                 |
+| DDI_AUX_DATA | A set of 5 registers to send up to 20 bytes of data             |
+| DP_AUX_DATA  |                                                                 |
+| SRD_AUX_CTL  | A register that must be disabled if using the DDI_AUX registers |
+
+Refer to the Intel programming manuals for the register's addresses and potential errata.
+
+To send a request, first copy the AUX CH packet to the data registers starting with the high byte of the first register. Then initiate a request by setting the message length and the send_busy bit. Wait for either the done bit or any of the error bits to be set, then read the message length and the appropriate amount of data from the data registers.
+
+Note that all the other bits in the CTL registers should be preserved, so load the registers before toggling any bits.
+
+### Display pipeline structure
+
+### Display Pipes
+
+### Display FDI
+
+### Display planes
+
+Three types of display planes are available for each pipe, namely:
+
+- Display plane
+- Cursor plane
+- Video/sprite plane
+
+A VGA plane is also available, allowing for the use of the VGA emulation hardware present in every Intel graphics device, however it is very limiting and its use is discouraged by the author.
+
+None of the planes besides the cursor plane (in pop-up cursor mode) can be enabled alongside the VGA plane.
+
+The display plane provides the high resolution framebuffer and needs to be enabled for any of the other planes to function (besides the VGA plane).
+
+As the name implies, the cursor plane provides hardware accelerated cursor drawing. Similarly, the video/sprite plane provides a second source which can be drawn on top of the display plane, its purpose is to allow for efficient use of the video decoding hardware by allowing the decoded data to be directly drawn to the window.
+
+## Simple mode set sequence
+
+A simple mode set sequence can be used with the default/built-in display, assuming that the boot firmware has configured the display timings correctly. If not, it is necessary to perform a full mode set operation involving a display power cycle.
+
+As this is going to rely on have displays already configured by the firmware, the first step is to figure out the mapping between ports and pipes and their status.
+
+This info is based on the intel_reg_dumper utility's output for integrated graphics for Haswell:
+
+``` text
+Ports:
+There are 5 ports: A,B,C,D,E
+These represent connections to displays.
+The EDP port is always port A
+
+The important registers here are:
+PORT_CLK_SEL_[A-E]
+DP_TP_CTL_[A-E]
+DDI_BUF_CTL_A[A-E]
+
+Pipes:
+There are 3 general pipes A,B,C and 1 'specialized' EDP pipe that actually maps to Pipe A. Additionally, the EDP pipe (and DDI A) can only run in DP single stream (SST) mode.
+
+Pipes handle display timings/resolution settings, with the following registers:
+```
+
+``` text
+SFUSE_STRAP : This controls overall display capability (can disable all display output - forcing the use of external graphics), VGA port capability (can disable the physical VGA port) and the physical presence of ports on the device (regardless of if the port has something plugged in).
+```
+
+``` text
+PIPE_DDI_FUNC_CTL_[A-C,EDP] : Used to control how the system 'talks' to the device (HDMI/DisplayPort SST/DisplayPort MST), bits per channel, VSync and HSync polarities (from EDID) 
+WM_PIPE_[A-C] : These control when the controller generates memory accesses for pixels, the values depend on the timing information as obtained from the EDID, the exact calculation process is described in the Display Watermark section of the PRMs.
+WM_LP{1-3]: Configures the memory access timings for low power mode, the associated WM_LINETIME_[A-C] must be programmed before enabling one of these.
+WM_LINETIME_[A-C]: Configures the line timings for low power mode based on the horizontal resolution
+```
+
+``` text
+PIPE_SRCSZ_[A-C]: Contains the horizontal and vertical pixel width of the output.
+PIPE_CONF_[A-C/EDP]: Enable/disable the pipe and some features
+```
+
+``` text
+These registers are all based on the desired resolution, and are fairly well documented in the PRM, they rely on the EDID information.
+HTOTAL_[A-C/EDP] 
+HBLANK_[A-C/EDP]
+HSYNC_[A-C/EDP]
+VTOTAL_[A-C/EDP]
+VBLANK_[A-C/EDP]
+VSYNC_[A-C/EDP]
+VSYNCSHIFT_[A-C/EDP]
+```
+
+  
+
+``` text
+Refresh rate timing:
+The calculation for these values is described in the Display chapter, section "Pipe M/N Values":
+Used for normal power mode:
+PIPE_DATA_M1
+PIPE_DATA_N1
+PIPE_LINK_M1
+PIPE_LINK_N1
+```
+
+``` text
+Used for low power mode:
+PIPE_DATA_M2
+PIPE_DATA_N2
+PIPE_LINK_M2
+PIPE_LINK_N2
+```
+
+``` text
+Once the above are configured as desired, the panels may be configured and used. For display output, the Primary panel is most interesting, followed by the cursor panel if a hardware cursor is desired.
+The EDP pipe uses Pipe A's panels.
+```
+
+``` text
+The Primary panel has the following registers:
+PRI_CTL_[A-C]: Enable/Disable the panel, gamma mode, pixel format, tiling, rotation
+PRI_STRIDE_[A-C]: Configure the pixel stride when reading the framebuffer (in multiples of 64-bytes)
+PRI_SURF_[A-C]: Configure the physical address of the framebuffer, this must be mapped via the global GTT
+PRI_OFFSET_[A-C]: Configure the pixel offset from which to start reading
+```
+
+Thus, provided that the display has already been initialized, very dirty mode setting can be performed by directly updating the primary panel registers, then the horizontal and vertical TOTAL/BLANK/SYNC registers, followed by the M/N timings and then finally the WM timings. It may be possible to make the process cleaner by disabling and then re-enabling the pipe, but it is unconfirmed if that would restore the display without having to recallibrate. However, display callibration seems to be handled by the graphics chipset itself, so it may be relatively simple to just do modesetting properly (updates upcoming).
+
+## Full mode set sequence
+
+The full mode set sequence is much longer than the simple sequence, but it is guaranteed to work with all connected displays, assuming that the EDID is valid. This sequence involves completely disabling the display, configuring the timings for the FDIs and pipes again and then powering on the display again.
+
+The steps are as follows:
+
+### Link Training Notes
+
+``` text
+DDI_BUF_TRANS must be configured with voltage swing information, as specified in the Display chapter, "DDI Buffer" section
+```
+
+``` text
+- Set the number of enabled lanes via writes to AUX 0x101, and configure the lanes, 
+```
+
+``` text
+First step of training is to set training pattern 1 and try voltage settings from smallest to largest until clock recovery is achieved
+- First set the sink device (via AUX channel/GMBUS) to start receiving training pattern 1 by performing a burst write to AUX 0x102-0x106, setting the lanes to expect training pattern 1 with the currently testing voltage level
+- Set the integrated graphics (DDI_TP_CTL) to send training pattern 1
+- Wait 500us
+- Read offset 0x202 from the AUX channel to get the link status to determine if training was successful.
+- If none of the voltage levels work, reduce the bitrate and try again
+```
+
+``` text
+- For eDP, the voltage settings can be precallibrated, allowing skipping the clock recovery process, this is determined by AUX address 0x3 bit 6 (see section 3.5.1.3 of the DisplayPort 1.4 spec)
+```
+
+``` text
+Second training step is to determine the pre-emphasis, it's very similar to the first step, but using training pattern 2. Clock recovery may be lost in this step, in which case the clock recovery training must be restarted.
+Once pre-emphasis training is done, the link is ready. 
+```
+
+DisplayPort 1.4 spec: [\[1\]](http://file.yizimg.com/383992/2014090921252964.pdf)
+
+### Graphics virtual memory configuration
+
+### The ring buffer
+
+### Blitter - Block Litigated Transfer engine
+
+### 3D pipeline
+
+## See also
+
+- [Intel programming manuals](https://www.intel.com/content/www/us/en/docs/graphics-for-linux/developer-reference/1-0/overview.html) (PRMs) for Intel HD Graphics devices.

@@ -1,0 +1,456 @@
+VMware's various virtualization products implement a backdoor which provides some useful functionality to the guest operating system, similar to the [VirtualBox Guest Additions](https://wiki.osdev.org/VirtualBox_Guest_Additions "VirtualBox Guest Additions"). In addition to VMware, QEMU also implements some of the functionality of the VMware backdoor, including support for absolute mouse positioning which can be very useful if you lack a USB stack and want to be able to productively use QEMU's integrated VNC server.
+
+Sample code in this article is provided from ToaruOS and is based on research from the VMware SVGA developer kit and open-vm-tools.
+
+## VMware Backdoor
+
+To communicate with the host, VMware uses a port-and-register based backdoor. Magic values, commands, and arguments are stored in the eax, ebx, ecx, and edx registers, a "magic" port operation is executed, and then the returned values are stored in these registers. There are three ways to access the backdoor, which uses two different magic port values. Most backdoor commands use the single port "in" version, while longer messages are read and written through the "high bandwidth" "rep out/in" version.
+
+First, let's define a structure to store the register values and also provide some helpful aliases through unions. I am using unnamed unions here, but you may wish to name them depending on your compiler configuration:
+
+``` c
+typedef struct {
+    union {
+        uint32_t ax;
+        uint32_t magic;
+    };
+    union {
+        uint32_t bx;
+        size_t size;
+    };
+    union {
+        uint32_t cx;
+        uint16_t command;
+    };
+    union {
+        uint32_t dx;
+        uint16_t port;
+    };
+    uint32_t si;
+    uint32_t di;
+} vmware_cmd;
+```
+
+The union values explain the purpose of some of the registers in the single port "in" version of the backdoor. DX will contain the port number used for the port read, EAX will store a magic value, EBX may contain a size argument, and CX will indicate the command we are requesting from the VM. You will not we also have values for SI and DI, which are used by the "high bandwidth" version of the backdoor.
+
+Now let's set up some functions to perform the various backdoor calls. GCC's inline assembly makes this very easy, as we can just pass the values from our struct into a short assembly call as the registers we want to set. We'll have three different methods available: one for the single-port backdoor and both an "in" and "out" method for the high bandwidth version. We'll also set the magic values and ports appropriately before calling the assembly instructions:
+
+``` c
+#define VMWARE_MAGIC  0x564D5868
+#define VMWARE_PORT   0x5658
+#define VMWARE_PORTHB 0x5659
+
+void vmware_send(vmware_cmd * cmd) {
+    cmd->magic = VMWARE_MAGIC;
+    cmd->port = VMWARE_PORT;
+    asm volatile("in %%dx, %0" : "+a"(cmd->ax), "+b"(cmd->bx), "+c"(cmd->cx), "+d"(cmd->dx), "+S"(cmd->si), "+D"(cmd->di));
+}
+
+static void vmware_send_hb(vmware_cmd * cmd) {
+    cmd->magic = VMWARE_MAGIC;
+    cmd->port = VMWARE_PORTHB;
+    asm volatile("cld; rep; outsb" : "+a"(cmd->ax), "+b"(cmd->bx), "+c"(cmd->cx), "+d"(cmd->dx), "+S"(cmd->si), "+D"(cmd->di));
+}
+
+static void vmware_get_hb(vmware_cmd * cmd) {
+    cmd->magic = VMWARE_MAGIC;
+    cmd->port = VMWARE_PORTHB;
+    asm volatile("cld; rep; insb" : "+a"(cmd->ax), "+b"(cmd->bx), "+c"(cmd->cx), "+d"(cmd->dx), "+S"(cmd->si), "+D"(cmd->di));
+}
+```
+
+## Detecting the VMware Backdoor
+
+*Note: Blindly reading from IO ports is probably not the best approach to detecting some special VM hardware.*
+
+In order to ensure that we are communicating with a VMware backdoor implementation, we should query it as follows:
+
+``` c
+int is_vmware_backdoor(void) {
+    vmware_cmd cmd;
+    cmd.bx = ~VMWARE_MAGIC;
+    cmd.command = CMD_GETVERSION;
+    vmware_send(&cmd);
+    
+    if (cmd.bx != VMWARE_MAGIC || cmd.ax == 0xFFFFFFFF) {
+        /* Not a backdoor! */
+        return 0;
+    }
+    
+    return 1;
+}
+```
+
+## Absolute Mouse Coordinates
+
+The backdoor allows us to disable the PS/2 mouse and instead receive absolute mouse coordinates. This means we don't need to "capture" the mouse pointer in the VM. As an extra bonus, QEMU implements this functionality as well.
+
+When the absolute mouse is enabled, the PS/2 mouse status bit indicates not that the PS/2 port should be read, but that the backdoor should be used to read mouse data instead, so you should route PS/2 mouse interrupts to your VMware backdoor handler where appropriate.
+
+We'll provide two functions, one to enable the absolute mouse, and one to disable it.
+
+Our enable function will perform 4 backdoor calls: One to enable the mouse functionality, two to request status information, and one to switch to absolute mode. Let's define some magic values for these commands:
+
+``` c
+#define CMD_ABSPOINTER_DATA    39
+#define CMD_ABSPOINTER_STATUS  40
+#define CMD_ABSPOINTER_COMMAND 41
+
+#define ABSPOINTER_ENABLE   0x45414552 /* Q E A E */
+#define ABSPOINTER_RELATIVE 0xF5
+#define ABSPOINTER_ABSOLUTE 0x53424152 /* R A B S */
+```
+
+Now we can enable the absolute mouse like this:
+
+``` c
+void mouse_absolute(void) {
+    vmware_cmd cmd;
+
+    /* Enable */
+    cmd.bx = ABSPOINTER_ENABLE;
+    cmd.command = CMD_ABSPOINTER_COMMAND;
+    vmware_send(&cmd);
+
+    /* Status */
+    cmd.bx = 0;
+    cmd.command = CMD_ABSPOINTER_STATUS;
+    vmware_send(&cmd);
+
+    /* Read data (1) */
+    cmd.bx = 1;
+    cmd.command = CMD_ABSPOINTER_DATA;
+    vmware_send(&cmd);
+
+    /* Enable absolute */
+    cmd.bx = ABSPOINTER_ABSOLUTE;
+    cmd.command = CMD_ABSPOINTER_COMMAND;
+    vmware_send(&cmd);
+}
+```
+
+Disabling the mouse is a bit easier as it is a single backdoor command:
+
+``` c
+void mouse_relative(void) {
+    vmware_cmd cmd;
+    cmd.bx = ABSPOINTER_RELATIVE;
+    cmd.command = CMD_ABSPOINTER_COMMAND;
+    vmware_send(&cmd);
+}
+```
+
+With these two functions, we can toggle the absolute mouse pointer on and off, which is useful if users want to play games in our OS that require a relative mouse pointer (like Quake), so we'll want to provide a user-accessible method to toggling the pointer mode.
+
+Now let's handle the actual mouse events. When your PS/2 mouse driver receives a byte from the mouse when the absolute pointer is enabled, it should ignore that byte and call a function in the VMware driver to get the actual mouse data.
+
+``` c
+void vmware_handle_mouse(void) {
+    vmware_cmd cmd;
+    /* Read the mouse status */
+    cmd.bx = 0;
+    cmd.command = CMD_ABSPOINTER_STATUS;
+    vmware_send(&cmd);
+    
+    /* Mouse status is in EAX */
+    if (cmd.ax == 0xFFFF0000) {
+        /* An error has occured, let's turn the device off and back on */
+        mouse_off();
+        mouse_absolute();
+        return;
+    }
+    
+    /* The status command returns a size we need to read, should be at least 4. */
+    if ((cmd.ax & 0xFFFF) < 4) return;
+    
+    /* Read 4 bytes of mouse data */
+    cmd.bx = 4;
+    cmd.command = CMD_ABSPOINTER_DATA;
+    vmware_send(&cmd);
+    
+    /* Mouse data is now stored in AX, BX, CX, and DX */
+    int flags   = (cmd.ax & 0xFFFF0000) >> 16; /* Not important */
+    int buttons = (cmd.ax & 0xFFFF); /* 0x10 = Right, 0x20 = Left, 0x08 = Middle */
+    int x       = (cmd.bx); /* Both X and Y are scaled from 0 to 0xFFFF */
+    int y       = (cmd.cx); /* You should map these somewhere to the actual resolution. */
+    int z       = (int8_t)(cmd.dx); /* Z is a single signed byte indicating scroll direction. */
+    
+    /* TODO: Do something useful here with these values, such as providing them to userspace! */
+}
+```
+
+## Message Channels
+
+Advanced functionality of the backdoor employs message channels. We'll be using two different message channels: RPCI channels and TCLO channels. We'll use RPCI channels to send capability strings to VMware, and the TCLO channel to receive events.
+
+Message channels have five basic operations: open, close, receive, send, ack.
+
+``` c
+#define MESSAGE_OPEN  0x00000000
+#define MESSAGE_SEND  0x00010000
+#define MESSAGE_RECV  0x00030000
+#define MESSAGE_ACK   0x00050000 
+#define MESSAGE_CLOSE 0x00060000
+
+/* Open a message channel */
+int open_msg_channel(uint32_t protocol) {
+    vmware_cmd cmd;
+    cmd.cx = CMD_MESSAGE | MESSAGE_OPEN;
+    cmd.bx = protocol;
+    vmware_send(&cmd);
+    
+    /* AX indicates status; 0x10000 is success */
+    if ((cmd.ax & 0x10000) == 0) {
+        /* Failed */
+        return -1;
+    }
+    
+    /* Channel is returned in upper two bytes of EDX */
+    return cmd.dx >> 16;
+}
+
+/* Close a message channel */
+void close_msg_channel(int channel) {
+    vmware_cmd cmd;
+    cmd.cx = CMD_MESSAGE | MESSAGE_CLOSE;
+    cmd.bx = 0;
+    cmd.dx = channel << 16; /* channel passed in high two bytes of EDX */
+    vmware_send(&cmd);
+}
+```
+
+To send and receive messages, we first send a command containing our requested operation and its size to the normal backdoor. We then follow this up with either a read or write to the high-bandwidth backdoor. In the receive case, we also send an acknowledgement command afterwards.
+
+``` c
+/* Send data to a message channel */
+int send_msg(int channel, char * msg, size_t size) {
+    /* Write the send size to the regular backdoor */
+    vmware_cmd send = {0};
+    send.cx = CMD_MESSAGE | MESSAGE_SEND;
+    send.size = size;
+    send.dx = channel << 16;
+    vmware_send(&send);
+    
+    if (size == 0) return 0; /* Nothing more to do for empty messages */
+    
+    if (((send.cx >> 16) & 0x0081) != 0x0081) {
+        /* This error indicates the response is not expected
+           to come from the correct source (the high bandwidth
+           backdoor) and we should bail. */
+        return -1;
+    }
+    
+    /* Write the data to the high-bandwidth backdoor */
+    vmware_cmd data = {0};
+    data.bx = 0x00010000; /* High-bandwidth commands are in EBX */
+    data.cx = size; /* And ECX stores the size */
+    data.dx = channel << 16; /* Channel still in EDX though */
+    data.si = (uint32_t)msg; /* Probably needs adjustments for 64-bit guests */
+    vmware_send_hb(&data);
+    
+    /* Confirm status code */
+    if (!(cmd.bx & 0x00010000)) {
+        /* Failed to send */
+        return -1;
+    }
+    
+    return 0; /* Success */
+}
+
+/* Receive data from message channel */
+int recv_msg(int channel, char * buf, size_t bufsize) {
+    int size;
+    /* Request the recv data size */
+    vmware_cmd recv = {0};
+    recv.cx = CMD_MESSAGE | MESSAGE_RECV;
+    recv.dx = channel << 16;
+    vmware_send(&recv);
+    
+    size = cmd.bx; /* Data size from bx */
+    
+    if (size == 0) return 0; /* Nothing more to do for empty message */
+    
+    if (((cmd.cx >> 16)  & 0x0083) != 0x0083) {
+        /* The VM is trying to send us data through the wrong mechanism */
+        return -1;
+    }
+
+    if (size > bufsize) {
+        /* There is insufficient space in our buffer to fit this message */
+        return -1;
+    }
+    
+    vmware_cmd data = {0};
+    data.bx = 0x00010000; /* Same BX value as sending; just means "high bandwidth data" */
+    data.cx = size;
+    data.dx = channel << 16;
+    data.di = (uint32_t)buf; /* For reads, DI */
+    vmware_get_hb(&data);
+    
+    /* Check status bit */
+    if (!(data.bx & 0x00010000)) {
+        /* Failed to receive */
+        return -1;
+    }
+    
+    vmware_cmd ack = {0};
+    ack.cx = CMD_MESSAGE | MESSAGE_ACK;
+    ack.bx = 0x0001;
+    ack.dx = channel << 16;
+    vmware_send(&ack);
+    
+    return size;
+}
+```
+
+With these primitives, we can implement the RPCI and TCLO channels.
+
+### RPCI
+
+RPCI is used to send strings containing capability information and other data to the VM. These are a simple one-shot messages.
+
+``` c
+#define MSG_PROTO_RPCI 0x49435052 /* R P C I */
+int rpci_string(char * request) {
+    int channel = open_msg_channel(MSG_PROTO_RPCI);
+    if (channel < 0) return channel; /* Return error code */
+    
+    size_t size = strlen(request) + 1; /* RPCI messages include nul terminator */
+    send_msg(channel, request, size); /* Send RPCI message */
+    
+    /* The VM sends a response that should contain a success code */
+    char buf[16]; /* Response buffer */
+    int recv_size = recv_msg(channel, buf, sizeof(buf));
+
+    close_msg_channel(channel); /* Close the channel now that we are done with it */
+    
+    if (recv_size < 0) return recv_size; /* Return error code */
+    
+    return 0; /* 0 for success */
+}
+```
+
+### TCLO
+
+The TCLO channel is used to receive and acknowledge events. We'll use it later to receive display resolution information. There is only one TCLO channel available, and we'll keep it open through multiple operations.
+
+``` c
+#define MSG_PROTO_TCLO 0x4f4c4354 /* T C L O */
+int open_tclo_channel(void) {
+    static int tclo = -1;
+    if (tclo != -1) {
+        /* If the TCLO channel was already open, close it so we can reopen */
+        close_msg_channel(tclo);
+    }
+    tclo = open_msg_channel(MSG_PROTO_TCLO);
+    return tclo;
+}
+```
+
+To communicate with the TCLO channel, we first send an empty message indicating we are expecting an event message:
+
+``` c
+int tclo_query(void) {
+    int tclo = open_tclo_channel();
+    if (tclo < 0) return -1; /* Failed to open channel */
+
+    char buf[256]; /* Should be big enough */
+
+    if (send_msg(tclo, buf, 0) < 0) return -1; /* Failed to send empty message */
+    
+    while (1) {
+        int size = recv_msg(tclo, buf, 256);
+        if (i < 0) return -1; /* Receive error */
+        
+        if (i == 0) {
+            /* Empty response means nothing available */
+            /* This is a good time to send capability reports. */
+            /* This is also a good time to yield! */
+            if (send_msg(tclo, buf, 0) < 0) return -1; /* Failed to send blank response */
+        } else {
+            /* TODO: Check message types */
+        }
+    }
+}
+```
+
+Messages received from the TCLO channel are human-readable text. We'll use prefix matching to check different commands. I'll assume you have a function called "startswith" which can be implemented with strncmp.
+
+Two important commands are "reset" and "ping". This is where we're going to start to see some very specific responses VMware is expecting. TCLO replies do not include nul bytes. We'll write a quick macro to send replies so we don't have to repeat ourselves:
+
+``` c
+#define TCLO_REPLY(x) send_msg(tclo, x, sizeof(x))
+if (startswith(buf, "reset")) {
+    if (TCLO_REPLY("OK ATR toolbox") < 0) return -1; /* Failed to send */
+} else if (startswith(buf, "ping")) {
+    if (TCLO_REPLY("OK ") < 0) return -1; /* Failed to send */
+} else {
+    if (TCLO_REPLY("ERROR Unknown command") < 0) return -1; /* Failed to send */
+}
+```
+
+## Automatically Setting the Display Resolution
+
+There are some esoteric RPCI strings we need to send to indicate we are capable of receiving display resolution data. I have not tested whether some of these may be omitted, but the sample code from VMware sends all of them:
+
+``` c
+if (rpci_string("tools.capability.resolution_set 1") < 0) { return 1; }
+if (rpci_string("tools.capability.resolution_server toolbox 1") < 0) { return 1; }
+if (rpci_string("tools.capability.display_topology_set 1") < 0) { return 1; }
+if (rpci_string("tools.capability.color_depth_set 1") < 0) { return 1; }
+if (rpci_string("tools.capability.resolution_min 0 0") < 0) { return 1; }
+if (rpci_string("tools.capability.unity 1") < 0) { return 1; }
+```
+
+As for where to send these, the VMware sample code sends them once on startup and then again when there is nothing in the TCLO queue after receiving a "Capabilities_Register" event from TCLO. I have found only the latter is necessary for things to work.
+
+``` c
+int send_capabilities = 0;
+...
+/* This is a good time to send capability reports. */
+if (send_capabilities) {
+    if (rpci_string("tools.capability.resolution_set 1") < 0) { return 1; }
+    if (rpci_string("tools.capability.resolution_server toolbox 1") < 0) { return 1; }
+    if (rpci_string("tools.capability.display_topology_set 1") < 0) { return 1; }
+    if (rpci_string("tools.capability.color_depth_set 1") < 0) { return 1; }
+    if (rpci_string("tools.capability.resolution_min 0 0") < 0) { return 1; }
+    if (rpci_string("tools.capability.unity 1") < 0) { return 1; }
+    send_capabilities = 0;
+} else {
+    /* This is also a good time to yield! */
+}
+```
+
+``` c
+...
+} else if (startswith(buf, "Capabilities_Register")) {
+    if (TCLO_REPLY("OK ") < 0) return -1;
+    send_capabilities = 1;
+} else {
+...
+```
+
+Once we have registered our ability to handle resolution events, we'll also see "Resolution_Set" events from the TCLO channel:
+
+``` c
+...
+} else if (startswith(buf, "Resolution_Set")) {
+    /* Split the arguments */
+    char * x_str = &buf[15]; /* one space after Resolution_Set */
+    char * y_str = strstr(x_str, " "); *y_str = '\0'; y_str++;
+    
+    int x = atoi(x_str);
+    int y = atoi(y_str);
+    
+    set_display_resolution(x,y);
+
+    if (TCLO_REPLY("OK ") < 0) return -1;
+    /* Now may also be a good time to yield for an extended period of time
+       as it's unlikely the user will be resizing the guest again for a while */
+} else {
+...
+```
+
+And that's it - we have everything we need to set the display resolution to optimally fill the VMware window.
+
+Do note, however, that unlike the Bochs display device, the VMware one uses strides that may not match width\*bpp, which is more apparent at arbitrary window sizes.

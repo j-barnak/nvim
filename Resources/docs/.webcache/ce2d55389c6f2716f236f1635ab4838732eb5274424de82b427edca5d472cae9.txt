@@ -1,0 +1,275 @@
+The **Interrupt Translation Service** is an component of the [ARM Generic Interrupt Controller](https://wiki.osdev.org/Generic_Interrupt_Controller_versions_3_and_4 "Generic Interrupt Controller versions 3 and 4") (optional in GICv3, required in GICv4) that is used to route Locality-specific Peripheral Interrupts, such as message-signaled interrupts coming from [PCI Express](https://wiki.osdev.org/PCI_Express "PCI Express") devices. The ITS manages a series of mapping tables for devices, events, interrupt collections, and other entities in order to redistribute message-signaled interrupts and help compartmentalize interrupts coming from different virtual machines.
+
+If your ARM GIC has an ITS, you must use it to manage and send LPIs - the LPI register interface in the Redistributor will not be implemented.
+
+## Detecting the ITS
+
+### Devicetree
+
+When starting your system from a [Devicetree](https://wiki.osdev.org/Devicetree "Devicetree"), the ITS is listed as a child node of the node describing the GIC:
+
+``` text
+gic: interrupt-controller@0e001000 {
+    compatible = "arm,gic-700", "arm,gic-v3";
+    #address-cells = <2>;
+    #interrupt-cells = <3>;
+    #size-cells = <2>;
+    single-redist;
+    ranges;
+    interrupt-controller;
+    # ...
+
+    its_pcie: its@0e050000 {
+        compatible = "arm,gic-v3-its";
+        msi-controller;
+        reg = <0x0 0x0e050000 0x0 0x30000>;
+    };
+};
+```
+
+The `reg` parameter of the ITS node will tell you where its control registers begin.
+
+Note that a single system might have multiple ITS devices, each of which service interrupts from different sources.
+
+### ACPI
+
+If you're booting from ACPI, the ITS will be listed as one of the items in the [MADT](https://wiki.osdev.org/MADT "MADT"), specifically as entry type `0xF`. Its layout is as follows:
+
+``` c
+struct its_entry {
+  uint8_t type;
+  uint8_t length;
+  uint16_t reserved_0;
+  uint32_t gic_its_id; // if there are multiple ITSes, all of these values must be unique
+  struct its_control *its_control; // 64-bit address
+  uint32_t reserved_1;
+}
+```
+
+Note again that there might be multiple ITS units.
+
+## Starting the ITS
+
+After setting up an enabling the GIC proper, along with initializing the GICR_PROPBASER and GICR_PENDBASER registers with the appropriate LPI tables, you can initialize the ITS. The ITS exposes a series of control registers starting at the base address given in the Devicetree or MADT:
+
+**ITS Control Registers**
+
+| Name            | Offset               | Width | Type | Description                                         |
+|-----------------|----------------------|-------|------|-----------------------------------------------------|
+| GITS_CTLR       | 0x0000               | 4     | RW   | Control register (activate and read ITS state)      |
+| GITS_IIDR       | 0x0004               | 4     | RO   | Identification register                             |
+| GITS_TYPER      | 0x0008               | 8     | RO   | Type register (read ITS features)                   |
+| GITS_MPAMIDR    | 0x0010               | 4     | RO   | Support MPAM sizes                                  |
+| GITS_PARTIDR    | 0x0014               | 4     | RW   | PARTID register                                     |
+| GITS_MPIDR      | 0x0018               | 4     | RO   | ITS affinity (the set of PEs it can send events to) |
+| GITS_STATUSR    | 0x0040               | 4     | RO   | (Optional) Error reporting status register          |
+| GITS_UMSIR      | 0x0048               | 8     | RO   | (Optional) Unmapped MSI register                    |
+| GITS_CBASER     | 0x0080               | 8     | RW   | Base address of command queue                       |
+| GITS_CWRITER    | 0x0088               | 8     | RW   | Write position of command queue                     |
+| GITS_CREADR     | 0x0090               | 8     | RO   | Read position of command queue                      |
+| GITS_BASER\<n\> | 0x0100 + 0x0008 \* n | 8     | RW   | Translation table descriptors                       |
+
+### Disabling the ITS first
+
+The first thing you should do is ensure the ITS is disabled and not running any commands, first by clearing the enable bit (bit 0) of GITS_CTLR and then waiting for the quiescent bit (bit 31) to be set:
+
+``` c
+its_control->ctlr = its_control->ctlr & 0xfffffffe;
+while (!(its_control->ctlr & 0x80000000)) ;
+```
+
+### Allocating ITS tables
+
+Then, allocate tables for the GITS_BASER registers. Each GITS_BASER register describes a table that the ITS uses for internal bookkeeping - you will not be accessing these tables during execution, but you will need to reserve memory for them and clear them to zero. The layout of the GITS_BASER register is as follows:
+
+**GITS_BASER Register**
+
+| Name            | Bit Offsets | Type | Description                                                                                                                                                                                                                          |
+|-----------------|-------------|------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Valid           | 63          | RW   | Starts off clear, set this when you allocate memory for the table.                                                                                                                                                                   |
+| Indirect        | 62          | RW   | If cleared, describes a flat table. If set, describes a two-level table.                                                                                                                                                             |
+| InnerCache      | 59-61       | RW   | Sets the inner cacheability of memory accesses to the table (e.g. 0b001 for Normal Inner Non-cacheable)                                                                                                                              |
+| Type            | 56-58       | RO   | Describes the type of entity the table concerns itself with (1 for devices, 2 for vPEs, 4 for interrupt collections). In particular, if this field is 0, then the register does not describe a translation table and can be skipped. |
+| OuterCache      | 53-55       | RW   | Sets the outer cacheabiilty of memory accesses to the table. 0 indicates that the value from InnerCache should be used.                                                                                                              |
+| EntrySize       | 48-52       | RO   | The number of bytes in each table entry, minus one (so a value of 0xf means 0x10 bytes).                                                                                                                                             |
+| PhysicalAddress | 12-47       | RW   | Specifies the page-aligned physical address of the table.                                                                                                                                                                            |
+| Shareability    | 10-11       | RW   | Specifies the shareability attributes of the table (Non-shareable, Inner Shareable, Outer Shareable)                                                                                                                                 |
+| PageSize        | 8-9         | RO   | A code indicating the size of pages described in Size (0 for 4KiB, 1 for 16KiB, 2 for 64KiB)                                                                                                                                         |
+| Size            | 0-7         | RW   | The number of pages allocated for the table minus one. Page_Size specifies the size of each page.                                                                                                                                    |
+
+``` c
+for (int n = 0; n < 8; n++) {
+  uint64_t baser_value = its_control->baser[n];
+  int table_type = (baser_value & 0x0700000000000000) >> 0x38
+  if (table_type != 0) {
+    size_t entry_size = ((baser_value & 0x1f000000000000) >> 0x30) + 1;
+    size_t entry_count = get_entry_count (table_type);
+    size_t needed_size = entry_size * entry_count;
+    int page_size_code = baser_value & 0x300;
+    size_t page_size = 1000 << (page_size_code >> 7);
+    size_t allocation_size = (needed_size + page_size - 1) & ~(page_size - 1)
+    size_t size_in_pages = allocation_size / page_size;
+    void *table = alloc_aligned_to_0x10000_uncacheable(allocation_size); // whatever your kernel allocation function is
+    its_control->baser[n] = baser_value & 0xffff000000000000) | 0x8800000000000000 | (uint64_t) table | (size_in_pages - 1);
+  }
+}
+```
+
+The number of entries you need for each table will depend on what type of entries it stores:
+
+- The Device table stores an entry indexed by the DeviceID of the requesting device. For PCIe, this is the requester ID of the device (the packed tuple of bus, device, and function numbers), meaning that you will likely want to implement 0x10000 entries for this table if this ITS's purpose is to service a PCIe bus.
+- The vPE table stores processor identities for virtual interrupts (GICv4 only). If your OS is not using these, allocate 1.
+- The Collection table stores mappings for interrupt collections. Collections are a virtual mapping that is primarily intended to link events to specific Redistributors. If you're not doing anything particularly complex with interrupt routing, this table should have one entry for each processor you want to have servicing hardware interrupts.
+
+### Allocating the command queue
+
+The last memory you'll allocate is the command queue, which you'll be using to send commands to the ITS. This code allocates a page-sized queue:
+
+``` c
+// set both indices to zero
+its_control->cwriter = 0;
+its_control->creadr = 0;
+// allocate a 1-page buffer and set the base register to that
+its_control->cbaser = ((uint64_t) alloc_aligned_to_0x10000_uncacheable(0x1000)) | 0x8800000000000000;
+```
+
+### Enabling the ITS
+
+Once you've allocated all the required memory, enabling the ITS is a simple matter of setting the Enable bit:
+
+``` c
+its_control->ctlr = its_control->ctlr | 1;
+```
+
+## ITS Commands
+
+Once you have enabled the ITS, interaction with it will primarily consist of sending commands. Commands are 32 bytes long and have their contents primarily arranged into four quadwords:
+
+``` c
+struct its_command = {
+  uint64_t qword0;
+  uint64_t qword1;
+  uint64_t qword2;
+  uint64_t qword3;
+};
+```
+
+To send a command, write it into the location pointed to by `cwriter & 0xfffe0 + cbaser & 0xfffffff000`, then increment `cwriter` by 32, wrapping back around to 0 if needed. The ITS will start processing the command immediately, and will update the value of `creadr` accordingly. If a command fails such that the queue stalls, the low bit of `creadr` will be set.
+
+The ITS offers quite a few commands to work with, which are listed in the GICv3/4 specification. Here is a list of the commands that would be necessary for a simplified interrupt setup.
+
+### MAPC
+
+MAPC creates an Interrupt Collection and maps it to a Redistributor. It can also be used to remove a previously created mapping.
+
+Bit 0x10 (PTA) of GITS_TYPER will state how the Redistributor should be specified:
+
+- If the bit is set, it should be the physical address of the Redistributor.
+- Otherwise, it should be the Redistibutor's processor number.
+
+``` c
+int valid; // whether you are creating or removing a mapping
+int icid; // whatever collection ID you want to assign
+int pta = its_control->typer & 0x80000;
+uint64_t rdbase_field = (pta ? (uint64_t) gicr : (gicr->typer & 0xffff00) << 8)
+its_command->qword0 = 9;
+its_command->qword1 = 0;
+its_command->qword2 = (valid ? 0x80000000000000000 : 0) | rdbase_field | icid;
+its_command->qword3 = 0;
+```
+
+### MAPD
+
+MAPD creates a Device entry for a given DeviceID and maps it to an Interrupt Translation Table that you create for it. It can also be used to remove an existing mapping.
+
+The Interrupt Translation Table is another internal bookkeeping table, allocated per device that you will be servicing interrupts from. The size of entries in this table is given by the ITT_Entry_Size field in GITS_TYPER.
+
+``` c
+int valid; // whether you are creating or removing a mapping
+int device_id; // the device ID you are mapping
+int size_log_2; // the log base 2 of the max number of the event ID you want to support
+size_t itt_entry_size = (its_control->typer & 0xf0) >> 4 + 1;
+void *itt = alloc_aligned_to_0x1000_uncacheable(itt_entry_size << size_log_2);
+its_command->qword0 = 9 | device_id << 0x20;
+its_command->qword1 = size_log_2 - 1;
+its_command->qword2 = (valid ? 0x80000000000000000 : 0) | (uint64_t) itt;
+its_command->qword3 = 0;
+```
+
+### MAPTI
+
+MAPTI maps a given DeviceID/EventID tuple to a given LPI on a given ICID.
+
+``` c
+int device_id; // the device ID you are mapping
+int event_id; // the event ID you are mapping
+int lpi; // the LPI ID you want to map to
+int icid; // the ICID you want to service this interrupt
+its_command->qword0 = 0xa | device_id << 0x20;
+its_command->qword1 = event_id | lpi << 0x20;
+its_command->qword2 = icid;
+its_command->qword3 = 0;
+```
+
+### DISCARD
+
+DISCARD unmaps an exisitng DeviceID/EventID tuple.
+
+``` c
+int device_id; // the device ID you are mapping
+int event_id; // the event ID you are mapping
+its_command->qword0 = 0xf | device_id << 0x20;
+its_command->qword1 = event_id;
+its_command->qword2 = 0;
+its_command->qword3 = 0;
+```
+
+### INV
+
+INV ensures that any caching in the Redistributors for the given DeviceID/EventID tuple matches the LPI configuration tables held in memory (which can be changed by other commands).
+
+``` c
+int device_id; // the device ID you are mapping
+int event_id; // the event ID you are mapping
+uint64_t rdbase_field = same_way_you_calculated_rdbase_field_earlier();
+its_command->qword0 = 0xc | device_id << 0x20;
+its_command->qword1 = event_id;
+its_command->qword2 = rdbase_field;
+its_command->qword3 = 0;
+```
+
+Note that some commands do this invalidation automatically, and you don't need to run this command. In particular, DISCARD does this invalidation, but the MAP commands do not.
+
+### SYNC
+
+Ensures that all outstanding ITS operations associated with the given Redistributor are globally observed before any further ITS commands are executed.
+
+``` c
+uint64_t rdbase_field = same_way_you_calculated_rdbase_field_earlier();
+its_command->qword0 = 0x5;
+its_command->qword1 = 0;
+its_command->qword2 = rdbase_field;
+its_command->qword3 = 0;
+```
+
+## Receiving Message Signaled Interrupts
+
+Once you've used the command queues to set up interrupt mappings on the ITS, you are now ready to send message signaled interrupts from connected devices.
+
+The destination address for message signaled interrupts is the GITS_TRANSLATER register, a 4-byte write-only register located at offset 0x10040 from the control register base (technically, at offset 0x40 in the so-called "ITS translation register map"). You will want to instruct your MSI devices to write the EventID you set to this address:
+
+``` c
+struct its_translation *its_translation = (struct its_translation *)((uint64_t)its_control + 0x10000);
+struct msix_table_entry *entry; // an MSI-X table entry in the device's PCIe config space
+msix_table_entry->data = event_id;
+msix_table_entry->address = &(its_translation->translater);
+msix_table_entry->vector_control = 0;
+```
+
+When a device writes to this register, it will also communicate its DeviceID via an auxillary channel, which cannot be spoofed by the interrupt sender but can be read by the ITS. This DeviceID varies based on what kind of devices the ITS is connected to, but for [PCI Express](https://wiki.osdev.org/PCI_Express "PCI Express"), it is the requester ID of the device (`bus << 8 | device << 3 | function`).
+
+Any DeviceID/EventID combination that is written to this register that has not yet been mapped will either be dropped, or will be reported on the GITS_UMSIR register.
+
+## References
+
+- [GICv3/4 specification (Arm IHI 0069G)](https://kib.kiev.ua/x86docs/ARM/GIC/IHI0069C_gic_architecture_specification.pdf%7CARM)

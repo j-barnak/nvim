@@ -1,0 +1,129 @@
+When a task (process, thread, application, program, ...) is using the CPU, some of the task's state is stored in the CPU - things like the contents of registers, the address of the task's current stack, the current instruction pointer, which virtual address space the task is using, etc.
+
+A task switch involves saving any state that the previous task had in the CPU (that the task may have modified) and then loading any state that the next task expects to be in the CPU. Typically a kernel stores at some of this state on the task's (kernel) stack and some of the state in data structure/s in kernel-space (e.g. in a "task control block" structure).
+
+There are two very different ways of implementing multi-tasking, depending on how the kernel stacks are done. However, the mechanisms outlined below are not mutually exclusive, and both may be used at the same time in different situations, to potentially achieve better memory usage and performance.
+
+## Kernel Stack Per Task
+
+In most kernels, each task has its own kernel stack used when a task moves between user-space (and user stack) and kernel (and kernel stack). When the kernel is entered (as a result of interrupt, exception, system call, etc.), all the registers of userspace are typically pushed onto its corresponding kernel stack. Then, task switches only ever happen after something else (IRQ, exception, system call) has already caused the task to switch to kernel code and kernel stack; which means that task switches can only ever occur between tasks that are running kernel code. Additionally, since the kernel stack holds all the context, it makes it easy to make the kernel be preemptible at any moment, and not just while running in user mode. This is the recommended model for the beginners.
+
+For example (NASM syntax, 32-bit 80x86, "cdecl" calling convention, single-CPU only/globals used for "per CPU" variables, no support for FPU/MMX/SSE/AVX, untested):
+
+``` nasm
+;C declaration:
+;   void switch_tasks(thread_control_block *next_thread);
+;
+;WARNING: Caller is expected to disable IRQs before calling, and enable IRQs again after function returns
+
+switch_tasks:
+
+    ;Save previous task's state
+
+    ;Notes:
+    ;  For cdecl; EAX, ECX, and EDX are already saved by the caller and don't need to be saved again
+    ;  EIP is already saved on the stack by the caller's "CALL" instruction
+    ;  The task isn't able to change CR3 so it doesn't need to be saved
+    ;  Segment registers are constants (while running kernel code) so they don't need to be saved
+
+    push ebx
+    push esi
+    push edi
+    push ebp
+
+    mov edi,[current_task_TCB]    ;edi = address of the previous task's "thread control block"
+    mov [edi+TCB.ESP],esp         ;Save ESP for previous task's kernel stack in the thread's TCB
+
+    ;Load next task's state
+
+    mov esi,[esp+(4+1)*4]         ;esi = address of the next task's "thread control block" (parameter passed on stack)
+    mov [current_task_TCB],esi    ;Current task's TCB is the next task TCB
+
+    mov esp,[esi+TCB.ESP]         ;Load ESP for next task's kernel stack from the thread's TCB
+    mov eax,[esi+TCB.CR3]         ;eax = address of page directory for next task
+    mov ebx,[esi+TCB.ESP0]        ;ebx = address for the top of the next task's kernel stack
+    mov [TSS.ESP0],ebx            ;Adjust the ESP0 field in the TSS (used by CPU for for CPL=3 -> CPL=0 privilege level changes)
+    mov ecx,cr3                   ;ecx = previous task's virtual address space
+
+    cmp eax,ecx                   ;Does the virtual address space need to being changed?
+    je .doneVAS                   ; no, virtual address space is the same, so don't reload it and cause TLB flushes
+    mov cr3,eax                   ; yes, load the next task's virtual address space
+.doneVAS:
+
+    pop ebp
+    pop edi
+    pop esi
+    pop ebx
+
+    ret                           ;Load next task's EIP from its kernel stack
+```
+
+The following is an example of the same function for the System V X86_64 calling convention:
+
+``` nasm
+switch_tasks:
+    ; Save previous task's state
+    push rbp
+    push rbx
+    push r12
+    push r13
+    push r14
+    push r15
+
+    mov rdi,[current_task_TCB]
+    mov [rdi+TCB.ESP],rsp
+
+    ; Adjust TSS, IA32_SYSENTER_ESP and other registers to point to the rights stack,
+    ; similarly to the previous example (may also be done in higher level language
+    ; by the caller. Also, switch the active page tables, fp/vector data, and so on here.
+    ; All of that depends on the kernel layout
+
+    pop r15
+    pop r14
+    pop r13
+    pop r12
+    pop rbx
+    pop rbp
+    ret
+```
+
+When called, the example function above behaves very similarly to sched_yield from POSIX, where it returns to the context of the caller after the other threads are done running and have yielded their execution, and the caller was scheduled to run again.
+
+Note that the low-level task switch code should be written in pure assembly. If it's written in inline assembly in the middle of a C function then the compiler may add its own "function prologue" and "function epilogue" code that changes the layout of the stack. This is important because when a new task is being created the kernel needs to put values on the new task's kernel stack to match the values that the "switch_tasks" expects to pop off of the new task's stack.
+
+Also note that (for kernels primarily written in higher level languages) the low-level task switch code may be the only part of the scheduler that needs to be rewritten when porting the kernel to a different architecture.
+
+This low-level task switch code may be called directly from other places in the kernel (e.g. when a task is being pre-empted and the caller knows exactly which task is pre-empting the current task); but may also be called by higher-level code that selects a task to switch to (e.g. when the currently running task is being terminated and the kernel doesn't know which task to switch to).
+
+## Kernel Stack Per CPU
+
+For some rare kernels (mostly only a few micro-kernels), there is only one kernel stack per CPU (and each task doesn't have its own kernel stack), which gets (primarely) reused by the tasks/threads, instead of having their own individual stacks. Because of that, the common stacks cannot store any of the thread's state, which makes the task switching (and as a result, the rest of the kernel) radically different from the previous model. In theory, this has the potential to save some memory (the stacks are typically 4-8KB in size on the smaller end, or much larger in the more complex kernels, or some programming languages, such as Rust) and achieve better performance because of the cache locality, especially for microkernels, which execute more threads, and do more context switches. However, this comes with a lot of trade-offs discussed later, and is not recommended to beginners.
+
+Compared to the stack per thread model, instead of saving the state to the stack, the userspace state typically gets stored to some kind of current per-thread data structure ("thread control block", TCB) immediately after the switch from userspace to kernel; and symmetrically, when returning to the userspace, the state is also restored from the active thread's TCB (which might be different from the entry if the kernel has decided to schedule a different thread).
+
+Then, the kernel typically has some "thread to return to" variable (for each CPU), and any kernel code can modify this variable when it decides a task switch should happen, instead of calling yield/switch_tasks function as explained before. When the kernel wants to block, it cannot just leave its context on the stack and instead has to explicitly save and set its resume context (continuations), or fall back to the previous scheme and allocate a stack for it.
+
+In addition, the preemption of the kernel code also becomes more difficult and has to be designed much more carefully, since it is no longer possible to just preempt the kernel code at any arbitrary place and immediately schedule a different task to run. To combat this, the kernel may limit what is allowed to preempt it, not reschedule while preempted (to not rug pull the preempted context from its thread context), and use explicit preemption points during long operations (which may check if the other task needs to run, save the progress to the continuation point, give up what it's doing, and explicitly run the different task). Another option is making the kernel completely nonpreemptible, which might be good for a carefully designed microkernel, but comes with a big latency issues for monolithic kernels (or usual kernels in general).
+
+For that reasons, "kernel stack per CPU" is not recommended for beginners; partly because it's only beneficial in rare cases (e.g. it'd be silly for a monolithic kernel), and partly because it becomes a lot more complex as soon as you try to overcome the latency problems due to the reasons outlined before. However, it might still be useful as a later advanced optimization in some sort of hybrid system, where the kernel mostly uses stack per thread, but is allowed to give up the stacks of the treads that are not currently running (which subjects them to use of the mechanisms outlined above) to potentially improve the memory consumption and performance.
+
+  
+
+## See Also
+
+### Articles
+
+- [Context Switching](https://wiki.osdev.org/Context_Switching "Context Switching")
+- [Multitasking Systems](https://wiki.osdev.org/Multitasking_Systems "Multitasking Systems")
+- [Monotasking Systems](https://wiki.osdev.org/Monotasking_Systems "Monotasking Systems")
+- [Scheduling Algorithms](https://wiki.osdev.org/Scheduling_Algorithms "Scheduling Algorithms")
+
+### Threads
+
+- [Designing a kernel to be preemptible](http://forum.osdev.org/viewtopic.php?t=9669 "topic:9669")
+- [Making a fully preemptible kernel](http://forum.osdev.org/viewtopic.php?t=812 "topic:812")
+
+### External Links
+
+- [Computer Multitasking](https://wikipedia.org/wiki/Computer_multitasking "wikipedia:Computer multitasking") on Wikipedia.
+- [https://www.cse.iitd.ac.in/~sbansal/os/bib/draves91continuations.pdf](https://www.cse.iitd.ac.in/~sbansal/os/bib/draves91continuations.pdf)

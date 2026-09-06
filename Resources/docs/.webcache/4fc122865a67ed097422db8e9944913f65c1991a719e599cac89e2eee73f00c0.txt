@@ -1,0 +1,166 @@
+It's always a problem to decide if you use asynchronous or synchronous message passing. In this article I'll show you how to have both. I'll use a pseudo-code to describe the algorithm, so you can implement it to your language environment. Note that I refer sender and receiver as processes, it can be easily adopted to threads.
+
+## Definitions
+
+You should have a structure to be sent to another process. I'll refer to this as the message, and I will assume you have these fields:
+
+``` c
+struct message {
+  src //the source process that sends the message
+  dst //the destination process that receives
+  body //the body of the message (usually holds type and arguments, it's up to you)
+}
+```
+
+Sending and receiving must be atomic. This means you must prevent task switches until it's finished. I have two different timers in my OS, one for the wallclock, and another for preemption. So for me this means masking the latter, and reenabling it at the end. You could also use a [mutex](https://wiki.osdev.org/index.php?title=Mutex&action=edit&redlink=1 "Mutex (page does not exist)") or [semaphore](https://wiki.osdev.org/Semaphore "Semaphore") to accomplish mutual exclusion.
+
+Blocking and non blocking: the sender can be blocked upon sending a message, but this does not necessarily have to be so. The receiver must block if there's no message waiting. Blocking means the OS will remove the process from ready queue, and won't allocate CPU resources for it until the blockade is cancelled. When it happens, it simply puts the process back into the ready queue (most likely to the top). Processes on the blocked queue will not use any CPU time. This prevents a [busy loop](https://wiki.osdev.org/Busy_loop "Busy loop").
+
+You should maintain a queue for every process to record blocked waiting processes. This queue must not be a circular buffer, you can implement it as a simple chained list. I assume you have written the following functions already (they will be required by the tutorial):
+
+``` c
+ block(processid)               //function to block a process
+ awake(processid)               //function to unblock a process
+ isblocked(processid)           //returns true if process is blocked
+ pushwaitqueue(recvpid,sendpid) //put sendpid on recvpid process' sender waiting queue
+ topwaitqueue()                 //get the last pid in queue
+ popwaitqueue()                 //get the last pid in queue and remove it from queue
+```
+
+Now a few words on synchronization: if it's asynchronous, it means the sender is not interested whether the receiver accepts the message or not. It will send the message and move on (won't block). This also means the message could be lost, hence messaging is unreliable. On the other hand, a synchronous sender will wait (block) until the message is delivered, this creates a rendezvous point (so the sender process and the receiver process will run synchronized after the message is accepted). Also because the sender knows when and if the message has arrived, it's a reliable messaging system.
+
+Finally, [circular buffer](https://wiki.osdev.org/index.php?title=Circular_buffer&action=edit&redlink=1 "Circular buffer (page does not exist)"). It's a FIFO (First In, First Out) buffer. It's implemented by pointers (or indeces) head and tail. If you push something in a FIFO, it will be stored at the memory pointed to by head, and head will be adjusted. On pop, the item will be read from the memory pointed to by tail, and tail will be adjusted. If head or tail reaches the end of the buffer, they will wrap around.
+
+``` c
+struct circbuff {
+  int head;  //index to queue start within buffer
+  int tail;  //index to queue end within buffer
+  int count; //number of elements in buff
+  message buffer[MAXITEMS]; //buffer to hold messages
+}
+```
+
+You could calculate the number of items in the buffer using the head and tail variables, but as being circular, there's a special case which cannot be handled without a count variable: head will be equal to tail if the buffer is empty, and also when it's full.
+
+## Asynchronous
+
+### Sending
+
+Now let's start with sending a message, and not care about. This could lead to losing a message, which we can't afford, so we'll do a trick here. Despite of being asynchronous, we will block if receiver buffer is full, and we'll continue only after there's space for our message.
+
+``` c
+void async_send(msg)
+{
+  disable_task_switch();
+  msg.src=current_process; //we must not rely on it's set
+  tmpbuff=map_buffer(msg.dst); //temporarily map destination's buffer into sender process' address space
+  if (tmpbuff.count==MAXITEMS) { //if receiver buffer is full, block
+    pushwaitqueue(msg.dst,current_process); //record this process in dst's sender queue
+    block(current_process);
+  }
+  push(tmpbuff,msg);
+  if(isblocked(msg.dst)) awake(msg.dst);  //if destination process is blocked for receiving, awake it
+  unmap_buffer();
+  enable_task_switch();
+}
+```
+
+### Receiving
+
+Doesn't matter whether it's synchronized or not, receiver must block if it's message queue is empty, and there's nothing to process.
+
+``` c
+circbuff buff;
+message async_recv()
+{
+  message tmp=NULL;
+  disable_task_switch();
+  if (buff.count==0) block(current_process); //if there's nothing to get, block
+  tmp=pop(buff);
+  while(topwaitqueue()!=NULL) awake(popwaitqueue()); //awake blocked processes waiting to send
+  enable_task_switch();
+  return (tmp);
+}
+```
+
+It's possible that under very rare circumstances you want a non-blocking receive that returns NULL if there's no message waiting. I highly discourage, because it leads to a polling busy loop, but just in case, here you are:
+
+``` c
+message async_recvpoll()
+{
+  message tmp=NULL;
+  disable_task_switch();
+  if (buff.count!=0) {
+    tmp=pop(buff);
+    while(topwaitqueue()!=NULL) awake(popwaitqueue());
+  }
+  enable_task_switch();
+  return (tmp);
+}
+```
+
+Note that we count on recv being blocking to implement synchronous transfer. If you use the non-blocking code above, you'll have to take care of that on your own.
+
+## Synchronous
+
+### Sending
+
+Okay, now that we have primitives for asynchronous sending and receiving, it's rather easy to implement synchronous transfer on top of them.
+
+``` c
+message sync_send(msg)
+{
+  async_send(msg); //we send the message
+  return(async_recv()); //and we block waiting for the response
+}
+```
+
+### Receiving
+
+Likewise,
+
+``` c
+message consume(message); //function to do something with the message
+void sync_recv()
+{
+  message tmp;
+  tmp=async_recv();  //wait for a message to arrive
+  tmp=consume(tmp);  //process the message and return a response message
+  async_send(tmp);   //send it back to the caller
+}
+```
+
+## What is this good for?
+
+Synchronous messaging is often used to implement [Remote Procedure Calls](https://wiki.osdev.org/RPC "RPC"). You send the function code and it's arguments first, then consume() calls the appropriate function and creates a message with the results.
+
+Most OS use some primitive messaging to implement more sophisticated IPC like [pipes](https://wiki.osdev.org/Unix_Pipes "Unix Pipes") or [sockets](https://wiki.osdev.org/Socket "Socket"). Reading and writing from [files](https://wiki.osdev.org/index.php?title=File&action=edit&redlink=1 "File (page does not exist)") is also worked out by sending messages between the vfs process and the disk driver.
+
+## Pitfalls
+
+This may seem to be easy, but don't forget it's only a tutorial. In the real world, you'll have to work a lot before your messaging code can became useful. Some suggestions:
+
+- check the receiver actually wants to receive from the sender.
+- always check for loops: process A waiting for B to send, C waiting for A. Now it would be a disaster if B also waits for C.
+- you should implement an alarm for sending. If delivering fails within a timeout, you should check the reason(s), and maybe resend.
+- you should have an unique id in every message to detect retransmission.
+- normally userspace applications never have to receive messages without sending an acknowledge. So it's a good idea to tie asynchronous messaging to a capability flag or something similar.
+- you should have a matrix of process ids recording who is allowed to send messages to who. An application should never send messages to a driver process directly (only through a library or system call).
+
+## See Also
+
+### Articles
+
+- [Remote Procedure Call (RPC)](https://wiki.osdev.org/Remote_Procedure_Call "Remote Procedure Call")
+- [Message Passing](https://wiki.osdev.org/Message_Passing "Message Passing")
+
+### Threads
+
+- [passing messages through registers](http://forum.osdev.org/viewtopic.php?t=10116 "topic:10116")
+- [RPC message size, handling oversized messages](http://forum.osdev.org/viewtopic.php?t=10922 "topic:10922")
+
+### External Links
+
+- [Message Passing](https://wikipedia.org/wiki/Message_Passing "wikipedia:Message Passing") on Wikipedia
+- [How do I implement curcular buffer in C](http://stackoverflow.com/questions/827691/how-do-you-implement-a-circular-buffer-in-c)?
+- This is how [Minix](http://git.minix3.org/?p=minix.git;a=blob;f=kernel/proc.c;h=4595f08c2182c1ea9783b9b9cec3f499df0b5b2e;hb=HEAD#l799) does message passing (see functions mini_send, mini_receive well documented).

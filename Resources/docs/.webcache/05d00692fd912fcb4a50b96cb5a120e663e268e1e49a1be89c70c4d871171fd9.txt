@@ -1,0 +1,137 @@
+**Unreal mode** consists of breaking the 64KiB limit of real mode segments (while retaining 16-bit instructions and the `segment * 16 + offset` addressing mode) by tweaking the [descriptor caches](https://wiki.osdev.org/Descriptor_Cache "Descriptor Cache").
+
+## Usage
+
+Unreal mode is usually recommended in the two following cases:
+
+- You're trying to extend a legacy 16-bit DOS program so that it can deal with larger data and neither [Virtual 8086 Mode](https://wiki.osdev.org/Virtual_8086_Mode "Virtual 8086 Mode"), nor xms are suitable for your needs.
+- You're trying to load something that will run in 32-bit mode which is larger than 640K (therefore you cannot load it in conventional memory) and you don't want to bother writing a protected mode disk driver yet, but you also want to avoid switching between real and protected mode to copy chunks from the conventional memory buffer into extended memory.
+
+You still will not have full access to all physical RAM if you do not have the [A20 Line](https://wiki.osdev.org/A20_Line "A20 Line") enabled; all the "odd" 1 MiB blocks will be unavailable.
+
+## Implementation
+
+To do this, you need to set the descriptor cache's limits for your segment register(s) to any value higher than 64KiB (usually a full 4GiB (`0xffffffff`)).
+
+In protected mode, bits 3-15 in the segment registers represent an index into [the global descriptor table](https://wiki.osdev.org/GDT "GDT"). That's why in the following code 0x08 = 1000b gets you entry \#1 (entry \#0 is ALWAYS a null descriptor).
+
+When (in protected mode) a segment register is loaded with a "selector", a "segment descriptor cache register" is filled with the descriptor's values, including the size (or limit). After the switch back to real mode, these values are not modified, regardless of what value is in the 16-bit segment register. So the 64KiB limit is no longer valid and 32-bit offsets can be used in Real Mode to actually access areas above 64KiB (`segment * 16 + 32-bit offset`).
+
+### Big Unreal Mode
+
+This won't touch CS.  
+Therefore IP is unaffected by all this, and the code itself is still limited to 64KiB.
+
+``` nasm
+; Assembly example
+
+; nasm boot.asm -o boot.bin
+; partcopy boot.bin 0 200 -f0
+
+org 0x7c00                ; add to offsets
+
+start:
+   xor ax, ax             ; make it zero
+   mov ds, ax             ; DS=0
+   mov ss, ax             ; stack starts at seg 0
+   mov sp, 0x9c00         ; 2000h past code start, 
+                          ; making the stack 7.5k in size
+
+   cli                    ; no interrupts
+   push ds                ; save real mode
+
+   lgdt [gdtinfo]         ; load gdt register
+
+   mov  eax, cr0          ; switch to pmode by
+   or al,1                ; set pmode bit
+   mov  cr0, eax
+   jmp 0x8:pmode
+
+pmode:
+   mov  bx, 0x10          ; select descriptor 2
+   mov  ds, bx            ; 10h = 10000b
+
+   and al,0xFE            ; back to realmode
+   mov  cr0, eax          ; by toggling bit again
+   jmp 0x0:unreal
+
+unreal:
+   pop ds                 ; get back old segment
+   sti
+
+   mov bx, 0x0f01         ; attrib/char of smiley
+   mov eax, 0x0b8000      ; note 32 bit offset
+   mov word [ds:eax], bx
+
+   jmp $                  ; loop forever
+
+gdtinfo:
+   dw gdt_end - gdt - 1   ;last byte in table
+   dd gdt                 ;start of table
+
+gdt:        dd 0,0        ; entry 0 is always unused
+codedesc:   db 0xff, 0xff, 0, 0, 0, 10011010b, 00000000b, 0
+flatdesc:   db 0xff, 0xff, 0, 0, 0, 10010010b, 11001111b, 0
+gdt_end:
+
+   times 510-($-$$) db 0  ; fill sector w/ 0's
+   dw 0xAA55              ; Required by some BIOSes
+```
+
+### Huge Unreal Mode
+
+Huge Unreal Mode enables code over 64KiB. However, it is more difficult to implement as real mode interrupts do not automatically save the high 16 bits of EIP. Initialization is simple though, you just load a code segment with a 4GiB limit:
+
+``` nasm
+; Assembly example
+
+; nasm boot.asm -o boot.bin
+; partcopy boot.bin 0 200 -f0
+
+org 0x7c00               ; add to offsets
+
+start:   xor ax, ax       ; make it zero
+
+   ...                    ; As before
+
+   mov  cr0, eax
+   jmp 0x8:pmode
+pmode:
+   mov  bx, 0x10          ; select descriptor 2, instead of 1
+   mov  ds, bx            ; 10h = 10000b
+
+   and al,0xFE            ; back to realmode
+   mov  cr0, eax          ; by toggling bit again
+   jmp 0x0:huge_unreal
+huge_unreal:
+
+   ...                    ;As before
+
+gdtinfo:
+   dw gdt_end - gdt - 1   ;last byte in table
+   dd gdt                 ;start of table
+
+gdt         dd 0,0        ; entry 0 is always unused
+flatcode    db 0xff, 0xff, 0, 0, 0, 10011010b, 10001111b, 0
+flatdata    db 0xff, 0xff, 0, 0, 0, 10010010b, 11001111b, 0
+gdt_end:
+
+   times 510-($-$$) db 0  ; fill sector w/ 0's
+   dw 0xAA55              ; Required by some BIOSes
+```
+
+WARNING: this may not work on some emulators or some hardware.
+
+## Compiler Support
+
+### Smaller C
+
+The [Smaller C](https://wiki.osdev.org/Smaller_C "Smaller C") compiler supports unreal mode. It produces [MZ](https://wiki.osdev.org/MZ "MZ") executables for unreal mode (can be loaded with [BootProg](https://wiki.osdev.org/BootProg "BootProg")).
+
+The code and the stack are to be located below the 1MB mark and the stack size is limited by 64KB (IOW, there's nothing unusual about CS:(E)IP, SS:(E)SP, it's a natural setup for MZ executables in DOS). The DS and ES segment registers are set to 0, so C pointers can work as flat 32-bit physical addresses and address data or memory-mapped devices anywhere in the first 4GB of memory.
+
+The startup code of these executables performs the necessary relocation (there are only custom relocations and no standard MZ relocations, which may simplify loading of the executables) and sets up unreal mode before passing control to the equivalent of *main()*. See *srclib/c0du.asm* and other C/assembly code under *srclib* in the compiler source tree for how to write bits of assembly code for unreal mode (look for *asm("inline asm code")* under *\#ifdef \_\_UNREAL\_\_*).
+
+You can try out unreal mode in DOS (e.g. in DOSBox, VirtualBox + FreeDOS) as the compiler fully supports the DOS + unreal mode combo in its C library. *tests/vesalfb.c* is a simple example of setting up a [VESA](https://wiki.osdev.org/VESA "VESA") graphics mode with the linear frame buffer enabled and drawing something on the screen in unreal mode.
+
+For an example of an Unreal Mode [bootloader](https://wiki.osdev.org/Bootloader "Bootloader") implementation with Smaller C, look at [FYSOS](https://github.com/fysnet/FYSOS/tree/master/loader).

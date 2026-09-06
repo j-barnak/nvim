@@ -1,0 +1,601 @@
+|                                                                                          |     |
+|------------------------------------------------------------------------------------------|-----|
+| This page or section is a stub . You can help the wiki by accurately contributing to it. |     |
+
+  
+**Iwlwifi** is the Linux kernel driver for wireless Intel Wi-Fi devices.
+
+## Firmware download
+
+Before usage, a firmware download is required. For many new NIC cards, the firmware is available in [this repository](https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/tree/). [\[1\]](https://www.intel.com/content/www/us/en/support/articles/000005511/wireless.html)
+
+  
+
+## Writing to registers
+
+Registers are mapped in MMIO, writel() is used to write 32-bit and 64-bit values safely to the MMIO. In PCI configuration space, the BAR must be used to set up the device registers first. Writel definitions of the Linux source are available [here](https://billauer.co.il/blog/2014/08/wmb-rmb-mmiomb-effects/).
+
+  
+
+## NIC access
+
+NIC access is needed to read or write some registers safely.
+
+Grabbing NIC access involves a few steps:
+
+- Disabling [softirq](https://lwn.net/Articles/520076/)
+- Test if the transport is alive
+- Test if there is no command in flight
+- Set the registers
+- When release access is called, enable softirq.
+
+``` c
+// Set bits of the mask
+static inline void set_bits_mask(uint32_t reg, uint32_t mask)
+{
+    uint32_t v = read32(reg);
+    v &= ~mask;
+    v |= mask;
+    write32(reg, v);
+}
+
+
+// Poll bits
+int iwl_poll_bits_mask(u32 addr, u32 bits, u32 mask, int timeout)
+{
+    int t = 0;
+    while (t < timeout) {
+        if ((read32(trans, addr) & mask) == (bits & mask))
+            return 0;
+            
+        udelay(POLL_INTERVAL);
+        t += POLL_INTERVAL;
+    }
+
+    return -1;
+}
+
+
+/* Control and status registers */
+#define CSR_BASE        (0x000)
+#define CSR_GP_CONTROL  (CSR_BASE + 0x024)
+
+
+/* Grab access */
+int grab_nic_access() {
+    if (!trans_alive || cmd_in_flight) return -1;
+    
+    if (family >= family_bz) {
+        set_bits_mask(CSR_GP_CONTROL, BIT(21));
+        
+        if (family >= family_8000) udelay(2);
+        
+        iwl_poll_bits_mask(CSR_GP_CONTROL, BIT(20), BIT(20), 1500);
+        if (ret) {
+            // Handle error
+            return -1;
+        }
+    } else {
+        set_bits_mask(CSR_GP_CNTRL, 0x08);
+        
+        if (family >= family_8000) udelay(2);
+        
+        iwl_poll_bits_mask(CSR_GP_CONTROL, 0x01, 0x11, 1500);
+        if (ret) {
+            // Handle error
+            return -1;
+        }
+    }
+
+    return 0;
+}
+```
+
+``` c
+// Set bits of the mask
+static inline void clear_bits_mask(uint32_t reg, uint32_t mask)
+{
+    uint32_t v = read32(reg);
+    v &= ~mask;
+    v |= 0;
+    write32(reg, v);
+}
+
+
+#define CSR_BASE        (0x000)
+#define CSR_GP_CONTROL  (CSR_BASE + 0x024)
+
+
+/* Release access */
+int release_nic_access() {
+    if (cmd_in_flight) return -1;
+    
+    if (family >= family_bz) {
+        clear_bits_mask(CSR_GP_CONTROL, BIT(21));
+    } else {
+        clear_bits_mask(CSR_GP_CONTROL, 0x08);
+    }
+
+    return 0;
+}
+```
+
+## Keep warm
+
+Keep warm is a technique to keep the host DRAM powered on. It utilizes a dummy buffer, in this case a 4K buffer that needs to be passed to the device. The buffer must be 4K aligned and shifted four bits to the right.
+
+``` c
+// Flow handler
+#define FH_BASE                         (0x1000)
+
+/* Physical address */
+#define KEEP_WARM_ADDR_REG              (FH_BASE + 0x97C)
+#define KEEP_WARM_SIZE                  0x1000
+
+
+int init_kw() {
+    void *kw = allocate_align(KEEP_WARM_SIZE, 0x1000);
+    if (!kw) return -1;
+    
+    write32(KEEP_WARM_ADDR_REG, kw >> 4);
+    return 0;
+}
+```
+
+## Queue
+
+Intel devices use [circular ring](https://wiki.osdev.org/Intel_8254x#:~:text=writeH)%3B%0A%7D-,Ring%20setup,-%5Bedit%20%7C) buffers to send packets. There are many rings which have to be used: TX ring (transmit), RX ring (receive), command rings and a firmware download ring. The firmware download ring is usually only available at the firmware download stage. The command rings are used to change device settings and the other rings are used for networking. The DMA needs base registers to be set to the base address of the descriptor ring. Below is an example for the TX ring.
+
+``` c
+/*
+ * Flow Handler memory block (0x1000 - 0x2000)
+ */
+
+// Base registers for TX gen1
+#define FH_0_15_LOWER_BOUND         (FH_BASE + 0x9D0)
+#define FH_0_15_UPPER_BOUND         (FH_BASE + 0xA10)
+#define FH_16_19_LOWER_BOUND        (FH_BASE + 0xBF0)
+#define FH_16_19_UPPER_BOUND        (FH_BASE + 0xC00)
+#define FH_20_31_LOWER_BOUND        (FH_BASE + 0xB20)
+#define FH_20_31_UPPER_BOUND        (FH_BASE + 0xB80)
+
+// 22000 base registers
+#define GEN2_TX_BASE_REGS           (0x1C00)
+
+// Get base register
+unsigned int get_base_register(int channel) {
+    // Generation 2 chips
+    if (gen2) {
+        // For generation 2, channel should not exceed 64
+        throw_error(chnl >= 64);
+        return GEN2_TX_BASE_REGS + 8 * chnl;
+    }
+
+    if (chnl < 16)
+        return FH_MEM_CBBC_0_15_LOWER_BOUND + 4 * chnl;
+
+    if (chnl < 20)
+    return FH_MEM_CBBC_16_19_LOWER_BOUND + 4 * (chnl - 16);
+    
+    // For generation 1, channel should not exceed 32
+    throw_error(chnl >= 32);
+    return FH_MEM_CBBC_20_31_LOWER_BOUND + 4 * (chnl - 20);
+}
+
+
+// make sure we have NIC control
+void write_nic_access32(uint32_t reg, uint32_t val) {
+    grab_access();
+    write32(reg, val);
+    release_access();
+}
+
+// make sure we have NIC control
+void write_nic_access64(uint32_t reg, uint64_t val) {
+    grab_access();
+    write32(reg, low_32(val));
+    write32(reg, high_32(val));
+    release_access();
+}
+
+
+/* Set the base register */
+int set_base_register(unsigned int addr, int channel) {
+    // it requires a 256-byte aligned address
+    if (gen2) {
+        write_nic_access64(get_base_register(channel), addr);
+    } else {
+        write_nic_access32(get_base_register(channel), addr >> 8);
+    }
+    return 0;
+}
+```
+
+### TX layout
+
+For generation 1, every even low address field is unaligned on a 16-bit boundary, so it must be access with a special helper. Each TFD supports up to 20 / 25 buffers in DRAM, with a maximum size of 4K - 4 per buffer and a maximum size of 8K for the whole TFD. Each buffer needs to be a continuous block of memory, which may be scattered in DRAM. A ring has 256 TFDs with no more than 255 TFDs allowed on a queue.
+
+#### Generation 1:
+
+**TFD buffer descriptor Gen1**
+
+| Size | Offset | Field                            |
+|------|--------|----------------------------------|
+| 4    | 0x00   | Low address                      |
+| 2    | 0x04   | High 4 bits and length of buffer |
+
+**TFD Gen1**
+
+| Size      | Offset    | Field                                                      |
+|-----------|-----------|------------------------------------------------------------|
+| 3         | 0x00      | Reserved                                                   |
+| 1         | 0x03      | Number of TFD buffer descriptors \[4:1 (res):3 (padding)\] |
+| 6 \* 20   | 0x04      | TFD buffer descriptor gen1                                 |
+| 4         | 0x04 + 6n | Padding                                                    |
+| 128 bytes |           |                                                            |
+
+  
+
+#### Generation 2:
+
+**TFD buffer descriptor Gen2**
+
+| Size | Offset | Field                 |
+|------|--------|-----------------------|
+| 2    | 0x00   | Length                |
+| 8    | 0x02   | Address of the buffer |
+
+**TFD Gen2**
+
+| Size      | Offset | Field                      |
+|-----------|--------|----------------------------|
+| 2         | 0x00   | Number of transmit buffers |
+| 10 \* 25  | 0x02   | TFD buffer descriptor gen2 |
+| 4         | 0xFC   | Padding                    |
+| 256 bytes |        |                            |
+
+### TX uCode setup
+
+The firmware called uCode needs a copy of the base address if the TX ring as it is unable to read the registers. The uCode operates in DRAM and uses commands for configuration. Below is an example for the initialization of the TX ring.
+
+``` c
+#define TFD_GEN1_NUM_TBS 20
+
+struct tfd_tb_gen1 {
+    le32 lo;
+    le16 hi_len;
+} PACKED;
+
+struct tfd_gen1 {
+    uint8_t reserved1[3];
+    uint8_t num_tbs;
+    struct tfd_tb_gen1 tbs[TFD_GEN1_NUM_TBS];
+    le32 __pad;
+} PACKED;
+
+#define TFD_GEN2_NUM_TBS 25
+
+struct tfd_tb_gen2 {
+    le16 tb_len;
+    le64 addr;
+} PACKED;
+
+struct tfd_gen2 {
+    le16 num_tbs;
+    struct tfd_tb_gen2 tbs[TFD_GEN2_NUM_TBS];
+    le32 pad;
+} PACKED;
+
+void *allocate_tx_tfd(int size, int tid) {
+    void *ring = NULL;
+    if (gen2) {
+        ring = allocate_align(size * sizeof(tfd_gen2), 256);
+    } else {
+        ring = allocate_align(size * sizeof(tfd_gen1), 256);
+    }
+    if (!ring) return ring;
+
+    set_base_register(ring, tid);
+    return ring;
+}
+
+
+/**
+ * struct iwl_bc_tbl_entry - scheduler byte count table entry
+ *  base physical address provided by SCD_DRAM_BASE_ADDR
+ * For devices up to 22000:
+ * @tfd_offset:
+ *  For devices up to 22000:
+ *       0-12 - tx command byte count
+ *      12-16 - station index
+ *  For 22000 and on:
+ *       0-12 - tx command byte count
+ *      12-13 - number of 64 byte chunks
+ *      14-16 - reserved
+ */
+struct sched_bc_tbl_entry {
+    __le16 tfd_offset;
+} __packed;
+
+
+
+/* Read with read32 */
+#define CSR_HW_REV              (CSR_BASE + 0x028)
+
+
+
+struct cmd_header {
+    uint8_t cmd_id;
+    uint8_t group_id;
+    /**
+     * @sequence:
+     * Sequence number for the command.
+     *
+     * The driver sets up the sequence number to values of its choosing.
+     * uCode does not use this value, but passes it back to the driver
+     * when sending the response to each driver-originated command, so
+     * the driver can match the response to the command.  Since the values
+     * don't get used by uCode, the driver may set up an arbitrary format.
+     *
+     * There is one exception:  uCode sets bit 15 when it originates
+     * the response/notification, i.e. when the response/notification
+     * is not a direct response to a command sent by the driver.  For
+     * example, uCode issues REPLY_RX when it sends a received frame
+     * to the driver; it is not a direct response to any driver command.
+     */
+    le16 sequence;
+} PACKED;
+
+
+struct rx_packet {
+    /*
+     * The first 4 bytes of the RX frame header contain both the RX frame
+     * size and some flags.
+     * Bit fields:
+     * 31:    flag flush RB request
+     * 30:    flag ignore TC (terminal counter) request
+     * 29:    flag fast IRQ request
+     * 28-27: Reserved
+     * 26:    RADA enabled
+     * 25:    Offload enabled
+     * 24:    RPF enabled
+     * 23:    RSS enabled
+     * 22:    Checksum enabled
+     * 21-16: RX queue
+     * 15-14: Reserved
+     * 13-00: RX frame size
+     */
+    le32 len_n_flags;
+    struct cmd_header hdr;
+    uint8_t data[];
+} PACKED;
+
+
+// Up to 20
+#define MAX_CMD_TBS_PER_TFD 20
+
+struct iwl_host_cmd {
+    const void *data[MAX_CMD_TBS_PER_TFD];
+    struct rx_packet *resp_pkt;
+    unsigned long _rx_page_addr;
+    uint32_t _rx_page_order;
+
+    uint32_t flags;
+    uint32_t id;
+    uint16_t len[MAX_CMD_TBS_PER_TFD];
+    uint8_t dataflags[MAX_CMD_TBS_PER_TFD];
+};
+
+
+struct tx_queue_cfg_cmd {
+    uint8_t sta_id;
+    uint8_t tid;
+    le16 flags;
+    le32 cb_size;
+    le64 byte_cnt_addr;
+    le64 tfdq_addr;
+} PACKED; /* TX_QUEUE_CFG_CMD_API_S_VER_2 */
+
+
+struct tx_queue_cfg_rsp {
+    le16 queue_number;
+    le16 flags;
+    le16 write_pointer;
+    le16 reserved;
+} PACKED; /* TX_QUEUE_CFG_RSP_API_S_VER_2 */
+
+
+struct schedular_cfg_cmd {
+    le32 operation;
+    union {
+        struct {
+            le32 sta_mask;
+            uint8_t tid;
+            uint8_t reserved[3];
+            le32 flags;
+            le32 cb_size;
+            le64 bc_dram_addr;
+            le64 tfdq_dram_addr;
+        } PACKED add; /* TX_QUEUE_CFG_CMD_ADD_API_S_VER_1 */
+        struct {
+            le32 sta_mask;
+            le32 tid;
+        } PACKED remove; /* TX_QUEUE_CFG_CMD_REMOVE_API_S_VER_1 */
+        struct {
+            le32 old_sta_mask;
+            le32 tid;
+            le32 new_sta_mask;
+        } PACKED modify; /* TX_QUEUE_CFG_CMD_MODIFY_API_S_VER_1 */
+    } PACKED u; /* TX_QUEUE_CFG_CMD_OPERATION_API_U_VER_1 */
+} PACKED; /* TX_QUEUE_CFG_CMD_API_S_VER_3 */
+
+
+
+
+static inline uint32_t rx_packet_payload_len(const struct rx_packet *pkt)
+{
+    return (le32_to_cpu(pkt->len_n_flags) & FH_RSCSR_FRAME_SIZE_MSK) - sizeof(pkt->hdr);
+}
+
+
+static int txq_alloc_response(struct iwl_host_cmd *hcmd)
+{
+    struct iwl_tx_queue_cfg_rsp *rsp;
+
+    if (rx_packet_payload_len(hcmd->resp_pkt) != sizeof(*rsp)) {
+        goto error;
+    }
+
+    rsp = (void *)hcmd->resp_pkt->data;
+    int qid = le16_to_cpu(rsp->queue_number); // Store it
+    uint32_t wr_ptr = le16_to_cpu(rsp->write_pointer);
+
+    // If qid is unsupported
+    if (qid >= ARRAY_SIZE(num_txq)) {
+        goto error;
+    }
+
+    wr_ptr &= (max_tfd - 1);
+
+    /* Place first TFD at index corresponding to start sequence number */
+    txq->read_ptr = wr_ptr;
+    txq->write_ptr = wr_ptr;
+
+    free_pages(cmd->_rx_page_addr, cmd->_rx_page_order);
+    return qid;
+
+error_free_resp:
+    free_pages(cmd->_rx_page_addr, cmd->_rx_page_order);
+    return -1;
+}
+
+enum CMD_MODE {
+    CMD_ASYNC           = BIT(0),
+    CMD_WANT_SKB        = BIT(1),
+    CMD_SEND_IN_RFKILL  = BIT(2),
+    CMD_BLOCK_TXQS      = BIT(3),
+};
+
+enum tx_queue_cfg_actions {
+    TX_QUEUE_CFG_ENABLE_QUEUE       = BIT(0),
+    TX_QUEUE_CFG_TFD_SHORT_FORMAT       = BIT(1),
+};
+
+enum scd_queue_cfg_operation {
+    IWL_SCD_QUEUE_ADD = 0,
+    IWL_SCD_QUEUE_REMOVE = 1,
+    IWL_SCD_QUEUE_MODIFY = 2,
+};
+
+enum mvm_command_groups {
+    LEGACY_GROUP = 0x0,
+    LONG_GROUP = 0x1,
+    SYSTEM_GROUP = 0x2,
+    MAC_CONF_GROUP = 0x3,
+    PHY_OPS_GROUP = 0x4,
+    DATA_PATH_GROUP = 0x5,
+    SCAN_GROUP = 0x6,
+    NAN_GROUP = 0x7,
+    LOCATION_GROUP = 0x8,
+    BT_COEX_GROUP = 0x9,
+    PROT_OFFLOAD_GROUP = 0xb,
+    REGULATORY_AND_NVM_GROUP = 0xc,
+    DEBUG_GROUP = 0xf,
+    STATISTICS_GROUP = 0x10,
+};
+
+#define SCD_QUEUE_CONFIG_CMD 0x17
+
+#define TFD_QUEUE_CB_SIZE(x) (ilog2(x) - 3)
+#define WIDE_ID(grp, opcode) (((grp) << 8) | (opcode))
+
+
+/* Allocate tx queue */
+int allocate_tx_queue(uint32_t flags, uint32_t sta_mask, uint8_t tid, int size)
+{
+    union {
+        struct iwl_tx_queue_cfg_cmd old;
+        struct schedular_cfg_cmd new;
+    } cmd;
+
+    struct iwl_host_cmd hcmd = {
+        .flags = CMD_WANT_SKB,
+    };
+
+    void *schedular = allocate(sizeof(sched_bc_tbl_entry));
+    if (!schedular) return -1;
+
+    // Allocate ring
+    void *txq = NULL;
+    if (family == family_bz && hw_revision == 0x00) {
+        size = 4096;
+        txq = allocate_tx_tfd(size, tid);
+        if (!txq) { free(schedular); return -1; }
+    } else {
+        do {
+            txq = allocate_ring(size, tid);
+            if (txq) break;
+            size /= 2; // Try smaller sizes
+        } while (size >= 16);
+        if (!txq) { free(schedular); return -1; }
+    }
+
+    // queue_alloc_cmd_ver can be found in the patch header
+    if (queue_alloc_cmd_ver == 0) {
+        memset(&cmd.old, 0, sizeof(cmd.old));
+        cmd.old.tfdq_addr = cpu_to_le64(txq);
+        cmd.old.byte_cnt_addr = cpu_to_le64(schedular);
+        cmd.old.cb_size = cpu_to_le32(TFD_QUEUE_CB_SIZE(size));
+        cmd.old.flags = cpu_to_le16(flags | TX_QUEUE_CFG_ENABLE_QUEUE);
+        cmd.old.tid = tid;
+
+        if (__builtin_popcount(sta_mask) != 1) {
+            goto error;
+        }
+        cmd.old.sta_id = __builtin_ffs(sta_mask) - 1;
+
+        hcmd.id = SCD_QUEUE_CFG;
+        hcmd.len[0] = sizeof(cmd.old);
+        hcmd.data[0] = &cmd.old;
+    } else if (queue_alloc_cmd_ver == 3) {
+        memset(&cmd.new, 0, sizeof(cmd.new));
+        cmd.new.operation = cpu_to_le32(IWL_SCD_QUEUE_ADD);
+        cmd.new.u.add.tfdq_dram_addr = cpu_to_le64(txq);
+        cmd.new.u.add.bc_dram_addr = cpu_to_le64(schedular);
+        cmd.new.u.add.cb_size = cpu_to_le32(TFD_QUEUE_CB_SIZE(size));
+        cmd.new.u.add.flags = cpu_to_le32(flags);
+        cmd.new.u.add.sta_mask = cpu_to_le32(sta_mask);
+        cmd.new.u.add.tid = tid;
+
+        hcmd.id = WIDE_ID(DATA_PATH_GROUP, SCD_QUEUE_CONFIG_CMD);
+        hcmd.len[0] = sizeof(cmd.new);
+        hcmd.data[0] = &cmd.new;
+    } else {
+        goto error;
+    }
+
+    int ret = iwl_trans_send_cmd(trans, &hcmd);
+    if (ret) goto error;
+
+    ret = txq_alloc_response(trans, txq, &hcmd);
+    if (ret < 0) goto error;
+
+    return ret;
+
+error:
+    free(txq);
+    free(schedular);
+    return -1;
+}
+```
+
+## See Also
+
+### Articles
+
+### External Links
+
+- [https://elixir.bootlin.com/linux/v6.18.6/source/drivers/net/wireless/intel/iwlwifi](https://elixir.bootlin.com/linux/v6.18.6/source/drivers/net/wireless/intel/iwlwifi)
+- [https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/tree/](https://git.kernel.org/pub/scm/linux/kernel/git/firmware/linux-firmware.git/tree/)
+- [https://billauer.co.il/blog/2014/08/wmb-rmb-mmiomb-effects/](https://billauer.co.il/blog/2014/08/wmb-rmb-mmiomb-effects/)
+- [https://www.intel.com/content/www/us/en/support/articles/000005511/wireless.html](https://www.intel.com/content/www/us/en/support/articles/000005511/wireless.html)

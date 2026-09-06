@@ -1,0 +1,91 @@
+# References
+
+UDI Bus/Bridge Metalanguage v1.1., UDI Physical I/O specification v1.1.
+
+# Core interface
+
+## Service Calls
+
+``` c
+/* Provided by bus drivers; enables child devices to request and enable their IRQs. */
+void udi_intr_attach_req(udi_intr_attach_cb_t *intr_attach_cb);
+/* Provided by bus drivers; enables child devices to disable their IRQs. */
+void udi_intr_detach_req(udi_intr_detach_cb_t *intr_detach_cb);
+
+/* Provided by child drivers; called to notify a child device when an IRQ occurs, after the preprocessing stage. */
+void udi_intr_event_ind(
+    udi_intr_event_cb_t *intr_event_cb,
+    udi_ubit8_t flags);
+
+/* Provided by bus drivers; called when by the child driver to signal that it can handle more IRQs. */
+void udi_intr_event_rdy(udi_intr_event_cb_t *intr_event_cb);
+```
+
+## Control block messages
+
+``` c
+/* Message/control-block type used by udi_intr_attach_req(). */
+typedef struct {
+    udi_cb_t gcb;
+    udi_index_t interrupt_idx;
+    udi_ubit8_t min_event_pend;
+    udi_pio_handle_t preprocessing_handle;
+} udi_intr_attach_cb_t;
+
+/* Message/Control-block type used by udi_intr_detach_req(). */
+typedef struct {
+    udi_cb_t gcb;
+    udi_index_t interrupt_idx;
+} udi_intr_detach_cb_t;
+
+/* Message/Control-block type used by udi_intr_event_ind() and udi_intr_event_rdy() */
+typedef struct {
+    udi_cb_t gcb;
+    udi_buf_t *event_buf;
+    udi_ubit16_t intr_result;
+} udi_intr_event_cb_t;
+```
+
+# IRQ Routing, IRQ controllers and Bus-IRQ mapping
+
+## Types of IRQs
+
+Naturally, when talking about device driver IRQ management APIs, one would wonder how the API could be mapped to an existing kernel's IRQ infrastructure.
+
+A well designed kernel designs its IRQ handling into several groups of related IRQs. Should your design not be as complete as the one presented here, you could consider this a useful bonus design guide for private implementation.
+
+- Pin-based IRQs.
+- Message signaled IRQs.
+- Non-Maskable interrupts.
+
+## The slow move from pin-based IRQs to MSI IRQs
+
+Most devices, due to the fact that the majority of chipsets available today only support pin-based IRQs, export only one "interrupt", in spite of the fact that many devices may actually be optimally manufactured with more than one; for example, a network card could be designed to have two interrupts: one for signaling frame receipt, and one for say, signaling that a DMA transfer from a send operation has been completed. It has been theorized that as message-signaled IRQs come into more common use, the trend will lean more toward devices exposing functions using more than one interrupt per device. UDI genericizes this possibility by allowing drivers to indicate which interrupt they are trying to attach to the system. This is the purpose of the `'interrupt_idx'` member of the control block messages.
+
+## IRQ Routing modes
+
+The IBM-PC can use any of three different IRQ routing modes: Symmetric I/O mode, i8259a-PIC mode, and "mixed mode" which is explicitly not supported by the ACPI specification. Most kernels use either PIC or Symmetric I/O mode for IRQ routing. A kernel is expected to detect the IRQs associated with a bus and maintain this information in some form of IRQ information repository.
+
+## Buses, IRQs and Bus \<-\> device IRQ mapping
+
+Each bus on a chipset may export zero or more IRQs of any kind, be they pin-based, message signaled or NMIs. For legacy buses like ISA, the device attached to each pin of the IRQ controllers is known. The i8254 PIT is assigned ISA-IRQ-0, and connected to pin-0 of the i8259a-PIC, and so forth. When the I/O APICs are in use, ISA IRQs are ID-mapped to the first 16 Global System IRQs, so generally, discovering where the ISA device IRQs are connected is very easy. ISA device detection is often very easily doable, and actually works well with a lot of assumptions.
+
+But for other buses such as PCI, discovering which device is attached to which pin(s) on the i8259a-PICs or the I/O APICs is more difficult. PCI device \<-\> IRQ-pin mapping requires the reading of tables in RAM, and possibly support for ACPICA. Regardless, a kernel must detect and know the mappings of devices to their IRQ pins. It should be possible for a kernel to be given a request to enable "IRQ-3" on the "PCI Bus"; and the kernel should be able to translate that using something along these lines, until it arrives at the correct PIC or I/O APIC pin to handle the request:
+
+- Request: "Enable PCI IRQ-3".
+  - Translate: "PCI IRQ-3" to "PCI-Link D".
+  - Look-up PCI IRQ steering information.
+  - Look-up current mapping for PCI-Link-D.
+  - Ensure that the kernel hasn't, for example, steered the PCI link to a non-default PIC or I/O-APIC pin.
+  - Get the correct PIC or I/O-APIC pin that corresponds to PCI-Link-D.
+    - Enable the PIC or I/O APIC pin in question.
+
+You can probably see that "PCI-IRQ-3" may actually correspond to I/O APIC pin 20. This is not information that PCI drivers should have to care about; a PCI driver only cares about PCI bus notation. This is the case with UDI drivers -- a UDI driver that uses the PCI bus will make service calls that will ask the kernel to enable `'interrupt_idx'` number `3` for that device. PCI does allow each device to have up to 4 interrupts, so a PCI device can ask the kernel to enable any of these 4 interrupts. The kernel must then know how to translate that PCI Interrupt number into a PCI Link number, and then furthermore into an I/O APIC or PIC pin number. The same goes for any other type of bus -- devices should not care about IRQ-controller pins. They should only care about their own private IRQ-ID-number which is relative to their parent bus.
+
+# General sequence for managing IRQs
+
+In general, UDI drivers will just call `udi_intr_attach_req()`, passing the index of a device-specific interrupt that the driver wishes to enable, and it is left up to the kernel to translate this information to a pin-number or MSI-IRQ index or NMI, depending on what that device-specific IRQ ID maps to. Drivers do not know about or care about the particular IRQ routing scheme in use by the kernel (i8259a-PIC or Symmetric I/O mode), whether or not one of its IRQs has been steered to a non-default pin, or indeed the type of IRQ that is being enabled. It is up to the kernel to decide, for example, whether to use Message-Signaled IRQ functionality for a device if it supports it.
+
+Upon a successful call to `udi_intr_attach_req()`, the driver is expected to supply a number of message control blocks to the kernel for the purpose of IRQ handling, and from that point on, the device should expect to receive any number of IRQ notifications (signaled via a call into the driver at its entry point for `udi_intr_event_ind`).
+
+TODO: Discuss interrupt preprocessing here.

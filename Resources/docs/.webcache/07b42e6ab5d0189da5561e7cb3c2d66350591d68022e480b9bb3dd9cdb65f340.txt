@@ -1,0 +1,142 @@
+|                                                                                                                       |     |
+|-----------------------------------------------------------------------------------------------------------------------|-----|
+| This page or section is a work in progress and may thus be incomplete. Its content may be changed in the near future. |     |
+
+Once the [TLS Handshake](https://wiki.osdev.org/TLS_Handshake "TLS Handshake") has been completed, the two parties can start communicating the way they would normally do. Only now, they do so by encrypting any message and sending a TLS Record instead. We will focus on this page about what happens when the TLS_DHE_RSA_WITH_AES_128_CBC_SHA cipher suite is used (see [SSL/TLS](https://wiki.osdev.org/SSL/TLS "SSL/TLS") for more information about what this means)
+
+At this point, any TLS packet -as sent on top of TCP- is of type Application Data (save TLS Alert messages) and looks like:
+
+``` c
+typedef struct __attribute__((packed)) {
+    uint8_t content_type;  // 0x17 for Application Data
+    uint16_t version;      // 0x0303 for TLS 1.2
+    uint16_t length;       // length of encrypted_data
+        uint8_t encrypted_data[];
+} TLSRecord;
+```
+
+## Encrypting / Decrypting data with AES CBC
+
+Any encrypted data in this example is using AES 128-bit in CBC mode. AES encrypts 128-bit (16 bytes) blocks of data using a 128, 192 or 256-bit secret key. The CBC mode tells how to use AES to encrypt some plaintext which is not 16-bytes long (and no, you don't want to encrypt each 16-byte block [independently](https://en.wikipedia.org/wiki/Block_cipher_mode_of_operation#Electronic_Codebook_.28ECB.29))
+
+The following steps needs to be implemented:
+
+- Create an intermediary plaintext which concatenates:
+  - The 8-bytes sequence number. This number is 0 for handshake messages, 1 for the first application data message, 2 for the next application data message, etc.
+  - The 1-byte content type (0x16 for a handshake message, 0x17 for an application data message)
+  - The TLS version (0x0303)
+  - The 2-bytes plaintext length
+  - The original plaintext
+- Compute the MAC on that intermediary plaintext using HMAC+SHA1 and the client/server_write_MAC_key
+- The final plaintext will be the concatenation of \[original plaintext\] + \[20-bytes MAC\] + \[CBC padding\]. Because AES-CBC only encrypts data whose size is a multiple of 16, the CBC padding is composed of bytes to fill to 16 (16 full bytes if the plaintext size is already a multiple of 16). The value of each of those padding bytes is the length of the padding + 1. So in the case of a 16-bytes plaintext, the final plaintext would be \[16-bytes plaintext\] \| \[20 bytes MAC\] \| 0x0B0B0B0B0B0B0B0B0B0B0B0B
+- Come up with a random 16-bytes IV
+- Encrypt the final plaintext using the client/server_write_key and this IV
+- The ciphertext is the concatenation of IV + ciphertext
+
+``` python
+from Crypto.Hash import *
+from Crypto.Cipher import AES
+
+def to_n_bytes(number, size):
+    h = '%x' % number
+    s = ('0'*(size*2 - len(h)) + h).decode('hex')
+    return s
+
+def encrypt(plaintext, iv, key_AES, key_MAC, seq_num, content_type):
+    hmac = HMAC.new(key_MAC, digestmod=SHA)
+    plaintext_to_mac = to_n_bytes(seq_num, 8) + to_n_bytes(content_type, 1) + '\x03\x03' + to_n_bytes(len(plaintext), 2) + plaintext
+    hmac.update(plaintext_to_mac)
+    mac_computed = hmac.digest()
+
+    cipher = AES.new(key_AES, AES.MODE_CBC, iv)
+    plaintext += mac_computed
+    padding_length = 16 - (len(plaintext) % 16)
+    if padding_length == 0:
+        padding_length = 16
+
+    padding = chr(padding_length - 1) * padding_length
+    ciphertext = cipher.encrypt(plaintext + padding)
+
+    return ciphertext
+
+def decrypt(message, key_AES, key_MAC, seq_num, content_type, debug=False):
+    iv = message[0:16]
+    cipher = AES.new(key_AES, AES.MODE_CBC, iv)
+    decoded = cipher.decrypt(message[16:])
+
+    padding = to_int(decoded[-1:]) + 1
+    plaintext = decoded[0:-padding-20]
+    mac_decrypted = decoded[-padding-20:-padding]
+
+    hmac = HMAC.new(key_MAC, digestmod=SHA)
+    plaintext_to_mac = to_n_bytes(seq_num, 8) + to_n_bytes(content_type, 1) + '\x03\x03' + to_n_bytes(len(plaintext), 2) + plaintext
+    hmac.update(plaintext_to_mac)
+    mac_computed = hmac.digest()
+
+    if debug:
+        print('Decrypted: [' + decoded.encode('hex') + ']')
+        print('Plaintext: [' + plaintext.encode('hex') + ']')
+        print('MAC (decrypted): ' + to_hex(mac_decrypted))
+        print('MAC (computed):  ' + to_hex(mac_computed))
+        print('')
+
+    return plaintext
+```
+
+## Another Encryption: AES GCM (Optional)
+
+Another popular mode of operation used by TLS in conjunction with AES is the [Galois Counter Mode (GCM)](https://en.wikipedia.org/wiki/Galois/Counter_Mode).
+
+The Galois Counter Mode is basically the regular [Counter Mode](https://en.wikipedia.org/wiki/Block_cipher_mode_of_operation#Counter_.28CTR.29) combined with its own authentication tag based on a Galois Field. As a result, GCM contains its own MAC (contrary to the CBC mode). The cryptographic hash mentioned in the cipher suite (e.g. SHA256 in TLS_DHE_RSA_WITH_AES_128_GCM\_**SHA256**) is only used by the PRF and to generate the Encrypted Handshake Message.
+
+As a result, the GCM does not require MAC keys, and needs less data from the key expansion:
+
+``` python
+keys = PRF(master_secret, "key expansion", server_random + client_random, 40)
+
+# We assume a 128-bit AES key
+client_write_key = keys[0:16]
+server_write_key = keys[16:32]
+# The IVs are only 4 bytes long
+client_IV = keys[32:36]
+server_IV = keys[36:40]
+```
+
+The GCM algorithm take as input an initialization vector (IV), the plaintext, an AES key as well as authenticated data. While those may vary depending on the use of GCM, TLS is using the following format:
+
+- The IV is a 12-bytes array composed of an implicit part and an explicit part
+  - The first four bytes (the implicit IV) are the client or server IV (depending on who's writing the message) which was derived from the master secret
+  - The explicit IV is a 8-bytes random sequence
+- The Authenticated data is a concatenation of:
+  - The sequence number (8 bytes)
+  - The content type (1 byte)
+  - The TLS version (0x0303 for TLS 1.2)
+  - The plaintext size (2 bytes) which should be the final encrypted message size minus 24 (8 for the IV, 16 for the MAC)
+
+The output sent by TLS is the concatenation of:
+
+- The explicit IV (8 bytes). There is no need to send the implicit IV as both sides can derive it from the key expansion
+- The ciphertext, generated using the counter mode, and using the IV as an initial counter
+- The Authentication Tag (16 bytes), generated by a Galois Field operation (see below). If you technically do not need to verify the Authentication Tag for server messages, you need to compute the correct tag for encrypted data you send to the HTTPS server as it will verify it and ignore the communication if it is incorrect
+
+Here is some pseudo Python code which encrypts a plaintext using the AES-CBC mode (you will need to implement your own GHASH function)
+
+``` python
+def encrypt(plaintext, key_AES, seq_num, content_type):
+    iv = client_IV + os.urandom(8)
+
+    # Encrypts the plaintext
+    plaintext_size = len(plaintext)
+    counter = Counter.new(nbits=32, prefix=iv, initial_value=2, allow_wraparound=False)
+    ciphertext = AES.new(AES_key, AES.MODE_CTR, counter=counter).encrypt(plaintext)
+
+    # Compute the Authentication Tag
+    H = to_int(AES.new(AES_key, AES.MODE_ECB).encrypt('\x00'*16))
+    auth_data = to_n_bytes(seq_num, 8) + to_n_bytes(content_type, 1) + TLS_VERSION + to_n_bytes(plaintext_size, 2)
+ 
+    auth_tag = GHASH(H, auth_data, ciphertext)
+    auth_tag ^= to_int(AES.new(self.client_AES_key, AES.MODE_ECB).encrypt(iv + '\x00'*3 + '\x01'))
+    auth_tag = to_bytes(auth_tag)
+
+    return iv[4:] + ciphertext + auth_tag
+```

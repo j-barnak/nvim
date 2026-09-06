@@ -1,0 +1,131 @@
+For certain kinds of optimizations, sometimes it's useful for applications and OSs to detect CPU topology and adjust (optimize) its behaviour accordingly.
+
+## Uses
+
+CPU Topology data is useful for initializing your physical memory manager, especially information about NUMA domains and the cache. This means that you may wish to build the topology tree before you have a fully functioning memory allocator. Further down the line, this information will be of importance to your [scheduler](https://wiki.osdev.org/Scheduler "Scheduler").
+
+## Detecting CPU Topology
+
+For complete CPU topology, there are 4 levels to consider:
+
+- Which logical CPU within a core (implemented, for example, by Intel's hyperthreading)
+- Which core within a chip
+- Which chip within a NUMA domain
+- Which [NUMA](https://wiki.osdev.org/Multiprocessing#NUMA_.28Non-Uniform_Memory_Access.29 "Multiprocessing") domain
+
+For convenience, this can be expressed as a colon-separated ID. For example, "CPU 3:2:1:0" would be logical CPU \#0 in core \#1 of chip/package number 2, in NUMA domain \#3.
+
+## General Steps
+
+To begin with, the ACPI [MADT](https://wiki.osdev.org/MADT "MADT") table or the MP Specification table should be used to determine the APIC IDs for all CPUs. To better organize the information, a table of structures can be created that contains the information that is different for each CPU (e.g. APIC ID, topology information, etc.). This "CPU info" structure could include a pointer to a separate "CPU description" structure that stores information that can be the same for different CPUs (e.g. vendor, family/model/stepping, brand string, feature flags, cache sizes, etc).
+
+To detect NUMA domain information the ACPI [SRAT](https://wiki.osdev.org/SRAT "SRAT") table (System Resource Affinity Table) has to be used. First, preset the "NUMA domain" field for each CPU to "unknown" (in case the CPU isn't mentioned in the SRAT table). Then, for each entry in the SRAT table you determine if it's a CPU or memory, and if the entry is a CPU the 'APIC ID' field is used to determine which CPU and the 'proximity domain' field to determine which NUMA domain that CPU is in; and set the NUMA domain for that CPU. Note that there are 2 different structures in the SRAT table - one for 8-bit local APIC IDs and one for 32-bit APIC IDs, and if you support x2APIC you need to use both.
+
+To get nice clean results in the later steps, the list of CPUs should be sorted now - in order of NUMA domain, each NUMA domain in order of APIC ID.
+
+For cores and logical CPUs; for each CPU, CPUID should determine:
+
+- Number of bits in the APIC ID that are used to identify which logical CPU
+- Number of bits in the APIC ID that are used to identify which core
+
+The values are used for a set of calculations:
+
+- logical_CPU_number_within_core = APIC_ID & ( (1 \<\< logical_CPU_bits) -1)
+- core_number_within_chip = (APIC_ID \>\> logical_CPU_bits) & ( (1 \<\< core_bits) -1)
+- chip_ID = APIC_ID & ~( (1 \<\< (logical_CPU_bits+core_bits) ) -1)
+
+How to use CPUID to determine these values is described below in the "Using CPUID" section. It should be noted that you only need to obtain 2 values: "logical_CPU_bits" and "core_bits".
+
+The "chip ID" is a temporary value that you could discard later.
+
+These calculations should be done separately for each logical CPU because it's theoretically possible for different physical chips in the same computer to use APIC ID bits differently.
+
+Once you've done these calculations the "chip number within NUMA domain" can be determined. All CPUs that have the same "chip ID" and the same NUMA domain are on the same chip.
+
+For example:
+
+``` c
+    for(domain = 0; domain <= highest_domain; domain++) {
+        chip_number = 0;
+        for(firstCPU = 0; firstCPU < total_CPUs; firstCPU++) {
+            if( CPU_info_table[firstCPU].domain == domain) {
+                if( CPU_info_table[firstCPU].chipNumber == -1) {
+                    CPU_info_table[firstCPU].chipNumber = chip_number;
+                    chipID = CPU_info_table[firstCPU].chipID;
+                    for(i = firstCPU; i < total_CPUs; i++) {
+                        if( CPU_info_table[i].domain == domain) {
+                            if( CPU_info_table[i].chipID == chipID) {
+                                CPU_info_table[i].chipNumber = chip_number;
+                            }
+                        }
+                    }
+                }
+                chipNumber++;
+            }
+        }
+    }
+```
+
+There's a bit of strangeness which should be explained here. In general, it doesn't make too much sense for the same chip to be in different NUMA domains. However, when Intel designed x2APIC they decided that Logical APIC ID (which shouldn't be confused with the "APIC ID") and the "Destination Format Register" would be hardwired; and that "Logical Destination Mode" would only support "cluster model". They decided that the highest bits of the Logical APIC ID would determine which "group of CPUs" and the lowest 4 bits of the Logical APIC ID would determine which CPU within the group. The end result is that, if a chip has more than 16 logical CPUs it will be split into different NUMA domains. For the algorithm above, this case is treated as separate chips in different NUMA domains (even though it is technically one physical chip spread across multiple NUMA domains). This is deliberate, as it avoids complications everywhere else (in the APIC/interrupt handling code, in the scheduler, etc).
+
+## Using CPUID
+
+From the "General Steps" section above, we need to obtain 2 values: "logical_CPU_bits" and "core_bits".
+
+There are several different CPUID functions that are useful for detecting CPU topology. They are shown in order below.
+
+### CPUID eax=0x00000001
+
+This is the first step. Check if the "HTT" flag is set. If the HTT flag is clear (or if the CPU doesn't support CPUID) then it's an old single-core CPU without hyper-threading. In that case "logical_CPU_bits = 0" and "core_bits = 0" and you're done.
+
+Otherwise (if the "HTT" flag is set), you want to get the "count" field from EBX bits 16 to 23. You (might) need it later.
+
+### INTEL: CPUID eax=0x0000000B
+
+For Intel CPUs (and *not* AMD), this CPUID function tells you "Number of bits to shift right APIC ID to get next level APIC ID", and needs to be used twice. The first time (with ECX=0) it tells you how many bits of the APIC ID is used to identify the logical CPU within each core (logical_CPU_bits). The second time (with ECX=1) it tells you how many bits of the APIC ID is used to identify the core and logical CPU within the chip, and to get "core_bits" from this value you subtract "logical_CPU_bits" from it.
+
+### INTEL: CPUID eax=0x00000004
+
+For Intel CPUs (and *not* AMD), if "CPUID eax=0x0000000B" wasn't supported then this is the next CPUID function to try. You're only interested in EAX bits 26 to 31, which tells you the number of APIC IDs reserved for this chip. The count field from earlier tells you the max number of logical CPUs in a package, whereas (EAX \>\> 26) & 0x3F from this function tells you the maximum number of cores in a package, -1. Hence, to get "logical_CPU_bits" and "core_bits", write a function that counts the number of left-shifts to get 0, which is the number of bits to represent a number. core_bits is func((EAX \>\> 26) & 0x3F), logical_CPU_bits is func(count - 1) - core_bits. Note that the initial ecx value does not affect EAX bits 26 to 31.
+
+If "CPUID eax=0x00000004" isn't supported, then it's a single-core CPU with hyper-threading. Use the "count" field you got earlier (from CPUID eax=0x00000001) rounded up to the next power of 2 to determine "logical_CPU_bits", then set "core_bits = 0".
+
+### AMD: CPUID eax=0x80000008
+
+For AMD CPUs (and *not* Intel), use this function to determine "core_bits". First check ECX bits 12 to 15, if it is not zero, then it contains "core_bits". Otherwise, use ECX bits 0 to 7 to determine the number of cores, round it up to the next power of 2 and use it to determine "core_bits".
+
+Now that you've got "core_bits"; use the "count" field you got earlier (from CPUID eax=0x00000001) and shift it right by "core_bits" bits. Then round the result up to the next power of 2 and use it to determine "logical_CPU_bits".
+
+### AMD: CPUID eax=0x00000001
+
+For AMD CPUs (and *not* Intel), if CPUID eax=0x80000008 isn't supported just assume that the "count" field you got earlier (from CPUID eax=0x00000001) is the number of cores; and round it up to the next power of 2 and use it to determine "core_bits". In this case set "logical_CPU_bits" to zero.
+
+### Managing CPU Topology
+
+Your kernel needs to manage the processor topology in the system for things like load-balancing. You should make a topological tree which would be built by the system during setup.
+
+``` c
+      typedef
+      struct _CPU_DOMAIN {
+          ULONG DomainID;/* SMT_ID, CoreID, PackageID or ClusterID*/
+          LINKED_LIST ChildGroups;
+          struct _CPU_DOMAIN *ParentDomain;
+          SPIN_LOCK DomainLock;
+      } CPU_DOMAIN;
+
+      CPU_DOMAIN systemTopology;
+```
+
+A good implementation would make each CPU parse the tree. For example, each AP would acquire the lock for the systemTopology domain. Then, it will search for its child domain, with sequential IDs like ClusterID, PackageID, CoreID, and SMT_ID adding a CPU_DOMAIN struct to the ChildGroups list if not present. Finally, it will add a CPU_DOMAIN with its SMT_ID with no children (representing the logical CPU).
+
+## Cache Topology
+
+The complexity of your cache topology code mainly depends on how exotic the systems you wish to support are. Most multiprocessor systems have the same processor in all sockets. However, it is possible to get systems with minorly different CPUs. Further, in the future, it's conceivable that there will be systems with more than one architecture onboard (this is already true to an extent with GPUs). It is a non-trivial design consideration whether you store cache data per CPU or globally. FOr instance, if working on ARM, big.LITTLE technology means you can have two CPUs with different cache line sizes.
+
+## See Also
+
+[ARM big.LITTLE and cache](https://www.mono-project.com/news/2016/09/12/arm64-icache/)
+
+### Articles
+
+- [CPUID](https://wiki.osdev.org/CPUID "CPUID")

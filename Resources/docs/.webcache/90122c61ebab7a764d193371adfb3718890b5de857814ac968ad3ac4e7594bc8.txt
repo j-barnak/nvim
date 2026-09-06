@@ -1,0 +1,617 @@
+|                                                                                               |
+|-----------------------------------------------------------------------------------------------|
+| WAIT! Have you read Getting Started , Beginner Mistakes , and some of the related OS theory ? |
+
+| Difficulty level |
+|------------------|
+| Advanced         |
+
+| Kernel Designs                                                                                                                       |
+|--------------------------------------------------------------------------------------------------------------------------------------|
+| Models                                                                                                                               |
+| Monolithic Kernel Microkernel Hybrid Kernel Exokernel Nano/Picokernel Cache Kernel Virtualizing Kernel Megalithic Kernel Multikernel |
+| Other Concepts                                                                                                                       |
+| Modular Kernel Higher Half Kernel 64-bit Kernel Pre-kernel Rump kernel                                                               |
+
+This is a tutorial on operating systems development on the [Raspberry Pi](https://wiki.osdev.org/Raspberry_Pi "Raspberry Pi"). This will serve as an example of how to create a minimal system, but not as an example of how to properly structure your project.
+
+There's a similar tutorial [Raspberry Pi Bare Bones Rust](https://wiki.osdev.org/Raspberry_Pi_Bare_Bones_Rust "Raspberry Pi Bare Bones Rust") which uses Rust instead of C.
+
+## Prepare
+
+You are about to begin development of a new operating system. Perhaps one day, your new operating system can be developed under itself. This is a process known as bootstrapping or going self-hosted. However, that is way into the future. Today, we simply need to set up a system that can compile your operating system from an existing operating system. This is a process known as cross-compiling and this makes the first step in operating systems development.
+
+This article assumes you are using a Unix-like operating system such as Linux which supports operating systems development well. Windows users should be able to complete it from a MinGW or Cygwin environment.
+
+## Building a Cross-Compiler
+
+*Main article: [GCC Cross-Compiler](https://wiki.osdev.org/GCC_Cross-Compiler "GCC Cross-Compiler"), [Why do I need a Cross Compiler?](https://wiki.osdev.org/Why_do_I_need_a_Cross_Compiler? "Why do I need a Cross Compiler?")*
+
+The first thing you should do is set up a [GCC Cross-Compiler](https://wiki.osdev.org/GCC_Cross-Compiler "GCC Cross-Compiler") for **arm-none-eabi**. You have not yet modified your compiler to know about the existence of your operating system, so we use a generic target called arm-none-eabi, which provides you with a toolchain targeting the [System V ABI](https://wiki.osdev.org/System_V_ABI "System V ABI"). You will *not* be able to correctly compile your operating system without a cross-compiler.
+
+If you want a 64 bit kernel, you should set up **aarch64-elf** target instead. This provides the same System V ABI interface, but for 64 bit. Using elf is not mandatory, but simplifies things.
+
+## Overview
+
+By now, you should have set up your [cross-compiler](https://wiki.osdev.org/GCC_Cross-Compiler "GCC Cross-Compiler") for the proper ABI (as described above). This tutorial provides a minimal solution for creating an operating system. It doesn't serve as a recommend skeleton for project structure, but rather as an example of a minimal kernel. In this simple case, we just need three input files:
+
+- boot.S - kernel entry point that sets up the processor environment
+- kernel.c - your actual kernel routines
+- linker.ld - for linking the above files
+
+## Booting the Operating System
+
+We will now create a file called boot.S and discuss its contents. In this example, we are using the GNU assembler, which is part of the cross-compiler toolchain you built earlier. This assembler integrates very well with the rest of the GNU toolchain.
+
+Each Pi Model requires different set up. In general, you must distinguish AArch32 and AArch64 mode, as they are booted differently. The latter only accessible from Pi 3 and upwards. Within a mode, you can [detect the board](https://wiki.osdev.org/Detecting_Raspberry_Pi_Board "Detecting Raspberry Pi Board") in run-time, and set up mmio base address accordingly.
+
+### Pi Model A, B, A+, B+, and Zero
+
+The environment is set up and execution to \_start transferred from [armstub.s](https://github.com/raspberrypi/tools/blob/master/armstubs/armstub.S#L35).
+
+``` asm
+// AArch32 mode
+
+// To keep this in the first portion of the binary.
+.section ".text.boot"
+
+// Make _start global.
+.globl _start
+
+        .org 0x8000
+// Entry point for the kernel.
+// r15 -> should begin execution at 0x8000.
+// r0 -> 0x00000000
+// r1 -> 0x00000C42 - machine id
+// r2 -> 0x00000100 - start of ATAGS
+// preserve these registers as argument for kernel_main
+_start:
+    // Setup the stack.
+    mov sp, #0x8000
+
+    // Clear out bss.
+    ldr r4, =__bss_start
+    ldr r9, =__bss_end
+    mov r5, #0
+    mov r6, #0
+    mov r7, #0
+    mov r8, #0
+    b       2f
+
+1:
+    // store multiple at r4.
+    stmia r4!, {r5-r8}
+
+    // If we are still below bss_end, loop.
+2:
+    cmp r4, r9
+    blo 1b
+
+    // Call kernel_main
+    ldr r3, =kernel_main
+    blx r3
+
+    // halt
+halt:
+    wfe
+    b halt
+```
+
+The section ".text.boot" will be used in the linker script to place the boot.S as the very first thing in our kernel image. The code initializes a minimum C environment, which means having a stack and zeroing the BSS segment, before calling the kernel_main function. Note that the code avoids using r0-r2 so the remain valid for the kernel_main call.
+
+You can then assemble boot.S using:
+
+``` shell-session
+$ arm-none-eabi-gcc -mcpu=arm1176jzf-s -fpic -ffreestanding -c boot.S -o boot.o
+```
+
+### Pi 2
+
+With newer versions of the Pi, there's a bit more to be done. Raspberry Pis 2 and 3 (the first model that supports 64 bit) have 4 cores. On boot, all cores are running and executing the same boot code. Therefore you have to distinguish cores, and only allow one of them to run, putting the others in an infinite loop.
+
+The environment is set up and execution to \_start transferred from [armstub7.s](https://github.com/raspberrypi/tools/blob/master/armstubs/armstub7.S#L167).
+
+``` asm
+// AArch32 mode
+
+// To keep this in the first portion of the binary.
+.section ".text.boot"
+
+// Make _start global.
+.globl _start
+
+        .org 0x8000
+// Entry point for the kernel.
+// r15 -> should begin execution at 0x8000.
+// r0 -> 0x00000000
+// r1 -> 0x00000C42 - machine id
+// r2 -> 0x00000100 - start of ATAGS
+// preserve these registers as argument for kernel_main
+_start:
+    // Shut off extra cores
+    mrc p15, 0, r5, c0, c0, 5
+    and r5, r5, #3
+    cmp r5, #0
+    bne halt
+
+    // Setup the stack.
+    ldr r5, =_start
+    mov sp, r5
+
+    // Clear out bss.
+    ldr r4, =__bss_start
+    ldr r9, =__bss_end
+    mov r5, #0
+    mov r6, #0
+    mov r7, #0
+    mov r8, #0
+    b       2f
+
+1:
+    // store multiple at r4.
+    stmia r4!, {r5-r8}
+
+    // If we are still below bss_end, loop.
+2:
+    cmp r4, r9
+    blo 1b
+
+    // Call kernel_main
+    ldr r3, =kernel_main
+    blx r3
+
+    // halt
+halt:
+    wfe
+    b halt
+```
+
+You can assemble boot.S using:
+
+``` shell-session
+$ arm-none-eabi-gcc -mcpu=cortex-a7 -fpic -ffreestanding -c boot.S -o boot.o
+```
+
+### Pi 3, 4
+
+It worth mentioning that Pi 3 and 4 normally boots kernel8.img into 64 bit mode, but you can still use AArch32 with kernel7.img for backward compatibility. Note that in 64 bit mode, the boot code is loaded at 0x80000 and not 0x8000. The boot code in AArch64 is exactly the same for Pi 3 and 4, however Pi 4 has a different peripheral base address (see below the C example code).
+
+With the latest firmware, only the primary core runs (core 0), and the secondary cores are awaiting in a spin loop. To wake them up, write a function's address at 0xE0 (core 1), 0xE8 (core 2) or 0xF0 (core 3) and they will start to execute that function.
+
+The environment is set up and execution to \_start transferred from [armstub8.s](https://github.com/raspberrypi/tools/blob/master/armstubs/armstub8.S#L154).
+
+``` asm
+// AArch64 mode
+
+// To keep this in the first portion of the binary.
+.section ".text.boot"
+
+// Make _start global.
+.globl _start
+
+    .org 0x80000
+// Entry point for the kernel. Registers:
+// x0 -> 32 bit pointer to DTB in memory (primary core only) / 0 (secondary cores)
+// x1 -> 0
+// x2 -> 0
+// x3 -> 0
+// x4 -> 32 bit kernel entry point, _start location
+_start:
+    // set stack before our code
+    ldr     x5, =_start
+    mov     sp, x5
+
+    // clear bss
+    ldr     x5, =__bss_start
+    ldr     w6, =__bss_size
+1:  cbz     w6, 2f
+    str     xzr, [x5], #8
+    sub     w6, w6, #1
+    cbnz    w6, 1b
+
+    // jump to C code, should not return
+2:  bl      kernel_main
+    // for failsafe, halt this core
+halt:
+    wfe
+    b halt
+```
+
+Compile your code with:
+
+``` shell-session
+$ aarch64-elf-as -c boot.S -o boot.o
+```
+
+## Implementing the Kernel
+
+So far we have written the bootstrap assembly stub that sets up the processor such that high level languages such as C can be used. It is also possible to use other languages such as C++.
+
+### Freestanding and Hosted Environments
+
+If you have done C or C++ programming in user-space, you have used a so-called Hosted Environment. Hosted means that there is a C standard library and other useful runtime features. Alternatively, there is the Freestanding version, which is what we are using here. Freestanding means that there is no C standard library, only what we provide ourselves. However, some header files are actually not part of the C standard library, but rather the compiler. These remain available even in freestanding C source code. In this case we use \<stddef.h\> to get size_t & NULL and \<stdint.h\> to get the intx_t and uintx_t datatypes which are invaluable for operating systems development, where you need to make sure that the variable is of an exact size (if we used a short instead of uint16_t and the size of short changed, our code would break!). Additionally you can access the \<float.h\>, \<iso646.h\>, \<limits.h\>, and \<stdarg.h\> headers, as they are also freestanding. GCC actually ships a few more headers, but these are special purpose.
+
+### Writing a kernel in C
+
+The following shows how to create a simple kernel in C. Please take a few moments to understand the code. To set the value for "int raspi" in run-time, see [detecting the board type](https://wiki.osdev.org/Detecting_Raspberry_Pi_Board "Detecting Raspberry Pi Board").
+
+``` cpp
+#include <stddef.h>
+#include <stdint.h>
+
+static uint32_t MMIO_BASE;
+
+// The MMIO area base address, depends on board type
+static inline void mmio_init(int raspi)
+{
+    switch (raspi) {
+        case 2:
+        case 3:  MMIO_BASE = 0x3F000000; break; // for raspi2 & 3
+        case 4:  MMIO_BASE = 0xFE000000; break; // for raspi4
+        default: MMIO_BASE = 0x20000000; break; // for raspi1, raspi zero etc.
+    }
+}
+
+// Memory-Mapped I/O output
+static inline void mmio_write(uint32_t reg, uint32_t data)
+{
+    *(volatile uint32_t*)(MMIO_BASE + reg) = data;
+}
+
+// Memory-Mapped I/O input
+static inline uint32_t mmio_read(uint32_t reg)
+{
+    return *(volatile uint32_t*)(MMIO_BASE + reg);
+}
+
+// Loop <delay> times in a way that the compiler won't optimize away
+static inline void delay(int32_t count)
+{
+    asm volatile("__delay_%=: subs %[count], %[count], #1; bne __delay_%=\n"
+         : "=r"(count): [count]"0"(count) : "cc");
+}
+
+enum
+{
+    // The offsets for reach register.
+    GPIO_BASE = 0x200000,
+
+    // Controls actuation of pull up/down to ALL GPIO pins.
+    GPPUD = (GPIO_BASE + 0x94),
+
+    // Controls actuation of pull up/down for specific GPIO pin.
+    GPPUDCLK0 = (GPIO_BASE + 0x98),
+
+    // The base address for UART.
+    UART0_BASE = (GPIO_BASE + 0x1000), // for raspi4 0xFE201000, raspi2 & 3 0x3F201000, and 0x20201000 for raspi1
+
+    // The offsets for reach register for the UART.
+    UART0_DR     = (UART0_BASE + 0x00),
+    UART0_RSRECR = (UART0_BASE + 0x04),
+    UART0_FR     = (UART0_BASE + 0x18),
+    UART0_ILPR   = (UART0_BASE + 0x20),
+    UART0_IBRD   = (UART0_BASE + 0x24),
+    UART0_FBRD   = (UART0_BASE + 0x28),
+    UART0_LCRH   = (UART0_BASE + 0x2C),
+    UART0_CR     = (UART0_BASE + 0x30),
+    UART0_IFLS   = (UART0_BASE + 0x34),
+    UART0_IMSC   = (UART0_BASE + 0x38),
+    UART0_RIS    = (UART0_BASE + 0x3C),
+    UART0_MIS    = (UART0_BASE + 0x40),
+    UART0_ICR    = (UART0_BASE + 0x44),
+    UART0_DMACR  = (UART0_BASE + 0x48),
+    UART0_ITCR   = (UART0_BASE + 0x80),
+    UART0_ITIP   = (UART0_BASE + 0x84),
+    UART0_ITOP   = (UART0_BASE + 0x88),
+    UART0_TDR    = (UART0_BASE + 0x8C),
+
+    // The offsets for Mailbox registers
+    MBOX_BASE    = 0xB880,
+    MBOX_READ    = (MBOX_BASE + 0x00),
+    MBOX_STATUS  = (MBOX_BASE + 0x18),
+    MBOX_WRITE   = (MBOX_BASE + 0x20)
+};
+
+// A Mailbox message with set clock rate of PL011 to 3MHz tag
+volatile unsigned int  __attribute__((aligned(16))) mbox[9] = {
+    9*4, 0, 0x38002, 12, 8, 2, 3000000, 0 ,0
+};
+
+void uart_init(int raspi)
+{
+    mmio_init(raspi);
+
+    // Disable UART0.
+    mmio_write(UART0_CR, 0x00000000);
+    // Setup the GPIO pin 14 && 15.
+
+    // Disable pull up/down for all GPIO pins & delay for 150 cycles.
+    mmio_write(GPPUD, 0x00000000);
+    delay(150);
+
+    // Disable pull up/down for pin 14,15 & delay for 150 cycles.
+    mmio_write(GPPUDCLK0, (1 << 14) | (1 << 15));
+    delay(150);
+
+    // Write 0 to GPPUDCLK0 to make it take effect.
+    mmio_write(GPPUDCLK0, 0x00000000);
+
+    // Clear pending interrupts.
+    mmio_write(UART0_ICR, 0x7FF);
+
+    // Set integer & fractional part of baud rate.
+    // Divider = UART_CLOCK/(16 * Baud)
+    // Fraction part register = (Fractional part * 64) + 0.5
+    // Baud = 115200.
+
+    // For Raspi3 and 4 the UART_CLOCK is system-clock dependent by default.
+    // Set it to 3Mhz so that we can consistently set the baud rate
+    if (raspi >= 3) {
+        // UART_CLOCK = 30000000;
+        unsigned int r = (((unsigned int)(&mbox) & ~0xF) | 8);
+        // wait until we can talk to the VC
+        while ( mmio_read(MBOX_STATUS) & 0x80000000 ) { }
+        // send our message to property channel and wait for the response
+        mmio_write(MBOX_WRITE, r);
+        while ( (mmio_read(MBOX_STATUS) & 0x40000000) || mmio_read(MBOX_READ) != r ) { }
+    }
+
+    // Divider = 3000000 / (16 * 115200) = 1.627 = ~1.
+    mmio_write(UART0_IBRD, 1);
+    // Fractional part register = (.627 * 64) + 0.5 = 40.6 = ~40.
+    mmio_write(UART0_FBRD, 40);
+
+    // Enable FIFO & 8 bit data transmission (1 stop bit, no parity).
+    mmio_write(UART0_LCRH, (1 << 4) | (1 << 5) | (1 << 6));
+
+    // Mask all interrupts.
+    mmio_write(UART0_IMSC, (1 << 1) | (1 << 4) | (1 << 5) | (1 << 6) |
+                           (1 << 7) | (1 << 8) | (1 << 9) | (1 << 10));
+
+    // Enable UART0, receive & transfer part of UART.
+    mmio_write(UART0_CR, (1 << 0) | (1 << 8) | (1 << 9));
+}
+
+void uart_putc(unsigned char c)
+{
+    // Wait for UART to become ready to transmit.
+    while ( mmio_read(UART0_FR) & (1 << 5) ) { }
+    mmio_write(UART0_DR, c);
+}
+
+unsigned char uart_getc()
+{
+    // Wait for UART to have received something.
+    while ( mmio_read(UART0_FR) & (1 << 4) ) { }
+    return mmio_read(UART0_DR);
+}
+
+void uart_puts(const char* str)
+{
+    for (size_t i = 0; str[i] != '\0'; i ++)
+        uart_putc((unsigned char)str[i]);
+}
+
+#if defined(__cplusplus)
+extern "C" /* Use C linkage for kernel_main. */
+#endif
+
+#ifdef AARCH64
+// arguments for AArch64
+void kernel_main(uint64_t dtb_ptr32, uint64_t x1, uint64_t x2, uint64_t x3)
+#else
+// arguments for AArch32
+void kernel_main(uint32_t r0, uint32_t r1, uint32_t atags)
+#endif
+{
+    // initialize UART for Raspi2
+    uart_init(2);
+    uart_puts("Hello, kernel World!\r\n");
+
+    while (1)
+        uart_putc(uart_getc());
+}
+```
+
+The GPU bootloader passes arguments to the AArch32 kernel via r0-r2 and the boot.S makes sure to preserve those 3 registers. They are the first 3 arguments in a C function call. The argument r0 contains a code for the device the RPi was booted from. This is generally 0 but its actual value depends on the firmware of the board. r1 contains the 'ARM Linux Machine Type' which for the RPi is 3138 (0xc42) identifying the BCM2708 CPU. A full list of ARM Machine Types is available from [here](http://www.arm.linux.org.uk/developer/machines/). r2 contains the address of the ATAGs.
+
+For AArch64, the registers are a little bit different, but also passed as arguments to the C function. The first, x0 is the 32 bit address of the DTB (that is, [Device Tree Blob](https://elinux.org/Device_Tree_Reference) in memory). Watch out, it is a 32 bit address, the upper bits may not be cleared. The other arguments, x1-x3 are cleared to zero for now, but reserved for future use. Your boot.S should preserve them.
+
+Notice how we wish to use the common C function strlen, but this function is part of the C standard library that we don't have available. Instead, we rely on the freestanding header \<stddef.h\> to provide size_t and we simply declare our own implementation of strlen. You will have to do this for every function you wish to use (as the freestanding headers only provide macros and data types).
+
+The addresses for the GPIO and UART are offsets from the peripheral base address, which is 0x20000000 for Raspberry Pi 1 and 0x3F000000 for Raspberry Pi 2 and Raspberry Pi 3. For [Raspberry Pi 4](https://wiki.osdev.org/Raspberry_Pi_4 "Raspberry Pi 4") the base address is 0xFE000000. You can find the addresses of registers and how to use them in the BCM2835 manual. It is possible to detect the base address in run time by [reading the board id](https://wiki.osdev.org/Detecting_Raspberry_Pi_Board "Detecting Raspberry Pi Board").
+
+Compile using:
+
+``` bash
+arm-none-eabi-gcc -mcpu=arm1176jzf-s -fpic -ffreestanding -std=gnu99 -c kernel.c -o kernel.o -O2 -Wall -Wextra
+```
+
+or for 64 bit:
+
+``` bash
+aarch64-elf-gcc -ffreestanding -c kernel.c -o kernel.o -O2 -Wall -Wextra
+```
+
+Note that the above code uses a few extensions and hence we build as the GNU version of C99.
+
+## Linking the Kernel
+
+To create the full and final kernel we will have to link these object files into the final kernel program. When developing user-space programs, your toolchain ships with default scripts for linking such programs. However, these are unsuitable for kernel development and we need to provide our own customized linker script.
+
+The linker script for 64 bit mode looks exactly the same, except for the starting address.
+
+``` text
+ENTRY(_start)
+
+SECTIONS
+{
+    /* Starts at LOADER_ADDR. */
+    . = 0x8000;
+    /* For AArch64, use . = 0x80000; */
+    __start = .;
+    __text_start = .;
+    .text :
+    {
+        KEEP(*(.text.boot))
+        *(.text)
+    }
+    . = ALIGN(4096); /* align to page size */
+    __text_end = .;
+
+    __rodata_start = .;
+    .rodata :
+    {
+        *(.rodata)
+    }
+    . = ALIGN(4096); /* align to page size */
+    __rodata_end = .;
+
+    __data_start = .;
+    .data :
+    {
+        *(.data)
+    }
+    . = ALIGN(4096); /* align to page size */
+    __data_end = .;
+
+    __bss_start = .;
+    .bss :
+    {
+        bss = .;
+        *(.bss)
+    }
+    . = ALIGN(4096); /* align to page size */
+    __bss_end = .;
+    __bss_size = __bss_end - __bss_start;
+    __end = .;
+}
+```
+
+There is a lot of text here but don't despair. The script is rather simple if you look at it bit by bit.
+
+ENTRY(\_start) declares the entry point for the kernel image. That symbol was declared in the boot.S file. Since we are actually booting a binary image, the entry is completely irrelevant, but it has to be there in the elf file we build as intermediate file.
+
+SECTIONS declares sections. It decides where the bits and pieces of our code and data go and also sets a few symbols that help us track the size of each section.
+
+``` text
+    . = 0x8000;
+    __start = .;
+```
+
+The "." denotes the current address so the first line tells the linker to set the current address to 0x8000 (or 0x80000), where the kernel starts. The current address is automatically incremented when the linker adds data. The second line then creates a symbol "\_\_start" and sets it to the current address.
+
+After that sections are defined for text (code), read-only data, read-write data and BSS (0 initialized memory). Other than the name the sections are identical so lets just look at one of them:
+
+``` text
+    __text_start = .;
+    .text : {
+        KEEP(*(.text.boot))
+        *(.text)
+    }
+    . = ALIGN(4096); /* align to page size */
+    __text_end = .;
+```
+
+The first line creates a \_\_text_start symbol for the section. The second line opens a .text section for the output file which gets closed in the fifth line. Lines 3 and 4 declare what sections from the input files will be placed inside the output .text section. In our case ".text.boot" is to be placed first followed by the more general ".text". ".text.boot" is only used in boot.S and ensures that it ends up at the beginning of the kernel image. ".text" then contains all the remaining code. Any data added by the linker automatically increments the current address ("."). In line 6 we explicitly increment it so that it is aligned to a 4096 byte boundary (which is the page size for the RPi). And last line 7 creates a \_\_text_end symbol so we know where the section ends.
+
+What are the \_\_text_start and \_\_text_end for and why use page alignment? The 2 symbols can be used in the kernel source and the linker will then place the correct addresses into the binary. As an example the \_\_bss_start and \_\_bss_end are used in boot.S. But you can also use the symbols from C by declaring them extern first. While not required I made all sections aligned to page size. This later allows mapping them in the page tables with executable, read-only and read-write permissions without having to handle overlaps (2 sections in one page).
+
+``` text
+    __end = .;
+```
+
+After all sections are declared the \_\_end symbol is created. If you ever want to know how large your kernel is at runtime you can use \_\_start and \_\_end to find out.
+
+With these components you can now actually build the final kernel. We use the compiler as the linker as it allows it greater control over the link process. Note that if your kernel is written in C++, you should use the C++ compiler instead.
+
+You can then link your kernel using:
+
+``` bash
+arm-none-eabi-gcc -T linker.ld -o myos.elf -ffreestanding -O2 -nostdlib boot.o kernel.o -lgcc
+arm-none-eabi-objcopy myos.elf -O binary kernel7.img
+```
+
+or for 64 bit:
+
+``` bash
+aarch64-elf-gcc -T linker.ld -o myos.elf -ffreestanding -O2 -nostdlib boot.o kernel.o -lgcc 
+aarch64-elf-objcopy myos.elf -O binary kernel8.img
+```
+
+## Booting the Kernel
+
+In a few moments, you will see your kernel in action.
+
+### Testing your operating system (Real Hardware)
+
+Do you still have the SD card with the original Raspbian image on it from when you where testing the hardware above? Great. So you already have a SD card with a boot partition and the required files. If not then download one of the original Raspberry boot images and copy them to the SD card.
+
+Now mount the first partition from the SD card and look at it:
+
+``` text
+bootcode.bin  fixup.dat     kernel.img            start.elf
+cmdline.txt   fixup_cd.dat  kernel_cutdown.img    start_cd.elf
+config.txt    issue.txt     kernel_emergency.img
+```
+
+If you don't have a raspbian image, you can create a FAT32 partition, and [download the firmware files](https://github.com/raspberrypi/firmware/tree/master/boot) from the official repository. You'll need only three files:
+
+- bootcode.bin: this is the one that's loaded first, executed on the GPU (not needed on RPi4 as that model has bootcode.bin in a ROM)
+- fixup.dat: this data file contains important hardware-related information, a must have
+- start.elf: this is the RPi firmware (same as BIOS on IBM PC). This also runs on the GPU.
+
+Simplified when the RPi powers up the ARM CPU is halted and the GPU runs. The GPU loads the bootloader from ROM and executes it. That then finds the SD card and loads the bootcode.bin (except RPi4 which has a big enough ROM to include bootcode.bin as well). The bootcode loads the firmware, start.elf which handles the config.txt and cmdline.txt. The start.elf loads the kernel\*.img and at last the ARM CPU is started running that kernel image.
+
+To switch among ARM modes, you have to rename your kernel.img file. If you rename it to **kernel7.img**, that will be executed in AArch32 mode (ARMv7). For AArch64 mode (ARMv8) you'll have to rename it to **kernel8.img**.
+
+So now we replace the original kernel.img with our own, umount, sync, stick the SD card into RPi and turn the power on. Your Minicom should then show the following:
+
+``` text
+Hello, kernel World!
+```
+
+### Testing your operating system (QEMU)
+
+QEMU supports emulating Raspberry Pi 2 with the machine type "raspi2". At the time of writing this feature is not available in most package managers but can be found in the latest QEMU source found here: [https://github.com/qemu/qemu](https://github.com/qemu/qemu)
+
+Check that your QEMU install has qemu-system-arm and that it supports the option "-M raspi2". When testing in QEMU, be sure to use the raspi2 base addresses noted in the source code.
+
+With QEMU you do not need to objcopy the kernel into a plain binary; QEMU also supports ELF kernels:
+
+``` bash
+$YOURINSTALLLOCATION/bin/qemu-system-arm -m 256 -M raspi2 -serial stdio -kernel kernel.elf
+```
+
+#### Updated Support for AArch64 (raspi2, raspi3, raspi4)
+
+As of QEMU 2.12 (April 2018), emulation for 64-bit ARM, *qemu-system-aarch64*, now supports direct emulation of both Raspberry Pi 2 and 3 using the machine types **raspi2** and **raspi3**, respectively. This should allow for testing of 64-bit system code.
+
+``` bash
+qemu-system-aarch64 -M raspi3 -serial stdio -kernel kernel8.img
+```
+
+As of QEMU 9.0 (April 2024), emulation for 64-bit ARM, *qemu-system-aarch64*, now supports emulation of the Rasberry Pi 4 using the machine type **raspi4b**.
+
+``` bash
+qemu-system-aarch64 -M raspi4b -serial stdio -kernel kernel8.img
+```
+
+Note that in most cases, there will be few if any differences between 32-bit ARM code and 64-bit ARM, but there can be difference in the way the code behaves, in particular regarding kernel memory management. Also, some AArch64 implementations may support features not found on any of their 32-bit counterparts (e.g., cryptographic extensions, enhanced NEON SIMD support).
+
+Another very important note: starting from Raspberry Pi 3, the SoC is changed to [BCM2837](https://github.com/raspberrypi/documentation/files/1888662/) and PL011 clock (UART0) is not fixed any more, but derived from the system clock. Therefore to properly set up baud rate, first you have to set clock frequency. This can be done with a [Mailbox call](https://github.com/raspberrypi/firmware/wiki/Mailboxes). Or you can use AUX miniUART (UART1) chip, which is easier to program. The links below includes tutorials on how to do both.
+
+## See Also
+
+### Articles
+
+- [Raspberry Pi Bare Bones Rust](https://wiki.osdev.org/Raspberry_Pi_Bare_Bones_Rust "Raspberry Pi Bare Bones Rust")
+- [ARMv7-A Bare Bones](https://wiki.osdev.org/ARMv7-A_Bare_Bones "ARMv7-A Bare Bones")
+
+### External Links
+
+- [BCM2835 ARM Peripherals](http://www.raspberrypi.org/wp-content/uploads/2012/02/BCM2835-ARM-Peripherals.pdf) (original Raspberry Pi)
+- [BCM2837 ARM Peripherals](https://github.com/raspberrypi/documentation/files/1888662/) (latest Raspberry Pi 3)
+- [PrimeCell UART (PL011) Technical Reference Manual](http://infocenter.arm.com/help/topic/com.arm.doc.ddi0183g/DDI0183G_uart_pl011_r1p5_trm.pdf)
+- [Raspberry-Pi-OS a hobby OS tutorial for the Raspberry Pi](https://github.com/s-matyukevich/raspberry-pi-os) (details Linux drivers too, great source)
+- [Bare metal tutorial for AArch64](https://github.com/bztsrc/raspi3-tutorial)

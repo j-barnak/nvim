@@ -1,0 +1,274 @@
+There are two things we have to do here: (1) enable the DRAM controller module's clock and reset; (2) configure the DRAM controller.
+
+**License warning**: the sequence of operations needed was derived from [U-Boot](https://wiki.osdev.org/U-Boot "U-Boot"), but is written here in the author's own code. In the author's opinion, since only the facts and not the code are derived, U-Boot's license (GPL) doesn't carry over. Note there is **no way** to know what registers to write, other than copying what Allwinner ultimately provided, detailed hardware reverse-engineering, or an extremely lucky guess.
+
+**Quality warning**: the code here got DRAM to work for the author, but actual correctness is not guaranteed. Especially since the entire DRAM controller is barely documented (in the comments of U-Boot and Linux drivers), we might be close to some threshold of unreliability without knowing.
+
+## Power up DRAM controller
+
+This part is documented in the A64 User Manual so it's pretty safe
+
+``` c
+#define U32_REG(addr) (*(volatile uint32_t*)(addr))
+
+#define PLL_DDR0_CTRL_REG U32_REG(0x01C20020)
+#define PLL_DDR0_ENABLE_FLAG 0x80000000
+
+#define PLL_DDR1_CTRL_REG U32_REG(0x01C2004C)
+#define PLL_DDR1_ENABLE_FLAG 0x80000000
+#define PLL_DDR1_UPDATE_FLAG 0x40000000
+#define PLL_DDR1_FACTOR_N(n) ((((n) - 1) << 8) & 0x3F00)
+
+#define MBUS_RST_REG U32_REG(0x01C200FC)
+#define MBUS_RST_RELEASE 0x80000000 // zero value means reset, this flag means not reset
+
+#define MBUS_CLK_REG U32_REG(0x01C2015C)
+#define MBUS_CLK_CLOCK_ENABLE 0x80000000
+
+#define BUS_CLK_GATING_REG0 U32_REG(0x01C20060)
+#define BUS_CLK_RESET_RELEASE_REG0 U32_REG(0x01C202C0) // same bitfields
+#define BUS_CLK_REG0_DRAM_GATING 0x00004000
+
+#define DRAM_CFG_REG U32_REG(0x01C200F4)
+#define DRAM_CFG_RESET_RELEASE 0x80000000
+#define DRAM_CFG_SRC_PLL_DDR1 0x00100000
+#define DRAM_CFG_UPDATE_FLAG 0x00010000
+
+static void dsb() {
+    // wait for all outstanding memory accesses to complete before continuing.
+    // Probably not actually the right thing to do in most cases!
+    __asm__ __volatile__("dsb" ::: "memory");
+}
+static void delay() {
+    for(volatile int i = 0; i < 0x1000; i++) {}
+}
+
+static void delay() {
+    int n = 0x1000;
+    while(n--) {
+        __asm__ __volatile__("" : "=r"(n) : "0"(n) : "memory");
+    }
+}
+
+void dram_clock_init()
+{
+    // A64 User Manual 3.3.6.4. says we should always release reset before releasing clock gate. So logically we should do the reverse order when disabling a clock.
+    MBUS_CLK_REG &= ~MBUS_CLK_CLOCK_ENABLE; // disable MBUS clock
+    BUS_CLK_GATING_REG0 &= ~BUS_CLK_REG0_DRAM_GATING; // disable DRAM clock
+    PLL_DDR0_CTRL_REG &= ~PLL_DDR0_ENABLE_FLAG; // disable DRAM clock (maybe)
+    PLL_DDR1_CTRL_REG &= ~PLL_DDR1_ENABLE_FLAG; // disable DRAM clock (maybe)
+    MBUS_RST_REG &= ~MBUS_RST_RELEASE; // assert MBUS reset
+    BUS_CLK_RESET_RELEASE_REG0 &= ~BUS_CLK_REG0_DRAM_GATING; // assert DRAM reset
+    // shouldn't we disable the DRAM controller clock?
+    DRAM_CFG_REG &= ~DRAM_CFG_RESET_RELEASE; // assert DRAM controller reset
+    dsb();
+
+    // N factor calculation:
+    // 553MHz DDR clock; *2 because the DRAM controller internal clock apparently runs at DDR (not surprising I guess)
+    // divided by the 24MHz base clock which is apparently the input to the PLL
+    // gives 553*2/24 = 46.083, rounded to 46 (which gives 552MHz)
+    // note the value in register is this -1 (see the macro) so it's 45 to give an actual divisor of 46
+    // note the DDR register values are also calculated based on the 553MHz clock speed
+    PLL_DDR1_CTRL_REG = PLL_DDR1_ENABLE_FLAG | PLL_DDR1_UPDATE_FLAG | PLL_DDR1_FACTOR_N(46);
+
+    // Then wait for the PLL change to be processed by the hardware. (Does this wait for the PLL to actually lock? Not clear)
+    while (PLL_DDR1_CTRL_REG & PLL_DDR1_UPDATE_FLAG) {}
+
+    // there's also a clock divisor in this register; default (zero value) is divide-by-1
+    DRAM_CFG_REG = DRAM_CFG_SRC_PLL_DDR1 | DRAM_CFG_UPDATE_FLAG;
+    while(DRAM_CFG_REG & DRAM_CFG_UPDATE_FLAG) {}
+
+    // as mentioned, A64 User Manual 3.3.6.4. says we should always release reset before releasing clock gate.
+    MBUS_RST_REG |= MBUS_RST_RELEASE; // release MBUS reset
+    MBUS_CLK_REG |= MBUS_CLK_CLOCK_ENABLE; // enable MBUS clock
+    BUS_CLK_RESET_RELEASE_REG0 |= BUS_CLK_REG0_DRAM_GATING; // release DRAM reset
+    BUS_CLK_GATING_REG0 |= BUS_CLK_REG0_DRAM_GATING; // enable DRAM clock
+
+    // apparently that rule does not apply to this one. Perhaps because the clock enable is inside the block (next register)
+    DRAM_CFG_REG |= DRAM_CFG_RESET_RELEASE; // release DRAM controller reset
+
+    U32_REG(0x01C6300C) = 0x0000c00e; // enable DRAM controller clock via undocumented register
+    // Some kind of readiness check. If we don't wait for this, MCTL_PGSR0_REG&1 never becomes true. u-boot uses a fixed delay, not this register
+    while(U32_REG(0x01C63018) == 0) {}
+}
+```
+
+## Configure DRAM controller
+
+According to the A64 User Manual, the DRAM controller initializes itself automatically. *Compared to some other processors*, this is true. On some other platforms, software has to measure the delay on every wire between the memory chip and the CPU chip, and then decide the optimal delays and tell the DRAM controller how much delay to add to make them all equal. On A64 we don't have to do that, but we still have a bunch of undocumented registers to set...
+
+Here's the sequence - just the raw register writes and magic numbers to make the controller work. This might be expanded once more is known about the controller. Actually this was distilled down from u-boot, losing a lot of documentation in the process.
+
+``` c
+// All identifiers and comments in this code were written for the wiki page or based on the A64 manual.
+// It is the author's opinion that this code no longer contains any copyrightable material from u-boot.
+
+#define U32_REG(addr) (*(volatile uint32_t*)(addr))
+#define MCTL_CR0_REG U32_REG(0x01C62000)
+#define MCTL_CR1_REG U32_REG(0x01C62004)
+#define MCTL_PIR_REG U32_REG(0x01C63000)
+#define MCTL_PGSR0_REG U32_REG(0x01C63010)
+
+static const unsigned char AC_DELAYS[] =
+    {5, 5, 13, 10, 2, 5, 3, 3, 0, 3, 3, 3, 1, 0, 0, 0, 3, 4, 0, 3, 4, 1, 4, 0, 1, 1, 0, 1, 13, 5, 4};
+
+static const unsigned short READ_AND_WRITE_DELAYS[4][11] =
+    {{0x0010, 0x0010, 0x0010, 0x0010, 0x0011, 0x0010, 0x0010, 0x0011, 0x0010, 0x0f01, 0x0f00},
+     {0x0011, 0x0011, 0x0011, 0x0011, 0x0111, 0x0111, 0x0111, 0x0111, 0x0011, 0x0a01, 0x0a00},
+     {0x0110, 0x0011, 0x0111, 0x0110, 0x0110, 0x0110, 0x0110, 0x0110, 0x0010, 0x0b00, 0x0b00},
+     {0x0111, 0x0011, 0x0011, 0x0111, 0x0111, 0x0111, 0x0111, 0x0111, 0x0011, 0x0c01, 0x0c00}};
+
+static void memcpy32(u32 dst_, const u32 *src, size_t nregs)
+{
+    u32 *dst = (u32*)dst_;
+    while(nregs--) {
+        *dst++ = *src++;
+    }
+}
+
+static void init_dram_controller()
+{
+    MCTL_CR1_REG = MCTL_CR0_REG = 0x004f19f4;
+
+    memcpy32(0x01C63034, (const u32[]){0xc3, 0xa, 0x2}, 3);
+    memcpy32(0x01C63050, (const u32[]){0x0381b009, 0x22a017c4, 0x0d0e180c, 0x00030314, 0x03060d0b, 0x0005500c, 0x07020308, 0x0505050c}, 8);
+    U32_REG(0x01C63078) = 0x90006610;
+    U32_REG(0x01C63080) = 0x02050102;
+    U32_REG(0x01C63090) = 0x0021003a;
+
+    U32_REG(0x01C63100) = 0x04005400;
+    U32_REG(0x016C3104) = 0x4680c620; // This is probably a typo for 0x01C63104. This code was tested WITH the typo. Maybe you can fix this typo and see if it changes anything, then add some information here.
+
+    U32_REG(0x01C63208) = 0x0000034A;
+    U32_REG(0x01C63108) = 0x000008C0;
+
+    U32_REG(0x01C63100) = 0x00005400; // unlock access to bit delay registers?
+
+    // bytewise bit delay line timing. Low byte delay when reading, high byte delay when writing
+    for (int i = 0; i < 4; i++)
+        for (int j = 0; j < 11; j++) // DQ0-7, then DM, DQS, DQSN
+            U32_REG(0x01C63310 + (i<<7) + (j<<2)) = READ_AND_WRITE_DELAYS[i][j];
+
+    // command/address bit delay line timing
+    for (int i = 0; i < 31; i++)
+        *(u32*)(0x01C63210 + (i<<2)) = AC_DELAYS[i] << 8;
+
+    __asm__ __volatile__("dsb" ::: "memory"); // not sure if necessary. Isn't cache disabled at this point?
+    U32_REG(0x01C63100) = 0x04005400; // re-lock access to bit delay registers?
+
+    U32_REG(0x01C63140) = 0x013b3bdd;
+
+    MCTL_PIR_REG = 0x5F3;
+    while(!(MCTL_PGSR0_REG & 1)) {}
+
+    // if any of these bits are set, u-boot does some stuff that doesn't make any sense. Let's skip over that.
+    assert((MCTL_PGSR0_REG & 0x0fe00000) == 0);
+
+    while(!(U32_REG(0x01C63018) & 1)) {}
+
+    U32_REG(0x01C6310C) = 0xc0aa0060;
+    U32_REG(0x01C63140) = 0x817b7bfc;
+
+    U32_REG(0x01C63120) = 0x00000303;
+    U32_REG(0x01C630B8) = 0x0000021f;
+    U32_REG(0x01C620D0) = 0x80103040; // if you forget this, accessing DRAM will hang.
+}
+```
+
+## Detecting memory size
+
+Memory address consists of concatenated rank, row, bank, column, and column width. **ALL OF THESE** must be set correctly. They can also be set too low, but then the memory controller doesn't know about all of your memory.
+
+So e.g. if you have 2 ranks, 12 row bits, 8 banks, and 12 column bits, the physical RAM address looks like this:
+
+``` text
+ 3 3 2 2 2 2 2 2 2 2 2 2 2 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 0 0
+ 1 0 9 8 7 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|XXXXXXXXX|R|          row          | bank|       column      |wid|
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+ ^^^^^^^^^ ^
+ ignored   rank
+```
+
+Detecting the width of one of these parts consists of configuring the memory controller, writing a value at address N, then a different value at address N+(1\<\<SHIFT) and detecting whether it overwrote address N. If it overwrote the address, it means the memory controller is trying to use bits that aren't wired up to anything.
+
+For example if we tell the controller there are 11 column bits, but actually there are only 8, then our address layout is like this:
+
+``` text
+ 3 3 2 2 2 2 2 2 2 2 2 2 2 1 1 1 1 1 1 1 1 1 1 0 0 0 0 0 0 0 0 0 0
+ 1 0 9 8 7 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0 9 8 7 6 5 4 3 2 1 0
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+|XXXXXXX|R|          row          | bank|XXXXX|     column    |wid|
++-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+
+```
+
+If we write address 0x444 the memory controller will access rank 0, row 0, bank 0, column 0x111, however since there are only 8 column bits in the RAM chip, it will access column 0x11, the same as address 0x044. By detecting that 0x444 and 0x044 access the same byte of memory, we know the RAM chip has less than 11 column bits. Of course, if we correctly configure the controller for 8 column bits, the 0x400 bit will be one of the bank bits, and then we use the same procedure to detect the size of the bank address and then the row address.
+
+There's one other thing to note: each rank can have a different number of row+bank+column bits.
+
+All PinePhones have 2 identical ranks (1 bit), 8 banks (3 bits), and a 4-byte column width (2 bits) which is hard-wired. So you can skip detecting those if you want. Indeed the init code above has the rank detection stripped out.
+
+From the CPU's point of view the RAM starts at CPU address 0x40000000. If the CPU accesses address 0x40000000 it will go to address 0x00000000 on the RAM chip. Address 0x80000000 goes to address 0x40000000 on the RAM chip, 0xFFFFFFFF goes to RAM address 0xBFFFFFFF, etc.
+
+  
+
+The memory chip is different depending on whether you got the "convergence package" or not.  
+Non-convergence package: you have the following chip with 2GB of memory. [Datasheet](http://files.pine64.org/doc/datasheet/pinephone/ATL3A1632H12A_mobile_lpddr3_11x11.5_v1.0_1600.pdf)  
+Convergence package: you have an unknown one with 4GB of memory.  
+You might notice that despite having a 4GB RAM chip you can only access 3GB because the CPU can't go above address 0xFFFFFFFF which corresponds to 3GB-1 on the RAM chip. That's why the convergence package phone is advertised as 3GB despite having a 4GB chip.
+
+According to the datasheet, on the non-convergence package it should be 15 row bits, 10 column bits.  
+The convergence package seems to also be 15 row bits which means it presumably has 11 column bits.
+
+### Controller memory size registers
+
+``` text
+ 
+          31 30 29 28 27 26 25 24 23 22 21 20 19 18 17 16 15 14 13 12 11 10 09 08 07 06 05 04 03 02 01 00
+Rank 0   +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+01C62000 |?????????????????|25|?????|BL|21|20|1T|  type  |SQ|?????|FW|    page   |    row    |??|8B|01|DR|
+         +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+
+Rank 1   +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+01C62004 |???????????????????????????????????????????????????????????|    page   |    row    |??|8B|?????|
+         +--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+--+
+
+All ??s should be set to 0 but may have unknown function.
+
+BL: unknown. Full name "BL8". Set to true on the Pinephone.
+25: if set, accessing rank 1 hangs the CPU
+21, 20: should be 0. Playing with these bits caused random inversions of bit 4 of the address, even after setting them back to the normal 0 value. This condition ended with DRAM controller power-cycle. Also sometimes the CPU hangs.
+1T: unknown. Set to 1 on the Pinephone. "1T" is official name. If set to 0, mode is "2T"
+type: Select memory type. Set to 7 (LPDDR3) on the Pinephone.
+  2: DDR2. 3: DDR3. 6: LPDDR2 (i.e. 2|4). 7: LPDDR3 (i.e. 3|4).
+SQ: sequential mode. Set to 0 on the Pinephone.
+  Unknown effect
+FW: full-width. Set to true on the Pinephone.
+  If you set it to false, the controller only accesses the bottom 16 bits out of each 32-bit word,
+  and does two accesses to complete a 32-bit access. TODO: figure out how this affects the bit layout of addresses.
+page: Number of page bits (column + column width), with some bias (I think raw value 0 means 2 page bits, up to raw value 15 means 17 page bits. Maybe it's actually the number of columns not including the width? This is inconsistent with u-boot)
+  Minimum (raw) value is 6, maximum is 12. Values outside this range are treated as raw value 7.
+row: Number of row bits, with some bias (I think raw value 0 means 1 row bit, up to 15 means 16 row bits)
+  Minimum (raw) value is 10, maximum is unknown, possibly 15. Values outside this range are treated as raw value 15.
+8B: set to 1 for 8 banks (3 bank bits), 0 for 4 banks (2 bank bits)
+01: if set, accessing rank 1 hangs the CPU.
+DR: enables second rank (dual-rank mode).
+```
+
+Optimum raw values on the convergence package (discovered by brute force): page=10, row=14.  
+Without the convergence package it's probably page=9, row=13 but this remains to be verified.
+
+### Accessing the top 1GB on the convergence package
+
+If you bought the convergence package you have 4GB of RAM, but the 3GB address window on the CPU only allows you to use 3/4 of it normally.
+
+But wait - it's divided into two ranks and the memory controller has separate settings for each rank. If we lie to the memory controller and say the lower rank is only 1GB instead of 2GB, now our memory layout divided into GBs looks like this: \[internal memory & I/O registers\]\[rank 0 with mangled address pattern\]\[rank 1 first half\]\[rank 1 second half\] and we should be able to access the top GB. This wasn't tested yet.
+
+If we do it by shrinking the page size, it probably won't break refresh as refresh is row-wise and the memory controller doesn't handle the data during refresh (so it won't only refresh half of each page). This wasn't confirmed yet. Shrinking anything other than the row bits will mangle the address layout of rank 0 due to deleting address bits from the middle, but shrinking the row bits has a risk of breaking refresh (leading to a debugging nightmare six months down the line when RAM randomly loses data). Data to be transferred to/from the upper 1GB would have to be staged in the first half of rank 1 (or a striped pattern in rank 0).
+
+This could possibly be used as a swap device, or as main memory, depending on how fast and reliable changing the controller settings is.
+
+### Crossbar priority
+
+The controller includes a priority crossbar switch which allocates memory bandwidth to various clients, such as the CPU, GPU, display output. This is left uninitialized here because it doesn't seem to matter if you just want to run the CPU, however this could lead to starvation for some clients - especially for the display output which has to output pixels at a certain rate or else the display presumably just breaks (black pixels or lost synchronization).

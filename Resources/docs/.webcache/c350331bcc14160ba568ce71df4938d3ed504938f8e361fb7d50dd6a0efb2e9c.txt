@@ -1,0 +1,86 @@
+## FS and GS
+
+In x86-64 mode, only the FS and GS registers participate in a limited form of [segmentation](https://wiki.osdev.org/Segmentation "Segmentation"); only their base addresses are used to calculate effective addresses. Due in part to the requirement for per-CPU data, as well as the design of AMD's SYSCALL/SYSRET instructions in long mode, the GS register often holds a base address to a structure containing per-CPU data. (Note: the [System V ABI](https://wiki.osdev.org/System_V_ABI "System V ABI") specifies that FS is used for [Thread Local Storage](https://wiki.osdev.org/Thread_Local_Storage "Thread Local Storage"), and unless you configure GCC otherwise (possibly by building an [OS Specific Toolchain](https://wiki.osdev.org/OS_Specific_Toolchain "OS Specific Toolchain")), GCC will generate code that uses FS for TLS)
+
+(Each CPU core has its own set of MSRs, so they can each have a unique GSBase)
+
+## GSBase, KernelGSBase, and FSBase MSRs
+
+Instead of allowing FS and GS to select a 'long' descriptor in the [GDT](https://wiki.osdev.org/GDT "GDT") (similar to the [TSS](https://wiki.osdev.org/TSS "TSS")), AMD (thankfully) created 3 new [Model Specific Registers](https://wiki.osdev.org/Model_Specific_Registers "Model Specific Registers") to tell the CPU what the base address of FS and GS should be. Consequently, your GDT does not need to have any descriptors for FS/GS, and in fact you can load `0` into the selectors. There is a caveat though; on loading a null selector, AMD CPUs will preserve the "hidden registers", while Intel processors clear the hidden registers.
+
+FSBase is MSR `0xC0000100`, GSBase is `0xC0000101`, and KernelGSBase is `0xC0000102`.
+
+## Loading a Null Selector into FS or GS
+
+As detailed above, Intel and AMD processors differ in their behaviour when loading a null selector into FS and GS. On AMD chips, the effective values of FSBase and GSBase are preserved, as detailed in the AMD manual (revision 3.30, section 4.5.3 \[page 73\]):
+
+> Segment register-load instructions (MOV to Sreg and POP Sreg) load only a 32-bit base-address value into the hidden portion of the FS and GS segment registers. The base-address bits above the low 32 bits are cleared to 0 as a result of a segment-register load. **When a null selector is loaded into FS or GS, the contents of the corresponding hidden descriptor register are not altered.**
+
+This behaviour is not documented in the Intel manuals, and from empirical testing the hidden portions are cleared to 0 when a null selector is loaded. (probably)
+
+## SWAPGS
+
+To facilitate using GS to store kernel data (its 'original' intention was to be used in conjunction with SYSCALL/SYSRET), a 'SWAPGS' instruction is present in long mode, which swaps the values in the KernelGSBase and GSBase [Model Specific Registers](https://wiki.osdev.org/Model_Specific_Registers "Model Specific Registers"). Since the processor will use the value in the GSBase MSR as the base address of GS, KernelGSBase allows the kernel to 'save' another base address.
+
+The typical use of SWAPGS is to keep the 'user' GS (which likely has a base address of 0) in the GSBase MSR, and the address of the kernel's per-CPU structure in KernelGSBase. Upon entry to Ring 0 (through a system call, software interrupt, or some other method), the kernel will use SWAPGS so accessing `[GS:0]` will get the pointer to the kernel data. Upon leaving Ring 0, SWAPGS will be called again, to switch GS back to the 'user' GS. For instance:
+
+``` asm
+interrupt_entry:
+    swapgs
+    push %r15
+    push %r14
+    ...
+    pop %r14
+    pop %r15
+    swapgs
+    iretq
+```
+
+Then, in kernel code somewhere:
+
+``` asm
+get_cpu_struct:
+    mov %gs:0, %rax
+    ret
+```
+
+(Note: LEA does not work with segments, so I use the snippet above, and have the first field of the structure be a pointer to itself (SysV ABI mandates this of the FS pointer to TLS as well)
+
+## Complications
+
+A problem should start to become apparent after studying how SWAPGS behaves -- it's not nestable! For instance, if the CPU is in Ring 0 when it is interrupted, then GSBase will already contain the correct pointer; calling SWAPGS at this point would load the user GS, which could cause crashes, or worse. Thus, it is necessary to determine whether the interrupt context was in Ring 0 or Ring 3, and by extension determine whether or not GS needs to be swapped.
+
+When the CPU is interrupted, it helpfully pushes a couple of things to the stack, notably CS. (see page 252 of the AMD manual volume 2 for a helpful diagram). By looking at the value of CS on the stack, one can determine the CPL of the interrupted context. The code snippet above can be modified as such to swap GS when the interrupted context was in Ring 3, and not to swap when it was in Ring 0:
+
+``` asm
+.macro swapgs_if_necessary
+    cmp $0x08, 0x8(%rsp)
+    je 1f
+    swapgs
+1:
+.endm
+
+interrupt_entry:
+    swapgs_if_necessary
+    push %r15
+    push %r14
+    ...
+    pop %r14
+    pop %r15
+    swapgs_if_necessary
+    iretq
+```
+
+As a sidenote, the handlers for SYSCALL/SYSRET can unconditionally perform a SWAPGS, since they will only be called from Ring 3 (and return to Ring 3, respectively). If the kernel is interrupted (by a timer IRQ, for example) while handling the syscall, the snippet above will correctly choose not to swap GS.
+
+## Complications, Part 2
+
+There is a potential race condition in the code above; if the interrupt calling `interrupt_entry` is itself interrupted (perhaps by a machine check exception, or NMI) -- after the CPU has pushed the interrupt stack frame, but before SWAPGS is called -- the snippet will incorrectly decide **not** to swap GS, since the most-recent value of CS on the stack would be that of Ring 0 code.
+
+In this situation, there is another method to determine whether GS needs to be swapped -- by reading the value of GSBase from the MSR. Note that this is a slower process, and it is advisable to only do this method of checking "in an NMI/MCE/DEBUG/whatever super-atomic entry context". (according to Linux)
+
+Note: for this reason, when implementing the entry points to the kernel from userspace (typically syscall handlers), interrupts should be **disabled**. (for example, mask IF in MSR_SF_MASK, or use an interrupt gate instead of a call gate for your interrupt handler). Only **after** SWAPGS is called should interrupts be enabled (to preserve allow processes in syscalls to be pre-empted). Similarly, interrupts should be disabled before the final SWAPGS to usermode. The relevant CPU mechanisms should re-enable interrupts upon a SYSRET or IRET.
+
+### External Links
+
+- [What Linux has to say about SWAPGS](https://www.kernel.org/doc/Documentation/x86/entry_64.txt)

@@ -1,0 +1,564 @@
+| Difficulty level |
+|------------------|
+| Advanced         |
+
+This is a demonstration tutorial of how you could write an OS using Java. The methods described in here however are quite generic - you can use similar approaches for other bytecoded languages, such as .NET. In addition, this article contains a simple compiler that can be a source of inspiration for any custom languages.
+
+Being a demonstration, the method posted here is exceedingly simple and only does the necessary work to make the bundled Java code run. It can not deal with most things one would expect from Java. It does not do garbage collection in any forms, let alone support strings. The code provided here is purposefully limited, so you can play with it a bit to get a feeling, but it is impossible to extend this code to support more key components of the language.
+
+Consider this a throwaway prototype - **it's deliberately written in such a fashion that you're forced to rewrite a new one from scratch.**
+
+## Supporting a non-native language
+
+Since you have much less to leech from existing compilers, you essentially are in charge of the entire toolchain. There are a number of rough steps:
+
+- **Define your native ABI**
+
+Java and .NET come in bytecode, which are designed for machines that are fundamentally different than your typical register-based hardware. You'll need to understand assembly for your platform, and you'll have to think about how the language structures should be converted to native ones. One of the things this example does is to adhere to the stdcall convention, because it's closer to the virtual java machine than the cdecl that's the default in most compilers.
+
+- **Create bytecode-to-native compiler**
+
+Java comes in bytecode form, and we need a method of converting it to native. Because we are writing an OS at the same time, everything must be compiled ahead of time, and not rely on an existing runtime that expects the existing presence of an OS. Therefore, we write our own compiler. As part of the compiler, we include the org.objectweb.asm that can read .class files and save us from writing significant portions of code.
+
+- **Compile the compiler**
+
+The compiler is of course written in Java as well. We don't need additional languages to add to the bootstrap problem later. Of course this compiler is overly simplistic, and will never be able to compile itself.
+
+- **Compile managed os to bytecode**
+
+Javac is written in Java, so that's obviously the best choice for later porting.
+
+- **Compile bytecode to native assembly**
+
+Now that we have the compiler, we can run it on all our OS classes to generate native code.
+
+- **Create runtime for things that have to be non-native**
+
+Java is memory-safe, which prevents it from implementing a lot of things. A minimal set of startup code is done in native assembly. Everything architecture-specific has to be done in assembly. Some parts you'll need later, such as memory management and exception handling are probably easier to have pure native parts for as well.
+
+- **Assemble os and runtime**
+
+We have everything in machine language form now. We're still reuseing the parts that we can, and in this example we use yasm. You're free to write an assembler in Java later on.
+
+- **package the final kernel binary**
+
+This is done using binutils. Note that there is not a single C compiler in the chain, and again, you can build your own linker in your language - it doesn't really have to do that much.
+
+  
+
+## Compiler
+
+In bytecoded languages there are several steps before code can be run. Typically you have "the" compiler, which converts your source files into some portable binary, and you have an interpreter that reads those binaries and runs instructions from them. Modern interpreters turn bytecode into native code, as to avoid the `if(instruction = ...)` that takes several cycles while the instruction you'd actually want to execute would otherwise cost you just one CPU instruction.
+
+In the case of an OS, we need to take this a step further. We could run an interpreter, but that's slow. We could compile into native on boot but that needs just as much OS as we actually want to run. Instead, the appropriate solution is to compile to native in advance, so we can just run the code directly from the start.
+
+The entirety of a language is still a whole lot to deal with, but for our example it suffices to deal with just integers. That's right, no objects yet!
+
+The Java bytecode uses a stack for operations, and a list of locals. These need not be in the same place, but as the x86 only has one hardware stack, we'll be using it as both local stack, call stack, and operation stack. A few tricks are used to make this compiler easier, and in turn, make it difficult to interface with C. Locals in Java terms include the function arguments, and as a result the locals would be split around return addresses. Since the caller doesn't know the storage needed - it doesn't even get the number of arguments for free - the called function should fix this. We also can't put things past the top of the stack because that'll be a big issue with interrupts later. Basically we copy all arguments to the other side of the return address and then we make some room for locals so that they can be indexed by `EBP - 4 * slot_number` where for instance 0 and 1 would be arguments and 2+ would be true locals.
+
+The fact that getting the number of arguments is convoluted to perform on the caller's side, we do callee-cleanup using `RET imm` instead of the regular `RET`. Locals is a convoluted issue as well, so we just reserve room for 8 because you're not meant to copy this code anyway.
+
+``` java
+// File: compiler/nl/combuster/minijava/Compiler.java
+package nl.combuster.minijava;
+
+import org.objectweb.asm.*;
+import org.objectweb.asm.tree.*;
+import java.util.*;
+import java.io.*;
+
+public class Compiler
+{
+    public static byte[] readEntireFile(String filename)
+    {
+        File file = new File(filename);
+        try 
+        {
+            FileInputStream input = new FileInputStream(file);
+            byte bytes[] = new byte[(int)file.length()];
+            input.read(bytes);
+            return bytes;
+        }
+        catch (IOException e)
+        {
+            throw new RuntimeException("Unable to read file " + file, e);
+        }
+    }
+
+    public static void writeOutput(String filename, List<String> lines)
+    {
+        try 
+        {
+            BufferedWriter writer = new BufferedWriter(new FileWriter(new File(filename)));
+            for (String string : lines)
+            {
+                writer.write(string);
+                writer.newLine();
+            }
+            writer.close();
+        }
+        catch (IOException e)
+        {
+            throw new RuntimeException("Unable to write output file " + filename, e);
+        }
+    }
+
+    public static String decorate(String classname, String method, String signature)
+    {
+        // make all these assembly-friendly names. Note that the 
+        // constructor is for instance called <init>
+        return classname.replace("/","_") + "__" + method.replace("<","_").replace(">","_");
+    }
+    
+    public static void jumpgroup(List<String> output, String jumpcode, LabelNode dest)
+    {
+        output.add("pop edx");
+        output.add("pop ecx");
+        output.add("cmp ecx, edx");
+        output.add(jumpcode + " .l" + dest.getLabel());
+    }
+
+    public static void main(String args[])
+    {
+        if (args.length != 2) throw new RuntimeException("Usage: compiler input-file output-file");
+
+        ClassNode node = new ClassNode();
+        ClassReader reader = new ClassReader(readEntireFile(args[0]));
+        reader.accept(node, 0);
+
+        List<String> outputdata = new LinkedList<String>();
+
+        outputdata.add("section .text");
+
+        for (MethodNode method : node.methods)
+        {
+            method.visitCode();
+            String methodname = decorate(node.name, method.name, method.signature);
+
+            if ((method.access & Opcodes.ACC_NATIVE) != 0) continue;
+
+            // prologue
+            System.out.println("; attributes: " + method.attrs);
+            outputdata.add("global " + methodname);
+            outputdata.add(methodname + ":");
+            outputdata.add("push ebp");
+            outputdata.add("mov ebp, esp");
+
+            int locals = (method.localVariables == null) ? 0 : method.localVariables.size();
+            outputdata.add("; locals: + " + locals);
+            int arguments = (method.parameters == null) ? 0 : method.parameters.size();
+            if ((method.access & Opcodes.ACC_STATIC) == 0) arguments++; // hidden "this"
+            outputdata.add("; params: + " + arguments);
+            // copy params so that they correspond with java indexing and join with the local numbering
+            for (int i = 0; i < arguments; i++)
+            {
+                outputdata.add("push dword [ebp + " + (8 + 4 * i) + "]");
+            }
+            // do some frame checking for many variables, locals is not of much use...
+            outputdata.add("sub esp, 32");
+
+            Iterator<AbstractInsnNode> iterator = method.instructions.iterator();
+            while (iterator.hasNext())
+            {     
+                AbstractInsnNode insn = iterator.next();
+                int opcode = insn.getOpcode() & 0xff;
+                outputdata.add("    ; " + opcode + " = " + insn.getClass().getSimpleName());
+                //outputdata.add("mov byte [" + (0xb8000 + 156) + "], '0' + " + (opcode % 10));
+                //outputdata.add("mov byte [" + (0xb8000 + 154) + "], '0' + " + (opcode / 10)%10);
+                //outputdata.add("mov byte [" + (0xb8000 + 152) + "], '0' + " + (opcode / 100));
+                
+                if (insn instanceof LabelNode)
+                {
+                    LabelNode labelinsn = (LabelNode)insn;
+                    outputdata.add(".l" + labelinsn.getLabel());
+                }
+                else if (insn instanceof LineNumberNode)
+                {
+                    // ignore these
+                }
+                else if (insn instanceof VarInsnNode)
+                {
+                    // copy a variable
+                    VarInsnNode varinsn = (VarInsnNode) insn;
+                    switch(varinsn.getOpcode())
+                    {
+                        case Opcodes.ILOAD:
+                        case Opcodes.ALOAD:
+                            // todo: verify offset
+                            outputdata.add("push dword [ebp - " + (4 + 4 * varinsn.var) + "]");
+                            break;
+                            
+                        case Opcodes.ISTORE:
+                        case Opcodes.ASTORE:
+                            outputdata.add("pop dword [ebp - " + (4 + 4 * varinsn.var) + "]");
+                            break;
+
+                        default:
+                            outputdata.add("Can't deal with varinsnnode: " + varinsn.getOpcode());
+                    }
+                }
+                else if (insn instanceof MethodInsnNode)
+                {
+                    MethodInsnNode methodinsn = (MethodInsnNode) insn;
+                    String calledmethod = decorate(methodinsn.owner, methodinsn.name, methodinsn.desc);
+                    outputdata.add("extern " + calledmethod);
+                    outputdata.add("call " + calledmethod);
+                    if (!methodinsn.desc.endsWith("V"))
+                    {
+                        // not a void return value
+                        outputdata.add("push eax");
+                    }
+                    /*switch (methodinsn.getOpcode())
+                    {
+                        default:
+                            outputdata.add("Can't deal with methodcall: " + methodinsn.getOpcode());
+                    }*/
+                }
+                else if (insn instanceof IntInsnNode)
+                {
+                    IntInsnNode intinsn = (IntInsnNode)insn;
+                    switch(intinsn.getOpcode())
+                    {
+                        case Opcodes.BIPUSH:
+                            outputdata.add("push " + intinsn.operand);
+                            break;
+
+                        default:
+                            outputdata.add("Can't deal with intinsnnode: " + intinsn.getOpcode());
+                    }
+                    
+                }
+                else if (insn instanceof JumpInsnNode)
+                {
+                    JumpInsnNode jmpinsn = (JumpInsnNode)insn;
+                    
+                    switch(jmpinsn.getOpcode())
+                    {
+                        case Opcodes.IF_ICMPEQ:     jumpgroup(outputdata, "je", jmpinsn.label);     break; // 159
+                        case Opcodes.IF_ICMPNE:     jumpgroup(outputdata, "jne", jmpinsn.label);    break; // 160                       
+                        case Opcodes.IF_ICMPLT:     jumpgroup(outputdata, "jb", jmpinsn.label);     break; // 161
+                        case Opcodes.IF_ICMPGE:     jumpgroup(outputdata, "jae", jmpinsn.label);    break; // 162
+                        case Opcodes.IF_ICMPGT:     jumpgroup(outputdata, "ja", jmpinsn.label);     break; // 163
+                        case Opcodes.IF_ICMPLE:     jumpgroup(outputdata, "jbe", jmpinsn.label);    break; // 164
+                    
+                        case Opcodes.GOTO: // 167
+                            outputdata.add("jmp .l" + jmpinsn.label.getLabel());
+                            break;
+
+                        default:
+                            outputdata.add("Can't deal with jumpinsnnode: " + jmpinsn.getOpcode());
+                    }
+                }   
+                else if (insn instanceof LdcInsnNode)
+                {
+                    LdcInsnNode ldcinsn = (LdcInsnNode) insn;
+                    if (ldcinsn.cst instanceof Integer)
+                    {
+                        outputdata.add("push " + ldcinsn.cst.toString());
+                    }
+                    else
+                    {
+                        outputdata.add("Can't deal with data in ldcinsnnode (" + ldcinsn.getOpcode() +"): " + ldcinsn.cst.getClass().getSimpleName());
+                    }
+                }             
+                else if (insn instanceof IincInsnNode)
+                {
+                    IincInsnNode incinsn = (IincInsnNode) insn;
+                    switch (incinsn.getOpcode())
+                    {   
+                        case Opcodes.IINC:
+                            outputdata.add("add dword [ebp - " + (4 + 4 * incinsn.var) + "], " + incinsn.incr);
+                            break;
+                        default:
+                            outputdata.add("Can't deal with iincinsnnode: " + incinsn.getOpcode());                         
+                    }
+                    
+                }
+                else if (insn.getOpcode() >= Opcodes.ICONST_M1 && insn.getOpcode() <= Opcodes.ICONST_5) // 2...8
+                {
+                    outputdata.add("push " + (insn.getOpcode() - Opcodes.ICONST_M1 - 1));
+                }
+                else if (insn.getOpcode() == Opcodes.IADD) // 96
+                {
+                    outputdata.add("pop edx");
+                    outputdata.add("add [esp], edx");
+                }
+                else if (insn.getOpcode() == Opcodes.IMUL) // 104
+                {
+                    outputdata.add("pop eax");
+                    outputdata.add("pop ecx");
+                    outputdata.add("imul ecx"); // eax:edx = eax * ecx
+                    outputdata.add("push eax");
+                }                
+                else if (insn.getOpcode() == Opcodes.I2B) // 145
+                {
+                    outputdata.add("and dword [esp], 0xff");
+                }
+                else if (insn.getOpcode() == Opcodes.RETURN)    // 177
+                {
+                    outputdata.add("xor eax, eax");
+                }
+                else if (insn instanceof FrameNode)
+                {
+                    outputdata.add("; framenode");
+                }
+                else
+                {
+                    outputdata.add("Can't deal with " + insn.getClass().getSimpleName() + ", fix it (" + insn.getOpcode() + ")");
+                }
+            }
+
+            // epilogue, stdcall to save complexity on decoding methodinsns
+            outputdata.add("leave");
+            outputdata.add("ret " + arguments);
+        }
+
+        writeOutput(args[1], outputdata);
+    }
+}
+```
+
+Yes, that's a compiler in a magic 256 lines of code. The result is Intel syntax assembly, because there already are decent tools for assembly out there that deal with object formats out there. Of course you can write your own later as well.
+
+## HAL and Runtime
+
+Almost no programming language has standard constructs for all the things a processor can do, in particular not languages that were designed to be portable and memory-safe. For that reason we are required to add support for that outside of the language. Fortunately, Java does come with one construct specifically design to wrap the language to platform specifics: `native`
+
+``` java
+// File: os/nl/combuster/minijavaos/Hal.java
+package nl.combuster.minijavaos;
+
+public class Hal
+{
+    public static native void poke(int address, byte data);
+}
+```
+
+At some point the OS needs to access memory unsafely, and this is the method we'll use. The native keyword also implies that there is no implementation in java and that it'll come from elsewhere.
+
+There are more things that might be difficult to do in straight Java: this example omits memory management in its entirety, but there is still a quirk: Every object subclasses from java.lang.Object. To make matters more complicated, the compiler does not allow us to write java.lang classes in Java. In this case it's a particular chicken-and-egg problem: how would we even compile a class that extends itself? We are in some way forced to treat java.lang.Object special, and basically use its constructor as a terminator for a constructor chain. At a later stage, we might even want to do something more in there, but for now we don't need to. The first piece of native support code deals with these problems:
+
+``` asm
+; File: os/hal.asm
+section .text
+
+global java_lang_Object___init_
+global nl_combuster_minijavaos_Hal__poke
+
+java_lang_Object___init_:
+    ret
+
+nl_combuster_minijavaos_Hal__poke:
+    mov eax, [esp+8]
+    mov dl, [esp+4]
+    mov [eax], dl
+    ret 2
+```
+
+## A primitive kernel
+
+"Hello world!" is a very overrated thing. Or is it? Strings are a full-blown object in Java, and passing objects safely is one of the things skipped in the compiler itself. Instead, we can count our numbers to show what we have actually works:
+
+``` java
+package nl.combuster.minijavaos;
+
+public class Kernel
+{
+    public Kernel(int arg1)
+    {
+    }
+
+    public static void kmain()
+    {            
+        
+        for (int i = 0; i < 10; i++)
+        {
+            Hal.poke(0xB8000 + 2 * i,     (byte) ('0' + i));
+            Hal.poke(0xB8000 + 2 * i + 1, (byte) 0x1F); 
+        }                
+    }
+}
+```
+
+This is little more than some simple VGA code, but it demonstrates that we can call Java code, do some calculations, and then call our hardware abstraction layer to complete the little bits Java just couldn't do.
+
+## Wrapping it all together
+
+The last thing we need to do is to glue all the pieces together and stick a bootloader on top of it. [Bare Bones](https://wiki.osdev.org/Bare_Bones "Bare Bones") has a more extensive description of the process. You might have noticed the full filenames in the source files above, basically we have two projects fairly tightly intertwined with each other, residing in the compiler and os subfolders that serve as the Java source root at the same time. A build folder is added so that you can simply delete that folder to start fresh, without having to worry about finding all your intermediates in between the real sources. In particular, we wouldn't be able to tell which .asm file is original and which one is compiler output without it!
+
+#### Multiboot
+
+We use GRUB as a bootloader, so the mechanics are the same. The only real difference is that we have to cope with the name mangling and be unable to call something kmain.
+
+``` asm
+; File: os/multiboot.asm
+
+; Declare constants used for creating a multiboot header.
+MBALIGN     equ  1<<0                   ; align loaded modules on page boundaries
+MEMINFO     equ  1<<1                   ; provide memory map
+FLAGS       equ  MBALIGN | MEMINFO      ; this is the Multiboot 'flag' field
+MAGIC       equ  0x1BADB002             ; 'magic number' lets bootloader find the header
+CHECKSUM    equ -(MAGIC + FLAGS)        ; checksum of above, to prove we are multiboot
+ 
+; Declare a header as in the Multiboot Standard.
+section .multiboot
+align 4
+    dd MAGIC
+    dd FLAGS
+    dd CHECKSUM
+ 
+; We'll need a stack
+section .bootstrap_stack, nobits
+align 4
+stack_bottom:
+resb 16384
+stack_top:
+ 
+; Kernel entry point
+section .text
+global _start
+_start:
+    mov esp, stack_top
+
+    extern nl_combuster_minijavaos_Kernel__kmain
+    call nl_combuster_minijavaos_Kernel__kmain
+ 
+    cli
+.hang:
+    ;hlt
+    jmp .hang
+```
+
+#### Linker script
+
+Linking also happens with the same script as [Bare Bones](https://wiki.osdev.org/Bare_Bones "Bare Bones")
+
+``` c
+/* File: os/linker.ld */
+/* The bootloader will look at this image and start execution at the symbol
+   designated as the entry point. */
+ENTRY(_start)
+
+/* Tell where the various sections of the object files will be put in the final
+   kernel image. */
+SECTIONS
+{
+    /* Begin putting sections at 1 MiB, a conventional place for kernels to be
+       loaded at by the bootloader. */
+    . = 1M;
+
+    /* First put the multiboot header, as it is required to be put very early
+       early in the image or the bootloader won't recognize the file format.
+       Next we'll put the .text section. */
+    .text BLOCK(4K) : ALIGN(4K)
+    {
+        *(.multiboot)
+        *(.text)
+    }
+
+    /* Read-only data. */
+    .rodata BLOCK(4K) : ALIGN(4K)
+    {
+        *(.rodata)
+    }
+
+    /* Read-write data (initialized) */
+    .data BLOCK(4K) : ALIGN(4K)
+    {
+        *(.data)
+    }
+
+    /* Read-write data (uninitialized) and stack */
+    .bss BLOCK(4K) : ALIGN(4K)
+    {
+        *(COMMON)
+        *(.bss)
+        *(.bootstrap_stack)
+    }
+
+    /* The compiler may produce other sections, by default it will put them in
+       a segment with the same name. Simply add stuff here as needed. */
+}
+```
+
+#### GRUB
+
+Some configuration files for GRUB legacy. Doing this with a CD is the easiest way, really:
+
+``` bash
+# 
+# File: os/grub.cfg
+#
+default 0
+timeout 30
+
+# For booting GNU/Linux
+title Java OS 
+root (cd)
+kernel (cd)/kernel
+```
+
+#### Build instructions
+
+To simplify things, here's the Makefile that glues all the steps together. This one is a bit more elaborate as it covers for pretty much all the intermediate steps needed. Compile the compiler, make an executable jar file, compile the java files to class files, to assembly files, to object files, to an ELF binary. Include the runtime halfway into the process, then build a CD image with GRUB.
+
+In this example, GRUB is assumed to be preinstalled in /boot where it resides by default on a linux system that has it installed. We also need mkisofs and the binutils step from the [GCC Cross-Compiler](https://wiki.osdev.org/GCC_Cross-Compiler "GCC Cross-Compiler"). Of course, at some point in time you can decide to write these tools in Java as well
+
+``` make
+COMPILER_J=$(shell find -L compiler -iname '*.java')
+COMPILER_C=$(addprefix build/,$(patsubst %.java,%.class,$(COMPILER_J)))
+
+OS_J:=$(shell find -L os -iname '*.java')
+OS_C:=$(addprefix build/,$(patsubst %.java,%.class,$(OS_J)))
+OS_A:=$(patsubst %.class,%.asm,$(OS_C)) 
+RT_A:=$(shell find -L os -iname '*.asm')
+OS_O:=$(patsubst %.asm,%.o,$(OS_A))
+RT_O:=$(addprefix build/,$(patsubst %.asm,%.o,$(RT_A)))
+
+default: build/compiler.jar build/kernel build/image.iso
+    echo done compiling
+
+.PHONY: default
+
+build/.dir: 
+    mkdir -p build/compiler
+    mkdir -p build/os
+    touch build/.dir
+
+build/compiler.jar: $(COMPILER_C) compiler/compiler.manifest
+    jar cvfm $@ compiler/compiler.manifest -C build/compiler .
+
+build/compiler/%.class: compiler/%.java build/.dir
+    javac -d build/compiler -sourcepath compiler $<
+
+build/os/%.class: os/%.java build/.dir
+    javac -d build/os -sourcepath os $<
+
+%.asm:%.class build/compiler.jar
+    java -jar build/compiler.jar $< $@
+
+%.o:%.asm
+    yasm -f elf -o $@ $<
+
+build/os/%.o: os/%.asm build/.dir
+    yasm -f elf -o $@ $<
+
+build/kernel: $(OS_O) $(RT_O)
+    i586-elf-ld -o $@ -T os/linker.ld $(OS_O) $(RT_O)
+
+build/image.iso: build/kernel os/grub.cfg Makefile
+    -rm -rf build/iso
+    mkdir -p build/iso/boot/grub
+    cp build/kernel build/iso/
+    cp os/grub.cfg build/iso/boot/grub/menu.lst
+    cp /boot/grub/stage2_eltorito build/iso/boot/grub/
+    mkisofs -R -b boot/grub/stage2_eltorito -no-emul-boot -boot-load-size 4 -boot-info-table -o $@ build/iso
+```
+
+If you paid attention, you'll notice that the JAR step requires a manifest at `compiler/compiler.manifest`. It only really marks it as runnable so that we can use it easily:
+
+``` bash
+Main-Class: nl.combuster.minijava.Compiler
+```
+
+Lastly, the [one library](http://forge.ow2.org/project/download.php?group_id=23&file_id=20549) our compiler uses to do most of its magic. You can just copy the source into the compiler folder and the build script will pick it up.

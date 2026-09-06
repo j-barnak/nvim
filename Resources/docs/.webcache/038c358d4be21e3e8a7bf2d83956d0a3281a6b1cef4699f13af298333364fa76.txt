@@ -1,0 +1,406 @@
+|                                                                                          |     |
+|------------------------------------------------------------------------------------------|-----|
+| This page or section is a stub . You can help the wiki by accurately contributing to it. |     |
+
+|                                                                                                                                                                              |
+|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| This tutorial needs to explain what the code does as tutorials are not just copy paste. You can help out by editing this page to include more context to what the code does. |
+
+In this tutorial, we'll make a simple hello world kernel in Zig for x86 PCs.
+
+## Prerequisites
+
+First off, you'll need:
+
+- The [Zig](https://ziglang.org/) compiler version 0.15.1+
+- [GRUB](https://wiki.osdev.org/GRUB "GRUB") as our bootloader to boot the kernel
+
+## Code
+
+If you done setting up all of the prerequisites above, we can now write some code for our kernel
+
+### build.zig
+
+``` zig
+const std = @import("std");
+
+pub fn build(b: *std.Build) !void {
+    const optimize = b.standardOptimizeOption(.{});
+
+    const Target = std.Target.x86;
+    const target = b.resolveTargetQuery(.{
+        .cpu_arch = .x86,
+        .os_tag = .freestanding,
+        .abi = .none,
+        // We use software float because we are disabling all SIMD stuff
+        .cpu_features_add = Target.featureSet(&.{.soft_float}),
+        // Disable all SIMD related stuff because SIMD are problematic in kernel
+        .cpu_features_sub = Target.featureSet(&.{ .avx, .avx2, .sse, .sse2, .mmx }),
+    });
+
+    const kernel = b.addExecutable(.{
+        .name = "kernel.elf",
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/main.zig"),
+            .target = target,
+            .optimize = optimize,
+            .code_model = .kernel,
+        }),
+    });
+    kernel.setLinkerScript(b.path("src/linker.ld"));
+    b.installArtifact(kernel);
+
+    const kernel_path = kernel.getEmittedBin();
+    const qemu_cmd = b.addSystemCommand(&[_][]const u8{
+        // zig fmt: off
+        "qemu-system-x86_64",
+        "-m", "1G",
+        "-serial", "stdio",
+    });
+    // zig fmt: on
+    qemu_cmd.addArg("-kernel");
+    qemu_cmd.addFileArg(kernel_path);
+    qemu_cmd.step.dependOn(b.getInstallStep());
+
+    const run_cmd = b.addRunArtifact(kernel);
+    run_cmd.step.dependOn(&qemu_cmd.step);
+    if (b.args) |args| {
+        run_cmd.addArgs(args);
+    }
+
+    const run_step = b.step("run", "Run kernel with qemu");
+    run_step.dependOn(&run_cmd.step);
+}
+```
+
+### src/main.zig
+
+``` zig
+const console = @import("console.zig");
+
+const MB_HEADER_MAGIC = 0x1BADB002;
+const MB_FLAG_ALIGN = 1 << 0;
+const MB_FLAG_MEMINFO = 1 << 1;
+const FLAGS = MB_FLAG_ALIGN | MB_FLAG_MEMINFO;
+
+/// https://www.gnu.org/software/grub/manual/multiboot/multiboot.html#Header-layout
+const MultibootHeader = packed struct {
+    magic: u32 = MB_HEADER_MAGIC,
+    flags: u32 = FLAGS,
+    checksum: u32,
+    padding: u32 = 0,
+};
+
+export var multiboot: MultibootHeader align(4) linksection(".multiboot") = .{
+    // Here we are adding magic and flags and ~ to get 1's complement and by adding 1 we get 2's complement
+    .checksum = ~@as(u32, (MB_HEADER_MAGIC + FLAGS)) + 1,
+};
+
+var stack_bytes: [16 * 1024]u8 align(16) linksection(".bss") = undefined;
+
+// We specify that this function is "naked" to let the compiler know
+// not to generate a standard function prologue and epilogue, since
+// we don't have a stack yet.
+export fn _start() callconv(.naked) noreturn {
+    // We use inline assembly to set up the stack before jumping to
+    // our kernel entry point.
+    asm volatile (
+        \\ movl %[stack_top], %%esp
+        \\ movl %%esp, %%ebp
+        \\ call %[kmain:P]
+        :
+        // The stack grows downwards on x86, so we need to point ESP register
+        // to one element past the end of `stack_bytes`.
+        //
+        // Finally, we pass the whole expression as an input operand with the
+        // "immediate" constraint to force the compiler to encode this as an
+        // absolute address. This prevents the compiler from doing unnecessary
+        // extra steps to compute the address at runtime (especially in Debug mode),
+        // which could possibly clobber registers that are specified by multiboot
+        // to hold special values (e.g. EAX).
+        : [stack_top] "i" (stack_bytes[stack_bytes.len..].ptr),
+          // We let the compiler handle the reference to kmain by passing it as an input operand as well.
+          [kmain] "X" (&kmain),
+    );
+}
+
+// We use noinline to make sure it don't get inlined by compiler
+noinline fn kmain() callconv(.c) noreturn {
+    // Initialize our VGA driver
+    console.init();
+    // Printing string
+    console.print("Hello {s} kernel!", .{"zig"});
+    // Loop forever as there is nothing to do
+    while (true) {
+        asm volatile ("hlt");
+    }
+}
+```
+
+### src/console.zig
+
+``` zig
+const std = @import("std");
+const console = @import("console.zig");
+
+const VGA_WIDTH = 80;
+const VGA_HEIGHT = 25;
+const VGA_SIZE = VGA_WIDTH * VGA_HEIGHT;
+
+var g_row: usize = 0;
+var g_column: usize = 0;
+var g_color: Color = .init(.light_gray, .black);
+var g_buffer = @as([*]volatile u16, @ptrFromInt(0xB8000));
+
+pub const ColorType = enum(u4) {
+    black = 0,
+    blue = 1,
+    green = 2,
+    cyan = 3,
+    red = 4,
+    magenta = 5,
+    brown = 6,
+    light_gray = 7,
+    dark_gray = 8,
+    light_blue = 9,
+    light_green = 10,
+    light_cyan = 11,
+    light_red = 12,
+    light_magenta = 13,
+    light_brown = 14,
+    white = 15,
+};
+
+const Color = packed struct(u8) {
+    fg: ColorType,
+    bg: ColorType,
+
+    pub fn init(fg: ColorType, bg: ColorType) Color {
+        return .{ .fg = fg, .bg = bg };
+    }
+
+    /// Combine vga color and char. The upper byte will be color and lower byte will be character
+    pub fn getVgaChar(self: Color, char: u8) u16 {
+        return @as(u16, @as(u8, @bitCast(self))) << 8 | char;
+    }
+};
+
+/// Initialize VGA
+pub fn init() void {
+    clear();
+}
+
+/// Set Color for VGA
+pub fn setColor(fg: Color, bg: Color) void {
+    g_color = Color.init(fg, bg);
+}
+
+/// Clear the screen
+pub fn clear() void {
+    @memset(g_buffer[0..VGA_SIZE], Color.getVgaChar(g_color, ' '));
+}
+
+/// Print character with color at specific position
+pub fn printCharAt(char: u8, color: Color, x: usize, y: usize) void {
+    const index = y * VGA_WIDTH + x;
+    g_buffer[index] = color.getVgaChar(char);
+}
+
+/// INFO: Scrolling is left as an exercise for the reader
+fn checkAndScroll() void {
+    if (g_row == VGA_HEIGHT) {
+        g_row = 0;
+    }
+}
+
+/// Print character to the VGA
+pub fn printChar(char: u8) void {
+    switch (char) {
+        '\n' => {
+            g_column = 0;
+            g_row += 1;
+            checkAndScroll();
+        },
+        else => {
+            printCharAt(char, g_color, g_column, g_row);
+            g_column += 1;
+            if (g_column == VGA_WIDTH) {
+                g_column = 0;
+                g_row += 1;
+                checkAndScroll();
+            }
+        },
+    }
+}
+
+/// Implementation of std.Io.Writer.vtable.drain function.
+/// When flush is called or the writer buffer is full this function is called.
+/// This function first writes all data of writer buffer after that it writes
+/// the argument data in which the last element is written splat times.
+fn drain(w: *std.Io.Writer, data: []const []const u8, splat: usize) !usize {
+    // the length of data must not be zero
+    std.debug.assert(data.len != 0);
+
+    var consumed: usize = 0;
+    const pattern = data[data.len - 1];
+    const splat_len = pattern.len * splat;
+
+    // If buffer is not empty write it first
+    if (w.end != 0) {
+        printString(w.buffered());
+        w.end = 0;
+    }
+
+    // Now write all data except last element
+    for (data[0 .. data.len - 1]) |bytes| {
+        printString(bytes);
+        consumed += bytes.len;
+    }
+
+    // If out patter (i.e. last element of data) is non zero len then write splat times
+    switch (pattern.len) {
+        0 => {},
+        else => {
+            for (0..splat) |_| {
+                printString(pattern);
+            }
+        },
+    }
+    // Now we have to return how many bytes we consumed from data
+    consumed += splat_len;
+    return consumed;
+}
+
+/// Returns std.Io.Writer implementation for this console
+pub fn writer(buffer: []u8) std.Io.Writer {
+    return .{
+        .buffer = buffer,
+        .end = 0,
+        .vtable = &.{
+            .drain = drain,
+        },
+    };
+}
+
+/// Print string to VGA
+pub fn printString(str: []const u8) void {
+    for (str) |char| {
+        printChar(char);
+    }
+}
+
+/// Print with standard zig format to VGA
+pub fn print(comptime fmt: []const u8, args: anytype) void {
+    var w = writer(&.{});
+    w.print(fmt, args) catch return;
+}
+```
+
+### src/linker.ld
+
+``` asm
+/* The bootloader will look at kernel and start execution at the symbol
+   designated as the entry point. */
+ENTRY(_start)
+
+/* Tell where the various sections of the object files will be put in the
+   final kernel image. */
+SECTIONS {
+    /* It used to be universally recommended to use 1M as a start offset,
+       as it was effectively guaranteed to be available under BIOS systems.
+       However, UEFI has made things more complicated, and experimental data
+       strongly suggests that 2M is a safer place to load. In 2016, a new
+       feature was introduced to the multiboot2 spec to inform bootloaders
+       that a kernel can be loaded anywhere within a range of addresses and
+       will be able to relocate itself to run from such a loader-selected
+       address, in order to give the loader freedom in selecting a span of
+       memory which is verified to be available by the firmware, in order to
+       work around this issue. This does not use that feature, so 2M was
+       chosen as a safer option than the traditional 1M. */
+    . = 2M;
+
+    /* First put the multiboot header, as it is required to be put very early
+       in the image or the bootloader won't recognize the file format. Next
+       we'll put the .text section. */
+    .text : ALIGN(4K) {
+        /* We need to specify KEEP to prevent the linker from removing the
+           multiboot section. */
+        KEEP(*(.multiboot))
+        *(.text)
+    }
+
+    /* Read-only data. */
+    .rodata : ALIGN(4K) {
+        *(.rodata)
+    }
+
+    /* Read-write data (initialized) */
+    .data : ALIGN(4K) {
+        *(.data)
+    }
+
+    /* Read-write data (uninitialized i.e. undefined) */
+    .bss : ALIGN(4K) {
+        *(COMMON)
+        *(.bss)
+    }
+
+    /* The compiler may produce other sections, by default it will put them
+       in a segment with the same name. Simply add stuff here as needed. */
+}
+```
+
+## Build
+
+Now that our kernel code is done, we'll now build our kernel by running the command below:
+
+``` bash
+$ zig build
+```
+
+## Verifying Multiboot
+
+If the header isn't valid, GRUB will give an error that it can't find a Multiboot header when you try to boot it. This code fragment will help you diagnose such cases:
+
+``` bash
+grub-file --is-x86-multiboot zig-out/bin/kernel.elf
+```
+
+`grub-file` is quiet but will exit 0 (successfully) if it is a valid multiboot kernel and exit 1 (unsuccessfully) otherwise. You can type `echo $?` in your shell immediately afterwards to see the exit status.
+
+## Booting the Kernel
+
+You can easily create a bootable CD-ROM image containing the GRUB bootloader and your kernel using the program `grub-mkrescue`. You may need to install the GRUB utility programs and the program `xorriso` (version 0.5.6 or higher). First you should create a file called `grub.cfg` containing the contents:
+
+    menuentry "Zig Bare Bones" {
+        multiboot /boot/kernel.elf
+    }
+
+Note that the braces must be placed as shown here. You can now create a bootable image of your operating system by typing these commands:
+
+``` bash
+mkdir -p isodir/boot/grub
+cp zig-out/bin/kernel.elf isodir/boot/kernel.elf
+cp grub.cfg isodir/boot/grub/grub.cfg
+grub-mkrescue -o kernel.iso isodir
+```
+
+**Warning:** GNU GRUB, the bootloader used by `grub-mkrescue`, is licensed under the GNU General Public License. Your iso file contains copyrighted material under that license and redistributing it in violation of the GPL constitutes copyright infringement. The GPL requires you publish the source code corresponding to the bootloader. You need to get the exact source package corresponding to the GRUB package you have installed from your distribution, at the time `grub-mkrescue` is invoked (as distro packages are occasionally updated). You then need to publish that source code along with your ISO to satisfy the GPL. Alternative, you can build GRUB from source code yourself. Clone the latest GRUB git from savannah (do not use their last release from 2012, it's severely out of date). Run autogen.sh, ./configure and make dist. That makes a GRUB tarball. Extract it somewhere, then build GRUB from it, and install it in a isolated prefix. Add that to your PATH and ensure its `grub-mkrescue` program is used to produce your iso. Then publish the GRUB tarball of your own making along with your OS release. You're not required to publish the source code of your OS at all, only the code for the bootloader that's inside the iso.
+
+### Testing your operating system (QEMU)
+
+In this tutorial, we will be using QEMU. You can also use other virtual machines if you please. Simply adding the ISO to the CD drive of an empty virtual machine will do the trick.
+
+Install QEMU from your repositories, and then use the following command to start your new operating system.
+
+``` bash
+qemu-system-x86_64 -cdrom kernel.iso
+```
+
+Additionally, QEMU supports booting multiboot kernels directly without bootable medium:
+
+``` bash
+qemu-system-x86_64-kernel kernel.elf
+```
+
+For make testing easier **run** step is provided which effectively is equivalent to previous command

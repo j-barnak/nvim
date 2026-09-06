@@ -1,0 +1,298 @@
+|                                                                                                                       |     |
+|-----------------------------------------------------------------------------------------------------------------------|-----|
+| This page or section is a work in progress and may thus be incomplete. Its content may be changed in the near future. |     |
+
+| Difficulty level |
+|------------------|
+| Medium           |
+
+| Executable Formats                                         |
+|------------------------------------------------------------|
+| Microsoft                                                  |
+| 16 bit: COM MZ NE Mixed (16/32 bit): LE 32/64 bit: PE COFF |
+| \*nix                                                      |
+| a.out ELF                                                  |
+| Apple                                                      |
+| Mach-O                                                     |
+
+When debugging, chances are you will need debugging information. For instance, you can use GCC utility **addr2line** to convert an address into an actual location in your code, but it is much more convenient if your OS can display a stack trace with as much debugging information as possible, e.g.
+
+``` text
+[0x00106F39] process_command (utils/shell.c at line 270)
+[0x001077F3] process_char (utils/shell.c at line 477)
+[0x001079ED] shell (utils/shell.c at line 526)
+[0x00100DD6] main (kernel/kernel.c at line 84)
+```
+
+DWARF is a debugging data format designed along with ELF, and allows you to find information like shown above.
+
+## Generating the debug symbols
+
+You will need to pass the **-g** to GCC and to ld to generate DWARF information. GCC also allows you to specify the exact DWARF version, e.g. **gcc -gdwarf-4**.
+
+Once this is done, running **objdump -h** on your executable will show several .debug sections. Those are standard ELF sections that you access the same way as any ELF binary. Running **objdump -g** on your binary will generate a text dump of the debug symbols.
+
+## Relocation
+
+The addresses provided by DWARF are the addresses provided by ELF. You should take into account any relocation if any.
+
+## Mapping an address to a line number (.debug_line section)
+
+The **.debug_line** section allows to determine the source code file and line number for a given address in memory. The content is broken down by Compilation Units (CU) representing one main source code file.
+
+Each CU has a header:
+
+``` c
+typedef struct __attribute__((packed)) {
+    uint32_t length;
+    uint16_t version;
+    uint32_t header_length;
+    uint8_t min_instruction_length;
+    uint8_t default_is_stmt;
+    int8_t line_base;
+    uint8_t line_range;
+    uint8_t opcode_base;
+    uint8_t std_opcode_lengths[12];
+} DebugLineHeader;
+```
+
+followed by a list of directories, a list of files (referencing what directory they are in), and a series of line number statements, e.g.
+
+``` text
+  Offset:                      0x11f
+  Length:                      103
+  DWARF Version:               2
+  Prologue Length:             52
+  Minimum Instruction Length:  1
+  Initial value of 'is_stmt':  1
+  Line Base:                   -5
+  Line Range:                  14
+  Opcode Base:                 13
+
+ Opcodes:
+  Opcode 1 has 0 args
+  Opcode 2 has 1 args
+  Opcode 3 has 1 args
+  Opcode 4 has 1 args
+  Opcode 5 has 1 args
+  Opcode 6 has 0 args
+  Opcode 7 has 0 args
+  Opcode 8 has 0 args
+  Opcode 9 has 1 args
+  Opcode 10 has 0 args
+  Opcode 11 has 0 args
+  Opcode 12 has 1 args
+
+ The Directory Table (offset 0x13a):
+  1 kernel
+  2 ./lib
+
+ The File Name Table (offset 0x148):
+  Entry Dir Time    Size    Name
+  1 1   0   0   heap.c
+  2 2   0   0   libc.h
+
+ Line Number Statements:
+  [0x0000015d]  Extended opcode 2: set Address to 0x100ad1
+  [0x00000164]  Advance Line by 15 to 16
+  [0x00000166]  Copy
+  [0x00000167]  Special opcode 48: advance Address by 3 to 0x100ad4 and Line by 1 to 17
+  [0x00000168]  Special opcode 50: advance Address by 3 to 0x100ad7 and Line by 3 to 20
+  ...
+```
+
+In order to decode the information from **.debug_line**, you will need to implement a small state machine with a few registers. The most important registers are:
+
+- Address: the address in memory
+- File: the source code file
+- Line: the line number in that file (starts at 1)
+
+Each line number statement starts with a 1-byte opcode, optionally followed by an argument. Each opcode tells what state machine register(s) to change:
+
+- Standard opcodes (1 to 12): see section 6.2.5.2 of the [The DWARF Debugging Information Format](http://dwarfstd.org/doc/DWARF4.pdf) to see what those opcodes are doing and what parameters they take
+- Extended opcodes (0): the next byte is an unsigned LEB128-encoded number that tells how many bytes after that are used by the extended opcode. The byte after that tells the extended opcode number, followed by any argument. See section 6.2.5.3 of the [The DWARF Debugging Information Format](http://dwarfstd.org/doc/DWARF4.pdf)
+- Special opcodes (13 or greater): these are one-character instructions that tell to change the Address and Line registers. If the Address can only increase, note that the Line may decrease. The way to compute this is a bit tricky (see section 6.2.5.1 of the [The DWARF Debugging Information Format](http://dwarfstd.org/doc/DWARF4.pdf)), but relies on the Line Base, Line Range and Opcode base from the header and goes something line this:
+
+``` text
+Address += ((Opcode - Opcode base) / Line range) * Min instruction length
+Line += Line base + (Opcode - Opcode base) % Line range
+```
+
+In the example above, Special opcode 48 (stored in the file as 48 + 13 = 0x3D) tells to increase the Address by 48 / 14 = 3 bytes (thus moving from 0x100ad1 to 0x100ad4) and the Line by -5 + 48 % 14 = 1 (thus moving from 16 to 17)
+
+### Binary representation
+
+The above CU is store as follows in a 32-bit ELF binary:
+
+``` text
+67 00 00 00   02 00 34 00   00 00 01 01   FB 0E 0D 00
+01 01 01 01   00 00 00 01   00 00 01 6B   65 72 6E 65
+6C 00 2E 2F   6C 69 62 00   00 68 65 61   70 2E 63 00
+01 00 00 6C   69 62 63 2E   68 00 02 00   00 00 00 05
+02 D1 0A 10   00 03 0F 01   3D3F...
+```
+
+- 0x67000000: the size of the CU (after this)
+- 0x0200: DWARF version
+- 0x34000000: Header Length, which indicates how many bytes after this number does the first opcode start
+- 0x01: Minimum Instruction Length
+- 0x01: Default is_stmt value
+- 0xFB: Line Base (signed int)
+- 0x0E: Line Range
+- 0x0D: Opcode Base
+- 0x00010101 01000000 01000001: the number of arguments for the 12 standard opcodes
+- 0x6B65726E 656C00: "kernel" (first directory)
+- 0x2E2F6C69 6200: "./lib" (second directory)
+- 0x00: end of the directories
+- 0x68656170 2E6300: "heap.c" (first file)
+- 0x010000: Dir=1 ("kernel"), Time=0, Size=0
+- 0x6C696263 2E6800: "libc.h" (second file)
+- 0x020000: Dir=2 ("./lib"), Time=0, Size=0
+- 0x00: end of the files
+- 0x00: Signals an extended opcode
+- 0x05: number of bytes after this used by the extended opcode (unsigned LEB128 encoded)
+- 0x02: Extended opcode 2 (DW_LNE_set_address)
+- 0xD10A1000: opcode argument (address 0x00100ad1)
+- 0x03: Standard opcode 3 (DW_LNS_advance_line)
+- 0x0F: opcode argument, encoded as a signed LEB128 (15)
+- 0x01: Standard opcode 1 (DW_LNS_copy)
+- 0x3D: Special opcode 48 (0x3D - 13 = 48)
+- 0x3F: Special opcode 50
+
+## Mapping an address to a function (.debug_info section)
+
+The **.debug_info**, allows -among others- to determine the address range occupied by various parts of the code. It is complemented by the **.debug_abbrev** and **.debug_str** sections.
+
+the **.debug_info** section is a series of Compilation Units (CU). Each compilation unit starts with a header followed by Debugging Information Entries (DIEs):
+
+``` text
+Contents of the .debug_info section:
+
+  Compilation Unit @ offset 0x0:
+   Length:        0x6b7 (32-bit)
+   Version:       4
+   Abbrev Offset: 0x0
+   Pointer Size:  4
+ <0>< b>: Abbrev Number: 1 (DW_TAG_compile_unit)
+    <c>   DW_AT_producer    : (indirect string, offset: 0x107): GNU C99 5.3.0 -m32 -mtune=generic -march=pentiumpro -g -std=gnu99 -ffreestanding
+    <10>   DW_AT_language    : 12 (ANSI C99)
+    <11>   DW_AT_name        : (indirect string, offset: 0x1b8): kernel/main.c
+    <15>   DW_AT_comp_dir    : (indirect string, offset: 0x158): /usr/opsys
+    <19>   DW_AT_low_pc      : 0x1002dd
+    <1d>   DW_AT_high_pc     : 0x7f4
+    <21>   DW_AT_stmt_list   : 0x0
+ <1><25>: Abbrev Number: 2 (DW_TAG_typedef)
+    <26>   DW_AT_name        : (indirect string, offset: 0xa5): uint
+    <2a>   DW_AT_decl_file   : 2
+    <2b>   DW_AT_decl_line   : 4
+    <2c>   DW_AT_type        : <0x30>
+ <1><30>: Abbrev Number: 3 (DW_TAG_base_type)
+    <31>   DW_AT_byte_size   : 4
+    <32>   DW_AT_encoding    : 7  (unsigned)
+    <33>   DW_AT_name        : (indirect string, offset: 0x23a): unsigned int
+```
+
+So the first thing when reading the **.debug_info** section is to look at the compilation unit header which contains the following fields:
+
+- unit_length: the size of the unit
+- version: the DWARF version
+- debug_abbrev_offset: the offset inside the **.debug_abbrev** table of the DIE schemas for that CU
+- address_size: the pointer size
+
+The header is followed by a series of DIEs. First first byte of each DIE indicates its type number, followed by its concatenated attributes. All the DIEs of the same type have the same schema within the same CU, but the number of types (and their schema) varies for each CU.
+
+So you need to:
+
+- Read the CU header. This will tell you the end of the CU, as well as the Abbrev Offset.
+  - The Abbrev offset is an offset inside the **.debug_abbrev** section
+  - Read from the **.debug_abbrev** section the number of DIE types, as well as the schema for each type (see the next section for further information)
+    - The first character of each DIE tells its type. Based on the type you can derive what attribute does the DIE has, and how much space occupies each attribute
+    - If the DIE type tag is DW_TAG_subprogram, then look for the attributes DW_AT_NAME (function name), DW_AT_low_pc (the address where the function starts) and DW_AT_high_pc (the amount of memory occupied by the function)
+  - Repeat until you reach the end of the CU
+- Read the next CU header
+- Repeat until you reach the end of the .debug_info section
+
+## The .debug_abbrev section
+
+This section contains the schema for all the DIE types from the **.debug_info** section.
+
+``` text
+Contents of the .debug_abbrev section:
+
+  Number TAG (0x0)
+   1      DW_TAG_compile_unit    [has children]
+    DW_AT_producer     DW_FORM_strp
+    DW_AT_language     DW_FORM_data1
+    DW_AT_name         DW_FORM_strp
+    DW_AT_comp_dir     DW_FORM_strp
+    DW_AT_low_pc       DW_FORM_addr
+    DW_AT_high_pc      DW_FORM_data4
+    DW_AT_stmt_list    DW_FORM_sec_offset
+    DW_AT value: 0     DW_FORM value: 0
+   2      DW_TAG_typedef    [no children]
+    DW_AT_name         DW_FORM_strp
+    DW_AT_decl_file    DW_FORM_data1
+    DW_AT_decl_line    DW_FORM_data1
+    DW_AT_type         DW_FORM_ref4
+    DW_AT value: 0     DW_FORM value: 0
+   3      DW_TAG_base_type    [no children]
+    DW_AT_byte_size    DW_FORM_data1
+    DW_AT_encoding     DW_FORM_data1
+    DW_AT_name         DW_FORM_strp
+    DW_AT value: 0     DW_FORM value: 0
+    ...
+```
+
+The first byte is the type number followed by its tag. The next byte is whether the type has children or not. Then are stored all the attributes for this type as name / type two-bytes pairs followed by 0x0000. See Figure 21 from the [The DWARF Debugging Information Format](http://dwarfstd.org/doc/DWARF4.pdf) for the list of attribute names and their hex codes and Figure 20 for attribute types. The attribute type tells how many bytes will it occupy in the **.debug_info** section.
+
+If most attributes have a fixed size, a few attributes need to have some special handling:
+
+- DW_FORM_string attributes are a small zero-terminated string (so of variable length)
+- DW_FORM_strp attributes represent the offset inside the **.debug_str** section of the desired string
+- DW_FORM_exprloc attributes are multibytes blocks (so of variable length) composed of an unsigned LEB128 number which tells the block length followed by the said block
+
+The list of DIE types for a particular Compilation Unit is over when the next type number is 0.
+
+### Binary representation
+
+The above is encoded as follows:
+
+``` text
+01 11 01 25   0E 13 0B 03   0E 1B 0E 11   01 12 06 10
+17 00 00 02   16 00 03 0E   3A 0B 3B 0B   49 13 00 00
+03 24 00 0B   0B 3E 0B 03   0E 00 00 04   24 00 0B 0B
+...
+```
+
+- 0x01 0x11: Type number 1 / DW_TAG_compile_unit
+- 0x01: has children
+- 0x25 0x0E: DW_AT_producer / DW_FORM_strp
+- 0x13 0x0B: DW_AT_language / DW_FORM_data1
+- ...
+- 0x00 0x00: end of Type number 1
+- 0x02 0x16: Type number 2 / DW_TAG_typedef
+- 0x00: no children
+- ...
+- 0x00 0x00: end of Type number n
+- 0x00: end of the schema for that Compilation Unit
+
+## LEB128
+
+DWARF is sometimes storing data using LEB128 (Little-Endian Base 128), a variable-length compression algorithm. You can find multiple implementations online, whose functions will typically look like this:
+
+``` c
+uint32_t decodeULEB128(const uint8_t *p, uint32_t *n);
+int32_t decodeSLEB128(const uint8_t *p, uint32_t *n);
+```
+
+The above functions take a pointer to a data stream as an argument, return the decoded value (respectively unsigned and signed LEB128) and store in **n** the number of characters used to decompress the data.
+
+## See Also
+
+### Articles
+
+- [ELF](https://wiki.osdev.org/ELF "ELF")
+
+### External Links
+
+- [The DWARF Debugging Information Format](http://dwarfstd.org/doc/DWARF4.pdf)

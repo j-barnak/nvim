@@ -1,0 +1,147 @@
+Computers are made by humans, and thus inherently prone to errors. This page describes known bugs for various models and brands.
+
+## Affecting almost all modern architectures
+
+### Spectre
+
+Spectre is an exploit that affects most modern CPUs made after 1995 that implement out-of-order execution (x86, x86_64, ARM, AMD, and potentially more) and allows the reading of physical memory by userland code. There is no sensible software fix for this issue. For more details, see [https://spectreattack.com/spectre.pdf](https://spectreattack.com/spectre.pdf).
+
+## x86 misfeatures
+
+### ESP is not cleared
+
+The x86 IRET will not clear upper bits of the stack register (32:16) when returning to 16-bit mode. As the result, the kernel high 16bit of ESP may be leaked to the userspace. Same is true for 64-bit kernel to 16-bit userspace transition.
+
+#### Mitigations
+
+One mitigation would be to simply not allow 16-bit code in user mode. Linux, however, does the following to work around the issue: In 32-bit mode, it reserves a segment for fixing up the stack pointer. If it detects a return to userspace with a 16-bit stack, it sets the base address of that segment such that the leaked bits can be set in ESP without moving the actual stack pointer, and then loads that segment as stack segment. Therefore the leaked bits will equal the original bits, so no harm is done.
+
+In 64-bit mode, this is not possible for lack of segmentation support. So instead Linux adopts another method, and will always leak bits chosen randomly at boot. During boot, Linux allocates 48 bytes for each CPU to serve as ESPFIX stack (actually, as long as there is space on the same page left, all CPUs will use the same page, just different offsets on it). These 48 bytes are mapped into kernel space, such that the leaked bits of ESP are entirely random. If a return to a 16-bit stack is detected, the return frame is copied into the ESPFIX stack, before switching the stack over to that address and performing the return. Since that may fail, the ESPFIX stack is mapped read-only (for the copy, a writable mapping of the same page is used). So if the IRET succeeds, nothing is ever written to the ESPFIX stack and everything works out. If something goes wrong, however, since the CPU is already running in Ring 0, it would not switch stacks back. It would try to write an interrupt frame onto the stack, but since the stack is read-only, that will fail. Therefore, a double-fault is caused, and the double-fault handler (running with an IST stack) changes the information such that it looks like a general protection fault occurred on the IRET instruction. And then the GPF handler just does its normal thing.
+
+This way, the leaked bits will not equal the bits userspace had at the start of the interrupt, but they will be random for each boot. Since the ESPFIX stack is so small, a large number of CPUs will have the same leaked ESP bits, so no important data is leaked.
+
+### NULL selector load may not clear MSR_GS_BASE
+
+Intel CPUs do not specify what happens with MSR_GS_BASE if NULL selector is loaded. The Intel CPUs seem to load it with zero, AMD CPUs preserve the previous values (now documented in the AMD64 Architecture Programmer's Manual Volume 2: System Programming). This detail needs to be taken into account for the context switches, if kernel tries to optimize the slow MSR operations.
+
+#### Mitigations
+
+Don't load a NULL selector into GS thinking it changes the GS.base register. Always use the MSR operations, unless running on a CPU with the WRFSGSBASE feature, in which case, the GS.base address can be set with the WRGSBASE instruction.
+
+### FXSAVE/FNSAVE
+
+The Intel and AMD differ in what context is saved/restored. AMD CPUs do not save/restore certain parts (FIP/FOP) only when exception is pending (see CVE-2006-1056)
+
+### SYSRET
+
+The Intel CPUs do not handle properly the non-canonical return address. If a non-canonical address is present in RCX when executing SYSRET, a General Protection Fault will be taken in CPL0 with CPL3 registers. (see CVE-2006-0744)
+
+#### Mitigations
+
+The only possible way to execute a SYSCALL instruction such that it jumps to kernel space with a non-canonical address is to put that instruction at address 0x00007ffffffffffe. This is invalid since there is nowhere for the CPU to return to (the return address is invalid). To prevent this from occurring, it is possible to disallow the mapping of an executable page at address 0x00007ffffffff000. Alternatively, the problem can be handled directly: If the return address has any of the top 16 bits set, return to userspace with the IRET instruction instead. Alternatively, construct the necessary stack frame, and jump directly to your GPF handler.
+
+### SS selector
+
+On AMD CPU, SS selector may become unusable when in-kernel interrupt arrives (sets SS to NULL) and thread is switched and returned to userspace via SYSRET. The numerical SS value is correct however the descriptor cache is wrong. This affects only the 32-bit compatibility mode usage of SS.
+
+#### Mitigation
+
+Don't switch threads after an in-kernel interrupt (that is: Only switch threads from the outermost stack layer, when returning to userspace or handling a system call). Alternatively, if you did switch threads after an in-kernel interrupt, always return via IRET. You need to jump to the slower IRET return path after a system call in some cases anyway, so you may as well make this one of the cases.
+
+### PUSH selector
+
+On Intel CPUs, when running in 32-bit protected mode, the push will only modify the low 16bit of stack and write there the selector. The high 16 bits remains unmodified. AMD CPUs do not do this. It may have some security impact, that some of stack is not initialized.
+
+Note: This applies to every time a selector is pushed to the stack. So both a PUSH instruction and an implicit push following an interrupt of some sort are affected.
+
+#### Mitigation
+
+When reading a selector value off the stack, always mask out the bits you are interested in. Very often, the important information is just the RPL of the selector (which already contains the information, whether the selector is kernel or user space), or the TI bit. The actual table index is rarely needed. Doing this also hardens all parts of the kernel that read selectors against modifications of the GDT later on.
+
+### Nesting of NMI interrupt
+
+If CPU is executing the NMI interrupt handler, CPU guarantees to keep NMI masked until the IRET is executed. However if for some reason NMI triggers some other exception, which executes IRET then the NMI may trigger again, possibly overwriting its own stack as on AMD64 it runs with IST stack (fun starts if SMI is triggering IRET for some reason).
+
+## Intel
+
+### Transactional Synchronization eXtensions (TSX) Bug
+
+In August 2014, Intel announced that a bug exists in the TSX implementation on Haswell, Haswell-E, Haswell-EP and early Broadwell CPUs, which resulted in disabling the TSX feature on affected CPUs via a microcode update. The bug was fixed in F-0 steppings of the vPro-enabled Core M-5Y70 Broadwell CPU in November 2014.
+
+### Extended Page Table (EPT) Bug
+
+A MOV to CR3 when EPT is enabled may lead to an unexpected page fault or an incorrect page translation.
+
+Affected processors:
+
+- Intel Xeon E5-#### v2, where \#### is a 4-digit number, optionally followed by a letter.
+- Intel Xeon E7-#### v2, where \#### is a 4-digit number.
+- Intel Xeon E3-12## v2, where \## is a 2-digit number, optionally followed by a letter.
+
+### F00F Bug
+
+Affects: Intel i586 series (Pentium 1, Pentium MMX, Pentium Overdrive, Pentium MMX Overdrive)
+
+This bug is caused by executing LOCK CMPXCHG8B eax (F0 0F C7 C8) By containing two opcode errors, an unallowed lock and a non-memory target, together with trying to cache the results, it confuses the cpu to enter a deadlock state, locking up the entire computer involved.
+
+To fix this bug, the [IDT](https://wiki.osdev.org/IDT "IDT") entry containing the invalid opcode should be marked as uncacheable or writethrough to eliminate one necessary factor, or by marking the same page as not-writable which further confuses the processor, this time into the pagefault handler instead of into a deadlock. If paging is to be left disabled, the only workaround is to disable the cpu's caches, which is far from efficient. Further discussion of various solutions is presented [here](http://web.archive.org/web/20070927195343/http://www.x86.org/errata/dec97/f00fbug.htm).
+
+We can check, if the processor is Pentium through the [CPUID](https://wiki.osdev.org/CPUID "CPUID") instruction. Calling it with EAX=1 will return the CPU signature in EAX. We can extract the Family Number from the CPU signature and compare it with 5, because the Pentium belongs to Family 5.
+
+### FDIV bug
+
+The Pentium FDIV bug is a bug in the Intel P5 Pentium floating point unit (FPU). Because of the bug, the processor can return incorrect decimal results, an issue troublesome for the precise calculations needed in fields like math and science. Discovered by Professor Thomas R. Nicely at Lynchburg College, Intel attributed the error to missing entries in the lookup table used by the floating-point division circuitry.
+
+This problem occurs only on some models of the original Pentium processor. Any Pentium family processor with a clock speed of at least 120 MHz is new enough not to have this bug.
+
+### Buggy HLT
+
+Some of the first 100 MHz Intel DX chips had a buggy HLT state, prompting the developers of Linux to implement a "no-hlt" option for use when running on those chips, but this was fixed in later chips.
+
+### Core-microarchitecture Bugs
+
+[See a list of known bugs as of 2006](http://web.archive.org/web/20190804131349if_/https://www.geek.com/images/geeknews/2006Jan/core_duo_errata__2006_01_21__full.gif)
+
+### 'Meltdown' Page Table Bug
+
+Modern (1995 and upwards) Intel x86 chips contain a bug in the out-of-order execution hardware that allows unprivileged userland software to gain access to kernel memory when the kernel is mapped into the userland address space. To avoid vulnerability, it is recommended that the kernel and userland page tables remain separate (i.e: PTI, Page Table Isolation). For more details, visit [this page](https://spectreattack.com/).
+
+## AMD
+
+### DragonFly BSD Heavy Load Crash
+
+AMD has confirmed that some of its processors contain a bug that could cause program errors under certain specific conditions. The bug was initially discovered by Matt Dillon, a DragonFly BSD developer.
+
+Consecutive back-to-back pops and (near) return instructions can create a condition where the processor incorrectly updates the stack pointer. The specific manifestations in DragonFly were random segmentation faults under heavy load.
+
+A program exception has been identified in previous generations of the AMD Opteron processor that occurs in certain environments that leverage a very specific GCC compiler build. A workaround has been identified for the small segment of customers this could potentially impact. Also, this marginal erratum impacts the previous four generations of AMD Opteron processors which include the AMD Opteron 2300, 8300 ("Barcelona" and "Shanghai",) 2400, 8400 ("Istanbul",) and 4100, 6100 ("Lisbon" and "Magny-Cours") series processors.
+
+### Ryzen Bug
+
+AMD has confirmed that some of its processors contain a bug that could cause program errors under certain specific conditions when executing code near the canonical address boundary. Insert a guard page (unmapped 4K page, or larger page) before canonical address boundary.
+
+### CPUID Bugs
+
+For older K5 CPUs, the feature flags returned by "CPUID 0x00000001" in EDX are dodgy - bit 9 is used to indicate support for PGE (and not used to indicate support for the local APIC).
+
+## Cyrix
+
+### Coma Bug
+
+Affects: Cyrix 6x86 series
+
+This bug is caused when several implicitly locked instructions are pipelined into an infinite loop. In effect when an instruction completes, the following locked instruction is executed directly afterward, maintaining bus lock and inhibiting interrupts. In an infinite loop, this will lock all interrupts on the processor, rendering it useless.
+
+To fix this bug, one must write to the cyrix registers and set the NO-LOCK bit in CCR1, which disables all but the most essential bus locks. The downside of this is that read-modify-write atomicity is no longer guaranteed on multiprocessor systems. Source code that should prevent this condition: (untested)
+
+``` asm
+MOV AL, 0xC1   ; 0xC1 refers to CCR1
+OUT 0x22, AL   ; Select Register
+IN 0x23, AL    ; Load Contents
+OR AL, 0x10    ; Set No-Lock bit
+MOV AH, AL     ;
+MOV AL, 0xC1   ; 0xC1 refers to CCR1
+OUT 0x22, AL   ; Select register
+MOV AL, AH     ; Load new contents
+OUT 0x23, AL   ; Write new CCR1 with No-Lock set
+```

@@ -1,0 +1,538 @@
+*For a quick tutorial on getting a bare bones C++ kernel running see [Bare Bones](https://wiki.osdev.org/Bare_Bones "Bare Bones")*
+
+A kernel can be programmed in C++, it is very similar to making a kernel in C, except that there are a few pitfalls you must take into account (runtime support, constructors, ...). This page will not list any (dis)advantages of this approach, but rather what you need to do to get things fired up.
+
+A lot of features C++ offers can be used on-the-fly; they require no additional support or code to use them properly (e.g. templates, classes, inheritance, virtual functions). There are however other parts of C++ that do require runtime support, which will be discussed in this article.
+
+## Introduction
+
+If you have created a C++ kernel as documented in the [Bare Bones](https://wiki.osdev.org/Bare_Bones "Bare Bones") article, then many C++ features are already available and work out the box. However, your kernel does not yet satisfy the ABI and you cannot be confident that the compiler will not emit problematic code, even if you stick to the intersection of C and C++. In particular, you may need to initialize further CPU state to enable the floating-point registers and instructions, as the compiler has every reason to think floating point registers and instructions are available by default.
+
+However, the compiler will assume that all the C++ runtime support is available by default, however you are not linking in libsupc++ into your C++ kernel, which implements the necessary run-time support. This is why you are passing -fno-rtti and -fno-exceptions to your cross-compiler to let these runtime features are unavailable. Going further, you should link in libsupc++ into your kernel, but at the moment it's known to not be readily accessible to those starting out with operating systems development and the GCC build process doesn't cross-compile it properly for the bare -elf platforms by default.
+
+You also need to call the global constructors as documented in [Calling Global Constructors](https://wiki.osdev.org/Calling_Global_Constructors "Calling Global Constructors") to satisfy the ABI requirement that the program initialization tasks are properly called.
+
+## Pure virtual functions
+
+If you want to use pure virtual functions, your compiler needs a single support function. It is only called in case a pure virtual function call cannot be made (e.g. if you have overridden the virtual function table of an object). But nonetheless your linker will complain about unresolved symbols, if you use pure virtual functions and don't provide this support routine.
+
+Enabling pure virtual functions in GCC is fairly straightforward. All you need to do is add the function below to one of your C++ source files (and make sure it is linked in). It is not necessary to declare this function first, the definition alone is good enough for GCC. The function itself doesn't even need to do anything (and it doesn't in most implementations), it just needs to be "there" just in case.
+
+Below you will find an example of an implementation in respectively GCC.
+
+``` cpp
+extern "C" void __cxa_pure_virtual()
+{
+    // Do nothing or print an error message.
+}
+```
+
+Or, if you happen to use Visual Studio:
+
+``` cpp
+int __cdecl _purecall()
+{
+    // Do nothing or print an error message.
+}
+```
+
+If, during runtime, your kernel detects that a call to a pure virtual function couldn't be made, it calls the above functions. These functions should actually never be called, because without hacks, or through undefined behaviour of your kernel, it is not possible to instantiate a class that doesn't define all pure virtual functions.
+
+## Global objects
+
+|                                                                                                                       |     |
+|-----------------------------------------------------------------------------------------------------------------------|-----|
+| This page or section is a work in progress and may thus be incomplete. Its content may be changed in the near future. |     |
+
+TODO: Please unify this information with the newer [Calling_Global_Constructors](https://wiki.osdev.org/Calling_Global_Constructors "Calling Global Constructors") article.
+
+Global objects must have their constructors called before they are used. Usually, they are called by the start-up code (which you just disabled). So, in order to be able to use them, you have to write your own start-up code for them. All objects have a constructor and a destructor. When an executable is loaded into memory and the program jumps straight to the entry point, the constructors of global objects will not have been called. One solution is to do this manually. You could put this code first when your C++ entry point is called:
+
+``` cpp
+    object1.object1();
+    object2.object2();
+    object3.object3();
+    // ...
+```
+
+Global or static objects have to be constructed by the environment before they are available to C++. Care should be taken if global/static objects need **new** and **delete** in their constructors. In this case it is best to construct these objects only after your kernel heap is ready for use (and you have access to dynamic memory allocation). Not doing so can cause an object to attempt to allocate memory via the non-working **new** operator. This also simplifies the storing of the destructor functions in **\_\_cxa_atexit**, because you don't have to use a static and fixed-size structure.
+
+### GCC
+
+Note: This appears to be specific to the Itanium platform. For IA-32/x86/i386 and amd64/x86_64, please check out [Calling_Global_Constructors](https://wiki.osdev.org/Calling_Global_Constructors "Calling Global Constructors") instead.
+
+According to the [Itanium C++ Application Binary Interface](http://refspecs.freestandards.org/LSB_3.1.0/LSB-Core-generic/LSB-Core-generic/baselib---cxa-atexit.html) (which **g++** follows and VC++ does not) the function **\_\_cxa_atexit** is used to register a destructor that should be called when a shared library needs to be unloaded. It should insert a function pointer with maximum 1 accompanying argument and the handle of the object or shared resource to be destroyed into a table.
+
+In the example implementation of **\_\_cxa_atexit**, the **\_\_atexit_funcs\[ATEXIT_MAX_FUNCS\]** array acts as the table. This is why the **\_\_cxa_atexit** function is defined as:
+
+``` cpp
+int __cxa_atexit(void (*destructor) (void *), void *arg, void *__dso_handle);
+```
+
+So that the **destructor** function pointer is the handle for a destructor function and **arg** is the single argument it may take. Finally, **\_\_dso_handle** is a handle for the DSO (Dynamic Shared Object).
+
+So summarized, you are required to define two functions and one symbol in order to use global objects in your C++ files:
+
+``` cpp
+void *__dso_handle;
+
+int __cxa_atexit(void (*destructor) (void *), void *arg, void *dso);
+void __cxa_finalize(void *f);
+```
+
+After you have called the objects constructor GCC automatically calls the function
+
+``` cpp
+int __cxa_atexit(void (*destructor) (void *), void *arg, void *dso);
+```
+
+This function should save all three parameters and if successful return zero, on failure non-zero. When your kernel exits you should call **\_\_cxa_finalize(0)**. According to the ABI specification, calling this with 0 as the parameter instead of the address of a function (to be called and removed from the list) causes *all* destructors in the list to be called and removed from the list.
+
+Since you will be calling this function from your Assembly source right after your kernel exits, you could use the following code:
+
+``` nasm
+; This is NASM source, mind you.
+sub esp, 4
+mov [esp], dword 0x0
+
+call __cxa_finalize
+
+add esp, 4
+```
+
+The following is tested, working, fully commented source that gives a more detailed explanation than the source previously found here. It also highlights what improvements can be implemented and where they can be inserted. To use it, just include **icxxabi.h** in any **one** file of your C++ kernel source (preferably the file where your kernel's main statements begin).
+
+**File: icxxabi.h**
+
+``` cpp
+#ifndef _ICXXABI_H
+    #define _ICXXABI_H
+
+    #define ATEXIT_MAX_FUNCS    128
+    
+    #ifdef __cplusplus
+    extern "C" {
+    #endif
+    
+typedef unsigned uarch_t;
+
+struct atexit_func_entry_t
+{
+    /*
+    * Each member is at least 4 bytes large. Such that each entry is 12bytes.
+    * 128 * 12 = 1.5KB exact.
+    **/
+    void (*destructor_func)(void *);
+    void *obj_ptr;
+    void *dso_handle;
+};
+
+int __cxa_atexit(void (*f)(void *), void *objptr, void *dso);
+void __cxa_finalize(void *f);
+
+    #ifdef __cplusplus
+    };
+    #endif
+
+#endif
+```
+
+  
+**File: icxxabi.cpp**
+
+``` cpp
+#include "./icxxabi.h"
+
+    #ifdef __cplusplus
+    extern "C" {
+    #endif
+
+atexit_func_entry_t __atexit_funcs[ATEXIT_MAX_FUNCS];
+uarch_t __atexit_func_count = 0;
+
+void *__dso_handle = 0; //Attention! Optimally, you should remove the '= 0' part and define this in your asm script.
+
+int __cxa_atexit(void (*f)(void *), void *objptr, void *dso)
+{
+    if (__atexit_func_count >= ATEXIT_MAX_FUNCS) {return -1;};
+    __atexit_funcs[__atexit_func_count].destructor_func = f;
+    __atexit_funcs[__atexit_func_count].obj_ptr = objptr;
+    __atexit_funcs[__atexit_func_count].dso_handle = dso;
+    __atexit_func_count++;
+    return 0; /*I would prefer if functions returned 1 on success, but the ABI says...*/
+};
+
+void __cxa_finalize(void *f)
+{
+    uarch_t i = __atexit_func_count;
+    if (!f)
+    {
+        /*
+        * According to the Itanium C++ ABI, if __cxa_finalize is called without a
+        * function ptr, then it means that we should destroy EVERYTHING MUAHAHAHA!!
+        *
+        * TODO:
+        * Note well, however, that deleting a function from here that contains a __dso_handle
+        * means that one link to a shared object file has been terminated. In other words,
+        * We should monitor this list (optional, of course), since it tells us how many links to 
+        * an object file exist at runtime in a particular application. This can be used to tell 
+        * when a shared object is no longer in use. It is one of many methods, however.
+        **/
+        //You may insert a prinf() here to tell you whether or not the function gets called. Testing
+        //is CRITICAL!
+        while (i--)
+        {
+            if (__atexit_funcs[i].destructor_func)
+            {
+                /* ^^^ That if statement is a safeguard...
+                * To make sure we don't call any entries that have already been called and unset at runtime.
+                * Those will contain a value of 0, and calling a function with value 0
+                * will cause undefined behaviour. Remember that linear address 0, 
+                * in a non-virtual address space (physical) contains the IVT and BDA.
+                *
+                * In a virtual environment, the kernel will receive a page fault, and then probably
+                * map in some trash, or a blank page, or something stupid like that.
+                * This will result in the processor executing trash, and...we don't want that.
+                **/
+                (*__atexit_funcs[i].destructor_func)(__atexit_funcs[i].obj_ptr);
+            };
+        };
+        return;
+    };
+
+    while (i--)
+    {
+        /*
+        * The ABI states that multiple calls to the __cxa_finalize(destructor_func_ptr) function
+        * should not destroy objects multiple times. Only one call is needed to eliminate multiple
+        * entries with the same address.
+        *
+        * FIXME:
+        * This presents the obvious problem: all destructors must be stored in the order they
+        * were placed in the list. I.e: the last initialized object's destructor must be first
+        * in the list of destructors to be called. But removing a destructor from the list at runtime
+        * creates holes in the table with unfilled entries.
+        * Remember that the insertion algorithm in __cxa_atexit simply inserts the next destructor
+        * at the end of the table. So, we have holes with our current algorithm
+        * This function should be modified to move all the destructors above the one currently
+        * being called and removed one place down in the list, so as to cover up the hole.
+        * Otherwise, whenever a destructor is called and removed, an entire space in the table is wasted.
+        **/
+        if (__atexit_funcs[i].destructor_func == f)
+        {
+            /* 
+            * Note that in the next line, not every destructor function is a class destructor.
+            * It is perfectly legal to register a non class destructor function as a simple cleanup
+            * function to be called on program termination, in which case, it would not NEED an
+            * object This pointer. A smart programmer may even take advantage of this and register
+            * a C function in the table with the address of some structure containing data about
+            * what to clean up on exit.
+            * In the case of a function that takes no arguments, it will simply be ignore within the
+            * function itself. No worries.
+            **/
+            (*__atexit_funcs[i].destructor_func)(__atexit_funcs[i].obj_ptr);
+            __atexit_funcs[i].destructor_func = 0;
+            
+            /*
+            * Notice that we didn't decrement __atexit_func_count: this is because this algorithm
+            * requires patching to deal with the FIXME outlined above.
+            **/
+        };
+    };
+};
+
+    #ifdef __cplusplus
+    };
+    #endif
+```
+
+### Visual C++
+
+*Main article:* [Visual Studio](https://wiki.osdev.org/Visual_Studio "Visual Studio")
+
+Running constructors and destructors is covered in MSDN help and in the C runtime library sources. See **\#pragma init_seg** on MSDN for more information.
+
+Basically what happens is that pointers to functions are placed in **.CRT\$XIC, \$XIL, \$XIU** based on the value of **init_seg**. The linker then merges everything together in the **.CRT** section, in the order of the letters after the **\$**. The pointers between the XIA (**xi_a**) and XIZ (**xi_z**) are then called if non-zero. The **.CRT** section is merged with the **.data** section to avoid a completely separated section.
+
+One problem with C++ support is the horrible name-mangling that is impossible to read in the map file. A build script should be set up that runs the map file through the **undname.exe** tool, so that names like **??2@YAPAXI@Z** (operator new - I think...) and others are readable.
+
+Below you will find some example code. Simply call **runInit()** if you want to initialize any static objects and then call **runTerm()** if static object destructors are to be run.
+
+``` cpp
+typedef void (*_PVFV)(void);
+typedef int  (*_PIFV)(void);
+typedef void (*_PVFI)(int);
+
+#pragma data_seg(".CRT$XIA")
+__declspec(allocate(".CRT$XIA")) _PIFV __xi_a[] = {0};
+#pragma data_seg(".CRT$XIZ")
+__declspec(allocate(".CRT$XIZ")) _PIFV __xi_z[] = {0};
+#pragma data_seg(".CRT$XCA")
+__declspec(allocate(".CRT$XCA")) _PVFV __xc_a[] = {0};
+#pragma data_seg(".CRT$XCZ")
+__declspec(allocate(".CRT$XCZ")) _PVFV __xc_z[] = {0};
+#pragma data_seg(".CRT$XPA")
+__declspec(allocate(".CRT$XPA")) _PVFV __xp_a[] = {0};
+#pragma data_seg(".CRT$XPZ")
+__declspec(allocate(".CRT$XPZ")) _PVFV __xp_z[] = {0};
+#pragma data_seg(".CRT$XTA")
+__declspec(allocate(".CRT$XTA")) _PVFV __xt_a[] = {0};
+#pragma data_seg(".CRT$XTZ")
+__declspec(allocate(".CRT$XTZ")) _PVFV __xt_z[] = {0};
+#pragma data_seg()
+#pragma comment(linker, "/merge:.CRT=.data")
+
+static _PVFV onexitarray[32];
+static _PVFV *onexitbegin, *onexitend;
+
+int __cdecl _purecall()
+{
+        // print error message
+}
+
+int __cdecl atexit(_PVFV fn)
+{
+        if (32*4 < ((int)onexitend-(int)onexitbegin)+4)
+                return 1;
+        else
+                *(onexitend++) = fn;
+        return 0;
+}
+
+EXTERN int runInit()
+{
+        // init the __xi_a to __xi_z:  __initex(__xi_a, __xi_z);
+        // init __xc_a to __xc_z
+}
+
+static void __init(_PVFV *pfbegin, _PVFV *pfend)
+{
+    while (pfbegin < pfend)
+    {
+        if (*pfbegin != 0)
+            (**pfbegin)();
+        ++pfbegin;
+    }
+}
+
+static int __initex(_PIFV *pfbegin, _PIFV *pfend)
+{
+        int ret = 0;
+
+        while (pfbegin < pfend && ret == 0)
+        {
+            if (*pfbegin != 0)
+                ret = (**pfbegin)();
+            ++pfbegin;
+        }
+
+        return ret;
+}
+
+EXTERN void runUninit()
+{
+        if (onexitbegin)
+        {
+                while (--onexitend >= onexitbegin)
+                        if (*onexitend != 0)
+                                (**onexitend)();
+        }
+
+        __init(__xp_a, __xp_z);
+        __init(__xt_a, __xt_z);
+}
+
+EXTERN int onexitinit()
+{
+        onexitend = onexitbegin = onexitarray;
+        *onexitbegin = 0;
+        return 0;
+}
+
+#pragma data_seg(".CRT$XIB")      // run onexitinit automatically
+__declspec(allocate(".CRT$XIB")) static _PIFV pinit = onexitinit;
+#pragma data_seg()
+```
+
+## Local Static Variables (GCC Only)
+
+When you declare a local static variable, GCC puts a guard around the variable's constructor call. This ensures that only one thread can call the constructor at the same time to initialize it.
+
+*Note that these are only stubs to get the code compiled, and you should implement them yourself. Simply add a mutex-like guard with a test-and-set primitive.*
+
+``` cpp
+namespace __cxxabiv1 
+{
+    /* guard variables */
+
+    /* The ABI requires a 64-bit type.  */
+    __extension__ typedef int __guard __attribute__((mode(__DI__)));
+
+    extern "C" int __cxa_guard_acquire (__guard *);
+    extern "C" void __cxa_guard_release (__guard *);
+    extern "C" void __cxa_guard_abort (__guard *);
+
+    extern "C" int __cxa_guard_acquire (__guard *g) 
+    {
+        return !*(char *)(g);
+    }
+
+    extern "C" void __cxa_guard_release (__guard *g)
+    {
+        *(char *)g = 1;
+    }
+
+    extern "C" void __cxa_guard_abort (__guard *)
+    {
+
+    }
+}
+```
+
+The actual code emitted by GCC to call a local static variable's constructor looks something like this:
+
+``` cpp
+static <type> guard;
+
+if (!guard.first_byte)
+{
+    if (__cxa_guard_acquire (&guard))
+    {
+        bool flag = false;
+
+        try
+        {
+            // Do initialization.
+            __cxa_guard_release (&guard);
+
+            flag = true;
+            // Register variable for destruction at end of program.
+        }
+
+        catch
+        {
+            if (!flag)
+            {
+                __cxa_guard_abort (&guard);
+            }
+        }
+    }
+}
+```
+
+## The Operators 'new' and 'delete'
+
+Before you can properly use **new** and **delete**, you have to implement some sort of memory management. You also have to implement both operators (including their array counterparts). **new** and **delete** respectively allocate and delete memory (much like **malloc** and **free** in C). Take a look at the [Memory Management](https://wiki.osdev.org/Memory_Management "Memory Management") article if you would like to know more about this subject.
+
+Every time you call one of the operators **new**, **new\[\]**, **delete**, or **delete\[\]**, the compiler inserts a call to them. The most simple implementation would be to map them to your kernel's **malloc** and **free**. For example:
+
+``` cpp
+#include <stddef.h>
+
+void *operator new(size_t size)
+{
+    return malloc(size);
+}
+
+void *operator new[](size_t size)
+{
+    return malloc(size);
+}
+
+void operator delete(void *p)
+{
+    free(p);
+}
+
+void operator delete[](void *p)
+{
+    free(p);
+}
+```
+
+You could also let **new** use **calloc** (allocate and zero). This way, newly allocated memory will always be zeroed (thus, not contain garbage). The standard **new** implementations do however not clear the returned memory.
+
+An easy malloc implementation you can port to your OS is [liballoc](https://github.com/blanham/liballoc/). It only requires basic [Paging](https://wiki.osdev.org/Paging "Paging") (that is, store a list of used and free pages, and have a function to find the next free page) to work.
+
+### Placement New
+
+In C++ (especially in OS code where structures can be found at fixed addresses) it can be useful to construct an object in memory obtained elsewhere. This is accomplished through a technique known as 'placement new'. For example, say you wanted to create an APIC object at address **0x09FFF0000**, then this snippet of code will use placement new to do the trick:
+
+``` cpp
+void *apic_address = reinterpret_cast<void *>(0x09FFF0000);
+APIC *apic = new (apic_address) APIC;
+```
+
+In order to use placement new, you need special overloads of the new and delete operators defined in scope. Fortunately, the required definitions are simple and can be inlined in a header file (the C++ standard puts them in a header called **new**).
+
+``` cpp
+inline void *operator new(size_t, void *p)     throw() { return p; }
+inline void *operator new[](size_t, void *p)   throw() { return p; }
+inline void  operator delete  (void *, void *) throw() { };
+inline void  operator delete[](void *, void *) throw() { };
+```
+
+The above implementation can potentially be unsafe for allocating memory since your kernel does not mark the memory that was allocated as being used. Placement new is hardly ever used, and if you wish to read an object from a specified address in memory, it is usually easier to create a pointer to that address.
+
+You never call placement delete explicitly (it's only required for certain implementation detail reasons). Instead, you simply invoke your object's destructor explicitly.
+
+``` cpp
+apic->~APIC();
+```
+
+## RTTI (Run-Time Type Information)
+
+RTTI is used for **typeid** and **dynamic_cast**. It requires runtime support as well. Disable it with **-fno-rtti**. A kernel has no access to run-time features, which are most likely operating system-dependent. Note that virtual functions work without RTTI.
+
+## Exceptions
+
+Another feature that requires run-time support. Disable it with **-fno-exceptions**. Exceptions require code to unwind the stack while looking for an appropriate exception handler to handle the exception. Usually, this code is linked in with your C++ application, but in a freestanding kernel the code must be provided manually.
+
+See [C++ Exception Support](https://wiki.osdev.org/C++_Exception_Support "C++ Exception Support").
+
+## Standard Library
+
+Note that the C++ Standard Library (stdlib) is not the same as the C++ Standard Template Library (STL). The STL was designed in 1994 and largely influenced the C++ Standard Library, but it's not a part of the ISO C++ standard. The C++ Standard Library is part of the C++ ISO specification, however, and is what you're using when you use *std::vector*, *std::string*, etc. Be wary of misusing the term STL and, ideally, avoid it completely. Anyone using it almost certainly means the C++ stdlib.
+
+You cannot use stdlib functions or classes without porting a stdlib implementation. A lot of existing code depending on the stdlib is OS-dependent, so you must port an stdlib implementation to your OS if you want to use them.
+
+To gain access to the stdlib in your OS you can do either of the following:
+
+- Write your own implementation of a few of the required class templates (std::string, std::list, std::cout, ...).
+- Port a stdlib implementation to your OS (e.g. [STLport](https://wiki.osdev.org/index.php?title=STLport&action=edit&redlink=1 "STLport (page does not exist)")).
+
+A lot of the stdlib classes require **new** and **delete** to be implemented in your OS. File access requires your OS to support reading and wrapping. Console functions require your OS to already have working console I/O.
+
+Porting the C++ stdlib (like porting the [C Standard Library](https://wiki.osdev.org/C_Library "C Library")) does not automatically make your OS able to read from and write to the disk or get data straight from the keyboard. These are simply wrappers around your OS' functions, and must be implemented by in your kernel.
+
+Note that it is generally not a good idea to port the entire stdlib to your kernel, although it is reasonable to port a few class templates, such as `std::vector` and `std::string` if you wish to. As for your user applications: the more the merrier! :)
+
+Here is a list of a the most commonly used stdlib implementations:
+
+- [STDCXX](http://incubator.apache.org/stdcxx/) (a.k.a Apache C++ Standard Library, formally Rogue Wave C++ Standard Library)
+- [Dinkumware C++ Standard Library](https://www.dinkumware.com/)
+- [Microsoft C++ Standard Library](https://github.com/microsoft/STL)
+- [libstdc++](http://gcc.gnu.org/libstdc++/) (a.k.a. GNU Standard C++ Library)
+- [STLport](http://www.stlport.org/)
+- [uSTL](http://ustl.sourceforge.net/)
+- [libc++](http://libcxx.llvm.org/) (LLVM C++ Standard library)
+
+## Full C++ Runtime Support Using libgcc And libsupc++
+
+*Main article:* [Libsupcxx#Full C++ Runtime Support Using libgcc And libsupc++](https://wiki.osdev.org/Libsupcxx#Full_C++_Runtime_Support_Using_libgcc_And_libsupc++ "Libsupcxx")
+
+If you want Exceptions, RTTI, new and delete altogether, you should use [libgcc](https://wiki.osdev.org/Libgcc "Libgcc") and libsupc++. libgcc contains the unwinder (for exceptions), while libsupc++ contains the C++ support.
+
+You may run into problems with libsupc++, but there are [alternative libraries](https://wiki.osdev.org/GCC_and_Libc++ "GCC and Libc++").
+
+## Optimizations
+
+There are [things you should know about optimizations](https://wiki.osdev.org/C#Things_you_should_know_about_optimizations "C") that also affect C++ because it is an extension of the [C](https://wiki.osdev.org/C "C") language. You should know about them even if you don't plan to to use the optimizer of your C++ compiler in the near future.
+
+## Links
+
+### Wiki
+
+- [Bare Bones](https://wiki.osdev.org/Bare_Bones "Bare Bones")
+- [Use of the volatile keyword](https://wiki.osdev.org/Volatile_(keyword) "Volatile (keyword)")
+- [Linking C++ and Assembly (GCC-specific)](https://wiki.osdev.org/C++_to_ASM_linkage_in_GCC "C++ to ASM linkage in GCC")

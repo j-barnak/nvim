@@ -1,0 +1,162 @@
+If the g++ that targets your operating system follows the [Itanium C++ ABI](https://itanium-cxx-abi.github.io/cxx-abi/abi-eh.html) (GCC does so for almost all architectures), you can follow this article and add C++ exception support to your kernel.
+
+## Introduction
+
+In the ABI, C++ exception is supported by the cooperation of three layers. The first layer is the compiler. The compiler translates the "try" "catch" "throw" statements into calls to specific functions in C++ runtime. The second layer is the C++ runtime. For exception support this layer is more or less a wrapper around the third layer. All the dirty work are done by the third layer: the unwind library. BTW, the second layer also adds support for RTTI & dynamic_cast
+
+So, in order to add C++ exception support, you just need to port the second and the third layer into you kernel, which means you need to either port libsupc++ or port libcxxrt and an unwind library. I prefer the second option, because libsupc++ is part of GCC, it's even not trivial to compile it separately. For the unwind library part, you have two options, libunwind and libgcc_eh. libunwind is more difficult to port, it depends on pthread and some type definitions in \<elf.h\> \<link.h\> and \<ucontext.h\>. The major reason you may want libunwind instead of libgcc_eh is that libgcc_eh is licensed under LGPL.
+
+If you don't have any of the unix header files when compiling libcxxrt or libgcc_eh, e.g. \<unistd.h\>, create an empty one and try again. If you still can't compile libcxxrt or libgcc_eh, find a copy of the corresponding header file from a unix system and find out exactly what you are missing.
+
+## Port libcxxrt
+
+libcxxrt can be downloaded [here](https://github.com/libcxxrt/libcxxrt). libcxxrt is very easy to port, only 1 .c file and 8 .cc files. It depends on a few simple libc functions and a few pthread functions. If you don't need multi-thread support in your kernel (no smp, kernel code isn't preemptive), create some pthread stubs. Then copy all the source files and header files into your own kernel source tree and compile them with your existing build system, no special compiler flags are needed.
+
+## Port libgcc_eh
+
+libgcc_eh is more difficult.
+
+1.  First thing is to try to cross compile GCC (you will fail, don't worry).
+2.  In the GCC build tree, you can find a directory named the same as your GCC target, e.g. i686-pc-linux-gnu.
+3.  Change to the sub-directory libgcc under the directory mentioned above.
+4.  Type command "make -k libgcc_eh.a" and record the console output of this command.
+5.  Check the console output and find out the exactly source files and compiler flags needed for libgcc_eh
+6.  Copy the source files into your kernel source tree except emutls.c(it's unnecessary), and add necessary compiler flags recorded in last step
+7.  Try to compile these source files, if any header file is missed, search GCC source tree and build tree for it.
+
+There is a generated file "gthr-default.h", most of the time it contains only one line:
+
+``` text
+#include "gthr-posix.h"
+```
+
+. If you don't need multi-thread support, change it to
+
+``` text
+#include "gthr-single.h"
+```
+
+Note that you should \*NOT\* rename any source files from .c to .cpp. You need to compile these files as C-files, while (most of) the rest of your kernel is C++
+
+Some of the compiler flags that affect code generation may cause stack unwinding to fail. In particular, flags like "-fomit-stack-pointer" and "-mregparms={n}" could break things. When debugging the ported code, try compiling without these flags first.
+
+## Rolling your own
+
+(NOTE: This is not yet complete, and hasn't been independently tested) If you're adverse to including external code in your OS (or just want the challenge), you should be able to write your own C++ library, which handles the dispatching and allocation of exceptions (stack backtracing is handed by libgcc, which you should already be including with your build). If you choose this route, make sure to run \_init upon loading each module (library or executable) to properly register the exception handling frames with the unwind code.
+
+The functions you'll need to implement all start with \`\_\_cxa\_\` and are documented in the Itanium C++ ABI (which is also used for x86 by GCC) You will also need to implement \`\_\_gxx_personality_v0\` (which according to the clang docs, is the de-facto standard for C++), the structures used by this function to know what to do are documented in [this](https://github.com/itanium-cxx-abi/cxx-abi/raw/master/exceptions.pdf) PDF.
+
+It is also possible to create macros that implement exception-like control structures (especially useful if you use visual C++). You can implement exceptions with nothing more than setjmp and a linked list. However, you will need to create an exception class that all exceptions derive from, which implements some form of basic RTTI.
+
+You can also implement the entire unwind library that matches the IA64 C++ Spec. Libc++ and Libc++abi provide great starting points for Layers 1 and 2. All thats needed is Layer 3 which provides the \_\_Unwind_RaiseException logic which uses the "eh_frame" specs from LSB, DWARF4 spec, IA64 C++ spec and the System V spec. To see an example of how to do this, see [here](https://github.com/Bareflank/hypervisor/tree/master/bfunwind)
+
+## Function stubs
+
+If you don't have some of the needed funtions, try some of these stubs
+
+### malloc
+
+``` cpp
+void* malloc(size_t size) {
+    static char* freeMemoryBase = SOME_BASE_ADDRESS;
+    size = (size + 7) / 8 * 8;
+    freeMemoryBase += size;
+    return freeMemoryBase - size;
+}
+```
+
+### pthread
+
+You may use the following stub for pthread, or you can just define LIBCXXRT_WEAK_LOCKS for libcxxrt, which will make libcxxrt treat all pthread functions as weak symbol, so you do not actually need to provide these functions, but only a single pthread.h with only declarations.
+
+``` cpp
+namespace { void* threadDataTable[64]; int freeEntry = 0;}
+int pthread_key_create(pthread_key_t* key, void (*)(void*)) {
+    assert(freeEntry < 64);
+
+    *key = freeEntry;
+    freeEntry++;
+    return 0;
+}
+
+int pthread_once(pthread_once_t* control, void (*init)(void)) {
+    if (*control == 0) {
+        (*init)();
+        *control = 1;
+    }
+    return 0;
+}
+
+void* pthread_getspecific(pthread_key_t key) {
+    return threadDataTable[key];
+}
+
+int pthread_setspecific(pthread_key_t key, const void* data) {
+    threadDataTable[key] = (void*)data;
+    return 0;
+}
+
+int pthread_mutex_init(pthread_mutex_t* mutex, const pthread_mutexattr_t*) {
+    *mutex = 0;
+    return 0;
+}
+
+int pthread_mutex_lock(pthread_mutex_t* mutex) {
+    assert(*mutex == 0);
+    *mutex = 1;
+    return 0;
+}
+
+int pthread_mutex_unlock(pthread_mutex_t* mutex) {
+    assert(*mutex != 0);
+    *mutex = 0;
+    return 0;
+}
+
+int pthread_cond_wait(pthread_cond_t*, pthread_mutex_t*) {
+    return 0;
+}
+
+int pthread_cond_signal(pthread_cond_t*) {
+    return 0;
+}
+```
+
+### dladdr
+
+This function is used for debugging by libcxxrt, not a big problem to simply return an error.
+
+``` c
+int dladdr(void*, Dl_info*) {
+    return 0;
+}
+```
+
+## Link Script
+
+If you use a custom link script, make sure to place .eh_frame_hdr, .eh_frame and .gcc_except_table in the exact order in your final output. Otherwise sometimes you are not able to catch any exceptions.
+
+## See Also
+
+- [https://itanium-cxx-abi.github.io/cxx-abi/abi-eh.html](https://itanium-cxx-abi.github.io/cxx-abi/abi-eh.html) (While sounding like being specific to the Itanium, this is the base for the common C++ ABI)
+
+&nbsp;
+
+- [http://www.codeproject.com/cpp/exceptionhandler.asp](http://www.codeproject.com/cpp/exceptionhandler.asp) (Specific to VC++.)
+
+&nbsp;
+
+- [http://www.microsoft.com/msj/0197/Exception/Exception.aspx](http://www.microsoft.com/msj/0197/Exception/Exception.aspx) (Article on SEH, the [stack-based unwinding](https://wiki.osdev.org/Stack#Unwinding_the_stack "Stack") used by VC++ and most other Windows compilers. Any use of stack-based SEH may or may not be covered by USPTO patent \#5,628,016, held by Borland International, Inc.; GCC and most other UNIX compilers use the same table-based mechanism on the x86 that is the rule on RISC architectures, thus being unaffected by the patent.)
+
+&nbsp;
+
+- [https://web.archive.org/web/20120620090841/http://www.kuzbass.ru:8086/docs/isocpp/except.html](https://web.archive.org/web/20120620090841/http://www.kuzbass.ru:8086/docs/isocpp/except.html)
+
+&nbsp;
+
+- The standard header **\<exception\>**, declaring several support functions.
+
+&nbsp;
+
+- [http://llvm.org/docs/ExceptionHandling.html](http://llvm.org/docs/ExceptionHandling.html) (How LLVM/Clang handles C++ exceptions, references the C++ABI and the following document)
+- [https://github.com/itanium-cxx-abi/cxx-abi/raw/master/exceptions.pdf](https://github.com/itanium-cxx-abi/cxx-abi/raw/master/exceptions.pdf) (A document by HP on C++ exception handling)

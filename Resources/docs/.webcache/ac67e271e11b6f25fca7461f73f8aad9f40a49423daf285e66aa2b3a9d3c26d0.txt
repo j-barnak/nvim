@@ -1,0 +1,130 @@
+|                                                                                          |     |
+|------------------------------------------------------------------------------------------|-----|
+| This page or section is a stub . You can help the wiki by accurately contributing to it. |     |
+
+The **PLIC** (Platform Level Interrupt Controller) is the RISC-V equivalent of the [PIC](https://wiki.osdev.org/PIC "PIC") for x86 platforms. Without it, no external interrupts can be received (on "standard" platforms, anyways).
+
+## Quickstart
+
+First, figure out the start address & size of the PLIC MMIO region & map it. In the [DTB](https://wiki.osdev.org/DTB "DTB") there should be an entry like this:
+
+``` dts
+plic@c000000 {
+    phandle = < 0x03 >;
+    riscv,ndev = < 0x35 >;
+    reg = < 0x00 0xc000000 0x00 0x210000 >;
+    interrupts-extended = < 0x02 0x0b 0x02 0x09 >;
+    interrupt-controller;
+    compatible = "riscv,plic0";
+    #interrupt-cells = < 0x01 >;
+    #address-cells = < 0x00 >;
+};
+```
+
+Then, determine which interrupt source(s) to enable. For example, to receive interrupts from the [UART](https://wiki.osdev.org/UART "UART") device, interrupt 0x0A must be enabled:
+
+``` dts
+uart@10000000 {
+    interrupts = < 0x0a >;
+    interrupt-parent = < 0x03 >;
+    clock-frequency = < 0x384000 >;
+    reg = < 0x00 0x10000000 0x00 0x100 >;
+    compatible = "ns16550a";
+};
+```
+
+Interrupts are enabled on a per-context basis. The exact meaning of a context is implementation-dependent but generally even-numbered contexts (0, 2, ...) refer to M-mode of hart 0, 1, ... while odd-numbered contexts (1, 3, ...) refer to S-mode of hart 0, 1, ...
+
+For example, to enable interrupt 0x0A for S-mode in hart 0 the 10th bit at `base + 0x2000 + 0x80 * context + source / 32` must be toggled. Note that the registers are all 32 bits!
+
+The priority and priority thresholds must be set to actually enable the interrupt. `base + 0x0 + 0x4 * source` must be set to any non-zero value and `base + 0x200000 + 0x1000 * context` to any value lower than the priority.
+
+Finally, enable any interrupts on the [UART](https://wiki.osdev.org/UART "UART") device:
+
+``` text
+uart_base[0] = 0x00; // Disable DLAB
+uart_base[1] = 0x01; // Enable data available interrupts
+```
+
+If the trap handler is set up properly, an external interrupt should be triggered when any characters are sent.
+
+## Context
+
+Context is an abstract representation of the hart *x* under privilege level *y*. It is the minimal unit of interrupt configuration through PLIC. Each context has an unque ID, and this ID will determine which hart in which privilege mode will the PLIC target when it is delivering interrupt signal. For example, Context 0 map to hart 0 M-mode, Context 1 map to hart 0 S-mode, Context 2 map to hart 1 M-mode, etc...
+
+In this case, when we configure PLIC context 0, we actually configure the external interrupt for Hart 0 when it is in M-mode.
+
+The exact context mapping should always be verified against the target development board's manual.For example, on qemu-virt machine, even numbered contexts (0, 2, 4, ...) map to M mode of hart (0, 1, 2, ...), while odd-numbered contexts map to S mode of hart (0, 1, 2, ...)
+
+## Enable/Disable interrupt
+
+There's already a simple example above talked about how to enable 0x0A interrupt in PLIC. The enable register for each interrupt under each context are mapped into memory begin at `base + 0x2000`. Each bits represent the enable/disable of an interrupt, and each context can hold up to 1024 interrupt sources. Below is a detailed memory map for this area:
+
+|                    |                                                   |
+|--------------------|---------------------------------------------------|
+| base + 0x0000_2000 | Enable bits for sources 0-31 on context 0         |
+| base + 0x0000_2004 | Enable bits for sources 32-63 on context 0        |
+| ...                | ...                                               |
+| base + 0x0000_207C | Enable bits for sources 992-1023 on context 0     |
+| base + 0x0000_2080 | Enable bits for sources 0-31 on context 1         |
+| base + 0x0000_2084 | Enable bits for sources 32-63 on context 1        |
+| ...                | ...                                               |
+| base + 0x0000_20FC | Enable bits for sources 992-1023 on context 1     |
+| base + 0x0000_2100 | Enable bits for sources 0-31 on context 2         |
+| base + 0x0000_2104 | Enable bits for sources 32-63 on context 2        |
+| ...                | ...                                               |
+| base + 0x0000_217C | Enable bits for sources 992-1023 on context 2     |
+| ...                | ...                                               |
+| base + 0x001F_1F80 | Enable bits for sources 0-31 on context 15871     |
+| base + 0x001F_1F84 | Enable bits for sources 32-63 on context 15871    |
+| base + 0x001F_1FFC | Enable bits for sources 992-1023 on context 15871 |
+
+## Handling interrupts
+
+The PLIC handles interrupts using the following flow: `Receive → Pending → Claim → Complete`
+
+An interrupt source triggers an interrupt by sending an activation signal to the PLIC. The PLIC then evaluates which contexts are eligible to receive this interrupt based on their enable and threshold settings. For each eligible context, the interrupt is marked as pending, and a signal is sent to the corresponding CPU core. Once the host CPU receives this signal, it saves the current machine state and jumps to a user-defined interrupt handler.
+
+To claim the interrupt, the host processor reads from the claim/complete register associated with its context. This read operation returns the ID of the highest-priority pending interrupt, or 0 if no interrupt is pending for that context.
+
+In a multicore system where the same interrupt may be delivered to multiple contexts, each hart must independently issue a read request to the PLIC. These requests are typically routed through NoC or interconnect. The PLIC ensures that only one hart receives the interrupt ID, while others receive 0. Once an interrupt is successfully claimed, the PLIC clears its pending bit.
+
+After the interrupt has been processed by the handler, the host must signal its completion. This is done by writing the same interrupt ID that was returned by the claim to the claim/complete register. The PLIC does not verify whether the written ID matches the one last read, but it will ignore any completion request for an interrupt ID that is not currently enabled for that context.
+
+For example, to begin handling an interrupt, the interrupt must be claimed by reading `base + 0x200000 + 0x4 + 0x1000 * context`, which will return the source. This automatically clears the pending bit.
+
+The interrupt **must** be claimed before returning to userspace! Not doing so will not clear the pending bits and it will cause the same interrupt to be triggered again immediately.
+
+**Note:** the interrupt should not be marked as completed until whatever caused it has actually been dealt with, e.g. don't mark an interrupt from UART as completed until all the data has been read.
+
+Here is the memory map for context claim/complete register:
+
+|                    |                                      |
+|--------------------|--------------------------------------|
+| base + 0x001F_FFFC | Reserved                             |
+| base + 0x0020_0000 | Priority threshold for context 0     |
+| base + 0x0020_0004 | Claim/complete for context 0         |
+| base + 0x0020_0008 | Reserved                             |
+| ...                | ...                                  |
+| base + 0x0020_0FFC | Reserved                             |
+| base + 0x0020_1000 | Priority threshold for context 1     |
+| base + 0x0020_1004 | Claim/complete for context 1         |
+| base + 0x0020_1008 | Reserved                             |
+| ...                | ...                                  |
+| base + 0x03FF_EFFC | Reserved                             |
+| base + 0x03FF_F000 | Priority threshold for context 15871 |
+| base + 0x03FF_F004 | Claim/complete for context 15871     |
+| base + 0x03FF_F008 | Reserved                             |
+| ...                | ...                                  |
+| base + 0x03FF_FFFC | Reserved                             |
+
+### threshold
+
+In PLIC, each context offer a configurable threshold number for filter interrupt requests. The PLIC will mask all PLIC interrupts of a priority less than or equal to threshold. For example, threshold value 0 permits all interrupts with non-zero, while threshold value 7 mute all interrupts.
+
+## See Also
+
+### External Links
+
+- [RISC-V Platform-Level Interrupt Controller Specification](https://github.com/riscv/riscv-plic-spec/blob/master/riscv-plic.adoc)
+- [The RISC-V Instruction Set Manual, Volume II: Privileged Architecture (draft 2018-12-01)](https://github.com/riscv/riscv-isa-manual/releases/download/draft-20181201-5449851/riscv-privileged.pdf). Chapter 7 describes the PLIC in more detail. Supposedly it was moved to another document but I'm unable to find it.

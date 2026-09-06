@@ -1,0 +1,416 @@
+The **AMD PCNET** family of network interface chips are supported by most popular virtual machines and emulators, including QEMU, VMware and VirtualBox. While not as simple as the [RTL8139](https://wiki.osdev.org/RTL8139 "RTL8139") it is easier to test with an emulator, as the RTL8139 is only supported in QEMU, and getting QEMU's full network support running is sometimes difficult. This article will focus on the Am79C970A a.k.a. the AMD PCnet-PCI II in VirtualBox.
+
+## Overview
+
+The PCnet-PCI II is a PCI network adapter. It has built-in support for CRC checks and can automatically pad short packets to the minimum Ethernet length.
+
+It supports PCI bus mastering and can operate in both 32-bit mode and a legacy 16-bit compatibility mode (this mode is from now on referred to as software style, or SWSTYLE). Access to the card's registers are through an index/data register system in either IO port space or memory mapped IO. Given that the MMIO access is sometimes absent on emulators or certain systems, this article will focus on the IO port access. A final distinction is made between the actual accesses to the index/data registers, which can either be 16-bit or 32-bit. The 32-bit mode is referred to as DWIO in the specifications (as it implies the DWIO bit is set in a particular register). Note that any combination of DWIO and SWSTYLE can be selected.
+
+## Initialization and Register Access
+
+### PCI Configuration
+
+In the PCI configuration space, the card has vendor ID 0x1022 and device ID 0x2000. A separate similar device (PCnet-PCI III and clones) has device ID 0x2001 and is programmed similarly.
+
+The first task of the driver should be to enable the IO ports and bus mastering ability of the device in PCI configuration space. This is done by setting bits 0 and 2 of the control register, e.g.
+
+``` c
+uint32_t conf = pciConfigReadDWord(bus, slot, func, offset);
+conf &= 0xffff0000; // preserve status register, clear config register
+conf |= 0x5;        // set bits 0 and 2
+pciConfigWriteDWord(bus, slot, func, offset, conf);
+```
+
+You will then want to read the IO base address of the first BAR from configuration space. We will assume this has the value io_base.
+
+### Card register access
+
+As stated above, the card supports a index/data system of accessing its internal registers. This means that the index of the register you wish to access is first written to an index port, followed by either writing a new value to or reading the old value from a data register. To make things slightly more complex, however, the card splits its internal registers into two groups - Control and Status Registers (CSR) and Bus Control Registers (BCR). Both share a common index port (called Register Address Port - RAP), but use separate data ports: the Register Data Port (RDP) for CSRs and the BCR Data Port (BDP) for BCRs. During normal initialization and use of the cards, the CSRs are used exclusively. A further important register exists in the IO space called the reset register.
+
+A further complication exists in that the offsets of the RAP, Reset register and BDP (but not RDP) relative to io_base vary depending on the current value of DWIO:
+
+| DWIO = 0 (16-bit access) | DWIO = 1 (32-bit access) | Register |        |                                                             |
+|--------------------------|--------------------------|----------|--------|-------------------------------------------------------------|
+| Offset                   | Length                   | Offset   | Length |                                                             |
+| 0                        | 16                       | 0        | 16     | First 16 bytes of EPROM (the first 6 bytes are MAC address) |
+| 0x10                     | 2                        | 0x10     | 4      | RDP - data register for CSRs                                |
+| 0x12                     | 2                        | 0x14     | 4      | RAP - index register for both CSR and BCR access            |
+| 0x14                     | 2                        | 0x18     | 4      | Reset register                                              |
+| 0x16                     | 2                        | 0x1c     | 4      | BDP - data register for BCRs                                |
+
+In addition, the card requires different length data accesses to the registers depending on the setting of DWIO: if DWIO=0, then offsets 0x0 through 0xf are read as single bytes, all others read/written as 16-bit words; if DWIO=1, then all registers (including 0x0 through 0xf) are read/written as 32-bit double words (and with accesses aligned on 32-bit boundaries). We can write functions to access the registers:
+
+``` c
+void writeRAP32(uint32_t val)
+{
+    outd(io_base + 0x14, val);
+}
+
+void writeRAP16(uint16_t val)
+{
+    outw(io_base + 0x12, val);
+}
+
+uint32_t readCSR32(uint32_t csr_no)
+{
+    writeRAP32(csr_no);
+    return ind(io_base + 0x10);
+}
+
+uint16_t readCSR16(uint16_t csr_no)
+{
+    writeRAP32(csr_no);
+    return inw(io_base + 0x10);
+}
+
+void writeCSR32(uint32_t csr_no, uint32_t val)
+{
+    writeRAP32(csr_no);
+    outd(io_base + 0x10, val);
+}
+
+void writeCSR16(uint16_t csr_no, uint16_t val)
+{
+    writeRAP16(csr_no);
+    outw(io_base + 0x10, val);
+}
+```
+
+and similar functions for BCRs.
+
+Unfortunately it is difficult to determine the current state of DWIO (and therefore know which state the card is in when the driver initializes) as the only way of reporting it is to read BCR18 bit 7, which in turn requires knowledge of the BDP, which requires knowledge of DWIO etc. Fortunately, following a reset (either hard or soft), the card is in a known state with DWIO=0 (16-bit access). Normally, therefore, when your driver takes control of the card, it would expect to assume it is in 16-bit mode. However, it may be the case that firmware or a boot-loader has already initialized the card into 32-bit mode, which you didn't know about. You should, therefore, reset the card when your driver takes control. This is accomplished by a read of the reset register:
+
+``` c
+ind(io_base + 0x18);
+inw(io_base + 0x14);
+```
+
+Note this snippet reads first from the 32-bit reset register: if the card is in 32-bit mode this will trigger a reset, if in 16-bit mode it will simply read garbage without affecting the card. It then reads from the 16-bit reset register: if the card was initially in 32-bit mode, it has since been reset and will now be reset again, otherwise it will reset for the first time.
+
+You should now wait 1 microsecond for the reset to complete (using your OSs timing functions).
+
+Then, if desired, you can program the card into 32-bit mode (the rest of this article assumes this, but you can easily substitute read/writeCSR32 with read/writeCSR16 if you like). To do this, we simply need to perform a 32 bit write of 0 to the RDP. After reset, RAP points to CSR0, so we are effectively writing 0 to CSR0. This will not cause any harm as we completely reprogram CSR0 later anyway.
+
+``` c
+outd(io_base + 0x10, 0);
+```
+
+### Interrupt handling
+
+The next section will enable some interrupts on the card. We will flesh out the interrupt handler later, but you should install the interrupt handler here as otherwise you will get crashes due to unhandled interrupts. You need to parse [ACPI](https://wiki.osdev.org/ACPI "ACPI") tables etc. to determine the proper interrupt routing for your device.
+
+### SWSTYLE
+
+We now need to set the value of SWSTYLE to 2. After reset, it defaults to 0 representing 16-bit legacy compatibility mode. We want the card to be able to access all of the first 4 GiB of (physical) memory for its buffers, so need to set it to 32-bit mode.
+
+``` c
+uint32_t csr58 = readCSR32(58);
+csr58 &= 0xFF00;  // SWSTYLE is 8 bits (7:0)
+csr58 |= 2;
+writeCSR32(58, csr58);
+```
+
+### ASEL
+
+The card has both 10/100baseT and coaxial outputs. It has functionality to automatically select whichever is attached which is normally enabled by default. This snippet simply ensures this functionality is enabled by setting the ASEL bit in BCR2 just in case firmware has altered this for some reason.
+
+``` c
+uint32_t bcr2 = readBCR32(2);
+bcr2 |= 0x2;
+writeBCR32(2, bcr2);
+```
+
+### Ring buffers
+
+The card uses two ring buffers to store packets: one for packets received and one for packets to be transmitted. The actual ring buffers themselves are regions of physical memory containing a set number of descriptor entries (DEs) which are fixed 16 bytes in length (for SWSTYLE=2). Each of these then contains a pointer to the actual physical address of the memory used for the packet.
+
+For example, if you wish to define 32 receive buffers and 8 transmit buffers (similar to what the Linux driver does), then you would need to allocate 32 \* 16 bytes for the receive DEs, 8 \* 16 bytes for the transmit DEs, 32 \* packet length (1544 is used in Linux, but we will use 1520 as it is a multiple of 16) for the actual receive buffers and 8 \* packet length for the actual transmit buffers.
+
+The DEs contain a number of important bits for sending/receiving packets, e.g. destination MAC address, error bits etc. but they also contain an important bit called the ownership bit (bit 7 of byte 7). If this is cleared, it means the driver 'owns' that particular ring buffer entry. If it is set, it means the card owns it (and the driver should not touch the entire entry). The way this works is that the only party (driver or card) that can read/write the entry is the one that owns it, and particularly only the owning party can flip ownership back to the other party. At initialization, you would want the card to 'own' all the receive buffers (OWN = 1) (so it can write new packets into them that it receives, then flip ownership to the driver), and the driver to 'own' all the transmit buffers (OWN = 0) (so it can write packets to be transmitted, then flip ownership to the card). For the Transmit Ring, remember to not set the OWNer bit until you have a buffer to transmit.
+
+You should also have a variable that stores the current 'pointer' into each buffer (i.e. what is the next one the driver expects to read/write). The card maintains separate pointers internally. You also need a simple way of incrementing the pointer (and wrapping back to the start if necessary).
+
+Thus to initialize the ring buffers you'd want something like:
+
+``` c
+int rx_buffer_ptr = 0;
+int tx_buffer_ptr = 0;                 // pointers to transmit/receive buffers
+
+int rx_buffer_count = 32;              // total number of receive buffers
+int tx_buffer_count = 8;               // total number of transmit buffers
+
+const int buffer_size = 1520;          // length of each packet buffer
+
+const int de_size = 16;                // length of descriptor entry
+
+uint8_t *rdes;                         // pointer to ring buffer of receive DEs
+uint8_t *tdes;                         // pointer to ring buffer of transmit DEs
+
+uint32_t rx_buffers;                   // physical address of actual receive buffers (< 4 GiB)
+uint32_t tx_buffers;                   // physical address of actual transmit buffers (< 4 GiB)
+
+// does the driver own the particular buffer?
+int driverOwns(uint8_t *des, int idx)
+{
+    return (des[de_size * idx + 7] & 0x80) == 0;
+}
+
+// get the next transmit buffer index
+int nextTxIdx(int cur_tx_idx)
+{
+    int ret = cur_tx_idx + 1;
+    if(ret == tx_buffer_count)
+        ret = 0;
+    return ret;
+}
+
+// get the next receive buffer index
+int nextRxIdx(int cur_rx_idx)
+{
+    int ret = cur_rx_idx + 1;
+    if(ret == rx_buffer_count)
+        ret = 0;
+    return ret;
+}
+
+// initialize a DE
+void initDE(uint8_t *des, int idx, int is_tx)
+{
+    memset(&des[idx * de_size], 0, de_size);
+    
+    // first 4 bytes are the physical address of the actual buffer
+    uint32_t buf_addr = rx_buffers;
+    if(is_tx)
+        buf_addr = tx_buffers;
+    *(uint32_t *)&des[idx * de_size] = buf_addr + idx * buffer_size;
+
+    // next 2 bytes are 0xf000 OR'd with the first 12 bits of the 2s complement of the length
+    uint16_t bcnt = (uint16_t)(-buffer_size);
+    bcnt &= 0x0fff;
+    bcnt |= 0xf000;
+    *(uint16_t *)&des[idx * de_size + 4] = bcnt;
+
+    // finally, set ownership bit - transmit buffers are owned by us, receive buffers by the card
+    if(!is_tx)
+        des[idx * de_size + 7] = 0x80;
+}
+```
+
+### Card registers setup
+
+Finally, once all our ring buffers are set up, we need to give their addresses to the card. There are two ways of setting up the card registers: we can either program them all directly, or set up a special initialization structure and then pass that to the card. In this article we will use the latter.
+
+You will need to allocate a 28 byte region of physical memory, aligned on a 32-bit boundary. The members are:
+
+| Offset (bytes) | Byte 3                                              | Byte 2      | Byte 1    | Byte 0    |
+|----------------|-----------------------------------------------------|-------------|-----------|-----------|
+| 0              | TLEN(7:4)\*                                         | RLEN(7:4)\* | MODE      |           |
+| 4              | MAC\[3\]                                            | MAC\[2\]    | MAC \[1\] | MAC\[0\]  |
+| 8              | Reserved (0)                                        | MAC\[5\]    | MAC\[4\]  |           |
+| 12             | LADR\[3\]                                           | LADR\[2\]   | LADR\[1\] | LADR\[0\] |
+| 16             | LADR\[7\]                                           | LADR\[6\]   | LADR\[5\] | LADR\[4\] |
+| 20             | Physical address of first receive descriptor entry  |             |           |           |
+| 24             | Physical address of first transmit descriptor entry |             |           |           |
+
+Note that TLEN and RLEN are the log2 of the number of transmit and receive descriptor entries respectively and are in the high order nibble of the byte while the lower nibble of the byte is reserved. For example, if you have 8 transmit descriptor entries, TLEN would be 3 (as 2^3 = 8). The maximum value of TLEN and RLEN is 9 (i.e. 512 buffers). However, after initialization, you may change this to a maximum of 65535 byte writing to the CSR76 and CSR78 registers.
+
+MODE provides various functions to control how the card works with regards to sending and receiving packets, and running loop-back tests. You probably want to set it to zero (enable transmit and receive functionality, receive broadcast packets and those sent this physical address, disable promiscuous mode). See the spec description of CSR15 for further details.
+
+You also need to specify the physical address (MAC address) you want the card to use. If you want to keep the current one, you will need to first read it from the EPROM of the card (it is exposed as the first 6 bytes of the IO space that the registers are in).
+
+LADR is the logical address filter you want the card to use when deciding to accept Ethernet packets with logical addressing. If you do not wish to use logical addressing (the default), then set these bytes to zero.
+
+To actually set up the card registers, we provide it with the address of our initialization structure by writing the low 16-bits of its address to CSR1 and the high 16-bits to CSR2.
+
+You can also set up other registers at this point, e.g. CSR3 (only interesting bits shown):
+
+| Bit number | Functionality                                                                                                                                                                                                |
+|------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 10         | Receive interrupt mask - if set then incoming packets won't trigger an interrupt                                                                                                                             |
+| 9          | Transmit interrupt mask - if set then an interrupt won't be triggered when a packet has completed sending. Depending on your design this may be preferable.                                                  |
+| 8          | Interrupt done mask - if set then you won't get an interrupt when the card has finished initializing. You probably want this as it is far easier to poll for this situation (which only occurs once anyway). |
+| 2          | Big-endian enable - you will want to ensure this is cleared to zero                                                                                                                                          |
+
+And you may want to set bit 11 of CSR4 which automatically pads Ethernet packets which are too short to be at least 64 bytes.
+
+Once all the control registers are set up, you set bit 0 of CSR0, and then wait for initialization to be done. You can do this by either waiting for an interrupt (if you didn't disable the initialization done interrupt in CSR3) or by polling until CSR0 bit 8 is set. Note that if you want to wait for an interrupt you will also need to set bit 6 of CSR0 or interrupts won't be generated (you will need to enable this anyway to get notification of received packets, so it makes sense to set it at the same time as the initialization bit).
+
+Once initialization has completed, you can finally start the card. This is accomplished by clearing both the INIT bit (bit 0) and STOP bit (bit 2) in CSR0 and setting the STRT bit (bit 1) at the same time.
+
+## Sending packets
+
+Sending packets involves simply writing the packet details to the next available transmit buffer, then flipping the ownership for the particular ring buffer entry to the card. The card regularly scans all the transmit buffers looking for one it hasn't sent, and then will transmit those it finds.
+
+For example:
+
+``` c
+int sendPacket(void *packet, size_t len, uint8_t *dest)
+{
+    // the next available descriptor entry index is in tx_buffer_ptr
+    if(!driverOwns(tdes, tx_buffer_ptr))
+    {
+        // we don't own the next buffer, this implies all the transmit
+        //  buffers are full and the card hasn't sent them yet.
+        // A fully functional driver would therefore add the packet to
+        //  a queue somewhere, and wait for the transmit done interrupt
+        //  then try again.  We simply fail and return.  You can set
+        //  bit 3 of CSR0 here to encourage the card to send all buffers.
+        return 0;
+    }
+
+    // copy the packet data to the transmit buffer.  An alternative would
+    //  be to update the appropriate transmit DE to point to 'packet', but
+    //  then you would need to ensure that packet is not invalidated before
+    //  the card has a chance to send the data.
+    memcpy((void *)(tx_buffers + tx_buffer_ptr * buffer_size), packet, len);
+
+    // set the STP bit in the descriptor entry (signals this is the first
+    //  frame in a split packet - we only support single frames)
+    tdes[tx_buffer_ptr * de_size + 7] |= 0x2;
+
+    // similarly, set the ENP bit to state this is also the end of a packet
+    tdes[tx_buffer_ptr * de_size + 7] |= 0x1;
+
+    // set the BCNT member to be 0xf000 OR'd with the first 12 bits of the
+    //  two's complement of the length of the packet
+    uint16_t bcnt = (uint16_t)(-len);
+    bcnt &= 0xfff;
+    bcnt |= 0xf000;
+    *(uint16_t *)&tdes[tx_buffer_ptr * de_size + 4] = bcnt;
+
+    // finally, flip the ownership bit back to the card
+    tdes[tx_buffer_ptr * de_size + 7] |= 0x80;
+
+    // update the next transmit pointer
+    tx_buffer_ptr = nextTxIdx(tx_buffer_ptr);
+}
+```
+
+## Handling interrupts and receiving packets
+
+Receiving packets is normally done in your interrupt handler - the card will signal an interrupt whenever it receives a packet and has written it to the receive buffer.
+
+Note that interrupts can come from many sources (other than new packets). If a new packet has been signaled then CSR0 bit 10 will be set. There are other bits in CSR0 than can be set (depending on how you set up interrupt masks in CSR3) and additionally other bits in CSR4 that can signal interrupts (although these are usually masked out on reset). After you have properly handled an interrupt, you will need to write a 1 back to the appropriate bit in CSR0 or CSR4 before sending EOI to you interrupt controller (or the interrupt will continue to be signaled). Bitwise OR CSR0 with 0x7F00 and bitwise OR CSR4 with 0x022A will reset all interrupts. Remember to preserve bit 6 in CSR0 and bit 11 in CSR4.
+
+Once a receive packet interrupt has been received, you need to loop through the receive descriptor entries (starting at rx_buffer_ptr) handling each packet until you find an entry which the driver doesn't own, then stop. e.g.
+
+``` c
+void handleReceiveInterrupt()
+{
+    while(driverOwns(rdes, rx_buffer_ptr))
+    {
+        // packet length is given by bytes 8 and 9 of the descriptor
+        //  (no need to negate it unlike BCNT above)
+        uint16_t plen = *(uint16_t *)&rdes[rx_buffer_ptr * de_size + 8];
+
+        // the packet itself is written somewhere in the receive buffer
+        void *pbuf = (void *)(rx_buffers + rx_buffer_ptr * buffer_size);
+
+        // do something with the packet (i.e. hand to the next layer in the
+        //  network stack).  You probably don't want to do any extensive
+        //  processing here (as this is within an interrupt handler) - just
+        //  copy the data somewhere to a queue and continue so that the
+        //  system is interrupted for as little time as possible
+        handlePacket(pbuf, plen);
+
+        // hand the buffer back to the card
+        rdes[rx_buffer_ptr * de_size + 7] = 0x80;
+
+        // increment rx_buffer_ptr;
+        rx_buffer_ptr = nextRxIdx(rx_buffer_ptr);
+    }
+
+    // set interrupt as handled
+    writeCSR32(0, readCSR32(0) | 0x0400);
+
+    // don't forget to send EOI
+}
+```
+
+## Important Registers
+
+### CSR0: "The Controller Status Register"
+
+The CSR0 is a register that contains flags indicating the cause of an interrupt. Writing a 1 to a flag's bit position clears the corresponding flag, allowing drivers to clear the interrupt flags by simple reading and writing back the read value to the register.
+
+| Bit   | Name | Description                                                                                                          |
+|-------|------|----------------------------------------------------------------------------------------------------------------------|
+| 31-16 | RES  | Reserved. Written as ZEROs and read as undefined.                                                                    |
+| 15    | ERR  | Error flag that is set when any of the error flags (BABL, CERR, MISS, MERR and ERR) are true.                        |
+| 14    | BABL | Babble flag indicating a transmitter timeout error.                                                                  |
+| 13    | CERR | Collision Error flag indicating a failure in collision detection.                                                    |
+| 12    | MISS | Missed Frame flag indicating the loss of an incoming receive frame.                                                  |
+| 11    | MERR | Memory Error flag indicating a timeout waiting for the bus.                                                          |
+| 10    | RINT | Receive Interrupt flag indicating the completion of a receive frame.                                                 |
+| 9     | TINT | Transmit Interrupt flag indicating the completion of a transmit frame.                                               |
+| 8     | IDON | Initialization Done flag indicating the completion of the initialization sequence.                                   |
+| 7     | INTR | Interrupt Flag indicating the occurrence of one or more interrupt-causing conditions.                                |
+| 6     | IENA | Interrupt Enable flag enabling INTA to be active if the Interrupt Flag is set.                                       |
+| 5     | RXON | Receive On flag indicating that the receive function is enabled.                                                     |
+| 4     | TXON | Transmit On flag indicating that the transmit function is enabled.                                                   |
+| 3     | TDMD | Transmit Demand flag causing buffer management unit access without waiting for the poll-time counter.                |
+| 2     | STOP | Stop flag disabling the chip from all DMA and network activity.                                                      |
+| 1     | STRT | Start flag enabling the PCnet-PCI II controller to send and receive frames and perform buffer management operations. |
+| 0     | INIT | Initialization flag enabling the PCnet-PCI II controller to begin the initialization procedure.                      |
+
+### CSR1 and CSR2: "Initialization Block Addresses"
+
+As mentioned in [Card registers setup](https://wiki.osdev.org/AMD_PCNET#Card_registers_setup) these registers are used to provide the physical address of the initialization struct.
+
+**CSR1**
+
+| Bit   | Name         | Description                                                                                            |
+|-------|--------------|--------------------------------------------------------------------------------------------------------|
+| 31–16 | RES          | Reserved.                                                                                              |
+| 15–0  | IADR\[15:0\] | Lower 16 bits of the initialization block address. Read/Write accessible when STOP or SPND bit is set. |
+
+**CSR2**
+
+| Bit   | Name         | Description                                                                                            |
+|-------|--------------|--------------------------------------------------------------------------------------------------------|
+| 31–16 | RES          | Reserved.                                                                                              |
+| 15–0  | IADR\[15:0\] | Upper 16 bits of the initialization block address. Read/Write accessible when STOP or SPND bit is set. |
+
+### CSR3: "Interrupt Masks and Deferral Control"
+
+This register is used to control the various masks of the interrupts the card generates.
+
+| Bit | Name    | Description                                                                                            |
+|-----|---------|--------------------------------------------------------------------------------------------------------|
+| 15  | RES     | Reserved. Read and written as ZERO.                                                                    |
+| 14  | BABLM   | Babble Mask. If BABLM is set, the BABL bit will be masked and unable to set the INTR bit.              |
+| 13  | RES     | Reserved. Read and written as ZERO.                                                                    |
+| 12  | MISSM   | Missed Frame Mask. If MISSM is set, the MISS bit will be masked and unable to set the INTR bit.        |
+| 11  | MERRM   | Memory Error Mask. If MERRM is set, the MERR bit will be masked and unable to set the INTR bit.        |
+| 10  | RINTM   | Receive Interrupt Mask. If RINTM is set, the RINT bit will be masked and unable to set the INTR bit.   |
+| 9   | TINTM   | Transmit Interrupt Mask. If TINTM is set, the TINT bit will be masked and unable to set the INTR bit.  |
+| 8   | IDONM   | Initialization Done Mask. If IDONM is set, the IDON bit will be masked and unable to set the INTR bit. |
+| 7   | RES     | Reserved. Read and written as ZERO.                                                                    |
+| 6   | DXSUFLO | Disable Transmit Stop on Underflow error.                                                              |
+| 5   | LAPPEN  | Look Ahead Packet Processing Enable.                                                                   |
+| 4   | DXMT2PD | Disable Transmit Two Part Deferral.                                                                    |
+| 3   | EMBA    | Enable Modified Back-off Algorithm.                                                                    |
+| 2   | BSWP    | Byte Swap (Endianness control, 1 for big-endian, 0 for little endian).                                 |
+| 1   | RES     | Reserved. The default value of this bit is a ZERO.                                                     |
+| 0   | RES     | Reserved. The default value of this bit is a ZERO.                                                     |
+
+### CSR58: "Software Style"
+
+As mentioned in [SWSTYLE](https://wiki.osdev.org/AMD_PCNET#SWSTYLE) allows the driver to set various behaviors of the card. In the above example we set bit 2 and clear the other bits 0-7 to set SWSTYLE=2, ie. use 32-bit structures.
+
+| Bit   | Name     | Description                                                                                                                                                                                      |
+|-------|----------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 31–16 | RES      | Reserved. Written as ZEROs and read as undefined.                                                                                                                                                |
+| 15–11 | RES      | Reserved. Written as ZEROs and read as undefined.                                                                                                                                                |
+| 10    | APERREN  | Advanced Parity Error Handling Enable. When set, indicates that the BPE bits (RMD1 and TMD1, bit 23) are used to indicate parity errors in data transfers to the receive and transmit buffers.   |
+| 9     | CSRPCNET | CSR PCnet-ISA Configuration. When set, indicates that the PCnet-PCI II controller register bits of CSR4 and CSR3 will map directly to the CSR4 and CSR3 bits of the PCnet-ISA (Am79C960) device. |
+| 8     | SSIZE32  | 32-Bit Software Size. When set, indicates that the controller should use 32-bit structures for the initialization block and the transmit and receive descriptor entries, as set above.           |
+| 7–0   | SWSTYLE  | Software Style Register. Determines the style of register and memory resources used by the controller.                                                                                           |
+
+  
+
+## See Also
+
+### External Links
+
+- [Specification](https://pdf1.alldatasheet.com/datasheet-pdf/view/89876/AMD/AM79C970.html)

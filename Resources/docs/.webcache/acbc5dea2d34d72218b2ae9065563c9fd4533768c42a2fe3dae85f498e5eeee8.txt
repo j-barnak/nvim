@@ -1,0 +1,358 @@
+|                                                                                                                       |     |
+|-----------------------------------------------------------------------------------------------------------------------|-----|
+| This page or section is a work in progress and may thus be incomplete. Its content may be changed in the near future. |     |
+
+Intel High Definition Audio refers to the specification released by Intel for delivering high-definition audio that is capable of playing back more channels at higher quality than previous integrated audio codecs like [AC97](https://wiki.osdev.org/AC97 "AC97").
+
+## Identifying HDA on a machine
+
+All HDA devices appear on the PCI bus with a specific VendorID and DeviceID. Many HDA devices have a Vendor ID of 8086 (Intel), and a Device ID such as 2668 or 27D8, but other Vendor IDs are also in use, e.g. Vendor ID 1002 (AMD) and Device ID 4383. If you find any others, please add them into this page. The best way to identify HDA is probably just to look for the Class code (4h) and subclass (3h), but the HDA specification doesn't tell you to do this.
+
+## Overview
+
+The HDA specification (link at the bottom of this page) spells out how to set up devices at the two ends of a link and there is no substitute for working from it, but it takes several readings through its 200+ pages before a clear picture eventually begins to emerge from it, so this overview is aimed at making the most frustrating parts clear from the outset.
+
+You can communicate with the HDA device via memory-mapped ports, but much of the action takes place further away in hardware codecs containing many widgets, and the communication link through to them is rather slow. Setting things up at the near end is relatively easy, part of it being done by keyhole surgery through a couple of ordinary ports in the PCI device configuration space, while the rest is done through the memory mapped ports located at an address found at index 10-17h (though the lowest four bits should be taken as zeros). You may not need to change anything in the PCI configuration space at all, but there's a fair bit to do with the memory mapped ports to set up and control several DMA engines. Setting things up at the codec end is much more complicated though as you have to interrogate them to find out what they are and what functionality they offer, and then you have to work out how to set them up correctly to create active paths between devices (speakers and mic.s) and DACs/ADCs. All your communications with the codecs and the many widgets they contain will be done by sending special commands via the link.
+
+Data and commands are sent across the link in frames with strict timings and bit limits, but the work of packaging the different kinds of data into packets to go into these frames is all done for you, so all you need to do is set up a number of buffers. Two of these buffers are called CORB (command output ring buffer) and RIRB (response input ring buffer) - each buffer has a DMA engine dedicated to it which will in one case send commands from the CORB buffer across the link to codecs, and in the other case will write responses from codecs into the RIRB buffer. There will in many implementations also be an immediate command port which allows you to send commands to codecs/widgets and to receive responses from them without going through the CORB and RIRB mechanisms, but this route should not be used at the same time as CORB/RIRB as they may conflict, so it should really be reserved for initial exploration while designing your driver. The purpose of CORB and RIRB is to allow large numbers of these relatively slow communications to take place in the background while the processor goes off to do something else.
+
+There are also buffers and DMA engines dedicated to four input streams and four output streams (or at least, it's four of each in current implementations, but your software ought to check the actual number), each stream needing a descriptor buffer which must contain two or more descriptors (up to 256) which define a list of data buffers used by that stream, and the data buffers which these descriptors define will contain the actual sound samples (or have samples written into them) structured like the content of .wav files (though 20 and 24-bit samples must be padded out with zeros at the LSB end to make them all 32-bits long). The combined length of the sound data buffers can be anything up to 4GiB, so you could set things up to play or record a very long sound file and leave it going all by itself. In reality though, you'll probably work with chunks of memory a just few megabytes in size (or smaller) as one megabyte gives you room for about six seconds of 16-bit stereo data at 41.1KHz. For performance reasons, making the length of these data buffers a multiple of 128 bytes is recommended.
+
+With all these buffers, the DMA engines jump back to the start and carry on running from there infinitely until you stop them, although with CORB there is a register which stores the last valid command which the DMA engine must stop at (after sending that command) and it will only move on again when that register is modified (by you) to enable more commands to be sent. It is the job of your software to collect data from input buffers before they are overwritten on the next lap. The set of sound data buffers defined by descriptors for a single stream collectively comprise a cyclic stream buffer, but it's divided up into chunks defined by descriptors to enable an interrupt to be generated at the end of each chunk (interrupt optional) to help you write new data into an output buffer that's just been sent before the DMA engine returns to that buffer on the next lap, or to copy data out of an input buffer that's just been written by a DMA engine to make way for more data to be written on the next lap.
+
+At the codec end, you will need to start out by interrogating the root node of each of 15 possible codecs. The STATESTS register at offset 0Eh indicates which codec addresses have codecs at the end of them. The verb F00h will then be used with an 8-bit parameter to request information such as vendor ID, device ID and the starting node number and number of nodes for the function groups in the codec. Having found the function groups, you can use the same verb to interrogate them to find out the starting node number and number of nodes of their widgets, and also the type of the function group itself - AFG (audio function group) is the one you want (unless you're looking for a modem). You can then interrogate each widget to ask it what its type is (e.g. output converter (DAC), input converter (ADC), mixer, selector, pin complex, power widget, volume knob). Another verb, F02h, allows you to get a connection list of other widgets in the same function group directly connected to the widget you're interrogating, though you need to use verb F00h first and the parameter at 0Eh to get the connection list length. On the Netbook I program on there is only one codec, one function group (AFG) and 37 widgets (about half of which are vendor defined audio widgets, though many of those don't exist on the codec manufacturer's datasheet as they are just holding places for real widgets used on more advanced sound cards). Don't be surprised if you don't find a volume control widget - the volume can also be controlled by setting different amplifier levels at the input and output controllers.
+
+## Device Registers
+
+Base address of these registers can be found in BAR0 in PCI. Full description of these registers can be found in specification, descriptions below do not aim to explain every register or every single bit, only relevant ones.
+
+#### 0x00 (4 bytes) Global Capabilities
+
+| Bits  | Description                        |
+|-------|------------------------------------|
+| 15:12 | Number of Output streams           |
+| 11:8  | Number of Input streams            |
+| 7:3   | Number of Bidirectional streams    |
+| 0     | 1 = 64 bit addressing is supported |
+
+#### 0x02 (1 byte) Minor Version / 0x03 (1 byte) Major Version
+
+As names suggests, from these registers you can read version of High Definition Audio specification that is implemented by sound card.
+
+#### 0x08 (2 bytes) Global Control
+
+| Bits | Description                                                             |
+|------|-------------------------------------------------------------------------|
+| 8    | 1 = Unsolicited responses from Codec are allowed                        |
+| 0    | 0 = Controller is in reset state 1 = Controller is in operational state |
+
+#### 0x20 (4 bytes) Interrupt Control
+
+| Bits | Description                                                                                                                                                                                                                                                                                                                                                           |
+|------|-----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 31   | 0 = All interrupts are disabled 1 = Interrupts are enabled                                                                                                                                                                                                                                                                                                            |
+| 30   | 1 = Controller will generate interrupt due to Response interrupt, Response Buffer overrun and wake events                                                                                                                                                                                                                                                             |
+| 29:0 | If is particular bit set, it mean that corresponding stream will be able to generate interrupts. Bits for streams are sorted in order: Input Streams, Output Streams, Bidirectional streams. So for example if there is one stream from each category, bit 0 will control Input Stream, bit 1 Output Stream and bit 2 Bidirectional Stream. Unused bits are reserved. |
+
+#### 0x34 (4 bytes) Stream Synchronization
+
+Note: The HD Audio specifications list this register at offset 0x38, but this appears to be incorrect.
+
+This register allows to start or stop more streams at same time. You can do it by setting bits of these streams what will stop them, then start DMA engine on each of them and finally clear their bits to allow DMA engines to start working with data.
+
+| Bits | Description                                                                                                                                                                          |
+|------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 29:0 | If is particular bit clear, it mean that corresponding stream will be able to sent or receive data. Bits for streams are sorted in same order as in register 0x20 Interrupt Control. |
+
+#### 0x40 (4 bytes) CORB Lower Base Address
+
+| Bits | Description                      |
+|------|----------------------------------|
+| 31:7 | Lower Base Address of CORB ring  |
+| 6:0  | Reserved to force 1 KB alignment |
+
+#### 0x44 (4 bytes) CORB Upper Base Address
+
+| Bits | Description                     |
+|------|---------------------------------|
+| 31:0 | Upper Base Address of CORB ring |
+
+#### 0x48 (2 bytes) CORB Write Pointer
+
+| Bits | Description                     |
+|------|---------------------------------|
+| 7:0  | Number of last valid CORB entry |
+
+#### 0x4A (2 bytes) CORB Read Pointer
+
+| Bits | Description                                                                                                                               |
+|------|-------------------------------------------------------------------------------------------------------------------------------------------|
+| 15   | 1 = Reset CORB read pointer (this bit is not self-clearing, you have to wait for it to be set, then clear it and wait for it to be clear) |
+| 7:0  | Number of last CORB entry that controller processed                                                                                       |
+
+#### 0x4C (1 byte) CORB Control
+
+| Bits | Description                                              |
+|------|----------------------------------------------------------|
+| 1    | 0 = CORB is stopped 1 = CORB is running                  |
+| 0    | 1 = Interrupt will be generated if there is memory error |
+
+#### 0x4E (1 byte) CORB Size
+
+| Bits | Description                                                                                        |
+|------|----------------------------------------------------------------------------------------------------|
+| 6    | 1 = CORB ring can be programmed to have 256 entries                                                |
+| 5    | 1 = CORB ring can be programmed to have 16 entries                                                 |
+| 4    | 1 = CORB ring can be programmed to have 2 entries                                                  |
+| 1:0  | Number of CORB ring entries. 0b00 = 2 entries 0b01 = 16 entries 0b10 = 256 entries 0b11 = Reserved |
+
+#### 0x50 (4 bytes) RIRB Lower Base Address
+
+| Bits | Description                      |
+|------|----------------------------------|
+| 31:7 | Lower Base Address of RIRB ring  |
+| 6:0  | Reserved to force 1 KB alignment |
+
+#### 0x54 (4 bytes) RIRB Upper Base Address
+
+| Bits | Description                     |
+|------|---------------------------------|
+| 31:0 | Upper Base Address of RIRB ring |
+
+#### 0x58 (2 bytes) RIRB Write Pointer
+
+| Bits | Description                                                |
+|------|------------------------------------------------------------|
+| 15   | 1 = Reset write pointer (note: this bit always reads as 0) |
+| 7:0  | Number of last RIRB entry that was written by controller   |
+
+#### 0x5A (2 bytes) RIRB Response Interrupt Count
+
+| Bits | Description                                                         |
+|------|---------------------------------------------------------------------|
+| 7:0  | How many responses have to be written by RIRB to generate interrupt |
+
+#### 0x5C (1 byte) RIRB Control
+
+| Bits | Description                                                  |
+|------|--------------------------------------------------------------|
+| 0    | 1 = Interrupt will be generated if there is response overrun |
+| 1    | 0 = RIRB is stopped 1 = RIRB is running                      |
+| 0    | 1 = Interrupt will be generated if there is memory error     |
+
+#### 0x5E (1 byte) RIRB Size
+
+| Bits | Description                                                                                        |
+|------|----------------------------------------------------------------------------------------------------|
+| 6    | 1 = RIRB ring can be programmed to have 256 entries                                                |
+| 5    | 1 = RIRB ring can be programmed to have 16 entries                                                 |
+| 4    | 1 = RIRB ring can be programmed to have 2 entries                                                  |
+| 1:0  | Number of RIRB ring entries. 0b00 = 2 entries 0b01 = 16 entries 0b10 = 256 entries 0b11 = Reserved |
+
+#### 0x70 (4 bytes) DMA Position Lower Base Address
+
+| Bits | Description                               |
+|------|-------------------------------------------|
+| 31:7 | Lower Base Address of DMA position buffer |
+| 6:1  | Reserved to force 1 KB alignment          |
+| 0    | 1 = DMA position buffer is enabled        |
+
+#### 0x74 (4 bytes) DMA Position Upper Base Address
+
+| Bits | Description                               |
+|------|-------------------------------------------|
+| 31:0 | Upper Base Address of DMA position buffer |
+
+### 0x80+ Registers of Stream Descriptors
+
+Sound card has as many Stream Descriptors as many streams it have. Registers of every Stream Control occupies 0x20 bytes. As first there are Stream Descriptors for Input Streams, then for Output Streams and then for Bidirectional Streams. Number of streams can be readed from 0x00 Global Capabilities register.
+
+For example, if there are 4 Input Streams, 3 Output Streams and 1 Bidirectional Stream, base address for registers of first Stream Descriptor for Input Stream is at (mmio_base + 0x80), first Stream Descriptor for Output Stream is at (mmio_base + 0x80 + 0x20\*4) and first Stream Descriptor for Bidirectional Stream is at (mmio_base + 0x80 + 0x20\*4 + 0x20\*3).
+
+Offsets in table below should be added to particular Stream Descriptor base.
+
+| Offset | Size    | Description                                                                         |
+|--------|---------|-------------------------------------------------------------------------------------|
+| 0x00   | 1 byte  | Stream Control byte 0                                                               |
+| 0x02   | 1 byte  | Stream Control byte 2                                                               |
+| 0x03   | 1 byte  | Stream Status                                                                       |
+| 0x04   | 4 bytes | Link position in buffer entry                                                       |
+| 0x08   | 4 bytes | Cyclic Buffer Length (size of all entries in Buffer Descriptor List added together) |
+| 0x0C   | 2 bytes | Last Valid Index (number of entries in Buffer Descriptor List + 1)                  |
+| 0x12   | 2 bytes | Stream Format                                                                       |
+| 0x18   | 4 bytes | Lower Base Address of Buffer Descriptor List                                        |
+| 0x1C   | 4 bytes | Upper Base Address of Buffer Descriptor List                                        |
+
+#### Stream Control byte 0
+
+| Bits | Description                                                                                                                                                                                        |
+|------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| 4    | 1 = Generate interrupt if there is Descriptor error                                                                                                                                                |
+| 3    | 1 = Generate interrupt if there is FIFO error                                                                                                                                                      |
+| 2    | 1 = Generate interrupt if was transferred buffer with IOC bit set                                                                                                                                  |
+| 1    | 1 = Stream is running (transferring data)                                                                                                                                                          |
+| 0    | 1 = Reset all registers of Stream Descriptor, must not be set when Stream is running (this bit is not self-clearing, you have to wait for it to be set, then clear it and wait for it to be clear) |
+
+#### Stream Control byte 2
+
+| Bits | Description                                                                                                                              |
+|------|------------------------------------------------------------------------------------------------------------------------------------------|
+| 7:4  | Number of stream to which this Stream Descriptor will send data. Value 0 is reserved and indicate that this Stream Descriptor is unused. |
+| 3    | Relevant only for Bidirectional streams to set their behaviour 0 = Select Input engine 1 = Select Output engine                          |
+| 2    | This bit may be read-only. 0 = Stream will be handled on „best effort“ basis 1 = Stream will be transferred as preferred traffic         |
+
+## CODECs and Nodes
+
+Each HD Audio device contains one or more CODECs, and each CODEC contains a list of "nodes" that are connected together in a hierarchical structure. You can find the available CODECs by sending a GetParameter command to the codec's root node (node 0) using the CORB ring buffer (or the Immediate Command Output Interface, if available). If response is not 0x00000000, it mean that CODEC is present.
+
+## Node Commands
+
+Each entry in the CORB ring buffer has the following structure:
+
+| Bits  | Description   |
+|-------|---------------|
+| 31:28 | Codec Address |
+| 27:20 | Node Index    |
+| 19:8  | Command       |
+| 7:0   | Data          |
+
+The following list contain some useful verbs that could be send to CODEC nodes:
+
+| Hex | Command                              | Notes                                                            |
+|-----|--------------------------------------|------------------------------------------------------------------|
+| F00 | Get Parameter                        | Data is number of requested parameter                            |
+| F02 | Get Connection List Entry            |                                                                  |
+| 701 | Set Selected Input                   |                                                                  |
+| 705 | Set Power State                      | 0 in data mean full power                                        |
+| 706 | Set Converter Stream, Channel        |                                                                  |
+| 707 | Set Pin Widget Control               |                                                                  |
+| F09 | Get Pin Widget Sense                 | Used to detect if headphone/microphone is plugged into Pin       |
+| 70C | Set EAPD/BTL                         |                                                                  |
+| F1C | Get Pin Widget Configuration Default |                                                                  |
+| 72D | Set Output Converter Channel Count   |                                                                  |
+| 7FF | Audio Function Node Reset            | Reset all nodes in particular Audio Function Group               |
+| 0x3 | Set Amplifier Gain                   | (16-bit payload)                                                 |
+| 0x2 | Set Stream Converter Format          | (16-bit payload) Data have same format as Stream Format register |
+
+## Node Parameters
+
+The following parameters can be read using the Get Parameter verb above:
+
+| Hex | Description                   | Notes |
+|-----|-------------------------------|-------|
+| 00  | Vendor ID / Device ID         |       |
+| 02  | Revision ID                   |       |
+| 04  | Node Count                    |       |
+| 05  | Function Group Type           |       |
+| 08  | Audio Group Capabilities      |       |
+| 09  | Audio Widget Capabilities     |       |
+| 0A  | Supported PCM Rates           |       |
+| 0B  | Supported Formats             |       |
+| 0C  | Pin Capabilities              |       |
+| 0D  | Input Amplifier Capabilities  |       |
+| 12  | Output Amplifier Capabilities |       |
+| 0E  | Connection List Length        |       |
+| 0F  | Supported Power States        |       |
+| 10  | Processing Capabilities       |       |
+| 11  | GPIO Count                    |       |
+| 13  | Volume Capabilities           |       |
+
+## Initalizing sound card
+
+TODO
+
+## Initalizing CODEC
+
+### Setting up the AFG codec
+
+Each programmer will likely have their own way of going about this, but the main aim will be to set out to identify which pin complexes are connected to actual speakers, headphone sockets, microphones and microphone sockets before following the trail of connections back to the most appropriate DAC or ADC to handle the stream. How you end up connecting things up will depend on what you want to do: you could, for example, use the same DAC for the speakers as for the headphone jack, but there might be occasions when you want to send different sound streams to each. Similarly, you might use the same ADC for the built-in microphone as for the microphone jack, but you could use a different ADC for each if you need to collect different inputs from different microphones (perhaps using one to collect background noise to subtract from the other input). You might also want to send sound out through the microphone socket so that two people can listen to the same music at the same time on headphones, or you might want to use the headphone socket as an extra microphone socket, perhaps to set up a pair of stereo microphones in a tetrahedron arrangement in order to calculate the direction a sound is coming from. Try to make your driver flexible enough to cover all those cases, or at least to make it easy to adapt it to cover them later.
+
+Here's an suggestion as to how the initial task might be broken down, but use it only as a rough guide:-
+
+\(1\) Use verb F00h with parameter 4 and NID 0 (the root node) to find the number of function groups in the codec, then check those nodes using their NID and with verb F00h and parameter 5 to hunt for an AFG function group.
+
+\(2\) Use verb F00h with parameter 4 and the correct NID for the AFG function group to get the start node (first widget) and number of nodes (widgets).
+
+\(3\) Collect the following data for each widget: param 9h (primarily to get the widget type); Ch (pin capabilities); Dh (input amplifier details); 12h (output amplifier details); Eh (connection list length); 13h (volume knob capabilities). Also, use verb F1Ch to collect the configuration defaults, and verb F02h to collect the first few entries in the connection list. Don't worry about whether useful responses are available for each widget - they will send back all zeros wherever they are not relevant.
+
+\(4\) Sort the results into groups of DACs, ADCs, mixers, pins, etc.
+
+\(5\) Identify the pins with actual speakers, microphone and sockets for jacks by using the configuration defaults which you collected earlier. Bits 31-30 state which pins have devices attached to them, telling you whether they are integrated devices or sockets into which things can be plugged. Bits 23-20 tell you what the integrated device is or what kind of device will normally be plugged into the socket. Some machines may have multiple output sockets for sound and may in rare cases have more than one set of integrated speakers to play surround sound, so you might need to look at bits 7-4 (default-association) to find out which ones are grouped together as a set, and bits 3-1 (sequence) to determine which are the main speakers in that set. In a few badly configured machines which fail to provide correct information in some of these bits, EAPD capability may serve as an additional clue for tracking down the speakers.
+
+\(6\) Make two lists of pins: one for those you want to send outputs to, and the other for inputs.
+
+\(7\) Try to find the shortest paths from the speakers and headphone jacks back to DACs, though you may wish to use different DACs for different pins. See the section "Finding all useful paths through the codec" below for guidance on this, but the first connection in the connection list for a widgit should help you find the right paths for the most common uses, although you may need to explore more items in the connection lists for some of the widgets.
+
+\(8\) Try to find the shortest paths from the ADCs to any built-in microphone and microphone jack. Again you may wish to use different ADCs for the different inputs or you may wish to share the same one.
+
+\(9\) Set up the paths you want to use by setting an intitial volume/gain and turning off the mutes at every widget in the chain wherever there is one needing to be set. Use verb 2h to set Format for any DACs and ADCs you're going to use, and verb 706h to set the stream and the lowest channel. Verb 707 must be used to enable input/output at the pins (and read up on VrefEn for mic.s, if you can find any good information on this - I'm still searching for it). Remember to set Unsol for the jacks too if you want pins to report headphones/microphone being plugged in or removed, but you can poll them if you prefer.
+
+\(10\) For each path, create a list of volume controls, mutes and the range of numbers that can be used with each volume/gain control to guide the creation of suitable controls for the user to manipulate in order to control each input/output.
+
+\(11\) Set EAPD to enable the external amp for the speakers.
+
+After you've done all that, get the near end of the link set up to get the DMA engines to handle the streams (read the specification carefully and act on it) and with luck you'll soon have sound coming in and out. If it doesn't happen that easily, you can set up the DMA position buffer to see if the DMA engines are actually running and looping correctly through the cyclic stream buffers. If all is well there, you might find it useful to use the codec ID to find the datasheet for it just to make sure you aren't missing anything out in the way you're setting it up. Also, feel free to improve the instructions on this page so that others can gain from your solutions to any problems you encounter.
+
+### Finding all useful paths through the codec
+
+The paths that are potentially useful are the ones that lead from pins with output devices connected to them back to a DAC, plus all the paths from those same pins back to all other pins with an input device connected to them (some codecs allow inputs to be mixed into outputs for such purposes as karaoke, so your device driver might as well make this option available if the codec supports it), plus all the paths from ADCs to all pins with an input device connected. A socket for a jack can be both an output and input device, but not at the same time.
+
+An algorithm guaranteed to find all useful paths is as follows. Write a routine to start at a pin with an attached output device and then call it for each such pin in turn. The routine will look at the association list for the pin it's starting at and follow the path to the first widget listed there. If it finds a DAC (or a pin with an input device attached), the path can be stored. Else, look at the association list for this widget and repeat the process to examine the next widget in the path. The search will backtrack to the previous widget in the chain once a DAC or pin has been reached, and then the next item in the association list for that previous widget tells you which widget to examine next. If there isn't a next item in the association list, backtrack again to the widget before it. In this way, all paths are explored, and the task is complete once you've run out of items in the association list to explore for the pin you started at. It may be wise to keep count of the number of links in the path just in case a codec sends you round in circles - you should abandon any paths that get too long (perhaps a ten link limit would be safe). For inputs the algorithm is much the same, but you start at each ACD and store any paths that link through to a pin which has an input device attached.
+
+Once you have your list, you can select the first suitable one found for each purpose, while the rest can be offered to the user as alternative options accessed either via a user-interface for the device driver or from the interface of an advanced application which directly offers these other paths whenever they exist on the machine. An audio player could, for example, allow you to sing along with the music it's playing such that you hear your voice in the headphones (without any delay from the input being put through a conversion to digital and back).
+
+## Playing Audio
+
+If you successfully initalized all nodes that are in path, you can play audio by following steps:
+
+#### Set Audio Output node
+
+You have to set Audio Output node to format of your data by verb 0x2, and also set stream number and channel you will use to transfer data by verb 0x706. Node will remember these values, so you need to set them only when you want to change them.
+
+#### Create Buffer Descriptor List
+
+Buffer Descriptor List has to be 1 KB aligned, what mean that first seven bits must be zero. It has to contain at least 2 entries. Every entry is 16 bytes long and has following format:
+
+| Offset | Length  | Description                                                                                                                 |
+|--------|---------|-----------------------------------------------------------------------------------------------------------------------------|
+| 0x00   | 8 bytes | Address of Audio Data                                                                                                       |
+| 0x08   | 4 bytes | Length of Audio Data in bytes                                                                                               |
+| 0x0C   | 4 bytes | Bit 0 = IOC (Interrupt On Completion), if set, interrupt will be generated after transferring this entry. Rest is reserved. |
+
+NOTE: Sound Card will read Buffer Descriptor List data directly from RAM memory, so you have to be sure, that you really wrote it into RAM memory and not only to processor cache. You can do it by flushing processor cache by assembly command „wbinvd“
+
+#### Set Stream Descriptor
+
+Now you have to select Stream Descriptor that you do not already use and program it to transfer your Buffer Descriptor List.
+
+\(1\) Stop Stream Descriptor (clear bit 1 in Control register)
+
+\(2\) Reset Stream Descriptor (set bit 0 in Control register, wait until it is set, then clear it and wait for it to be cleared)
+
+\(3\) Write Buffer Descriptor List physical address
+
+\(4\) Add up length of all entries in Buffer Descriptor List and write it to register
+
+\(5\) Set number of Buffer Descriptor List entries
+
+\(6\) Set Stream Format register by same format you sended to Audio Output node
+
+\(7\) Set number of stream you want to use for streaming data (in byte 2 of Control register)
+
+\(8\) Start transfer (set bit 1 in Control register)
+
+If you configured everything properly, DMA engine should start transfer your audio data and you should hear sound from PIN(s) you enabled and connected them to Audio Output(s) that are receiving data from your stream number. The audio will play until the end of the last buffer in the buffer list, then it will begin playing the beginning of the first buffer again. You can enable the proper interrupt to be notified when a buffer has been played, so that you can refill the buffer with the next block of audio data.
+
+## See Also
+
+### External links
+
+- [Intel High Definition Audio Specification](http://www.intel.co.uk/content/www/us/en/standards/high-definition-audio-specification.html)
+
+&nbsp;
+
+- [Thread about playing sound through Intel HD Audio](https://forum.osdev.org/viewtopic.php?f=1&t=34525)
+
+&nbsp;
+
+- [https://forum.osdev.org/viewtopic.php?f=1&t=28944](https://forum.osdev.org/viewtopic.php?f=1&t=28944)

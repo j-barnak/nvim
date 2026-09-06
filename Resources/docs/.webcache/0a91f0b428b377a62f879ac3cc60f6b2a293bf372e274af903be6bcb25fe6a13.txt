@@ -1,0 +1,159 @@
+## Overview
+
+Like all forms of reentrancy locks, spinlocks are used to ensure orderly access to a resource (e.g. data structure, piece of hardware, etc) so that software running in one context can't get an inconsistent view of that resources because software running in another context is in the middle of modifying the resource. For example, imagine a structure that contains a person's first name and last name that currently contains the data "Fred" and "Smith". If one CPU is changing this data to "Jane" and "Doe", then it might change the first name to "Jane" and then change the last name to "Doe", and a different CPU (or thread, or IRQ handler) might access this structure at the wrong time and read "Jane" and "Smith". To prevent this problem you could use a lock, such that only one context can have the lock at any time and only the context that has the lock is allowed to access the resource. For this example, if one CPU is changing this data to "Jane" and "Doe" it would acquire the lock, then change the data, then release the lock; and if something else attempts to access the structure it has to wait until it can acquire the lock before accessing the data.
+
+A spinlock is a type of reentrancy lock, where the CPU repeatedly attempts to acquire the lock until it succeeds (or, the CPU "spins" until it succeeds). A lock is "uncontended" if the lock can be acquired on the first attempt, and no spinning is necessary. If a lock is "contended" (many attempts to acquire the lock are necessary) a spinlock can waste CPU time. The amount of CPU time wasted due to contention/spinning may be more or less than the overhead of other forms of locks (for example, there can be cases where wasting a little bit of CPU time spinning is better than wasting more CPU time on the overhead of switching tasks).
+
+  
+
+## Lock Construction
+
+### Basic Lock
+
+There are a few [Atomic operations](https://wiki.osdev.org/Atomic_operation "Atomic operation") on the x86 processor that set and compare memory or registers, that can be used as the basis of a spinlock. I'll focus on the BTS and BTR instructions for this discussion (but other instructions like CMPXCHG, ADD/SUB, INC/DEC, etc can also be used).
+
+The basic lock looks something like this (but typically implemented as macros):
+
+``` asm
+acquireLock:
+.retry:
+    lock bts [lock],0
+    jc .retry
+    ret
+
+
+releaseLock:
+    lock btr [lock],0
+    ret
+```
+
+  
+
+### Improved Lock
+
+The basic lock has a few performance problems. The LOCK prefix can grant one CPU exclusive use of the bus, and therefore prevent other CPUs from accessing the bus for a (very short) period of time. This isn't a problem if the LOCK prefix isn't used often, but (when there's contention) the basic lock shown above uses it continuously and can therefore seriously effect other CPU's ability to use the bus and slow them down. To avoid this, it's better to avoid the LOCK unless it's necessary. This can be done by testing if the lock is free before attempting to acquire the lock:
+
+``` asm
+acquireLock:
+    lock bts [lock],0        ;Attempt to acquire the lock (in case lock is uncontended)
+    jc .spin_wait            ;Spin if locked ( organize code such that conditional jumps are typically not taken ) 
+    ret                      ;Lock obtained
+
+.spin_wait:
+    test dword [lock],1      ;Is the lock free?
+    jnz .spin_wait           ;no, wait
+    jmp acquireLock          ;maybe, retry ( could also repeat bts, jc, ret instructions here instead of jmp )
+```
+
+Or even:
+
+``` asm
+.spin_wait:
+    test dword [lock],1      ;Is the lock free?
+    jnz .spin_wait           ;no, wait
+
+acquireLock:
+    lock bts [lock],0        ;Attempt to acquire the lock (in case lock is uncontended)
+    jc .spin_wait            ;Spin if locked ( organize code such that conditional jumps are typically not taken ) 
+    ret                      ;Lock obtained
+```
+
+In addition, the LOCK prefix can be avoided when the spinlock is released. The CPU guarantees that writes to aligned uint32_t are atomic, and therefore the code to release the lock could be changed to:
+
+``` asm
+releaseLock:
+    mov dword [lock],0
+    ret
+```
+
+There is also an issue on CPUs that support hyper-threading. In this case, the real CPU's resources (pipelines, etc) are shared by 2 (or more) logical CPUs, and if one of these logical CPUs is spinning it can waste resources that could have been used by the other logical CPU. To reduce this problem Intel introduced the PAUSE instruction, which is meant to be used in tight polling loops (like spinlocks). The opcode for the PAUSE instruction was specially chosen so that it behaves like a NOP on older CPUs (it's literally a "REP NOP" on older CPUs, where the "REP" prefix is ignored). To improve performance on CPUs that support hyper-threading, the spinlock would be modified like this:
+
+``` asm
+acquireLock:
+    lock bts [lock],0        ;Attempt to acquire the lock (in case lock is uncontended)
+    jc .spin_with_pause
+    ret
+
+.spin_with_pause:
+    pause                    ; Tell CPU we're spinning
+    test dword [lock],1      ; Is the lock free?
+    jnz .spin_with_pause     ; no, wait
+    jmp acquireLock          ; retry
+
+releaseLock:
+    mov dword [lock],0
+    ret
+```
+
+It is also possible to check the state of a spinlock without attempting to acquire it. This can be done without any LOCK (the CPU guarantees that reads from aligned uint32_t are atomic too):
+
+``` asm
+    cmp dword [lock],0
+    je .free
+    jne .locked
+```
+
+### Lock Location
+
+Modern CPUs tend to operate on cache lines; and for most modern 80x86 CPUs a cache line is a 64-byte area. Each cache line has a state (Modified, Exclusive, etc), and different CPUs request cache lines from each other (and from the memory controller). If a cache line contains a lock that is under contention, then that cache line may remain in one CPU's cache while that CPU is repeatedly testing the lock (and therefore won't cause any bus traffic), until some other CPU modifies that cache line. If another CPU modifies something in that cache line, then that cache line's data would be transferred to the other CPU and modified, then transferred back to the first CPU again (which does cost some bus traffic). To reduce unnecessary bus traffic (caused by other CPUs modifying other data that happens to be in the cache line that contains the lock), Intel recommends using an entire cache line for each reentrancy lock.
+
+In addition, locks should be correctly aligned on a suitable boundary (e.g. a uint32_t boundary). The worst case is for a lock to be split across page boundaries and cache line boundaries; but in general there may also be penalties for accessing misaligned uint16_t/uint32_t/uint64_t's.
+
+  
+
+### Lock Debugging
+
+For large and complex software that has to deal with concurrency (e.g. kernels) some types of mistakes involving the incorrect use of reentrancy locks can be hard to avoid. Worse, bugs involving reentrancy locks often depend on exact timing, and can be intermittent bugs that are difficult to detect and correct. These problems include things like "deadlock" (e.g. where whoever acquired the lock attempts to acquire it a second time), releasing a lock that wasn't acquired, failing to release a lock quickly enough (and causing excessive lock contention), etc.
+
+It's easy to add an extra check in the code to release a lock, to detect if the lock was actually acquired first. For other checks extra information is needed.
+
+A spinlock itself only really needs a single bit, but typically in practice a full uint32_t or an entire cache line is used instead. The extra space can be used to store additional information to help detect mistakes. For a simple example, if a uint32_t is used then one bit can be the lock itself, and the remaining 31 bits could be used to store something to identify who has acquired the lock (e.g. a CPU number or thread ID). That way, the code to acquire a lock could be modified to check if the same CPU or same thread is trying to acquire a lock a second time (and detect some types of deadlock), and the code to release a lock could be modified to detect if the lock is being released by the same CPU or thread that acquired it.
+
+In a similar way, a second uint32_t could be used as a counter to keep track of how many attempts to acquire the lock have failed (e.g. due to lock contention), and these counters can be used for finding performance bottlenecks and scalability problems. A reentrancy lock could also be "fully instrumented" to track other information, like the number of times it has been acquired and the total number of cycles it has been acquired for (to determine the average number of cycles the lock remains acquired).
+
+Of course it's possible to use conditional compilation to enable/disable these extra checks. For example you might have a "production" version of your kernel with none of these extra checks enabled (for better performance); and a "testing" version of your kernel with all of these checks enabled.
+
+## Spinlocks in C
+
+Here is an example implementation of spinlocks in C using standard atomic operations.
+
+``` c
+#include <stdatomic.h>
+
+atomic_flag example_lock_variable = ATOMIC_FLAG_INIT;
+
+void acquire( atomic_flag * lock )
+{
+    while( atomic_flag_test_and_set_explicit( lock, memory_order_acquire ) )
+    {
+        /* use whatever is appropriate for your target arch here */
+        __builtin_ia32_pause();
+    }
+}
+
+void release( atomic_flag * lock )
+{
+    atomic_flag_clear_explicit( lock, memory_order_release );
+}
+```
+
+Declare locks using the atomic_flag type and the ATOMIC_FLAG_INIT initializer, use acquire() to acquire the lock, and use release() to release it. The acquire() function will spin until the lock is acquired before continuing. These functions can be rewritten as macros to force inlining.
+
+## See Also
+
+### Articles
+
+- [Synchronization Primitives](https://wiki.osdev.org/Synchronization_Primitives "Synchronization Primitives")
+- [Atomic operation](https://wiki.osdev.org/Atomic_operation "Atomic operation")
+- [Semaphore](https://wiki.osdev.org/Semaphore "Semaphore")
+- [Mutual Exclusion](https://wiki.osdev.org/Mutual_Exclusion "Mutual Exclusion")
+- [Deadlock](https://wiki.osdev.org/Deadlock "Deadlock")
+
+### Threads
+
+- [Brendan explaining basic Spinlocks](http://forum.osdev.org/viewtopic.php?t=28481 "topic:28481")
+
+### External Links
+
+- [Spinlock algorithm benchmarks](http://www.reddit.com/r/osdev/comments/32zv69/spinlocks_and_contention_some_benchmarks/)
+- [Spinlocks and Read-Write locks](http://locklessinc.com/articles/locks/) - Shows basic code for some kinds of spinlocks and read-write locks

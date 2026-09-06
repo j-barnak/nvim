@@ -1,0 +1,308 @@
+This tutorial discusses how to correctly invoke global constructors, such as those on global C++ objects. These are supposed to have run before your main function, which is why the program entry point is normally a function called \_start. This function has the responsibility of parsing the command line arguments, initializing the standard library (memory allocation, signals, ...), running the global constructors and finally exit(main(argc, argv)). Things may be different on your operating system if you change your compiler, but if you are using the GNU Compiler Collection (gcc) it may be wise to follow the System V ABI.
+
+On most platforms, the global constructors/destructors are stored in a sorted array of function pointers and invoking these is as simple as traversing the array and running each element. However, the compiler does not always give access to this list, and some compilers consider this implementation details. In this case you will have to cooperate with the compiler - fighting the compiler will only cause trouble.
+
+## GNU Compiler Collection - System V ABI
+
+The System V ABI (as used by `i686-elf-gcc`, `x86_64-elf-gcc`, and other ELF platforms) specifies use of five different object files that together handle program initialization. These are traditionally called `crt0.o`, `crti.o`, `crtbegin.o`, `crtend.o`, and `crtn.o`. Together these object files implement two special functions: `_init` which runs the global constructors and other initialization tasks, and `_fini` that runs the global destructors and other termination tasks.
+
+This scheme gives the compiler great control over program initialization and makes things easy for you, but you have to cooperate with the compiler, otherwise bad things will happen. Your cross-compiler will provide you with `crtbegin.o` and `crtend.o`. These files contain the internals that the compiler wishes to hide from you, but wants you to use. To get access to this information, you will need to provide your own implementation of `crti.o` and `crtn.o`. Fortunately, this is easy and is described in detail in this tutorial. The fifth file `crt0.o` contains the program entry point (normally `_start`) and calls the special `_init` function that runs the "program initialization tasks" that `crti.o`, `crtbegin.o`, `crtend.o`, and `crtn.o` together form, and your exit function will normally call the `_fini` function made by these objects. However, `crt0`.o is out of scope of this article. (Note that the object file that contains `_start` acts as `crt0.o` in a kernel.)
+
+To understand this apparent complexity, consider a program consisting of `foo.o` and `bar.o` that is being linked:
+
+``` bash
+i686-elf-gcc foo.o bar.o -o program
+```
+
+The compiler will rewrite the command line and pass it to the linker as:
+
+``` bash
+i686-elf-ld crt0.o crti.o crtbegin.o foo.o bar.o crtend.o crtn.o
+```
+
+The idea is that the these files together form the `_init` and `_fini` functions during the linking. This is done by storing the `_init` function in the `.init` section, and the `_fini` function in the `.fini section`. Each file then contributes a bit to these sections and the linker makes glues together the fragments in the code specified on the command line. `crti.o` provides the function header, `crtbegin.o` and `crtend.o` provide the body, and `crtn.o` provide the footer (return statement). It is important to understand that the link order matters and strange things may happen if the objects is not exactly linked in this order.
+
+### Using global constructors from C
+
+As a special extension, GCC allows C programs to run functions as global constructors. For more information, consult the compiler documentation. This is normally used as:
+
+``` c
+__attribute__ ((constructor)) void foo(void)
+{
+    printf("foo is running and printf is available at this point\n");
+}
+
+int main(int argc, char* argv[])
+{
+    printf("%s: main is running with argc=%i\n", argv[0], argc);
+}
+```
+
+### Using crti.o, crtbegin.o, crtend.o, and crtn.o in a Kernel
+
+In a kernel, you are not using a user-space C library. You may be using a special kernel "C library", or none at all. The compiler always supplies `crtbegin.o` and `crtend.o`, but normally the C library supplies `crti.o` and `crtn.o`, but not in this case. The kernel should supply its own `crti.o` and `crtn.o` implementation (even if it would be otherwise identical to the user-space libc version). A kernel is linked with `-nostdlib` (which is the same as passing `-nodefaultlibs` and `-nostartfiles`) which disables the "start files" `crt*.o` that are normally automatically added to the link command line. By passing `-nostartfiles`, we promise to the compiler that we take on the responsibility ourselves to call the "program initialization tasks" in the `crtbegin.o` and `crtend.o` files. This means as we need to manually add `crti.o`, `crtbegin.o`, `crtend.o`, and `crtn.o` to the command line. Since we provide `crti.o` and `crtn.o` ourselves, that is trivial to add to the kernel command line. However, since `crtbegin.o` and `crtend.o` are installed inside a compiler-specific directory, we'll need to figure out the path. Luckily, gcc offers an option just to do this. If `i686-elf-gcc` is your cross-compiler and `$CFLAGS` is the flags you would normally provide to your compiler, then
+
+``` bash
+i686-elf-gcc $CFLAGS -print-file-name=crtbegin.o
+```
+
+will make the compiler print the path to the correct `crtbegin.o` file (that is ABI compatible with the \$CFLAGS options) to the standard output. The same works with `crtend.o`. If you are using GNU Make, you can do it easily in your makefile assuming `$(CC)` is your cross-compiler and `$(CFLAGS)` is the flags you would normally pass it:
+
+``` make
+CRTBEGIN_OBJ:=$(shell $(CC) $(CFLAGS) -print-file-name=crtbegin.o)
+CRTEND_OBJ:=$(shell $(CC) $(CFLAGS) -print-file-name=crtend.o)
+```
+
+You can then use them as such (adapted to your real build system):
+
+``` make
+OBJS:=foo.o bar.o
+
+CRTI_OBJ=crti.o
+CRTBEGIN_OBJ:=$(shell $(CC) $(CFLAGS) -print-file-name=crtbegin.o)
+CRTEND_OBJ:=$(shell $(CC) $(CFLAGS) -print-file-name=crtend.o)
+CRTN_OBJ=crtn.o
+
+OBJ_LINK_LIST:=$(CRTI_OBJ) $(CRTBEGIN_OBJ) $(OBJS) $(CRTEND_OBJ) $(CRTN_OBJ)
+INTERNAL_OBJS:=$(CRTI_OBJ) $(OBJS) $(CRTN_OBJ)
+
+myos.kernel: $(OBJ_LINK_LIST)
+    $(CC) -o myos.kernel $(OBJ_LINK_LIST) -nostdlib -lgcc
+
+clean:
+    rm -f myos.kernel $(INTERNAL_OBJS)
+```
+
+It is important to remember that the objects must be linked in this exact order, or you will experience strange bugs.
+
+Your kernel will then have an `_init` and a `_fini` function linked in, which can be called from your `boot.o` (or what your kernel entry point object is called) before passing control to `kernel_main` (or what your kernel main routine is called). Please note that the kernel may not be initialized, at all, at this point in time and you can only do trivial things from your global constructors. In addition, `_fini` may not ever get called because your operating system will remain running, and when it is time to shut down, there is little worth doing that a processor reset won't do. It may be worth setting up a `kernel_early_main` function that initializes the heap, the log, and other core kernel features. Then your `boot.o` can call `kernel_early_main`, then call `_init`, and then finally pass control to the real `kernel_main`. This is analogous to how things work in user-space, where `crt0.o` calls `_initialize_c_library` (or what you call it), then `_init`, and finally `exit(main(argc, argv))`.
+
+### Using crti.o, crtbegin.o, crtend.o, and crtn.o in User-Space
+
+*Main article:* [Creating a C Library](https://wiki.osdev.org/Creating_a_C_Library "Creating a C Library")
+
+It is very easy to use these object files in user-space, as the cross-compiler automatically will link them in the right order into the final program. The compiler will, as always, provide `crtbegin.o` and `crtend.o`. Your C library will then provide `crt0.o` (program entry point file), `crti.o`, and `crtn.o`. If you have an [OS Specific Toolchain](https://wiki.osdev.org/OS_Specific_Toolchain "OS Specific Toolchain"), you can change the name of the program entry point (normally \_start), the path where the compiler searches for the `crt{0,i,n}.o` files, and what files is even used (possibly with other names) and what order, by modifying `STARTFILE_SPEC` and `ENDFILE_SPEC`. When you start creating a user-space, it may well be worth creating an OS Specific Toolchain because it allows you great control over exactly how all this works.
+
+### x86 (32-bit)
+
+It is very simple to implement this under x86. You simply have to define the header of two functions in `crti.o` and the footer in `crtn.o` and use these objects in your C library or kernel. You can then simply call `_init` to perform the initialization tasks and call `_fini` to perform the termination tasks (normally done from a `crt0.o` or `my-kernel-boot-object.o`).
+
+``` text
+/* x86 crti.s */
+.section .init
+.global _init
+.type _init, @function
+_init:
+    push %ebp
+    movl %esp, %ebp
+    /* gcc will nicely put the contents of crtbegin.o's .init section here. */
+
+.section .fini
+.global _fini
+.type _fini, @function
+_fini:
+    push %ebp
+    movl %esp, %ebp
+    /* gcc will nicely put the contents of crtbegin.o's .fini section here. */
+```
+
+``` text
+/* x86 crtn.s */
+.section .init
+    /* gcc will nicely put the contents of crtend.o's .init section here. */
+    popl %ebp
+    ret
+
+.section .fini
+    /* gcc will nicely put the contents of crtend.o's .fini section here. */
+    popl %ebp
+    ret
+```
+
+### x86_64 (64-bit)
+
+The system ABI on x86_64 is similar to its 32-bit counterpart and we also just need to provide function headers and function footers and the compiler will insert the rest of the `_init` and `_fini` functions through `crtbegin.o` and `crtend.o`.
+
+``` text
+/* x86_64 crti.s */
+.section .init
+.global _init
+.type _init, @function
+_init:
+    push %rbp
+    movq %rsp, %rbp
+    /* gcc will nicely put the contents of crtbegin.o's .init section here. */
+
+.section .fini
+.global _fini
+.type _fini, @function
+_fini:
+    push %rbp
+    movq %rsp, %rbp
+    /* gcc will nicely put the contents of crtbegin.o's .fini section here. */
+```
+
+``` text
+/* x86_64 crtn.s */
+.section .init
+    /* gcc will nicely put the contents of crtend.o's .init section here. */
+    popq %rbp
+    ret
+
+.section .fini
+    /* gcc will nicely put the contents of crtend.o's .fini section here. */
+    popq %rbp
+    ret
+```
+
+### ARM (BPABI)
+
+In this case things are slightly different. The system ABI mandates the use of special sections called `.init_array` and `.fini_array`, rather than the common `.init` and `.fini` sections. This means that `crtbegin.o` and `crtend.o`, as provided by your cross-compiler, does not insert instructions into the `.init` and `.fini` sections. The result is that if you follow the method from Intel/AMD systems, your `_init` and `_fini` functions will do nothing. Your cross-compiler may actually come with default `crti.o` and `crtn.o` objects, however they also suffer from this ABI decision, and their `_init` and `_fini` functions will also do nothing.
+
+The solution is to provide your own `crti.o` object that inserts a symbol at the start of `.init_array` and `.fini_array` sections, as well as your own `crtn.o` that inserts a symbol at the end of the sections. In this case it is actually possible to write `crti.o` and `crtn.o` in C, because we are not writing incomplete functions. These files should be compiled like the rest of your kernel and otherwise used normally as `crti.o` and `crtn.o`.
+
+``` c
+/* crti.c for ARM - BPABI - use -std=c99 */
+typedef void (*func_ptr)(void);
+
+extern func_ptr _init_array_start[0], _init_array_end[0];
+extern func_ptr _fini_array_start[0], _fini_array_end[0];
+
+void _init(void)
+{
+    for ( func_ptr* func = _init_array_start; func != _init_array_end; func++ )
+        (*func)();
+}
+
+void _fini(void)
+{
+    for ( func_ptr* func = _fini_array_start; func != _fini_array_end; func++ )
+        (*func)();
+}
+
+func_ptr _init_array_start[0] __attribute__ ((used, section(".init_array"), aligned(sizeof(func_ptr)))) = { };
+func_ptr _fini_array_start[0] __attribute__ ((used, section(".fini_array"), aligned(sizeof(func_ptr)))) = { };
+```
+
+``` c
+/* crtn.c for ARM - BPABI - use -std=c99 */
+typedef void (*func_ptr)(void);
+
+func_ptr _init_array_end[0] __attribute__ ((used, section(".init_array"), aligned(sizeof(func_ptr)))) = { };
+func_ptr _fini_array_end[0] __attribute__ ((used, section(".fini_array"), aligned(sizeof(func_ptr)))) = { };
+```
+
+Additionally, if you use constructor/desctructor priorities, the compiler will append these priorities to the section name. The linker script is expected to expected to sort these, so you will have to add the following to your linker script. Note that we have to treat the `crti.o` and `crtn.o` objects specially because we need to put the symbols in the right order. Alternatively, you can emit the `_init_array_start`, `_init_array_end`, `_fini_array_start`, `_fini_array_end` symbols yourself from the linker script.
+
+``` text
+/* Include the list of initialization functions sorted. */
+.init_array :
+{
+    crti.o(.init_array)
+    KEEP (*(SORT(EXCLUDE_FILE(crti.o crtn.o) .init_array.*)))
+    KEEP (*(EXCLUDE_FILE(crti.o crtn.o) .init_array))
+    crtn.o(.init_array)
+}
+
+/* Include the list of termination functions sorted. */
+.fini_array :
+{
+    crti.o(.fini_array)
+    KEEP (*(SORT(EXCLUDE_FILE(crti.o crtn.o) .fini_array.*)))
+    KEEP (*(EXCLUDE_FILE(crti.o crtn.o) .fini_array))
+    crtn.o(.fini_array)
+}
+```
+
+### CTOR/DTOR
+
+Another way to execute the global constructors / destructors is to execute the .ctors / .dtors symbols manually (assuming you have your own ELF loader, see [ELF_Tutorial](https://wiki.osdev.org/ELF_Tutorial "ELF Tutorial")). Once you have loaded each ELF file into memory, and all of the symbols have been resolved and relocated you can use .ctors / .dtors to execute the global constructors / destructors manually (apparently, the same applies to .init_array and .fini_array). To do this, you must first locate the .ctors / .dtors section headers:
+
+``` c
+for (i = 0; i < ef->ehdr->e_shnum; i++)
+{
+    char name[250];
+    struct elf_shdr *shdr;
+
+    ret = elf_section_header(ef, i, &shdr);
+    if (ret != ELF_SUCCESS)
+        return ret;
+
+    ret = elf_section_name_string(ef, shdr, &name);
+    if (ret != BFELF_SUCCESS)
+        return ret;
+
+    if (strcmp(name, ".ctors") == 0)
+    {
+        ef->ctors = shdr;
+        continue;
+    }
+
+    if (strcmp(name, ".dtors") == 0)
+    {
+        ef->dtors = shdr;
+        continue;
+    }
+}
+```
+
+Now that you have the .ctors / .dtors section headers, you can resolve each constructor using the following. Note that .ctors / .dtors is a table of pointers (32bit for ELF32 and 64bit for ELF64). Each pointer is a function that must be executed.
+
+``` c
+typedef void(*ctor_func)(void);
+
+for(i = 0; i < ef->ctors->sh_size / sizeof(void *); i++)
+{
+    ctor_func func;
+    elf64_addr sym = 0;
+
+    sym = ((elf64_addr *)(ef->file + ef->ctors->sh_offset))[i];
+    func = ef->exec + sym;
+    func();
+
+    /* elf->file is the char * that stores the ELF file that your working with. Could be binary or shared library */
+    /* elf->exec is the char * that stores the location in memory that the ELF file have been loaded to, and and reloacted */
+}
+```
+
+Don't be surprised if you only have one entry in .ctors / .dtors. At least on x86_64, GCC appears to add a single entry to a set of functions called \_GLOBAL\_\_sub_I_XXX and \_GLOBAL\_\_sub_D_XXX which call \_Z41\_\_static_initialization_and_destruction_0ii that actually call each constructor for you. Adding more globally defined constructors / destructors will cause this function to grow, and not .ctors / .dtors.
+
+### Stability Issues
+
+If you don't call the constructors / destructors that GCC provides, GCC will generate code that will segfault under certain conditions with x86_64. Take this for example:
+
+``` cpp
+class A
+{
+    public: 
+        A() {}
+};
+
+A g_a;
+
+void foo(void)
+{
+    A *p_a = &g_a;
+    p_a->anything();     // <---- segfault
+}
+```
+
+It appears that GCC is using the constructor / destructor initialization routines to do more than simply call the constructors / destructors of each globally defined class. Executing the functions defined in .ctors / .dtors not only initializes all of the constructors / destructors, but resolves these types of segfaults (the above is only one example of many that are resolved). From what I can tell, when globally defined objects exist, GCC might also create ".data.rel.ro" which is another relocation table that GCC needs to process. It is marked as PROGBITS and not REL/RELA, which means that the ELF loader will not do the relocations for you. Instead, executing the functions defined in .ctors will execute \_Z41\_\_static_initialization_and_destruction_0ii which appears to perform the relocations for us. See the following for more info: [\[1\]](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=68738)
+
+## Clang
+
+**Note:** Since Clang attemps to be largely compatible with GCC, the information listed there can possibly be adapted easily. If you give it a try, please document the findings here.
+
+From what I can tell, clang doesn't require you to specify the correct crt{begin,end}.o in the objects you pass to your linker, provided you pass crt\[in\].o in correct place. clang, being able to output to many targets, doesn't always have a usable crt{begin,end}.o at hand, which it seems to somehow compile on demand. Calling \_init doesn't seem to be a requirement, too. An additional call to \_init doesn't execute it twice, so it's still safe to call manually.
+
+In summary, in order to adapt this from GCC to clang, take out crt{begin,end}.o from your linker line and you should be fine.
+
+## Other Compilers / Platforms
+
+If your compiler or system ABI is not listed here, you will need to consult the appropriate documentation manually and hopefully document the information here if it is relevant.
+
+## See Also
+
+### External links
+
+- [How Initialization Functions Are Handled](https://gcc.gnu.org/onlinedocs/gccint/Initialization.html) in the GCC Documentation.

@@ -1,0 +1,459 @@
+This article aims to describe some of the more useful / easier to implement features of the VirtualBox Guest Additions.
+
+## The VirtualBox Guest Device
+
+The Guest Additions package operates through a PCI/mmio device provided by the VM. A combination of memory-mapped packets, MMIO port writes, and IRQs allow the guest to communicate its feature support to the VM and for the VM to communicate events such as display changes and mouse movement. The PCI device has the vendor ID **0x80EE**, same as the VirtualBox implementation of the Bochs display adapter, and a device ID of **0xCAFE**. BAR0 is the MMIO port and BAR1 is a memory region that contains some shared state for the device, such as a bit mask for what events the guest wishes to receive. The format for the latter is unimportant for the features described on this page - you need only know that the region can be interpreted as an array of 32-bit unsigned integers and offset 3 contains the IRQ mask.
+
+Communication between the guest and the host happens through packets in memory. These can be anywhere in physical memory, and are relatively short. The MMIO operations that read or populate packets are synchronous, so setting up one page to pass back and forth is feasible. The basic process for sending a message to the VM is to prepare a packet and then write its (physical) address to the MMIO port. Receiving works the same way, as you must prepare a packet with a request type and provide its physical address; after the MMIO port write finishes, the packet will be populated with the appropriate values if the request was successful. Communication from the VM is primarily initiated by an IRQ on the PCI device's interrupt line, which should then be followed up by appropriate packet requests, one of which should be of a special "Acknowledge Events" type.
+
+This page contains some struct definitions which could alternatively be obtained from headers provided by VirtualBox, but those headers are rather heavy and assume they are being used alongside a robust set of system headers, so instead we will define these structs ourselves.
+
+Pseudo-code examples in the following sections will assume the availability of these functions; adjust them to match your environment:
+
+``` c
+// Allocate one page of memory, providing its physical address as an output and virtual address as a return value.
+void * allocate_physical_page(uint32_t * physical);
+// Map a physical page into the virtual memory space.
+void * map_physical_page(uint32_t physical);
+// Install an interrupt request handler function.
+void install_interrupt_handler(irq, int (*irq_function)(void));
+// Write a 32-bit value to an MMIO port.
+void outportl(port, value);
+// Write a 16-bit value to an MMIO port.
+void outports(port, value);
+// Return an object describing the requested PCI device, if found.
+pci_device_t pci_find(vendor,device);
+// Read a field from the given PCI device
+uint32_t pci_read_field(pci_device_t device, field, size);
+```
+
+## Initializing the Device
+
+Before we can do anything with the guest device, we need to tell it about ourselves. There are two protocols that current versions of VirtualBox support: 1.03 and 1.04. We will use 1.03, the so-called "Legacy Protocol", as it is slightly simpler.
+
+``` c
+#define VBOX_VENDOR_ID 0x80EE
+#define VBOX_DEVICE_ID 0xCAFE
+#define VBOX_VMMDEV_VERSION 0x00010003
+#define VBOX_REQUEST_HEADER_VERSION 0x10001
+
+#define VBOX_REQUEST_GUEST_INFO 50
+
+/* VBox Guest packet header */
+struct vbox_header {
+        uint32_t size; /* Size of the entire packet (including this header) */
+        uint32_t version; /* Version; always VBOX_REQUEST_HEADER_VERSION */
+        uint32_t requestType; /* Request code */
+        int32_t  rc; /* This will get filled with the return code from the requset */
+        uint32_t reserved1; /* These are unused */
+        uint32_t reserved2;
+};
+
+/* VBox Guest Info packet (legacy) */
+struct vbox_guest_info {
+        struct vbox_header header;
+        uint32_t version;
+        uint32_t ostype;
+};
+
+static pci_device_t vbox_pci;
+static int vbox_port;
+static uint32_t * vbox_vmmdev;
+
+static void vbox_guest_init(void) {
+    /* Find the guest device */
+    pci_device_t vbox_pci = pci_find(VBOX_VENDOR_ID, VBOX_DEVICE_ID);
+    
+    /* BAR0 is the IO port. */
+    vbox_port = pci_read_field(vbox_pci, PCI_BAR0, 4) & 0xFFFFFFFC;
+
+    /* BAR1 is the memory-mapped "vmmdevmem" area. */
+    vbox_vmmdev = map_physical_page(pci_read_field(vbox_pci, PCI_BAR1, 4) & 0xFFFFFFF0);
+
+    /* Allocate some space for our Guest Info packet */
+    uint32_t guest_info_phys;
+    struct vbox_guest_info * guest_info = allocate_physical_page(&guest_info_phys);
+
+    /* Populate the packet */
+    guest_info->header.size = sizeof(struct vbox_guest_info);
+    guest_info->header.version = VBOX_REQUEST_HEADER_VERSION;
+    guest_info->header.requestType = VBOX_REQUEST_GUEST_INFO;
+    guest_info->header.rc = 0;
+    guest_info->header.reserved1 = 0;
+    guest_info->header.reserved2 = 0;
+    guest_info->version = VBOX_VMMDEV_VERSION;
+    guest_info->ostype = 0; /* 0 = Unknown (32-bit); we don't need to lie about being another OS here */
+
+    /* And send it to the VM */
+    outportl(vbox_port, guest_info_phys);
+
+    /* (We could check the return value here as well) */
+}
+```
+
+  
+
+## Auto-resize Guest Display
+
+The first feature of the Guest Additions we'll look at is "Auto-resize Guest Display", which will allow your OS to be informed of the best resolution to use on the display adapter. The VirtualBox display adapter is itself based on the Bochs/Qemu display adapter, though it uses a different PCI vendor and device ID. It allows for any resolution to be set (in older versions, it required widths to be multiples of 4). With this capability enabled, we can receive interrupts when the host window size changes, and querying the guest device will tell us what resolution we should set the display to.
+
+We'll need to define some new packets, install an interrupt handler, and also set some bits in the VMMDevMem space.
+
+``` c
+#define VBOX_REQUEST_ACK_EVENTS 41
+#define VBOX_REQUEST_GET_DISPLAY_CHANGE 51
+#define VBOX_REQUEST_SET_GUEST_CAPS 55
+
+/* VBox Guest Capabilities packet */
+struct vbox_guest_caps {
+        struct vbox_header header;
+        uint32_t caps;
+};
+
+/* VBox Acknowledge Events packet */
+struct vbox_ack_events {
+        struct vbox_header header;
+        uint32_t events;
+};
+
+/* VBox GetDisplayChange packet */
+struct vbox_display_change {
+        struct vbox_header header;
+        uint32_t xres;
+        uint32_t yres;
+        uint32_t bpp;
+        uint32_t eventack;
+};
+
+/* We'll use separate pages for our packets for simplicity. */
+static uint32_t vbox_display_phys;
+static uint32_t vbox_ack_phys;
+static vbox_display_change * vbox_display;
+static vbox_ack_events * vbox_ack;
+
+/* Adjust as necessary for your interrupt handling. */
+static int vbox_irq_handler(struct regs * r) {
+    if (!vbox_vmmdev[2]) return 0; /* Nothing to process? Maybe this interrupt was from something sharing the line. */
+
+    vbox_ack->events = vbox_vmmdev[2];
+    outportl(vbox_port, vbox_ack_phys); /* Acknowledge events */
+
+    outportl(vbox_port, vbox_display_phys); /* Request display change information. */
+
+    /* vbox_display now has information on our display size. If it changed we can tell our display driver to update. */
+    set_new_graphics_mode_maybe(vbox_display->xres, vbox_display->yres, vbox_display->bpp);
+
+    /* You probably want to make sure you have a way of informing your userspace that the
+       display resolution is changing, so your window manager or whatever updates. */
+
+    /* Don't forget to acknowledge the interrupt itself if you need to. */
+    return 1;
+}
+
+static void vbox_guest_init(void) {
+    ...
+
+    /* Install an interrupt handler. */
+    int irq = pci_read_field(vbox_pci, PCI_INTERRUPT_LINE, 1);
+    install_interrupt_handler(irq, vbox_irq_handler);
+
+    ...
+
+    /* We need to tell the VM that we support this capability. The Guest Capabilities request tells the VM about our ability to support seamless and auto-resize modes. */
+    uint32_t guest_caps_phys;
+    struct vbox_guest_caps * guest_caps = allocate_physical_page(&guest_caps_phys);
+
+    guest_caps->header.size = sizeof(struct vbox_guest_caps);
+    guest_caps->header.version = VBOX_REQUEST_HEADER_VERSION;
+    guest_caps->header.requestType = VBOX_REQUEST_SET_GUEST_CAPS;
+    guest_caps->header.rc = 0;
+    guest_caps->header.reserved1 = 0;
+    guest_caps->header.reserved2 = 0;
+    guest_caps->caps = 1 << 2; /* set bit 2, which indicates we support "graphics" (auto-resize guest display). */
+    outportl(vbox_port, guest_caps_phys);
+
+    /* We'll also set up the packets we'll use later for AcknowledgeEvents and GetDisplayChange */
+    vbox_ack = allocate_physical_page(&vbox_ack_phys);
+    vbox_ack->header.size = sizeof(struct vbox_ack_events);
+    vbox_ack->header.version = VBOX_REQUEST_HEADER_VERSION;
+    vbox_ack->header.requestType = VBOX_REQUEST_ACK_EVENTS;
+    vbox_ack->header.rc = 0;
+    vbox_ack->header.reserved1 = 0;
+    vbox_ack->header.reserved2 = 0;
+    vbox_ack->events = 0;
+
+    vbox_display = allocate_physical_page(&vbox_display_phys);
+    vbox_display->header.size = sizeof(struct vbox_display_change);
+    vbox_display->header.version = VBOX_REQUEST_HEADER_VERSION;
+    vbox_display->header.requestType = VBOX_REQUEST_GET_DISPLAY_CHANGE;
+    vbox_display->header.rc = 0;
+    vbox_display->header.reserved1 = 0;
+    vbox_display->header.reserved2 = 0;
+    vbox_display->xres = 0;
+    vbox_display->yres = 0;
+    vbox_display->bpp = 0;
+    vbox_display->eventack = 1;
+
+    /* Finally, we need to enable interrupts for the capabilities we've advertised. We're just going to enable all of them. */
+    vbox_vmmdev[3] = 0xFFFFFFFF;
+}
+```
+
+## Mouse Integration
+
+Mouse Integration provides mouse position information using an absolute coordinate system. It does not provide information on mouse buttons, though, and that continues to go through the standard PS/2 (or USB) mouse devices. If your OS supports USB devices, mouse integration can implemented through a USB tablet devices instead of the mechanism described in this article.
+
+Mouse Integration operates entirely over the guest device. Once enabled, mouse movements are sent to the guest through mouse packet requests and a corresponding interrupt. It is important to note that the format of the coordinates in these packets is based on a range from 0 to 0xFFFF which needs to be scaled to the display resolution. Why this approach was taken over using actual pixel coordinates (scaled or otherwise) is unknown.
+
+``` c
+#define VBOX_REQUEST_GET_MOUSE 1
+#define VBOX_REQUEST_SET_MOUSE 2
+
+/* The Mouse packet is used both to advertise our guest capabilities and to receive mouse movements. */
+struct vbox_mouse_absolute {
+        struct vbox_header header;
+        uint32_t features;
+        int32_t x;
+        int32_t y;
+};
+
+static uint32_t vbox_mouse_phys;
+static vbox_mouse_absolute * vbox_mouse;
+
+static int vbox_irq_handler(struct regs * r) {
+    ...
+
+    outportl(vbox_port, vbox_mouse_phys);
+
+    ...
+
+    /* The mouse coordinates are scaled to the range (0x0,0xFFFF) independently in each dimension, so let's convert to pixels.
+       If you prefer to have a more accurate mouse (subpixel support, etc.) you can convert to something else. */
+    unsigned int x = ((unsigned int)vbox_mouse->x * display_resolution_width) / 0xFFFF;
+    unsigned int y = ((unsigned int)vbox_mouse->y * display_resolution_height) / 0xFFFF;
+    do_something_useful_with_mouse_coordinates(x,y);
+    
+    ...
+}
+
+static void vbox_guest_init(void) {
+    ...
+
+    vbox_mouse = allocate_physical_page(&vbox_mouse_phys);
+    vbox_mouse->header.size = sizeof(struct vbox_mouse_absolute);
+    vbox_mouse->header.version = VBOX_REQUEST_HEADER_VERSION;
+    vbox_mouse->header.requestType = VBOX_REQUEST_SET_MOUSE;
+    vbox_mouse->header.rc = 0;
+    vbox_mouse->header.reserved1 = 0;
+    vbox_mouse->header.reserved2 = 0;
+    vbox_mouse->features = (1 << 0) | (1 << 4); /* bit 0 says "guest supports (and wants) absolute mouse"; bit 4 says we'll query absolute positions on interrupts */
+    vbox_mouse->x = 0;
+    vbox_mouse->y = 0;
+    outportl(vbox_port, vbox_mouse_phys);
+
+    vbox_mouse->header.requestType = VBOX_REQUEST_GET_MOUSE; /* Change the packet to a Get packet for use in the interrupt handler. */
+
+    ...
+}
+```
+
+## Seamless Desktop
+
+The seamless desktop mode in VirtualBox works by sending the virtual machine a list of rectangles representing the non-background visible regions of the desktop. The host creates a borderless, maximized window and shapes it based on the rectangles provided by the guest, yielding the appearance of a seamless desktop. You can tie this into a driver that receives window bounds information from your GUI. Note that seamless works best with (and maybe requires?) Auto-Resize Guest Display support.
+
+``` c
+#define VBOX_REQUEST_SET_VISIBLE_REGION 71
+
+struct vbox_rtrect {
+    int32_t xLeft;
+    int32_t yTop;
+    int32_t xRight;
+    int32_t yBottom;
+}
+
+struct vbox_visibleregion {
+    struct vbox_header header;
+    uint32_t count;
+    struct vbox_rtrect rect[];
+}
+
+static uint32_t vbox_visibleregion_phys;
+static vbox_visibleregion * vbox_visibleregion;
+
+...
+
+static void vbox_set_visible_region(uint32_t count, ...) {
+    vbox_visibleregion = allocate_physical_page(&vbox_visibleregion_phys);
+    vbox_visibleregion->header.size = sizeof(struct vbox_visibleregion) + sizeof(vbox_rtrect) * count;
+    vbox_visibleregion->header.version = VBOX_REQUEST_HEADER_VERSION;
+    vbox_visibleregion->header.requestType = VBOX_REQUEST_SET_VISIBLE_REGION;
+    vbox_visibleregion->header.rc = 0;
+    vbox_visibleregion->header.reserved1 = 0;
+    vbox_visibleregion->header.reserved2 = 0;
+    vbox_visibleregion->count = count;
+
+    /* Set each of the rectangles... */
+    vbox_visibleregion->rect[i].xLeft = ...;
+    /* etc */
+    
+    outportl(vbox_port, vbox_visibleregion_phys);
+}
+```
+
+*There is an additional interface for the seamless mode using the (undocumented) host-guest communication interface. In the case of the seamless mode, this functionality only communicates whether the seamless mode has been requested and is not necessary for it to function.*
+
+*There are also hints in the VirtualBox codebase that a direct guest-host window mapping feature was planned but has not been implemented. This would presumably allow the guest to provide separate textures for each window, possibly alongside window title and icon information...*
+
+## Pointer Shape
+
+The Pointer Shape functionality allows you to send a mouse cursor texture to the host, saving you the need to draw it yourself in software. This functionality is especially useful in combination with the Seamless mode, as it allows your cursor to be rendered outside of the visible regions. This works with the absolute mouse functionality so there is no need to inform the host of the mouse cursor position as it already knows.
+
+## Shared Folders and Clipboard
+
+The virtual Guest Additions PCI device provides access to a service on the host called the Host-Guest Communication Manager (HGCM). This service is responsible for providing functionality for Shared Folders, Shared Clipboard and making configuration changes to the guest itself.
+
+All requests to the communication manager are made with the same packet header, and there are 5 values used for the packet type field:
+
+| Value (decimal) | Request Type           |
+|-----------------|------------------------|
+| 60              | Connect                |
+| 61              | Disconnect             |
+| 62              | Call Function (32-bit) |
+| 63              | Call Function (64-bit) |
+| 64              | Cancel Request         |
+
+After the standard Guest Addition Header, each communication manager packet (except the cancel request packet) has a second header, depending on the request type above.
+
+### Connect
+
+| Offset (hex) | Length | Description   |
+|--------------|--------|---------------|
+| 0x20         | 4      | Location Type |
+| 0x24         | 128    | Location      |
+| 0xA4         | 4      | Client ID     |
+
+The Location field contains the name of the library to connect. There are 4 pre-defined library names: VBoxSharedFolders, VBoxSharedClipboard, VBoxGuestPropSvc, VBoxSharedOpenGL
+
+Additional libraries may also be accessed by providing the library name in the Location field.
+
+The Location Type field should be set to 1 to connect to an additional library, and 2 to connect to one of the pre-defined libraries.
+
+The Client ID is filled by the host after the request is complete. This value should be used in any further calls to this service.
+
+### Disconnect
+
+| Offset (hex) | Length | Description |
+|--------------|--------|-------------|
+| 0x20         | 4      | Client ID   |
+
+### Call Function
+
+Both the 32-bit and 64-bit call function packets use the same service header, followed by a list of parameter records. 32-bit function parameter records are 12 bytes long, and 64-bit function parameter records are 16 bytes long.
+
+| Offset (hex) | Length | Description     |
+|--------------|--------|-----------------|
+| 0x20         | 4      | Type            |
+| 0x24         | 4      | Client ID       |
+| 0x28         | 4      | Function Code   |
+| 0x2c         | 4      | Parameter Count |
+| 0x30         | \*     | Parameters      |
+
+  
+
+#### 32-bit Parameter
+
+| Offset (hex) | Length | Description |
+|--------------|--------|-------------|
+| 0x00         | 4      | Type        |
+| 0x04         | 8      | Value       |
+
+#### 64-bit Parameter
+
+| Offset (hex) | Length | Description |
+|--------------|--------|-------------|
+| 0x00         | 4      | Type        |
+| 0x04         | 12     | Value       |
+
+#### Parameter Types
+
+| Value (decimal) | Request Type                                             |
+|-----------------|----------------------------------------------------------|
+| 1               | 32-bit Value                                             |
+| 2               | 64-bit Value                                             |
+| 3               | Physical Address                                         |
+| 4               | Linear Address                                           |
+| 5               | Linear Address (Host-to-Guest only)                      |
+| 6               | Linear Address (Guest-to-Host only)                      |
+| 7               | Linear Address (Pre-Locked by Guest)                     |
+| 8               | Linear Address (Host-to-Guest only, Pre-Locked by Guest) |
+| 9               | Linear Address (Guest-to-Host only, Pre-Locked by Guest) |
+
+Physical and Linear Address parameter values have the following structure:
+
+| Offset (hex) | Length | Description             |
+|--------------|--------|-------------------------|
+| 0x00         | 4      | Buffer Length           |
+| 0x04         | 4/8    | Address (32-Bit/64-Bit) |
+
+### Functions
+
+| Value (decimal) | Function       | Parameters |
+|-----------------|----------------|------------|
+| 1               | Query Mappings | 3          |
+| 2               | Query Map Name | 2          |
+| 3               | Create Handle  | 3          |
+| 4               | Close Handle   | 2          |
+| 5               | Read           | 5          |
+| 6               | Write          | 5          |
+| 7               | Lock           | 5          |
+| 8               | List Directory | 8          |
+| 9               | Information    | 5          |
+| 11              | Delete         | 3          |
+| 14              | Rename         | 4          |
+| 15              | Flush          | 2          |
+| 24              | Set File Size  | 3          |
+
+### Query Mappings
+
+The Query Mappings command returns a list of all of the shared folders configured for this guest. The buffer passed by the guest will be filled with mapping records, and the Count parameter will be set to the number of records returned. The Root value for each record will be used to reference this shared folder in future commands. If the buffer size is insufficient to hold all of the records, the buffer pointer size field will be set to the minimum size necessary to contain the entire list of mapping records. By default, all strings returned by the host will be in UCS2 encoding. Passing the UTF8 flag will force all requests to return strings in UTF8 format. The Automount Only flag will only return shared folders that have been marked as Automount in the guest configuration.
+
+| Number | Parameter | Type                                            |
+|--------|-----------|-------------------------------------------------|
+| 1      | Flags     | 32-Bit (0 - UCS2, 1 - UTF8, 2 - Automount Only) |
+| 2      | Count     | 32-Bit                                          |
+| 3      | Buffer    | Pointer                                         |
+
+#### Mapping Record
+
+| Offset (hex) | Length | Description                  |
+|--------------|--------|------------------------------|
+| 0x00         | 4      | Flags (1 - New, 2 - Deleted) |
+| 0x04         | 4      | Root                         |
+
+  
+
+### Query Map Name
+
+The Query Map Name command will return the name for the specified shared folder in the guest configuration.
+
+| Number | Parameter | Type    |
+|--------|-----------|---------|
+| 1      | Root      | 32-Bit  |
+| 2      | Buffer    | Pointer |
+
+  
+
+## Other Stuff
+
+VirtualBox also provides a mechanism for writing to its log files, though this is not managed through the guest device. Simple writing bytes to port 0x504 will produce log entries. The capability bit for this functionality is bit 0.
+
+  
+
+## See Also
+
+### External Links
+
+- [ToaruOS VirtualBox guest driver](https://github.com/klange/toaruos/blob/master/modules/vbox.c)
+- [VirtualBox host implementation of the guest additions](https://www.virtualbox.org/browser/vbox/trunk/src/VBox/Devices/VMMDev/VMMDev.cpp)
+- [VirtualBox guest implementations](https://www.virtualbox.org/browser/vbox/trunk/src/VBox/Additions)
+- [VirtualBox Technical Documentation (SDK)](https://www.virtualbox.org/wiki/Technical_documentation)

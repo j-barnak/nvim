@@ -1,0 +1,181 @@
+|     |                                                                                                                           |     |
+|-----|---------------------------------------------------------------------------------------------------------------------------|-----|
+|     | The content of this article or section is considered a historical curiosity and should not be considered for new designs. |     |
+
+  
+
+**APM** (Advanced Power Management) is a [Power Management](https://wiki.osdev.org/Category:Power_management "Category:Power management") standard, developed by Intel and Microsoft, which allows the operating system to control the amount of power sent to devices. [ACPI](https://wiki.osdev.org/ACPI "ACPI") replaces APM as the main power management system for operating systems, mainly because [SMP](https://wiki.osdev.org/SMP "SMP") and APM do not mix well.
+
+## APM Initialization
+
+The APM standard defines three interfaces through which the APM BIOS and the Operating System can communicate. They are the Real Mode Interface, the 16bit Protected Mode Interface, and the 32bit Protected Mode Interface. Only one of the interfaces may be in use at any given time. Before any of the interfaces can be used, the operating system must check if APM is actually supported (many very new computers don't support APM anymore) and if it is, connect to one of its interfaces. It is a good idea to send a disconnect command prior to connecting to an interface.
+
+### Installation Check
+
+This function checks if APM is even supported. It must be performed in **Real Mode** (or vm86 mode).
+
+``` asm
+;perform an installation check
+mov ah,53h            ;this is an APM command
+mov al,00h            ;installation check command
+xor bx,bx             ;device id (0 = APM BIOS)
+int 15h               ;call the BIOS function through interrupt 15h
+jc APM_error          ;if the carry flag is set there was an error
+                      ;the function was successful
+                      ;AX = APM version number
+                          ;AH = Major revision number (in BCD format)
+                          ;AL = Minor revision number (also BCD format)
+                      ;BX = ASCII characters "P" (in BH) and "M" (in BL)
+                      ;CX = APM flags (see the official documentation for more details)
+```
+
+### Connecting to an interface
+
+This function connects to an APM interface based on the value of `interface_number` which should be one of the following:
+
+``` text
+01h = Real Mode Interface
+02h = 16bit Protected Mode Interface
+03h = 32bit Protected Mode Interface
+```
+
+It must be performed in **Real Mode** (or vm86 mode).
+
+``` asm
+;connect to an APM interface
+mov ah,53h               ;this is an APM command
+mov al,[interface_number];see above description
+xor bx,bx                ;device id (0 = APM BIOS)
+int 15h                  ;call the BIOS function through interrupt 15h
+jc APM_error             ;if the carry flag is set there was an error
+                         ;otherwise, the function was successful
+                         ;The return values are different for each interface.
+                         ;The Real Mode Interface returns nothing.
+
+                         ;16-Bit Protected Mode Interface
+                         ;AX = Code Segment
+                         ;BX = Entry Point (Offset)
+                         ;CX = Data Segment
+                         ;SI = Code Segment Length
+                         ;DI = Data Segment Length
+
+                         ;32-Bit Protected Mode Interface
+                         ;AX = 32-Bit Code Segment
+                         ;EBX = 32-Bit Entry Point (Offset)
+                         ;CX = 16-Bit Code Segment
+                         ;DX = Data Segment
+                         ;ESI 0:15 = 32-Bit Code Segment Length
+                         ;ESI 16:31 = 16-Bit Code Segment Length
+                         ;DI = Data Segment Length
+```
+
+The APM driver or OS is responsible for setting up the proper environment for the 16-bit and 32-bit protected mode interface calls. This includes setting up the GDT (or LDT) with a 16-bit code segment and a 16-bit data segment for the 16-Bit protected mode interface, or setting up a 32-bit code segment **and** a 16-bit code segment, along with a data segment before using the 32-bit protected mode interface.
+
+Note: The 16-bit and 32-bit code segments returned from the function above are the real-mode segments containing the protected mode code. This means that the value returned must first be converted from the real-mode segment number to a linear address. This can be done by shifting the value to the left by 8 bits.
+
+Once these GDT (or LDT) entries have been created, they can be used to call the 16-bit or 32-bit protected mode APM functions, using the value returned above in the BX register as the offset for a far-call into the proper code segment.
+
+### Disconnecting from an Interface
+
+This function will disconnect from whatever interface is connected when it is called. If no interface is connected or an error occurs it will set the carry flag upon return. It may be performed in **any** APM interface mode.
+
+``` asm
+;disconnect from any APM interface
+mov ah,53h               ;this is an APM command
+mov al,04h               ;interface disconnect command
+xor bx,bx                ;device id (0 = APM BIOS)
+int 15h                  ;call the BIOS function through interrupt 15h
+jc .disconnect_error            ;if the carry flag is set see what the fuss is about. 
+jmp .no_error
+
+.disconnect_error:       ;the error code is in ah.
+cmp ah,03h               ;if the error code is anything but 03h there was an error.
+jne APM_error            ;the error code 03h means that no interface was connected in the first place.
+                         
+.no_error:
+                         ;the function was successful
+                         ;Nothing is returned.
+```
+
+### Setting APM Driver Version
+
+After an APM interface is connected, APM **always** runs as if it was version 1.0, to support legacy code. Unfortunately in that mode it isn't possible to do some things as setting the power state for all devices (as needed e.g. to shut the system down). So, if the APM installation check reports a version higher than 1.0, it might be useful to tell the APM that you support 1.1 or 1.2 version using INT 0x15 / AX=0x530E
+
+``` asm
+mov ah,53h               ;this is an APM command
+mov al,0eh               ;set driver supported version command
+mov bx,0000h             ;device ID of system BIOS
+mov ch,01h               ;APM driver major version
+mov cl,01h               ;APM driver minor version (can be 01h or 02h if the latter one is supported)
+int 15h
+jc .version_error
+;at this point AX holds the APM version that is connected, AH=major version AL=minor version
+;so an additional check might be implemented
+jmp .no_error
+.version_error:
+;ah can hold: 03h if the interface wasn't connected, 09h if the device ID wasn't recognised (BX nonzero), 0Bh if APM v1.1 still isn't engaged
+.no_error:
+;continue
+```
+
+## Controlling Devices
+
+After the operating system has connected to an APM interface it can begin to control the power state of various devices in the computer. Before a given device can be controlled, however, power management for that device must be enabled. Only then can the actual power state of the device be set.
+
+### Enabling Power Management
+
+This function will enable power management for all devices. This is, by far, faster than enabling power management for each device separately.
+
+``` asm
+;Enable power management for all devices
+mov ah,53h              ;this is an APM command
+mov al,08h              ;Change the state of power management...
+mov bx,0001h            ;...on all devices to...
+mov cx,0001h            ;...power management on.
+int 15h                 ;call the BIOS function through interrupt 15h
+jc APM_error            ;if the carry flag is set there was an error
+```
+
+To enable power management for a specific device, find the device number for the device in the APM documentation, and put the device number in bx instead of 0001h.
+
+### Setting Power States
+
+This function will set the power state of every device to the value of `power_state` which may be one of the following.
+
+``` text
+01h = Standby
+02h = Suspend
+03h = Off
+
+20h...7Fh = OEM-defined power states 
+```
+
+To set the power state for a specific device, find the device number for the device in the APM documentation, and put the device number in bx instead of 0001h.
+
+``` asm
+;Set the power state for all devices
+mov ah,53h              ;this is an APM command
+mov al,07h              ;Set the power state...
+mov bx,0001h            ;...on all devices to...
+mov cx,[power_state]    ;see above
+int 15h                 ;call the BIOS function through interrupt 15h
+jc APM_error            ;if the carry flag is set there was an error
+```
+
+## APM Reliability
+
+Because APM is used by calling BIOS functions, it is much simpler to implement in an operating system. These BIOS functions, however, may be buggy or broken on some BIOSes. This is one of the main reasons why [ACPI](https://wiki.osdev.org/ACPI "ACPI") has succeeded.
+
+- [A list of defective BIOSes](http://lxr.linux.no/source/arch/x86/kernel/apm_32.c#L2055)
+
+## See Also
+
+### Articles
+
+- [Shutdown](https://wiki.osdev.org/Shutdown "Shutdown")
+- [ATA/ATAPI Power Management](https://wiki.osdev.org/ATA/ATAPI_Power_Management "ATA/ATAPI Power Management")
+- [ACPI](https://wiki.osdev.org/ACPI "ACPI"), the standard superseding APM
+
+### External Links
+
+- [Official document by Intel and Microsoft describing the APM standard version 1.2](http://download.microsoft.com/download/1/6/1/161ba512-40e2-4cc9-843a-923143f3456c/APMV12.rtf)

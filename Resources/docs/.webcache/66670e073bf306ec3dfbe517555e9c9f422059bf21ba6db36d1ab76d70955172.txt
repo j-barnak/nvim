@@ -1,0 +1,354 @@
+## Recommended Reads
+
+- [CPUID](https://wiki.osdev.org/CPUID "CPUID")
+- [Paging](https://wiki.osdev.org/Paging#64-Bit_Paging "Paging")
+- [Setting Up Paging](https://wiki.osdev.org/Setting_Up_Paging "Setting Up Paging")
+- [Setting up Paging With PAE](https://wiki.osdev.org/Setting_Up_Paging_With_PAE "Setting Up Paging With PAE")
+- [GDT](https://wiki.osdev.org/Global_Descriptor_Table "Global Descriptor Table")
+
+## Overview
+
+- Covering long mode.
+- How to detect long mode
+- How to set up paging for long mode
+- How to enter long mode.
+- How to set up the GDT for long mode
+
+## Introduction
+
+Since the introduction of the x86-64 processors (AMD64, EM64T, VIA Nano), a new mode has been introduced as well, which is called long mode. Long mode consists of two sub modes which are: the actual 64-bit mode, and compatibility mode (a 32-bit mode, usually referred to as IA32e in the AMD64 manuals). The 64-bit mode is the most useful as it provides a lot of new features such as registers being extended to 64-bit (rax, rcx, rdx, rbx, rsp, rbp, rip, etc.), eight new general-purpose registers (r8 - r15), and eight new multimedia registers (xmm8 - xmm15). 64-bit mode is almost completely void of the segmentation that was used on the 8086-processors, and the [GDT](https://wiki.osdev.org/GDT "GDT"), the [IDT](https://wiki.osdev.org/IDT "IDT"), [paging](https://wiki.osdev.org/Paging "Paging"), etc. are also different compared to the old 32-bit mode (a.k.a. [protected mode](https://wiki.osdev.org/Protected_Mode "Protected Mode")).
+
+## Detecting the Presence of Long Mode
+
+There are only three processor vendors so far who have made processors that are capable of entering and using long mode: AMD, Intel and VIA. Intel tried to get 64-bit processors on the market with EM64T, but now uses AMD's x86-64 architecture instead, which means using 64-bit on an Intel processor is (almost) identical to using 64-bit on an AMD or VIA processor. The presence of long mode can be detected using the [CPUID](https://wiki.osdev.org/CPUID "CPUID") instruction.
+
+### Detection of CPUID
+
+Main article: [CPUID](https://wiki.osdev.org/CPUID "CPUID")
+
+``` nasm
+; it may be preferrable to put this in a separate file to be included,
+; along with any other EFLAGS bits you may want to use
+EFLAGS_ID equ 1 << 21           ; if this bit can be flipped, the CPUID
+                                ; instruction is available
+
+; Checks if CPUID is supported by attempting to flip the ID bit (bit 21) in
+; the EFLAGS register. If we can flip it, CPUID is available.
+; returns eax = 1 if there is cpuid support; 0 otherwise
+checkCPUID:
+    pushfd
+    pop eax
+
+    ; The original value should be saved for comparison and restoration later
+    mov ecx, eax
+    xor eax, EFLAGS_ID
+
+    ; storing the eflags and then retrieving it again will show whether or not
+    ; the bit could successfully be flipped
+    push eax                    ; save to eflags
+    popfd
+    pushfd                      ; restore from eflags
+    pop eax
+
+    ; Restore EFLAGS to its original value
+    push ecx
+    popfd
+
+    ; if the bit in eax was successfully flipped (eax != ecx), CPUID is supported.
+    xor eax, ecx
+    jnz .supported
+    .notSupported:
+        mov ax, 0
+        ret
+    .supported:
+        mov ax, 1
+        ret
+```
+
+### Checking for long mode support
+
+The presence of long mode can only be detected using the extended functions of CPUID, which aren't supported on every processor. Because of this, it's necessary to check if the extended function that checks long mode support is available:
+
+``` nasm
+CPUID_EXTENSIONS equ 0x80000000 ; returns the maximum extended requests for cpuid
+CPUID_EXT_FEATURES equ 0x80000001 ; returns flags containing long mode support among other things
+
+; other setup code
+; ...
+
+.queryLongMode:
+    mov eax, CPUID_EXTENSIONS
+    cpuid
+    cmp eax, CPUID_FEATURES
+    jb .NoLongMode              ; if the CPU can't report long mode support, then it likely
+                                ; doesn't have it
+```
+
+Now the extended function can be used to check for long mode support:
+
+``` nasm
+CPUID_EDX_EXT_FEAT_LM equ 1 << 29   ; if this is set, the CPU supports long mode
+
+; ...
+
+    mov eax, CPUID_EXT_FEATURES
+    cpuid
+    test edx, CPUID_EDX_EXT_FEAT_LM
+    jz .NoLongMode
+```
+
+## Entering Long Mode
+
+Entering long mode can be done from both real mode and protected mode, however only protected mode is covered in the Intel and AMD64 manuals; early AMD documentation explains how this process works from real mode as well.
+
+Before anything, it is highly recommended to enable the [A20 Line](https://wiki.osdev.org/A20_Line "A20 Line"), otherwise only odd MiBs can be accessed.
+
+### Setting up paging
+
+Before 64-bit paging can be set up, 32-bit paging needs to be disabled (this can be skipped if paging was never set up in the first place).
+
+``` nasm
+CR0_PAGING equ 1 << 31
+
+; disables 32 bit paging
+disablePaging32:
+    mov eax, cr0
+    and eax, ~CR0_PAGING
+    mov cr0, eax
+    ret
+```
+
+64-bit paging uses PAE paging with an extra level, which includes (in order of distance from the root):
+
+- A Page Map Level 4 Table (PML4T), which replaces the PDPT as the root of PAE paging
+- A Page Directory Pointer Table (PDPT)
+- A Page Directory Table (PDT)
+- A Page Table (PT)
+
+Each entry in a 64 bit page table is double the size of the equivalent 32 bit entry, which means that each table can only hold 512 entries instead of the previous 1024. One entry in a PT can address 4KiB, and each table is 4096 bytes long, giving a maximum address space of 256TiB. Each level of page tables contains pointers to the one below (PML4T-\>PDPT-\>PDT-\>PT-\>Physical Memory), so each level refers to a more granular range of virtual addresses that the MMU uses to map each page to a physical address.
+
+Virtual memory can be set up in many different ways, each with varying amounts of complexity, but one simple way to get started is to map the first 2 megabytes and then more memory can be allocated from within long mode later. This example code uses address 0x1000 as the beginning of the PML4T and each level below is in contiguous memory one after the other (PML4T = 0x1000, PDPT = 0x2000, etc...).
+
+First step is to clear the tables:
+
+``` nasm
+PML4T_ADDR equ 0x1000
+SIZEOF_PAGE_TABLE equ 4096
+
+    mov edi, PML4T_ADDR
+    mov cr3, edi       ; cr3 lets the CPU know where the page tables are
+
+    xor eax, eax
+    mov ecx, SIZEOF_PAGE_TABLE
+    rep stosd          ; writes 4 * SIZEOF_PAGE_TABLE bytes, which is enough space
+                       ; for the 4 page tables
+    mov edi, cr3       ; reset di back to the beginning of the page table
+```
+
+Next is to link up just the first entries of each table, since 2 megabytes doesn't use more than one PDT entry
+
+``` nasm
+PML4T_ADDR equ 0x1000
+PDPT_ADDR equ 0x2000
+PDT_ADDR equ 0x3000
+PT_ADDR equ 0x4000
+
+; the page table only uses certain parts of the actual address
+PT_ADDR_MASK equ 0xffffffffff000
+PT_PRESENT equ 1                 ; marks the entry as in use
+PT_READABLE equ 2                ; marks the entry as r/w
+
+    ; edi was previously set to PML4T_ADDR
+    mov DWORD [edi], PDPT_ADDR & PT_ADDR_MASK | PT_PRESENT | PT_READABLE
+
+    mov edi, PDPT_ADDR
+    mov DWORD [edi], PDT_ADDR & PT_ADDR_MASK | PT_PRESENT | PT_READABLE
+
+    mov edi, PDT_ADDR
+    mov DWORD [edi], PT_ADDR & PT_ADDR_MASK | PT_PRESENT | PT_READABLE
+```
+
+Now all that's left to do is fill the page table:
+
+``` nasm
+ENTRIES_PER_PT equ 512
+SIZEOF_PT_ENTRY equ 8
+PAGE_SIZE equ 0x1000
+
+    mov edi, PT_ADDR
+    mov ebx, PT_PRESENT | PT_READABLE
+    mov ecx, ENTRIES_PER_PT      ; 1 full page table addresses 2MiB
+
+.SetEntry:
+    mov DWORD [edi], ebx
+    add ebx, PAGE_SIZE
+    add edi, SIZEOF_PT_ENTRY
+    loop .SetEntry               ; Set the next entry.
+```
+
+Now PAE can be enabled using the cr4 register
+
+``` nasm
+CR4_PAE_ENABLE equ 1 << 5
+
+    mov eax, cr4
+    or eax, CR4_PAE_ENABLE
+    mov cr4, eax
+```
+
+Now paging is set up, but it isn't enabled yet.
+
+### Future of x86-64 - the PML5
+
+In November 2016, Intel released a white paper [\[1\]](https://cdrdv2-public.intel.com/671442/5-level-paging-white-paper.pdf) about 5-level paging, and started supporting it with Ice Lake processors in 2019. These processors support a 128 PiB address space, and furthermore up to 4 PiB of physical memory (far above the 4-level 256 TiB/64 TiB limits). Support for this is detected as follows:
+
+``` nasm
+CPUID_GET_FEATURES equ 7
+CPUID_FEATURE_PML5 equ 1 << 16
+
+    mov eax, CPUID_GET_FEATURES
+    xor ecx, ecx
+    cpuid
+    test ecx, CPUID_FEATURE_PML5
+    jnz .5_level_paging
+```
+
+The paging structures are identical to the 4 level versions, there's just an added layer of indirection. recursive addresses will change. 5 level paging is enabled if CR4.LA57=1, and EFER.LMA=1.
+
+``` nasm
+CR4_LA57 equ 1 << 12
+
+BITS 32
+mov eax, cr4
+or eax, CR4_LA57
+mov cr4, eax
+```
+
+Note that attempting to set CR4.LA57 while EFER.LMA=1 causes a \#GP general protection fault. You therefore need to drop into protected mode or set up 5 level paging before entering long mode in the first place.
+
+### The Switch to compatibility mode
+
+First set the LM-bit:
+
+``` nasm
+EFER_MSR equ 0xC0000080
+EFER_LM_ENABLE equ 1 << 8
+
+    mov ecx, EFER_MSR
+    rdmsr
+    or eax, EFER_LM_ENABLE
+    wrmsr
+```
+
+Enable paging and protected mode (if it is not set already):
+
+``` nasm
+CR0_PM_ENABLE equ 1 << 0
+CR0_PG_ENABLE equ 1 << 31
+
+    mov eax, cr0
+    or eax, CR0_PG_ENABLE | CR0_PM_ENABLE   ; ensuring that PM is set will allow for jumping
+                                            ; from real mode to compatibility mode directly
+    mov cr0, eax
+```
+
+And compatibility mode is now enabled.
+
+## Entering the 64-bit Submode
+
+To switch from compatibility mode to long mode, a [GDT](https://wiki.osdev.org/GDT "GDT") is used with fields set for 64 bit mode
+
+The GDT (see chapter 4.8.1 and 4.8.2 of the AMD64 Architecture Programmer's Manual Volume 2) should look like this:
+
+``` nasm
+; Access bits
+PRESENT        equ 1 << 7
+NOT_SYS        equ 1 << 4
+EXEC           equ 1 << 3
+DC             equ 1 << 2
+RW             equ 1 << 1
+ACCESSED       equ 1 << 0
+
+; Flags bits
+GRAN_4K       equ 1 << 7
+SZ_32         equ 1 << 6
+LONG_MODE     equ 1 << 5
+
+GDT:
+    .Null: equ $ - GDT
+        dq 0
+    .Code: equ $ - GDT
+        .Code.limit_lo: dw 0xffff
+        .Code.base_lo: dw 0
+        .Code.base_mid: db 0
+        .Code.access: db PRESENT | NOT_SYS | EXEC | RW
+        .Code.flags: db GRAN_4K | LONG_MODE | 0xF   ; Flags & Limit (high, bits 16-19)
+        .Code.base_hi: db 0
+    .Data: equ $ - GDT
+        .Data.limit_lo: dw 0xffff
+        .Data.base_lo: dw 0
+        .Data.base_mid: db 0
+        .Data.access: db PRESENT | NOT_SYS | RW
+        .Data.Flags: db GRAN_4K | SZ_32 | 0xF       ; Flags & Limit (high, bits 16-19)
+        .Data.base_hi: db 0
+    .Pointer:
+        dw $ - GDT - 1
+        dq GDT
+```
+
+A 4GiB limit for code is needed because the processor will make a last limit check before the jump, and having a limit of 0 will cause a \#GP (tested in [Bochs](https://wiki.osdev.org/Bochs "Bochs")). After that, the limit will be ignored. Now the only thing left to do is load it and make the jump to 64-bit:
+
+``` nasm
+    lgdt [GDT.Pointer]
+    jmp GDT.Code:Realm64
+```
+
+### Sample
+
+The next step would probably be to load kernel code written in C, or some simpler code to test everything out. Clearing the screen would look like:
+
+``` nasm
+bits 64
+
+VGA_TEXT_BUFFER_ADDR equ 0xb8000
+COLS equ 80
+ROWS equ 25
+BYTES_PER_CHARACTER equ 2
+VGA_TEXT_BUFFER_SIZE equ BYTES_PER_CHARACTER * COLS * ROWS
+
+Realm64:
+    cli                           ; the code would probably be more reliable if you did this
+                                  ; before even switching from real mode
+    mov ax, GDT.Data
+    mov ds, ax
+    mov es, ax
+    mov fs, ax
+    mov gs, ax
+    mov ss, ax
+
+    mov rdi, VGA_TEXT_BUFFER_ADDR
+    mov rax, 0
+    mov rcx, VGA_TEXT_BUFFER_SIZE / 8
+    rep stosq
+    hlt
+```
+
+## See Also
+
+### Articles
+
+- [Intel EM64T](https://wiki.osdev.org/EM64T "EM64T")
+- [X86-64](https://wiki.osdev.org/X86-64 "X86-64")
+- [Creating a 64-bit kernel](https://wiki.osdev.org/Creating_a_64-bit_kernel "Creating a 64-bit kernel")
+- [Entering Long Mode Directly](https://wiki.osdev.org/Entering_Long_Mode_Directly "Entering Long Mode Directly")
+
+### Threads
+
+- [Wrote a tutorial covering long mode](http://forum.osdev.org/viewtopic.php?f=8&t=21601) about this article.
+- [Loading a higher-half kernel](http://forum.osdev.org/viewtopic.php?f=1&t=21748) on setting up long mode for a higher-half kernel.
+- [Setting up the stack after the switch to long mode](http://forum.osdev.org/viewtopic.php?f=1&t=21772) on the stack segment note.
+
+### Wikipedia
+
+- [AMD64](https://wikipedia.org/wiki/AMD64 "wikipedia:AMD64")
+- [64-bit](https://wikipedia.org/wiki/64-bit "wikipedia:64-bit")

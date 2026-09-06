@@ -1,0 +1,124 @@
+The memory map on the S390 is very simple, the first 1024 (or 8192, if on z/Arch) bytes are used as [PSA](https://wiki.osdev.org/PSA "PSA") area. The [IPL](https://wiki.osdev.org/index.php?title=IPL&action=edit&redlink=1 "IPL (page does not exist)") is loaded just after that said PSA.
+
+## Detecting memory
+
+``` c
+/* We are going to read in pairs of 1MiB and when we hit the memory limit we
+ * will instantly catch the program exception and stop counting, then it's just
+ * a matter of returning what we could count :) */
+size_t s390_get_memsize(
+    void)
+{
+    const uint8_t *probe = (const uint8_t *)0x0;
+    while(1) {
+        int r;
+        /* Do a "probe" read */
+        r = s390_address_is_valid(probe);
+        if(r != 0) {
+            kprintf("Done! %p\n", (uintptr_t)probe);
+            break;
+        }
+
+        kprintf("Memory %p\n", (uintptr_t)probe);
+
+        /* Go to next MiB */
+        probe += 1048576;
+    }
+    return (size_t)probe;
+}
+```
+
+Now there needs to be a function to "catch" the exceptions recognized by the processor:
+
+``` c
+/* Check if an address is valid - this only catches program exceptions to
+ * determine if it's valid or not */
+int s390_address_is_valid(
+    volatile const void *probe)
+{
+    int r = 0;
+
+    S390_PSW_DEFAULT_TYPE old_pc_psw;
+#if (MACHINE >= M_ZARCH)
+    struct s390x_psw pc_psw = {
+        0x00040000 | S390_PSW_AM64, S390_PSW_DEFAULT_AMBIT, 0,
+        (uint32_t)&&invalid
+    };
+#else
+    struct s390_psw pc_psw = {
+        0x000C0000, (uint32_t)&&invalid + S390_PSW_DEFAULT_AMBIT
+    };
+#endif
+
+#if (MACHINE >= M_ZARCH)
+    memcpy(&old_pc_psw, (void *)S390_FLCEPNPSW, sizeof(struct s390x_psw));
+    memcpy((void *)S390_FLCEPNPSW, &pc_psw, sizeof(struct s390x_psw));
+#else
+    memcpy(&old_pc_psw, (void *)S390_FLCPNPSW, sizeof(struct s390_psw));
+    memcpy((void *)S390_FLCPNPSW, &pc_psw, sizeof(struct s390_psw));
+#endif
+
+    *((volatile const uint8_t *)probe);
+    goto end;
+invalid:
+    r = -1;
+end:
+#if (MACHINE >= M_ZARCH)
+    memcpy((void *)S390_FLCEPNPSW, &old_pc_psw, sizeof(struct s390x_psw));
+#else
+    memcpy((void *)S390_FLCPNPSW, &old_pc_psw, sizeof(struct s390_psw));
+#endif
+    return r;
+}
+```
+
+Some C compilers are known to crash or even ABEND during compilation if addresses of labels are taken via the && operator, alternatively using direct high-level assembler syntax:
+
+``` asm
+* HwCheckAddress
+* IN:
+*    pointer to address to probe
+*
+         ENTRY @ZHWCHKA
+@ZHWCHKA DS 0H
+         SAVE (14,12),,@ZHWCHKA
+         LR R12,R15
+         USING @ZHWCHKA,12
+         LR R11,R1
+* CATCHPSW address on R1
+         L R1,=A(CATCHPSW)
+* Save address of TMPSAVE on R2
+         L R2,=A(TMPSAVE)
+* And FLCPNPSW on R3
+         L R3,FLCPNPSW
+*
+         MVC 0(8,R2),0(R3)
+* ... use a new PSW to catch the exceptions
+         MVC 0(8,R3),0(R1)
+* Probe the address, if it raises a PC exception then
+* we will simply catch it and return 1
+         L R1,0(R11)
+         L R15,0(R1)
+* rc = 0
+         MVC 0(8,R3),0(R2)
+         L R15,=F'0'
+         RETURN (14,12),RC=(15)
+CATCHPCR DS 0H
+* rc = 1
+         MVC 0(8,R3),0(R2)
+         L R15,=F'1'
+         RETURN (14,12),RC=(15)
+         LTORG
+         DROP 12
+*
+CATCHPSW DS 0D
+         DC X'020E0000'
+         DC A(AMBIT+CATCHPCR)
+TMPSAVE  DS 1D
+```
+
+## See also =
+
+### Source code
+
+- [Example implementation (C)](https://github.com/udos-project/UDOS/blob/3f446f4117d78fddf181f1df2927a9437fb08035/kernel/s390/cpu.c#L51)

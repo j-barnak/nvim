@@ -1,0 +1,315 @@
+|                                                                                               |
+|-----------------------------------------------------------------------------------------------|
+| WAIT! Have you read Getting Started , Beginner Mistakes , and some of the related OS theory ? |
+
+| Difficulty level |
+|------------------|
+| Medium           |
+
+## About
+
+A minimal kernel targeting IBM z/Architecture (s390x), using **ZXFoundationLoader (ZXFL)** dual-stage loader.
+
+**Note:** This is a minimal barebones intended to get you to a booting kernel as quickly as possible. It deliberately omits explanation of z/Architecture concepts (IPL, DASD, PSW, boot protocol internals, etc.). See the [full documentation](https://assembler-0.github.io/ZXFoundation) for a thorough treatment of all of these.
+
+- **Barebones source:** [GitHub](https://github.com/assembler-0/ZXFoundation/tree/master/docs/barebones)
+- **ZXFoundation source:** [GitHub](https://github.com/assembler-0/ZXFoundation)
+- **Documentation:** [assembler-0.github.io/ZXFoundation](https://assembler-0.github.io/ZXFoundation)
+
+## Prerequisites
+
+- `s390x-ibm-linux-gnu-gcc` cross-compiler
+- `s390x-ibm-linux-gnu-ld`
+- `dasdload` (Hercules tools)
+- ZXFoundation binaries: `core.zxfoundationloader00.sys`, `core.zxfoundationloader01.sys` and `zxsign`
+
+## Compiling ZXFoundation
+
+``` sh
+git clone https://github.com/assembler-0/ZXFoundation.git
+cd ZXFoundation
+mkdir build && cd build
+cmake .. -DZX_TOOLCHAIN_FILE=../cmake/toolchain/zxfoundation-gcc.cmake -DZX_CONFIG_FILE=../cmake/configs/base.cmake -GNinja
+ninja
+ls -l core.zxfoundationloader00.sys core.zxfoundationloader01.sys zxsign
+# now, you can copy the listed files to the barebones sources (i.e. ZXFoundation/docs/barebones/)
+```
+
+## Source Files
+
+- main.c - kernel main entry point
+
+``` c
+#include <stdint.h>
+#include "zxfl.h"
+
+[[noreturn]] void zxfoundation_global_initialize(zxfl_boot_protocol_t *boot) {
+    while (1) __asm__ volatile("nop");
+}
+```
+
+- head64.S - assembly stub
+
+``` asm
+// arch/s390x/init/head64.S
+
+#include <zxfoundation/zxconfig.h>
+#include <arch/s390x/init/zxfl/zxvl.h>
+#include <arch/s390x/init/zxfl/zxfl.h>
+#include <arch/s390x/cpu/lowcore.h>
+#include <arch/s390x/cpu/psw.h>
+
+    .section .text.handshake, "ax"
+    .globl __zxfl_handshake_stub
+
+__zxfl_handshake_stub:
+    llihf   %r0, ZXVL_SEED_HI
+    iilf    %r0, ZXVL_SEED_LO
+    xgr     %r2, %r0
+    lgr     %r0, %r2
+    sllg    %r0, %r0, 17
+    srlg    %r1, %r2, 47
+    ogr     %r0, %r1
+    llihf   %r1, ZXVL_HS_RESPONSE_HI
+    iilf    %r1, ZXVL_HS_RESPONSE_LO
+    lgr     %r2, %r0
+    agr     %r2, %r1
+    br      %r14
+
+    .section .text.__zx_start_kernel64, "ax", @progbits
+    .globl __zx_start_kernel64
+__zx_start_kernel64:
+    lgr     %r11, %r2
+
+    larl    %r2, __bss_start
+    larl    %r3, __bss_end
+    sgr     %r3, %r2                       // R3 = BSS size in bytes
+    jz      .Lbss_done
+    lgr     %r4, %r2                       // R4 = source (same as dest)
+    sgr     %r5, %r5                       // R5 = 0 (source length 0 + pad byte 0x00)
+.Lmvcl_retry:
+    mvcl    %r2, %r4
+    jo      .Lmvcl_retry
+.Lbss_done:
+
+    lgr     %r2, %r11
+    lg      %r15, ZXFL_OFFSET_KERNEL_STACK_TOP(%r2) // kernel_stack_top from boot protocol
+    aghi    %r15, -160                     // 160-byte register save area
+
+    lgr     %r2, %r11
+    brasl   %r14, zxfoundation_global_initialize
+
+.Lhalt:
+    larl    %r1, .Ldisabled_wait_psw
+    lpswe   0(%r1)
+    j       .Lhalt
+
+    .align 8
+.Ldisabled_wait_psw:
+    .quad   PSW_MASK_DISABLED_WAIT, 0x0000000000000000
+
+    .section .text.ap_entry, "ax", @progbits
+    .globl ap_entry
+ap_entry:
+    lg      %r15, LC_RESTART_STACK(0)
+    aghi    %r15, -160
+
+    lctlg   %c0, %c0, LC_AP_CR0(0)
+    // CR1 must be loaded before DAT is enabled in the LPSWE below.
+    // Without this the AP faults immediately on the first HHDM access.
+    lctlg   %c1, %c1, LC_KERNEL_ASCE(0)
+    lctlg   %c13, %c13, LC_AP_CR13(0)
+
+    lpswe   LC_RETURN_PSW(0)
+
+    .globl ap_dat_on
+ap_dat_on:
+    lg      %r15, LC_KERNEL_STACK(0)
+    aghi    %r15, -160
+    brasl   %r14, ap_startup
+
+.Lap_halt:
+    larl    %r1, .Lap_disabled_wait
+    lpswe   0(%r1)
+    j       .Lap_halt
+
+    .align 8
+.Lap_disabled_wait:
+    .quad   PSW_MASK_DISABLED_WAIT, 0x0000000000DEAD07
+
+    .section .note.GNU-stack, "", @progbits
+```
+
+- link.ld - linker script
+
+``` asm
+/* arch/s390x/init/link.ld — ZXFoundation Kernel Linker Script */
+
+ENTRY(__zx_start_kernel64)
+
+PHDRS {
+    hs_seg        PT_LOAD FLAGS(0x00400005);  /* ZXVL_PFLAGS_HS:    PF_X|PF_R + bit22 */
+    entry_seg     PT_LOAD FLAGS(0x00800005);  /* ZXVL_PFLAGS_ENTRY: PF_X|PF_R + bit23 */
+    nucleus_text  PT_LOAD FLAGS(0x00000005);  /* PF_X|PF_R  — kernel .text             */
+    nucleus_ro    PT_LOAD FLAGS(0x00000004);  /* PF_R       — kernel .rodata            */
+    nucleus_data  PT_LOAD FLAGS(0x00000006);  /* PF_R|PF_W  — kernel .data             */
+    nucleus_bss   PT_LOAD FLAGS(0x00000006);  /* PF_R|PF_W  — kernel .bss              */
+    lock_seg      PT_LOAD FLAGS(0x00100006);  /* ZXVL_PFLAGS_LOCK:  PF_R|PF_W + bit20 */
+    checksums_seg PT_LOAD FLAGS(0x00200004);  /* ZXVL_PFLAGS_CKSUM: PF_R + bit21      */
+}
+
+nucleus_vma_base = 0xFFFF800000100000;
+
+SECTIONS {
+    . = nucleus_vma_base;
+    __zx_vma_start = .;
+
+    .text.handshake : ALIGN(8) {
+        KEEP(*(.text.handshake))
+    } :hs_seg
+
+    .text.entry : ALIGN(8) {
+        KEEP(*(.text.__zx_start_kernel64))
+    } :entry_seg
+
+    .text : ALIGN(8) {
+        *(.text .text.*)
+    } :nucleus_text
+
+    .rodata : ALIGN(4096) {
+        __rodata_start = .;
+        *(.rodata .rodata.*)
+        __rodata_end = .;
+    } :nucleus_ro
+
+    .data : ALIGN(4096) {
+        __data_start = .;
+        *(.data .data.*)
+        __data_end = .;
+    } :nucleus_data
+
+    .bss : ALIGN(4096) {
+        __bss_start = .;
+        *(COMMON)
+        *(.bss .bss.*)
+        __bss_end = .;
+    } :nucleus_bss
+
+    .zxfl_lock : ALIGN(4096) {
+        LONG(0xCCBBCC35)
+        LONG(0x5A58464C)
+        . += 0x1000 - 8;
+        LONG(0xE5664311)
+    } :lock_seg
+
+    .zxvl_checksums : ALIGN(4096) {
+        KEEP(*(.zxvl_checksums))
+    } :checksums_seg
+
+    __zx_vma_end = .;
+
+    /DISCARD/ : { *(.comment) *(.eh_frame) *(.note.GNU-stack) }
+}
+```
+
+- zxvl_cksum.c - SHA256 kernel checksum
+
+``` c
+#include "zxvl.h"
+
+__attribute__((section(".zxvl_checksums"), used))
+zxvl_checksum_table_t zxvl_kernel_checksum_table = { 0 };
+```
+
+- sysres.conf - dasdload control file
+
+&nbsp;
+
+    sysres 3390-2 * core.zxfoundationloader00.sys
+    core.zxfoundationloader01.sys SEQ core.zxfoundationloader01.sys TRK 5 0 0 PS FB 4096 4096 0
+    core.zxfoundation.nucleus SEQ core.zxfoundation.nucleus TRK 300 0 0 PS FB 4096 4096 0
+    etc.zxfoundation.parm SEQ etc.zxfoundation.parm TRK 2 0 0 PS FB 4096 4096 0
+
+- hercules.conf - hercules script
+
+&nbsp;
+
+    ARCHLVL      z/Arch
+    CPUSERIAL    000666
+    CPUMODEL     $(z16)
+    LPARNUM      1
+    LPARNAME     ZXF
+    PLANT        ZZ
+    MANUFACTURER IBM
+    MAINSIZE     512M
+    XPNDSIZE     0
+    NUMCPU       4
+    MAXCPU       8
+    DIAG8CMD     ENABLE
+    CNSLPORT     3270
+    0009         3215-C  /
+    001C         SYSG
+    001F         3270
+
+    0100        3390    sysres.3390
+
+    IPL 0100
+
+- etc.zxfoundation.parm - parameter file (cmdline)
+
+&nbsp;
+
+    syssize=512M sysmodule=
+
+## Using with C++ (modules)
+
+ZXFL is capable of loading a C++ kernel (like most other loader). With traditional C++, ZXFL protocol (the C header) can easily be adapted. For C++ modules, the protocol [module](https://github.com/assembler-0/ZXFoundation/blob/master/arch/s390x/init/zxfl/protocol.cxxm) is not entirely freestanding-compatible, and depends on several simple dependencies:
+
+- ZXFoundation fundamental types (rust-like) (can be trivially replaced by standard C/C++ types)
+- STFLE_MAX_DWORDS (just a number)
+- CONFIG_ZX_MAX_CPUS (your configuration)
+- SHA256_DIGEST_SIZE (also a number)
+- string_view-like implementation (can be swapped out for `const char*`)
+
+Though, is possible to adapt/hard-code for your kernel.
+
+## Environment and Compilation (from scratch)
+
+``` sh
+# navigate to your source dir
+# copy your ZXFoundation binaries here
+
+# get header files
+wget https://raw.githubusercontent.com/assembler-0/ZXFoundation/refs/heads/master/arch/s390x/init/zxfl/include/arch/s390x/init/zxfl/zxfl.h
+wget https://raw.githubusercontent.com/assembler-0/ZXFoundation/refs/heads/master/arch/s390x/init/zxfl/include/arch/s390x/init/zxfl/zxvl.h
+
+# make sure your sources are here
+
+export CFLAGS="-ffreestanding -nostdlib -msoft-float -mno-vx -m64 -march=z13 -mtune=z13 \
+        -pipe -fno-stack-protector -std=c23 -mzarch -static-libgcc -O2 -g0 -I."
+export LDFLAGS="-nostdlib -static --no-dynamic-linker -ztext -zmax-page-size=0x1000 \
+         --no-pie -g -melf64_s390"
+
+# It is possible to use clang with target triple s390x-{unknown-none,linux-gnu}-elf
+s390x-ibm-linux-gnu-gcc $CFLAGS -c head64.S     -o head64.o
+s390x-ibm-linux-gnu-gcc $CFLAGS -c main.c       -o main.o
+s390x-ibm-linux-gnu-gcc $CFLAGS -c zxvl_cksum.c -o zxvl_cksum.o
+s390x-ibm-linux-gnu-ld  -T link.ld $LDFLAGS head64.o main.o zxvl_cksum.o \
+        -o core.zxfoundation.nucleus
+
+# Embed checksums required by the ZXFL ZXVerifiedLoad protocol
+./zxsign core.zxfoundation.nucleus
+
+# Build the DASD image
+dasdload -z sysres.conf sysres.3390
+```
+
+The output is `sysres.3390`, a CKD 3390 disk image bootable under Hercules.
+
+## Running
+
+    $ hercules -f hercules.cnf
+
+## Further Reading
+
+For loader internals, boot protocol layout, memory map, and kernel subsystems see the [full documentation](https://assembler-0.github.io/ZXFoundation).

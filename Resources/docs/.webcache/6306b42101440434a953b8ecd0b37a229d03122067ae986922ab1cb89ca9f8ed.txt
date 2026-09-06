@@ -1,0 +1,146 @@
+## Introduction
+
+Intel has produced a number of graphics chips that are integrated into their chipsets and processors. Most notably modern Intel processors often come with Intel HD graphics chips. Wikipedia contains [a list](https://en.wikipedia.org/wiki/List_of_Intel_graphics_processing_units) of all those chips. This page explains how to drive a subset of those cards. In particular it explains how to change the graphics resolution and how to manage the hardware provided frame buffers. It does not yet explain how the GPU can be used to accelerate 2D and 3D graphics operations via shader programs.
+
+### Prerequisites
+
+Before trying to implement a native driver for your OS, make sure you understand the basics first.
+
+- Read the [VGA Hardware](https://wiki.osdev.org/VGA_Hardware "VGA Hardware") page. Especially the part about display timings it is still relevant for modern graphics cards. You should know what horizontal/vertical active, total, sync start/end and blanking start/end values mean; and what a pixel clock is.
+- You need to be able to access [PCI](https://wiki.osdev.org/PCI "PCI") configuration space and find MMIO regions that are determined by BARs.
+
+## Getting EDID via DDC
+
+In order to determine the graphics modes that are supported on a connected monitor it is necessary to parse the monitor's [EDID](https://wiki.osdev.org/EDID "EDID") information. EDID is obtained via [DDC](https://wiki.osdev.org/index.php?title=DDC&action=edit&redlink=1 "DDC (page does not exist)") which is a simple protocol over [I²C](https://wiki.osdev.org/I²C "I²C"). Intel graphics chips provide a relative straightforward way to interact with the I²C bus.
+
+Before using the I²C bus a connector has to be selected in the `GMBUS0` register. This register also sets the bus rate. 100 kHz is a conservative default choice.
+
+In order to send a packet to the bus the following steps suffice:
+
+- Write the first 4 bytes of data to the `GMBUS3` register.
+- Write the destination address, the byte count and the software-ready bit to the `GMBUS1` register. The simplest way to use the bus is to program the bus cycle selects bits so that no index or STOP is generated and the bus just enters a wait state after the packet is transferred.
+- Wait until the hardware-ready bit in `GMBUS2` is set. Optionally an IRQ can be enabled to avoid busy waiting.
+- Write the next 4 bytes to `GMBUS3` and wait for hardware-ready in `GMBUS2`. Repeat this last step until all data is transferred.
+
+Receiving a packet works as follows:
+
+- Write the destination address, the byte count, the software-ready bit and the direction bit to the `GMBUS1` register.
+- Wait for hardware-ready in `GMBUS2`. Read 4 bytes of data from `GMBUS3`. Repeat this last step until all data is transferred.
+
+After a packet was sent or received the driver should wait until the bus enters a wait state by checking for the wait-phase bit in `GMBUS2`. If the transaction (possibly consisting of multiple packets) is complete a STOP condition should be generated via the bus cycle select bit in `GMBUS1`.
+
+## Generation 4 GMA desktop chips (aka Intel G45)
+
+The G45 is a PCI-Express based graphics chip that was introduced by Intel in 2008.
+
+### Architecture overview
+
+G45 chips appear as devices on the PCI bus. They are identified a vendor ID of 0x8086 and a model-specific device ID. The PCI configuration space is used to access two BARs: BAR 0 points to a MMIO region that contains all registers of the card. BAR 2 allows access to the graphics memory.
+
+The chip supports two independent graphics pipelines. Each pipeline is made of the following:
+
+- A DPLL (digital phase-locked loop) that generates the pixel clock.
+- A display pipe that is responsible for setting the display timings.
+- A primary plane and secondary planes. The primary plane supplies the primary framebuffer to the display pipe. Secondary planes are mostly used to implement hardware mouse cursors.
+
+Both pipelines share a set of connectors that are used to attach monitors to the card. G45 supports DAC (digital-to-analog converter, i.e. CRTs via the usual VGA plug) connectors, SDVO (serial digital video out) connectors, LVDS (low-voltage differential signaling) connectors and TV output. SDVO is an internal bus that is usually transcoded to HDMI or DisplayPort. LVDS is used to connect integrated flat panels to the graphics chip of laptops.
+
+### Documentation
+
+The G45's registers are documented by Intel. However Intel's functional descriptions are quite sparse. The Linux kernel's i915 driver is often a good reference.
+
+- Intel's documentation is available [here](https://01.org/linuxgraphics/documentation/hardware-specification-prms). We are primarily interested in the [G45: Volume Three: Display Register](https://01.org/sites/default/files/documentation/g45_vol_3_register_0_0.pdf) that describes the display registers. [G45: Volume 1a Graphics Core](https://01.org/sites/default/files/documentation/g45_vol_1a_core_updated.pdf) documents the graphics memory interface and the PCI configuration space. The [G35: Volume Three: Display Registers](https://01.org/sites/default/files/documentation/965_g35_vol_3_display_registers_updated.pdf) contains a few registers that are undocumented in the G45 manual but still must be programmed by the driver.
+- The [i915 driver](http://lxr.free-electrons.com/source/drivers/gpu/drm/i915) of the Linux kernel. Almost all of the mode setting logic is in [intel_display.c](https://elixir.bootlin.com/linux/latest/source/drivers/gpu/drm/i915/display/intel_display.c).
+
+### Mode setting
+
+Mode setting proceeds in two phases: First the display hardware needs to be deactivated. After that it can be reprogrammed and enabled again in another mode.
+
+More specifically disabling the display hardware consists of the following steps:
+
+- Disable all output connectors.
+- Disable all planes. This includes the primary plane and cursor planes.
+- Disable the display pipe.
+- Disable the DPLL.
+- Disable the legacy VGA emulation.
+
+Enabling the display reverses this sequence:
+
+- Program the DPLL to generate a suitable pixel clock and enable it. Wait for the clock to stabilize.
+- Setup the display timings of your desired mode and enable the display pipe.
+- Set a framebuffer address and stride and enable the primary plane and all secondary planes that you wish to use.
+- Enable the output connectors.
+
+#### Programming the DPLL
+
+Before a display pipe can be enabled its DPLL has to be programmed to generate a suitable pixel clock for the desired graphics mode. The DPLL clock is determined by five integer variables called N, M1, M2, P1 and P2. The relation between the DPLL clock and those variables is given by the formula:
+
+`DPLL = (reference frequency * (5 * (M1 - 2) + (M2 - 2)) / N) / (P1 * P2)`
+
+There are limits on various terms of this formula. Let `M = 5 * (M1 - 2) + (M2 - 2)`, `P = P1 * P2` and `VCO = reference frequency * (5 * (M1 - 2) + (M2 - 2)) / N`. Then M1 and M2 need to be chosen so that `M1 < M2`. The following table lists the G45's limits on DPLL variables:
+
+|          |             |               |     |     |     |     |     |     |     |
+|----------|-------------|---------------|-----|-----|-----|-----|-----|-----|-----|
+| Variable | DPLL        | VCO           | N   | M   | M1  | M2  | P   | P1  | P2  |
+| Min      | 25,000 kHz  | 1,750,000 kHz | 1   | 104 | 17  | 5   | 10  | 1   | 10  |
+| Max      | 270,000 kHz | 3,500,000 kHz | 4   | 138 | 23  | 11  | 30  | 3   | 10  |
+
+The reference frequency is 96,000 kHz for DAC and SDVO output.
+
+The resulting pixel clock is the quotient between the DPLL clock and a pixel multiplier. The pixel multiplier inserts padding into the SDVO output to ensure that its DPLL always operates at a frequency between 100 MHz and 200 MHz. Note that the pixel multiplier also applies to DAC output.
+
+In order to determine the DPLL parameters one has to:
+
+- Take the desired pixel clock as input.
+- Chose a pixel multiplier so that the pixel clock times this multiplier is in the 100 MHz to 200 MHz range. This value is the required DPLL clock.
+- Compute N, M1, M2, P1 and P2 from the DPLL clock. This can be done by iterating over all possible N, M1, M2, P1 and P2 values and checking if each combination falls into the allowed limits.
+
+After that the DPLL can be programmed. This is done by programming the N, M1 and M2 values in `FPA0` register and programming the P1 and P2 values and enabling the DPLL in the `DPLLA_CTRL` register. Ensure to set the VGA disable bit and select SDVO/DAC mode. The driver should issue a 150μs delay after enabling the DPLL to allow the clock to stabilize.
+
+**Reference implementations**
+
+- Linux i915 driver (version 4.9): `g4x_find_best_dpll()` in [intel_display.c](http://lxr.free-electrons.com/source/drivers/gpu/drm/i915/intel_display.c) computes the N, M1, M2, P1 and P2 values for a given DPLL clock. `i9xx_compute_dpll()` determines the DPLL register values. `i9xx_set_pll_dividers()` and `i9xx_enable_pll()` write those values to the registers.
+
+#### Programming the display pipes
+
+Before a display pipe can be enabled the display timings have to be programmed in the `HTOTAL_A`, `VTOTAL_A`, `HBLANK_A`, `VBLANK_A`, `HSYNC_A`, `VSYNC_A` and `PIPEASRC` registers. The values of the `PIPEASRC` register should usually match the horizontal and vertical active values.
+
+Display pipes can be enabled and disabled via their `PIPEACONF` registers.
+
+Pipes should only be enabled while their DPLLs are enabled and warmed up.
+
+**Reference implementations**
+
+- Linux i915 driver (version 4.9): `intel_set_pipe_timings()` and `intel_set_pipe_src_size()` in [intel_display.c](http://lxr.free-electrons.com/source/drivers/gpu/drm/i915/intel_display.c) program the display timings. `i9xx_set_pipeconf()` and `intel_enable_pipe()` enable the pipe.
+
+#### Handling planes
+
+The `DSPASURF` register control the address of the primary framebuffer. The stride of the buffer has to be programmed in the `DSPASTRIDE` register. G45 requires strides to be multiples of 64. The `DSPALINOFF` register is usually set to zero.
+
+The primary plane can be enabled and disabled via the `DSPACNTR` register. This register also sets the pixel format.
+
+Planes should only be enabled while the pipes they are assigned to are enabled.
+
+#### Enabling and disabling connectors
+
+The analog output connector can be enabled and disabled via the `ADPA` register. This register also specifies the pipe that the connector uses.
+
+Note that connectors must only be enabled or disabled while their respective pipes are enabled.
+
+#### Disabling the legacy VGA emulation
+
+The VGA emulation is controlled via the `VGACNTRL` register. For non-VGA modes the `VGA Display Disable` bit should be set. Likewise the `VGA Centering Enable` bits should be set to 0.
+
+## Intel HD Graphics
+
+See [Intel HD Graphics](https://wiki.osdev.org/Intel_HD_Graphics "Intel HD Graphics").
+
+## Debugging tips
+
+- While debugging a display driver logging messages to the screen is often not possible. Use [Serial Ports](https://wiki.osdev.org/Serial_Ports "Serial Ports") instead.
+- Because there are no emulators that emulate Intel graphics cards you have to test your driver on a physical machine. Make sure that you can recompile your driver and reboot your test machine with little effort. Things like [PXE](https://wiki.osdev.org/PXE "PXE") might help with that.
+- Read the initial values of each register and ensure you understand them before you try to change the registers.
+
+## Implementations in hobby OSs
+
+- [managarm](https://github.com/avdgrinten/managarm) (as of commit 0e9d37c) has a G45 mode setting driver in [drivers/gfx/intel](https://github.com/avdgrinten/managarm/blob/master/drivers/gfx/intel/src/main.cpp). Note that the code makes heavy use of C++ features, particularly operator overloading of the register classes.

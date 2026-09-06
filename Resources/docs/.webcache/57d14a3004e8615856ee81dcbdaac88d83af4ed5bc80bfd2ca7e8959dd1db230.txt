@@ -1,0 +1,195 @@
+The S/390 architecture is one of the most interesting ones for kernels, since it involves concepts not seen on standard small computer architectures, such as a dedicated processor for I/O or failure-prone checks.
+
+## Pre-requisites
+
+- [Hercules](https://hercules-390.github.io/html/) emulator
+- [Hercules Github Repo](https://github.com/hercules-390/hyperion)
+- [GCC ESA S/390 Cross-Compiler](https://wiki.osdev.org/GCC_Cross-Compiler "GCC Cross-Compiler") (s390-linux target)
+
+## Sources
+
+The [Flatboot](https://github.com/udos-project/flatboot) bootloader is an easy starting point for starting OS-development on the S/390. It partially-implements the [stivale](https://wiki.osdev.org/Stivale "Stivale") protocol (but it is not fully compliant). Supports ELF loading and BIN loading as well. In general; in the mainframe world having a general purpouse bootloader is not practical, since most IPL bootloaders are dependant on the device they loaded on. Flatboot wastes precious amounts of memory (64KB) which is a lot on the S/360 and the S/370. But it provides an easy starting point for newcomers.
+
+### kernel.c
+
+The central controlling part of the system (runs in an LPAR for any S/390 or z/Arch system):
+
+``` c
+// Source: https://github.com/limine-bootloader/limine-barebones/blob/master/stivale2-barebones/kernel/kernel.c
+#include <stdint.h>
+#include <stddef.h>
+
+#define _STIVALE2_SPLIT_64_FORCE 1
+#include <stivale2.h>
+
+static uint8_t stack[8192];
+static struct stivale2_header_tag_terminal terminal_hdr_tag = {
+    .tag = {
+        .identifier = STIVALE2_HEADER_TAG_TERMINAL_ID,
+        .next = 0
+    },
+    .flags = 0
+};
+
+__attribute__((section(".stivale2hdr"), used))
+static struct stivale2_header stivale_hdr = {
+    .entry_point = 0,
+    .stack = (uintptr_t)stack + sizeof(stack),
+    .flags = (1 << 1) | (1 << 2),
+    .tags = (uintptr_t)&terminal_hdr_tag
+};
+
+// We will now write a helper function which will allow us to scan for tags
+// that we want FROM the bootloader (structure tags).
+void *stivale2_get_tag(struct stivale2_struct *stivale2_struct, uint64_t id) {
+    struct stivale2_tag *current_tag = (void *)stivale2_struct->tags;
+    for (;;) {
+        // If the tag pointer is NULL (end of linked list), we did not find
+        // the tag. Return NULL to signal this.
+        if (current_tag == NULL) {
+            return NULL;
+        }
+
+        // Check whether the identifier matches. If it does, return a pointer
+        // to the matching tag.
+        if (current_tag->identifier == id) {
+            return current_tag;
+        }
+
+        // Get a pointer to the next tag in the linked list and repeat.
+        current_tag = (void *)current_tag->next;
+    }
+}
+
+// The following will be our kernel's entry point.
+void _start(struct stivale2_struct *stivale2_struct) {
+    // Let's get the terminal structure tag from the bootloader.
+    struct stivale2_struct_tag_terminal *term_str_tag;
+    term_str_tag = stivale2_get_tag(stivale2_struct, STIVALE2_STRUCT_TAG_TERMINAL_ID);
+
+    // Check if the tag was actually found.
+    if (term_str_tag == NULL) {
+        // It wasn't found, just hang...
+        for (;;);
+    }
+
+    // Let's get the address of the terminal write function.
+    void *term_write_ptr = (void *)term_str_tag->term_write;
+
+    // Now, let's assign this pointer to a function pointer which
+    // matches the prototype described in the stivale2 specification for
+    // the stivale2_term_write function.
+    void (*term_write)(const char *string, size_t length) = term_write_ptr;
+    term_write("Hello World\n", 13);
+    for (;;);
+}
+```
+
+### linker.ld
+
+The kernel needs to be loaded above 0x20000 due to Flatboot's strict no-low-64K rule for kernels.
+
+``` text
+ENTRY(_start);
+SECTIONS {
+    . = 0x20000;
+
+    .text : {
+        *(.text);
+        *(.text.*);
+        *(.stivale2hdr*);
+    }
+    
+    .rodata : {
+        *(.rodata);
+        *(.rodata.*);
+    }
+
+    .data : {
+        *(.data);
+        *(.data.*);
+    }
+
+    .bss : ALIGN(4K) {
+        *(COMMON);
+        *(.bss);
+        *(.bss.*);
+    }
+}
+```
+
+### hercules.cnf
+
+The configuration file for Hercules, enables diagnostic messages, sets the architecture mode to ESA S/390 and uses the IBM-1047 codepage (EBCDIC)
+
+``` text
+MAINSIZE             32
+ARCHMODE             ESA/390
+CPUSERIAL            000611
+CPUMODEL             4381
+DIAG8CMD             ENABLE
+NUMCPU               1 
+PANRATE              MEDIUM
+PGMPRDOS             RESTRICTED
+CODEPAGE             819/1047
+
+# This is the IPL disk and can be any address
+01b9      3390       flat00.cckd
+```
+
+### dasd.txt
+
+Describe the files in the DASD disk, this is needed since [ZDSFS](https://wiki.osdev.org/ZDSFS "ZDSFS") has an unique way to order datasets (files) - which includes support for text-files (70-columns) or binaries.
+
+``` text
+FLAT00       3390-1 * stage1.txt
+STAGE2.BIN   SEQ stage2.bin          TRK 10 1 0 PS FB 1 18452
+SYSVTOC      VTOC                    CYL  2
+KERNEL.ELF   SEQ kernel              CYL  1 1 0 PS FB 1 18452
+```
+
+## Running the mainframe
+
+``` bash
+#!/usr/bin/bash
+
+# Download headers required for the stivale2 structs
+rm stivale2.h
+wget https://raw.githubusercontent.com/stivale/stivale/master/stivale2.h
+
+# Download the disk-dependant IPL
+wget https://github.com/udos-project/flatboot/releases/download/0.1.2/stage1_S390.txt
+mv stage1_S390.txt stage1.txt
+
+# Download the second stage bootloader
+wget https://github.com/udos-project/flatboot/releases/download/0.1.2/stage2_S390.bin
+mv stage2_S390.bin stage2.bin
+
+CC=s390-linux-gcc
+CFLAGS="-fexec-charset=IBM-1047 -fno-stack-protector -pipe -m31 -ffreestanding -mpacked-stack -I. -O2 -g"
+LDFLAGS="-Wl,-static,--no-dynamic-linker,-ztext -nostdlib -z max-page-size=0x1000 -static -fno-pic -fno-pie -g"
+
+$CC $CFLAGS -c kernel.c -o kernel.o
+$CC $LDFLAGS $CFLAGS -Tlinker.ld kernel.o -o kernel
+
+# Create the DASD disk
+dasdload -bz2 dasd.txt flat00.cckd
+
+# Fire up the emulator and concat to a log file
+hercules -f hercules.cnf >hercules.log
+```
+
+Once the hercules screen appears, the kernel can be loaded with:
+
+``` text
+IPL 1B9
+```
+
+## What's next?
+
+- Use MVS 3.8/tk4 in hercules to know how a mainframe operates
+- Read [this](https://udos-project.github.io/)
+- Catch program exceptions
+- Get the CSS to be able to do read/write operations on devices
+- There is no framebuffer to speak of, no GUI, only terminals - so implement a [3270](https://wiki.osdev.org/3270 "3270") (Graphical terminal) driver or 2703 (Telnet)
+- Implement multiprocessing

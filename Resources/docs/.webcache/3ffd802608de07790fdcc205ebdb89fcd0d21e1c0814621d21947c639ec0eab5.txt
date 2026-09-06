@@ -1,0 +1,151 @@
+The **Stack Smashing Protector** (**SSP**) compiler feature helps detect stack buffer overrun by aborting if a secret value on the stack is changed. This serves a dual purpose in making the occurrence of such bugs visible and as exploit mitigation against return-oriented programming. SSP merely detects stack buffer overruns, they are not prevented. The detection can be beaten by preparing the input such that the stack canary is overwritten with the correct value and thus does not offer perfect protection. The stack canary is native word sized and if chosen randomly, an attacker will have to guess the right value among 2^32 or 2^64 combinations (and revealing the bug if the guess is wrong), or resort to clever means of determining it.
+
+## Description
+
+Compilers implement this feature by selecting appropriate functions, storing the stack canary during the function prologue, checking the value in the epilogue, and invoking a failure handler if it was changed. For instance, consider the code:
+
+``` c
+void foo(const char* str)
+{
+    char buffer[16];
+    strcpy(buffer, str);
+}
+```
+
+SSP automatically illustratively transforms that code into this:
+
+``` c
+/* Note how buffer overruns are undefined behavior and the compilers tend to
+   optimize these checks away if you wrote them yourself, this only works
+   robustly because the compiler did it itself. */
+extern uintptr_t __stack_chk_guard;
+noreturn void __stack_chk_fail(void);
+void foo(const char* str)
+{
+    uintptr_t canary = __stack_chk_guard;
+    char buffer[16];
+    strcpy(buffer, str);
+    if ( (canary = canary ^ __stack_chk_guard) != 0 )
+        __stack_chk_fail();
+}
+```
+
+Note how the secret value is stored in a global variable (initialized at program load time) and is copied into the stack frame, and how it is safely erased from the stack as part of the check. Since stacks grow downwards on many architectures, the canary gets overwritten whenever input to strcpy is more than 16 characters. The caller return pointer exploited in return-oriented programming attacks is not accessed until after the value was validated, thus preventing such attacks.
+
+The detection method works because it is impossible to get the correct value via trial and error. Since one incorrect canary value prevents further alterations, an attacker cannot keep trying until the correct value is found. In the example above, if the canary contained a zero byte, it would be impossible to guess its existence and position by trial and error. This forces the attacker to either not attack, or be detected and be unable to alter the stack any further. This does not mean that the buffer cannot be exploited. For example, if 16 bytes are written to the buffer above and it is not null-terminated, unintended behaviour can still take place later on during program execution.
+
+Note how there is only a single protective value, not every variable is protected in this manner. One heuristic ordering often used, with the stack growing downwards, is first storing the canary, then buffers (that might overflow into each other) and finally all the small variables unaffected by overruns. This is based on the idea that it is generally less dangerous if arrays are modified, compared to variables that hold flags, pointers and function pointers, which may more seriously alter execution.
+
+Some compilers randomize the order of stack variables and randomize the stack frame layout, which further complicates determining the right input with the intended malicious effect.
+
+## Usage
+
+Compilers such as [GCC](https://wiki.osdev.org/GCC "GCC") enable this feature if requested through compiler options, or if the compiler supplier enabled it by default. It is worth considering enabling it by default if your operating system is security conscious and you provide support. It is possible to use it in your entire operating system (even kernel and standard library, perhaps excluding ports with really poor code quality). A feature enabled with a `-ffoo` option can be disabled with the `-fno-foo` counterpart. Several options exist that provide different variants of SSP:
+
+**-fstack-protector**: Check for stack smashing in functions with vulnerable objects. This includes functions with buffers larger than 8 bytes or calls to alloca.
+
+**-fstack-protector-strong**: Like `-fstack-protector`, but also includes functions with local arrays or references to local frame addresses.
+
+**-fstack-protector-all**: Check for stack smashing in every function.
+
+Some operating systems have extended their compiler with more relevant options:
+
+**-fstack-shuffle**: (Found in OpenBSD) Randomize the order of stack variables at compile time. This helps find bugs.
+
+When you activate the feature, the compiler will attempt to link in libssp and libssp_nonshared (if statically linked) for run-time support. This is disabled if you pass `-nostdlib` as you do when linking a kernel and you'll need to supply your own implementation. For user-space, you have two options:
+
+- Supply your own implementation in libc (so libc can take advantage of the feature) and install empty libssp and libssp_nonshared libraries (or change your toolchain to not use them).
+- Use the libssp implementation that comes with GCC.
+
+It should also be noted that with the optimisations enabled via `-O<n>` in GCC, the compiler may or may not "inline" a function. If a function has been inlined, then **stack smash protection will not work for that function.** To prevent this, one must use the `noinline` attribute like so:
+
+``` c
+void __attribute__ ((noinline)) foo( /* args */ )
+{
+    // Code goes here
+}
+```
+
+Disabling inlining in GCC can be done with the `-fno-inline` compile flag, however, that will not inline functions with the `inline` attribute. The `-fno-inline-functions` will not inline functions optimised with `-O<n>`; but that has been proven ineffective for GCC versions 3.4.5 and over ([see bug report](https://gcc.gnu.org/bugzilla/show_bug.cgi?id=28120)).
+
+If any tests do not work when trying to trip the protective mechanism, this may be the reason why it does not work!
+
+## Implementation
+
+Run-time support needs only two components: A global variable and a check failure handler. For instance, a minimal implementation could be:
+
+``` c
+#include <stdint.h>
+#include <stdlib.h>
+
+#if UINT32_MAX == UINTPTR_MAX
+#define STACK_CHK_GUARD 0xe2dee396
+#else
+#define STACK_CHK_GUARD 0x595e9fbd94fda766
+#endif
+
+uintptr_t __stack_chk_guard = STACK_CHK_GUARD;
+
+__attribute__((noreturn))
+void __stack_chk_fail(void)
+{
+#if __STDC_HOSTED__
+    abort();
+#elif __is_myos_kernel
+    panic("Stack smashing detected");
+#endif
+}
+```
+
+Note how the secret guard value is hard-coded rather than being decided during program load. You should have the program loader (the bootloader in the case of the kernel) randomize the values. You can do this by putting the guard value in a special segment that the loader knows to randomize. The numbers shown here are not special, they are just examples of randomly generated numbers. You can still take advantage of the bug-discovering properties of SSP even if the guard value is not cryptographically secure (unless you anticipate sufficiently obscure bugs that intelligently circumvent SSP).
+
+Alternatively, you could have an early phase in your code that initializes the guard value, perhaps written in assembly or in C but built without stack smash protection. This approach adds code complexity and early phases where language features are not online. You may take such approaches with thread-local storage, errno, paging, GDT, scheduling, and so on, and suddenly a bootstrap is very complex with many dependencies between language features. Once a function built with stack-smashing protection is run, the guard value cannot be changed or a spurious failure will occur.
+
+## Secure Handling
+
+Beware how you implement the stack smash detection handler: This code is only run in cases where the bug was triggered innocently, or where the bug is being exploited maliciously. By now the attacker is assumed to have at least corrupted an unknown amount of this thread's stack. This means the environment is hostile. The stack is currently under your control and none of the new local variables are affected. Note however that the stack smash protection may have occurred from a signal handler or another inopportune time where another thread holds locks to critical standard library state or such. Beware how if pointers to caller stack variables are currently inside the standard library, and using standard library functions accesses that memory, the attacker may control the stack smash detection handler even.
+
+Assuming a handler invocation implies an intelligent exploit is happening, the best course of action is is:
+
+- Eliminate attacker influence.
+- Alert user or system administrator of a potential breach.
+- Diagnose the details of the buffer overrun so the defect can be fixed.
+
+You should assume the worst if you wish to eliminate the attacker influence. The used exploit may well be combined with other exploited vulnerabilities, and a sufficiently skilled attacker may even influence and exploit the actions of the handler. There are many creative ways an attacker could influence the handler or even take advantage of it:
+
+- Pointers to earlier stack variables (now to be considered potentially corrupted) could be stored somewhere and accessed by the functions you use.
+- The handler could be run at a very inopportune time where the process is fragile, perhaps from a signal handler, perhaps the current thread owns non-recursive locks you could deadlock.
+- Printing a stack trace (if at all possible) and other diagnostic information to the stderr file descriptor (which might not even exist in this process, but instead fd 2 is used for another purpose) might result in the output being sent to the attacker. This is imaginable for a webserver, which perhaps includes the stderr contents in an error response. The attacker could learn things this way he isn't supposed to.
+- The thread might be multi-threaded and who knows how that might interact with a thread that is malfunctioning and compromised. It could have pointers to variables on the stack of the compromised thread, and SSP won't help if it accesses those.
+
+Your approach should be to discard the process as soon as possible. Use only async-signal-safe functions, preferably without state that could influence them. Don't write to any standard streams but open the terminal anew or write to the system log. Ensure none of these operations fail (for instance, if the process is in a chroot or out of file descriptors).
+
+The ideal approach is perhaps to have a special system call that does these tasks and invoke it unconditionally and immediately. Kernel code must not trust user-space code or be unsafely influenced by it, so it can be considered safe. It can then stop all threads in the process, investigate where the issue seemed to occur in the process, and alert the user or system administrator appropriately.
+
+## libssp
+
+Alternatively to your own implementation, you can use the implementation that comes with GCC. This means you have to build libssp as part of your toolchain.
+
+**TODO**: I have never built it for osdev purposes before, but I guess that you do `make all-target-libssp` and `make install-target-libssp` like with libstdc++. It's probable that depends on libc for no good reason at all (as the gcc developers put fortify source functions in it and it wants to check whether they work).
+
+The libssp approach is to have an initialization function marked as attribute constructor, which is run among the global constructors during process startup. This means SSP isn't properly online during the early parts of process initialization (but perhaps that's not a problem if all those C stack frames are gone before that point and the default null guard value was used until now). The startup code then proceeds to attempt opening `/dev/urandom` which might fail if you are in a chroot, are out of file descriptors, or your system doesn't have such a file (perhaps by design). If it fails, it falls back on a reasonable but known value. You can read the [libssp initialization code here](https://gcc.gnu.org/viewcvs/gcc/trunk/libssp/ssp.c?view=markup#l67).
+
+The libssp `__stack_chk_fail` implementation tries to open the terminal, construct an error message with alloca, then use write to output it. If the terminal isn't accessible, it tries the system log. It then attempts to destroy the process by invoking `__builtin_trap()`, writing a 0 to the int at -1 (which is also undefined behavior and an unaligned pointer, in addition to probably crashing), and finally attempting to `_exit().` This exiting strategy doesn't feel super robust. You can read the [libssp handler code here](https://gcc.gnu.org/viewcvs/gcc/trunk/libssp/ssp.c?view=markup#l96).
+
+Read the secure handling section above and read the code, then decide whether you want this linked into your programs, or whether it is cleaner to make your own implementation. You can also modify this code as part of your [OS Specific Toolchain](https://wiki.osdev.org/OS_Specific_Toolchain "OS Specific Toolchain").
+
+## See Also
+
+### Articles
+
+- [Undefined Behavior Sanitization](https://wiki.osdev.org/Undefined_Behavior_Sanitization "Undefined Behavior Sanitization")
+
+### Threads
+
+- [GCC stack protector - false positive?](http://forum.osdev.org/viewtopic.php?t=28571 "topic:28571")
+
+### External Links
+
+- [GCC optimization options documentation](https://gcc.gnu.org/onlinedocs/gcc/Optimize-Options.html) in which `-fstack-protector` is detailed
+- [GCC extension for protecting applications from stack-smashing attacks](http://www.trl.ibm.com/projects/security/ssp/)
+- [Buffer overflow protection](https://wikipedia.org/wiki/Buffer_overflow_protection "wikipedia:Buffer overflow protection") on Wikipedia

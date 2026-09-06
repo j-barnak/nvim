@@ -1,0 +1,283 @@
+|                                                                                                                                    |
+|------------------------------------------------------------------------------------------------------------------------------------|
+| This page or section refers to its readers or editors using I , my , we or us . It should be edited to be in an encyclopedic tone. |
+
+This article explains how z/Architecture systems perform **initial program loading** (IPL) and how an operating-system developer prepares bootable code on channel-attached storage. Architectural behavior described here is taken from the IBM *Principles of Operation* (SA22-7832, Thirteenth Edition). For CCW structure, ORB layout, and post-IPL I/O, see [CCW](https://wiki.osdev.org/index.php?title=CCW&action=edit&redlink=1 "CCW (page does not exist)").
+
+*Derived from IBM z/Architecture Principles of Operation (SA22-7832).*
+
+## Overview
+
+Initial program loading (IPL) is the architecturally defined manual procedure that reads a program from a designated I/O device and starts CPU execution under a new program status word (PSW).
+
+There are two IPL types:
+
+| Type              | Availability               | Typical osdev use                                        |
+|-------------------|----------------------------|----------------------------------------------------------|
+| CCW-type IPL      | All machine configurations | Boot from DASD or tape via channel command words         |
+| List-directed IPL | Model-dependent            | Console-entered parameters; devices not accessed by CCWs |
+
+This article focuses on **CCW-type IPL**, used for classic DASD and tape paths on real hardware, Hercules, and QEMU.
+
+## Initiating CCW-type IPL
+
+CCW-type IPL is started manually:
+
+1.  Set the **load-unit-address controls** to the four-digit hexadecimal device number of the IPL device.
+2.  Activate the **load-clear** or **load-normal** key.
+
+When the **alternate-subchannel-set-IPL-device** facility is installed, an additional hexadecimal digit may select the subchannel set.
+
+### Reset behavior
+
+| Key         | Reset performed                                                                                                                                                          |
+|-------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| load-clear  | Clear reset on the entire configuration                                                                                                                                  |
+| load-normal | Initial CPU reset on the activating CPU (or lowest-numbered online primary CPU on some models), CPU reset propagated to all other CPUs, subsystem reset on the remainder |
+
+When the **configuration-z/Architecture-architectural-mode** (CZAM) facility is **not** installed, either key sets architectural mode to ESA/390 (or ESA/390-compatibility mode). When CZAM **is** installed, architectural mode is unchanged.
+
+### Load state
+
+After reset, the affected CPU enters the **load state**. The **load indicator** is on while the CPU remains in load state.
+
+If IPL succeeds, the CPU leaves load state, the load indicator turns off, and execution continues under the PSW loaded from absolute storage. If IPL fails, the CPU stays in load state and absolute locations 0–7 are unpredictable.
+
+## What the channel subsystem does
+
+After reset, the channel subsystem initiates a read from the device designated by the load-unit-address controls. Architecturally this is equivalent to executing **START SUBCHANNEL** with:
+
+- The subchannel for the IPL device number, and
+- A command-mode **operation-request block** (ORB) that is all zeros except **LPM = 0xFF** (all logical paths available).
+
+The channel-program address in the ORB is zero. Full ORB field layout is in [CCW § ORB](https://wiki.osdev.org/index.php?title=CCW&action=edit&redlink=1 "CCW (page does not exist)"); the IPL-specific values are summarized below.
+
+### Implicit IPL ORB
+
+Figure 17-2 in the PoP defines the ORB used during CCW-type IPL:
+
+| ORB word | Bit(s) | Field                   | IPL value         |
+|----------|--------|-------------------------|-------------------|
+| 0        | 0–31   | Interruption parameter  | 0                 |
+| 1        | 0–3    | Subchannel key          | 0                 |
+| 1        | 4      | S (suspend control)     | 0                 |
+| 1        | 5–7    | C, M, Y                 | 0                 |
+| 1        | 8      | F (CCW-format control)  | 0 → format-0 CCWs |
+| 1        | 9–15   | P, I, A, U, B, H, T     | 0                 |
+| 1        | 16–23  | LPM (logical-path mask) | 0xFF              |
+| 1        | 24–30  | L, D, (reserved)        | 0                 |
+| 1        | 31     | X (ORB extension)       | 0                 |
+| 2        | 1–31   | CCW address (CPA)       | 0                 |
+
+Because **F = 0**, all CCWs in the IPL channel program (after the implicit first CCW) are **format-0** with 24-bit data addresses. IDA is still permitted using format-1 IDAWs below the 2 GiB boundary (PoP programming note 7).
+
+### The implicit first CCW
+
+The first CCW is **not** fetched from main storage. The channel subsystem behaves as if a format-0 CCW at absolute address **0** were executed:
+
+| Field                           | IPL value                             |
+|---------------------------------|---------------------------------------|
+| Command                         | Read (modifier bits zero) → code 0x02 |
+| Data address                    | 0                                     |
+| Byte count                      | 24                                    |
+| CC (chain-command)              | 1                                     |
+| SLI (suppress incorrect length) | 1                                     |
+| CD, SKP, PCI, IDA, S, MIDA      | 0                                     |
+
+As a format-0 byte layout (big-endian, 8 bytes):
+
+``` text
+Offset  Field
+------  -----
+0       0x02          command (Read)
+1–3     0x00 0x00 0x00   data address
+4       0x60          flags: CC (0x40) | SLI (0x20)
+5–6     (ignored in format-0)
+7–8     0x00 0x18     count = 24
+```
+
+The read places 24 bytes into absolute storage starting at address 0. The CC flag causes command chaining to the format-0 CCW at absolute address **8** (next doubleword). Further CCWs may occupy address **16**, or a CCW at 16 may use **TIC** (transfer-in-channel) to branch elsewhere. See [TIC and chaining](https://wiki.osdev.org/index.php?title=CCW&action=edit&redlink=1 "CCW (page does not exist)").
+
+During IPL, the **PCI** flag is ignored (PoP §15). Other flags behave normally.
+
+## Lowcore layout after the initial read
+
+The 24-byte IPL record maps into absolute storage as follows:
+
+| Absolute offset | Size | Role                                                                                                 |
+|-----------------|------|------------------------------------------------------------------------------------------------------|
+| 0–7             | 8    | PSW loaded when IPL completes successfully (short-PSW form on z/Architecture when CZAM is installed) |
+| 8–15            | 8    | Optional format-0 CCW \#2 (command-chained from the implicit CCW)                                    |
+| 16–23           | 8    | Optional format-0 CCW \#3 (often a TIC, or another read/control CCW)                                 |
+| 184–187         | 4    | IPL device subsystem ID (stored on successful completion)                                            |
+| 188–191         | 4    | Zeros                                                                                                |
+
+Additional lowcore locations useful immediately after IPL:
+
+| Offset                                       | Content                                                                                                    |
+|----------------------------------------------|------------------------------------------------------------------------------------------------------------|
+| 0xB8 (184 decimal for SCHID in some loaders) | Subchannel ID of the IPL device — used by boot loaders to issue further SSCH operations on the same device |
+
+Exact post-IPL subchannel identification may also be obtained from the subchannel-information block; loaders commonly cache the SCHID from lowcore early.
+
+### Successful completion
+
+When the last CCW of the IPL channel program completes successfully:
+
+- Subsystem ID is stored at absolute 184–187; 188–191 are cleared.
+- A new PSW is loaded from absolute 0–7.
+- No I/O interruption is generated for the final IPL operation (unlike normal SSCH).
+- The IPL subchannel is left as if START SUBCHANNEL had been executed with the implicit ORB above; save the **LPUM** from the SCHIB and use it as ORB LPM until your kernel can verify all channel paths (PoP programming note 6).
+
+### Failure conditions
+
+IPL does not complete when, among other cases (PoP §17):
+
+- No subchannel matches the IPL device number.
+- No channel path to the device is available or operational.
+- The device presents status other than the allowed combinations (channel end, device end, status modifier, busy, etc.).
+- Subchannel status other than PCI is indicated (except some models retry interface-control check on another path).
+- The loaded PSW has an early PSW-format error.
+
+On failure, absolute 0–7 are unpredictable. Subsystem ID at 184–187 is unpredictable unless a subchannel was found.
+
+## z/Architecture short PSW at absolute 0
+
+When CZAM is installed, IPL loads a **short PSW** (8 bytes) from absolute 0–7. Bit 31 of the first word is the **EA** (extended addressing) bit; it must be set for 64-bit addressing. Bit 32 (in the full 64-bit mask after expansion) is **BA**.
+
+Minimal C structure for what you place at the start of your IPL record:
+
+``` c
+/* Short PSW written at absolute 0 for z/Architecture IPL (8 bytes). */
+struct ipl_short_psw {
+    uint32_t mask;   /* bit 31 (EA) must be 1 for 64-bit mode */
+    uint32_t addr;   /* entry point; bit 0 of addr field = 0 */
+};
+
+#define PSW_EA_BIT  0x00000001u  /* bit 31 of mask word in short PSW */
+
+/* Example: enter _start at 0x10000, supervisor, DAT off, 64-bit */
+struct ipl_short_psw boot_psw = {
+    .mask = 0x00000001u,                    /* EA only; expand per your early boot needs */
+    .addr = 0x80000000u | 0x00010000u,      /* 0x80000000 = high bit of address half */
+};
+```
+
+On real z/Architecture, the mask contains additional valid bits (I/O mask, external mask, DAT, wait, problem state, ASC, condition code, program mask). Your first-stage loader normally runs with DAT off, interrupts masked, and EA\|BA set once you switch to 64-bit mode. See your platform's PSW conventions.
+
+## Building a classic IPL record (multi-CCW chain)
+
+Most introductory s390x examples use a 24-byte record: PSW + two chained CCWs.
+
+### Step 1 — PSW at 0
+
+Entry at `0x10000` after the chained read completes:
+
+``` c
+/* Absolute 0x000: PSW — execution starts here when IPL finishes */
+uint8_t abs0_psw[8] = {
+    0x00, 0x00, 0x00, 0x01,   /* mask: EA=1 */
+    0x80, 0x00, 0x00, 0x00,   /* addr high; OR with entry below */
+};
+/* Set bytes 4–7 to 0x80000000 | (entry & 0x7FFFFFFF), e.g. entry 0x10000:
+   0x80, 0x00, 0x01, 0x00 */
+```
+
+### Step 2 — CCW at 8 (read stage-2 block)
+
+``` c
+/* Format-0 CCW at absolute 0x008 */
+struct ccw0 {
+    uint8_t  cmd;
+    uint8_t  addr[3];   /* 24-bit big-endian */
+    uint8_t  flags;     /* CD CC SLI SKP PCI IDA S MIDA from bit 32 */
+    uint8_t  _ign[3];
+    uint16_t count;
+} __attribute__((packed));
+
+#define CCW0_CC  0x40
+#define CCW0_SLI 0x20
+
+struct ccw0 abs8_read = {
+    .cmd   = 0x02,                    /* Read */
+    .addr  = { 0x00, 0x00, 0x10 },    /* data address 0x1000 */
+    .flags = CCW0_CC | CCW0_SLI,     /* chain + suppress length */
+    .count = 512,
+};
+/* Bytes: 02 00 00 10 60 00 00 02 00 */
+```
+
+### Step 3 — CCW at 16 (TIC back, or NOP stop)
+
+A minimal second CCW that simply ends the chain (control NOP, no CC):
+
+``` c
+struct ccw0 abs16_nop = {
+    .cmd   = 0x03,          /* Control, modifiers zero → NOP */
+    .flags = 0,
+    .count = 0,
+};
+```
+
+Alternatively, use **TIC** at 16 to loop on a SEARCH/READ sequence (see [DASD example](https://wiki.osdev.org/index.php?title=CCW&action=edit&redlink=1 "CCW (page does not exist)")).
+
+### Status modifier
+
+If the device sets **status modifier** during IPL, the channel subsystem skips the CCW at *current_address + 16* and uses the CCW at *current_address + 32* instead (PoP programming note 2). Layout your record accordingly if the device may assert modifier.
+
+## Loading your kernel
+
+The classic way is to embeds multiple IPL/CCW chains across multi stages (zIPL) increasing complexity and more hardcoding addresses. It is possible to skip this by having a single entry and then implement a DASD/VTOC driver. This approach is used by the **ZXFoundationLoader**.
+
+1.  Stage 1 itself is the IPL and the DASD/VTOC driver.
+2.  Immediately switch to 64 bit addressing mode
+3.  Perform all further I/O with **format-1 CCWs** and a full DASD/VTOC driver via SSCH.
+
+This reduces bootstrap assembly code used. Rather than assuming that a stage must be present, it finds and validate the requested dataset, e.g. your next stage in the chain.
+
+### IPL and switching addressing mode
+
+ZXFoundation `arch/s390x/init/zxfl/stage1/head.S` places at `.org 0`:
+
+``` asm
+    .section .text.ipl, "ax"
+    .globl __zx_ipl_entry
+    .org 0x0
+
+__zx_ipl_entry:
+    .long   0x00080000
+    .long   0x80000000 + stage1_entry
+
+    .long   0x00000000, 0x00000000
+    .long   0x00000000, 0x00000000
+
+    .section .text, "ax"
+    .globl stage1_entry
+stage1_entry:
+    la      %r7, 2                      /* order: z/Arch + restore 64-bit PSWs */
+    la      %r6, 0                      /* target CPU address = 0 */
+    sigp    %r7, %r6, 0x12              /* SIGP SET ARCHITECTURE */
+    bc      8, .Lswitched64             /* branch if accepted (CC=0) */
+    la      %r7, 1                      /* fallback: z/Arch without PSW restore */
+    sigp    %r7, %r6, 0x12
+.Lswitched64:
+    sam64                               /* switch addressing mode to 64-bit */
+    /* clear BSS  */
+    /* Jumps to C code */
+```
+
+## Preparing a bootable DASD volume (Hercules)
+
+1.  Compile everything into ELF64
+2.  Convert stage 1 and stage 2 to raw binary
+3.  Convert stage 1 to **80-byte punch card format (TXT/END)** (see **bin2rec** utility, from ZXFoundation or FLATBOOT)
+4.  Use **dasdload** to make a 3390 disk image
+
+The current approach is likely not to work on QEMU s390x, as QEMU demand a zIPL entry (S390EP) as part of the ABI
+
+## See Also
+
+### References
+
+- IBM SA22-7832, Thirteenth Edition (September 2019): CCW-type IPL (§17), implicit CCW, ORB Figure 17-2, programming notes 1–7.
+- ZXFoundation ZXFL: `zxfl/stage1/head.S`, `zxfl/stage1/entry.c`, `zxfl/common/dasd_io.c`.

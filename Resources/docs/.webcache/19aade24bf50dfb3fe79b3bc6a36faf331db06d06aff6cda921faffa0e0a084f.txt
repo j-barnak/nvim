@@ -1,0 +1,280 @@
+|                                                                                               |
+|-----------------------------------------------------------------------------------------------|
+| WAIT! Have you read Getting Started , Beginner Mistakes , and some of the related OS theory ? |
+
+| Difficulty level |
+|------------------|
+| Beginner         |
+
+| Kernel Designs                                                                                                                       |
+|--------------------------------------------------------------------------------------------------------------------------------------|
+| Models                                                                                                                               |
+| Monolithic Kernel Microkernel Hybrid Kernel Exokernel Nano/Picokernel Cache Kernel Virtualizing Kernel Megalithic Kernel Multikernel |
+| Other Concepts                                                                                                                       |
+| Modular Kernel Higher Half Kernel 64-bit Kernel Pre-kernel Rump kernel                                                               |
+
+In this tutorial you will learn how to write a simple x86_64 uefi kernel in rust using the uefi crate and boot it. This kernel just prints hello world to the screen and halts the cpu. The uefi crate provides a println marco that prints to the console. The cpu is halted thanks to the cpu instructions cli and hlt. While all std features are not available in your kernel, the core features still can be used.
+
+## Required crates
+
+- uefi crate (Version 0.37.0 used in this tutorial)
+
+The uefi crate provides a safe interface for interaction with boot and runtime services and useful macros.
+
+## Hello world
+
+``` rust
+#![no_main]
+#![no_std]
+
+use uefi::{
+    Status, entry, println
+};
+use core::{
+    arch::asm,
+    panic::PanicInfo
+};
+
+#[entry]
+fn main() -> Status {
+    uefi::helpers::init().unwrap();
+
+    println!("Hello world");
+
+    loop {
+        unsafe {
+            asm!("cli; hlt");
+        }
+    }
+}
+
+#[panic_handler]
+fn panic<'a, 'b>(info: &'a PanicInfo<'b>) -> ! {
+    println!("{}", info);
+    loop {}
+}
+```
+
+The panic handler is always required. Instead of the usual main a method with the entry attribute macro shall be defined. According to the uefi crate documentation, uefi::helpers::init() must be called before the println macro can be used. before using the prinln macro.
+
+## Building
+
+The target x86_64-unknown-uefi must be specified in order to build an UEFI-Application.
+
+``` bash
+cargo build --target x86_64-unknown-uefi
+```
+
+You can alternatively specify the target in the .cargo/config.toml file.
+
+## Booting
+
+### Booting using QEMU -kernel option
+
+On option for booting is by using qemu with the -kernel option to boot the kernel. Since QEMU has a legacy BIOS by default, we need to replace it with an UEFI-BIOS (OVMF is used in this tutorial).
+
+``` bash
+qemu-system-x86_64 -kernel target/x86_64-unknown-uefi/debug/example.efi -bios /usr/share/ovmf/x64/OVMF.4m.fd
+```
+
+### Booting using a FAT image
+
+*Main article:* [Bootable Disk](https://wiki.osdev.org/Bootable_Disk "Bootable Disk")
+
+A other option is to make a FAT32 boot-partition and copy the kernel to the location /EFI/BOOT/BOOTX64.EFI.
+
+``` bash
+fallocate disk.img -l64M
+mkfs.vfat -F 32 disk.img
+mmd -i disk.img ::/EFI
+mmd -i disk.img ::/EFI/BOOT
+mcopy -i disk.gpt target/x86_64-unknown-uefi/debug/example.efi ::/EFI/BOOT/BOOTX64.EFI
+```
+
+After the kernel has been copied, the image can be booted with:
+
+``` bash
+qemu-system-x86_64 -hda disk.img -bios /usr/share/ovmf/x64/OVMF.4m.fd
+```
+
+### Booting on real hardware
+
+|                                                                                                                                                                          |
+|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| WARNING: This section assumes the empty USB-Stick is at location /dev/sda. Triple check the path to the hardware. Writing to the wrong disk will cause severe data loss. |
+
+It is recommended to try out your OS in a virtual machine before trying it on real hardware.
+
+``` bash
+parted /dev/sda mklabel gpt
+parted /dev/sda mkpart BOOT fat32 2048s 64M
+mkfs.vfat /dev/sda1 -F 32
+mount /dev/sda1 /mnt
+mkdir /mnt/EFI
+mkdir /mnt/EFI/BOOT
+cp target/x86_64-unknown-uefi/debug/example.efi /mnt/EFI/BOOT/BOOTX64.EFI
+```
+
+After unmounting the USB-Stick you should be able to boot this kernel on a real machine.
+
+## Exiting boot services and obtaining a memory map
+
+At this point your kernel prints "Hello world" to the screen. To avoid collisions with your drivers and UEFI-drivers you need to exit the boot services. Any boot service or allocator features are unavaiable after exiting boot services.
+
+``` rust
+use uefi::boot::exit_boot_services;
+
+let memory_map = unsafe {
+    exit_boot_services(None)
+};
+```
+
+## Console
+
+Since the println macro will be unavailable after exiting the boot services, you need to write a custom console, that does not rely on boot services. To do that, you need to get the address of framebuffer.
+
+### Obtaining the framebuffer using GOP
+
+*Main article:* [GOP](https://wiki.osdev.org/GOP "GOP")
+
+To obtain the framebuffers address, you require the GOP (Graphics Output Protocol). This protocol allows you to read the framebuffer address, the current video mode and set it. This method returns None if no display is available or GOP is not supported. This method needs to be called before exiting boot services.
+
+``` rust
+use uefi::{
+    boot,
+    proto::console::gop::GraphicsOutput
+};
+
+struct Framebuffer {
+    frame_buffer: &'static mut [u32],
+    width: usize,
+    height: usize
+}
+
+fn framebuffer() -> Option<Framebuffer> {
+    let mut gop_protocol = boot::open_protocol_exclusive::<GraphicsOutput>(
+        boot::get_handle_for_protocol::<GraphicsOutput>().ok()?
+    ).ok()?;
+
+    let (width, height) = gop_protocol.current_mode_info().resolution();
+    let mut frame_buffer = gop_protocol.frame_buffer();
+
+    Some(Framebuffer {
+        frame_buffer: unsafe {
+            core::slice::from_raw_parts_mut(
+                frame_buffer.as_mut_ptr() as *mut u32,
+                frame_buffer.size()
+            )
+        },
+        width,
+        height
+    })
+}
+```
+
+### Drawing characters
+
+This code snippet uses a 8x16 bitmap font. Currently this implementation only shows white characters. The iterators sometimes require to be reversed if the characters were mirrored vertically or horizontally. It uses a u128 array to store the font.
+
+``` rust
+fn draw_char(cx: usize, cy: usize, ch: char, frame_buffer: &mut Framebuffer) {
+    let mut bitmask = FONT[ch as usize];
+    for y in cy * 16..cy * 16 + 16 {
+        for x in cx * 8..cx * 8 + 8 {
+            let value = if bitmask & 0x1 == 0x1 { 0xffffffff } else { 0x0 };
+            frame_buffer.frame_buffer[y * frame_buffer.width + x] = value;
+            bitmask >>= 1;
+        }
+    }
+}
+```
+
+### Printing strings and cursor management
+
+Now to support formatted output you can implement the core::fmt::Write trait somewhere and iterate each character. The write and writeln macro can then be used for formatted output.
+
+``` rust
+use core::fmt::Write;
+
+struct Console {
+    frame_buffer: Framebuffer,
+    cursor_pos_x: usize,
+    cursor_pos_y: usize
+}
+
+impl Console {
+    fn new(frame_buffer: Framebuffer) -> Console {
+        self.frame_buffer.frame_buffer.fill(0x0);
+        Console {
+            frame_buffer,
+            cursor_pos_x: 0,
+            cursor_pos_y: 0
+        }
+    }
+
+    /*
+     * Clears the console and puts the cursor in the top-left corner.
+     */
+    fn clear(&mut self) {
+        self.frame_buffer.frame_buffer.fill(0x0);
+        self.cursor_pos_x = 0;
+        self.cursor_pos_y = 0;
+
+        draw_char(self.cursor_pos_x, self.cursor_pos_y, '_', &mut self.frame_buffer);
+    }
+}
+
+impl core::fmt::Write for Console {
+    fn write_str(&mut self, s: &str) -> Result<(), core::fmt::Error> {
+        for ch in s.chars() {
+            if ch == '\n' {
+                draw_char(self.cursor_pos_x, self.cursor_pos_y, ' ', &mut self.frame_buffer);
+                self.cursor_pos_x = 0;
+                self.cursor_pos_y += 1;
+            } else {
+                draw_char(self.cursor_pos_x, self.cursor_pos_y, ch, &mut self.frame_buffer);
+                self.cursor_pos_x += 1;
+            }
+        }
+
+        draw_char(self.cursor_pos_x, self.cursor_pos_y, '_', &mut self.frame_buffer);
+
+        Ok(())
+    }
+}
+```
+
+## Moving Forward
+
+If your kernel is now working with a custom console, congratulations. Now there are many ways of moving forward, like extending the console, memory management, interrupts, GDTs, User mode or disk/mouse/keyboards drivers.
+
+### Extending the console
+
+#### Color support
+
+A colored terminal is always nicer to look at instead of just a single color. To do that, you just need to replace the 0xffffffff in the draw_char method with your RGB-color.
+
+#### Scrolling
+
+Scrolling is a common feature present in almost every console. To do that, you either clear the screen when the cursor exceeds the last line or copy the second line to the first line of the frame_buffer, the third to the second and so on.
+
+### Memory manager
+
+*Main article:* [Memory management](https://wiki.osdev.org/Memory_management "Memory management")
+
+Memory management is one of the first things, that needs to be implemented in a kernel. With dynamic memory management you can write your own implementations of important std features like Vec, Box or String.
+
+### Higher Half kernel
+
+*Main article:* [Higher Half Kernel](https://wiki.osdev.org/Higher_Half_Kernel "Higher Half Kernel")
+
+If you´re making a higher half kernel, please keep in mind that the function pointers in the vtables of dyn types point to the memory addresses, where UEFI has put your kernel in physical memory.
+
+### See Also
+
+- [Going Further on x86](https://wiki.osdev.org/Going_Further_on_x86 "Going Further on x86")
+- [Interrupts](https://wiki.osdev.org/Interrupts "Interrupts")
+- [Global Descriptor Table](https://wiki.osdev.org/Global_Descriptor_Table "Global Descriptor Table")
+- [Getting to Ring 3](https://wiki.osdev.org/Getting_to_Ring_3 "Getting to Ring 3")
+- [Rust](https://wiki.osdev.org/Rust "Rust")
+- [QEMU](https://wiki.osdev.org/QEMU "QEMU")

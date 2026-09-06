@@ -1,0 +1,176 @@
+VirtIO is a standardized interface which allows virtual machines access to simplified "virtual" devices, such as block devices, network adapters and consoles. Accessing devices through VirtIO on a guest VM improves performance over more traditional "emulated" devices, as VirtIO devices require only the bare minimum setup and configuration needed to send and receive data, while the host machine handles the majority of the setup and maintenance of the actual physical hardware.
+
+## Technical Details
+
+VirtIO devices appear, to the guest VM, to be normal [PCI](https://wiki.osdev.org/PCI "PCI") devices with a specific VendorID and DeviceID. All VirtIO devices have a Vendor ID of 0x1AF4, and have a DeviceID between 0x1000 and 0x103F. The type of VirtIO device (Network Adapter, Block Device, etc.) can be determined by the Subsystem ID field in the [PCI Configuration Space](https://wiki.osdev.org/PCI#Configuration_Space "PCI") for the device. The currently defined types are:
+
+| Subsystem ID | Name              |
+|--------------|-------------------|
+| 01           | Network Card      |
+| 02           | Block Device      |
+| 03           | Console           |
+| 04           | Entropy Source    |
+| 05           | Memory Ballooning |
+| 06           | IO Memory         |
+| 07           | RPMSG             |
+| 08           | SCSI Host         |
+| 09           | 9P Transport      |
+| 10           | MAC802.11 WLAN    |
+
+## I/O Registers
+
+Based on the PCI subsystem ID, the I/O mapped registers for the device can be determined. All devices have a common "header" block of registers:
+
+| Offset (Hex) | Name            |
+|--------------|-----------------|
+| 00           | Device Features |
+| 04           | Guest Features  |
+| 08           | Queue Address   |
+| 0C           | Queue Size      |
+| 0E           | Queue Select    |
+| 10           | Queue Notify    |
+| 12           | Device Status   |
+| 13           | ISR Status      |
+
+The Device Features register is pre-configured by the device, and includes flags to notify the guest VM what features are supported by the device. The Guest Features register is used by the guest VM to communicate the features that the guest VM driver supports. This allows both the host and the guest to maintain both backward and forward compatibility.
+
+The Device Status field is used by the guest VM to communicate the current state of the guest VM driver. The flags in this register designate when the driver has found the device, when the driver has determined that the device is supported, and when the all of the necessary registers have been configured by the guest driver, and communication between the guest and host may begin.
+
+| Flags | Description         |
+|-------|---------------------|
+| 01    | Device Acknowledged |
+| 02    | Driver Loaded       |
+| 04    | Driver Ready        |
+| 40    | Device Error        |
+| 80    | Driver Failed       |
+
+## Device Specific Registers
+
+Immediately after the common registers above, any device specific registers are located (at offset 0x14).
+
+### Network Device Registers
+
+| Offset (Hex) | Name          |
+|--------------|---------------|
+| 14           | MAC Address 1 |
+| 15           | MAC Address 2 |
+| 16           | MAC Address 3 |
+| 17           | MAC Address 4 |
+| 18           | MAC Address 5 |
+| 19           | MAC Address 6 |
+| 1A           | Status        |
+
+### Block Device Registers
+
+| Offset (Hex) | Name                  |
+|--------------|-----------------------|
+| 14           | Total Sector Count    |
+| 1C           | Maximum Segment Size  |
+| 20           | Maximum Segment Count |
+| 24           | Cylinder Count        |
+| 26           | Head Count            |
+| 27           | Sector Count          |
+| 28           | Block Length          |
+
+## Configuration
+
+All VirtIO devices use one or more ring buffers on the guest machine to communicate with the host machine. These buffers are added to virtual queues in memory, and each device has a predefined number of queues. For instance, the VirtIO Network device has 2 mandatory queues (the receive queue and the send queue), and one optional queue (the control queue). The optional control queue must be supported by both the host and guest (i.e. feature bit must be set in both the Device Features register and the Guest Features register), and allows the guest to control network specific features on the host machine, like promiscuous mode and hardware checksum calculations.
+
+Each queue must be configured by the guest operating system before the device can be enabled. The guest can determine the necessary memory needed by the queue by setting the Queue Select register to the desired queue index, and then reading the Queue Size register. Once the virtual queue has been created in memory, its address is written to the Queue Address register. This value written to this register is the address of the queue divided by 4096, which means that the virtual queue must be aligned on a 4096 byte boundary.
+
+### Virtual Queue Descriptor
+
+``` c
+struct VirtualQueue
+{
+  struct Buffers[QueueSize]
+  {
+    uint64_t Address; // 64-bit address of the buffer on the guest machine.
+    uint32_t Length;  // 32-bit length of the buffer.
+    uint16_t Flags;   // 1: Next field contains linked buffer index;  2: Buffer is write-only (clear for read-only).
+                      // 4: Buffer contains additional buffer addresses.
+    uint16_t Next;    // If flag is set, contains index of next buffer in chain.
+  }
+  
+  struct Available
+  {
+    uint16_t Flags;             // 1: Do not trigger interrupts.
+    uint16_t Index;             // Index of the next ring index to be used.  (Last available ring buffer index+1)
+    uint16_t [QueueSize] Ring;  // List of available buffer indexes from the Buffers array above.
+    uint16_t EventIndex;        // Only used if VIRTIO_F_EVENT_IDX was negotiated
+  }
+  
+  uint8_t[] Padding;  // Reserved
+  // 4096 byte alignment
+  struct Used
+  {
+    uint16_t Flags;            // 1: Do not notify device when buffers are added to available ring.
+    uint16_t Index;            // Index of the next ring index to be used.  (Last used ring buffer index+1)
+    struct Ring[QueueSize]
+    {
+      uint32_t Index;  // Index of the used buffer in the Buffers array above.
+      uint32_t Length; // Total bytes written to buffer.
+    }
+    uint16_t AvailEvent;       // Only used if VIRTIO_F_EVENT_IDX was negotiated
+  }
+}
+```
+
+## Communication
+
+To send data to a VirtIO device, the guest fills a buffer in memory, and adds that buffer to the Buffers array in the Virtual Queue descriptor. Then, the index of the buffer is written to the next available position in the Available ring buffer, and the Available index field is incremented. Finally, the guest writes the index of the Virtual Queue to the Queue Notify I/O register, in order to notify the device that the queue has been updated. Once the buffer has been processed, the device will add the buffer index to the Used ring, and will increment the Used index field. If interrupts are enabled, the device will also set the low bit of the ISR Status I/O register, and will trigger an interrupt.
+
+To receive data from a VirtIO device, the guest adds an empty buffer to the Buffers array (with the Write-Only flag set), and adds the index of the buffer to the Available ring, and increments the Available index field, and writes the Virtual Queue index to the Queue Notify I/O register. When the buffer has been filled, the device will write the buffer index to the Used ring and increment the Used index. If interrupts are enabled, the device will set the low bit of the ISR Status field, and trigger an interrupt.
+
+Once a buffer has been placed in the Used ring, it may be added back to the available ring, or discarded.
+
+### Network Packets
+
+Each ethernet packet placed in a buffer must be immediately preceeded by a VirtIO Network Packet header.
+
+``` c
+struct PacketHeader
+{
+  uint8_t Flags;                // Bit 0: Needs checksum; Bit 1: Received packet has valid data;
+                                // Bit 2: If VIRTIO_NET_F_RSC_EXT was negotiated, the device processes
+                                // duplicated ACK segments, reports number of coalesced TCP segments in ChecksumStart
+                                // field and number of duplicated ACK segments in ChecksumOffset field,
+                                // and sets bit 2 in Flags(VIRTIO_NET_HDR_F_RSC_INFO) 
+  uint8_t SegmentationOffload;  // 0:None 1:TCPv4 3:UDP 4:TCPv6 0x80:ECN
+  uint16_t HeaderLength;        // Size of header to be used during segmentation.
+  uint16_t SegmentLength;       // Maximum segment size (not including header).
+  uint16_t ChecksumStart;       // The position to begin calculating the checksum.
+  uint16_t ChecksumOffset;      // The position after ChecksumStart to store the checksum.
+  uint16_t BufferCount;         // Used when merging buffers.
+}
+```
+
+Note: Since the PacketHeader structure is Read-Only, and the incoming Network Packet is Write-Only (for incoming packets), you may need to separate these two areas into separate buffers, linked by the Next field.
+
+### Block Device Packets
+
+Each block device request placed in a buffer must be filled with a VirtIO Block Request record.
+
+``` c
+struct BlockRequest
+{
+  uint32_t Type;              // 0: Read; 1: Write; 4: Flush; 11: Discard; 13: Write zeroes
+  uint32_t Reserved;
+  uint64_t Sector;
+  uint8_t Data[];             // Data's size must be a multiple of 512
+  uint8_t Status;             // 0: OK; 1: Error; 2: Unsupported
+}
+```
+
+Note: Since the BlockRequest structure contains both read-only and write-only fields, it may be necessary to split this structure up into multiple buffers. The Type, Priority and Sector fields should be placed in a Read-Only buffer, and the Data and Status fields should be placed in a Write-Only buffer. The buffers will need to be linked together using the Next field. For Write requests, the buffer containing the Data field should be Read-Only, and the Status field buffer should be Write-Only, which would require 3 buffer entries.
+
+## See Also
+
+### External Links
+
+- [VirtIO specification](https://docs.oasis-open.org/virtio/virtio/v1.1/virtio-v1.1.html)
+- [VirtIO Driver Example](http://www.dumais.io/index.php?article=aca38a9a2b065b24dfa1dee728062a12)
+- [VirtIO Network Driver Example](https://github.com/torokernel/torokernel/blob/7d6df4c40fa4cc85febd5fd5799404592ffdff53/rtl/drivers/VirtIONet.pas)
+- [VirtIO Block Driver Example](https://github.com/torokernel/torokernel/blob/7d6df4c40fa4cc85febd5fd5799404592ffdff53/rtl/drivers/VirtIOBlk.pas)
+- [VirtIO FS Driver Example](https://github.com/torokernel/torokernel/blob/master/rtl/drivers/VirtIOFS.pas)
+- [VirtIO VSocket Driver Example](https://github.com/torokernel/torokernel/blob/master/rtl/drivers/VirtIOVSocket.pas)

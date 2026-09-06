@@ -1,0 +1,58 @@
+Journaling is a filesystem technique that is used to combat data corruption in the event of power loss or other forced system shutdown. As long as the underlying disk is well-behaved, a correct implementation of journaling can guarantee that the filesystem never enters an inconsistent state as a result of a mere sudden shutdown. It is therefore a crucial feature of all modern filesystems, such as [ext3](https://wiki.osdev.org/Ext3 "Ext3"), [ext4](https://wiki.osdev.org/Ext4 "Ext4"), or [NTFS](https://wiki.osdev.org/NTFS "NTFS").
+
+# Background
+
+A single filesystem operation may require multiple actions to be carried out on disk. For example, appending data to a file in an ext4 filesystem could involve:
+
+1.  finding a free data block and marking it as used,
+2.  writing the data to this block,
+3.  adding the block number to the extent tree, potentially adding a new layer to the tree,
+4.  and modifying the inode to reflect the new size.
+
+If the system loses power in the middle of this operation, the on-disk filesystem will be left in an inconsistent state:
+
+- If the system loses power between (2) and (3), the newly allocated block will be orphaned and will reduce the free space available until the next filesystem check.
+- If the system loses power in the middle of writing a block in (3), the contents of said block may become arbitrarily corrupted. As disks often include checksums in the low-level on-platter format, it is likely that reading the block will result in a read error until it gets overwritten. This would result in significant data loss in the affected file.
+- Only a part of the write operation might persist, while the user-level application might expect to find either none or all of the data.
+
+To prevent this, a journaling filesystem reserves a special section of the disk, called the *journal*, and performs operations as follows:
+
+1.  Prepare a packet describing what is about to be done.
+2.  Write the packet describing the transaction to the journal.
+3.  Flush the disk cache to make sure the data persists after a power loss. At this point, the transaction has been committed.
+4.  Perform the changes described in the transaction to the actual data section of the disk.
+5.  Flush the disk cache again.
+6.  Mark the journal entry as completed.
+
+If the system loses power at (2) or (3), the journal entry gets corrupted (which we can detect because our journal format uses a checksum). This is not a problem -- we just discard the journal entry and effectively revert to the state before the transaction. On the other hand, if the system loses power at (4) or (5), then we can replay the transaction, just like the system would if the sudden shutdown hadn't happened.
+
+# Design considerations
+
+## Idempotency
+
+Of course, one must ensure that executing the initial portion of a transaction, followed by the full transaction from the very beginning, will give the same result as just executing the transaction in full. To achieve this, two separate properties are required of the transaction steps:
+
+- Each step must be *idempotent*, which means that executing it as many times as you want yields the same end result as executing it once.
+- The steps must be independent of each other, where you could execute them in any order and get the same result.
+
+Writing a block of data at a specific location is the simplest idempotent operation, but more complex ones are possible, such as copying a long range of blocks from one location to another (as long as the source and destination don't overlap).
+
+If the steps of a complex transaction aren't independent of each other, the transaction can be broken down into stages, where each stage being finished is noted down in the journal before starting the next stage. Then we don't have to worry about steps in different stages interfering with each other.
+
+## Journal scope
+
+The most reliable and simple method is to journal all writes -- both the filesystem metadata, and the data itself. This however has the disadvantage of slowing the writes down a lot. A lighter approach logs only metadata writes in the journal. This has the effect of containing any potential corruption within the data blocks, preventing any subsequent cascading corruption in the filesystem data structures.
+
+This choice can be made configurable. Linux's implementation of Ext4 exposes this at the filesystem level, with the `data=journal` and `data=ordered` mount options. This choice could also be exposed to the application itself -- for example, a database engine would opt into the more expensive, but more reliable full journaling, without burdening the throughput of e.g. a web browser downloading a large file.
+
+## Performance
+
+Having everything go through the journal can impact performance, since effectively every write is doubled. This can be mitigated by allowing transactions to accumulate in the journal during burst load, and then finalizing them while the system is idle.
+
+## Subtle issues
+
+Metadata journaling can be a subtle matter. When deallocating a block, you need to make sure that no operations involving it are pending in the journal, before you actually reuse the block. When all writes go through the journal, this is not a concern.
+
+## Advanced techniques
+
+While a simple list of block writes to be done will suffice for most usecases, more advanced journal operations can facilitate features such as defragmentation, or safely migrating to a new, incompatible on-disk format, without requiring an excessively large journal.
