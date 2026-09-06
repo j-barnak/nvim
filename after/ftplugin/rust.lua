@@ -45,7 +45,16 @@ local function to_markdown(path, cb)
 	try()
 end
 
-local function show(path, lines)
+-- `origin` is the window the search was started from. The render is async, so
+-- without it the split lands wherever the user has moved to in the meantime
+-- (including another tabpage).
+local function show(path, lines, origin)
+	if origin and vim.api.nvim_win_is_valid(origin) then
+		if vim.api.nvim_win_get_tabpage(origin) ~= vim.api.nvim_get_current_tabpage() then
+			return vim.notify("Rust docs ready for " .. vim.fs.basename(path) .. " (press <leader>K again here)", vim.log.levels.INFO)
+		end
+		vim.api.nvim_set_current_win(origin)
+	end
 	vim.cmd.vsplit({ mods = { split = "belowright" } })
 	local buf = vim.api.nvim_create_buf(false, true)
 	vim.api.nvim_win_set_buf(0, buf)
@@ -61,11 +70,12 @@ local function show(path, lines)
 end
 
 local function open_doc(path)
+	local origin = vim.api.nvim_get_current_win()
 	to_markdown(path, function(lines)
 		if not lines or #lines == 0 then
 			return vim.notify("Could not render " .. vim.fs.basename(path), vim.log.levels.WARN)
 		end
-		show(path, lines)
+		show(path, lines, origin)
 	end)
 end
 

@@ -127,7 +127,11 @@ local function ensure_clone(name, url, cb)
 	if vim.fn.isdirectory(dir .. "/.git") == 1 then
 		return cb(dir)
 	end
-	vim.fn.mkdir(data_root, "p")
+	-- Guarded: vim.fn.mkdir raises, so an unwritable data dir turned gs into
+	-- an E739 traceback instead of a message.
+	if vim.fn.isdirectory(data_root) == 0 and not pcall(vim.fn.mkdir, data_root, "p") then
+		return vim.notify("Src: cannot create " .. data_root, vim.log.levels.ERROR)
+	end
 	vim.notify("Cloning " .. name .. " source (shallow, first time) …")
 	local tmp = dir .. ".tmp"
 	local script = table.concat({

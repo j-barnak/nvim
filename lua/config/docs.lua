@@ -41,12 +41,14 @@ local shq, have, fzf = util.shq, util.have, util.fzf
 -- mkdir -p that reports instead of throwing: vim.fn.mkdir raises, and an
 -- unwritable cache directory turned any :Docs call into an E739 traceback.
 -- Returns true when the directory exists afterwards.
-local function mkdir(path)
+-- `quiet` for best-effort cache writes, which already ran under pcall and
+-- should not produce an error notification on every single document open.
+local function mkdir(path, quiet)
 	if vim.fn.isdirectory(path) == 1 then
 		return true
 	end
 	local ok = pcall(vim.fn.mkdir, path, "p")
-	if not ok then
+	if not ok and not quiet then
 		vim.notify("Docs: cannot create " .. path, vim.log.levels.ERROR)
 	end
 	return ok
@@ -303,16 +305,27 @@ local function render_lines(lines, ft, dir, title)
 			-- bufhidden=wipe, destroyed the doc. Render into a fresh split with
 			-- the same viewer (cached like the man pickers).
 			local word = vim.fn.expand("<cword>")
-			if word ~= "" then
-				vim.cmd.vsplit({ mods = { split = "belowright" } })
-				-- Hand the new split over as the viewer, otherwise render_lines
-				-- follows the tracked viewer_win and puts the new page back in
-				-- the old window, leaving the stale one here and leaking a
-				-- window on every jump.
-				viewer_win = vim.api.nvim_get_current_win()
-				vim.w[viewer_win].docs_viewer = true
-				render_shell("MANWIDTH=90 man " .. shq(word) .. " 2>/dev/null | col -bx", word, "man", "man::" .. word)
+			if word == "" then
+				return
 			end
+			-- Confirm the page exists BEFORE splitting: splitting first leaked
+			-- a window (marked docs_viewer, so later renders could land in it)
+			-- every time the word under the cursor had no man page.
+			vim.system({ "man", "-w", word }, { text = true, timeout = 5000 }, function(res)
+				vim.schedule(function()
+					if res.code ~= 0 then
+						return vim.notify("No man page for " .. word, vim.log.levels.INFO)
+					end
+					vim.cmd.vsplit({ mods = { split = "belowright" } })
+					-- Hand the new split over as the viewer, otherwise
+					-- render_lines follows the tracked viewer_win and puts the
+					-- new page back in the old window, leaving the stale one
+					-- here and leaking a window on every jump.
+					viewer_win = vim.api.nvim_get_current_win()
+					vim.w[viewer_win].docs_viewer = true
+					render_shell("MANWIDTH=90 man " .. shq(word) .. " 2>/dev/null | col -bx", word, "man", "man::" .. word)
+				end)
+			end)
 		end, { buffer = buf, nowait = true, silent = true, desc = "Docs: follow man cross-reference" })
 	end
 	if dir then
@@ -577,7 +590,7 @@ local function open_file(path)
 				-- then fail, and that truncation would be served forever.
 				if res.code == 0 then
 					pcall(function() -- cache even if a newer open won the race
-						mkdir(convcache_dir)
+						mkdir(convcache_dir, true)
 						vim.fn.writefile(lines, cf)
 					end)
 				end
@@ -874,7 +887,9 @@ local function ensure_docs(version, cb)
 	if vim.fn.isdirectory(docdir) == 1 then
 		return cb(dir, docdir)
 	end
-	mkdir(cache_root)
+	if not mkdir(cache_root) then
+		return
+	end
 	vim.notify("Cloning kernel Documentation @ " .. version .. " … (first time only)")
 	local tmp = dir .. ".tmp"
 	local script = table.concat({
@@ -926,7 +941,9 @@ local function with_versions(cb)
 	if vim.fn.filereadable(tags_cache) == 1 then
 		return cb(vim.fn.readfile(tags_cache))
 	end
-	mkdir(cache_root)
+	if not mkdir(cache_root) then
+		return
+	end
 	vim.notify("Fetching kernel versions …")
 	local cmd = "git ls-remote --tags --refs " .. repo .. " | grep -oE 'v[0-9]+\\.[0-9]+(\\.[0-9]+)?$' | sort -Vr"
 	vim.system({ "sh", "-c", cmd }, { text = true, timeout = 30000 }, function(res)
@@ -1676,7 +1693,7 @@ render_shell = function(cmd, title, ft, cache_key)
 			-- serve the truncation forever.
 			if cf and res.code == 0 then
 				pcall(function()
-					mkdir(vim.fs.dirname(cf))
+					mkdir(vim.fs.dirname(cf), true)
 					vim.fn.writefile(out, cf)
 				end)
 			end
@@ -1908,7 +1925,9 @@ local function pick_ocaml()
 	if vim.fn.filereadable(idxfile) == 1 then
 		return browse()
 	end
-	mkdir(dir)
+	if not mkdir(dir) then
+		return
+	end
 	vim.system({ "sh", "-c", OCAML_IDX }, { text = true, timeout = 20000 }, function(res)
 		vim.schedule(function()
 			local mods = vim.split(res.stdout or "", "\n", { trimempty = true })
@@ -1999,7 +2018,9 @@ local function pick_aya_api()
 	if vim.fn.filereadable(idxfile) == 1 then
 		return modules_menu(vim.fn.readfile(idxfile))
 	end
-	mkdir(dir)
+	if not mkdir(dir) then
+		return
+	end
 	vim.notify("Fetching the Aya API index (docs.rs) … (first time)")
 	vim.system({ "sh", "-c", tool_script("aya_api_idx.sh") }, { text = true, timeout = 30000 }, function(res)
 		vim.schedule(function()
@@ -2175,13 +2196,18 @@ local function update_all()
 	-- Every git clone under the cache, whatever its layout (<name>/master, a
 	-- flat <name>, <name>/<version>, rust/<book>, bap/wiki, android-kernel/
 	-- <branch>): glob depth 1..3 and dedupe, so nothing is silently skipped.
+	-- The source clones :Src makes live in a sibling tree and are caches of
+	-- upstream just as much as the doc repos, so update them too.
+	local src_root = vim.fn.stdpath("data") .. "/src"
 	local repos, seen = {}, {}
-	for _, glob in ipairs({ "/*", "/*/*", "/*/*/*" }) do
-		for _, d in ipairs(vim.fn.glob(data_root .. glob, false, true)) do
-			-- <dir>.tmp is an in-flight clone (renamed into place when done).
-			if not seen[d] and not d:match("%.tmp$") and vim.fn.isdirectory(d .. "/.git") == 1 then
-				seen[d] = true
-				repos[#repos + 1] = d
+	for _, root in ipairs({ data_root, src_root }) do
+		for _, glob in ipairs({ "/*", "/*/*", "/*/*/*" }) do
+			for _, d in ipairs(vim.fn.glob(root .. glob, false, true)) do
+				-- <dir>.tmp is an in-flight clone (renamed into place when done).
+				if not seen[d] and not d:match("%.tmp$") and vim.fn.isdirectory(d .. "/.git") == 1 then
+					seen[d] = true
+					repos[#repos + 1] = d
+				end
 			end
 		end
 	end
@@ -2223,6 +2249,11 @@ local function update_all()
 						end
 						pcall(vim.fn.delete, data_root .. "/ocaml/modules.txt")
 						pcall(vim.fn.delete, data_root .. "/aya-api/items.tsv")
+						-- ctags indexes of the source clones, now that those are
+						-- pulled above; each rebuilds on the next gs.
+						for _, t in ipairs(vim.fn.glob(src_root .. "/*/.srctags", false, true)) do
+							pcall(vim.fn.delete, t)
+						end
 						vim.notify("Docs update: all " .. #repos .. " repos up to date")
 					else
 						vim.notify(("Docs update: %d/%d ok; failed: %s"):format(#repos - #failed, #repos, table.concat(failed, ", ")), vim.log.levels.WARN)

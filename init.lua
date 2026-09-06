@@ -11,12 +11,17 @@ if not (vim.uv or vim.loop).fs_stat(lazypath) then
 	-- Without this a first run with no network gives a bare Lua traceback
 	-- from the require below instead of saying what actually failed.
 	if vim.v.shell_error ~= 0 then
-		vim.api.nvim_echo({
-			{ "Failed to clone lazy.nvim:\n", "ErrorMsg" },
-			{ out, "WarningMsg" },
-			{ "\nPress any key to exit ..." },
-		}, true, {})
-		vim.fn.getchar()
+		local msg = { { "Failed to clone lazy.nvim:\n", "ErrorMsg" }, { out, "WarningMsg" } }
+		-- Only wait for a keypress when someone is there to press one:
+		-- getchar() never returns without a UI, which hung headless runs
+		-- (exactly the automated first-run this path exists for).
+		if #vim.api.nvim_list_uis() > 0 then
+			msg[#msg + 1] = { "\nPress any key to exit ..." }
+			vim.api.nvim_echo(msg, true, {})
+			vim.fn.getchar()
+		else
+			vim.api.nvim_echo(msg, true, {})
+		end
 		os.exit(1)
 	end
 end

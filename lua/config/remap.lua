@@ -5,7 +5,9 @@ vim.keymap.set("n", "<leader>Y", [["+y$]])
 -- <CR> changes the word under the cursor, but only where that is possible:
 -- a plain "ciw" raised E21 in every read-only buffer (:help, :Man, quickfix).
 vim.keymap.set("n", "<cr>", function()
-	return (vim.bo.modifiable and not vim.bo.readonly) and "ciw" or "<CR>"
+	-- 'modifiable' alone: E21 comes from that, while a readonly buffer still
+	-- edits (with a warning), so testing readonly too would block real edits.
+	return vim.bo.modifiable and "ciw" or "<CR>"
 end, { expr = true, desc = "Change word (plain <CR> when not modifiable)" })
 vim.keymap.set("i", "jj", "<Esc>", { silent = true })
 vim.keymap.set({ "n", "o", "x" }, "H", "^", {})

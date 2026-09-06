@@ -1,9 +1,14 @@
 set -e
 # MODE is optional: the PDF spec providers pass only three arguments.
 PDF="$1"; OUT="$2"; URL="$3"; MODE="${4:-}"
-# The cleanup below globs outside the quotes, so an empty or root OUT would
-# expand to "rm -f /*.txt". Refuse both.
-case "$OUT" in "" | / | //) echo "pdf_build: refusing out-dir '$OUT'" >&2; exit 1 ;; esac
+# Refuse an empty or root-ish out-dir: the cleanup below globs outside the
+# quotes, so "" or "/" would expand to "rm -f /*.txt". Normalise first, so
+# "///", "/.", "/.." and a trailing slash cannot slip through, then require at
+# least two real path components.
+OUTN=$(printf %s "$OUT" | sed 's#//*#/#g; s#/*$##')
+if [ "$(printf %s "${OUTN#/}" | tr / '\n' | grep -vc '^\.\{0,2\}$')" -lt 2 ]; then
+  echo "pdf_build: refusing out-dir '$OUT'" >&2; exit 1
+fi
 if [ ! -f "$PDF" ]; then mkdir -p "$(dirname "$PDF")"; curl -fsSL "$URL" -o "$PDF"; fi
 mkdir -p "$OUT"
 # Clean slate; ".complete" (written only on full success) gates reuse, so a

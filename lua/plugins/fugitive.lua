@@ -1,27 +1,46 @@
 return {
 	"tpope/vim-fugitive",
-	-- Every command fugitive actually defines (checked against plugin/fugitive.vim):
-	-- Ggrep, Gsplit and Glog do not exist, and naming them here loaded the plugin
-	-- and then failed with E492. Logs are Gclog / Gllog.
+	-- The full set, taken from `:command` after loading the plugin rather than
+	-- by grepping its source (fugitive builds most definitions through `exe`
+	-- with a variable in the middle, so a pattern search misses them and a
+	-- missing name here means the command silently fails to load).
+	-- Only `Glog` is genuinely gone: the logs are Gclog and Gllog.
 	cmd = {
 		"G",
 		"Git",
+		"Gbrowse",
+		"GBrowse",
 		"Gcd",
 		"Glcd",
 		"Gclog",
+		"GcLog",
 		"Gllog",
+		"GlLog",
+		"Ggrep",
+		"Glgrep",
 		"Gdiffsplit",
 		"Gvdiffsplit",
 		"Ghdiffsplit",
+		"Ge",
 		"Gedit",
 		"Gpedit",
+		"Gsplit",
+		"Gvsplit",
+		"Gtabedit",
+		"Gr",
 		"Gread",
+		"Gw",
 		"Gwrite",
 		"Gwq",
 		"Gdelete",
+		"GDelete",
+		"Gremove",
+		"GRemove",
+		"GUnlink",
 		"Gmove",
+		"GMove",
 		"Grename",
+		"GRename",
 		"Gdrop",
-		"GBrowse",
 	},
 }
