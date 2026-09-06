@@ -418,6 +418,42 @@ end
 -- mdBook {{#include}} expansion use it, so a crafted ../-laden target cannot
 -- pull an arbitrary file into the viewer. Defined here, above its first use
 -- in clean_markdown, so the closure captures it as an upvalue.
+-- Binary formats whose first bytes identify them. A NUL scan alone is not
+-- enough: a PDF's header is ASCII and two of the cached specs carry no NUL in
+-- their first 200 KB, so they were read into the viewer as "text" and threw
+-- on the embedded newlines, wiping the doc that was on screen.
+local BINARY_MAGIC = {
+	"%PDF", -- pdf
+	"PK\3\4", -- zip, epub, docx
+	"PK\5\6",
+	"\31\139", -- gzip
+	"BZh", -- bzip2
+	"\253\55zXZ", -- xz
+	"\127ELF", -- elf
+	"\137PNG",
+	"\255\216\255", -- jpeg
+	"GIF8",
+	"OggS",
+	"Rar!",
+	"\0asm", -- wasm
+	"!<arch>", -- ar / deb
+}
+
+local function is_binary(path)
+	local fh = io.open(path, "rb")
+	if not fh then
+		return false
+	end
+	local head = fh:read(65536) or ""
+	fh:close()
+	for _, magic in ipairs(BINARY_MAGIC) do
+		if head:sub(1, #magic) == magic then
+			return true
+		end
+	end
+	return head:find("\0", 1, true) ~= nil
+end
+
 local function within_docs(path)
 	local real = vim.uv.fs_realpath(path) or path
 	for _, r in ipairs({ data_root, frozen_root }) do
@@ -487,8 +523,9 @@ local function clean_markdown(lines, dir)
 			local rel, sel = spec:match("^([^:]+):?(.*)$")
 			local full = vim.fs.normalize(dir .. "/" .. rel)
 			-- Same containment as gd: an include must not reach outside the
-			-- doc trees (a ../-laden target otherwise read any file).
-			if vim.fn.filereadable(full) == 1 and within_docs(full) then
+			-- doc trees (a ../-laden target otherwise read any file), and must
+			-- not pull in a binary (which throws on its embedded newlines).
+			if vim.fn.filereadable(full) == 1 and within_docs(full) and not is_binary(full) then
 				for _, cl in ipairs(include_select(vim.fn.readfile(full), sel)) do
 					push(cl)
 				end
@@ -555,13 +592,8 @@ local function open_file(path)
 	end
 	-- Any other binary (a tarball or PDF reached through a link) would throw
 	-- the same way, so refuse it rather than wiping the current doc for it.
-	local probe = io.open(path, "rb")
-	if probe then
-		local head = probe:read(1024) or ""
-		probe:close()
-		if head:find("\0", 1, true) then
-			return vim.notify("Not a text document: " .. vim.fs.basename(path), vim.log.levels.WARN)
-		end
+	if is_binary(path) then
+		return vim.notify("Not a text document: " .. vim.fs.basename(path), vim.log.levels.WARN)
 	end
 	if not from then
 		return finish(nil, nil) -- markdown / code: raw read is already instant
