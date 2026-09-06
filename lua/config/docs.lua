@@ -2541,9 +2541,11 @@ local BOOKS = {
 		{ title = "SSA-based Compiler Design", fmt = "pdf", file = "Fabrice Rastello, Florent Bouchez Tichadou - SSA-based Compiler Design-Springer (2022).pdf" },
 	} },
 	{ module = "Databases", key = "books-db", items = {
+		{ title = "Build Your Own SQLite (CodeCrafters)", fmt = "md", slug = "build-your-own-sqlite", file = "https://github.com/codecrafters-io/build-your-own-sqlite" },
 		{ title = "Database Internals", fmt = "epub", file = "Database Internals _ A Deep Dive Into How Distributed Data -- Alex  Petrov -- O'Reilly Media, Sebastopol, CA, 2019 -- O'Reilly Media, Incorporated -- 9781492040316 -- 6ed4b5c9518da1d5ff76d1cd6c3aa813 -- Anna’s Arc.epub" },
 	} },
 	{ module = "Linux / Drivers", key = "books-linux", items = {
+		{ title = "eBPF Developer Tutorial (eunomia)", fmt = "md", slug = "ebpf-developer-tutorial", file = "https://github.com/eunomia-bpf/bpf-developer-tutorial" },
 		{ title = "Linux Device Driver Development (Madieu)", fmt = "epub", file = "Linux Device Driver Development_ Everything you need to -- John Madieu -- Packt Publishing, [Place of publication not identified], -- Packt -- isbn13 9781803235943 -- e409561761c67e6644a54ed53a248850 -- Anna’s (1).epub" },
 		{ title = "Linux Device Drivers, 3rd Edition", fmt = "epub", file = "Linux Device Drivers, 3rd Edition -- Jonathan Corbet, Alessandro Rubini, and Greg Kroah-Hartman -- 3rd Edition, 2009 -- O'Reilly Media, Incorporated -- isbn13 9780596159740 -- f4346a4d961cc1b0cb12d88c75e50c50 -- A.epub" },
 		{ title = "The Linux Memory Manager", fmt = "epub", file = "The Linux Memory Manager - Lorenzo Stoakes.epub" },
@@ -2556,6 +2558,7 @@ local BOOKS = {
 		{ title = "The Algorithm Design Manual", fmt = "pdf", file = "The-Algorithm-Design-Manual.pdf" },
 	} },
 	{ module = "Security", key = "books-security", items = {
+		{ title = "Nightmare: Binary Exploitation Course", fmt = "md", slug = "nightmare-binary-exploitation", file = "https://github.com/guyinatuxedo/nightmare" },
 		{ title = "Serious Cryptography (2e)", fmt = "epub", file = "Serious Cryptography, 2nd Edition_ A Practical Introduction -- Jean-Philippe Aumasson -- 2, 2024 -- No Starch Press, Incorporated -- isbn13 9781718503847 -- 98baee034c0a929a742dfde69353a637 -- Anna’s Archive.epub" },
 		{ title = "Fuzzing Against the Machine", fmt = "pdf", file = "FuzzingAgainstTheMachine.pdf" },
 	} },
@@ -2581,6 +2584,7 @@ local BOOKS = {
 		{ title = "OpenGL SuperBible", fmt = "pdf", file = "OpenGL_Superbible.pdf" },
 	} },
 	{ module = "Version Control", key = "books-vcs", items = {
+		{ title = "Build Your Own Git (CodeCrafters)", fmt = "md", slug = "build-your-own-git", file = "https://github.com/codecrafters-io/build-your-own-git" },
 		{ title = "Building Git", fmt = "pdf", file = "Building_Git.pdf" },
 	} },
 	{ module = "Debugging", key = "books-debugging", items = {
@@ -2603,8 +2607,10 @@ local function ensure_book(mkey, entry)
 		local d = frozen_root .. "/rust/" .. entry.url:match("([^/]+)$") .. "/src"
 		return pick_files(d, "-e md", entry.title .. "> ")
 	end
-	local out = books_root .. "/" .. mkey .. "/" .. book_slug(entry.title)
-	pick_files(out, entry.fmt == "epub" and "-e md" or "-e txt", entry.title .. "> ")
+	local out = books_root .. "/" .. mkey .. "/" .. (entry.slug or book_slug(entry.title))
+	-- "md" books come from a git repo of markdown (a course or tutorial set)
+	-- rather than an epub or pdf; the chapters are already markdown.
+	pick_files(out, (entry.fmt == "epub" or entry.fmt == "md") and "-e md" or "-e txt", entry.title .. "> ")
 end
 
 -- One provider per module: fuzzy-pick a book, then ensure_book opens chapters.
