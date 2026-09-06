@@ -8,7 +8,7 @@ Linux Kernel Exploitation
 
 
                       Sam Page, #TyphoonCon23
-About Me
+About Me
 
 ●
     Sam (@sam4k1)
@@ -16,7 +16,7 @@ Linux Kernel Exploitation
     Background in VR and exploit dev
 ●
     I like Linux, security, games & food
-What Are We Doing Here?
+What Are We Doing Here?
 
 ●
     Exploring the past, present & future of kernel security & xdev
@@ -24,13 +24,13 @@ Linux Kernel Exploitation
     Hopefully making an increasingly complex topic more accessible
 ●
     Do we need any more reasons??? This stuff is awesome!
-Tl;dr kernel exploits??
+Tl;dr kernel exploits??
 
 
 
 
     bug(s)            alter kernel state   privileged action
-Tl;dr kernel exploits??
+Tl;dr kernel exploits??
 
 
 
@@ -38,7 +38,7 @@ Linux Kernel Exploitation
       bug(s)             alter kernel state        privileged action
 
  stack buffer overflow    control-flow hijacking   elevated process privs
-Tl;dr kernel exploits??
+Tl;dr kernel exploits??
 
                   msg_msg len
     OOB Write                   OOB Read    KASLR leak
@@ -62,9 +62,9 @@ Linux Kernel Exploitation
 
 
                                              Root shell
-         Tux’s Security Past
+         Tux’s Security Past
 Examining Historical Kernel Exploitation Trends
-Mitigations
+Mitigations
 
 ●
     A graph of mitigations over time; highlighting key points
@@ -73,7 +73,7 @@ Examining Historical Kernel Exploitation Trends
 
 
                                                                 Data: kconfig-hardened-check[1], LKDDb[2]
-       Mitigations
+       Mitigations
 
        ●
            A graph of mitigations over time; highlighting key points
@@ -92,7 +92,7 @@ Examining Historical Kernel Exploitation Trends
 
 
                                                                        Data: kconfig-hardened-check[1], LKDDb[2]
-       Mitigations
+       Mitigations
 
        ●
            A graph of mitigations over time; highlighting key points
@@ -113,7 +113,7 @@ Examining Historical Kernel Exploitation Trends
 
 
                                                                        Data: kconfig-hardened-check[1], LKDDb[2]
-       Mitigations
+       Mitigations
 
        ●
            A graph of mitigations over time; highlighting key points
@@ -137,7 +137,7 @@ Examining Historical Kernel Exploitation Trends
 
 
                                                                        Data: kconfig-hardened-check[1], LKDDb[2]
-       Mitigations
+       Mitigations
 
        ●
            A graph of mitigations over time; highlighting key points
@@ -161,7 +161,7 @@ Examining Historical Kernel Exploitation Trends
 
 
                                                                        Data: kconfig-hardened-check[1], LKDDb[2]
-       Mitigations
+       Mitigations
 
        ●
            A graph of mitigations over time; highlighting key points
@@ -186,7 +186,7 @@ Examining Historical Kernel Exploitation Trends
 
 
                                                                        Data: kconfig-hardened-check[1], LKDDb[2]
-Bug Trends
+Bug Trends
 
 ●
     A graph of mitigations over time; highlighting key points
@@ -195,7 +195,7 @@ Examining Historical Kernel Exploitation Trends
 
 
                                                                 Data: gsd-database[3]
-Bug Trends
+Bug Trends
 
 ●
     A graph of mitigations over time; highlighting key points
@@ -204,15 +204,15 @@ Examining Historical Kernel Exploitation Trends
 
 
                                                                 Data: gsd-database[3], torvalds/linux[4]
-Bug Trends
+Bug Trends
 
 
 
 
              Data: gsd-database[3]
-     Tux’s Security Present
+     Tux’s Security Present
 Looking At Contemporary Kernel Exploitation
-Kernel Exploits in 2023 | The Process
+Kernel Exploits in 2023 | The Process
 
 The process of getting from bug to privesc has become more complex:
 1) Need to understand the attack surface
@@ -221,7 +221,7 @@ The process of getting from bug to privesc has become more complex:
  ●
      Typically takes knowledge of platform/surface/bug and existing techniques
 4) Actually get a (reliably??) working proof-of-concept
-Kernel Exploits in 2023 | The Mindset
+Kernel Exploits in 2023 | The Mindset
 
 ●
     Curiosity! Ask questions and take the time to understand
@@ -233,7 +233,7 @@ The process of getting from bug to privesc has become more complex:
     Opt for generic tooling and techniques where possible, to reuse
 ●
     The kernel is unforgiving of mistakes and unexpected behaviour!
-Understanding The Attack Surface
+Understanding The Attack Surface
 
 ●
     Informs where to look for bugs, what to look for and how to exploit them
@@ -241,7 +241,7 @@ The process of getting from bug to privesc has become more complex:
     Lots of factors to consider: Kconfig, arch, platform specifics, 3rd parties etc.
 ●
     Varies greatly across desktop, android, IoT
-Finding Some Bugs | Approaches
+Finding Some Bugs | Approaches
 
 ●
     Doesn’t have to be 0days! Syzbot dashboard, silent fixes, n-days etc.
@@ -251,7 +251,7 @@ The process of getting from bug to privesc has become more complex:
     Time spent understanding the bug & surface will help going forward
 ●
     Factor in surface/mitigations when thinking about what to look for
-Finding Some Bugs | Tools & Tips
+Finding Some Bugs | Tools & Tips
 
 But if you do want a shiny 0day there’s…
 ●
@@ -264,7 +264,7 @@ But if you do want a shiny 0day there’s…
         Adding coverage for areas without descriptions (e.g. 3rd party drivers)
     ●
         Extending coverage for more tailored fuzzing using platform knowledge
-From Bug To #
+From Bug To #
 
 ●
     Bug provides our initial primitive
@@ -276,13 +276,13 @@ But if you do want a shiny 0day there’s…
     Goal is to chain these together to ultimately privesc
     ●
         Typically via elevating our procs privs or executing another bin with privs
-Exploiting UAFs | Getting Our Bearings
+Exploiting UAFs | Getting Our Bearings
 
 ●
     Can cause the kernel to do some action(s) on previously freed memory
 ●
     So we need to think about how the kernel allocates this memory:
-Exploiting UAFs | Getting Our Bearings
+Exploiting UAFs | Getting Our Bearings
 
 ●
     Can cause the kernel to do some action(s) on previously freed memory
@@ -290,7 +290,7 @@ But if you do want a shiny 0day there’s…
     So we need to think about how the kernel allocates this memory:
     ●
         SLUB allocator: used for small, commonly used objects
-Exploiting UAFs | Getting Our Bearings
+Exploiting UAFs | Getting Our Bearings
 
 ●
     Can cause the kernel to do some action(s) on previously freed memory
@@ -303,7 +303,7 @@ But if you do want a shiny 0day there’s…
 
 
                                (Where chunk size = 2order * PAGE_SIZE)
-Exploiting UAFs | Getting Our Bearings
+Exploiting UAFs | Getting Our Bearings
 
 ●
     Can cause the kernel to do some action(s) on previously freed memory
@@ -317,7 +317,7 @@ But if you do want a shiny 0day there’s…
     We also need to consider what actions are done on the freed memory
 ●
     As well as how reachable/triggerable the UAF is and any timing issues
-Exploiting UAFs | Mitigations
+Exploiting UAFs | Mitigations
 
                              Ubuntu 22.04 (5.15)     kCTF (6.1)      Pixel 7 (5.10)
 
@@ -338,7 +338,7 @@ But if you do want a shiny 0day there’s…
              FUSE
 
        slab_nomerge                not set             default           default
-Exploiting UAFs | Realising Our Goal
+Exploiting UAFs | Realising Our Goal
 
 ●
     Need an object to replace our freed one
@@ -350,7 +350,7 @@ But if you do want a shiny 0day there’s…
     Then we need to make sure our object(s) ends up where its supposed to…
     ●
         i.e. we need to understand how to control the memory layout
-    Exploiting UAFs | Shaping General Purpose Caches
+    Exploiting UAFs | Shaping General Purpose Caches
 
 ●
     Different gfp_t flags may be allocated
@@ -370,7 +370,7 @@ But if you do want a shiny 0day there’s…
     FUSE can open up more allocation
     possibilities by allowing us to keep more          API example for general purpose allocs
     ephemeral object allocations in memory[8]
-Exploiting UAFs | Shaping Private Caches
+Exploiting UAFs | Shaping Private Caches
 
                                            ●
                                                Same goal as before, except...
@@ -388,7 +388,7 @@ But if you do want a shiny 0day there’s…
                                            ●
                                                AKA cross-cache attacks
               $ sudo slabtop
-    Exploiting UAFs | Shaping The Buddy (Page) Allocator
+    Exploiting UAFs | Shaping The Buddy (Page) Allocator
 
 ●
     Goal is the same, just need to remember the different structure!
@@ -402,7 +402,7 @@ But if you do want a shiny 0day there’s…
         If higher order is empty, contiguous chunks merged
 ●
     May also want to ensure contiguity of multiple allocations
-    Exploiting UAFs | A Real World Example
+    Exploiting UAFs | A Real World Example
 
 ●
     CVE-2022-32250[5] was a UAF in Netfilter:
@@ -430,7 +430,7 @@ But if you do want a shiny 0day there’s…
                                                                         overwrite
                                                    Root shell
                                                                       modprobe_path
-Exploiting OOB Writes | What Bounds?
+Exploiting OOB Writes | What Bounds?
 
 ●
     Different kinds out-of-bounds writes in the kernel…
@@ -438,7 +438,7 @@ But if you do want a shiny 0day there’s…
         Array indexes, heap overflows, stack overflows etc.
 ●
     However this list may be shorter after we factor in mitigations...
-Exploiting OOB Writes | Mitigations
+Exploiting OOB Writes | Mitigations
 
                            Ubuntu 22.04 (5.15)   kCTF (6.1)   Pixel 7 (5.10)
 
@@ -453,7 +453,7 @@ But if you do want a shiny 0day there’s…
 
 
   STATIC_USERMODEHELPER          not set          not set        default
-Exploiting OOB Writes | Heap Overflows It Is
+Exploiting OOB Writes | Heap Overflows It Is
 
 ●
     As we’re dealing with the heap: how is our object allocated?
@@ -469,7 +469,7 @@ But if you do want a shiny 0day there’s…
     What is the extent of our overflow? Controlled size/data?
 ●
     With all this info, we can find a suitable candidate to corrupt
-Exploiting OOB Writes | Getting To The Finish Line
+Exploiting OOB Writes | Getting To The Finish Line
 
 ●
     Want to pivot from our initial OOB write primitive
@@ -482,7 +482,7 @@ But if you do want a shiny 0day there’s…
     inaccessible corruption targets
 ●
     modprobe_path is still an easy target to privesc with an AAW
-    Exploiting OOB Writes | A Real World Example
+    Exploiting OOB Writes | A Real World Example
 
 ●
     CVE-2022-0185[7] was a heap overflow in fsconfig(2):
@@ -509,7 +509,7 @@ But if you do want a shiny 0day there’s…
 
 
                                                              Root shell
-Exploiting Race Conditions
+Exploiting Race Conditions
 ●
     Typically enable other bugs, such as use-after-frees
 ●
@@ -528,9 +528,9 @@ But if you do want a shiny 0day there’s…
     Be considerate of the little gotchas
     ●
         Execution contexts? Locks? Who’s executing what, when? CPU affinity? etc.
-         Tux’s Security Future
+         Tux’s Security Future
 Some Thoughts On Future Impacts to Kernel Security
-Looking Ahead
+Looking Ahead
 
 
                                          New
@@ -542,7 +542,7 @@ Some Thoughts On Future Impacts to Kernel Security
 
                                              Attitude to
                                              Security
-Looking Ahead | New Mitigations
+Looking Ahead | New Mitigations
 
 ●
     kCTF experimental mitigations[10]:
@@ -558,7 +558,7 @@ Some Thoughts On Future Impacts to Kernel Security
     Lag between mainline mitigation support & hardware adoption
     ●
         E.g. Intel’s CFI (CET) support was introduced in their 11th Gen CPUs (2021)
-Looking Ahead | New Technologies (AKA Rust)
+Looking Ahead | New Technologies (AKA Rust)
 
 ●
     Yep, it’s Rust time
@@ -570,7 +570,7 @@ Some Thoughts On Future Impacts to Kernel Security
     Where 66% of kernel security issues are memory safety related (2019) [9]
 ●
     However, Rust is still a tool used by people, and we make mistakes!
-Looking Ahead | Attitude to Security
+Looking Ahead | Attitude to Security
 
 ●
     Finding the balance between performance/usability and security
@@ -586,9 +586,9 @@ Some Thoughts On Future Impacts to Kernel Security
         Vs. malicious actors who are happy to keep all this in the shadows
     ●
         Still friction in the handling of security fixes & disclosures
-           Wrapping Up
+           Wrapping Up
 Thank You! Feel Free To @ Me Online/Offline
-Resources
+Resources
 
 ●
     https://github.com/xairy/linux-kernel-exploitation
@@ -600,7 +600,7 @@ Thank You! Feel Free To @ Me Online/Offline
     https://codeql.github.com
 ●
     https://github.com/google/syzkaller
-Refs
+Refs
 1. https://github.com/a13xp0p0v/kconfig-hardened-check/
 
 2. https://cateee.net/lkddb/web-lkddb/
@@ -622,4 +622,4 @@ Thank You! Feel Free To @ Me Online/Offline
 10.https://github.com/thejh/linux/blob/slub-virtual-v6.1-lts/MITIGATION_README
 
 11.https://googleprojectzero.blogspot.com/2022/03/racing-against-clock-hitting-tiny.html
-
+

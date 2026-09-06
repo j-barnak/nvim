@@ -31,7 +31,7 @@ The process of establishing a TCP connection is often referred to as the "three-
 
 The complete flowchart is shown below:
 
-![tcpconnlat1](tcpconnlat1.png)
+![tcpconnlat1](media/847b6ca52d0dcaf3c6216119e455e16eda2468eb.png)
 
 From the client's perspective, under normal circumstances, the total time for a TCP connection is approximately the time consumed by one network round-trip. However, in some cases, it may cause an increase in network transmission time, an increase in CPU processing overhead, or even connection failure. When a long delay is detected, it can be analyzed in conjunction with other information.
 

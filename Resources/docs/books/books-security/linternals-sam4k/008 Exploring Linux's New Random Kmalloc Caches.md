@@ -101,23 +101,23 @@ Lets use a generic heap overflow to demonstrate this. We can overflow object `x`
 
 We want to consider how active the cache is (aka is it cache noise) and up-time, as this will give us an idea of the cache slab state. On a typical workload with a fairly used cache size, we can assume there are likely to be several partially filled slabs; this is our starting state.
 
-![](./Exploring%20Linux's%20New%20Random%20Kmalloc%20Caches%20_%20sam4k_files/1_partial_slabs.png)
+![](media/185bd5ab71e2bb41d69afcc5ac7abd897b681538.png)
 
 A basic heap feng shui approach would be to first allocate a number of object `y` to fill up the holes in the partial slabs:
 
-![](./Exploring%20Linux's%20New%20Random%20Kmalloc%20Caches%20_%20sam4k_files/2_filled_partials.png)
+![](media/bbe3586a5ee84501023a853bd1c5a4dca20b987d.png)
 
 Then, we allocate several slabs worth of object `y` which we can assume is to trigger new slabs to be allocated, hopefully filled with object `y`:
 
-![](./Exploring%20Linux's%20New%20Random%20Kmalloc%20Caches%20_%20sam4k_files/3_filled_new_slabs.png)
+![](media/c8e5b18e5a6ea1376dc3b73953277ae42b48f8e0.png)
 
 Then, from the second batch of allocations into new slabs, we would free every other allocation to try and create holes in the new slabs:
 
-![](./Exploring%20Linux's%20New%20Random%20Kmalloc%20Caches%20_%20sam4k_files/4_holes.png)
+![](media/73343352946e5d16a52e942a584aef043de579ee.png)
 
 We would then allocate our vulnerable object `x` in the hopes we have increased our chances that it will be allocated into one of the wholes we just created:
 
-![](./Exploring%20Linux's%20New%20Random%20Kmalloc%20Caches%20_%20sam4k_files/5_landed.png)
+![](media/4d4607bc223b1533c6842581f7668c8f739e4561.png)
 
 #### Cache Reuse/Overflow Attacks
 
@@ -143,7 +143,7 @@ Elastic objects can provide generic techniques to exploiting these vulnerabiliti
 
 A popular elastic object used on contemporary heap corruption is `[struct msg_msg](https://elixir.bootlin.com/linux/v6.6/source/include/linux/msg.h#L9)`, which can be used to leverage an out-of-bounds heap write into arbitrary read/write[\[5\]](https://www.willsroot.io/2021/08/corctf-2021-fire-of-salvation-writeup.html):
 
-``` chroma
+``` c
 /* one msg_msg structure for each message */
 struct msg_msg {
   struct list_head m_list;
@@ -159,7 +159,7 @@ struct msg_msg {
 
 #### FUSE
 
-![](./Exploring%20Linux's%20New%20Random%20Kmalloc%20Caches%20_%20sam4k_files/theresmore.gif)
+![](media/263f94080ac88b31277391aae3c8c18a8374bba9.gif)
 
 Seeing as we’re going all out on the exploitation techniques here, I might as well throw in a ***quick*** shoutout to FUSE as well, which is commonly used in kernel exploitation.
 
@@ -221,7 +221,7 @@ So first things first lets touch on how the kmalloc caches are actually created 
 
 The header additions include configurations for things like the number of cache copies:
 
-``` chroma
+``` c
 +#ifdef CONFIG_RANDOM_KMALLOC_CACHES
 +#define RANDOM_KMALLOC_CACHES_NR   15 // # of cache copies
 +#else
@@ -233,7 +233,7 @@ The `[kmalloc_cache_type](https://elixir.bootlin.com/linux/v6.6/source/include/l
 
 With that in mind, an entry for each of the cache copies is added to `[enum kmalloc_cache_type](https://elixir.bootlin.com/linux/v6.6/source/include/linux/slab.h#L363)` so that they’re created and fetchable as part of the existing API:
 
-``` chroma
+``` c
 enum kmalloc_cache_type {
   KMALLOC_NORMAL = 0,
 #ifndef CONFIG_ZONE_DMA
@@ -269,7 +269,7 @@ I’m speeding through this, but you can probably tell already this is going to 
 
 Below we can see the addition of the kmalloc random caches:
 
-``` chroma
+``` c
 +#ifdef CONFIG_RANDOM_KMALLOC_CACHES
 +#define __KMALLOC_RANDOM_CONCAT(a, b) a ## b
 +#define KMALLOC_RANDOM_NAME(N, sz) __KMALLOC_RANDOM_CONCAT(KMA_RAND_, N)(sz)
@@ -336,7 +336,7 @@ Moving on, we can see how the per-boot seed is generated, which is one of the va
 
 This is initialised during the initial kmalloc cache creation and is stored in the the exported symbol `[random_kmalloc_seed](https://elixir.bootlin.com/linux/v6.6/source/include/linux/slab.h#L398)`, as we can see below:
 
-``` chroma
+``` c
 +#ifdef CONFIG_RANDOM_KMALLOC_CACHES
 +unsigned long random_kmalloc_seed __ro_after_init;
 +EXPORT_SYMBOL(random_kmalloc_seed);
@@ -364,7 +364,7 @@ Okay, so we’ve covered how the caches are created and the seed initialisation,
 
 As we touched on, the random cache a particular allocation ends up in comes from two factors: the `kmalloc()` callsite and the per-boot `random_kmalloc_seed`:
 
-``` chroma
+``` c
 +static __always_inline enum kmalloc_cache_type kmalloc_type(gfp_t flags, unsigned long caller)
  {
   /*
@@ -385,7 +385,7 @@ diff from [include/linux/slab.h](https://elixir.bootlin.com/linux/v6.6/source/in
 
 As we can see above, when calculating the kmalloc cache type for an allocation, if the flags are appropriate for the kmalloc random caches, a hash is generated from the two values mentioned and is used to calculate the kmalloc cache type (from the `[kmalloc_cache_type](https://elixir.bootlin.com/linux/v6.6/source/include/linux/slab.h#L363)` enum, of which there is one for each `RANDOM_KMALLOC_CACHES_NR`), which is then used fetch the cache from `kmalloc_caches[]`.
 
-``` chroma
+``` c
 static __always_inline __alloc_size(1) void *kmalloc(size_t size, gfp_t flags)
 {
   if (__builtin_constant_p(size) && size) {

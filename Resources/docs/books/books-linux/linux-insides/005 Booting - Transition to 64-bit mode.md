@@ -1,6 +1,6 @@
 # Kernel booting process. Part 4
 
-In the previous [part](./linux-bootstrap-3.md), we saw the transition from the [real mode](https://en.wikipedia.org/wiki/Real_mode) into [protected mode](http://en.wikipedia.org/wiki/Protected_mode). At this point, the two crucial things were changed: 
+In the previous [part](004%20Booting%20-%20Video%20mode%20initialization%20and%20transition%20to%20protected%20mode.md), we saw the transition from the [real mode](https://en.wikipedia.org/wiki/Real_mode) into [protected mode](http://en.wikipedia.org/wiki/Protected_mode). At this point, the two crucial things were changed: 
 
 - The processor now can address up to four gigabytes of memory
 - The privilege levels were set for the memory access 
@@ -187,7 +187,7 @@ SYM_FUNC_START(startup_32)
 
 When the direction flag is clear, all string or copy-like operations used for copying data, like for example [stos](https://www.felixcloutier.com/x86/stos:stosb:stosw:stosd:stosq) or [scas](https://www.felixcloutier.com/x86/scas:scasb:scasw:scasd), will increment the index registers `esi` or `edi`. We need to clear the direction flag because later we will use string operations for tasks such as clearing space for page tables or copying data.
 
-The next instruction is to disable interrupts - `cli`. We have already seen it in the previous chapter. The interrupts are disabled "twice" because modern bootloaders can load the kernel starting from this point, but not only one that we have seen in the [first chapter](./linux-bootstrap-1.md).
+The next instruction is to disable interrupts - `cli`. We have already seen it in the previous chapter. The interrupts are disabled "twice" because modern bootloaders can load the kernel starting from this point, but not only one that we have seen in the [first chapter](002%20Booting%20-%20From%20bootloader%20to%20kernel.md).
 
 After these two simple instructions, the next step is to calculate the difference between where the kernel is compiled to run, and where it actually was loaded. If we will take a look at the linker [script](https://github.com/torvalds/linux/blob/master/arch/x86/boot/compressed/vmlinux.lds.S), we will see the following definition:
 
@@ -241,7 +241,7 @@ The `rva` macro is defined in the same source code file and looks like this:
 
 Schematically, it can be represented like this:
 
-![startup_32](./images/startup_32.svg)
+![startup_32](media/d5edc4f6ea92b4eec1719aeb2ec686410233216d.svg)
 
 Starting from this moment, the `ebp` register contains the physical address of the `startup_32` symbol. Next, it will be used to calculate the offset to any other symbols or structures in memory.
 
@@ -280,7 +280,7 @@ The new Global Descriptor table contains five descriptors:
 - Task state descriptor
 - Second task state descriptor
 
-We already saw loading the Global Descriptor Table in the previous [part](./linux-bootstrap-3.md#set-up-global-descriptor-table), and now we're doing almost the same, but we set descriptors to use `CS.L = 1` and `CS.D = 0` for execution in `64` bit mode.
+We already saw loading the Global Descriptor Table in the previous [part](004%20Booting%20-%20Video%20mode%20initialization%20and%20transition%20to%20protected%20mode.md#set-up-global-descriptor-table), and now we're doing almost the same, but we set descriptors to use `CS.L = 1` and `CS.D = 0` for execution in `64` bit mode.
 
 After the new Global Descriptor Table is loaded, the next step is to set up the stack:
 
@@ -398,7 +398,7 @@ The second way to avoid this problem is to allocate a buffer for the decompresse
 
 Schematically, it can be represented like this:
 
-![kernel-relocation](./images/kernel-relocation.svg)
+![kernel-relocation](media/aaa3707141b43e29b9f5ffa32cb921474bf83196.svg)
 
 The buffer for the decompressed kernel starts at the address specified by the `LOAD_PHYSICAL_ADDR` macro, which by default expands to the `0x1000000` address. Since we loaded this address below (at `0x100000`), the kernel setup code should copy itself, the compressed kernel image, and the decompressor code at this address. In addition, to have some room for the safe in-place decompression, it should calculate a special offset from the beginning of this buffer.
 
@@ -437,7 +437,7 @@ The last two lines are the most interesting. Using them, the kernel calculates t
 
 As a result, we get something like this:
 
-![kernel-relocation](./images/kernel-relocation-2.svg)
+![kernel-relocation](media/6d9155558bb1e0a2d4210ca9ba221687ca8bf9c3.svg)
 
 The decompressor code decompresses the compressed kernel image starting from the beginning of the buffer and gradually overwrites the compressed kernel image. As mentioned above, the size of the gap between the beginning of the decompression buffer and `startup_32` must be safe enough not to overwrite still-compressed parts of the image with the decompressed ones. The calculation of this gap highly depends on the compression method the kernel uses and is encoded in `BP_init_size`. Here I will skip all the details about this calculation, but if you are interested, you can find more details in the comment located in the [arch/x86/boot/header.S](https://github.com/torvalds/linux/blob/master/arch/x86/boot/header.S) file.
 
@@ -474,7 +474,7 @@ Let's briefly see what happens when the processor needs to translate a virtual a
 
 In four-level paging mode, a virtual address is 64 bits long. However, only the `48` bits are actually used for translation to a physical address. These `48` bits are divided into several parts:
 
-![early-page-table.svg](./images/early-page-table.svg)
+![early-page-table.svg](media/8cc46e961c1bd686e3b81119f986039733a5bd62.svg)
 
 Each group of `9` bits selects an entry in one level of the page-table hierarchy. Since `9` bits can represent `512` values, each page table contains exactly `512` entries. Each entry of a page table occupies `8` bytes, so a single page table fits into one 4-kilobyte page.
 
@@ -676,4 +676,4 @@ Here is the list of the links that you may find useful during reading of this ch
 - [Physical addresses](https://en.wikipedia.org/wiki/Physical_address)
 - [Model specific registers](http://en.wikipedia.org/wiki/Model-specific_register)
 - [Control registers](https://en.wikipedia.org/wiki/Control_register)
-- [Previous part](linux-bootstrap-3.md)
+- [Previous part](004%20Booting%20-%20Video%20mode%20initialization%20and%20transition%20to%20protected%20mode.md)

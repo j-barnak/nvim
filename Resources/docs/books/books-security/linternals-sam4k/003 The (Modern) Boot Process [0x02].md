@@ -47,7 +47,7 @@ Anyway, back to generic bootloader things, when we select our kernel (or more li
 
 The short and sweet of this is that the bootloader will bootstrap the kernel by loading into memory the “kernel real-mode code”, consisting of the kernel setup and kernel boot sector, creating a memory mapping similar to the one seen below:
 
-``` chroma
+```
         ~                        ~
         |  Protected-mode kernel |
 100000  +------------------------+
@@ -130,7 +130,7 @@ During this stage some more setup occurs, the GDT is updated, page tables are in
 
 Okay, there’s a lot to unpack here (haha), so I’ll try to keep things brief. At boot time, the kernel is typically sat on disk as a compressed image. You can check this out for yourself:
 
-``` chroma
+``` console
 [sam4k ~]$ ls /boot
 ...  efi  grub  ...  vmlinuz-linux
 [sam4k ~]$ file /boot/vmlinuz-linux 

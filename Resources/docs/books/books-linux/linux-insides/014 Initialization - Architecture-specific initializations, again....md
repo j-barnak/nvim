@@ -89,7 +89,7 @@ noexec		[X86]
 
 We can see it in the booting time:
 
-![NX](images/NX.png)
+![NX](media/1d646a573c929d177a24ba858b09b48da11d1b84.png)
 
 After this we can see call of the:
 
@@ -465,7 +465,7 @@ First of all it get the size of the page table buffer, it will be `INIT_PGT_BUF_
 
 Or we can find it with `readelf` util:
 
-![brk area](images/brk_area.png)
+![brk area](media/9d35d0517a8d858db194af49f51e6a711143c7fd.png)
 
 After that we got physical address of the new `brk` with the `__pa` macro, we calculate the base address and the end of the page table buffer. In the next step as we got page table buffer, we reserve memory block for the brk area with the `reserve_brk` function:
 

@@ -259,7 +259,7 @@ The `jiffies` clock source uses the `NSEC_PER_JIFFY` multiplier conversion to sp
 
 Where `CONFIG_HZ` can be one of the following values:
 
-![HZ](images/HZ.png)
+![HZ](media/d78cebfef7355ce316f6fbb2654e12d09aae78fa.png)
 
 This means that in our case the timer interrupt frequency is `250 HZ` or occurs `250` times per second or one timer interrupt each `4ms`.
 
@@ -311,7 +311,7 @@ Note that we have used `NSEC_PER_SEC` macro as the base of the standard `jiffies
 #define CLOCK_TICK_RATE         PIT_TICK_RATE
 ```
 
-where the `PIT_TICK_RATE` macro expands to the frequency of the [Intel 8253](Programmable interval timer):
+where the `PIT_TICK_RATE` macro expands to the frequency of the Intel 8253:
 
 ```C
 #define PIT_TICK_RATE 1193182ul

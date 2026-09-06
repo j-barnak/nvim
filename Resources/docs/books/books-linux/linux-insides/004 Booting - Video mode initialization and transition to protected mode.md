@@ -1,6 +1,6 @@
 # Kernel booting process. Part 3
 
-In the previous [part](./linux-bootstrap-2.md), we have seen first pieces of C code that run in the Linux kernel. One of the main goal of this stage is to switch into the [protected mode](https://en.wikipedia.org/wiki/Protected_mode), but before this, we have seen some early setup code which executes early initialization procedures, such as:
+In the previous [part](003%20Booting%20-%20First%20steps%20in%20the%20kernel%20setup%20code.md), we have seen first pieces of C code that run in the Linux kernel. One of the main goal of this stage is to switch into the [protected mode](https://en.wikipedia.org/wiki/Protected_mode), but before this, we have seen some early setup code which executes early initialization procedures, such as:
 
 - Setup of console to be able to print messages from the kernel's setup code
 - Validation of CPU
@@ -151,7 +151,7 @@ After getting the video mode set by the bootloader, we can see resetting the hea
 #define RESET_HEAP() ((void *)( HEAP = _end ))
 ```
 
-If you have read [part 2](./linux-bootstrap-2.md), you should remember the initialization of the heap memory area. This memory area starts right after the end of [BSS](https://en.wikipedia.org/wiki/.bss) and lasts till the stack.
+If you have read [part 2](003%20Booting%20-%20First%20steps%20in%20the%20kernel%20setup%20code.md), you should remember the initialization of the heap memory area. This memory area starts right after the end of [BSS](https://en.wikipedia.org/wiki/.bss) and lasts till the stack.
 
 The kernel setup code provides a couple of utility macros and functions for managing the early heap. Let's take a look at some of them, especially at those relevant for this chapter.
 
@@ -325,7 +325,7 @@ We will consider only a standard use case, when the bootloader does not provide 
 
 An interrupt is a signal to the CPU that is emitted by hardware or software. After getting such a signal, the CPU suspends the current instruction sequence, saves its state, and transfers control to the interrupt handler. After the interrupt handler has finished its work, it transfers control back to the interrupted instruction. Non-maskable interrupts (NMI) are interrupts that are always processed, independently of permission. They cannot be ignored and are typically used to signal non-recoverable hardware errors. We will not dive into the details of interrupts now, but we will discuss them in the next parts.
 
-At the first line, there is an [inline assembly](../Toolchain/linux-toolchain-4.md) statement with the `cli` instruction, which clears the [interrupt flag](https://en.wikipedia.org/wiki/Interrupt_flag). After this, external interrupts are disabled. The next line disables NMI (non-maskable interrupt).
+At the first line, there is an [inline assembly](074%20Toolchain%20and%20binaries%20-%20Inline%20assembly.md) statement with the `cli` instruction, which clears the [interrupt flag](https://en.wikipedia.org/wiki/Interrupt_flag). After this, external interrupts are disabled. The next line disables NMI (non-maskable interrupt).
 
 Let's get back to the code. In the second line, we set the byte `0x0` to the port `0x80`. After that, a call to the `io_delay` function occurs. `io_delay` causes a little delay and looks like this:
 
@@ -445,7 +445,7 @@ This structure provides information about the pointer to the Interrupt Descripto
 
 ### Set up Global Descriptor Table
 
-Next, we set up the Global Descriptor Table. As you may remember, the memory access is based on the `segment:offset` addressing in real mode. The protected mode introduces a different model based on the `Global Descriptor Table`. If you forgot the details about the Global Description Table structure, you can find more information in the [previous chapter](./linux-bootstrap-2.md#protected-mode).
+Next, we set up the Global Descriptor Table. As you may remember, the memory access is based on the `segment:offset` addressing in real mode. The protected mode introduces a different model based on the `Global Descriptor Table`. If you forgot the details about the Global Description Table structure, you can find more information in the [previous chapter](003%20Booting%20-%20First%20steps%20in%20the%20kernel%20setup%20code.md#protected-mode).
 
 Instead of fixed segment bases and limits, the CPU now looks for memory regions defined by descriptors located in the Global Descriptor Table. The goal of the kernel is to set up these descriptors.
 
@@ -623,4 +623,4 @@ Here is the list of the links that you may find useful during reading of this ch
 - [Protected mode](https://en.wikipedia.org/wiki/Protected_mode)
 - [Intel VT](https://en.wikipedia.org/wiki/X86_virtualization#Intel_virtualization_(VT-x))
 - [Flat memory model](https://en.wikipedia.org/wiki/Flat_memory_model)
-- [Previous part](linux-bootstrap-2.md)
+- [Previous part](003%20Booting%20-%20First%20steps%20in%20the%20kernel%20setup%20code.md)

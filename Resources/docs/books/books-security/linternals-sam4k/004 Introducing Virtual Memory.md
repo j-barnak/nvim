@@ -62,7 +62,7 @@ Okay, so now we have a general grasp of physical memory and the integral role it
 
 As we alluded to above, basically everything wants a piece of RAM. Using `ps` we can see just how many processes are vying for a slice of our precious RAM:
 
-``` chroma
+``` console
 $ ps -e --no-headers | wc -l
 404
 ```
@@ -97,7 +97,7 @@ We use hexadecimal over decimal because as a base 16 system, it lines up perfect
 
 The reason hexadecimal “lines up perfectly” is that 16 is a power 2; 24 specifically, which basically means that 1 hex digit can perfectly represent any 4 binary digits. 2 hex for 8 binary and so on. Whereas decimal simply doesn’t align like this.
 
-![](./Linternals_%20Introducing%20Virtual%20Memory%20_%20sam4k_files/mathematical.gif)
+![](media/7f5b52144e4f0842a4b9ea3b99c818d803f1cb63.gif)
 
 So for things like memory, which is often byte-addressable, hexadecimal provides as a more readable and information dense alternative to using binary.
 
@@ -113,7 +113,7 @@ At one point or another, the virtual memory address needs to be translated to th
 
 But let’s use this moment to remind ourselves that ***each process has it’s own virtual address space***. So effectively, each process lives in a sandbox, believing it has unfettered access to addresses `0x0 - 0xffffffffffffffff`. Processes are not aware/able to access the virtual address space of another process.
 
-![](./Linternals_%20Introducing%20Virtual%20Memory%20_%20sam4k_files/addresstrans_basic-3.png)
+![](media/e69fed4d25f3036809fb71c18568f9f86318bad0.png)
 
 Drastically over simplified view of how two processes can use the same virtual address which however translates to a different physical address. 
 
@@ -153,7 +153,7 @@ However, even the most simple “Hello, World!” program in C requires loading 
 
 Don’t believe me? Take the basic C program below:
 
-``` chroma
+``` c
 #include <stdio.h>
 int main() {
    printf("Hello, World!\n");
@@ -163,7 +163,7 @@ int main() {
 
 With a few commands, we can get a quick insight into what’s going on behind the scenes:
 
-``` chroma
+``` console
 $ ldd hw
         linux-vdso.so.1 (0x00007ffecb53e000)
         libc.so.6 => /usr/lib/libc.so.6 (0x00007fc3747f3000)
@@ -172,7 +172,7 @@ $ ldd hw
 
 `ldd` prints the shared objects (shared libraries) dependencies required by our dynamically compiled `hw.c`, in our context, this means when we map our program into it’s virtual address space, we’ve also got to map any necessary dependencies too.
 
-``` chroma
+``` console
 $ strace ./hw
 execve("./hw", ["./hw"], 0x7ffd3ee6c190 /* 62 vars */) = 0
 brk(NULL)                               = 0x563a56b24000
@@ -253,7 +253,7 @@ There’s an overhead to switching the CPU’s context (tl;dr there’s context 
 
 This is all implemented by splitting the virtual memory into two sections, the User Virtual Address Space and the Kernel Virtual Address Space:
 
-![](./Linternals_%20Introducing%20Virtual%20Memory%20_%20sam4k_files/vmsplit.png)
+![](media/1e7169958d418b4454ddd4a9f1aec5b5d406bbaa.png)
 
 x86_64 VM split
 

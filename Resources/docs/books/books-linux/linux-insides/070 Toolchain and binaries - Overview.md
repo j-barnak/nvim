@@ -41,8 +41,8 @@ When reading this and other chapters, you may encounter special notation:
 
 The topics in this chapter are independent of one another, so you can read the sections in any order. The chapter covers the following topics:
 
-- [How the kernel is compiled](linux-toolchain-1.md) - from the `make` execution to the building of the `bzImage`
-- [Linkers](linux-toolchain-2.md) - the linking process, object files and linker scripts
-- [Executable and Linkable Format](linux-toolchain-3.md) - the structure of `ELF` binaries and their representation in the kernel
-- [Inline assembly](linux-toolchain-4.md) - basic and extended forms of inline assembly with examples
-- [Program startup process in userspace](linux-toolchain-5.md) - the way from the entry point of an `ELF` binary to the `main` function of a program
+- [How the kernel is compiled](071%20Toolchain%20and%20binaries%20-%20How%20the%20kernel%20is%20compiled.md) - from the `make` execution to the building of the `bzImage`
+- [Linkers](072%20Toolchain%20and%20binaries%20-%20Linkers.md) - the linking process, object files and linker scripts
+- [Executable and Linkable Format](073%20Toolchain%20and%20binaries%20-%20Executable%20and%20Linkable%20Format.md) - the structure of `ELF` binaries and their representation in the kernel
+- [Inline assembly](074%20Toolchain%20and%20binaries%20-%20Inline%20assembly.md) - basic and extended forms of inline assembly with examples
+- [Program startup process in userspace](075%20Toolchain%20and%20binaries%20-%20Program%20startup%20process%20in%20userspace.md) - the way from the entry point of an `ELF` binary to the `main` function of a program

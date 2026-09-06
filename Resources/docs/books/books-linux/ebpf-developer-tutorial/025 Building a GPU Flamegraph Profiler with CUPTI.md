@@ -8,7 +8,7 @@ This tutorial will guide you through building a profiler that bridges this gap. 
 
 To see our profiler in action, let's look at a real-world example: profiling a Qwen3 0.6B Large Language Model during inference. The resulting flamegraph, shown below, visualizes the entire operation, merging CPU call stacks with the GPU kernels they launch. It immediately becomes clear that the `matmul_kernel` (matrix multiplication) is the most time-consuming part, accounting for 95% of the total GPU execution time.
 
-![Qwen3 LLM Inference Flamegraph](qwen3_flamegraph.svg)
+![Qwen3 LLM Inference Flamegraph](media/3072777341cc57149a0b089bf7eaef80aba6b867.svg)
 
 **Key Insights from this Flamegraph:**
 

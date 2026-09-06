@@ -39,7 +39,7 @@ When reading this and other chapters, you may encounter special notation:
 
 The topics in this chapter are independent of one another, so you can read the sections in any order. The chapter covers the following topics:
 
-- [Per-CPU variables](linux-cpu-1.md) - how per-cpu variables are implemented and how to work with them
-- [CPU masks](linux-cpu-2.md) - the bitmaps which describe sets of processors and the API around them
-- [The initcall mechanism](linux-cpu-3.md) - the ordering of built-in modules and subsystems initialization
-- [Notification Chains](linux-cpu-4.md) - how subsystems subscribe to and publish asynchronous events
+- [Per-CPU variables](059%20Kernel%20mechanisms%20-%20Per-CPU%20variables.md) - how per-cpu variables are implemented and how to work with them
+- [CPU masks](060%20Kernel%20mechanisms%20-%20Cpumasks.md) - the bitmaps which describe sets of processors and the API around them
+- [The initcall mechanism](061%20Kernel%20mechanisms%20-%20The%20initcall%20mechanism.md) - the ordering of built-in modules and subsystems initialization
+- [Notification Chains](062%20Kernel%20mechanisms%20-%20Notification%20Chains.md) - how subsystems subscribe to and publish asynchronous events

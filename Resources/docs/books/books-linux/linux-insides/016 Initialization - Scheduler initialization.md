@@ -203,7 +203,7 @@ It setups setup the `startup` and `teardown` callbacks (second and third paramet
 
 After this function we can see the kernel command line in the initialization output:
 
-![kernel command line](images/kernel_command_line.png)
+![kernel command line](media/23db73d7173948888099f184ef6c9e2b94f008b4.png)
 
 And a couple of functions such as `parse_early_param` and `parse_args` which handles Linux kernel command line. You may remember that we already saw the call of the `parse_early_param` function in the sixth [part](https://0xax.gitbook.io/linux-insides/summary/initialization/linux-initialization-6) of the kernel initialization chapter, so why we call it again? Answer is simple: we call this function in the architecture-specific code (`x86_64` in our case), but not all architecture calls this function. And we need to call the second function `parse_args` to parse and handle non-early command line arguments.
 

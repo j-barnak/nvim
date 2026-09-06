@@ -1,0 +1,1367 @@
+26                      Kernel Mode Rootkits
+
+K      ernel mode rootkits are extremely dangerous to the runtime integrity of a Linux
+       system. These rootkits have the power to add, delete, or modify any data that kernel
+or userland applications request about the state of the system. This can include information
+such as lists of running processes, loaded kernel modules, active network connections,
+files within a directory, and even the contents of those files. Kernel mode rootkits can also
+monitor user activity including keystrokes, network packets, and interactions with hard-
+ware such as removable media or security devices. To find kernel mode rootkits, you must
+perform deep inspection of the running kernel, including its code and data structures.
+    Kernel rootkits can hook many places to subvert the system, and accordingly, Volatility
+has powerful support for enumerating and verifying in-kernel data. Many of these are
+newly developed capabilities and exclusive to Volatility, such as finding Netfilter hooks
+and copied credential structures. Throughout this chapter, you’ll see several of these
+plugins in action and you’ll learn how to use them in your own investigations.
+
+Accessing Kernel Mode
+To install and use a kernel mode rootkit, attackers must first obtain root-level privi-
+leges. They can gain access to this permission level either through a social engineering
+attack (e.g., convincing an administrator to install a malicious application) or by remotely
+exploiting a network service that runs with root privilege. Alternatively, an adversary
+could gain access to a local user account and then execute a privilege escalation attack.
+Such attack techniques are out of the scope of this book, but you can learn about them
+in many places, such as A Guide to Kernel Exploitation: Attacking the Core by Enrico Perla
+and Massimiliano Okdani, Syngress, 2010 (http://www.attackingthecore.com). Once the
+adversary has acquired root level privileges, they can leverage one of the native methods
+that Linux provides for writing into the kernel address space (also known as ring 0) of a
+running system.
+
+        One method of getting “inside” the kernel is to use loadable kernel modules (LKMs). In
+     Chapter 23, you learned how modules are loaded, how they are enumerated, and how they
+     are recovered to disk through memory forensics. LKMs are the most popular method of
+     gaining access to the kernel because you can write them in the C programming language.
+     Additionally, LKMs have full access to the kernel’s APIs and data structures. This makes
+     rootkits portable across different kernel versions and also provides stability because the
+     LKM can obtain the proper synchronization locks before manipulating data structures.
+        Another interface into kernel memory that Linux provides involves the character
+     devices /dev/mem and /dev/kmem. These devices were discussed in Chapter 19, in which
+     you learned about memory acquisition methods. On older distributions on Linux, the
+     /dev/mem device exports (i.e., allows access to) the first gigabyte of physical memory, and
+     /dev/kmem exports the kernel virtual address space. However, on modern Linux distribu-
+     tions, /dev/mem allows access only to the first megabyte of RAM. This lets programs that
+     read physical memory of hardware devices, such as the X server, to operate correctly
+     without exposing a significant amount of sensitive kernel code and data.
+        Despite the aforementioned challenges, rootkits can still access more than the first
+     megabyte of RAM using /dev/mem. For example, as you will see in Chapter 27, the Phalanx2
+     rootkit loads an LKM to disable the /dev/mem restrictions and then maps its own view of
+     /dev/mem. The new mapping allows it to read and write physical memory from its userland
+     process. However, directly accessing /dev/mem and /dev/kmem poses a number of chal-
+     lenges because the rootkit author cannot rely on system APIs to perform tasks. Instead,
+     the rootkit must read and write data structures found in memory directly, similar to the
+     process that memory forensics tools use.
+
+     Hidden Kernel Modules
+     The first task that many malicious LKMs perform is to hide the kernel module from the
+     running system. System administrators and security tools frequently use the lsmod com-
+     mand, which reads from /proc/modules, to check for malicious LKMs. By simply deleting
+     itself from the module list in kernel memory, a malicious module cannot be found through
+     such methods, but the rootkit will still operate correctly. This hiding technique requires
+     only a single line of code:
+        list_del_init(&__this_module.list);
+
+        This code obtains a reference to the current module through __this_module and then
+     uses the list_del_init macro to remove it from the list. __this_module is a special section
+     of the ELF file in memory that holds the module structure of the LKM.
+
+Hiding from sysfs
+The sysfs file system also exports module information. For example, on a live system,
+the /sys/module directory has a subdirectory for each active module. These directories
+contain information such as the module’s name, its sections, and its parameters. Security
+tools can cross-reference the modules in this list with the ones reported by lsmod to detect
+certain rootkits. However, it’s also possible to hide from sysfs. Rootkits that want to do
+this can use the following line of code to accomplish the task:
+  kobject_del(__this_module.holders_dir->parent);
+
+   This code finds a reference to the sysfs data structure (holders_dir) and then removes
+itself from the parent’s list of children.
+
+ NOTE
+ The lines of code involving list_del_init and kobject_del both come from the suter-
+ usu rootkit (https://github.com/mncoppola/suterusu). suterusu is an open source
+ rootkit that you can use for testing plugins because similar tactics (hiding the module,
+ code hooking, etc.) are frequently used in the wild.
+
+Detecting KBeast
+For the rootkits that hide only from the modules list, not from sysfs, you can use the
+linux_check_modules plugin to automatically compare the modules and display discrepan-
+cies. The following shows this plugin against a system infected with the KBeast rootkit:
+  $ python vol.py -f kbeast.lime --profile=LinuxDebianx86 linux_check_modules
+  Volatility Foundation Volatility Framework 2.4
+  Offset (V) Module Name
+  ---------- ----------------
+  0xf841a258 ipsecs_kbeast_v1
+
+  Volatility found the ipsecs_kbeast_v1 module of KBeast because it hides only from the
+module list, not sysfs. You can then use the linux_moddump plugin to extract and statically
+analyze the kernel module. The following command dumps the module to disk:
+  $ python vol.py --profile=LinuxDebianx86 -f kbeast.lime
+         linux_moddump -b 0xf841a258 -D outdir
+  Volatility Foundation Volatility Framework 2.4
+  Wrote 33798 bytes to ipsecs_kbeast_v1.0xf841a258.lkm
+
+         If you examine the beginning of the module’s init function, you see that the module
+     is immediately deleted from the global list:
+        static int init(void) {
+               list_del_init(&__this_module.list);
+
+         Examination of list_del_init shows that it unlinks the current entry from the given
+     list and then sets the next and prev pointers of the list back to itself:
+         1   static inline void INIT_LIST_HEAD(struct list_head *list) {
+         2         list->next = list;
+         3         list->prev = list;
+         4   }
+         5
+         6   static inline void __list_del(struct list_head * prev,
+         7                                 struct list_head * next) {
+         8         next->prev = prev;
+         9         prev->next = next;
+        10 }
+        11
+        12 static inline void list_del_init(struct list_head *entry) {
+        13      __list_del(entry->prev, entry->next);
+        14      INIT_LIST_HEAD(entry);
+        15 }
+
+       As shown, the list_del_init function, on lines 12–15, calls __list_del with the prev
+     and next members of the entry. Then it passes the entry to INIT_LIST_HEAD.
+
+     Examining the Disassembly
+     The disassembly of the extracted module in the following code shows these steps as
+     well. We have added labels to several instructions to assist with interpretation of the
+     instructions:
+        public init_module
+        init_module proc near
+        mov     edx, ds:0f841A25Ch ; this_module.next
+        mov     eax, ds:0F841A260h ; this_module.prev
+        push    ebx
+        mov     [edx+4], eax        ; this_module.next.prev = this_module.prev
+        mov     [eax], edx          ; this_module.prev.next = this_module.next
+        mov     eax, ds:0C14CBB2Ch
+        mov     dword ptr ds:0F841A25Ch, 0F841A25Ch ; this_module.next = this_module
+        mov     dword ptr ds:0F841A260h, 0F841A25Ch ; this_module.prev = this_module
+
+        The first mov instruction accesses 0xf841a25c, which is four bytes into the start of the
+     ­ odule structure for KBeast (remember that the parameter you passed to linux_moddump
+     m
+     was 0xf841a258). To determine exactly which structure member the code is accessing,
+
+you can display the module structure in linux_volshell. For example, in the following
+code, the member at offset four is list:
+  >>> dt("module")
+  'module' (352 bytes)
+
+  [snip]
+
+  0x4    : list              ['list_head']
+
+   Because next is the first member of list_head, its address is the same as the beginning
+of the list_head structure.
+   The second mov shown in the previous code is eight bytes into the module structure,
+which corresponds to the prev member. The next two commented lines set the entry
+.next.prev and entry.prev.next members, just like lines 6–9 of the source code listing.
+The last two commented lines correspond to lines 1–4 of the source code, in which the
+next and prev members of the module are set to the module itself. These instructions
+successfully unlink the module from the module list.
+
+Carving for Hidden Modules
+Carving is the process of searching raw input (disk image, memory sample, network cap-
+ture) for data such as files and structures. To find LKMs that hide from both the module
+list and sysfs, you can use the linux_hidden_modules plugin. This plugin scans memory
+for instances of a module structure and then compares the results with the list of modules
+reported by linux_lsmod. Modules that are found through carving, but not the linked list
+of modules, are reported. The results can include modules that are hidden and those that
+have been freed but not overwritten (i.e., lingering in unallocated storage).
+    To improve performance, the plugin uses the module_addr_min and module_addr_max
+variables within the kernel. These variables indicate the range of addresses of where
+kernel module structures are allocated, thus they provide a lower and upper bound for
+the scanner to search. Scanning this area is considerably faster than scanning the entire
+virtual address space, but it is just as thorough because the OS should never allocate module
+structures from outside of the range. The validity of each candidate kernel module is then
+evaluated by leveraging a set of constraints. To reduce the opportunities for subversion,
+the constraints check members of the structures that are essential to the stability of the
+system, such as the size of sections and pointers to the module’s code and data.
+    The following code shows the linux_hidden_modules plugin against a memory sample
+infected with suterusu:
+  $ python vol.py --profile=LinuxDebian-3_2x64 -f susnf.lime linux_hidden_modules
+  Volatility Foundation Volatility Framework 2.4
+
+        Offset (V)         Name
+        ------------------ ----
+        0xffffffffa03a15d0 suterusu
+
+        The output presents the virtual address of the module structure as well as the module
+     name gathered from the name member. You can then use linux_moddump with the given
+     virtual offset to recover the kernel module from memory:
+        $ python vol.py --profile=LinuxDebian-3_2x64 -f susnf.lime linux_moddump
+           -D dump -b 0xffffffffa03a15d0
+        Wrote 3625087 bytes to dump/suterusu.0xffffffffa039e000.lkm
+
+        The kernel module is dumped to a file with the .lkm extension. You can now analyze
+     the LKM using traditional executable analysis methods (e.g., disassemble with IDA Pro;
+     scan with antivirus signatures). In the next output, the readelf command parses the ELF’s
+     symbol table and identifies various functions that appear to hide TCP and UDP ports:
+        $ readelf -W -s suterusu.0xffffffffa039e000.lkm
+        <snip>
+            15: 0000000000000878    69 FUNC    GLOBAL DEFAULT         2 hide_udp4_port
+            17: 000000000000096e    69 FUNC    GLOBAL DEFAULT         2 hide_proc
+            18: 0000000000000938    54 FUNC    GLOBAL DEFAULT         2 unhide_udp6_port
+            24: 0000000000000782    69 FUNC    GLOBAL DEFAULT         2 hide_tcp4_port
+            25: 00000000000007fd    69 FUNC    GLOBAL DEFAULT         2 hide_tcp6_port
+            29: 00000000000007c7    54 FUNC    GLOBAL DEFAULT         2 unhide_tcp4_port
+            30: 0000000000000a2f    85 FUNC    GLOBAL DEFAULT         2 unhide_file
+            32: 0000000000001144   144 FUNC    GLOBAL DEFAULT         2 hijack_stop
+        <snip>
+
+       Presumably, the rootkit hooks system APIs and points them at these functions in the
+     malicious LKM. In the upcoming “Resolving Malicious Functions” section of this chapter,
+     we describe how to associate the hooked addresses with specific functions in the rootkit.
+
+     Finding Modules by File Handles
+     Regardless of the way a rootkit hides its own LKM, the LKM must request resources from
+     the operating system to function—such as file handles and network connections. Thus,
+     in the rare case when you cannot locate an LKM using the aforementioned plugins, you
+     can identify artifacts that the malicious LKM creates. For example, usually only processes
+     (not kernel modules) open files. Therefore, any file open within the kernel, except for a
+     swap device, warrants further inspection.
+        One of the suterusu rootkit’s capabilities is to log keystrokes from within the kernel to
+     the file /root/.keylog on disk. To gain write access to the log file, it uses the filp_open
+     function within the kernel. This function takes a path to a file and returns the file struc-
+     ture pointer, as shown in the following code:
+
+  1   #if defined(_CONFIG_LOGFILE_)
+  2     logfile = filp_open(LOG_FILE, O_WRONLY|O_APPEND|O_CREAT, S_IRWXU);
+  3     if ( ! logfile )
+  4         DEBUG("KEYLOGGER: Failed to open log file: %s", LOG_FILE);
+
+   The next example shows the linux_kernel_opened_files plugin used against a sample
+infected with suterusu:
+  $ python vol.py --profile=LinuxDebian-3_2x64 -f suskl2.lime
+      linux_kernel_opened_files
+  Volatility Foundation Volatility Framework 2.4
+  Offset (V)         Partial File Path
+  ------------------ -----------------
+  0xffff8800307109c0 /media/usb/suskl2.lime
+  0xffff8800306e5800 /root/.keylog
+
+   In the output, you can see two files reported along with the virtual address of their
+dentry structure. The first is suskl2.lime, which is the memory sample being investi-
+gated. It appears in the output because LiME also uses filp_open from within the kernel
+to write the memory sample to disk. The other file is /root/.keylog, which you know
+is part of the rootkit. Even if you did not know what the file was for and it had a more
+benign filename, the fact that it is opened from within the kernel is enough to warrant
+further investigation.
+   The linux_kernel_opened_files plugin operates by gathering all recently used dentry
+structures from the dentry cache and compares them with the set of files that processes
+open (using the linux_lsof and linux_proc_maps plugins). As previously mentioned, aside
+from swap files, the only files that these two plugins should not find are those opened
+through filp_open inside the kernel.
+
+Kernel-Mode Code Injection
+Malicious kernel rootkits also have the capability to subvert the system without using or
+keeping a kernel module in memory. In this case, the rootkit doesn’t necessarily hide its
+LKM; it just relocates and then unloads immediately. The following steps describe how
+this technique works:
+
+  1. The rootkit loads the kernel module from disk.
+  2. In the module’s init function, the rootkit allocates executable kernel memory by
+     calling functions such as kmalloc and vmalloc_exec.
+  3. The rootkit’s code is then copied to these new executable regions and its data is
+     copied to read/write regions.
+  4. The kernel module then starts a new thread, registers callback(s), or hooks code
+     that points into the allocated regions.
+
+        5. The module’s init function returns an error condition so that the module is
+           unloaded and its metadata structure (module) is destroyed. This means it will not
+           appear in lsmod or sysfs.
+
+        This technique allows the LKM to place code and hooks into the kernel that will persist
+     after the LKM unloads. As long as the allocated memory regions containing the rootkit
+     code aren’t freed, they remain valid and accessible to the operating system, thus allowing
+     the malicious code to survive. This trick is important to understand, because it explains
+     why you might not be able to find a malicious module with the aforementioned plugins.
+     However, if you can find at least one of its hooks, you will then have a function pointer
+     or data structure allocated within an unknown region of memory.
+
+      NOTE
+      A different approach, but with the same effects, is used by rootkits that write directly
+      to /dev/mem or /dev/kmem. From userland, these rootkits can inject shell code, into the
+      kernel, that allocates memory and places hooks. At that point, there is no need to use an
+      LKM. However, writing portable shell code requires slightly more skill than creating
+      an LKM because you must write it in straight assembly rather than C.
+
+     Hidden Processes
+     Many Linux rootkits are designed to be as flexible and reusable as possible (so they can
+     be sold as kits and then bundled with any crimeware the buyer desires). Thus, rootkits
+     can often hide their associated processes (based on a static or dynamic configuration)
+     from userland tools and system administrators. Although the attack typically takes place
+     by manipulating process–related kernel data structures, there are many variations. As
+     a forensics investigator, you must recognize and detect the artifacts associated with the
+     different methods.
+        The first Volatility plugin that can help you analyze systems with hidden processes is
+     linux_psxview. It enumerates processes from multiple sources throughout the operating
+     system and then cross-references the results to find discrepancies.
+
+     Sources of Process Listings
+     The sources that the plugin uses are these:
+
+        • Process list: The list of active processes that the init_task symbol points to. This
+            is the list that linux_pslist walks to enumerate processes.
+
+   • PID hash table: This list is populated from the linux_pidhashtable plugin you
+     learned about in Chapter 21. This plugin not only enumerates processes but also
+     their threads.
+   • Memory cache: For systems that use the SLAB allocator, this list is populated by
+     finding task_struct structures in the kernel memory cache (kmem_cache).
+   • Parents: This list is populated by following the parent pointers of processes and
+     threads found in the PID hash table.
+   • Leaders: This list is populated by gathering the thread group leader pointer of
+     each process and thread.
+
+   By correlating the data from these various sources, you can easily spot processes that
+are hiding in one or more ways. The following example shows the linux_psxview plugin
+against a memory sample infected with malware that is hiding a process from both the
+process list and the PID hash table:
+  $ python vol.py --profile=LinuxDebian-3_2x64 -f psrk.lime linux_psxview
+  Volatility Foundation Volatility Framework 2.4
+  Offset(V)          Name            PID pslist pid_hash kmem_cache parents leader
+  ------------------ -------------- ---- ------ -------- ---------- ------- ------
+  True
+  0xffff8800371f6300 apache2        2209 True    True    True       False   True
+  0xffff88003baf29f0 smbd           2166 True    True    True       True    True
+  0xffff880037175710 apache2        2211 True    True    True       False   True
+  0xffff88003e3a2180 crypto           27 True    True    True       False   True
+  0xffff88003e282e60 migration/0       6 True    True    True       False   True
+  0xffff880036f89810 bash           2878 True    True    True       False   True
+  0xffff88003e2a2100 kintegrityd      19 True    True    True       False   True
+  0xffff880036d60830 postgres       2514 False False     True       False   True
+  0xffff880036cce0c0 scsi_eh_2       155 True    True    True       False   True
+  0xffff88003e2927b0 kworker/0:1      11 True    True    True       False   True
+  0xffff88003c31a080 dlexec         2938 True    True    True       False   True
+  0xffff88003bdd41c0 getty          2828 True    True    True       False   True
+  0xffff88003b6b6ab0 nmbd           2163 True    True    True       False   True
+  0xffff88003e253510 init              1 True    True    True       True    True
+  0xffff88003c32d1a0 rpciod         1742 True    True    True       False   True
+  0xffff88003e2acf20 khelper          14 True    True    True       False   True
+  0xffff88003baf9120 exim4          2797 True    True    True       False   True
+  0xffff88003d71c240 winbindd       2509 True    True    True       False   True
+  0xffff880037216a30 apache2        2221 False True      True       False   False
+  0xffff88003baf37d0 apache2        2255 False True      True       False   False
+  <snip>
+
+   In the output, the postgres process displays False in the pslist, pid_hash, and parents
+columns, but was found within the kmem_cache and leaders sources. The absence of the
+postgres process from these lists is suspicious, and it should signal you to examine it
+more closely.
+
+     Cross View Exceptions
+﻿
+
+     When studying the output of linux_psxview for hidden processes, there are a number
+     of cases in which legitimate processes appear as False in certain columns. You should
+     become familiar with these cases in order to draw correct conclusions. These cases are
+     described in the following list:
+
+        • Threads appear only in pid_hash and kmem_cache. You can verify that a listed entry
+          is a thread by checking for its thread ID in the output of the linux_threads plugin.
+        • On SLUB systems, all entries are False in the kmem_cache column because SLUB
+          does not maintain data structures necessary to track all objects. On SLAB systems,
+          all processes and threads should appear in the kmem_cache. This rule can be sim-
+          plified this way: If any process or thread appears in kmem_cache, they all should.
+        • Except for the swapper process, all other entries should be within the process list.
+
+     Elevating Privileges
+     Besides hiding a process on the system, kernel-level rootkits often elevate their associ-
+     ated processes privileges to root (UID 0) in order to give the process full control of the
+     system. Attackers often compromise a non-root-user’s account, use privilege escalation
+     to install a kernel rootkit, and then leave the system for some period of time. When the
+     attacker wants to regain access, he can simply log in using previously stolen credentials
+     and communicate with the rootkit to gain full privileges for his new processes. To sys-
+     tem administrators monitoring the computer, the login simply looks like the normal
+     user accessing the system. Furthermore, with the heightened privileges, the attacker can
+     perform anti-forensics to remove traces of the login.
+
+     Analysis Objectives
+
+     Your objectives are these:
+
+        • Find processes with hijacked credentials: Depending on how the rootkit elevates
+          privileges, different artifacts can be present in memory. The linux_check_creds
+          Volatility plugin automatically finds the most common artifacts.
+        • Understand how rootkits interact with malicious processes: You will see how
+          rootkits in kernel mode facilitate communication with userland processes (and
+          how you can detect such activity).
+
+   • Inspect rootkit–specific data structures: Rootkits maintain their own data struc-
+       tures to track hidden processes, files, and network connections. By locating these
+       data structures and extracting them from memory, you can gain deep insight into
+       what the rootkit was doing on the system.
+
+Data Structures
+The cred structure holds credentials for a process. This is the way it appears for a 64–bit
+Debian system:
+  >>> dt("cred")
+  'cred' (152 bytes)
+  0x0    : usage                           ['__unnamed_0x38e']
+  0x4    : uid                             ['unsigned int']
+  0x8    : gid                             ['unsigned int']
+  0xc    : suid                            ['unsigned int']
+  0x10 : sgid                              ['unsigned int']
+  0x14 : euid                              ['unsigned int']
+  0x18 : egid                              ['unsigned int']
+  0x1c : fsuid                             ['unsigned int']
+  0x20 : fsgid                             ['unsigned int']
+  0x24 : securebits                        ['unsigned int']
+  0x28 : cap_inheritable                   ['kernel_cap_struct']
+  0x30 : cap_permitted                     ['kernel_cap_struct']
+  0x38 : cap_effective                     ['kernel_cap_struct']
+  [snip]
+
+Key Points
+The key points are these:
+
+   • uid: The user ID of the user that invoked the process.
+   • gid: The group ID of the user that invoked the process.
+   • euid: The effective user of the process. When a user invokes a setuid (suid) applica-
+     tion, the real user ID (uid) is that of the user, but the effective user ID is that of the
+     user for which setuid is used.
+   • egid: The effective group ID of the process.
+
+Hijacked Credentials
+On older Linux systems, elevating a process’ privileges was relatively simple. The user
+and group ID of the process were stored as integers within task_struct. Setting both
+members (uid and gid) to zero was enough to elevate a process to root. This type of attack
+
+     is difficult to detect, because although you can see a process running as root, it is challeng-
+     ing to find evidence that the current uid and gid values are different from the originals.
+        Starting with the 2.6 series of kernels, the operating system provides more thorough
+     sources of privilege information. A process’ credentials are now stored within the cred
+     structures. The kernel provides two APIs (prepare_creds and commit_creds) for creating
+     and manipulating these structures, so it’s possible for rootkits to create their own cre-
+     dential structures, initialize them with fake values, and basically give themselves root.
+     However, an even easier way to accomplish the same goal is to point the target processes’
+     cred structure to that of an existing process. In particular, the source process is often one
+     that runs as root and does not exit. During our investigations, the process most frequently
+     chosen was init. This makes sense because init runs as root and exits only when the
+     machine is powering off or rebooting.
+
+     Average Coder Rootkit
+     Average Coder (http://average-coder.blogspot.com/2011/12/linux-rootkit.html) is
+     a publicly available rootkit that performs the described method of privilege escalation.
+     Specifically, it creates an artifact that Volatility can leverage to determine which processes
+     are running with unauthorized privilege levels. First, you will see how to interact with
+     Average Coder.
+        To accept commands from userland, Average Coder hooks the write handler of the
+     /proc/buddyinfo file. This file is installed by default in Linux distributions and it exports
+     memory management information. However, typically the file is meant only to be read.
+     As shown in the following output, attempting to write to it produces an error, regardless
+     of whether a normal user or root user initiates the write:
+        $ echo 42 > /proc/buddyinfo
+        bash: /proc/buddyinfo: Permission denied
+        $ sudo bash
+        # echo 42 > /proc/buddyinfo
+        -bash: echo: write error: Input/output error
+
+        On a system infected with Average Coder, writing to the file still seemingly produces
+     an error, but the rootkit’s handler is actually processing the command. For example, the
+     following command shows how to elevate a process to root access by sending the /proc/
+     buddyinfo file a root command:
+
+        $ id
+        uid=1000(x) gid=1000(x) groups=1000(x),24(cdrom),25(floppy),29(audio),
+        30(dip),44(video),46(plugdev)
+
+        $ echo $$
+        9673
+
+  $ echo "root $$" > /proc/buddyinfo
+  -bash: echo: write error: Operation not permitted
+
+  $ id
+  uid=0(root) gid=0(root) groups=0(root)
+
+   The user initially does not have root access (user ID 1000). By sending the root com-
+mand with the PID of the bash shell (9673), the shell is then elevated to root privileges.
+You can use Volatility to detect this modification because the cred structure pointer of
+the bash shell is now the same as the init process. As the following code shows, the
+linux_check_creds plugin detects this by walking the list of processes and seeing whether
+any share a credentials structure. This never happens on a clean system!
+  $ python vol.py -f avg.hidden-proc.lime --profile=LinuxDebian-3_2x64
+       linux_check_creds
+  Volatility Foundation Volatility Framework 2.4
+  PIDs
+  --------
+  1, 9673
+
+   In the output, PID 1 and 9673 are reported to have the same credentials structure.
+Because process 1 (init) already runs as root and is critical to operating system stability, it
+is very likely that it is the one whose credentials were stolen and process 9673 is related to
+the rootkit. As shown in the previous output, the PID of the elevated bash process was 9673.
+
+ NOTE
+ Besides detecting the hijacked credentials, Volatility can also detect the fact that Aver-
+ age Coder hooked the write operation of /proc/buddyinfo, as well as several other
+ files under /proc. Specifically, the linux_check_fop plugin enumerates the file pointers
+ from numerous sources within the operating system and verifies that they have not
+ been hijacked. The following shows linux_check_fop against a 64-bit system infected
+ with Average Coder:
+    $ python vol.py -f avgcoder.mem --profile=LinuxCentOS63x64 linux_check_fop
+    Symbol Name               Member            Address
+    ------------------------ ------------------ ------------------
+    proc_mnt: root           readdir            0xffffffffa05ce0e0
+    buddyinfo                write              0xffffffffa05cf0f0
+    modules                  read               0xffffffffa05ce8a0
+    /                        readdir            0xffffffffa05ce0e0
+    /var/run/utmp            read               0xffffffffa05ce4d0
+
+    In the output, you can see that Average Coder hooks a number of file operations
+ structures, including the write method of the /proc/buddyinfo file. This verifies the
+ command channel of the rootkit. Later in this chapter, you learn how linux_check_fop
+ operates and the purposes of the other hooks.
+
+     System Call Handler Hooks
+     One of the most popular methods that Linux rootkits use to control a userland applica-
+     tion’s view of the system is by hooking system calls. As you learned in Chapter 1, processes
+     use system calls to request actions such as opening, reading, and writing files; creating
+     and destroying processes; network communications; and much more. By hooking system
+     calls, kernel rootkits can return false information to the caller, log parameters passed to
+     the APIs, or modify requests.
+        The system call table is an array of function pointers, one for each system call. On a
+     clean machine, the entries should point within the kernel’s static code (as opposed to inside
+     an LKM or an unknown region of kernel memory). Volatility provides two plugins to
+     detect hooked system call tables. The first one, linux_check_syscall, is discussed in this
+     section; the second, linux_check_kernel_inline, is discussed at the end of this chapter.
+     The first one operates by locating the system call table, determining its size, and then
+     validating each entry.
+        The following code shows the use of linux_check_syscall against a memory sample
+     infected with KBeast.
+
+      NOTE
+      If you have access to the header file that contains your target machine’s system call
+      definitions, you can supply that to the plugin and it automatically translates the sys-
+      tem call indexes to their respective function names. Because these numbers change so
+      frequently between kernel versions, Volatility cannot hardcode them into the plugin.
+      Depending on your machine, the definitions are either in /usr/include/syscall.h or
+      /usr/include/x86_64-linux-gnu/asm/unistd_32.h (unistd_64.h for 64-bit platforms).
+
+        $ python vol.py -f kbeast.lime --profile=LinuxDebianx86
+                    linux_check_syscall
+                    -i /usr/include/x86_64-linux-gnu/asm/unistd_32.h > ksyscall
+
+        $ head -10 ksyscall
+        Table Index System Call      Handler         Symbol
+        ----- ----- ---------------- ----------      ----------------------------------
+        32bit     0 restart_syscall 0xc103be51       sys_restart_syscall
+        32bit     1 exit             0xc1033c85      sys_exit
+        32bit     2 fork             0xc100333c      ptregs_fork
+        32bit     3 read             0xf841998b      HOOKED: ipsecs_kbeast_v1/h4x_read
+        32bit     4 write            0xf84191a1      HOOKED: ipsecs_kbeast_v1/h4x_write
+        32bit     5 open             0xf84194fc      HOOKED: ipsecs_kbeast_v1/h4x_open
+        32bit     6 close            0xc10b227a      sys_close
+        32bit     7 waitpid          0xc10334d8      sys_waitpid
+
+  $ grep HOOKED ksyscall
+  32bit     3 read               0xf841998b   HOOKED: ipsecs_kbeast_v1/h4x_read
+  32bit     4 write              0xf84191a1   HOOKED: ipsecs_kbeast_v1/h4x_write
+  32bit     5 open               0xf84194fc   HOOKED: ipsecs_kbeast_v1/h4x_open
+  32bit    10 unlink             0xf841927f   HOOKED: ipsecs_kbeast_v1/h4x_unlink
+  32bit    37 kill               0xf841900e   HOOKED: ipsecs_kbeast_v1/h4x_kill
+  32bit    38 rename             0xf841940c   HOOKED: ipsecs_kbeast_v1/h4x_rename
+  32bit    40 rmdir              0xf8419300   HOOKED: ipsecs_kbeast_v1/h4x_rmdir
+  32bit   220 getdents64         0xf84190ef   HOOKED: ipsecs_kbeast_v1/h4x_getdents64
+  32bit   301 unlinkat           0xf8419381   HOOKED: ipsecs_kbeast_v1/h4x_unlinkat
+
+  For each system call, the plugin prints the following information:
+
+   • Table: Whether the table is the 32- or 64-bit table. 64-bit systems with 32-bit emula-
+      tion enabled have tables present.
+   • Index: The index of the system call.
+   • System Call: The name of the system call.
+   • Handler Address: The address of the system call handler.
+   • Symbol: Denotes whether the handler is legitimate. Legitimate handlers show the
+      name of the kernel function that handles the system call. They are generally pre-
+      fixed with sys_. Malicious handlers are printed as HOOKED, followed by the hooking
+      module name and handling function name (if available).
+
+   An artifact that stands out in the previous output is that all malicious handlers are
+stored within the same page of memory: 0xf8419xxx. The fact that the handlers are so
+close to each other is a good indication that they point to the same kernel module or
+injected code segment. According to the Symbol column, the name of the malicious mod-
+ule is ipsecs_kbeast_v1. Furthermore, Volatility determines the name of the functions
+within the malicious module that handle the hooked system calls (h4x_read, h4x_write,
+and so on). The upcoming “Keyboard Notifiers” section describes how the name resolu-
+tion works.
+
+Keyboard Notifiers
+In 2012, a research team from Bowdoin College published a paper, Bridging the Semantic
+Gap to Mitigate Kernel-level Keyloggers (http://www.ieee-security.org/TC/SPW2012/
+proceedings/4740a097.pdf), which detailed two new methods for performing in–kernel
+key logging on Linux systems. Shortly after the paper was released, Joe Sylve contrib-
+uted two new plugins (linux_keyboard_notifiers and linux_check_tty) to Volatility that
+detected these attacks.
+﻿
+
+     Analysis Objectives
+
+     Your objectives are these:
+
+        • Locate keyboard notifiers: Linux enables you to receive a callback notification each
+          time a key is pressed. Although these notifiers are used for legitimate purposes,
+          such as hot key implementations, they are often exploited for malicious purposes.
+          With the linux_keyboard_notifiers plugin, you can find all keyboard notifiers
+          and determine whether they are malicious.
+        • Determine the associated modules and symbols of malicious functions:
+          Identifying the presence of a malicious function is rarely enough to conclude an
+          in-depth investigation. Instead, you usually need to examine the function through
+          reverse engineering to determine its purpose and capabilities. Through the exami-
+          nation of a module’s symbols, Volatility can help guide your reversing process.
+
+     Data Structures
+     The notifier_block structure holds information on a keyboard notifier. Here is the way
+     the structure appears for a 64–bit Debian system:
+        >>> dt("notifier_block")
+        'notifier_block' (24 bytes)
+        0x0   : notifier_call                    ['pointer', ['void']]
+        0x8   : next                             ['pointer', ['notifier_block']]
+        0x10 : priority                          ['int']
+
+     Key Points
+     The key points are these:
+
+        • notifier_call: A reference to the callback function that executes when a key is
+          pressed
+        • next: A pointer into the list of keyboard notifiers
+
+     Malicious Keyboard Notifiers
+     The first attack described in the Bowdoin paper showed how to implement a malicious
+     keyboard notifier in order to receive a copy of a user’s keystrokes. The notifier is registered
+     through the register_keyboard_notifier function, which takes a notifier_block struc-
+     ture as a parameter. This structure’s notifier_call member is called each time a key
+
+is pressed. To detect this attack, the linux_keyboard_notifier plugin walks the list of
+keyboard notifiers and prints each one, along with the handler and whether it is valid.
+On all default Linux installs that we have tested, no notifiers have been present.
+   suterusu is an example of a rootkit that implements key logging by installing a notifier.
+An example of the code follows:
+  1 int notify(struct notifier_block *nblock, unsigned long code, void *_param)
+  2 {
+  3    struct keyboard_notifier_param *param = _param;
+  4
+  5    DEBUG_KEY("KEYLOGGER %i %s\n",param->value,(param->down ? "down" : "up"));
+  6
+  7    <snip>
+  8 }
+  9
+  10 static struct notifier_block nb = {
+  11    .notifier_call = notify
+  12 };
+  13
+  14 void keylogger_init ( void )
+  15 {
+  16   DEBUG("Installing keyboard sniffer\n");
+  17
+  18   register_keyboard_notifier(&nb);
+  19
+  20   <snip>
+
+   Lines 1 through 8 contain the notify function that receives each keystroke. This func-
+tion prints the key to the kernel debug buffer and later writes it to /root/.keylog. This
+could obviously be modified to capture keystrokes to other locations on disk or send them
+over the network. The keyboard notifier structure is declared on lines 10 and 11. On lines
+14 through 18, the rootkit registers the keyboard notifier.
+   The following code shows how to use Volatility on a memory image with the suterusu
+sample installed:
+  $ python vol.py --profile=LinuxDebian-3_2x64 -f susnf.lime
+     linux_keyboard_notifier
+  Volatility Foundation Volatility Framework 2.4
+  Address            Symbol
+  ------------------ -------------------
+  0xffffffffa039f5d7 HOOKED
+
+    In the output, you can see that there is a notifier present and the plugin reports HOOKED
+because the handler (0xffffffffa039f5d7) is not within the kernel or an LKM in the linked
+list. Thus, the handler is in an anonymous region of kernel memory or in an LKM that’s
+unlinked from the list.
+
+     Resolving Malicious Functions
+     If you want to determine whether the malicious handler is inside a hidden kernel mod-
+     ule, you can use linux_hidden_modules. This plugin, introduced in the “Carving Hidden
+     Modules” section of this chapter, finds LKMs by carving rather than relying on the linked
+     list or the sysfs method:
+        $ python vol.py --profile=LinuxDebian-3_2x64 -f susnf.lime
+           linux_hidden_modules
+        Volatility Foundation Volatility Framework 2.4
+        Offset (V)         Name
+        ------------------ ----
+        0xffffffffa03a15d0 suterusu
+
+       In this case, one module is reported as hidden and its base address is 0­ xffffffffa03a15d0.
+     You can use linux_lsmod to determine where its sections are mapped:
+        $ python vol.py --profile=LinuxDebian-3_2x64 -f susnf.lime
+             linux_lsmod -b 0xffffffffa03a15d0 -S
+        Volatility Foundation Volatility Framework 2.4
+        ffffffffa03a15d0 suterusu 18928
+                .note.gnu.build-id             0xffffffffa03a0000
+                .text                          0xffffffffa039e000
+                .text.unlikely                 0xffffffffa039fdcc
+                .init.text                     0xffffffffa0030000
+                .exit.text                     0xffffffffa039fdfc
+                .rodata                        0xffffffffa03a0028
+                .rodata.str1.1                 0xffffffffa03a00c5
+                .parainstructions              0xffffffffa03a0ab0
+                .data                          0xffffffffa03a1000
+                .gnu.linkonce.this_module      0xffffffffa03a15d0
+                .bss                           0xffffffffa03a1820
+                .symtab                        0xffffffffa0031000
+                .strtab                        0xffffffffa00322a8
+
+        In this invocation, linux_lsmod is instructed to analyze the sections for the hidden
+     module at 0xffffffffa03a15d0. The malicious handler is within the .text section of the
+     module, which is determined because the handler is at 0xffffffffa039f5d7, and the .text
+     section starts at 0xffffffffa039e000. No other section is mapped between the .text sec-
+     tion and this address. This provides additional evidence that the notifier handler points
+     within this hidden module.
+        At this point, you can use linux_moddump to extract the module to disk, as was done
+     earlier in the chapter. To find the function name, you subtract the address of the handler
+     from the address of where the .text section starts:
+        $ python
+        Python 2.7.3 (default, Jan     2 2013, 13:56:14)
+        [GCC 4.7.2] on linux2
+
+  >>> "%x" % (0xffffffffa039f5d7-0xffffffffa039e000)
+  '15d7'
+
+  Next, you could use readelf to search the symbol table of the extracted module for the
+function at the calculated offset:
+  $ readelf -s -W suterusu.0xffffffffa039e000.lkm | grep 15d7
+  28: 00000000000015d7   129 FUNC    GLOBAL DEFAULT    2 notify
+
+   You now know that the notify function of suterusu is used as the malicious handler.
+You also saw this in the source code, but in most cases you do not have the source code
+of a rootkit you are analyzing. To automate the identification tasks, we extended the
+linux_keyboard_notifier plugin to automatically incorporate the linux_hidden_­modules
+plugin. We then used Volatility’s symbol_for_address API to find the corresponding sym-
+bol name. The output of the patched plugin looks as follows:
+  $ python vol.py --profile=LinuxDebian-3_2x64 -f susnf.lime
+    linux_keyboard_notifier
+  Volatility Foundation Volatility Framework 2.4
+  Address            Symbol
+  ------------------ ------------------------------
+  0xffffffffa039f5d7 HOOKED: suterusu/notify
+
+  The plugin now adds <module name>/<symbol name> for the malicious hook after the
+HOOKED string.
+
+TTY Handlers
+The second key-logging technique disclosed in the paper from Bowdoin College was the
+use of a malicious TTY input handler. These handlers read input (keystrokes) on TTY
+devices such as terminals. Instead of relying on a callback mechanism, this technique
+overwrites a function pointer with a malware-controlled pointer so it can gain access
+to each keystroke. As with many other rootkit techniques, this activity is immediately
+detectable with memory forensics.
+
+Analysis Objectives
+
+Your analysis objectives are these:
+
+   • Locate TTY devices in memory: To find TTY handlers, you must first know how
+      to find TTY devices in memory. It is also important to know the difference between
+      TTY and PTS devices because they use different handlers and require separate
+      validation and analysis. TTY handlers are used for physical terminal devices (e.g., a
+
+              keyboard login on a physical machine), whereas PTS devices are used for emulated
+﻿
+
+              terminals such those instantiated on SSH logins.
+            • Determine whether a malicious handler is installed: Depending on how TTY
+              handlers are hooked, either one device or all devices are hooked at once. This is
+              very dangerous because a single action by the rootkit can hook all TTY devices on
+              the system and immediately monitor all keystrokes.
+
+         Data Structures
+         The tty_struct structure holds information on a keyboard notifier. Here is how it appears
+         for a 64–bit Debian system:
+            >>> dt("tty_struct")
+            'tty_struct' (1280 bytes)
+            0x0    : magic                        ['int']
+            0x4    : kref                         ['kref']
+            0x8    : dev                          ['pointer', ['device']]
+            0x10 : driver                         ['pointer', ['tty_driver']]
+            0x18 : ops                            ['pointer', ['tty_operations']]
+            0x20 : index                          ['int']
+            0x28 : ldisc_mutex                    ['mutex']
+            0x48 : ldisc                          ['pointer', ['tty_ldisc']]
+            0x50 : termios_mutex                  ['mutex']
+            0x70 : ctrl_lock                      ['spinlock']
+            0x78 : termios                        ['pointer', ['ktermios']]
+            0x80 : termios_locked                 ['pointer', ['ktermios']]
+            0x88 : termiox                        ['pointer', ['termiox']]
+            0x90 : name                           ['String', {'length': 64}]
+            0xd0 : pgrp                           ['pointer', ['pid']]
+            0xd8 : session                        ['pointer', ['pid']]
+            0xe0 : flags                          ['unsigned long']
+            0xe8 : count                          ['int']
+            <snip>
+
+         Key Points
+         The key points are these:
+
+            • dev: A reference to the device structure.
+            • ldisc: A reference to the operations structures for the TTY device, which receives
+              input and handles read and write operations. You must inspect these methods to
+              ensure that no malicious hooking has occurred.
+            • name: The name of the device (for example, tty2).
+            • session: The session of the device, which can be used to associate the device with
+              logins and processes.
+
+  To hook a TTY handler, you can perform the following steps:
+
+  1. Locate the file pointer structure of a TTY device. You accomplish this by passing
+     the name of the device (for example, /dev/tty1) to the filp_open function.
+  2. Use the private_data member to get a reference to the tty_file_private structure,
+     which in turn points to a tty_struct.
+  3. Overwrite the tty_struct->ldisc->ops->receive_buf pointer with the address of
+     your key logging function.
+
+   After these steps are complete, your function can record keystrokes as they are passed
+through the device. To detect this activity, the linux_check_tty carries out the following
+steps:
+
+  1. It walks the list of TTY drivers stored within the tty_drivers global variable.
+  2. Within each tty_driver structure, it accesses the ttys member, which holds the
+     list of TTY devices managed by the driver.
+  3. For each TTY device found in this list, the receive_buf pointer is validated. On a
+     clean system, it should point to the n_tty_receive_buf function.
+
+  Here is an example of running the Volatility plugin against a clean system, whose TTY
+devices are not hooked:
+  $ python vol.py -f centos.lime --profile=LinuxCentosx64 linux_check_tty
+  Volatility Foundation Volatility Framework 2.4
+  Name             Address            Symbol
+  ---------------- ------------------ ------------------------------
+  tty1             0xffffffff8131a0b0 n_tty_receive_buf
+  tty2             0xffffffff8131a0b0 n_tty_receive_buf
+  tty3             0xffffffff8131a0b0 n_tty_receive_buf
+  tty4             0xffffffff8131a0b0 n_tty_receive_buf
+  tty5             0xffffffff8131a0b0 n_tty_receive_buf
+  tty6             0xffffffff8131a0b0 n_tty_receive_buf
+
+  On an infected system, the function points elsewhere. In the case of the following
+malware sample, it points to a function within a hidden module:
+  $ python vol.py -f tty-hook.lime --profile=LinuxDebian-3_2x64 linux_check_tty
+  Volatility Foundation Volatility Framework 2.4
+  Name             Address            Symbol
+  ---------------- ------------------ ------------------------------
+  tty1             0xffffffffa0427016 HOOKED
+  tty2             0xffffffffa0427016 HOOKED
+  tty3             0xffffffffa0427016 HOOKED
+  tty4             0xffffffffa0427016 HOOKED
+  tty5             0xffffffffa0427016 HOOKED
+  tty6             0xffffffffa0427016 HOOKED
+
+            One thing to notice with this malware and the way the technique is described in the
+﻿
+
+         paper: All devices have their receive_buf members overwritten to the same function.
+         This occurs because all devices share a default operations structure. Thus, overwriting
+         the pointer of one will overwrite all others. Alternatively, it is possible to make a copy of
+         this structure, alter the receive_buf member, and then point only the desired device at
+         the altered copy. For this reason, it is required to check all devices in order to ensure that
+         no tampering has occurred.
+
+         Network Protocol Structures
+         Kernel rootkits have a number of ways to hide connection information from userland
+         applications, but one of the most popular is hooking the kernel’s network protocol struc-
+         tures. These structures include the sequence operations handlers that are used when export-
+         ing network socket and connection data through the /proc file system, which is then read
+         by tools such as netstat and lsof. In other words, for the various parts of the kernel to
+         have a uniform API for exporting information through /proc, Linux provides sequence
+         operations functions. These functions support all the operations that userland applica-
+         tions can perform against the files, such as open, read, seek, and close. To filter or hide
+         data, all a rootkit needs to do is overwrite the function pointers associated with handling
+         these operations.
+
+         Analysis Objectives
+
+         Your objectives are these:
+
+            • Understand how network state is exported to userland: To fully realize why
+              malware often targets sequence operation structures, you must learn the types of
+              data they export and their role in live forensics. You should also be aware of the
+              utilities that are subject to malicious filtering, such as the netstat and lsof com-
+              mands, and the files under the /proc directory.
+            • Locate hooked sequence operations structures within network protocols: To find
+              malware that hides networking information from userland applications, you must
+              first know how to find each active protocol structure on the system. You should be
+              familiar with the linux_check_afinfo Volatility plugin and the most commonly
+              hooked operations methods.
+
+Data Structures
+The seq_operations structure stores pointers to the handlers of data exported from kernel
+subsystems. Here is how it appears on a 64–bit Debian machine:
+  >>> dt("seq_operations")
+  'seq_operations' (32 bytes)
+  0x0   : start                          ['pointer', ['void']]
+  0x8   : stop                           ['pointer', ['void']]
+  0x10 : next                            ['pointer', ['void']]
+  0x18 : show                            ['pointer', ['void']]
+
+Key Points
+The key points are these:
+
+   • start: The function that retrieves the first record of the sequence.
+   • stop: The function that determines when the sequence has ended.
+   • next: The function that retrieves the next record of the sequence.
+   • show: The function that shows the information of a record such as network con-
+      nection state or the fields of a process. This function is often targeted by malware
+      to hide data from live forensics.
+
+Network Sequence Operations
+On a live system, the files under the /proc/net/ directory export all network-related
+information from the kernel to userland. For example, /proc/net/dev shows information
+for each network interface:
+  $ cat /proc/net/dev
+  Inter-|   Receive                                          | Transmit
+   face |bytes    packets errs drop fifo compressed multicast|bytes   packets
+      lo: 3396353   10929    0    0    0         0         0 3396353    10929
+    eth0: 7412216   69623    0    0    0         0         0 17223107   57677
+
+  Likewise, /proc/net/arp shows the current ARP cache:
+  $ cat /proc/net/arp
+  IP address       HW type       Flags        HW address              Mask     Device
+  192.168.174.2    0x1           0x2          00:50:56:fa:ad:55       *        eth0
+  192.168.174.1    0x1           0x2          00:50:56:c0:00:08       *        eth0
+  192.168.174.254 0x1            0x2          00:50:56:e7:00:e1       *        eth0
+
+  And /proc/net/tcp shows information on each active network socket:
+  $ cat /proc/net/tcp
+
+            sl local_address rem_address    st uid inode
+             0: 00000000:C60E 00000000:0000 0A 102 4965
+             1: 00000000:006F 00000000:0000 0A 0   6108
+             2: 00000000:0016 00000000:0000 0A 0   6404
+             3: 0100007F:1538 00000000:0000 00 104 7585
+             4: A9AEA8C0:0016 01AEA8C0:D878 01 0   16238
+             5: A9AEA8C0:0016 01AEA8C0:D8B9 01 0   16287
+
+        As you can see in the previous output, quite a bit of useful network information is
+     exported under /proc. It is important to note that these examples just show a subset of
+     the information that is available.
+
+     Finding Network Protocol Hooks
+     The linux_check_afinfo plugin validates each handler within the file operations and
+     sequence operations structures of each network protocol. These protocols currently
+     include the following:
+
+        • tcp4: tcp4_seq_afinfo
+        • tcp6: tcp6_seq_afinfo
+        • udp4: udp4_seq_afinfo
+        • udp6: udp6_seq_afinfo
+        • udplite4: udplite4_seq_afinfo
+        • udplite6: udplite6_seq_afinfo
+        For each protocol, the handlers are checked to be inside the kernel or within a known
+     module. The plugin reports any handler that does not meet these criteria. Unlike other
+     plugins discussed in the chapter, this one reports only hooked entries. The following
+     shows this output against the KBeast rootkit:
+        $ python vol.py -f kbeast.lime --profile=LinuxDebianx86 linux_check_afinfo
+        Volatility Foundation Volatility Framework 2.4
+        Symbol Name        Member          Address
+        -----------        ------          ----------
+        tcp4_seq_afinfo    show            0xe0fb9965
+
+        This rootkit hooks the show member of tcp4_seq_afino to hide a connection on a
+     specified network port from /proc/net/tcp, userland tools, and system administrators.
+     A rootkit that hooks the show member can either filter the information or completely skip
+     records. The handler function from this specific rootkit is implemented as follows:
+        1   int h4x_tcp4_seq_show(struct seq_file *seq, void *v)
+        2   {
+        3     int r=old_tcp4_seq_show(seq, v);
+        4     char port[12];
+
+  5
+  6    sprintf(port,"%04X",_HIDE_PORT_);
+  7    if(strnstr(seq->buf+seq->count-TMPSZ,port,TMPSZ))
+  8      seq->count -= TMPSZ;
+  9    return r;
+  10 }
+
+   On line 6, the _HIDE_PORT_ variable, which stores the port to hide, is converted to a
+hexadecimal value. It is then compared with the hex value inside the TCP buffer. If the
+port matches, the entire record related to the connection is removed by subtracting the
+size of the record from the returned count. This process effectively hides it from userland
+applications.
+
+Netfilter Hooks
+Netfilter is the packet-filtering engine built into the Linux kernel. The iptables tool lever-
+ages Netfilter to implement Network Address Translation (NAT) and firewall filtering.
+Besides Netfilter’s userland interfaces, it also enables kernel modules to implement their
+own network stack hooks. While these hooks can serve a legitimate purpose, such as
+adding new firewall capabilities, they can also be used maliciously to intercept, modify,
+and inspect packets entering and leaving the computer. In this section, you learn how to
+enumerate and analyze Netfilter hooks.
+
+Analysis Objectives
+
+Your objectives are these:
+
+   • Detect covert command and control channels: Attackers use Netfilter hooks to
+     send and receive covert messages that are embedded in normal-looking packets.
+     For example, what may look like a typical ICMP echo request from the network
+     layer (if you had a packet capture) could actually contain a botnet command or
+     response.
+   • Detect malicious advertisement injection: A malware sample we analyzed, which
+     was situated on a client’s web proxy, used Netfilter hooks to inject IFRAMEs into
+     HTTP responses. The hooks caused client browsers to display malicious advertise-
+     ments when they rendered the IFRAME content.
+   • Reveal network sniffing: Because Netfilter hooks have unfettered access to any and
+     all packets entering and leaving a computer’s network stack, it’s a prime method
+     for attackers to sniff traffic for passwords and other sensitive data.
+
+         Data Structures
+﻿
+
+         The nf_hook_ops structure holds information on a Netfilter hook. This is how it appears
+         for a 64–bit Debian system:
+            >>> dt("nf_hook_ops")
+            'nf_hook_ops' (48 bytes)
+            0x0   : list                           ['list_head']
+            0x10 : hook                            ['pointer', ['void']]
+            0x18 : owner                           ['pointer', ['module']]
+            0x20 : pf                              ['unsigned char']
+            0x24 : hooknum                         ['unsigned int']
+            0x28 : priority                        ['int']
+
+         Key Points
+         The key points are these:
+
+            • list: A pointer into the list of Netfilter hooks.
+            • hook: A pointer to the hook function.
+            • pf: The protocol family of the hook.
+            • hooknum: The hook’s location within the network stack.
+
+         Netfilter Subsystem
+         Netfilter enables kernel modules to hook into a number of stages within the network
+         stack, which allows for inspection at different times during the processing and routing
+         of packets. The following list enumerates the possibilities:
+
+            • PRE_ROUTING: Activates before the packet enters the routing subsystem of the kernel.
+            • LOCAL_IN: Activates for packets that are sent to the computer itself, and it is the last
+                hook before a process receives the packet’s data.
+            • FORWARD: Activates before a packet is forwarded to another machine.
+            • LOCAL_OUT: Activates for packets generated on the local machine.
+            • POST_ROUTING: Activates right before a packet is sent out on the network.
+           When a hook is activated, it must decide what the kernel should do with the examined
+         packet. The following list shows the available options.
+
+            • NF_DROP: Drop the packet and perform no further processing.
+            • NF_ACCEPT: Allow the packet to continue through the stack.
+
+   • NF_STOLEN: Gives control of the packet solely to the handler. Its resources are not
+     freed, but it is also not sent further through the network stack.
+   • NF_QUEUE: Queues packets for userland processing.
+   • NF_REPEAT: Tells the Netfilter manager to call the hook function again.
+   • NF_STOP: Processes the packet without calling any other Netfilter hooks on it.
+
+ NOTE
+ You can find these options declared in the include/linux/netfilter.h header file.
+
+Abusing Netfilter
+As you can imagine, the type of hooks and processing options provide many opportuni-
+ties for malware to hide packets, set up command and control channels, and monitor the
+contents of network activity on the system. The following shows the Netfilter hook that
+suterusu uses to watch for a magic packet:
+
+  1 void icmp_init ( void )
+  2 {
+  3     DEBUG("Monitoring ICMP packets via netfilter\n");
+  4
+  5     pre_hook.hook     = watch_icmp;
+  6     pre_hook.pf       = PF_INET;
+  7     pre_hook.priority = NF_IP_PRI_FIRST;
+  8     pre_hook.hooknum = NF_INET_PRE_ROUTING;
+  9
+  10     nf_register_hook(&pre_hook);
+  11 }
+
+   In this function, the rootkit sets up an nf_hook_ops structure with a handler that
+executes the watch_icmp function (not shown). The protocol is PF_INET, the priority is
+NF_IP_PRI_FIRST, and the network stack position is NF_INET_PRE_ROUTING. This means
+that when packets come into the system, the handler is the first hook called and it has
+complete control of the packet.
+   If you were to analyze the watch_icmp function, you would see that it searches for
+an ICMP packet with a magic value, followed by an IP address and port from which to
+download a malicious executable. When the packet is not ICMP or does not match the
+magic value, the NF_ACCEPT return value is used. This allows the packet to continue as
+normal. If a magic packet is found, after downloading the instructed file, the NF_STOLEN
+return value is used so that other handlers will not process the packet. This means that
+
+         packet sniffers, such as Wireshark and Tcpdump, running on the local system will not
+﻿
+
+         see the packets.
+
+         Enumerating Netfilter Hooks
+         The linux_netfilter plugin can enumerate Netfilter hooks. Additionally, the plugin
+         reports the position of the hook in the stack, which protocol they use, and the addresses
+         of the hook handlers. The plugin works by enumerating all entries within the nf_hooks
+         global variable. nf_hooks is declared as follows:
+            struct list_head nf_hooks[NFPROTO_NUMPROTO][NF_MAX_HOOKS]
+
+            It holds a list of hooks for each protocol and position within the network stack. Each
+         list element has type nf_hook_ops, and these elements contain all the information that
+         the plugin requires. The following shows linux_netfilter against the suterusu sample
+         with the ICMP back door monitor activated:
+            $ python vol.py --profile=LinuxDebian-3_2x64 -f susnf.lime linux_netfilter
+            Volatility Foundation Volatility Framework 2.4
+            Proto Hook             Handler            Is Hooked
+            ----- ---------------- ------------------ ---------
+            IPV4 PRE_ROUTING       0xffffffffa039fcd4 True
+
+             In this output, you can see that the PRE_ROUTING hook of suterusu (the watch_icmp
+         function) was found. You can then analyze the code at 0xffffffffa039fcd4 to determine
+         its functionality.
+
+         File Operations
+         All file-related operations, such as reading, writing, and listing directories, eventually
+         go through the file_operations structure of a previously opened file. You have already
+         seen several places in the book where we briefly describe how Linux rootkits interact
+         with these structures to hide a file, prevent a file from being removed or overwritten,
+         and more. In this section, you learn the details of how these rootkits operate and how
+         Volatility detects their activity.
+
+         Analysis Objectives
+         Your objectives are these:
+
+            • Learn how file operation structures affect forensics: The sheer number of opera-
+               tions that use function pointers inside of file_operations makes them a rich target
+
+     for rootkits. By seeing how current rootkits use such hooks, you can prepare your-
+     self to analyze new rootkits you encounter.
+   • Analyze anti-forensics techniques: Determine when rootkits are monitoring access
+     to particular files in order to hide specific content from analysis tools. Likewise,
+     you can detect attempts to prevent malicious files from being deleted or disinfected
+     on live systems.
+   • Detect hidden logged-on users: The w and who commands on live systems list the
+     currently logged-on users. By hooking file_operations structures, attackers can
+     easily filter the results and prolong their access to a system.
+
+Data Structures
+The file_operations structure holds information on the functions that a particular file
+uses for reading, writing, and other tasks. Here is how it appears for a 64–bit Debian
+system:
+  >>> dt("file_operations")
+  'file_operations' (208 bytes)
+  0x0    : owner                          ['pointer', ['module']]
+  0x8    : llseek                         ['pointer', ['void']]
+  0x10 : read                             ['pointer', ['void']]
+  0x18 : write                            ['pointer', ['void']]
+  0x20 : aio_read                         ['pointer', ['void']]
+  0x28 : aio_write                        ['pointer', ['void']]
+  0x30 : readdir                          ['pointer', ['void']]
+  0x38 : poll                             ['pointer', ['void']]
+  0x40 : unlocked_ioctl                   ['pointer', ['void']]
+  0x48 : compat_ioctl                     ['pointer', ['void']]
+  0x50 : mmap                             ['pointer', ['void']]
+  0x58 : open                             ['pointer', ['void']]
+  0x60 : flush                            ['pointer', ['void']]
+  <snip>
+
+Sources of File Operations
+The linux_check_fop plugin gathers file_operations structures from a number of sources:
+
+   • Opened files: The linux_lsof plugin is used to gather the file structure for all
+     opened files.
+   • Proc file system: The /proc file system is walked, and all file structures are gathered.
+   • File cache: The linux_find_file plugin is leveraged to find all files within the
+     page cache.
+
+        For each structure found within these sources, the plugin checks all the function
+     pointer members to ensure they are within the static kernel or within a known kernel
+     module. Now that you know how the file operation structures are identified, the follow-
+     ing section discusses some specific types of attacks you can detect.
+
+      NOTE
+      Although you can use the kmem_cache for a definitive list of all allocated file structures
+      on SLAB-based systems, the same technique does not work on those systems using
+      SLUB. For this reason, Volatility attempts to find file structures from all other sources
+      that it knows about.
+
+     Frustrating Live Forensics
+     One of the most infamous examples of malicious code that hooks file operations is adore-
+     ng (see http://lwn.net/Articles/75990/). This rootkit hooked the readdir function of
+     the /proc and / (root) file systems to hide files from directory listings. Since adore-ng
+     was released, many rootkits, both public and private, have utilized the same file hiding
+     technique.
+        An interesting example from the wild was a rootkit that hooked the read call of sev-
+     eral files that contained stolen data (for example, the output of a key logger). The hook
+     hid information from live forensic tools, but the attackers could still read the actual file
+     contents by sending special parameters to the read operations function. We have also
+     encountered malware samples that hook the write function to prevent protected files
+     (such as configurations and executable components) from being overwritten.
+        Another example is the public Average Coder rootkit discussed previously in this
+     chapter. It installs a number of hooks that you can detect with the linux_check_fop plugin:
+        $ python vol.py -f avgcoder.mem --profile=LinuxCentOS63x64 linux_check_fop
+        Symbol Name                Member          Address
+        -------------------------- --------------- ------------------
+        proc_mnt: root             readdir         0xffffffffa05ce0e0
+        buddyinfo                  write           0xffffffffa05cf0f0
+        modules                    read            0xffffffffa05ce8a0
+        /                          readdir         0xffffffffa05ce0e0
+        /var/run/utmp              read            0xffffffffa05ce4d0
+
+        The first entry hooks the readdir function of the /proc file system. This hook allows
+     Average Coder to hide processes from the running system. On Linux, each process is
+     given a directory immediately under /proc, named according to the PID of the process.
+     These process-specific directories subsequently contain information about the state of
+
+the process. By hiding a process’ /proc directory from the live system, utilities such as
+ps and top cannot find and report them. The next entry hooks /proc/buddyinfo, as we
+explained previously.
+   By hooking the read method of /proc/modules, Average Coder can hide kernel modules
+from the system. The lsmod command is the main tool system administrators use to look
+for loaded modules on a Linux system, and this command gathers its data from /proc/
+modules. By filtering the results of the read function, loaded modules can be easily hidden
+on the live system. By hooking readdir of the root directory, Average Coder can hide files
+just as adore-ng did. The purpose of hooking utmp is explained next.
+
+Hiding Logged-in Users
+The last hook listed in the previous output is the read function of /var/run/utmp. The
+reason that Average Coder hooks this function is to hide logged-in users from system
+administrators who use the w or who command. These commands read the binary structure
+of /var/run/utmp and then format and print the information to the console. By hooking
+the read function of utmp, Average Coder can filter out entries associated with the attacker.
+   As you have seen many times, although this rootkit technique will fool an investigator
+on a live machine, the activity can be detected with memory forensics. In the case of the
+Average Coder sample, you can extract the utmp file from memory and determine the users
+logged in at the time of the memory dump. To start this process, use the linux_find_file
+plugin to find the inode structure address of the file:
+  $ python vol.py -f avgcoder.mem --profile=LinuxCentOS63x64
+         linux_find_file
+         -F "/var/run/utmp"
+  Volatility Foundation Volatility Framework 2.4
+  Inode Number                  Inode
+  ---------------- ------------------
+            130564     0x88007a85acc0
+
+  Next, this address is passed back to linux_find_file to extract it:
+  $ python vol.py -f avgcoder.mem --profile=LinuxCentOS63x64
+          linux_find_file
+          -i 0x88007a85acc0
+          -O utmp
+
+   Then you can use the who command on the forensics analysis machine to examine the
+extracted utmp file:
+  $ who utmp
+  centoslive tty1            2013-08-09 16:26 (:0)
+  centoslive pts/0           2013-08-09 16:28 (:0.0)
+
+        In this particular sample, the centoslive user was being hidden from the live system,
+     but it appears after the utmp file is extracted from memory and analyzed without malware
+     interference.
+
+     Inline Code Hooks
+     Inline hooking is a rootkit technique that overwrites instructions within a function to
+     change the function’s runtime behavior. Normally, the hooks redirect control flow to a
+     function that is part of the rootkit, which allows the rootkit to add, modify, or delete data
+     being processed and returned by the original function. These hooks were introduced
+     in Chapter 25, “Userland Rootkits,” however they also apply to code in kernel memory.
+        The linux_check_inline_kernel plugin builds on the work of many other plugins
+     described in this chapter. In particular, it leverages the other plugins to locate functions
+     and function pointers that may be targeted by malware. It then checks to see whether
+     any of the functions are victims of inline hooking. It also checks various other functions
+     (shown in the following list) that are not analyzed by other plugins:
+
+        • dev_get_flags: Used to hide the promiscuous mode setting of network interfaces
+        • ia32_sysenter_target and ia32_syscall: The handler functions of system call
+            interrupts
+        • vfs_readdir and tcp_sendmsg: These were hooked by an IFRAME injecting rootkit
+            in late 2012 (see: http://lwn.net/Articles/525977/).
+
+        The types of inline hooks currently detected are:
+
+        • JMP: Detects hooks that transfer control outside the local function by using the
+          JMP instruction. This normally occurs by first moving an address into a register or
+          directly jumping to the address.
+        • CALL: Detects functions that use the CALL instruction to transfer control.
+        • RET: Detects functions that use a RET instruction to transfer control. This is nor-
+          mally done by using PUSH to copy the destination address onto the stack and then
+          executing a RET.
+
+        Although this may not be an exhaustive list, these detections effectively find a major-
+     ity of hooks that you will encounter in the wild. The following shows how to use the
+     linux_check_inline_kernel plugin against a sample infected with suterusu. This rootkit
+     extensively uses inline hooks to control a wide range of system behavior:
+        $ python vol.py --profile=LinuxDebian-3_2x64 -f susnf.lime
+          linux_check_inline_kernel
+
+  proc_root                         readdir      JMP   0xffffffffa039e06f
+  /proc                             readdir      JMP   0xffffffffa039e06f
+  /                                 readdir      JMP   0xffffffffa039e06f
+  /                                 readdir      JMP   0xffffffffa039e0be
+  /home                             readdir      JMP   0xffffffffa039e0be
+  /home/x                           readdir      JMP   0xffffffffa039e0be
+  /root                             readdir      JMP   0xffffffffa039e0be
+
+  <snip>
+
+  /var                              readdir      JMP   0xffffffffa039e0be
+  /var/mail                         readdir      JMP   0xffffffffa039e0be
+  /var/www                          readdir      JMP   0xffffffffa039e0be
+  /var/cache                        readdir      JMP   0xffffffffa039e0be
+  /var/cache/samba                  readdir      JMP   0xffffffffa039e0be
+  /var/cache/samba/printing         readdir      JMP   0xffffffffa039e0be
+  /var/spool                        readdir      JMP   0xffffffffa039e0be
+  /var/spool/exim4                  readdir      JMP   0xffffffffa039e0be
+  /var/spool/exim4/db               readdir      JMP   0xffffffffa039e0be
+  /var/spool/exim4/msglog           readdir      JMP   0xffffffffa039e0be
+  /var/spool/exim4/input            readdir      JMP   0xffffffffa039e0be
+  /var/spool/cron                   readdir      JMP   0xffffffffa039e0be
+  /var/spool/cron/crontabs          readdir      JMP   0xffffffffa039e0be
+  /var/spool/cron/atjobs            readdir      JMP   0xffffffffa039e0be
+  /var/spool/rsyslog                readdir      JMP   0xffffffffa039e0be
+  /var/lib                          readdir      JMP   0xffffffffa039e0be
+
+  <snip>
+
+  tcp6_seq_afinfo                   show         JMP   0xffffffffa039e2a1
+  tcp4_seq_afinfo                   show         JMP   0xffffffffa039e36b
+  udplite6_seq_afinfo               show         JMP   0xffffffffa039e10d
+  udp6_seq_afinfo                   show         JMP   0xffffffffa039e10d
+  udplite4_seq_afinfo               show         JMP   0xffffffffa039e1d7
+  udp4_seq_afinfo                   show         JMP   0xffffffffa039e1d7
+  TCP                               ioctl        JMP   0xffffffffa039ea84
+  UDP                               ioctl        JMP   0xffffffffa039ea84
+  UDP-Lite                          ioctl        JMP   0xffffffffa039ea84
+  PING                              ioctl        JMP   0xffffffffa039ea84
+  RAW                               ioctl        JMP   0xffffffffa039ea84
+  dev_get_flags                                  JMP   0xffffffffa039e02a
+
+   The output shows several detected hooks. The first two entries indicate that the readdir
+function of the /proc root directory has been hooked. This means that the handlers in the
+linux_check_fop structure would still point to the original location, but the instructions
+at the location have been overwritten. There are also hundreds of files whose readdir
+member is hooked and whose handler address is the same. This occurs because the rootkit
+
+     hooks the readdir function of the entire root file system, which subsequently hooks all
+     files and directories inside it.
+         After the file system entries, you then see the network sequence operation structures
+     that linux_check_afinfo checks for function pointer replacement. In the case of suterusu,
+     instead of simply replacing the function pointers for the show function, it overwrites the
+     first several bytes of the function with a JMP instruction.
+         The next set of hooks contains the ioctl handlers for the IP protocol interfaces associ-
+     ated with sockets. This is the backdoor channel that suterusu creates for userland bina-
+     ries to request actions such as hiding processes, ports, and files. The last line tells you
+     that dev_get_flags is overwritten. Because dev_get_flags tells you whether a device is
+     in promiscuous mode, it’s often targeted by malware. By filtering the function’s output,
+     malware can hide the fact that it is sniffing network traffic.
+
+     Summary
+     Memory forensics provides you with the ability to detect rootkits that typical tools and
+     methodologies miss. In particular, it allows you to identify rootkits that log key strokes,
+     hide files, conceal logged-in users, elevate process privileges, and so on. Recently added
+     capabilities to the Volatility Framework also inspect Netfilter hooks to determine whether
+     any malicious code is sniffing network packets or engaging in covert communications.
+     Although there are endless ways to hook functions within the kernel, the currently imple-
+     mented detection capabilities cover a majority of what we’ve seen in the wild. As adver-
+     saries and offensive researchers continue to develop new rootkit techniques, remember
+     that Volatility is open-source and expandable. If attackers can install it—you can detect it!

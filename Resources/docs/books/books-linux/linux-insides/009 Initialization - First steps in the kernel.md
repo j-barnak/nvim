@@ -88,7 +88,7 @@ Two subtractions reserve the top of the stack for specific purposes:
 
 With the stack ready, the kernel can now safely use stack operations and call functions.
 
-The next few instructions deal with the `gs` register. The kernel uses it to access [per-CPU data structures](../Concepts/linux-cpu-1.md), but right now it may still hold whatever value the early kernel setup code left. If that garbage value is used as a base for a per-CPU access, the kernel would read from or write to the wrong memory location. So the kernel zeroes it out:
+The next few instructions deal with the `gs` register. The kernel uses it to access [per-CPU data structures](059%20Kernel%20mechanisms%20-%20Per-CPU%20variables.md), but right now it may still hold whatever value the early kernel setup code left. If that garbage value is used as a base for a per-CPU access, the kernel would read from or write to the wrong memory location. So the kernel zeroes it out:
 
 <!-- https://raw.githubusercontent.com/torvalds/linux/refs/heads/master/arch/x86/kernel/head_64.S#L69-L72 -->
 ```assembly
@@ -115,7 +115,7 @@ With the `gs` register zeroed out, the kernel can now turn its attention to anot
 
 The next step is the setup of the kernel [Global Descriptor Table](https://en.wikipedia.org/wiki/Global_Descriptor_Table). Yes, yes. I can imagine how you will exclaim - how, again? Yes, again, and it is not even the last time.
 
-The Global Descriptor Table (specified by the `gdt64` symbol) that we saw in the part about the [Linux kernel boot process](../Booting/linux-bootstrap-5.md) is a temporary table used only during decompression. The kernel cannot keep using it for two reasons. First, the decompressor's GDT is located in the decompressor's memory, which will not be mapped after the kernel switches to its own page tables. Second, each CPU needs its own GDT. The reason is that each CPU uses its own task-state segment, and the GDT entry for that segment must point to CPU-local data. The task-state segment holds the stack information that the processor uses when entering the kernel from user mode and when handling exceptions. For these reasons, the kernel loads a per-CPU Global Descriptor Table defined in [arch/x86/kernel/cpu/common.c](https://github.com/torvalds/linux/blob/master/arch/x86/kernel/cpu/common.c), which contains the full set of segments needed by the kernel.
+The Global Descriptor Table (specified by the `gdt64` symbol) that we saw in the part about the [Linux kernel boot process](006%20Booting%20-%20Kernel%20decompression.md) is a temporary table used only during decompression. The kernel cannot keep using it for two reasons. First, the decompressor's GDT is located in the decompressor's memory, which will not be mapped after the kernel switches to its own page tables. Second, each CPU needs its own GDT. The reason is that each CPU uses its own task-state segment, and the GDT entry for that segment must point to CPU-local data. The task-state segment holds the stack information that the processor uses when entering the kernel from user mode and when handling exceptions. For these reasons, the kernel loads a per-CPU Global Descriptor Table defined in [arch/x86/kernel/cpu/common.c](https://github.com/torvalds/linux/blob/master/arch/x86/kernel/cpu/common.c), which contains the full set of segments needed by the kernel.
 
 According to the [Intel® 64 and IA-32 Architectures Software Developer's Manual](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html):
 
@@ -318,11 +318,11 @@ This is the main reason the kernel must build new page tables. Right now it is s
 
 Right now the page tables have the following structure:
 
-![early-page-tables](./images/early-page-tables.svg)
+![early-page-tables](media/65832f81b1fd16ca093fc33142b8bc93560ba074.svg)
 
 After the new page tables are built, the structure looks like this:
 
-![early-page-tables-on-init](./images/early-page-tables-after-init.svg)
+![early-page-tables-on-init](media/8b149be76473eee684adca92da5f1a4e88eaa2ec.svg)
 
 ### Building the page tables
 

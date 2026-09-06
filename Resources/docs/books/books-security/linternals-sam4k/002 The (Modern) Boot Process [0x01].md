@@ -41,7 +41,7 @@ Okay, before we actually turn our computer on lets have a look at how all our da
 
 The GUID Partition Table (GPT) scheme is a standard for formatting storage devices using, who’d have thought it, globally unique identifiers (GUIDs). It was designed to improve upon its more limited predecessor, the Master Boot Record (MBR).
 
-``` chroma
+```
  LBA +----------------------+ <- Disk Sart
  000 | Protective MBR       |             
      +----------------------+ <-          
@@ -133,7 +133,7 @@ UEFI is the successor of BIOS, although as many people still erroneously refer t
 
 Upon executing, UEFI will begin initialising and checking hardware; this includes things like peripherals allowing for mouse use in the boot menu, wild! Next it checks the special EFI variables stored in nonvolatile RAM (NVRAM). These store configurations that can be set by the OS or the user. You can access these with root perms via the command `efibootmgr -v`:
 
-``` chroma
+``` console
 [sam@opulence ~]$ efibootmgr -v
 BootCurrent: 0008
 Timeout: 2 seconds
@@ -166,7 +166,7 @@ One of the key improvements of UEFI is that it is capable of reading the FAT12, 
 
 While we’re on the topic of the ESP, it’s worth mentioning the flexibility of this partition. Usually sized around 300-500MB, the ESP can contain the bootloaders for multiple OS’s and will have corresponding EFI vars in NVRAM. So you’re ESP could look something like this[\[2\]](https://wiki.mageia.org/en/About_EFI_UEFI):
 
-``` chroma
+```
 /boot/efi/EFI
 ├── boot
 │ ├── bootx64.efi [Default bootloader]

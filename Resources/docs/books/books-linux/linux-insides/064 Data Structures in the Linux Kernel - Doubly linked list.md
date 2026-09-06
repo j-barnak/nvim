@@ -35,7 +35,7 @@ According to [wikipedia](https://en.wikipedia.org/wiki/Linked_list):
 
 In other words, unlike an [array](https://en.wikipedia.org/wiki/Array_(data_structure)), the elements of a linked list do not have to occupy contiguous locations in memory. The relationship between them is represented explicitly by links. In the simplest case, every node contains a single link to the next node. The process can be illustrated as follows:
 
-![singly linked list](./images/singly-linked-list.svg)
+![singly linked list](media/dd70e1155af0bd07d6c026a79922763ee2e983db.svg)
 
 Such a list is called a **singly linked list**, and it can be walked only in one direction. We start from the `head` and follow the `next` pointer of each node until we reach the end. The definition of this data structure and implementation of its basic operations are pretty simple. If you have read, for example, [Algorithms](https://www.amazon.com/Algorithms-4th-Robert-Sedgewick/dp/032157351X) by Robert Sedgewick and Kevin Wayne, you know the classical representation of the linked list:
 
@@ -53,7 +53,7 @@ Adding a new element does not require moving the existing elements in memory. We
 
 Very often, this is not enough. For some operations, we may need to move backwards through the list. In such cases, every node gets a second link that points to the previous node. Such a structure is called a **doubly linked list**. Schematically, this structure can be represented like this:
 
-![doubly linked list](./images/doubly-linked-list.svg)
+![doubly linked list](media/bf77ee8221dd27ac62be646d710421a7d0c6aa39.svg)
 
 > [!NOTE]
 > I will not provide examples of linked-list implementations here. If you have never implemented one yourself, it can be a good exercise for self-training.
@@ -66,7 +66,7 @@ Before I saw the implementation of linked lists in the Linux kernel, I expected 
 
 The kernel implements so-called **intrusive linked lists**. In such lists, there is no pointer to the data. Instead, a list's node contains only two pointers. One pointer that points to the next element and one pointer that points to the previous element. Such a node is embedded into the structure that we want to keep in the list. The links connect these embedded nodes:
 
-![intrusive linked list](./images/intrusive-list.svg)
+![intrusive linked list](media/a503376d1fd8549a6549e950035f9830a68cb914.svg)
 
 Yes, this may look very unusual at first. How can such a structure represent a list of processes, devices, files, or any other kernel objects if it does not contain the objects themselves? As described above, the answer is one of the characteristic ideas behind the Linux implementation of linked lists. Instead of storing an object inside a list node, the list node is stored inside the object.
 
@@ -91,7 +91,7 @@ struct task_struct {
 
 The `tasks` field is used to link `task_struct` objects together. So, instead of allocating a separate list node that contains a pointer to a `task_struct`, every `task_struct` contains its own list node. What's interesting, the `next` and `prev` pointers do not point directly to another `task_struct`. Instead, they point to the tasks member embedded inside the neighboring `task_struct` objects. Schematically, it looks like this:
 
-![list of task_struct objects](./images/task-struct-list.svg)
+![list of task_struct objects](media/f3668e637dc02fd0db37e943b9b938f3403768cb.svg)
 
 This approach gives us a linked list without requiring a separate allocation for every list node and without requiring `list_head` to know anything about the structures it links.
 
@@ -137,7 +137,7 @@ The first line of the macro's body is not strictly related to the address calcul
 
 The second line of the macro does the actual job. Using the [offsetof](https://en.cppreference.com/c/types/offsetof) macro, it calculates the offset from the beginning of the structure to the field that defines the list node. Knowing this offset, we can subtract it from the address of the list node and get the address of the structure that contains this node.
 
-![container_of](./images/container-of.svg)
+![container_of](media/d47b07a600eb552cd2bfd08d64b9afb8bd8ad175.svg)
 
 And that is basically it! Abstractly, the `container_of` macro allows us to get the address of a structure when we know the address of one of its fields. Putting this logic into the context of linked lists, this is nothing more than obtaining the actual list entry from a pointer to its embedded list node:
 
@@ -270,7 +270,7 @@ static __always_inline void __list_add(struct list_head *new,
 
 This should already be familiar to you if you have ever tried to implement a linked list by yourself. To insert a new node between two existing nodes, the kernel updates four links:
 
-![list_add](./images/list-add.svg)
+![list_add](media/6b5e0f4b0be4c43be4bc580eceda04f38f4a9f47.svg)
 
 At this point, I think we already know enough to understand the basic idea behind the linked list API in the kernel. We have seen how list nodes are embedded into other structures, how to get the containing structure back with `list_entry`, and how a new node is inserted into a list with `list_add`.
 

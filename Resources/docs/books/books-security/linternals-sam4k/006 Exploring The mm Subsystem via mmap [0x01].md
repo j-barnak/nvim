@@ -116,7 +116,7 @@ Alright, here’s the plan: we will begin our journey with a simple C program th
 
 To refresh, “mapping” memory essentially involves pointing some portion of our processes virtual address space to somewhere in physical memory. This could be a file read into physical memory, but we can also map “anonymous” memory. This is just physical memory that has been allocated specifically for this mapping and wasn’t previously tied to a file. But we’ll get into that more shortly, for now, here’s the code:
 
-``` chroma
+``` c
 #include <sys/mman.h>
 
 int main()
@@ -135,7 +135,7 @@ So what’s going on here? We map `0x1000` bytes (i.e. a page) of anonymous memo
 
 Okay, now we understand what the program is doing from a user’s perspective - we’re just writing some bytes to some physical memory we allocated. But what’s the kernel actually doing under the hood? The primary API between the userspace and the kernel is system calls, so we can use `[strace](https://man7.org/linux/man-pages/man1/strace.1.html)` to understand how our little program interacts with the kernel. Perhaps unsurprisingly, it’s not too dissimilar:
 
-``` chroma
+``` console
 > strace ./mm_example
 // snip (process setup)
 mmap(NULL, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0x7f487ed24000
@@ -152,7 +152,7 @@ The libc `mmap()` and `munmap()` calls are just wrappers around the respective s
 
 So let’s start our dive into into the kernel with seeing how memory is mapped.
 
-``` chroma
+``` c
 void *mmap(void addr[.length], size_t length, int prot, int flags,
                   int fd, off_t offset);
 int munmap(void addr[.length], size_t length);
@@ -170,7 +170,7 @@ Finally, because it’s an anonymous mapping the file descriptor and offset fiel
 
 Okay, so we understand the system call from a userspace perspective, how do we go about understanding how it’s implemented? Well, without going into detail on how system calls work, we can generally find out a system calls “entry point” in the kernel by grepping the source for `SYSCALL_DEFINE.*<syscall name>`:
 
-``` chroma
+``` c
 SYSCALL_DEFINE6(mmap, unsigned long, addr, unsigned long, len,
       unsigned long, prot, unsigned long, flags,
       unsigned long, fd, unsigned long, off)
@@ -188,7 +188,7 @@ Check out the macros over in `[include/linux/syscalls.h](https://elixir.bootlin.
 
 That said, `[mmap(2)](https://man7.org/linux/man-pages/man2/mmap.2.html)` was a terrible example for this little auditing tidbit as there’s actually a lot of results for `SYSCALL_DEFINE.*mmap`. This is due to architecture specific implementations and legacy versions. If you wanted to be extra sure you can compare the arguments and architecture, or even whip out a debugger and break further in (e.g. on `[do_mmap()](https://elixir.bootlin.com/linux/v6.11.5/source/mm/mmap.c#L1255)`) \[2\] and check the back trace:
 
-``` chroma
+``` gdb
 (gdb) bt
 #0  do_mmap (file=file@entry=0x0 <fixed_percpu_data>, addr=addr@entry=0, len=len@entry=8192, prot=prot@entry=3, flags=flags@entry=34, 
     pgoff=pgoff@entry=0, populate=0xffffc900004f7d08, uf=0xffffc900004f7d28) at mm/mmap.c:1408
@@ -212,7 +212,7 @@ Backtrace from a 5.15 kernel using GDB
 
 ### `__x64_sys_mmap()`
 
-``` chroma
+``` c
 SYSCALL_DEFINE6(mmap, unsigned long, addr, unsigned long, len,
       unsigned long, prot, unsigned long, flags,
       unsigned long, fd, unsigned long, off)
@@ -230,7 +230,7 @@ Now we have a starting point, let’s start exploring! `[__x64_sys_mmap()](https
 
 ### `ksys_mmap_pgoff()`
 
-``` chroma
+``` c
 unsigned long ksys_mmap_pgoff(unsigned long addr, unsigned long len,
                 unsigned long prot, unsigned long flags,
                 unsigned long fd, unsigned long pgoff)
@@ -260,7 +260,7 @@ Well this one’s nice and simple for us anonymous mappers! As there’s no `fil
 
 Hopefully we’re warmed up now, as we’ve got a bit more going on here!
 
-``` chroma
+``` c
 unsigned long vm_mmap_pgoff(struct file *file, unsigned long addr,
   unsigned long len, unsigned long prot,
   unsigned long flag, unsigned long pgoff)
@@ -291,7 +291,7 @@ unsigned long vm_mmap_pgoff(struct file *file, unsigned long addr,
 
 First we fetch a reference to an `[mm_struct](https://elixir.bootlin.com/linux/v6.11.5/source/include/linux/mm_types.h#L779)` \[0\], which as we covered earlier, is a key structure that provides a description of a process’ virtual address space.
 
-![](./Linternals_%20Exploring%20The%20mm%20Subsystem%20via%20mmap%20%5B0x01%5D%20_%20sam4k_files/image.png)
+![](media/65afb9abefde30c67e2fa95ba7a3ff831873ec55.png)
 
 stolen from some of my old slides
 
@@ -307,7 +307,7 @@ Next up we do some security checks \[1\], via `security_mmap_file()`. Generally,
 
 Looking at the code we’ll notice two definitions[\[4\]](https://elixir.bootlin.com/linux/v6.11.5/source/include/linux/security.h#L1053)[\[5\]](https://elixir.bootlin.com/linux/v6.11.5/source/security/security.c#L2849), depending on if `[CONFIG_SECURITY](https://cateee.net/lkddb/web-lkddb/SECURITY.html)` is enabled. We’ll consider the default case, where it is enabled:
 
-``` chroma
+``` c
 /**
  * security_mmap_file() - Check if mmap'ing a file is allowed
  * @file: file
@@ -333,7 +333,7 @@ If we look for references to `mmap_file`, we can see these hooks are registered 
 
 Multiple security modules can be active on a system: the capabilities module is always active, along with any number of “minor” modules and up to one “major” module (e.g. apparmor, selinux). We can check which one’s are active via `/sys/kernel/security/lsm`, the output on my VM is:
 
-``` chroma
+``` console
 $ cat /sys/kernel/security/lsm
 lockdown,capability,landlock,yama,apparmor
 ```
@@ -348,7 +348,7 @@ I hope that was interesting, because in our example neither of these checks actu
 
 Before we delve another call deeper into the mm subsystem, let’s quickly talk about locking. The call to `[do_mmap()](https://elixir.bootlin.com/linux/v6.11.5/source/mm/mmap.c#L1255)` is protected by the mmap write lock \[2\]:
 
-``` chroma
+``` c
 unsigned long vm_mmap_pgoff(struct file *file, unsigned long addr,
   unsigned long len, unsigned long prot,
   unsigned long flag, unsigned long pgoff)

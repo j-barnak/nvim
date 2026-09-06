@@ -556,7 +556,7 @@ At the next step we check that the address is aligned by four bytes and if yes j
 
 From this point we have a correct stack and starts from `0x9000:0x9000` and grows down:
 
-![early-stack](./images/early-stack.svg)
+![early-stack](media/9cede28c6ca05746b51523ab98b890e8aedbf1dd.svg)
 
 ### BSS Setup
 
@@ -633,7 +633,7 @@ These offsets inside the setup segment. Since in our case the kernel image is lo
 
 The following diagram illustrates how the setup image, `.bss`, and the stack region are laid out in memory:
 
-![bss](./images/early-bss.svg)
+![bss](media/02718e9a29f7e112709ab03492388619739ffe55.svg)
 
 > [!IMPORTANT]
 > The addresses of the `__bss_start` and `__bss_end` may differ on your machine and depend on the Linux kernel version.

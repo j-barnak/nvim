@@ -51,7 +51,7 @@ Thanks to the volunteers, the posts about Linux are translated into different la
 
 ## Contribution
 
-Read the [Contribution guide](./CONTRIBUTING.md) to learn how to contribute to the project. When contributing, make sure to follow the [Code of Conduct](./CODE_OF_CONDUCT.md).
+Read the [Contribution guide](https://github.com/0xAX/linux-insides/blob/master/CONTRIBUTING.md) to learn how to contribute to the project. When contributing, make sure to follow the [Code of Conduct](https://github.com/0xAX/linux-insides/blob/master/CODE_OF_CONDUCT.md).
 
 If you have any questions or suggestions, feel free to ping me at Twitter [@0xAX](https://twitter.com/0xAX), add an [issue](https://github.com/0xAX/linux-insides/issues/new), or drop me an [email](mailto:anotherworldofworld@gmail.com).
 

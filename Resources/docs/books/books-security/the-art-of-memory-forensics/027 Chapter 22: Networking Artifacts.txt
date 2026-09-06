@@ -1,0 +1,719 @@
+22                       Networking Artifacts
+
+A      fter a network breach, the first questions that must be answered are often the follow-
+       ing: Which system was initially infected, which machines were later compromised
+through lateral movement, and which remote systems were involved in data exfiltration or
+command and control? Memory forensics is critical to answering these questions because
+very few of the related artifacts are written to disk. In this chapter, you will learn how this
+data is stored within Linux memory samples, what you can do to recover it, and how to
+draw conclusions based on what you find.
+
+Network Socket File Descriptors
+Before you can begin to analyze network information in memory, you must first locate
+the network socket file descriptors. Because a wide range of items (open file handles,
+network sockets, pipes, etc.) are represented as file descriptors, Linux provides a common
+application programming interface (API) for accessing them. By leveraging the data struc-
+tures of this generic API, you can successfully determine the purpose of a file descriptor.
+
+Analysis Objectives
+
+Your objectives are these:
+
+   • Identify socket file descriptors: In the previous chapter, you learned how to enu-
+     merate a process’ file descriptors. Now, you will learn how to determine which
+     descriptors belong to network sockets.
+   • Understand socket operations: You will learn how the operations structures of a
+     socket affect how the kernel interacts with the socket and processes its data.
+
+     Data Structures
+﻿
+
+     The inet_sock structure stores networking information for each TCP/IP socket file
+     descriptor. Here’s an example of how it appears:
+        >>> dt("inet_sock")
+        'inet_sock' (800 bytes)
+        0x0    : sk                           ['sock']
+        0x270 : pinet6                        ['pointer', ['ipv6_pinfo']]
+        0x278 : inet_dport                    ['unsigned short']
+        0x27a : inet_num                      ['unsigned short']
+        0x27c : inet_saddr                    ['unsigned int']
+        0x280 : uc_ttl                        ['short']
+        0x282 : cmsg_flags                    ['unsigned short']
+        0x284 : inet_sport                    ['unsigned short']
+        [snip]
+
+     Key Points
+     The key points are these:
+
+        • sk: The embedded sock structure
+        • pinet6: Contains the source and destination address of IPv6 connections
+        • inet_dport: The destination port
+        • inet_sport: The source port
+        • inet_saddr: The source IP address
+        • inet_num: The protocol number (TCP, UDP, ICMP)
+
+        The linux_netstat plugin leverages the linux_lsof plugin to enumerate a process’ file
+     descriptors. To properly report network connections, it must determine whether a par-
+     ticular file descriptor represents a network socket. This is accomplished by checking two
+     attributes representing the descriptor: the file_operation pointer of the file structure
+     and the dentry_operation pointer of the dentry structure.
+        The following code snippet shows how the plugin enumerates files and performs the
+     checks:
+        1 openfiles = linux_lsof.linux_lsof(self._config).calculate()
+        2
+        3 fops_addr = self.addr_space.profile.get_symbol("socket_file_ops")
+        4 dops_addr = self.addr_space.profile.get_symbol("sockfs_dentry_
+        operations")
+
+  5
+  6 for (task, filp, i) in openfiles:
+  7    if filp.f_op == fops_addr or filp.dentry.d_op == dops_addr:
+  [snip]
+
+   In line 1, the openfiles variable is assigned the generator returned by linux_lsof.
+Lines 3 and 4 retrieve the address of the socket_file_ops and sock_dentry_operations
+global variables.
+   On lines 6 and 7, the code walks each file descriptor returned by the generator and
+validates the f_op and d_op members of the file structure. Once a file descriptor is known
+to be a socket, its inode structure can then be converted to an inet_sock structure. The
+inet_sock determines which protocol the socket corresponds to as well as some protocol-
+specific information. The following code snippet is what executes if a socket file descriptor
+is validated:
+  1 iaddr = filp.dentry.d_inode
+  2 skt = self.SOCKET_I(iaddr)
+  3 inet_sock = obj.Object("inet_sock",
+  4                        offset = skt.sk,
+  5                        vm = self.addr_space)
+  6 yield task, i, inet_sock
+
+   In the “Handling Embedded Structures” section of Chapter 20, the SOCKET_I macro was
+introduced. It allows the programmer to find the embedded inet_sock of the socket_alloc
+structure that also holds the inode. Once an inet_sock is found, the protocol must be
+determined. For this purpose, Volatility reads the sk.sk_protocol member (a bit field
+storing the protocol number) of inet_sock and performs further analysis of sockets for
+TCP and UDP connections..
+
+ NOTE
+ If you inspect the socket_file_ops or sock_dentry_operations structures with linux
+ _volshell, you see that they define the operations that the descriptor supports:
+
+    >>> fops_addr = addrspace().profile.get_symbol(“socket_file_ops”)
+    >>> dt(“file_operations”, fops_addr)
+    [CType file_operations] @ 0xFFFFFFFF814400E0
+    0x0    : owner                          0
+    0x8    : llseek                         18446744071579868721
+    <snip>
+    0x38 : poll                             18446744071581455546
+    0x40 : unlocked_ioctl                   18446744071581457104
+    0x48 : compat_ioctl                     18446744071581457634
+    0x50 : mmap                             18446744071581455566
+    0x58 : open                             18446744071581455540
+    [snip]
+
+          In the output, you can see that the socket’s file_operations structure has a function
+       pointer for each type of operation that can be performed on the descriptor. You can
+       then use linux_volshell to determine the name of these functions by querying the
+       profile for a specific address; in this case, the one for the mmap handler:
+         >>> addrspace().profile.get_symbol_by_address("kernel", 18446744071581455566)
+         'sock_mmap'
+
+         Later in the book, you learn how malware can hook the file_operations and d­ entry
+       _operations structures to hide from live forensics. You also learn how Volatility detects
+       such hooks.
+
+     Network Connections
+     One of the most important artifacts for incident response is the network connections that
+     a computer makes. The Volatility linux_netstat plugin has the capability to recover such
+     evidence. The output replicates what you would see by running the netstat command
+     on a live system; however, you’re going straight to the source (RAM) rather than using
+     the operating system’s APIs.
+
+     Analysis Objectives
+
+     Your objectives are these:
+
+         • Recover connection information: Once a socket file descriptor is found, you must
+           determine which protocol it represents and how to find the protocol-specific con-
+           nection structures. This allows you to recover IP addresses, ports, connection states,
+           and more.
+         • Detect malicious network connections: Analysis of network connections during
+           incident response often reveals malicious connections. These include signs of data
+           exfiltration, command and control communication, or the use of the suspect system
+           to attack other resources.
+
+Data Structures
+The sock_common structure holds information about active connections. Here is an example
+of this structure on 64-bit Debian:
+  >>> dt("sock_common")
+  'sock_common' (80 bytes)
+  0x0   : skc_daddr                      ['unsigned int']
+  0x4   : skc_rcv_saddr                  ['unsigned int']
+  0x8   : skc_hash                       ['unsigned int']
+  0x8   : skc_u16hashes                  ['array', 2, ['unsigned short']]
+  0xc   : skc_family                     ['unsigned short']
+  0xe   : skc_state                      ['unsigned char']
+  0xf   : skc_reuse                      ['unsigned char']
+  0x10 : skc_bound_dev_if                ['int']
+  0x18 : skc_bind_node                   ['hlist_node']
+  0x18 : skc_portaddr_node               ['hlist_nulls_node']
+  0x28 : skc_prot                        ['pointer', ['proto']]
+  0x30 : skc_net                         ['pointer', ['net']]
+  0x38 : skc_dontcopy_begin              ['array', 0, ['int']]
+  0x38 : skc_node                        ['hlist_node']
+  0x38 : skc_nulls_node                  ['hlist_nulls_node']
+  0x48 : skc_tx_queue_mapping            ['int']
+  0x4c : skc_refcnt                      ['__unnamed_0x38e']
+  0x50 : skc_dontcopy_end                ['array', 0, ['int']]
+
+Key Points
+The key points are these:
+
+   • skc_daddr: The destination address of the connection
+   • skc_rcv_saddr: The source address of the connection
+   • skc_family: The address family. TCP and UDP connections are in the AF_INET
+     address family.
+   • skc_state: The protocol state that Volatility uses to determine the state of TCP con-
+     nections. You determine the state by replicating the enumeration defined within
+     the include/net/tcp_states.h Linux source file.
+
+TCP and UDP Connections
+The following shows output from linux_netstat for an established TCP connection, a
+listening TCP connection, and a UDP connection:
+  $ python vol.py --profile=LinuxDebian-3_2x64 -f debian.lime linux_netstat
+  Proto Source IP:Port      Destination IP:Port State        Process
+
+        TCP    192.168.174.169:22   192.168.174.1:56705     ESTABLISHED sshd/2787
+﻿
+
+        TCP    0.0.0.0:22           0.0.0.0:0               LISTEN      sshd/2437
+        UDP    0.0.0.0:137          0.0.0.0:0                           nmbd/2121
+        [snip]
+
+        The columns and recovered information are these:
+
+        • Proto: The field is populated from inet_sock.sk.sk_protocol , as discussed
+          previously.
+        • Source IP: The field is populated from skc_rcv_saddr of sock_common.
+        • Source Port: Depending on the kernel version, this is populated from sport or
+          inet_sport of the inet_sock structure or skc_port of sock_common.
+        • Destination IP: The field is populated from skc_daddr of sock_common.
+        • Destination Port: Depending on the kernel version, this is populated from dport
+          or inet_dport of the inet_sock structure.
+        • State: The field is populated from skc_state of sock_common.
+        • Process/PID: Because the plugin works on a per-process basis, this information is
+          simply gathered from the process’ task_struct.
+
+        In the output, you can see that there is a connection to the SSH server from 192.168.174.1,
+     that the sshd server is listening on port 22, and that nmbd (NetBIOS name server) is listening
+     on UDP port 137. We have often encountered infected systems that are used for large-scale
+     reconnaissance across internal networks or the Internet at large. In these cases, provided
+     that you capture memory during or immediately after the network activity, you will see a
+     substantial number of connections. An example of this is seen in linux_netstat output on
+     a machine in which nmap was used to sweep across an internal network 192.168.174.0/24:
+        $ python vol.py --profile=LinuxDebian-3_2x64 -f nmap.lime
+             linux_netstat > netstat.txt
+
+        $ grep nmap netstat.txt
+        [snip]
+        TCP      192.168.174.169:53456 192.168.174.1:5426 SYN_SENT            nmap/12120
+        TCP      192.168.174.169:35010 192.168.174.1:46195 SYN_SENT           nmap/12120
+        TCP      192.168.174.169:52533 192.168.174.1:23813 SYN_SENT           nmap/12120
+        TCP      192.168.174.169:54999 192.168.174.1:5531 SYN_SENT            nmap/12120
+        TCP      192.168.174.169:47679 192.168.174.1:13937 SYN_SENT           nmap/12120
+        TCP      192.168.174.169:50993 192.168.174.2:31865 CLOSE              nmap/12120
+        TCP      192.168.174.169:43534 192.168.174.1:51602 SYN_SENT           nmap/12120
+        TCP      192.168.174.169:50950 192.168.174.1:42057 SYN_SENT           nmap/12120
+        TCP      192.168.174.169:57012 192.168.174.1:28936 SYN_SENT           nmap/12120
+        [snip]
+
+  $ grep -c nmap netstat.txt
+  165
+
+   In this output, you can see that many connections to 192.168.174.1 are in the SYN_SENT
+state. This state means that nmap has attempted to initiate a TCP connection with the IP on
+a particular port. If the port isn’t open, the socket may linger in the SYN_SENT state for the
+duration of time that the TCP/IP stack is configured to wait for replies. You can also see
+that another IP, 192.168.174.2, was included in the scans. The final grep -c command counts
+the total list of connections (165) from the nmap program. Using this technique, you can
+look for tools that are currently conducting reconnaissance or denial-of-service attacks.
+
+Recovering Unix Sockets
+The following shows output from the linux_netstat plugin for select Unix sockets:
+  $ python vol.py --profile=LinuxDebian-3_2x64 -f debian.lime linux_netstat
+  Volatility Foundation Volatility Framework 2.4
+  UNIX /run/udev/control                                    udevd/354
+  UNIX /var/run/rpcbind.sock                              rpcbind/1706
+  UNIX /dev/log                                          rsyslogd/2051
+  UNIX /var/run/acpid.socket                                acpid/2103
+  UNIX /var/run/samba/unexpected                             nmbd/2121
+  UNIX /var/run/dbus/system_bus_socket                dbus-daemon/2296
+  UNIX /tmp/.winbindd/pipe                               winbindd/2419
+  UNIX /var/run/samba/winbindd_privileged/pipe           winbindd/2419
+  UNIX /tmp/.winbindd/pipe                               winbindd/2458
+  UNIX /var/run/samba/winbindd_privileged/pipe           winbindd/2458
+  UNIX /var/run/postgresql/.s.PGSQL.5432                 postgres/2466
+  UNIX /var/run/apache2/cgisock.2162                      apache2/3835
+
+    In this output, you can see that several processes are using Unix sockets. Unfortunately,
+it is difficult to discern the exact purpose of each socket without reading source code or
+reverse engineering. In this case, the output is from a clean system, but we have often
+seen malware that uses Unix sockets for local communication (between threads of the
+same process) and also for passing messages between different processes. In those cases,
+you can build indicators based on the names of the Unix sockets.
+
+Queued Network Packets
+The kernel queues packets that are sent or received over the network until the receiving
+client or server can process them. When servers are experiencing heavy network load,
+or when clients are attempting to upload large files, a substantial amount of data can be
+
+     found in these queues. You can use the linux_pkt_queues plugin to recover the queues
+﻿
+
+     on a per-process basis.
+
+     Analysis Objectives
+
+     Your objectives are these:
+
+        • Recover queued packets on a per-process basis: To find the queues, you need
+          to analyze the socket descriptor structure. This structure contains pointers to its
+          incoming and outgoing queues.
+        • Combine recovered packets with network captures: You can combine packets
+          of a data transfer that are queued in memory with those that were already sent
+          and captured by a network monitoring device. This allows you to build the entire
+          network flow corresponding to what an application or attacker intended to send,
+          not just what has already been sent on the network.
+        • Transfer attribution: If an attacker uses spoofed IP or MAC addresses, it can
+          be difficult to determine which computer sent network data using only packet
+          captures. There are also situations in which the network monitoring devices
+          were not configured to (or capable of) determining which machine sent a packet.
+          This is common in cases of VLANs or cross-subnet monitoring when DHCP
+          assignments are not logged. In these cases, you can use the packet queues in
+          conjunction with network connection artifacts to attribute packets back to the
+          source machine.
+        • Correlation of disk, network, and memory forensics: A paper published at
+          DFRWS 2008 by a research team from the University of New Orleans showed how
+          disk, memory, and network forensics could be used together: http://dfir.org/
+          research/dfrws2008.pdf. When malware sends data on the network, you can use
+          network forensics to find the initial indicators of an infection, which can potentially
+          lead to the compromised computer. You can then use the packet queues to deter-
+          mine from which process the data originated, the user that spawned the process,
+          and other useful artifacts.
+
+Data Structures
+The sk_buff structure references the contents of a packet and holds a list of related packets:
+
+  >>> dt("sk_buff")
+  'sk_buff' (240 bytes)
+  0x0   : next                             ['pointer', ['sk_buff']]
+  0x8   : prev                             ['pointer', ['sk_buff']]
+  0x10 : tstamp                            ['ktime']
+  0x18 : sk                                ['pointer', ['sock']]
+  0x68 : len                               ['unsigned int']
+  0x6c : data_len                          ['unsigned int']
+  0xcc : tail                              ['unsigned int']
+  0xd0 : end                               ['unsigned int']
+  0xd8 : head                              ['pointer', ['unsigned char']]
+  0xe0 : data                              ['pointer', ['unsigned char']]
+
+Key Points
+The key points are these:
+
+   • next: A reference to the next packet (sk_buff) of the connection
+   • len: The length of the packet’s contents
+   • head: A reference to the beginning of the packet’s protocol headers
+   • data: A reference to the packet’s protocol data
+
+   The linux_pkt_queues plugin leverages linux_netstat to retrieve the inet_sock of each
+socket descriptor. It then reads the sk member to obtain the sock member of the descrip-
+tor. The sock structure holds the queues in its sk_receive_queue and sk_write_queue
+members. Each of these queues is implemented as sk_buff_head structures, which hold
+a pointer to the head of the list of sk_buff structures.
+   The following output shows an example of this plugin on the Debian memory sample:
+  $ python vol.py --profile=LinuxDebian-3_2x64 -f debian.lime
+      linux_pkt_queues -D output
+  Volatility Foundation Volatility Framework 2.4
+  Wrote 308 bytes to receive.1851.5
+
+   The plugin’s output lists the size of each packet recovered along with the filename
+where the data is written. The filename is created as <receive or send>.<PID>.<file
+descriptor number>. There is only one packet recovered from this memory sample because
+there was little network traffic at the time of the memory capture. By correlating the output
+
+     of linux_pkt_queues with the information extracted by linux_pslist, you can see that
+﻿
+
+     the packet was recovered from dhclient:
+        $ python vol.py --profile=LinuxDebian-3_2x64 -f debian.lime linux_pslist -p 1851
+        Volatility Foundation Volatility Framework 2.4
+        Offset             Name       Pid     Uid Gid DTB          Start Time
+        ------------------ ---------- ------ ---- ---- ---------- ----------
+        0xffff88003b0d2280 dhclient   1851    0    0    0x3c2d3000 2013-10-31 07:08:40
+
+        The packet contents show a DHCP reply, as you might expect from the system’s DHCP
+     client process:
+        $ xxd -a output/receive.1851.5
+        0000000: 0043 0044 0134 cb07 0201 0600 dd99 b449       .C.D.4.........I
+        0000010: 0000 0000 c0a8 aea9 c0a8 aea9 c0a8 aefe       ................
+        0000020: 0000 0000 000c 29e5 112e 0000 0000 0000       ......).........
+        00000f0: 0000 0000 6382 5363 3501 0536 04c0 a8ae       ....c.Sc5..6....
+        0000100: fe33 0400 0007 0801 04ff ffff 001c 04c0       .3..............
+        0000110: a8ae ff03 04c0 a8ae 020f 0b6c 6f63 616c       ...........local
+        0000120: 646f 6d61 696e 0604 c0a8 ae02 2c04 c0a8       domain......,...
+        0000130: ae02 ff00                                     ....
+
+        The first eight bytes of the packet are the UDP header. The first two bytes of this header,
+     0x0043, represent the source port of 67; and the second set of two bytes, 0x0044, represents
+     the destination port of 68. The next four bytes, 0x0134, represent the length of the UDP
+     header plus its data, 308 bytes. The following two bytes are the checksum. Starting at
+     offset 8 is the DHCP protocol information. The first byte, 0x2, stands for a DHCP reply.
+     The next byte, 0x1, tells us that the communication is happening on an Ethernet network.
+     The remaining bytes contain the IP address being assigned to the computer as well as the
+     IP address of the DHCP server. Toward the end of the packet, you see the DHCP domain
+     (local domain) in ASCII.
+
+     Network Interfaces
+     Linux systems support multiple network interfaces that you can configure for different
+     routes and subnets. To completely understand the network flow of data through a server
+     with multiple interfaces, you must recover information about each device.
+
+     Analysis Objectives
+     Your objectives are these:
+
+        • Understand Linux network interfaces: Linux distributions have a fairly standard
+            naming convention for interfaces. Understanding this convention can help you
+
+     understand the type of interface. Linux also supports interface aliases that must
+     be taken into account during analysis.
+   • Determine whether a network interface is in promiscuous mode: Promiscuous
+     mode network devices have the capability to sniff traffic of all computers connected
+     to the subnet (if a hub or unsecured wireless router is in use). Volatility reports the
+     promiscuous mode status of each network interface.
+   • Identify applications that are sniffing network traffic: Once it is determined that
+     a network device is in promiscuous mode, you then want to find out why. The
+     only way you can accomplish this is by discovering which applications use raw
+     sockets and then determining the use of the sockets.
+
+Data Structures
+Each network device is represented by a structure named net_device. This structure is
+shown for the Debian sample memory image, but it can drastically change across all the
+different supported kernel versions. Fortunately, the members that are utilized by Volatil-
+ity have stayed fairly consistent.
+  >>> dt("net_device")
+  'net_device' (1856 bytes)
+  0x0    : name                           ['String', {'length': 16}]
+  0x10 : pm_qos_req                       ['pm_qos_request']
+  0x40 : name_hlist                       ['hlist_node']
+  0x50 : ifalias                          ['pointer', ['char']]
+  0x58 : mem_end                          ['unsigned long']
+  0x60 : mem_start                        ['unsigned long']
+  0x68 : base_addr                        ['unsigned long']
+  0x70 : irq                              ['unsigned int']
+  0x78 : state                            ['unsigned long']
+  0x80 : dev_list                         ['list_head']
+  0x1b0 : flags                           ['unsigned int']
+  0x1cc : perm_addr                       ['array', 32, ['unsigned char']]
+  [snip]
+
+Key Points
+The key points are these:
+
+   • dev_list : A pointer into the list of network devices in a particular network
+     namespace. In older kernels without namespace support, a global list is stored
+     within the dev_base global variable.
+   • perm_addr: The MAC address of the interface.
+   • flags: Holds status information on the device. If the device is in promiscuous mode,
+     the flags member will have its IFF_PROMISC (0x100) bit set.
+
+     Listing Interface Information
+     The linux_ifconfig plugin enumerates all active network interfaces, including their IP
+     address, MAC address, name, promiscuous setting, and aliases. On older kernel versions,
+     it enumerates network devices by walking the list stored within the dev_base global vari-
+     able. On newer kernels with namespace support, it walks each network namespace and
+     then walks the list of devices.
+         To determine all interface names and aliases of a device, the ip_ptr member is used,
+     which is the in_device type. The list of devices is stored in its ifa_list member. You
+     can find the name of each device or alias in the ifa_label member and the IP address
+     in ifa_address.
+         The following shows output from linux_ifconfig on the Debian memory sample:
+        $ python vol.py --profile=LinuxDebian-3_2x64 -f debian.lime linux_ifconfig
+        Volatility Foundation Volatility Framework 2.4
+        Interface        IP Address           MAC Address        promiscuous Mode
+        ---------------- -------------------- ------------------ ---------------
+        lo               127.0.0.1            00:00:00:00:00:00 False
+        eth0             192.168.174.169      00:0c:29:e5:11:2e False
+
+        In this output, you can see two active devices: lo (localhost) and eth0. Localhost has an
+     IP address of 127.0.0.1 and no MAC address because it is a pseudo-device. The Ethernet
+     interface has an IP and MAC address set. Neither device is in promiscuous mode.
+
+     Interface Naming Conventions
+     Common prefixes for network device names are:
+
+        • lo: Local loopback device. Network servers that want to receive only local con-
+          nections can use this interface to ensure that remote clients cannot connect. The X
+          graphics server does this, and many secure systems run services, such as MySQL
+          databases, only locally.
+        • : Ethernet devices.
+          eth
+        • wlan: Wireless devices.
+        • usb: USB network devices (wired or wireless).
+        If multiple devices of the same type are attached to the computer, Linux names them
+     starting at index 0 and incrementing sequentially (for example, eth0, eth1, eth2, and so on).
+
+     Interface Aliases
+     A network administrator can use interface aliases to assign multiple IP addresses to a
+     device. In this case, the aliased device is named with the base name of the real device
+
+followed by the index (and separated with a colon). For example, eth0:0 is the first aliased
+interface of the hardware device eth0, and eth1:2 is the third aliased interface of eth1.
+   The following shows output from the same system with tcpdump running and an aliased
+interface in use:
+  $ python vol.py --profile=LinuxDebian-3_2x64 -f tcpdump.lime linux_ifconfig
+  Volatility Foundation Volatility Framework 2.4
+  Interface        IP Address           MAC Address        Promiscuous Mode
+  ---------------- -------------------- ------------------ ---------------
+  lo               127.0.0.1            00:00:00:00:00:00 False
+  eth0             192.168.174.169      00:0c:29:e5:11:2e True
+  eth0:0           192.168.174.200      00:0c:29:e5:11:2e True
+
+   In the output, you can see that eth0 is in promiscuous mode and so is its aliased
+interface, eth0:0. You can also see that eth0 and eth0:0 have the same MAC address but
+different IP addresses. In the past, attackers with root privileges on victim machines have
+used aliases to assign new IP addresses—in an attempt to bypass firewall restrictions.
+
+Finding Processes with Raw Sockets
+linux_ifconfig tells you that a particular device is in promiscuous mode, but does not
+give any indication of which programs are sniffing the network. To find this information,
+you must enumerate raw sockets (SOCK_RAW). These sockets allow userland applications to
+read packets from the network, a capability typically limited to kernel modules.
+   To determine which programs (in each network namespace) are using raw sockets,
+you can use the linux_list_raw plugin. The following shows the output of this plugin
+against the memory sample where tcpdump was used:
+  $ python vol.py --profile=LinuxDebian-3_2x64 -f tcpdump.lime linux_list_raw
+  Volatility Foundation Volatility Framework 2.4
+  Process          PID    File Descriptor Inode
+  ---------------- ------ --------------- ------------------
+  tcpdump            3796               3               9209
+  dhclient           1788               4               6532
+
+   In this case, the plugin shows that tcpdump and dhclient have raw sockets open. Unless
+code has been injected into dhclient, it is likely that dhclient is using the raw sockets
+for a legitimate reason and not network sniffing. On the other hand, tcpdump is a very
+popular packet sniffer and our most likely candidate. linux_psaux confirms this suspicion:
+  $ python vol.py --profile=LinuxDebian-3_2x64 -f tcpdump.lime linux_psaux -p 3796
+  Volatility Foundation Volatility Framework 2.4
+  Pid    Uid    Gid    Arguments
+  3796   0      0      tcpdump -i eth0 -s 1500 -w eth0-capture.pcap
+
+     The Route Cache
+﻿
+
+     Until the Linux 3.6.x series of kernels, the routing subsystem maintained a cache of
+     recently used network routes and destinations. Before traversing the routing table each
+     time an IP address was contacted, this cache would be consulted, which made the pro-
+     cess much more efficient. As you will learn in this section, the routing cache is a valuable
+     forensics artifact, but it is available only on pre-3.6.x kernel versions. It was removed in
+     later versions of the kernel.
+
+      NOTE
+      You can see the commit that removed the routing cache here: https://git.kernel.org/
+      cgit/linux/kernel/git/torvalds/linux.git/commit/?id=89aef8921bfbac22f00e04f8
+      450f6e447db13e42. The document also explains why the cache was removed—because
+      malicious traffic (in addition to denial of service attacks) can easily corrupt or poison
+      the cache.
+
+     Analysis Objectives
+
+     Your objectives are these:
+
+        • Learn how to recover the routing cache from memory: The routing cache is stored
+          within a hash table backed by an array. You will learn a useful strategy in memory
+          forensics to generically enumerate such hash tables.
+        • Automatically map IP addresses to domain names: The routing cache stores des-
+          tinations by their IP addresses, but it is much more useful to know the associated
+          domains. You will learn how to automate this process inside of Volatility.
+
+     Data Structures
+     Every entry within the routing cache is stored as a struct rtable:
+        >>> dt("rtable")
+        'rtable' (224 bytes)
+        0x0   : dst                            ['dst_entry']
+        0x98 : rt_key_dst                      ['unsigned int']
+        0x9c : rt_key_src                      ['unsigned int']
+        0xa0 : rt_genid                        ['int']
+        0xa4 : rt_flags                        ['unsigned int']
+        0xa8 : rt_type                         ['unsigned short']
+        0xaa : rt_key_tos                      ['unsigned char']
+        0xac : rt_dst                          ['unsigned int']
+
+  0xb0   : rt_src                         ['unsigned int']
+  0xb4   : rt_route_iif                   ['int']
+  0xb8   : rt_iif                         ['int']
+  0xbc   : rt_oif                         ['int']
+  0xc0   : rt_mark                        ['unsigned int']
+  0xc4   : rt_gateway                     ['unsigned int']
+  0xc8   : rt_spec_dst                    ['unsigned int']
+  0xcc   : rt_peer_genid                  ['unsigned int']
+  0xd0   : peer                           ['pointer', ['inet_peer']]
+  0xd8   : fi                             ['pointer', ['fib_info']]
+
+Key Points
+The key points are these:
+
+   • dst: Information on the routing entry used to determine on which interface the
+     route was active.
+   • rt_gateway: The network gateway IP address
+   • rt_dst: The remote destination contacted by the computer
+
+   The routing cache is stored within the rt_hash_table global variable. Each element of
+the hash table is an rt_hash_bucket structure. The rt_hash_mask global variable deter-
+mines the size of the table. linux_route_cache finds routing cache entries by enumerating
+every element of the array and then attempting to walk the collision chain stored in the
+chain member.
+   The following shows the abbreviated output of the plugin against the Debian memory
+sample:
+  $ python vol.py --profile=LinuxDebian-3_2x64 -f debian.lime linux_route_cache
+  Volatility Foundation Volatility Framework 2.4
+  Interface        Destination          Gateway
+  ---------------- -------------------- -------
+  eth0             192.168.174.1        192.168.174.1
+  lo               192.168.174.169      192.168.174.169
+  eth0             192.168.174.254      192.168.174.254
+  eth0             192.168.174.1        192.168.174.1
+  eth0             192.168.174.1        192.168.174.1
+  lo               192.168.174.255      192.168.174.255
+  <snip>
+
+   In this output, you can see that several destinations were contacted, but they were all
+on the same subnet as the source machine. If the system had made remote connections,
+they would appear as well. Analyzing routes enables you to not only determine what
+
+     Internet hosts were contacted but also to potentially identify hosts within local networks
+     that were contacted during lateral movement attempts.
+        Although IP addresses are helpful, DNS names can also provide useful context. The
+     -R option to linux_route_cache adds names to the output (generated with the socket
+     .gethostbyaddr Python function). Here is an example of how it looks:
+
+        $ python vol.py --profile=LinuxDebian-3_2x64 -f rtcache.lime
+             linux_route_cache -R
+        Volatility Foundation Volatility Framework 2.4
+        Interface         Destination         Dest Name                  Gateway
+        ---------------- -------------------- -------------------------- -------
+        lo                127.0.0.1           localhost                  127.0.0.1
+        eth0              192.168.174.1                                  192.168.174.1
+        eth0              192.168.174.1                                  192.168.174.1
+        lo                192.168.174.169                                192.168.174.169
+        eth0              74.125.227.197      dfw06s33-in-f5.1e100.net   192.168.174.2
+        eth0              199.181.132.250     apps.pixiehollow.go.com    192.168.174.2
+        eth0              98.139.183.24       ir2.fp.vip.bf1.yahoo.com   192.168.174.2
+        lo                192.168.174.255                                192.168.174.255
+        eth0              98.139.183.24       ir2.fp.vip.bf1.yahoo.com   192.168.174.2
+
+        The domain names reveal context about the systems involved in the communication. For
+     example, if you perform domain lookups or whois queries, you will notice that 1e100.net
+     is owned by Google and is in the range often used for requests to www.google.com.
+
+      NOTE
+      Be careful when using the –R option to the linux_route_cache plugin. It requires an
+      Internet connection, and you also run the risk of contacting attacker-controlled DNS
+      servers. These servers could reply with inaccurate information or tip off the adversary
+      that their samples are being analyzed. Also, you might retrieve outdated DNS informa-
+      tion that has changed between the time the system being analyzed contacted the DNS
+      server and your analysis.
+
+     ARP Cache
+     Before a computer can contact another system on the same subnet, the MAC address
+     of the remote system must be found. This query occurs over the Address Resolution
+     Protocol (ARP) and allows a system to resolve the MAC address for a known IP address.
+     To avoid repetitive lookups, a cache is kept that maps an IP address to its MAC address.
+     The linux_arp plugin allows you to recover this cache for use during an investigation.
+
+Analysis Objectives
+
+Your objectives are these:
+
+   • Understand the in-memory storage of the ARP cache: The ARP cache is kept
+     within a deeply nested data structure of lists and hash tables. Because ARP requests
+     must be satisfied very quickly to maintain network operations, the data structures
+     used to store the cache must be extremely efficient at search.
+   • Detect lateral movement: The ARP cache provides a list of all the systems that the
+     computer being analyzed recently contacted. You can use this to determine lateral
+     movement of an attacker by finding systems that were directly contacted or routers
+     for subnets that would not normally be contacted.
+
+Data Structures
+The neighbour structure is used to represent an entry within the ARP cache:
+  >>> dt("neighbour")
+  'neighbour' (392 bytes)
+  0x0   : next                           ['pointer', ['neighbour']]
+  0x8   : tbl                            ['pointer', ['neigh_table']]
+  0x10 : parms                           ['pointer', ['neigh_parms']]
+  0x18 : confirmed                       ['unsigned long']
+  0x20 : updated                         ['unsigned long']
+  0x28 : lock                            ['__unnamed_0x2ff3']
+  0x2c : refcnt                          ['__unnamed_0x38e']
+  0x30 : arp_queue                       ['sk_buff_head']
+  0x48 : timer                           ['timer_list']
+  0x98 : used                            ['unsigned long']
+  0xa0 : probes                          ['__unnamed_0x38e']
+  0xa4 : flags                           ['unsigned char']
+  0xa5 : nud_state                       ['unsigned char']
+  0xa6 : type                            ['unsigned char']
+  0xa7 : dead                            ['unsigned char']
+  0xa8 : ha_lock                         ['__unnamed_0x3015']
+  0xb0 : ha                              ['array', 32, ['unsigned char']]
+  0xd0 : hh                              ['hh_cache']
+  0x160 : output                         ['pointer', ['void']]
+  0x168 : ops                            ['pointer', ['neigh_ops']]
+  0x170 : rcu                            ['rcu_head']
+  0x180 : dev                            ['pointer', ['net_device']]
+  0x188 : primary_key                    ['array', 0, ['unsigned char']]
+
+     Key Points
+﻿
+
+     The key points are these:
+
+        • next: The next ARP entry in the list
+        • tbl: A back-pointer to the owning ARP table
+        • primary_key: The IP address of the machine contacted
+        • ha: The hardware (MAC) address of the machine contacted
+        • dev: The net_device structure of the interface associated with the cache entry, which
+            allows for recovery of the interface name (eth0, wlan1, and so on)
+
+        The neigh_tables global variable stores the list of neighbor tables. Each table is stored
+     as a hash table in which each array index stores a pointer to a neighbour structure. You
+     can enumerate all neighbors by walking the next member (a linked list). The linux_arp
+     plugin mimics this enumeration of entries and then retrieves the IP address, MAC address,
+     and interface name of the entry. The following shows the output of linux_arp against the
+     Debian memory sample:
+        $ python vol.py --profile=LinuxDebian-3_2x64 -f debian.lime linux_arp
+        Volatility Foundation Volatility Framework 2.4
+        [::                                        ] at 00:00:00:00:00:00     on lo
+        [192.168.174.1                             ] at 00:50:56:c0:00:08     on eth0
+        [192.168.174.2                             ] at 00:50:56:fa:ad:55     on eth0
+        [192.168.174.254                           ] at 00:50:56:e3:2e:81     on eth0
+
+        In this output, you can see that the computer contacted three other systems on the
+     same subnet. To determine the type of systems contacted, you can query one of the data-
+     bases that store the MAC address assignments given to network device manufacturers.
+     Because MAC addresses must be unique, manufacturers are assigned a regulated block
+     of addresses. A couple of the more popular websites that allow such queries are www
+     .macvendorlookup.com and www.wireshark.org/tools/oui-lookup.html.
+        If you entered any of the addresses associated with the eth0 device, you would see
+     they all belong to VMware. Because our Debian system is a VMware guest on a private
+     subnet, this output makes sense. In a real investigation you can use such information
+     to determine whether a device contacted was another computer, printer, router, switch,
+     and so on. If you find a MAC address not assigned to any vendor or for the wrong type
+     of device, you can use that as a sign that MAC address spoofing may have been used.
+
+Summary
+Most modern digital investigations involve analyzing the network communication
+between multiple systems. The communication could be associated with the initial com-
+promise, command and control, lateral movement, or data exfiltration. By analyzing net-
+work artifacts found in memory of Linux systems, you can gain valuable insight into a
+system’s network configuration, who the system was communicating with, and what
+data was actually being sent. Memory forensics can also provide context about suspicious
+activity observed on the network and allow you to associate firewall and IDS alerts with
+specific processes.

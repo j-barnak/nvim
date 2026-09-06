@@ -1,6 +1,6 @@
 # Kernel booting process - Part 2
 
-We have already started our journey into the Linux kernel in the previous [part](./linux-bootstrap-1.md), where we walked through the very early stages of the booting process and first assembly instructions of the Linux kernel code. Aside from different mechanisms, this code was responsible for preparing the environment for the [C](https://en.wikipedia.org/wiki/C_(programming_language)) programming language. At the end of the chapter, we reached a symbolic milestone - the very first call of a C function. This function has a classical name - `main` - and is defined in the [arch/x86/boot/main.c](https://github.com/torvalds/linux/blob/master/arch/x86/boot/main.c) source code file.
+We have already started our journey into the Linux kernel in the previous [part](002%20Booting%20-%20From%20bootloader%20to%20kernel.md), where we walked through the very early stages of the booting process and first assembly instructions of the Linux kernel code. Aside from different mechanisms, this code was responsible for preparing the environment for the [C](https://en.wikipedia.org/wiki/C_(programming_language)) programming language. At the end of the chapter, we reached a symbolic milestone - the very first call of a C function. This function has a classical name - `main` - and is defined in the [arch/x86/boot/main.c](https://github.com/torvalds/linux/blob/master/arch/x86/boot/main.c) source code file.
 
 From here on, we will still see some assembly code on our way, but it will be more and more rare 🤓 Now it is time for more "high-level" logic!
 
@@ -51,7 +51,7 @@ lgdt gdt
 
 As mentioned above, the GDT contains `segment descriptors` which describe memory segments. Now let's see how segment descriptors look like. Each descriptor is 64-bits in size. The general scheme of a descriptor is:
 
-![segment-descriptor](./images/segment-descriptor.svg)
+![segment-descriptor](media/a3a38b0551993c4afe52dad7ef207a7555b1fe65.svg)
 
 Do not worry! I know it may look a little bit intimidating at the first glance, especially in comparison to the relatively simple addressing in real mode, but we will go through it in details. We will start from the bottom, from right to left. 
 
@@ -119,7 +119,7 @@ A code segment `Type` field:
 
 So far, we've looked at how a segment descriptor defines the properties of a memory segment - its base, limit, type, and different flags. But how does the CPU actually refer to one of these descriptors during execution? Just like in real mode - using segment registers. In protected mode they contain segment selectors. However, in protected mode, a segment selector is handled differently. Each segment descriptor has an associated segment selector which is a 16-bit structure:
 
-![segment-selector](./images/segment-selector.svg)
+![segment-selector](media/6f6d440ce3ab68a1a98587cad9041ffe5695275b.svg)
 
 The meaning of the fields is:
 
@@ -327,7 +327,7 @@ The GRUB bootloader sets this value to:
 
 Based on these values, the end of the heap pointed by the `heap_end` will be at the `0x9000` offset from the end of the kernel setup image. To avoid the case when the heap and stack overlap, there is an additional check. It sets the end of the heap equal to the end of the stack if the first one is greater than the second. Having this, the heap memory area will be located above the `bss` area till the stack. So, the memory map will look like:
 
-![early-heap](./images/early-heap.svg)
+![early-heap](media/57a9ace1f9f8356d8b1a0010756bcb128eedcb99.svg)
 
 Now the heap is initialized, although we will see the usage of it in the next chapters.
 
@@ -446,7 +446,7 @@ This function performs two tasks using [BIOS interrupt](https://en.wikipedia.org
 1. Gets the state of a keyboard which contains information about state of certain modifier keys, like for example Caps Lock active or not.
 2. Sets the keyboard repeat rate which determines how long a key must hold down before it begins repeating
 
-After the BIOS interrupt was executed, the keyboard should be initialized. If you are wondering why we need a working keyboard at such an early stage, the answer is - it can be used during the selection of the video mode. We will see more details in the [next chapter](linux-bootstrap-3.md).
+After the BIOS interrupt was executed, the keyboard should be initialized. If you are wondering why we need a working keyboard at such an early stage, the answer is - it can be used during the selection of the video mode. We will see more details in the [next chapter](004%20Booting%20-%20Video%20mode%20initialization%20and%20transition%20to%20protected%20mode.md).
 
 ### Gathering system information
 
@@ -496,4 +496,4 @@ Here is the list of the links that you may find useful during reading of this ch
 - [Intel SpeedStep](http://en.wikipedia.org/wiki/SpeedStep)
 - [APM](https://en.wikipedia.org/wiki/Advanced_Power_Management)
 - [EDD](https://en.wikipedia.org/wiki/Enhanced_Disk_Drive)
-- [Previous part](linux-bootstrap-1.md)
+- [Previous part](002%20Booting%20-%20From%20bootloader%20to%20kernel.md)

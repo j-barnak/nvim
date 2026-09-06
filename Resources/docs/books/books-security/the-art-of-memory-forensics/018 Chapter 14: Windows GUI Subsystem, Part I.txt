@@ -1,0 +1,1707 @@
+14                      Windows GUI
+                        Subsystem, Part I
+
+T     he Windows graphical user interface (GUI) subsystem is responsible for manag-
+      ing user input, such as mouse movements and keystrokes. In addition, it draws
+the display surface; presents windows, buttons, and menus; and provides the necessary
+isolation to support multiple concurrent users logged in via the console, RDP, and Fast-
+User Switching. The GUI subsystem plays a huge role in everyday computer use, and it
+is inevitable that malware and attackers unknowingly modify GUI memory during the
+course of their actions. Unfortunately, there are few tools, much less forensic tools, capable
+of analyzing and reporting on artifacts created in and maintained by this subsystem.
+    The next two chapters introduce a collection of data structures, classes, algorithms,
+APIs, and plugins for extracting GUI-related evidence from physical memory (RAM) of
+32- and 64-bit Windows XP, Server 2003, Vista, Server 2008, and Windows 7. We will be
+discussing various specific examples of how malicious code can be detected in memory
+and how you can apply knowledge of the GUI internals to forensic investigations.
+
+The GUI Landscape
+The GUI subsystem is composed of various objects that all work together to provide
+an enhanced user experience. The relationship of these components is summarized in
+Figure 14-1. The diagram does not capture all the GUI internals—only the most important
+ones for forensics and malware investigations.
+
+     Figure 14-1: Windows GUI landscape
+
+        As shown in the figure, a session is the outermost container—it represents a user’s
+     logon environment. Sessions have a unique session ID and they are created when users
+     log on via Fast-User Switching, RDP, or Terminal Services (TS). Thus a session is tied to
+     a particular user, and resources linked to the session can be attributed back to actions
+     performed by the user. These resources include an atom table (a group of strings shared
+     globally between applications in the session), one or more window stations (named secu-
+     rity boundaries), and a handle table for USER objects (similar to executive objects such as
+     threads and processes, but managed by the GUI subsystem).
+        Applications that require user input run in an interactive window station (i.e., WinSta0).
+     Services that run in the background use noninteractive window stations. Each window
+     station has its own atom table, clipboard, and one or more desktops. A desktop contains
+     the user interface objects such as windows, menus, hooks, and a heap for allocating and
+     storing such objects. Windows can be visible or invisible; they have a set of screen coor-
+     dinates, a window procedure (the function that executes when window messages are
+     received), an optional caption or title, and an associated class. By analyzing windows, you
+     can determine what attackers or victims were viewing at the time of the memory dump,
+     or what GUI applications had run in the past.
+
+   The majority of GUI-related APIs exposed to user mode are implemented in user32.dll
+and gdi32.dll. They are equivalent to ntdll.dll for native APIs—they contain stubs that
+route the caller through the System Service Dispatch Table (SSDT) and into the kernel.
+However, in this case, the SSDT routes GUI calls into the win32k.sys kernel module rather
+than the NT executive module. This relationship is shown in Figure 14-2.
+
+NT Executive (Native)      GUI Subsystem
+
+    ntoskrnl.exe             win32k.sys
+
+                                                 Kernel Mode
+      SSDT[0]                  SSDT[1]
+                                                 User Mode
+
+      ntdll.dll         user32.dll   gdi32.dll
+
+    kernel32.dll
+
+Figure 14-2: Native and GUI API component
+
+ NOTE
+ Just how big is the GUI subsystem? There are approximately three times the number
+ of APIs (667 versus 284 on a 32-bit XP SP3 machine) exposed through the system
+ call tables to perform all GUI tasks, compared with those required to perform native
+ actions (process creation, file handling, authentication, registry, and so on).
+
+    $ python vol.py –f grrcon.img --profile=WinXPSP3x86 ssdt
+    Volatility Foundation Volatility Framework 2.4
+    [x86] Gathering all referenced SSDTs from KTHREADs...
+    Finding appropriate address space for tables...
+    SSDT[0] at 804e26a8 with 284 entries
+      Entry 0x0000: 0x8058fdf5 (NtAcceptConnectPort) owned by ntoskrnl.exe
+      Entry 0x0001: 0x805790f1 (NtAccessCheck) owned by ntoskrnl.exe
+      Entry 0x0002: 0x80587999 (NtAccessCheckAndAuditAlarm) owned by ntoskrnl.exe
+      Entry 0x0003: 0x80591130 (NtAccessCheckByType) owned by ntoskrnl.exe
+      Entry 0x0004: 0x8058da83 (NtAccessCheckByTypeAndAuditAlarm) owned by ntoskrnl.exe
+    [snip]
+    SSDT[1] at bf999b80 with 667 entries
+      Entry 0x1000: 0xbf935f7e (NtGdiAbortDoc) owned by win32k.sys
+      Entry 0x1001: 0xbf947b29 (NtGdiAbortPath) owned by win32k.sys
+      Entry 0x1002: 0xbf88ca52 (NtGdiAddFontResourceW) owned by win32k.sys
+      Entry 0x1003: 0xbf93f6f0 (NtGdiAddRemoteFontToDC) owned by win32k.sys
+      Entry 0x1004: 0xbf949140 (NtGdiAddFontMemResourceEx) owned by win32k.sys
+      Entry 0x1005: 0xbf936212 (NtGdiRemoveMergeFont) owned by win32k.sys
+    [snip]
+
+         GUI Memory Forensics
+﻿
+
+         The Volatility Framework provides several plugins designed to explore and extract evi-
+         dence from the Windows GUI subsystem. Developing this capability was not without
+         challenge. First and foremost, the amount of publicly available documentation is very
+         scarce. Additionally, Microsoft did not divulge debugging symbols (PDB files) for the
+         primary kernel mode component (win32k.sys) until Windows 7, and Microsoft stripped
+         it again starting with Windows 8. Thus, to support all other operating systems besides
+         Windows 7 required significant work in order to determine the changes in structure
+         names, sizes, and member offsets between the various operating system versions.
+             The end result is a very powerful set of plugins for memory forensics, which are sum-
+         marized in Table 14-2.
+
+         Table 14-2: Plugins in the GUI Memory Forensics Suite
+
+           Plugin                  Description
+
+           sessions                Lists details on user logon sessions
+
+           wndscan                 Enumerates window stations and their properties
+
+           deskscan                Analyzes desktops and associated threads
+
+           atomscan                Scans for atoms (globally shared strings)
+
+           atoms                   Prints session and window station atom tables
+
+           messagehooks            Lists desktop and thread window message hooks
+
+           eventhooks              Prints details on windows event hooks
+
+           windows                 Enumerates windows
+
+           wintree                 Prints Z-Order desktop windows trees
+
+           gahti                   Dumps the USER handle type information
+
+           userhandles             Dumps the USER handle table objects
+
+           gditimers               Examines the use of GDI timers
+
+           screenshot              Saves a pseudo screenshot based on GDI windows
+
+         The Session Space
+         Sessions are the outermost container for the GUI landscape, as shown in Figure 14-1. When
+         users log on to a system via the console, RDP, or Fast-User Switching, the kernel creates
+         a new session, which is basically a container for processes and objects (such as window
+
+stations and desktops, which are discussed next) that belong to the session. A RAM dump
+will contain details on active, and in some cases terminated, logon sessions, including
+their associated processes, kernel modules, pool allocation address ranges, and page tables.
+
+Analysis Objectives
+
+Your objectives are the following:
+
+   • Associate processes with RDP users: If you see a process running and you want
+     to know whether a user launched it over RDP, you can use the information in this
+     section to figure it out.
+   • Detect hidden processes: Each session structure contains a linked list of processes
+     for that session. If malware unlinks a process from PsActiveProcessHead (see
+     Chapter 6), you can leverage this alternate process listing as a means to identify
+     the hidden process.
+   • Determine kernel drivers: Each session structure contains a list of drivers mapped
+     into the session. You can use this to distinguish RDP sessions from console sessions.
+
+Data Structures
+The main structure for a session is _MM_SESSION_SPACE. This is a large structure, so only
+a small portion of it is shown in the following code from Windows 7 x64. By locating
+all _EPROCESS structures (via list walking or pool scanning) and looking at the unique
+_EPROCESS.Session pointers, you can gather a complete list of _MM_SESSION_SPACE struc-
+tures. Each session has its own working set list, look-aside list, paged pool, page directory,
+and big page pool tracker tables.
+  >>> dt("_MM_SESSION_SPACE")
+  '_MM_SESSION_SPACE' (8064 bytes)
+  0x0   : ReferenceCount                   ['long']
+  0x4   : u                                ['__unnamed_2145']
+  0x8   : SessionId                        ['unsigned long']
+  0xc   : ProcessReferenceToSession        ['long']
+  0x10 : ProcessList                       ['_LIST_ENTRY']
+  0x20 : LastProcessSwappedOutTime         ['_LARGE_INTEGER']
+  0x28 : SessionPageDirectoryIndex         ['unsigned long long']
+  0x30 : NonPagablePages                   ['unsigned long long']
+  0x38 : CommittedPages                    ['unsigned long long']
+  0x40 : PagedPoolStart                    ['pointer64', ['void']]
+  0x48 : PagedPoolEnd                      ['pointer64', ['void']]
+  0x50 : SessionObject                     ['pointer64', ['void']]
+  0x58 : SessionObjectHandle               ['pointer64', ['void']]
+  0x64 : SessionPoolAllocationFailures     ['array', 4, ['unsigned long']]
+
+           0x78 : ImageList                       ['_LIST_ENTRY']
+﻿
+
+           0x88 : LocaleId                        ['unsigned long']
+           0x8c : AttachCount                     ['unsigned long']
+           0x90 : AttachGate                      ['_KGATE']
+           0xa8 : WsListEntry                     ['_LIST_ENTRY']
+           0xc0 : Lookaside                       ['array', 21, ['_GENERAL_LOOKASIDE']]
+           0xb40 : Session                        ['_MMSESSION']
+           0xb98 : PagedPoolInfo                  ['_MM_PAGED_POOL_INFO']
+           0xc00 : Vm                             ['_MMSUPPORT']
+           0xc88 : Wsle                           ['pointer64', ['_MMWSLE']]
+           0xc90 : DriverUnload                   ['pointer64', ['void']]
+           0xcc0 : PagedPool                      ['_POOL_DESCRIPTOR']
+           0x1e00: PageDirectory                  ['_MMPTE']
+           0x1e08: SessionVaLock                  ['_KGUARDED_MUTEX']
+           0x1e40: DynamicVaBitMap                ['_RTL_BITMAP']
+           0x1e50: DynamicVaHint                  ['unsigned long']
+           0x1e58: SpecialPool                    ['_MI_SPECIAL_POOL']
+           0x1ea0: SessionPteLock                 ['_KGUARDED_MUTEX']
+           0x1ed8: PoolBigEntriesInUse            ['long']
+           0x1edc: PagedPoolPdeCount              ['unsigned long']
+           0x1ee0: SpecialPoolPdeCount            ['unsigned long']
+           0x1ee4: DynamicSessionPdeCount         ['unsigned long']
+           0x1ee8: SystemPteInfo                  ['_MI_SYSTEM_PTE_TYPE']
+           0x1f30: PoolTrackTableExpansion        ['pointer64', ['void']]
+           0x1f38: PoolTrackTableExpansionSize    ['unsigned long long']
+           0x1f40: PoolTrackBigPages              ['pointer64', ['void']]
+           0x1f48: PoolTrackBigPagesSize          ['unsigned long long']
+           [snip]
+
+         Key Points
+         The key points are these:
+
+            • SessionId: Uniquely identifies the session. On Windows XP and Server 2003, a sin-
+              gle session (session 0) is shared by system services and user applications. Starting
+              with Vista, Microsoft introduced “session 0 isolation” to prevent shatter attacks
+              (see references in the “Malicious Window Abuse” section), after which time session
+              0 is only for system services.
+            • ProcessList   : You can use this member as an alternate process listing for processes
+              that hide via conventional DKOM (unlinking from PsActiveProcessHead). Each
+              process belongs to exactly one session, with the exception of the System process and
+              smss.exe. During process initialization, the _EPROCESS.Session member is updated
+              to point at the _MM_SESSION_SPACE. Likewise, the ProcessList is updated with a link
+              to the new _EPROCESS. A process stays in this list until it terminates.
+
+   • ImageList: A list of _IMAGE_ENTRY_IN_SESSION structures—one for each device
+      driver mapped into the session space. If you have two sessions, you’ll have two
+      copies of win32k.sys. Thus, forensic tools that want to analyze code or variables
+      in the win32k.sys driver must extract it once for each session.
+
+Detecting Remote Logged-in Users over RDP
+As shown in the following code for the Windows 2003 x86 system, you can determine
+that a user is logged in via RDP because the RDPDD.dll driver and rdpclip.exe process
+are running in the session. RDPDD.dll is the RDP display driver, and rdpclip.exe is the
+process that handles remote clipboard operations. Now, by association, you know that
+mbamgui.exe, cmd.exe, and notepad.exe (among others) were opened/displayed over RDP
+rather than on the computer’s console. This is very useful when reconstructing a remote
+attacker’s actions.
+
+ NOTE
+ This plugin separates processes into their owning session, but it does not automatically
+ link sessions to users. In other words, it does not say session 1 is for Rob and session
+ 2 is for Jack. To make that correlation, choose one or more processes from the session
+ and use the technique involving getsids, as described in Chapter 6.
+
+  $ python vol.py -f rdp.mem --profile=Win2003SP2x86 sessions
+  [snip]
+  **************************************************
+  Session(V): f79ff000 ID: 2 Processes: 10
+  PagedPoolStart: bc000000 PagedPoolEnd bc3fffff
+   Process: 7888 csrss.exe 2012-05-23 02:51:43
+   Process: 3272 winlogon.exe 2012-05-23 02:51:43
+   Process: 6772 rdpclip.exe 2012-05-23 02:52:00
+   Process: 5132 explorer.exe 2012-05-23 02:52:00
+   Process: 5812 PccNTMon.exe 2012-05-23 02:52:01
+   Process: 3552 VMwareTray.exe 2012-05-23 02:52:01
+   Process: 5220 mbamgui.exe 2012-05-23 02:52:02
+   Process: 4576 ctfmon.exe 2012-05-23 02:52:02
+   Process: 5544 cmd.exe 2012-05-23 02:52:09
+   Process: 6236 notepad.exe 2012-05-23 03:20:35
+   Image: 0x8a2fecc0, Address bf800000, Name: win32k.sys
+
+        Image: 0x877d0478, Address bf9d3000, Name: dxg.sys
+        Image: 0x8a1bdf38, Address bff60000, Name: RDPDD.dll
+        Image: 0x8771a970, Address bfa1e000, Name: ATMFD.DLL
+
+        One tip you should remember is that Volatility also can extract command histories and
+     entire screen buffers from RAM (for more information, see Chapter 17). Per the previous
+     output, you know that cmd.exe was invoked over RDP, but for what purpose? Although
+     the RDP protocol allows file transfers, it may not always be enabled, so typically you will
+     see attackers tunneling files to/from their own sites over FTP. An example is shown in
+     the following code (to protect the victim’s identity, many fields are redacted):
+       $ python vol.py -f rdp.mem --profile=Win2003SP2x86 consoles
+       Volatility Foundation Volatility Framework 2.4
+       **************************************************
+       ConsoleProcess: csrss.exe Pid: 7888
+       Console: 0x4c2404 CommandHistorySize: 50
+       HistoryBufferCount: 4 HistoryBufferMax: 4
+       OriginalTitle: Command Prompt
+       Title: Command Prompt
+       AttachedProcess: cmd.exe Pid: 5544 Handle: 0x25c
+       ----
+       CommandHistory: 0xf41610 Application: ftp.exe Flags: Reset
+       CommandCount: 19 LastAdded: 18 LastDisplayed: 18
+       FirstCommand: 0 CommandCountMax: 50
+       ProcessHandle: 0x0
+       Cmd #0 at 0xf43b58: xxxxxxxxxx
+       Cmd #1 at 0xf41788: cd statistics
+       Cmd #2 at 0xf43b78: cd logs
+       Cmd #3 at 0xf43db0: dir
+       Cmd #4 at 0x4c1eb8: cd xxxxxxxxxx
+       Cmd #5 at 0xf43dc0: dir
+       Cmd #6 at 0xf43de0: get xxxxxxxxxx.log
+       Cmd #7 at 0xf43e30: get for /bin/ls.
+       Cmd #8 at 0x4c2ac0: ge xxxxxxxxxx.log
+       Cmd #9 at 0xf43dd0: bye
+       Cmd #10 at 0xf43d98: xxxxxxxxxx
+       ----
+       CommandHistory: 0x4c2c30 Application: cmd.exe Flags: Allocated, Reset
+       CommandCount: 12 LastAdded: 11 LastDisplayed: 11
+       FirstCommand: 0 CommandCountMax: 50
+       ProcessHandle: 0x25c
+       Cmd #0 at 0x4c1f90: d:
+       Cmd #1 at 0xf41280: cd inetlogs
+       Cmd #2 at 0xf412e8: cd xxxxxxxxxx
+       Cmd #3 at 0xf41340: type xxxxxxxxxx.log | find " xxxxxxxxxx " | find "GET"
+       Cmd #4 at 0xf41b10: c:
+       Cmd #5 at 0xf412a0: cd\windows\system32\ xxxxxxxxxx
+       Cmd #6 at 0xf41b20: ftp xxxxxxxxxx.com
+       Cmd #7 at 0xf41948: notepad xxxxxxxxxx.log
+
+Cmd #8 at 0x4c2388: notepad xxxxxxxxxx.log
+Cmd #9 at 0xf43e70: ftp xxxxxxxxxx.com
+Cmd #10 at 0xf43fb0: dir
+Cmd #11 at 0xf41550: notepad xxxxxxxxxx.log
+----
+Screen 0x4c24b4 X:80 Y:3000
+Dump:
+Microsoft Windows [Version 5.2.3790]
+(C) Copyright 1985-2003 Microsoft Corp.
+
+C:\Documents and Settings\ xxxxxxxxxx >d:
+
+D:\>cd inetlogs
+
+D:\inetlogs>cd xxxxxxxxxx
+
+D:\inetlogs\ xxxxxxxxxx >type xxxxxxxxxx.log | find " xxxxxxxxxx " | \
+    find "GET" 2012-05-23 02:51:19 W3SVC xxxxxxxxxx xxxxxxxxxx \
+    GET xxxxxxxxxx xxxxxxxxxx - 80 – xxxxxxxxxx \
+    Mozilla/4.0+(compatible;+MSIE+7.0;+Windows+NT+5.1;\
+    +Trident/4.0) 200 0 0
+
+[snip]
+
+C:\WINDOWS\system32\ xxxxxxxxxx >ftp xxxxxxxxxx.com
+Connected to xxxxxxxxxx.com.
+220 Microsoft FTP Service
+User (xxxxxxxxxx.com:(none)): xxxxxxxxxx
+331 Password required for xxxxxxxxxx.
+Password:
+230 User xxxxxxxxxx logged in.
+ftp> cd statistics
+250 CWD command successful.
+ftp> cd logs
+250 CWD command successful.
+ftp> dir
+200 PORT command successful.
+150 Opening ASCII mode data connection for /bin/ls.
+05-22-12 09:34AM        <DIR>           W3SV xxxxxxxxxx
+226 Transfer complete.
+ftp: 51 bytes received in 0.00Seconds 51000.00Kbytes/sec.
+ftp> cd W3S xxxxxxxxxx
+250 CWD command successful.
+ftp> dir
+200 PORT command successful.
+150 Opening ASCII mode data connection for /bin/ls.
+05-22-12 06:59PM               24686680 e xxxxxxxxxx.log
+05-22-12 07:00PM                3272096 xxxxxxxxxx.log
+226 Transfer complete.
+ftp: 106 bytes received in 0.06Seconds 1.68Kbytes/sec.
+
+           ftp> get xxxxxxxxxx.log
+﻿
+
+           200 PORT command successful.
+           150 Opening ASCII mode data connection for xxxxx.log(3272096 bytes).
+           226 Transfer complete.
+           ftp: 3272096 bytes received in 7.47Seconds 438.09Kbytes/sec.
+
+            As you can see, with just a few commands, you can tell that a user logged in to the
+         victim system over RDP. He then used cmd.exe with process ID 5544 to search for specific
+         IIS log entries and copied the logs to his FTP site. You can see the FTP server’s address,
+         the attacker’s username and password, and the exact files in which he was interested.
+
+         Window Stations
+         We previously discussed sessions, which are containers for processes and other objects
+         related to a user’s logon session. Among those other objects are window stations, which
+         act as security boundaries for processes and desktops. From a forensic standpoint, by
+         analyzing window stations, you can detect applications snooping on clipboard activity
+         along with the frequency of clipboard usage and available data formats.
+            For some background information on window stations, see Sessions, Desktops, and
+         Window Stations on Technet (http://blogs.technet.com/b/askperf/archive/2007/07/24/
+         sessions-desktops-and-windows-stations.aspx) or Window Stations and Desktops on MSDN
+         (http://msdn.microsoft.com/en-us/library/windows/desktop/ms687098(v=vs.85).aspx).
+
+         Analysis Objectives
+
+         Your objectives are these:
+
+            • Clipboard snooping: You can detect applications snooping on clipboard activity.
+            • Clipboard usage: You can determine the frequency of clipboard usage and avail-
+                able formats. Has the logged-on user ever copied data to the clipboard? If so, what
+                type of data? This comes in handy when you actually carve the clipboard contents
+                from RAM.
+
+         Data Structures
+         The main structure for a window station is tagWINDOWSTATION. Unlike most other objects
+         that are covered in this chapter, window stations (and desktops) are securable objects. That
+         means they are allocated, managed, and freed by the same executive object manager that
+         handles processes, threads, mutants, and registry keys. Thus, they have a _POOL_HEADER
+         and a _OBJECT_HEADER that you can easily locate in RAM using the pool scanning technique
+
+described in Chapter 5. Alternately, if PDB symbols are available, you can walk the list of
+window stations for a given session using the following: win32k!grpWinStaList.
+  A structure from Windows 7 x64 is shown in the following code:
+  >>> dt("tagWINDOWSTATION")
+  'tagWINDOWSTATION' (152 bytes)
+  0x0   : dwSessionId                    ['unsigned long']
+  0x8   : rpwinstaNext                   ['pointer64', ['tagWINDOWSTATION']]
+  0x10 : rpdeskList                      ['pointer64', ['tagDESKTOP']]
+  0x18 : pTerm                           ['pointer64', ['tagTERMINAL']]
+  0x20 : dwWSF_Flags                     ['unsigned long']
+  0x28 : spklList                        ['pointer64', ['tagKL']]
+  0x30 : ptiClipLock                     ['pointer64', ['tagTHREADINFO']]
+  0x38 : ptiDrawingClipboard             ['pointer64', ['tagTHREADINFO']]
+  0x40 : spwndClipOpen                   ['pointer64', ['tagWND']]
+  0x48 : spwndClipViewer                 ['pointer64', ['tagWND']]
+  0x50 : spwndClipOwner                  ['pointer64', ['tagWND']]
+  0x58 : pClipBase                       ['pointer', ['array',
+                    <function <lambda> at 0x10195a848>, ['tagCLIP']]]
+  0x60 : cNumClipFormats                 ['unsigned long']
+  0x64 : iClipSerialNumber               ['unsigned long']
+  0x68 : iClipSequenceNumber             ['unsigned long']
+  0x70 : spwndClipboardListener          ['pointer64', ['tagWND']]
+  0x78 : pGlobalAtomTable                ['pointer64', ['void']]
+  0x80 : luidEndSession                  ['_LUID']
+  0x88 : luidUser                        ['_LUID']
+  0x90 : psidUser                        ['pointer64', ['void']]
+
+Key Points
+The key points are these:
+
+   • dwSessionId: Associates a window station to its owning session (it will match
+       _MM_SESSION_SPACE.SessionId).
+   • rpwinstaNext: A doubly linked list that enumerates all window stations in the same
+     session as the current one.
+   • rpdeskList: A pointer to the window station’s first desktop.
+   • dwWSF_Flags: Tells you whether the window station is interactive (see the WSF_NOIO
+     flag).
+   • pClipBase: A pointer to an array of tagCLIP structures that describe the available
+     clipboard formats and contain handles to clipboard objects. The array size is taken
+     from cNumClipFormats. You learn more about the tagCLIP structure in Chapter 15.
+   • iClipSequenceNumber: Increments by 1 for each object copied to the clipboard. By
+     looking at this number, you can tell how frequently copy operations occur.
+   • pGlobalAtomTable: Points to the window station’s atom table (atom tables are
+     described later in the chapter).
+
+           Additionally, several of the fields can tell you which thread is viewing the clipboard,
+﻿
+
+         which thread owns the clipboard, and which thread (if any) may be listening or snooping
+         on clipboard operations.
+
+         Analyzing the Frequency of Clipboard Usage
+         The output that follows shows the interactive window station WinSta0 for session 2. This
+         window station’s atom table is located at 0xe7981648, it contains three desktops (Default,
+         Disconnect, and Winlogon), and rdpclip.exe is currently viewing the clipboard. This
+         makes sense because rdpclip.exe is the process that handles copy-and-paste operations
+         over RDP. There are four supported clipboard formats, including Unicode and ASCII text,
+         and based on the serial number, the user has copied nine items to the clipboard so far.
+           $ python vol.py -f rdp.mem --profile=Win2003SP2x86 wndscan
+           Volatility Foundation Volatility Framework 2.4
+           **************************************************
+           WindowStation: 0x8581e40, Name: WinSta0, Next: 0x0
+           SessionId: 2, AtomTable: 0xe7981648, Interactive: True
+           Desktops: Default, Disconnect, Winlogon
+           ptiDrawingClipboard: pid - tid -
+           spwndClipOpen: 0x0, spwndClipViewer: 6772 rdpclip.exe
+           cNumClipFormats: 4, iClipSerialNumber: 9
+           pClipBase: 0xe6fe8ec8, Formats: CF_UNICODETEXT,CF_LOCALE,CF_TEXT,CF_OEMTEXT
+           [snip]
+
+           The next window station is named __X78B95_89_IW with a single desktop named
+         __A8D9S1_42_ID . This is a standard naming convention used by inetinfo.exe, so you
+         know that the system was running IIS at the time.
+           **************************************************
+           WindowStation: 0x990c760, Name: __X78B95_89_IW, Next: 0x0
+           SessionId: 0, AtomTable: 0xe26c6a60, Interactive: False
+           Desktops: __A8D9S1_42_ID
+           ptiDrawingClipboard: pid - tid -
+           spwndClipOpen: 0x0, spwndClipViewer: 0x0
+           cNumClipFormats: 0, iClipSerialNumber: 0
+           pClipBase: 0x0, Formats:
+
+            The last one shown in the example is WinSta0 for session 0. Although it is interactive,
+         the cNumClipFormats and iClipSerialNumber are both 0, meaning that this window sta-
+         tion’s clipboard has never been used.
+           **************************************************
+           WindowStation: 0x9a0d148, Name: WinSta0, Next: 0x8a089c48
+           SessionId: 0, AtomTable: 0xe1b19b10, Interactive: True
+
+  Desktops: Default, Disconnect, Winlogon
+  ptiDrawingClipboard: pid - tid -
+  spwndClipOpen: 0x0, spwndClipViewer: 0x0
+  cNumClipFormats: 0, iClipSerialNumber: 0
+  pClipBase: 0x0, Formats:
+  [snip]
+
+How to Detect Clipboard Snooping
+Many malware samples snoop on clipboard operations so they can steal credentials even
+when users implement password managers. One method is by hooking SetClipboardData
+and stealing the data as it is placed into the clipboard. Applications call this API in
+response to the user invoking a copy operation (for example, by typing CTRL+C). The func-
+tion prototype is shown in the following code, in which hMem is a handle to the memory
+region where data of type uFormat is copied by the application. The kernel takes the data
+and copies it into the system’s clipboard.
+  HANDLE WINAPI SetClipboardData(
+     _In_     UINT uFormat,
+     _In_opt_ HANDLE hMem
+  );
+
+   By hooking this API, malware can intercept and extract the data from hMem. However,
+this modifies the system in obvious ways and almost all anti-rootkit scanners these days
+can detect the API hook.
+   Malware can also simply call (not hook) GetClipboardData at a fast-paced regu-
+lar interval—for example, in a loop every 10ms. GetClipboardData is the reverse of
+SetClipboardData; applications call it in response to paste operations. Why is it a bad
+idea? Because before requesting the clipboard data, you must call OpenClipboard, and
+only one window or process per session can have the clipboard open at a time. If malware
+opens the clipboard to check for data every 10ms, it could cause a race condition and
+accidentally prevent (by blocking) legitimate applications from accessing the clipboard.
+
+Clipboard Viewers and Listeners
+Microsoft’s recommended way to access data as soon as it is copied to the clipboard is to
+register a clipboard viewer (by calling SetClipboardViewer) or format listener (by calling
+AddClipboardFormatListener). These functions allow applications to receive notifications
+(via WM_DRAWCLIPBOARD messages) whenever the content of the clipboard changes. They can
+then open the clipboard and query the data. As always, the most interesting part of all this
+is the list of artifacts left in RAM as a result of calling these APIs. The following example
+uses Nirsoft’s clipboardic.exe (you can also use InsideClipboard) to demonstrate. These
+
+     tools use the same APIs that malware uses, and because they are not actually malicious,
+     you can follow along on your own system.
+        To help illustrate the exact changes made from specific behaviors, you should start with
+     a freshly rebooted system—before any clipboard activity. The following is the wndscan
+     output for our user’s WinSta0:
+       $ python vol.py -f memory.dmp --profile=Win7SP1x86 wndscan
+       Volatility Foundation Volatility Framework 2.4
+       **************************************************
+       WindowStation: 0x7ea45d00, Name: WinSta0, Next: 0x0
+       SessionId: 1, AtomTable: 0x93b107f0, Interactive: True
+       Desktops: Default, Disconnect, Winlogon
+       ptiDrawingClipboard: pid - tid -
+       spwndClipOpen: 0x0, spwndClipViewer: 0x0
+       cNumClipFormats: 0, iClipSerialNumber: 0
+       pClipBase: 0x0, Formats:
+
+        Notice that the clipboard base is unset; there are no formats, clipboard owners, or view-
+     ers; and the serial number is zero. You can also use the wintree plugin (described later in
+     the chapter) to search for any windows of the class CLIPBRDWNDCLASS. Applications using
+     the aforementioned clipboard APIs inevitably become owners of these windows, which
+     the APIs create behind the scenes. Thus the presence of these windows is an early indica-
+     tion of which processes can perform, or are expected to perform, clipboard operations.
+       $ python vol.py -f memory.dmp --profile=Win7SP1x86
+             wintree | grep CLIPBRDWNDCLASS
+       Volatility Foundation Volatility Framework 2.4
+       .#10062 explorer.exe:372 CLIPBRDWNDCLASS
+       .#100f0 explorer.exe:372 CLIPBRDWNDCLASS
+       .#1011e vmtoolsd.exe:2224 CLIPBRDWNDCLASS
+       .#1014a SnagIt32.exe:2300 CLIPBRDWNDCLASS
+
+        As you can see, explorer.exe (Windows Explorer), vmtoolsd.exe (the VMware Tools
+     component allowing the host and guest to share clipboard data), and SnagIt32.exe (a
+     screen shot application that allows you to copy/paste images) have windows of this class.
+     This all makes perfect sense. Do you see other applications on your system? If so, do
+     they have a legitimate need to access the clipboard? These are questions you should ask
+     yourself when trying to determine whether there are malicious processes snooping on
+     the clipboard.
+
+     Snooping with Clipboardic.exe
+     Now, on your test system, open some new applications that interact with the clipboard.
+     In this case, that was Notepad++ (a text editor) and Nirsoft’s clipboardic.exe program (a
+     utility to actively monitor clipboard usage). For this example, we copied some data from
+     the host OS and pasted it into the running VMware guest. We also copied some data from
+
+an open Notepad++ document onto the clipboard. As you can see in Figure 14-3, the text
+was captured by clipboardic.exe, as expected.
+
+                            Text copied from Notepad++
+                            is monitored from Clipboardic
+
+Figure 14-3: Clipboardic monitors the clipboard
+
+  Take a second look at the guest VM’s physical memory after those actions. Keep in
+mind that malware would use the exact same APIs and produce similar artifacts.
+   $ python vol.py -f memory.dmp --profile=Win7SP1x86 wndscan
+   Volatility Foundation Volatility Framework 2.4
+   **************************************************
+   WindowStation: 0x7ea45d00, Name: WinSta0, Next: 0x0
+   SessionId: 1, AtomTable: 0x93b107f0, Interactive: True
+   Desktops: Default, Disconnect, Winlogon
+   ptiDrawingClipboard: pid - tid -
+   spwndClipOpen: 0x0, spwndClipViewer: 3616 Clipboardic.ex
+   cNumClipFormats: 4, iClipSerialNumber: 11
+   pClipBase: 0xfccb2be8, Formats: CF_UNICODETEXT,\
+         Unknown choice 8192,CF_TEXT,Unknown choice 197569
+
+  PID 3616 Clipboardic.exe has registered a new clipboard viewer. There are four clip-
+board formats, including ASCII (CF_TEXT) and Unicode (CF_UNICODETEXT)—the others are
+
+     probably OLE data. The serial number has now been increased to 11. Furthermore, there
+﻿
+
+     are several new windows of the clipboard class:
+       $ python vol.py -f memory.dmp --profile=Win7SP1x86
+             wintree | grep CLIPBRDWNDCLASS
+       Volatility Foundation Volatility Framework 2.4
+       .#10062 explorer.exe:372 CLIPBRDWNDCLASS
+       .#100f0 explorer.exe:372 CLIPBRDWNDCLASS
+       .#1011e vmtoolsd.exe:2224 CLIPBRDWNDCLASS
+       .#1014a SnagIt32.exe:2300 CLIPBRDWNDCLASS
+       .#4002c vmtoolsd.exe:2224 CLIPBRDWNDCLASS
+       .#10288 notepad++.exe:3140 CLIPBRDWNDCLASS
+       .#1032c Clipboardic.ex:3616 CLIPBRDWNDCLASS
+
+        Each application that was involved in the copy-and-paste operations is represented
+     here. VMware Tools (vmtoolsd.exe), which was previously running, has created a new
+     window (#4002c) to pass the data from the host to the guest. Notepad++ has a window
+     (#10288) to receive the data. clipboardic.exe has a window (#1032c) to snoop on the data.
+
+     Desktops
+     A desktop is a container for application windows and user interface objects. Malware
+     utilizes desktops in various ways, from launching applications in alternate desktops, so
+     the current logged-on user does not see them, to ransomware that locks users out of their
+     own desktop until a fee is paid (see the case study in Chapter 15).
+
+     Analysis Objectives
+
+     Your objectives are these:
+
+        • Hidden desktops: Find rogue desktops used to hide applications from logged-on
+           users
+        • Detecting ransomware: Detect desktops created by ransomware to effectively lock
+           users out of their own system.
+        • Find hidden threads: The GUI subsystem defines a structure called tagTHREADINFO
+           that is independent of _ETHREAD and contains information about the thread. Similar
+           to how you can utilize alternate process listings to find hidden processes, you can
+           use this alternate thread structure for identifying threads when other methods fail.
+
+Data Structures
+The main structure for a desktop is tagDESKTOP . A structure from Windows 7 x64 is
+shown here:
+  >>> dt("tagDESKTOP")
+  'tagDESKTOP' (224 bytes)
+  0x0   : dwSessionId          ['unsigned long']
+  0x8   : pDeskInfo            ['pointer64', ['tagDESKTOPINFO']]
+  0x10 : pDispInfo             ['pointer64', ['tagDISPLAYINFO']]
+  0x18 : rpdeskNext            ['pointer64', ['tagDESKTOP']]
+  0x20 : rpwinstaParent        ['pointer64', ['tagWINDOWSTATION']]
+  0x28 : dwDTFlags             ['unsigned long']
+  0x30 : dwDesktopId           ['unsigned long long']
+  0x38 : spmenuSys             ['pointer64', ['tagMENU']]
+  0x40 : spmenuDialogSys       ['pointer64', ['tagMENU']]
+  0x48 : spmenuHScroll         ['pointer64', ['tagMENU']]
+  0x50 : spmenuVScroll         ['pointer64', ['tagMENU']]
+  0x58 : spwndForeground       ['pointer64', ['tagWND']]
+  0x60 : spwndTray             ['pointer64', ['tagWND']]
+  0x68 : spwndMessage          ['pointer64', ['tagWND']]
+  0x70 : spwndTooltip          ['pointer64', ['tagWND']]
+  0x78 : hsectionDesktop       ['pointer64', ['void']]
+  0x80 : pheapDesktop          ['pointer64', ['tagWIN32HEAP']]
+  0x88 : ulHeapSize            ['unsigned long']
+  0x90 : cciConsole            ['_CONSOLE_CARET_INFO']
+  0xa8 : PtiList               ['_LIST_ENTRY']
+  0xb8 : spwndTrack            ['pointer64', ['tagWND']]
+  0xc0 : htEx                  ['long']
+  0xc4 : rcMouseHover          ['tagRECT']
+  0xd4 : dwMouseHoverTime      ['unsigned long']
+  0xd8 : pMagInputTransform    ['pointer64', ['_MAGNIFICATION_INPUT_TRANSFORM']]
+
+Key Points
+The key points are these:
+
+   • dwSessionId: Associates a desktop to its owning session (it matches _MM_SESSION_
+      SPACE.SessionId).
+   • pDeskInfo: Points to a tagDESKTOPINFO—this is where information on the desktop’s
+     global hooks is stored, as you will learn in Chapter 15. The tagDESKTOPINFO.spwnd
+     field also identifies the active foreground window.
+   • rpdeskNext: Enumerates all desktops in the same window station.
+   • rpwinstaParent: Identifies the window station to which the desktop belongs.
+   • pheapDesktop: Points to the desktop heap—it can be parsed in the same way as a
+     process heap.
+   • PtiList: A list of tagTHREADINFO structures, one for each thread attached to the desktop.
+
+     Enumerating Desktops and Associated Threads
+     The deskscan plugin scans for window stations and then walks the list of desktops
+     (rpdeskList). The output that follows shows WinSta0\Default, WinSta0\Disconnect, and
+     WinSta0\Winlogon.
+
+       $ python vol.py -f rdp.mem --profile=Win2003SP2x86 deskscan
+       Volatility Foundation Volatility Framework 2.4
+       **************************************************
+       Desktop: 0x8001038, Name: WinSta0\Default, Next: 0x8737bc10
+       SessionId: 2, DesktopInfo: 0xbc6f0650, fsHooks: 2128
+       spwnd: 0xbc6f06e8, Windows: 238
+       Heap: 0xbc6f0000, Size: 0x300000, Base: 0xbc6f0000, Limit: 0xbc9f0000
+        7808 (notepad.exe 6236 parent 5544)
+        7760 (csrss.exe 7888 parent 432)
+        5116 (csrss.exe 7888 parent 432)
+        8168 (PccNTMon.exe 5812 parent 5132)
+        3040 (cmd.exe 5544 parent 5132)
+        6600 (csrss.exe 7888 parent 432)
+        7392 (explorer.exe 5132 parent 8120)
+        5472 (explorer.exe 5132 parent 8120)
+        548 (PccNTMon.exe 5812 parent 5132)
+        6804 (mbamgui.exe 5220 parent 5132)
+        2008 (ctfmon.exe 4576 parent 5132)
+        3680 (PccNTMon.exe 5812 parent 5132)
+        2988 (VMwareTray.exe 3552 parent 5132)
+        1120 (explorer.exe 5132 parent 8120)
+        4500 (explorer.exe 5132 parent 8120)
+        7732 (explorer.exe 5132 parent 8120)
+        6836 (explorer.exe 5132 parent 8120)
+        7680 (winlogon.exe 3272 parent 432)
+        7128 (rdpclip.exe 6772 parent 3272)
+        5308 (rdpclip.exe 6772 parent 3272)
+       **************************************************
+       Desktop: 0x737bc10, Name: WinSta0\Disconnect, Next: 0x8a2f2068
+       SessionId: 2, DesktopInfo: 0xbc6e0650, fsHooks: 0
+       spwnd: 0xbc6e06e8, Windows: 25
+       Heap: 0xbc6e0000, Size: 0x10000, Base: 0xbc6e0000, Limit: 0xbc6f0000
+       **************************************************
+       Desktop: 0xa2f2068, Name: WinSta0\Winlogon, Next: 0x0
+       SessionId: 2, DesktopInfo: 0xbc6c0650, fsHooks: 0
+       spwnd: 0xbc6c06e8, Windows: 6
+       Heap: 0xbc6c0000, Size: 0x20000, Base: 0xbc6c0000, Limit: 0xbc6e0000
+        6912 (winlogon.exe 3272 parent 432)
+        1188 (winlogon.exe 3272 parent 432)
+        8172 (winlogon.exe 3272 parent 432)
+       **************************************************
+       [snip]
+
+  Please note the following:
+
+   • The Winlogon desktop is what presents the login prompt in which you enter your
+     username and password. If successful, the system switches you into the Default
+     desktop. As expected, explorer.exe runs in the Default desktop; note that there
+     are six different Explorer threads all running in this same desktop.
+   • The number of windows in the Default desktop is much higher than the others
+     (238 compared with 25 in Disconnect and 6 in Winlogon). To allow the creation of
+     so many more windows and other objects, it makes sense that the Default desk-
+     top’s heap size is also much larger (0x300000 compared with 0x10000 and 0x20000).
+   • The only threads in the Winlogon desktop actually belong to winlogon.exe. If you
+     ever see threads belonging to a different process in this desktop, it may indicate
+     an attempt to steal login credentials.
+   • The only desktop with global hooks installed is Default because the fsHooks value
+     is nonzero. This value is explained more in Chapter 15, but for now just know that
+     it indicates that threads within the desktop can intercept window messages, such
+     as keystrokes and mouse movements, before they reach the target window.
+
+Running Commands in Alternate Desktops
+Tigger malware includes a backdoor component that accepts commands over the network.
+If the remote attacker wants to run applications on the victim machine, he instructs the
+malware to create a hidden desktop in which to run them. For instance, an attacker may
+want to start corpvpn.exe (a corporate virtual private network [VPN] client) on the victim
+machine, so it connects to the corporate network, thus giving the attacker access to a whole
+set of other systems. However, corpvpn.exe is a GUI application that shows connection
+statistics (uptime, IP address, and data transferred in both directions) in a small window
+for as long as the connection is active. Obviously, this type of visual indication of the VPN
+application running would alert the user to unauthorized activity.
+
+Hidden Windows versus Alternate Desktops
+By running GUI applications in alternate desktops, the attacker has a greater chance of
+remaining undetected. It is important to note that windows and window messages do not
+cross desktop boundaries. Thus, the alternate desktop approach is not at all the same as sim-
+ply hiding a window by calling ShowWindow with the SW_HIDE flag (or by specifying SW_HIDE
+to CreateProcess when the process is initially spawned). Utilities, such as WinLister, can
+easily find windows that are marked as hidden, but they typically analyze only the current
+desktop—which means windows running in alternate desktops are missed.
+   Figure 14-4 shows the WinLister utility running on a user’s Default desktop. In addi-
+tion, an Internet Explorer (IE) process is running in the same desktop. As you can see,
+
+     the Internet Explorer window of class IEFrame is marked as visible and its window title
+     (MSN.com) tells you the currently accessed web page.
+
+                   WinLister and IE running in the same Desktop
+
+     Figure 14-4: WinLister on a live machine shows the IE window properties
+
+         The next image in Figure 14-5 shows a similar situation, but this time the IE process
+     is in a different desktop than WinLister. Although both processes are running as the
+     user Jake (thus they have the same privileges and access levels), the person who is actu-
+     ally logged in and looking at Jake’s default desktop cannot see any of the IE windows.
+     Unfortunately, switching desktops is not as easy on Windows as it is on Linux and Mac.
+     It typically involves writing your own C program that calls SwitchDesktop and you must
+     also figure out the name of the desktop that you want to switch to.
+
+     Tigger’s Recipe for Alternate Desktops
+     The code that follows is reverse-engineered from the DLL that Tigger injects into explorer
+     .exe. It uses all the same flags, APIs, and variables that the real malware used. Here is a
+     description of the steps:
+
+       1. Create a new desktop named system_temp_.
+       2. Generate a temporary filename that will capture the redirected output of console
+          commands.
+       3. Set STARTUPINFO.lpDesktop to WinSta0\system_temp_.
+       4. Set dwFlags to indicate that the STARTUPINFO structure also has preferences for
+          window visibility, standard output, and standard error handles for the process to
+          be created.
+       5. Create the new process. The full path to the process szCmd is passed into the func-
+          tion as an argument (originally taken from an attacker over the network).
+
+      IE is running in a different desktop
+
+Figure 14-5: The IE process’ windows are not visible outside of the current desktop.
+
+   6. Wait for the process to complete.
+   7. Close the system_temp_ desktop.
+   8. Read the process’ output (if any) from the specified output file and return it in a
+      buffer.
+   LPSTR RunCmdInSecretDesktop(TCHAR *szCmd, BOOL bWait)
+   {
+           DWORD dwFlags = (DESKTOP_SWITCHDESKTOP |
+                   DESKTOP_WRITEOBJECTS | DESKTOP_CREATEWINDOW);
+           HDESK hDesk = NULL;
+           SECURITY_ATTRIBUTES SecurityAttributes;
+           STARTUPINFO StartupInfo;
+           PROCESS_INFORMATION ProcessInfo;
+           DWORD ddSize = 0;
+           TCHAR lpszPath[MAX_PATH];
+           TCHAR lpszFile[MAX_PATH];
+           HANDLE hFile = INVALID_HANDLE_VALUE;
+
+            // Step 1
+            hDesk = OpenDesktop(_T("system_temp_"), 0, FALSE, dwFlags);
+
+            if (hDesk == NULL)
+                   hDesk = CreateDesktop(_T("system_temp_"),
+                NULL, NULL, 0, dwFlags, NULL);
+
+               if (hDesk == NULL)
+                      return NULL;
+
+               SecurityAttributes.nLength = sizeof(SecurityAttributes);
+               SecurityAttributes.bInheritHandle = TRUE;
+               SecurityAttributes.lpSecurityDescriptor = NULL;
+
+               GetTempPath(MAX_PATH, lpszPath);
+               GetTempFileName(lpszPath, NULL, GetTickCount(), lpszFile);
+
+               // Step 2
+               hFile = CreateFile(
+                      lpszFile,
+                      GENERIC_READ | GENERIC_WRITE,
+                      FILE_SHARE_READ | FILE_SHARE_WRITE,
+                      &SecurityAttributes,
+                      CREATE_ALWAYS,
+                      NULL, NULL);
+
+               if (hFile == INVALID_HANDLE_VALUE) {
+                      CloseDesktop(hDesk);
+                      return NULL;
+               }
+
+               memset(&StartupInfo, 0, sizeof(StartupInfo));
+               GetStartupInfo(&StartupInfo);
+
+               // Step 3
+               StartupInfo.cb = sizeof(StartupInfo);
+               StartupInfo.lpDesktop = _T("Winsta0\\system_temp_");
+               StartupInfo.wShowWindow = 1;
+               // Step 4
+               StartupInfo.dwFlags = (STARTF_USESTDHANDLES |
+                                          STARTF_USESHOWWINDOW);
+               StartupInfo.hStdOutput = hFile;
+               StartupInfo.hStdError = hFile;
+
+               LPTSTR szDup = _tcsdup(szCmd);
+
+               // Step 5
+               if (CreateProcess(NULL, szDup, NULL, NULL, TRUE,
+                   CREATE_NEW_CONSOLE, NULL, NULL,
+                   &StartupInfo, &ProcessInfo))
+               {
+                      // Step 6
+                      if (bWait)
+                         WaitForSingleObject(ProcessInfo.hProcess, INFINITE);
+               }
+
+               CloseHandle(ProcessInfo.hProcess);
+
+           CloseHandle(ProcessInfo.hThread);
+           CloseHandle(hFile);
+           // Step 7
+           CloseDesktop(hDesk);
+
+           // Step 8
+           return GetFileData(lpszFile, &ddSize);
+  }
+
+  As a result of this code, Tigger can covertly execute both console and GUI applications
+without the user noticing and without detection from security products that monitor only
+windows and window messages broadcasted in the user’s Default desktop. Unfortunately,
+because the function does call CloseDesktop at the end, this can cause the tagDESKTOP
+object in memory to be freed, unless other threads have references to it. However, if you
+have learned one thing from this book so far, it’s that artifacts in RAM can linger unex-
+pectedly even after you free or de-allocate them.
+
+Atoms and Atom Tables
+Atoms are strings that can easily be shared between processes in the same session. In
+short, one process adds an atom to an atom table (explicitly) by passing a string to a func-
+tion such as AddAtom or GlobalAddAtom. These APIs return an integer identifier that the
+process or other processes can use to retrieve the string. An atom table is a hash bucket
+that contains the integer to string mappings.
+   Atom tables are extremely interesting from a forensic perspective because many
+Windows API functions create atoms implicitly, or indirectly. Malware authors use these
+APIs, but are not aware of the artifacts they leave on the system, thus they don’t try and
+cover up the tracks. Atoms even have a tendency to “stick around” longer than sometimes
+intended. For example, atoms have a reference count that is incremented and decre-
+mented automatically when they are added and deleted from the atom table. According
+to the Microsoft article About Atom Tables (http://technet.microsoft.com/en-us/query/
+ms649053), string atoms remain in the atom table as long as the reference count is greater
+than zero, even after the application that placed it in the table terminates.
+
+Analysis Objectives
+
+Your objectives are these:
+
+   • Detect window class names: When applications use RegisterClassEx to register a
+       new window class, the name of the class is added to a global atom table.
+
+        • Detect window message names: When applications register window messages by
+﻿
+
+          calling RegisterWindowMessage, the name is added to a global atom table.
+        • Identify injected DLLs: When malware uses SetWindowsHookEx or SetWinEventHook
+          to install message hooks or event hooks, respectively, the path to the DLL on disk
+          that contains the hook function is added to a global atom table. You will learn more
+          about these APIs in Chapter 15.
+        • System presence marking: Some malware families use atoms to mark the system
+          as infected, in the same way as mutexes are commonly used.
+
+     Data Structures
+     Atom tables are represented as _RTL_ATOM_TABLE structures. As noted in Identifying Global
+     Atom Table Leaks (http://blogs.msdn.com/b/ntdebugging/archive/2012/01/31/identifying
+     -global-atom-table-leaks.aspx), the format of the structure is different in user mode than
+     in kernel mode. When analyzing the session atom table (win32k!UserAtomTableHandle)
+     and window station atom table (tagWINDOWSTATION.pGlobalAtomTable), you must be sure
+     to use the kernel mode definition.
+        In the following code, the kernel mode atom table and atom table entry structures for
+     Windows 7 x64 are shown:
+       >>> dt("_RTL_ATOM_TABLE")
+       '_RTL_ATOM_TABLE' (112 bytes)
+       0x0   : Signature              ['unsigned long']
+       0x8   : CriticalSection        ['_RTL_CRITICAL_SECTION']
+       0x18 : NumBuckets              ['unsigned long']
+       0x20 : Buckets                 ['array', <function>,
+                 ['pointer', ['_RTL_ATOM_TABLE_ENTRY']]]
+
+       >>> dt("_RTL_ATOM_TABLE_ENTRY")
+       '_RTL_ATOM_TABLE_ENTRY' (24 bytes)
+       0x0   : HashLink                ['pointer64', ['_RTL_ATOM_TABLE_ENTRY']]
+       0x8   : HandleIndex             ['unsigned short']
+       0xa   : Atom                    ['unsigned short']
+       0xc   : ReferenceCount          ['unsigned short']
+       0xe   : Flags                   ['unsigned char']
+       0xf   : NameLength              ['unsigned char']
+       0x10 : Name                     ['String', {'length':
+                 <function>, 'encoding': 'utf16'}]
+
+     Key Points
+     The key points are these:
+
+        • Signature: This value specifies the “magic” bytes for an atom table, which are
+           0x6d6f7441 (Atom). Also, the structures exist in pools with tag AtmT. Together, this
+           criterion provides a good initial pattern to scan for in RAM.
+
+   • NumBuckets: Specifies the number of _RTL_ATOM_TABLE_ENTRY structures in the
+      Buckets array.
+   • HashLink: Used to enumerate all atom entries in the bucket.
+   • Atom: The integer identifier for the atom table entry. This is the value returned by
+     functions, such as AddAtom and FindAtom. It also serves as the index into the atom
+     table where you can find a particular atom.
+   • ReferenceCount   : Incremented each time the specified string is added to the atom
+     table. Likewise, it is decremented each time an atom is deleted.
+   • Name: The string name of the atom. This is the primary point of interest for analysis.
+
+Atoms and Atomscan
+The atomscan plugin scans through memory and reports atoms in the order in which
+they were found. However, if you specify --sort-by=atom, the atoms from multiple atom
+tables are sorted individually by atom ID. Additionally, you can sort numerically by
+reference count by specifying the --sort-by=refcount option. An example is provided
+in the following code:
+  $ python vol.py -f win7x64.dd --profile=Win7SP1x64 atomscan --sort-by=refcount
+  Volatility Foundation Volatility Framework 2.4
+  AtomOfs(V)                 Atom Refs    Pinned Name
+  ------------------ ------------ ------ ------ ----
+  0xfffff8a007b22b80       0xc125       8      0 Micro[snip].IEXPLORER_EXITING
+  0xfffff8a005dba520       0xc0be       8      0 Net Resource
+  0xfffff8a007b1b480       0xc124       8      0 Micro[snip].SET_CONNECTOID_NAME
+  0xfffff8a007b21440       0xc123       8      0 Micro[snip].WINSOCK_ACTIVITY
+  0xfffff8a0098594b0       0xc15b       8      0 ReaderModeCtl
+  0xfffff8a007a62c50       0xc102       8      0 C:\Windows\system32\MsftEdit.dll
+  0xfffff8a0076f5fe0       0xc0e2      10      0 WorkerW
+  0xfffff8a005d51250       0xc0c9      10      0 UniformResourceLocatorW
+  0xfffff8a0073a6d60       0xc0e9      10      0 CLIPBRDWNDCLASS
+  0xfffff8a0081bd640       0xc1af      11      0 WM_HTML_GETOBJECT
+  0xfffff8a007baa5d0       0xc135      11      0 C:\Windows\system32\fxsst.dll
+  0xfffff8a001ae9200       0xc164      11      0 CMBIgnoreNextDeselect
+  0xfffff8a0071eb9b0       0xc1d1      12      0 C:\Windows\[snip]\ShFusRes.dll
+  0xfffff8a006a79850       0xc08b      12      0 FileNameMapW
+  0xfffff8a0083155a0       0xc1d9      13      0 C:\Program[snip] \windbg.exe
+  0xfffff8a0087cb880       0xc1f6      16      0 text/css
+  [snip]
+
+   You can see a plethora of strings that serve various purposes on the system. There are
+DLL paths, registered window messages (WM_HTML_GETOBJECT), class names, and data types
+(text/css). These atom strings are much like mutexes in that there are so many of them, it
+is difficult to spot abnormal ones with the naked eye. Examples showing how to identify
+
+     suspicious ones are discussed in the next sections. In addition, you can always build exten-
+     sions into the plugins that only output atoms based on a list of inputted rules (like IOCs).
+
+     Detecting Window Class Names
+     When applications call RegisterClassEx, they pass a WNDCLASSEX structure that has been
+     initialized with the desired properties of the new class. The win32k.sys module creates an
+     atom from the lpszClassName member of this structure. Some malware tries to be stealthy
+     and creates blank window class names (“ “) or uses nonprintable ASCII characters think-
+     ing no one will ever see them. You can observe this happening at addresses 00401355 and
+     00401387 in the disassembly in Figure 14-6 from a sample of Mutihack.
+
+                                                                 Empty strings and non-printable
+                                                                 characters being used as class
+                                                                 and window names
+
+     Figure 14-6: Both APIs called by mutihack result in newly created atoms
+
+        The output of the atomscan command shows a blank atom name, which should typi-
+     cally never happen:
+        $ python vol.py -f mutihack.vmem --profile=WinXPSP3x86 atomscan
+        Volatility Foundation Volatility Framework 2.4
+        AtomOfs(V)       Atom Refs    Pinned Name
+        ---------- ---------- ------ ------ ----
+        [snip]
+        0xe179d850     0xc038       1      1 OleMainThreadWndClass
+        0xe17a7e40     0xc094       2      0 Shell_TrayWnd
+        0xe17c34b8     0xc0c4       2      0 UnityAppbarWindowClass
+        0xe17c7678     0xc006       1      1 FileName
+        0xe17d40a0     0xc0ff       2      0
+        0xe17d4128     0xc027       1      1 SysCH
+        0xe17e78f0     0xc01c       1      1 ComboBox
+        0xe17e9070     0xc065      26      0 6.0.2600.6028!Combobox
+        0xe17ec350     0xc13e       1      0 Xaml
+        0xe18119c0     0xc08c       5      0 OM_POST_WM_COMMAND
+        [snip]
+
+Registered Window Messages
+To support custom user interactions, sometimes applications need to register special
+window messages. Calling the RegisterWindowMessage API, whose prototype is shown
+in the following code, can accomplish the task:
+  UINT WINAPI RegisterWindowMessage(
+     _In_ LPCTSTR lpString
+  );
+
+   Behind the scenes, the system creates an atom based on the string specified as the
+lpString parameter.
+   A classic example is shown in Figure 14-7 from a disassembly of the Clod malware.
+Registering the WM_HTML_GETOBJECT window message is one of the required steps to
+obtaining a fully marshaled IHTMLDocument2 interface (http://support.microsoft.com/
+kb/249232) from an HWND (a handle to a window). In other words, this is how Clod gains
+scriptable control over Internet Explorer—such as the ability to add/remove/modify DOM
+elements or inspect form variables upon submission, like credentials to banking sites.
+
+                                                                                The string is
+                                                                                copied to the
+                                                                                global atom
+                                                                                table in kernel
+                                                                                memory
+
+Figure 14-7: Clod registering a window message before HTML injection
+
+     Atoms Are the New Mutexes
+     For ages, malware has used mutexes to mark their presence on a system. A mutex (short
+     for mutually exclusive) is an executive object, typically used for interprocess synchroniza-
+     tion that can be owned by only one process at a time. Malware variants create mutexes
+     with predefined or pseudorandomly generated names such that other variants of the
+     same malware can determine whether they have already infected a particular system. If
+     the predefined mutex exists, there is no need to reinfect. Because this technique is so old
+     and overused, detecting malware by scanning for known mutexes is very commonplace.
+        Most likely, though, you have never heard of using atoms for malware discovery. Few
+     people are aware that atoms can and have been used for the same purpose as mutexes. For
+     example, the disassembly in Figure 14-8 shows how Tigger uses atoms instead of mutexes.
+     First, it calls GlobalFindAtomA to check whether an atom named ~Sun Nov 16 15:46:54
+     2008~ exists on the machine. If so, the malware terminates, assuming that it has already
+     completed the infection. Otherwise, it calls GlobalAddAtomA to mark the machine infected.
+
+                                                                               The malware checks if
+                                                                               a specific atom already
+                                                                               exists
+
+     Figure 14-8: Tigger using atoms to mark its presence
+
+        The next function, shown in Figure 14-9, enters a loop that looks for an atom named
+     putas38 every 200 milliseconds. It will sleep forever if the atom is never created, or until
+     another thread creates the atom, which causes the following code to exit the loop. At that
+     time, the malware proceeds to hook various API functions.
+
+                                                Loops infinitely until
+                                                the atom exists
+
+Figure 14-9: Tigger using atoms for synchronization
+
+   Once you build a list of atoms created by common malware families, you can begin
+to automate scans through RAM easily. Although this may seem like a lot of work up
+front, keep in mind that you can always rely on a malware sandbox to report on newly
+created atoms for you. In this case, you just sit back while the sandbox produces the list
+of indicators; then you can leverage those rules in your manual investigations.
+
+Windows
+Windows are containers for buttons, scroll bars, text/edit areas, and so on. They have
+titles, coordinates, and visibility properties like minimized, maximized, transparent or
+overlapped. They play such an important role in the UI that it is no surprise that malware
+and attackers have found numerous ways to abuse windows and the window messaging
+architecture. For example, it is common to see windows being used for interprocess com-
+munication, environmental awareness (i.e., detecting security/monitoring tools), disabling
+antivirus, defeating debuggers, monitoring USB insertions, and simulating user interac-
+tions such as mouse clicks and keystrokes.
+
+Analysis Objectives
+
+Your objectives are these:
+
+   • Process validity checks: You can cross-reference window names with the pro-
+     cess that should own them. For example, explorer.exe always owns a window
+     named SysFader (a window that helps with animations). If you see a process named
+     explorer.exe without this window, it is probably not the real Windows Explorer.
+   • Detect anti-monitoring software: Many malware families scan for window names
+     created by antivirus, monitoring, and other security applications for use as an
+     evasive tactic. For example, they may call FindWindow looking for Process Monitor
+
+           – Sysinternals: www.sysinternals.com (which is the name of the window created
+﻿
+
+          by Process Monitor) and then attempt to shut down the application. Or malware
+          may query for windows related to Wireshark and simply refuse to execute if any
+          exist.
+        • Metadata  forensics: Window titles often contain meta information such as the
+          system time, logged-on usernames, currently viewed web pages, and partial cmd
+          .exe commands.
+
+     Data Structures
+     The data structure for a window object is tagWND. Due to its large size, only a few select
+     members are shown:
+       >>> dt("tagWND")
+       'tagWND' (296 bytes)
+       0x0    : head                           ['_THRDESKHEAD']
+       [snip]
+       0x30 : ExStyle                          ['unsigned long']
+       0x34 : style                            ['unsigned long']
+       [snip]
+       0x48 : spwndNext                        ['pointer64', ['tagWND']]
+       0x50 : spwndPrev                        ['pointer64', ['tagWND']]
+       0x58 : spwndParent                      ['pointer64', ['tagWND']]
+       0x60 : spwndChild                       ['pointer64', ['tagWND']]
+       0x68 : spwndOwner                       ['pointer64', ['tagWND']]
+       0x70 : rcWindow                         ['tagRECT']
+       0x80 : rcClient                         ['tagRECT']
+       0x90 : lpfnWndProc                      ['pointer64', ['void']]
+       0x98 : pcls                             ['pointer64', ['tagCLS']]
+       [snip]
+       0xd8 : strName                          ['_LARGE_UNICODE_STRING']
+       [snip]
+       0x118 : spwndClipboardListenerNext      ['pointer64', ['tagWND']]
+       0x120 : ExStyle2                        ['unsigned long']
+       0x120 : bChildNoActivate                ['BitField',
+                {'end_bit': 12, 'start_bit': 11, 'native_type': 'long'}]
+       0x120 : bClipboardListener              ['BitField',
+                {'end_bit': 1, 'start_bit': 0, 'native_type': 'long'}]
+       [snip]
+
+     Key Points
+     The key points are these:
+
+        • ExStyle: A combination of extended style flags (the dwExStyle parameter to
+           CreateWindowEx). For example, WS_EX_ACCEPTFILES if the window accepts drag-
+           drop files or WS_EX_TRANSPARENT to achieve transparency.
+
+   • style: A combination of style flags such as WS_VISIBLE. This tells you if the window
+     was initially visible.
+   • rcWindow, rcClient, and tagRECT: Structures that have a left, right, bottom, and top
+     value. Together, the values indicate the position of the window within the desktop.
+   • lpfnWndProc: The window procedure function. Typically, all windows of a given
+     class have the same window procedure, but you can change that with window
+     subclassing (for example, to customize the behavior of a button or form).
+   • pcls: A pointer to the tagCLS structure that identifies the window’s class.
+   • strName: The window’s name/title (the lpWindowName argument to CreateWindowEx).
+   Additionally, you can use the various spwnd fields, such as spwndParent and spwndChild,
+to reconstruct the Z-order relationship of windows on a desktop.
+
+IEFrame: Currently Displayed IE Web Page
+With a basic process listing, you can see iexplore.exe and determine that a browser was
+open, but with the windows plugin, you can drill down to any window of the IEFrame class
+and see what page is currently being viewed:
+  $ python vol.py -f win7x64.dd --profile=Win7SP1x64 windows
+  Volatility Foundation Volatility Framework 2.4
+  **************************************************
+  Window context: 1\WinSta0\Default
+
+  Window Handle: #40170 at 0xfffff900c06258a0, Name: Download: Microsoft \
+         Windows SDK 7.1 - Microsoft Download Center - Confirmation - \
+         Windows Internet Explorer
+  ClassAtom: 0xc193, Class: IEFrame
+  SuperClassAtom: 0xc193, SuperClass: IEFrame
+  pti: 0xfffff900c24c4c30, Tid: 680 at 0xfffffa8002007060
+  ppi: 0xfffff900c28c2320, Process: iexplore.exe, Pid: 2328
+  Visible: Yes
+  Left: -32000, Top: -32000, Bottom: -32000, Right: -32000
+  Style Flags: WS_MINIMIZE,WS_MINIMIZEBOX,WS_TABSTOP,WS_DLGFRAME,\
+      WS_BORDER,WS_THICKFRAME,WS_CAPTION,WS_CLIPCHILDREN,\
+      WS_SYSMENU,WS_MAXIMIZEBOX,WS_GROUP,WS_OVERLAPPED,\
+      WS_VISIBLE,WS_CLIPSIBLINGS
+  ExStyle Flags: WS_EX_LTRREADING,WS_EX_RIGHTSCROLLBAR,\
+      WS_EX_WINDOWEDGE,WS_EX_LEFT
+  Window procedure: 0x714f6f7a
+
+     HH Parent: CHM File Exploit Titles
+     An old delivery mechanism for exploits involved bundling an executable inside com-
+     pressed windows help (.chm) files. The standard chm viewer is hh.exe that you may see
+     in a process list, but as shown in the code that follows, you can also extract the name of
+     the page being viewed. In this case, it is just the help file for the Windows debugger, but
+     if it was something like “Congrats, you won 10 million dollars,” it might give you an idea
+     of how a machine initially became infected (a gullible user/social engineering victim).
+       Window Handle: #e01ea at 0xfffff900c06428b0, Name: Debugging Tools for Windows
+       ClassAtom: 0xc1c2, Class: HH Parent
+       SuperClassAtom: 0xc1c2, SuperClass: HH Parent
+       pti: 0xfffff900c1f863a0, Tid: 2840 at 0xfffffa8003dfbb60
+       ppi: 0xfffff900c297e2a0, Process: hh.exe, Pid: 1952
+       Visible: Yes
+       [snip]
+
+     Current Local Time and Logged-in Username
+     As shown in the following output, windows of the TrayClockWClass class typically display
+     the current local time of the computer. Likewise, windows of the Desktop User Picture
+     reveal the current logged-on user’s name.
+       Window Handle: #3004e at 0xfffff900c0606d60, Name: 12:34 PM
+       ClassAtom: 0xc0e8, Class: TrayClockWClass
+       SuperClassAtom: 0xc0e8, SuperClass: TrayClockWClass
+       [snip]
+
+       Window Handle: #70268 at 0xfffff900c06352d0, Name: Sam
+       ClassAtom: 0xc0d8, Class: Desktop User Picture
+       SuperClassAtom: 0xc0d8, SuperClass: Desktop User Picture
+       [snip]
+
+     Visualizing Parent and Child Windows
+     The wintree plugin is less verbose than the windows plugin. It exists to show you the
+     parent/child relationships between windows in the desktop. The following code is a
+     preview of the hh.exe window tree—you can see that all windows are visible, starting
+     with the HH Parent; then HH Child; and including various instances of Button, ComboBox,
+     Edit, Toolbar, and an embedded Shell DocObject View with Internet Explorer_Server.
+     This is why .chm files are so dangerous—their content is rendered with IE, thus simply
+     opening a .chm file can trigger any vulnerability in IE.
+       $ python vol.py -f win7x64.dd --profile=Win7SP1x64 wintree
+       [snip]
+
+  .Debugging Tools for Windows (visible) hh.exe:1952 HH Parent
+  ..#70422 (visible) hh.exe:1952 HH Child
+  ...#90452 (visible) hh.exe:1952 SysTabControl32
+  ....#a0202 (visible) hh.exe:1952 -
+  .....Found: 62 (visible) hh.exe:1952 Static
+  .....Select &topic: (visible) hh.exe:1952 Static
+  .....Type in the &word(s) to search for: (visible) hh.exe:1952 Static
+  .....Sea&rch titles only (visible) hh.exe:1952 Button
+  .....&Match similar words (visible) hh.exe:1952 Button
+  .....Search previous res&ults (visible) hh.exe:1952 Button
+  .....List1 (visible) hh.exe:1952 SysListView32
+  ......#50164 (visible) hh.exe:1952 SysHeader32
+  .....&Display (visible) hh.exe:1952 Button
+  .....&List Topics (visible) hh.exe:1952 Button
+  .....#70424 (visible) hh.exe:1952 Button
+  .....#702cc (visible) hh.exe:1952 ComboBox
+  ......#f038e (visible) hh.exe:1952 Edit
+  ..#702ba (visible) hh.exe:1952 HH SizeBar
+  ..#70420 (visible) hh.exe:1952 HH Child
+  ...#a0478 (visible) hh.exe:1952 Shell Embedding
+  ....#36029e (visible) hh.exe:1952 Shell DocObject View
+  .....#9013e (visible) hh.exe:1952 Internet Explorer_Server
+  ..#18029a (visible) hh.exe:1952 ToolbarWindow32
+
+Taking Screen Shots from Memory Dumps
+One of Brendan Dolan-Gavitt’s early GDI utilities for Volatility included a screen shot
+plugin (http://moyix.blogspot.com/2010/07/gdi-utilities-taking-screenshots-of
+.html). The plugin drew wire-frame rectangles of windows according to their positions
+on the desktop. It is far from a real screen shot, but nonetheless it is very exciting from a
+memory forensics perspective because it can provide some context on what was displayed
+on the computer screen at the time of the RAM capture.
+
+ NOTE
+ Brendan also wrote a plugin using virtual machine introspection and PyGame to
+ actively trace a user’s mouse movements and window interactions based on the changes
+ they made in RAM (http://www.youtube.com/watch?v=c6OMlSoDXrw). They are both
+ major developments that show abstract ways you can leverage the power of memory
+ analysis.
+
+   The inner workings of the screenshot plugin are quite simple. It enumerates windows for
+each desktop in their Z-Order (front-to-back focus). It takes the coordinates of each window
+from the tagWND structure and draws rectangles with the Python Imaging Library (PIL).
+
+        To demonstrate, two users logged in to the same Windows 7 machine with fast-user switch-
+     ing. Each user left various windows open. Then memory was acquired, and the screenshot
+     plugin was run. As shown in the following code, you just pass it a -D/--dump-dir parameter
+     for the PNG files to be saved.
+       $ python vol.py -f users.vmem --profile=Win7SP1x86 screenshot -D shots/
+       Volatility Foundation Volatility Framework 2.4
+       Wrote shots/session_0.Service-0x0-3e4$.Default.png
+       Wrote shots/session_0.Service-0x0-3e5$.Default.png
+       Wrote shots/session_0.msswindowstation.mssrestricteddesk.png
+       Wrote shots/session_0.Service-0x0-3e7$.Default.png
+       Wrote shots/session_1.WinSta0.Default.png
+       Wrote shots/session_1.WinSta0.Disconnect.png
+       Wrote shots/session_1.WinSta0.Winlogon.png
+       Wrote shots/session_0.WinSta0.Default.png
+       Wrote shots/session_0.WinSta0.Disconnect.png
+       Wrote shots/session_0.WinSta0.Winlogon.png
+       Wrote shots/session_2.WinSta0.Default.png
+       Wrote shots/session_2.WinSta0.Disconnect.png
+       Wrote shots/session_2.WinSta0.Winlogon.png
+
+        Many of the screen shots will be blank because windows are not displayed on all
+     desktops. Why should they be, after all? There is only one interactive window station
+     (WinSta0) per user, so it does not make sense to display windows inside desktops of other
+     window stations.
+        As you will see, Session1\WinSta0\Default (for the first user to log on) and Session2\
+     WinSta0\Default (for the second user) seem to match well when aligned with thumbnails
+     of the real screen appearance. In Figure 14-10, the first user’s screen is in the top-left pane,
+     and the plugin output is in the bottom-left pane. The second user’s screen is in the top
+     right, just above the plugin-generated version of the screen shot.
+
+     Figure 14-10: Wireframe screen shots compared with
+     the real appearance
+
+  Window titles give you a much better depiction of what is currently going on, as you
+will notice in the next example (see Figure 14-11) that is from a real compromised machine.
+Notice an alert about two virus infections from Trend Micro’s OfficeScan at 9:27 PM.
+
+     OfficeScan
+    Notification
+       Mesage
+
+Virus/Malware: 2
+
+                                                                                    9:27 PM
+
+Figure 14-11: An extracted screen shot shows two virus alerts
+
+   There is still some work to be done in the realm of producing more lifelike screen shots
+from memory dumps, including labeled buttons and displayed text from toolbars and edit
+boxes; not to mention colors and gradients. However, the foundation is built. The decision
+to write Volatility in Python turned out to be a good one, so it can easily interface with
+libraries such as PIL, PyGame, and the thousands of other modules out there for security,
+reverse engineering, and forensics.
+
+Malicious Window Abuse
+Malware can leverage existing windows on a system to detect a running security appli-
+cation, insert keystrokes or mouse movements into a browser’s message queue, exploit
+vulnerabilities in highly privileged window message servers (a.k.a. Shatter Attacks), and
+carry out various other nefarious actions. The next sections summarize a few of the
+examples we have seen in the past and that you should learn to look out for in the future.
+
+      NOTE
+      For more information on Shatter Attacks, see the following resources:
+
+          • Shatter Attacks – How to Break Windows by Foon: http://www.net-security.org/
+             article.php?id=162
+          • Shattering the Windows Message Passing Architecture and Security Model by Alex
+            Ionescu: https://archive.org/details/Shattering_the_Windows_Message_
+            Passing_Architecture_and_Security_Model.
+          • MITRE’s CEW-422 page: https://cwe.mitre.org/data/definitions/422.html
+
+        A window message is essentially a notification sent to a window (or, in some cases,
+     broadcast to all windows) that a particular UI event was triggered. For example, when
+     a user presses a key, the system generates a WM_KEYDOWN message and delivers it to the
+     foreground/focused window with either the SendMessage or PostMessage APIs. As shown
+     in the function prototype in the following code, the Msg parameter is one of the system-
+     defined WM_ constants (applications can also define their own codes for custom behaviors).
+       LRESULT WINAPI SendMessage(
+          _In_ HWND hWnd,
+          _In_ UINT Msg,
+          _In_ WPARAM wParam,
+          _In_ LPARAM lParam
+       );
+
+        The wParam and lParam store additional information about the message, such as whether
+     the Shift key was down when a key was pressed. If the generated message is regarding
+     a mouse movement, the additional parameters will specify the X and Y coordinates of
+     the new position.
+
+     Killing KAV with Rogue Window Messages
+     Older versions of Kaspersky Antivirus (KAV) were vulnerable to a shatter attack. In other
+     words, lesser-privileged threads could send the antivirus engine’s __AVP.Root window a
+     specially formed window message and cause the engine to stop protecting the system—
+     this effectively disabled the antivirus. Tigger delivered the message with PostMessageA,
+     as shown in Figure 14-12. The special values are WPARAM 0x466 and LPARAM 0x10001.
+
+                                                     Posting a message
+                                                     to disable AV
+
+Figure 14-12: Tigger disables KAV with rogue window messages
+
+Secretly Dismissing Alerts/Prompts
+Bankpatch disables Windows File Protection and overwrites kernel32.dll, wininet.dll,
+and other system DLLs with trojanized copies. Its goal is to then force all processes to
+load the malicious DLLs. Because there is no easy and stable way to replace DLLs in a
+running process, without restarting the process, the Bankpatch authors decided to use
+ExitWindowsEx to reboot the machine. Thus on the next startup, the trojanized copies
+would be loaded.
+    The malware uses the window messaging architecture to dismiss any prompts that the
+operating system generates due to the reboot request (such as “You have unsaved work,
+do you really want to reboot?”). As shown in Figure 14-13, the malware does this by call-
+ing EnumWindows in a loop until the system shuts down—passing control to the EnumFunc
+callback, which we will discuss next.
+    The next disassembly in Figure 14-14 shows that EnumFunc calls GetWindowTextA to scan
+for text displayed inside the prompt window. If it begins with the string “Windows,”
+it uses GetDlgItem to select the “OK” button, and then posts a BM_CLICK message to the
+window thread’s message queue. This simulates a user clicking “OK”—the system has
+no idea that it all happened automatically. In the end, Bankpatch was able to reboot the
+system and hide any generated popup alerts without any user interaction.
+
+                                                                   Invoke a reboot/shutdown
+
+                                                                   Catch prompts ASAP
+
+     Figure 14-13: Bankpatch uses EnumWindows to catch prompts
+
+                                                       Clicking a button
+
+     Figure 14-14: Bankpatch simulates a mouse click
+
+     Simulating Keystrokes and Mouse Movements
+     Some malicious code may not only want to observe and record user actions but also to
+     perform actions on its own. For example, it could interactively log in to a machine, open
+     a web browser, and visit a specific web page by programmatically simulating key strokes
+     and mouse clicks—all by generating window messages and delivering them to the proper
+     message queue.
+
+ NOTE
+ Simulating keystrokes can have a critical impact on traditional forensics, especially
+ artifacts such as TypedURLs. As discussed in the two-part series from Crucial Secu-
+ rity (http://crucialsecurityblog.harris.com/2011/03/14/typedurls-part-1/), the
+ TypedURLs registry key contains a list of URLs directly typed into the IE browser (as
+ opposed to sites visited by clicking links). Thus, by analyzing TypedURLs, you can
+ typically show intent. This played a large role in the case of the school teacher named
+ Julie Amero, who was tried and convicted for visiting pornographic websites based on
+ forensic testimony of the links in the TypedURLs key. The decision was later overturned
+ when it was found that spyware changed the TypedURLs data instead.
+
+   Blazgel is an example of malware with the capability to open the Winlogon desktop and
+simulate a user pressing Ctrl+Alt+Del to access a login prompt, in case the screen saver
+with automatic lock turned on. To do this, you can broadcast a WM_HOTKEY message with
+number 0x2E0003 (MOD_ALT|MOD_CTRL|MOD_DEL), as shown in Figure 14-15.
+
+                                                     Posting a CTRL+ALT+DEL signal
+
+Figure 14-15: Blazgel simulates Ctrl+Alt+Del
+
+   The next screen shot in Figure 14-16 shows how the malware tunnels mouse movements
+over the command and control channel. One packet sends a string “EVENTMOUSE” if
+the attackers want to simulate a mouse movement. The next packet, read by the func-
+tion labeled Recv_Data, specifies the X and Y coordinates, which are then applied with
+SetCursorPos and triggered by mouse_event. By combining these two API functions, mal-
+ware can dynamically control the mouse from a remote location. Remember that each
+window’s tagWND structure contains the X and Y coordinates, among other values, so attack-
+ers can determine exactly where to click anytime without ever actually seeing the screen.
+   Two of the most prolific malware families in the last decade, Conficker and Stuxnet,
+spread by infecting USB sticks with autorun.inf files. Have you ever wondered how the
+malware knows exactly when a USB has been inserted into the victim computer? Do
+they continuously poll the available hardware devices? The answer is no; they actually
+
+     leverage a few very interesting capabilities provided by the GUI subsystem to passively
+     wait to receive notification when devices are inserted.
+
+     Figure 14-16: Blazgel simulates mouse movements
+
+        Conficker started by generating a random string for use as a window class name and
+     then created a window of that class with CreateWindowEx. The window procedure was
+     configured to monitor for WM_DEVICECHANGE notifications that are broadcast throughout
+     the system. In this manner, the malware could detect immediately when new USB devices
+     were inserted, and it could proceed with infection. The disassembly in Figure 14-17 shows
+     the code from Conficker’s binary that sets up the new window:
+
+                                                         Generating a random
+                                                         window class name
+
+     Figure 14-17: Conficker uses windows for USB notifications
+
+   Similar to Conficker, Stuxnet started by registering a window class, but it uses the
+hard-coded name of AFX64c313 instead of a randomly generated one. Thus, scanning
+through a memory dump for indicators of Stuxnet’s compromise based on window titles
+and window classes is downright simple. If you recall from the atom table section, the
+names of registered window classes become visible when the atomscan plugin is used.
+The following is an example of what you will see:
+  $ python vol.py –f stuxnet.vmem --profile=WinXPSP3x86 atomscan
+  Volatility Foundation Volatility Framework 2.4
+  AtomOfs(V)        Atom Refs    Pinned Name
+  ---------- ---------- ------ ------ ----
+  [snip]
+  0xe1f05ad0      0xc084      19      0 MSWHEEL_ROLLMSG
+  0xe1f3dcd0      0xc0d1       2      0 C:\WINDOWS\system32\SHDOCVW.dll
+  0xe1fee430      0xc0e1       1      0 image/jpeg
+  0xe20514d8      0xc118       2      0 AFX64c313
+  0xe20e0de0      0xc090       4      0 OLE_MESSAHE
+  0xe20e23d8      0xc115       2      0 ShImgVw:CPreviewWnd
+  0xe20f0208      0xc100       2      0 SysFader
+  [snip]
+
+   The next command shows the CreateWindowEx artifact. Note that the window is owned
+by services.exe because it is one of Stuxnet’s code injection targets. The window’s vis-
+ibility is set to False because it is not intended to be seen by a user, and the window
+procedure is located at 0x13fe695 in the memory of services.exe.
+  $ python vol.py –f stuxnet.vmem --profile=WinXPSP3x86 windows
+  [snip]
+  Window Handle: #e00e8 at 0xbc940720, Name: AFX64c313
+  ClassAtom: 0xc118, Class: AFX64c313
+  SuperClassAtom: 0xc118, SuperClass: AFX64c313
+  pti: 0xe1e81380, Tid: 1420 at 0x82126bf0
+  ppi: 0xe163f008, Process: services.exe, Pid: 668
+  Visible: No
+  Left: 92, Top: 146, Bottom: 923, Right: 695
+  Style Flags: WS_MINIMIZEBOX,WS_TABSTOP,WS_DLGFRAME,\
+         WS_BORDER,WS_THICKFRAME,WS_CAPTION,WS_SYSMENU,WS_MAXIMIZEBOX,\
+         WS_GROUP,WS_OVERLAPPED,WS_CLIPSIBLINGS
+  ExStyle Flags: WS_EX_LTRREADING,WS_EX_RIGHTSCROLLBAR,\
+         WS_EX_WINDOWEDGE,WS_EX_LEFT
+  Window procedure: 0x13fe695
+  [snip]
+
+Window Procedure Callbacks
+Taking the analysis one step farther, you can disassemble the window procedure and see
+exactly which window messages it handles.
+
+        Window procedure functions must all take the same number and type of parameters
+     and also return the same type of value. The prototype is shown in the following code. The
+     first argument is a handle to the window (hwnd) followed by an integer (uMsg) that indicates
+     the message being received. It can be any one of the system-defined WM_ constants (for
+     example, WM_PAINT, WM_KEYDOWN, WM_MOUSEMOVE) or it can be an application-defined value
+     for supporting custom actions. The final two parameters (wParam and lParam) contain
+     additional information that differs based on the value of uMsg.
+       LRESULT CALLBACK WindowProc(
+          _In_ HWND hwnd,           ; EBP + 0x08
+          _In_ UINT uMsg,           ; EBP + 0x0C
+          _In_ WPARAM wParam,       ; EBP + 0x10
+          _In_ LPARAM lParam        ; EBP + 0x14
+       );
+
+        In the function prototype, we labeled the offset of each parameter from EBP (stack base
+     pointer). This information is useful because when you see instructions that reference val-
+     ues by offset (for example, EBP+8) you will know the corresponding function parameter is
+     hwnd. Keep that in mind when you view the output of the following volshell commands
+     to disassemble the window procedure callback at 0x13fe695 for the AFX64c313 window.
+
+      NOTE
+      Instead of actually being interactive with volshell, you can pass commands via stan-
+      dard input:
+         $ echo "cc(pid=668);dis(0x13fe695)" | python vol.py -f stuxnet.vmem volshell
+
+         ; SUBROUTINE -------------------------------------------
+         0x13fe695 55               PUSH EBP
+         0x13fe696 8bec             MOV EBP, ESP
+         0x13fe698 817d0c19020000   CMP DWORD [EBP+0xc], 0x219; WM_DEVICE_CHANGE
+         0x13fe69f 7514             JNZ 0x13fe6b5
+         0x13fe6a1 ff7514           PUSH DWORD [EBP+0x14] ; lParam
+         0x13fe6a4 ff7510           PUSH DWORD [EBP+0x10] ; wParam
+         0x13fe6a7 e810000000       CALL 0x13fe6bc
+         0x13fe6ac 59               POP ECX
+         0x13fe6ad 33c0             XOR EAX, EAX
+         0x13fe6af 59               POP ECX
+         0x13fe6b0 40               INC EAX
+         0x13fe6b1 5d               POP EBP
+         0x13fe6b2 c21000           RET 0x10
+         0x13fe6b5 5d               POP EBP
+         0x13fe6b6 ff25c4534401     JMP DWORD [0x14453c4]
+
+    ; SUBROUTINE -------------------------------------------
+    0x13fe6bc 55               PUSH EBP
+    0x13fe6bd 8bec             MOV EBP, ESP
+    0x13fe6bf 83e4f8           AND ESP, -0x8
+    0x13fe6c2 64a100000000     MOV EAX, [FS:0x0]
+    0x13fe6c8 6aff             PUSH -0x1
+    0x13fe6ca 68893d4401       PUSH DWORD 0x1443d89
+    0x13fe6cf 50               PUSH EAX
+    0x13fe6d0 64892500000000   MOV [FS:0x0], ESP
+    0x13fe6d7 83ec6c           SUB ESP, 0x6c
+    0x13fe6da 817d0800800000   CMP DWORD [EBP+0x8], 0x8000; DBT_DEVICEARRIVAL
+    0x13fe6e1 53               PUSH EBX
+    0x13fe6e2 56               PUSH ESI
+    0x13fe6e3 0f8542010000     JNZ 0x13fe82b
+
+   As shown in the previous code, based on offsets from EBP , you can determine that
+EBP+0xC stores the value of the uMsg parameter. In this case, it is compared against 0x219,
+which is the WM_DEVICE_CHANGE message. This message is broadcast by the system to
+notify applications of a change to the hardware configuration of a device or the computer.
+Because you can have various types of changes, you must then look at the value passed
+as wParam, which is compared against 0x8000 (DBT_DEVICEARRIVAL) in the subroutine. This
+parameter indicates that a device or piece of media has been inserted and is now available
+for applications on the computer to access.
+   Based on the message codes that the window procedure looks for, you now know
+exactly why Stuxnet created this window named AFX64c313.
+
+ NOTE
+ A proof-of-concept automated way to detect USB monitoring applications in memory
+ dumps is available at the following link: https://code.google.com/p/volatility/
+ issues/detail?id=443. The URL takes you to the source code of a Volatility plugin
+ named usbwindows; the output, when run on a Stuxnet-infected machine, is shown in
+ the following code:
+    $ python vol.py -f stuxnet.vmem --profile=WinXPSP3x86 usbwindows
+    Volatility Foundation Volatility Framework 2.4
+    Context                        Process         Window       Procedure
+    ------------------------------ --------------- ------------ ----------
+    0\Service-0x0-3e7$\Default     services.exe    AFX64c313    0x013fe695
+    0\Service-0x0-3e5$\Default     services.exe    AFX64c313    0x013fe695
+    0\SAWinSta\SADesktop           services.exe    AFX64c313    0x013fe695
+    0\Service-0x0-3e4$\Default     services.exe    AFX64c313    0x013fe695
+
+     Malicious Window Subclassing
+     You should know by now that windows are essentially instances of a particular class.
+     There are several system-defined classes such as buttons, combo boxes, and edit controls.
+     By default, each window that extends one of the base classes shares a common window
+     procedure. In other words, without customization, all windows of the same class essen-
+     tially behave the exact same way. If applications want to configure their windows dif-
+     ferently, they can use subclassing. For instance, if you wanted to play a prank on your
+     friends, you could subclass all instances of the minimize and maximize buttons in their
+     applications so their behaviors are reversed. Any time someone tried to minimize a pro-
+     gram, it would be maximized instead.
+        One of the DLLs associated with the Vundo malware implements an interesting trick
+     that involves subclassing buttons in a similar way.
+        Figure 14-18 shows the malicious DLL calling CreateWindowExA to create a 10x10 overlapped
+     window of the “button” class. It then uses SetWindowLongA with the GWL_WNDPROC flag to change
+     the button’s window procedure to a function labeled NewButtonWndProc. The button is now
+     subclassed, and its behavior conforms to the specifications of its new window procedure.
+
+     Figure 14-18: Vundo subclasses buttons for covert actions
+
+   Notice that the new procedure is specifically interested in WM_QUERYENDSESSION mes-
+sages. These messages are fired when the user chooses to end the session, or when an
+application in the session calls a system shutdown function, such as NtSystemShutdown.
+Thus, NewButtonWndProc executes when the user logs off or the computer is about to reboot
+or shut down.
+   The new procedure calls a function labeled ReInfectSystem before it returns. This
+function ensures the registry entries and files required for persistence are still intact.
+Thus, the malware can survive reboots, even when antivirus applications claim to have
+removed or cleaned the infection.
+   In the output that follows, we investigated the infection using the windows plugin. You
+can see that the DLL has been injected into procexp.exe—Process Explorer. The window’s
+procedure function address is 0x20a21a7, which is not the default window procedure for
+the Button class.
+  $ python vol.py –f ddabx.vmem --profile=WinXPSP3x86 windows
+  Volatility Foundation Volatility Framework 2.4
+  [snip]
+  Window Handle: #a00ea at 0xbbe4d1d0, Name:
+  ClassAtom: 0xc061, Class: 6.0.2600.6028!Button
+  SuperClassAtom: 0xc017, SuperClass: Button
+  pti: 0xe21ca5b8, Tid: 2328 at 0x81fe7da8
+  ppi: 0xe2325a98, Process: procexp.exe, Pid: 2056
+  Visible: No
+  Left: 4, Top: 30, Bottom: 119, Right: 30
+  Style Flags: WS_MINIMIZEBOX,WS_TABSTOP,WS_DLGFRAME,WS_BORDER,\
+       WS_THICKFRAME,WS_CAPTION,WS_SYSMENU,WS_MAXIMIZEBOX,WS_GROUP,\
+       WS_OVERLAPPED,WS_CLIPSIBLINGS
+  ExStyle Flags: WS_EX_LTRREADING,WS_EX_RIGHTSCROLLBAR,\
+       WS_EX_WINDOWEDGE,WS_EX_LEFT
+  Window procedure: 0x20a21a7
+  [snip]
+
+  You can investigate further by disassembling the procedure code:
+  $ python vol.py -f ddabx.vmem --profile=WinXPSP3x86 volshell
+  Volatility Foundation Volatility Framework 2.4
+  Current context: process System, pid=4, ppid=0 DTB=0x319000
+  Welcome to volshell!
+  To get help, type 'hh()'
+  >>> cc(pid = 2056)
+  Current context: process procexp.exe, pid=2056, ppid=1008 DTB=0xa9401e0
+  >>> dis(0x20a21a7)
+  0x20a21a7 55             PUSH EBP
+  0x20a21a8 8bec           MOV EBP, ESP
+  0x20a21aa 837d0c11       CMP DWORD [EBP+0xc], 0x11 ; WM_QUERYENDSESSION
+  0x20a21ae 752f           JNZ 0x20a21df
+  0x20a21b0 803d00b00a0200 CMP BYTE [0x20ab000], 0x0
+
+       0x20a21b7 750c           JNZ 0x20a21c5
+       0x20a21b9 c60527b00a0201 MOV BYTE [0x20ab027], 0x1
+       0x20a21c0 e8b3100000     CALL 0x20a3278 ; ReInfectSystem
+       0x20a21c5 ff35d0520a02   PUSH DWORD [0x20a52d0]
+       0x20a21cb c60524b00a0200 MOV BYTE [0x20ab024], 0x0
+       0x20a21d2 ff1558900a02   CALL DWORD [0x20a9058]
+       0x20a21d8 33c0           XOR EAX, EAX
+       0x20a21da 40             INC EAX
+       0x20a21db 5d             POP EBP
+       0x20a21dc c21000         RET 0x10
+
+       As you have seen, although subclassing is commonly used for legitimate purposes,
+     you can also use it for malicious reasons. Vundo uses it as a method to determine when
+     users are logging off of the computer or when reboots are about to occur. These are both
+     opportune times to reinfect a system that might have been cleaned by applications run
+     during the user’s session.
+
+     Summary
+     A large aspect of digital forensics involves tracking user actions. Thus, it makes sense
+     that the subsystem that handles user interfaces maintains all sorts of critical artifacts.
+     Until now, you haven’t seen many articles or analysis involving the treasures that GUI
+     memory contains because the architecture and its API functions are largely undocu-
+     mented. However, the lack of documentation can play in your favor, especially when it
+     results in attackers not knowing the changes they make to victim systems when they
+     log in, execute programs, snoop on the clipboard, monitor USB devices, and so on. The
+     capability to explore these artifacts in physical memory dumps is a very exciting feature
+     of the Volatility Framework!

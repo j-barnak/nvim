@@ -1,0 +1,645 @@
+28                     Mac Acquisition and
+                       Internals
+
+T    he proliferation of systems running Mac OS X in both home and corporate environ-
+     ments has resulted in Mac systems being a focus of targeted attacks. Driven by these
+factors, the forensics community has worked to develop tools for Mac systems that are on
+par with the robust investigative capabilities currently available for Windows and Linux
+systems. To prepare you for Mac memory forensics, this chapter introduces some of the
+unique facets of the Mac operating system, such as 64-bit addressing on 32-bit kernels,
+the atypical userland and kernel address space layouts, and the use of microkernel com-
+ponents. Additionally, you’ll learn how to build Volatility profiles for Mac systems and
+which tools to use for memory acquisition.
+
+ NOTE
+ Part IV of this book focuses heavily on in-memory artifacts of Mac systems. If you would
+ like to learn about advances in Mac disk forensics and malware anaysis, we suggest
+ reading the presentations indexed on Sarah Edwards’ website (http://mac4n6.com/).
+
+Mac Design
+If you read Part III, “Linux Memory Forensics,” you are now very familiar with how Linux
+was designed and organized in both the kernel and userland. As you will soon see, Mac
+is very similar to Linux because it is heavily based on Berkeley Software Distribution
+(BSD). Both BSD and Linux were influenced by the initial designs and philosophies of
+Unix. The similarities between these operating systems result in a substantially smaller
+learning curve to extend what you’ve already learned about Linux memory forensics.
+
+        Throughout this chapter and those that follow, the various Mac OS X releases are
+     referred to by their numbers. Table 28-1 provides a reference in case you need to associ-
+     ate the numbers with their release names. Releases of Mac OS X prior to 10.5 are now
+     encountered very infrequently and are not discussed in this book.
+
+     Table 28-1: Mac OS X Releases and Version Numbers
+
+       Version         Name
+
+       10.5            Leopard
+
+       10.6            Snow Leopard
+
+       10.7            Lion
+
+       10.8            Mountain Lion
+
+       10.9            Mavericks
+
+     Mach and BSD Layers
+     If you study OS X kernel internals, one of the first concepts you encounter is the existence
+     of Mach and BSD kernel layers. The Mach layer is the OS X implementation of a microker-
+     nel design. It is based on the original Mach microkernel developed at Carnegie Mellon
+     University (https://www.cs.cmu.edu/afs/cs/project/mach/public/www/mach.html).
+     The Mach layer is responsible for tasks related to virtual memory management, process
+     scheduling, and message passing. The BSD layer (https://developer.apple.com/library/
+     mac/documentation/Darwin/Conceptual/KernelProgramming/BSD/BSD.html) was initially
+     based on FreeBSD and is used to implement networking, file systems, POSIX compliance,
+     and other subsystems. In the context of memory analysis, the relationship between these
+     two layers are shown throughout the next chapter.
+
+      NOTE
+      The term microkernel refers to a kernel design that splits kernel components into sub-
+      systems that can be isolated and run with the lowest privileges possible. A common
+      example is that kernel drivers actually run as userland processes and make hardware
+      requests through a thin API. The APIs are the only functions that have direct access to
+      the hardware (devices, page tables, etc.). These drivers are responsible for hardware
+      device–specific support and other related tasks, including file system handling and
+      network stack management.
+
+    The advantage of microkernels is that they are designed to minimize the amount of
+ required privileged code, which means that the attack surface is greatly reduced, and
+ bugs in kernel subsystems or third-party drivers can be handled more gracefully. Due
+ to the separation of subsystems, microkernels have historically had poor performance
+ because of the large number of required context switches for each operation. This
+ poor performance has led to the design of hybrid kernels, which are a mix between
+ true microkernels and the monolithic kernels used by Linux and Windows. For per-
+ formance reasons, Mac OS X adopts a hybrid approach, which doesn’t strictly isolate
+ all the individual kernel components in separate address spaces.
+
+Kernel/Userland Virtual Address Split
+Whereas Windows and Linux use either a 2GB/2GB or 3GB/1GB split of the kernel/user-
+land address space on 32-bit systems and a standard split on 64-bit systems, Macs are a
+bit more complicated. On 10.5 and prior, there was no split of the address space between
+kernel and userland. Instead, each process had a full 32-bit (4GB) address space and the
+kernel had a separate 32-bit address space. This meant special buffers had to be used for
+the kernel to read and write process memory. This also meant that expensive context
+switches had to be performed on each system call in order for the kernel to read and write
+from userland. 64-bit kernels (available since Mac OS X 10.6) use a more traditional split,
+mapping the kernel into the address space of each process.
+
+Kernel ASLR
+Starting with Mac 10.8, the kernel uses address space layout randomization (ASLR) within
+its virtual address space. Thus, functions and global variables are at different addresses
+between reboots. As you learn later in this chapter, Volatility’s Mac support relies on auto-
+matically determining the address of many of the kernel’s variables and functions. Kernel
+ASLR complicates this process because the static addresses acquired from the profile do
+not correspond directly to where the variables and functions actually are in memory.
+    To work around this issue, Volatility must determine the ASLR “slide,” which is the
+offset of where the variables are in memory versus the offset specified in the profile. It
+computes and applies this slide value to addresses queried from the profile. Once this
+is done, Volatility can find the functions and variables at the recomputed fixed address.
+    The algorithm Volatility uses to compute the slide value was originally developed by
+the authors of the Volafox project (https://code.google.com/p/volafox/). It works by
+searching for the string Catfish \x00\x00 in memory, which corresponds to the beginning
+
+     of the lowGlo data structure. This structure is defined in the XNU source code (in osfmk/
+     i386/lowmem_vectors.s) as follows:
+
+               .globl    EXT(lowGlo)
+       EXT(lowGlo):
+
+                .ascii "Catfish "            /* 0x2000 System verification code */
+                .long   0                    /* 0x2008 Double constant 0 */
+                .long   0
+                .long   0                    /* 0x2010 Reserved */
+                .long   0                    /* 0x2014 Zero */
+                .long   0                    /* 0x2018 Reserved */
+                .long   EXT(version)         /* 0x201C Pointer to kernel version string */
+                .fill   280, 4, 0            /* 0x2020 Reserved */
+                <snip>
+
+         The structure starts with the Catfish string followed by a space and several zeroes.
+     To determine the shift, the virtual address of this structure is queried from the profile.
+     It is then statically converted to a physical address by masking its most significant bits.
+     This static conversion works because lowGlo is within the kernel regions that are identity
+     mapped (See the “Kernel Identity Mapping” section of Chapter 20). With these two values,
+     computing the difference just requires subtracting the physical offset of where you find
+     lowGlo from the physical offset calculated from the profile.
+         Because finding the shift offset requires scanning, the described algorithm can unnec-
+     essarily slow down Volatility’s processing. To avoid the scanning upon each invocation of
+     Volatility, you can use the mac_find_aslr_shift plugin. The output of this plugin is the
+     shift offset of the specific memory sample, and this value can be passed as the --shift
+     option to subsequent invocations of Volatility to improve performance.
+
+     Process Address Spaces
+     For each operating system that Volatility supports, it provides a process class with a
+     get_process_address_space method. The purpose of this function is to retrieve the physi-
+     cal address of the per-process paging structure and instantiate a Volatility address space
+     with that address. As mentioned in Chapter 1, the per-process paging structure address
+     is the value that is typically stored in CR3, which allows plugins to read from the address
+     space of a process instead of the kernel’s virtual address space.
+         Implementing this function is fairly straightforward for Linux and Windows, but when
+     implementing this function across many Mac versions, we encountered quite a few issues.
+     To accurately determine the correct address space for a process, we realized that several
+     values must be checked:
+
+        • The architecture of the process: To determine the architecture of the process, you
+            must use the pm_task_map member of the process (task structure). This structure
+
+     represents each active process on the system (you will learn more in Chapter
+     29). The pm_task_map value can be one of TASK_MAP_32BIT, TASK_MAP_64BIT, or
+     TASK_MAP_64BIT_SHARED.
+   • The architecture of the kernel: Whether the kernel in use at the time of memory
+     acquisition was 32- or 64-bit.
+   • Whether the target machine’s hardware supported 64-bit operations: To deter-
+     mine whether the hardware supports 64-bit operations, the x86_64_flag global
+     variable is checked. If the variable is present, it will be True or False depending on
+     the hardware capabilities. Starting with 10.9 systems, this variable was removed
+     because all systems are 64-bit capable.
+
+  Table 28-2 illustrates the combinations of attributes that can affect whether a process’
+address space is 32 or 64 bits:
+
+Table 28-2: Process Architecture Combinations
+
+  Process Arch.               Kernel Arch.      64-bit Capable HW   Result
+
+  32BIT                       32-bit            No                  32-bit
+
+  32BIT                       32- or 64-bit     Yes                 64-bit
+
+  64BIT_SHARED                32-bit            Yes                 64-bit
+
+  64BIT/64BIT_SHARED          64-bit            Yes                 64-bit
+
+   The first and last rows are fairly easy to understand. They simply show that a 32-bit
+process on a system that does not support 64-bit capabilities will run in a 32-bit address
+space. Although fairly obvious, this combination was not in the original Mac Volatility
+code because only one very old system running 10.5 that we found did not support
+64-bit operations. This system also employed the previously described 4GB/4GB split and
+required special address space handling. The last row is for 64-bit processes on 64-bit
+kernels, which as you would expect, run in 64-bit address spaces.
+   The middle two rows are a bit more interesting. The second row shows that if you run
+a 32-bit process on a 64-bit-capable system, regardless of whether you are booted into a
+32- or 64-bit kernel, a 64-bit address space is used. The use of a 64-bit process address
+space for a 32-bit kernel and process is a bit nonintuitive. The third row shows that run-
+ning a 64-bit application on a 32-bit kernel results in a 64-bit address space being used.
+The capability to support 64-bit applications on a 32-bit kernel is not commonly seen in
+other operating systems.
+
+     Memory Acquisition
+     Mac initially allowed software programs to acquire physical memory through a device
+     file exposed to userland. For example, on Mac systems before the complete switch to the
+     Intel architecture, which occurred with the 10.6 release, physical memory was exposed
+     through /dev/mem, and the kernel’s virtual address space was exposed through /dev/
+     kmem. For security reasons, this functionality was not carried through to Intel–based Mac
+     systems. Thus, to acquire memory from these more recent machines, you must use a tool
+     that loads a kernel module to access the data.
+
+     Locating RAM Regions
+     To perform safe acquisition of RAM and avoid unmapped areas of physical memory
+     and device memory, acquisition tools often find where RAM is mapped within the sys-
+     tem’s physical address space. Of the three tools explained in this section, two of them,
+     OSXPmem and Mac Memory Reader, use the method discussed next to find RAM. The
+     third tool, Mac Memoryze, is a closed source and its acquisition methods have not been
+     publicly documented.
+        OSXPmem and Mac Memory Reader find the physical memory ranges associated with
+     RAM by parsing the kernel’s boot arguments. Specifically, they locate the map of physi-
+     cal memory, the map size, and the size of each descriptor within the map. The map is
+     represented as an array of EfiMemoryRange structures:
+       >>> dt("EfiMemoryRange")
+       'EfiMemoryRange' (40 bytes)
+       0x0   : Type                              ['unsigned int']
+       0x4   : Pad                               ['unsigned int']
+       0x8   : PhysicalStart                     ['unsigned long long']
+       0x10 : VirtualStart                       ['unsigned long long']
+       0x18 : NumberOfPages                      ['unsigned long long']
+       0x20 : Attribute                          ['unsigned long long']
+
+        The Type member describes what hardware is backing the region. This member deter-
+     mines whether the physical page corresponds to a RAM page or a hardware device. As
+     discussed in Chapter 4, acquisition tools often only acquire RAM regions to avoid hard-
+     ware issues and system crashes. PhysicalStart is the starting physical address of the
+     region, and VirtualStart is its virtual address in kernel memory. NumberOfPages describes
+     the size of the region in terms of pages. You can compute the size in bytes by multiplying
+     NumberOfPages by the page size (4096).
+
+ NOTE
+ At the time of writing, only OSXPmem advertises support for acquiring memory from
+ Mac OS X 10.9 (Mavericks) systems. Until 10.9 is officially supported by other tools, you
+ have to assume that there is a very high potential for the acquisition software to affect
+ the stability of the system or have unexpected results. As always, you should verify
+ tools before you try to acquire memory from production systems, even if support for
+ specific configurations is advertised.
+
+Mac Memory Reader (MMR)
+Mac Memory Reader (MMR) (http://cybermarshal.com/index.php/cyber-marshal-­
+utilities/mac-memory-reader) was the first tool available for acquiring physical memory
+from Mac systems. It is free to use, but closed source. At the time of this writing, MMR
+supports 10.6.x through 10.8.x on 32- and 64-bit Intel architectures. We do not know when
+10.9 will be supported.
+   MMR includes a userland component and a kernel extension. Once loaded, the kernel
+extension creates two device files:
+
+   • /dev/mem: This device exports the contents of physical memory to make it acces-
+     sible to the userland component. It operates in a similar manner as the original
+     /dev/mem that Apple removed in Mac OS X 10.6.
+   • /dev/pmap: This device exports the list of physical memory ranges.
+  The userland tool first queries the /dev/pmap file to get the offsets and sizes of physical
+memory ranges. It then requests the corresponding data by reading /dev/mem. By default,
+MMR saves the memory sample into the Mach-O file format, which is described later in the
+chapter. The file’s metadata stores the association of offsets within the memory dump file
+with offsets in physical memory. Volatility’s Mach-O address space (volatility/plugins/
+addrspaces/macho.py) translates the offsets transparently during memory analysis.
+  MMR is a command-line tool that takes several parameters of interest:
+
+   • H: Computes the hash of the memory sample using MD5, SHA-1, SHA-256, or
+     SHA-512. The hash is written to stderr after the acquisition completes.
+   • p: Writes the memory dump in raw format without padding between RAM regions.
+     Virtual memory analysis is not supported by Volatility when this format is used,
+     because the regions of RAM are consolidated without maintaining information
+     about the spacing between them. This breaks virtual address translation because
+
+          the calculated physical offset does not correspond to a known offset in the memory
+          sample.
+        • P: Writes the memory dump in raw format with padding between RAM regions.
+          This format is supported by Volatility, but it can be extremely wasteful of disk
+          space. We recommend using the default Mach-O capture format.
+        • k: Expert mode creates /dev/mem and /dev/pmap, but does not acquire memory.
+          You can use this to read arbitrary memory regions of the running system with
+          another tool.
+
+       The following shows acquisition with MMR using the default Mach-O format:
+       $ sudo ./MacMemoryReader mem.dmp
+       No kernel file specified, using '/mach_kernel'
+       Dumping memory regions:
+       available 0000000000000000 (568.00 KB)                                [WRITTEN]
+       available 0000000000090000 (64.00 KB)                                 [WRITTEN]
+       available 0000000000100000 (511.00 MB)                                [WRITTEN]
+       available 0000000020200000 (199.00 MB)                                [WRITTEN]
+       LoaderData 000000002c900000 (76.00 KB)                                [WRITTEN]
+       available 000000002c913000 (948.00 KB)                                [WRITTEN]
+       LoaderData 000000002ca00000 (5.26 MB)                                 [WRITTEN]
+       available 000000002cf42000 (760.00 KB)                                [WRITTEN]
+       LoaderData 000000002d000000 (35.21 MB)                                [WRITTEN]
+       RT_data     000000002f336000 (336.00 KB)                              [WRITTEN]
+       RT_code     000000002f38a000 (196.00 KB)                              [WRITTEN]
+       LoaderData 000000002f3bb000 (232.00 KB)                               [WRITTEN]
+       available 000000002f3f5000 (268.06 MB)                                [WRITTEN]
+       available 0000000040005000 (1.15 GB)                                  [WRITTEN]
+       BS_data     0000000089d0f000 (84.00 KB)                               [WRITTEN]
+       available 0000000089d24000 (4.12 MB)                                  [WRITTEN]
+       [snip]
+       Reported physical memory: 8589934592 bytes (8.00 GB)
+       Statistics for each physical memory segment type:
+        reserved: 6 segments, 46727168 bytes (44.56 MB)--assigned to unreadable device
+        LoaderCode: 2 segments, 516096 bytes (504.00 KB) -- WRITTEN
+        LoaderData: 35 segments, 42881024 bytes (40.89 MB) -- WRITTEN
+        BS_code: 83 segments, 2093056 bytes (2.00 MB) -- WRITTEN
+        BS_data: 109 segments, 43204608 bytes (41.20 MB) -- WRITTEN
+        RT_code: 1 segment, 200704 bytes (196.00 KB) -- WRITTEN
+        RT_data: 1 segment, 344064 bytes (336.00 KB) -- WRITTEN
+        available: 20 segments, 8436510720 bytes (7.86 GB) -- WRITTEN
+        ACPI_recl: 1 segment, 155648 bytes (152.00 KB) -- WRITTEN
+        ACPI_NVS: 1 segment, 262144 bytes (256.00 KB) -- WRITTEN
+        MemMapIO: 3 segments, 217088 bytes (212.00 KB) -- assigned to unreadable device
+       Total memory written: 8526168064 bytes (7.94 GB)
+       Total memory assigned to unreadable devices \
+              (not written): 46944256 bytes (44.77 MB)
+       Reported memory not in the physical memory map: 16822272 bytes (16.04 MB)
+
+   In the preceding output, we highlighted a few lines of interest. The first line reports
+that the machine claims to have 8GB of RAM. The last 3 lines of output then state that
+7.94GB of RAM was written to the capture; 44.77MB of RAM was assigned to unreadable
+devices; and 16.04MB was reported to exist, but was not in the actual physical memory
+map. Adding the last 3 lines together results in 7.9999GB (essentially 8GB). If these num-
+bers were substantially different than 8GB, you would check the ranges the kernel reports
+for consistency and possible Direct Kernel Object Manipulation (DKOM) from malware.
+Similarly, if you knew the amount of RAM installed in the system was not 8GB, you should
+verify the related data structures. Once acquisition is complete, the memory sample can
+be analyzed with Volatility.
+
+Mac Memoryze
+You can use Mac Memoryze (http://www.mandiant.com/resources/download/mac-­memoryze)
+to acquire memory from systems running 10.6.x through 10.8.x on both 32- and 64-bit Intel
+architectures. Its output format is raw with padding and is supported by Volatility. Currently,
+no information is available about when (or if) 10.9 will be supported. The following shows
+using Mac Memoryze on a 10.8 system:
+  $ sudo./macmemoryze dump -f 10.8.dump
+  INFO: loading driver...
+  INFO: opening /dev/mem...
+  INFO: dumping memory to [/Users/a/10.8.dump]
+  INFO: dumping 4290871296-bytes [4092-MB]
+  INFO: dumping [4290871296-bytes:4092-MB]
+  100%
+  INFO: dumping complete
+  INFO: unloading driver...
+
+   You can then analyze the 10.8.dmp file using the Volatility or Memoryze analysis
+components. At the time of writing, Mac Memoryze provides basic capabilities, including
+listing processes, dumping a process’ address space, listing loaded libraries and network
+connections on a per-process basis, listing loaded kernel extensions, and finding system
+call table hooks.
+
+OSXPmem
+OSXPmem (https://code.google.com/p/pmem/wiki/OSXPmem) is an open–source memory
+acquisition tool. At the time of writing, the OSXPmem documentation includes support
+for 10.7 and later releases. It may also work on 10.6 systems, but only if they have a 64-bit
+kernel. Support for 32-bit kernels has been explicitly ruled out by the author of the tool. To
+use OSXPmem, simply provide the pathname for the memory image that will be created.
+By default, OSXPmem writes the output file in the ELF format, but you can change it to
+
+     Mach-O or raw with padding through the format parameter. OSXPmem operates similar
+     to Mac Memory Reader in that it contains both a userland component and a kernel driver.
+     Its userland component interacts with the /dev/pmem file created by the kernel driver to
+     enumerate and read physical memory ranges.
+        The following shows output running OSXPmem against a 10.8 system:
+       $ sudo./osxpmem mem.dump
+       [0000000000000000 - 0000000000001000] ACPI Memory NVS [WRITTEN]
+       [0000000000001000 - 00000000000a0000] Conventional    [WRITTEN]
+       [0000000000100000 - 000000002f700000] Conventional    [WRITTEN]
+       [000000002f700000 - 000000002f713000] Loader Data     [WRITTEN]
+       [000000002f713000 - 000000002f800000] Conventional    [WRITTEN]
+       [000000002f800000 - 000000002fd3e000] Loader Data     [WRITTEN]
+       [000000002fd3e000 - 000000002fe00000] Conventional    [WRITTEN]
+       [000000002fe00000 - 000000003137f000] Loader Data     [WRITTEN]
+       [000000003137f000 - 000000003138a000] RTS Code        [WRITTEN]
+       [000000003138a000 - 000000003138f000] RTS Code        [WRITTEN]
+       [000000003138f000 - 0000000031392000] RTS Code        [WRITTEN]
+       [0000000031392000 - 00000000313b2000] RTS Code        [WRITTEN]
+       [00000000313b2000 - 00000000313fc000] RTS Data        [WRITTEN]
+       [00000000313fc000 - 0000000031402000] RTS Data        [WRITTEN]
+       [0000000031402000 - 0000000031433000] Loader Data     [WRITTEN]
+       [0000000031433000 - 000000007db20000] Conventional    [WRITTEN]
+       [000000007db20000 - 000000007db9c000] Loader Code     [WRITTEN]
+       [000000007db9c000 - 000000007dc57000] Conventional    [WRITTEN]
+       [000000007dc57000 - 000000007dc90000] BS Data         [WRITTEN]
+       <snip>
+       Acquired 524192 pages (2147090432 bytes)
+       Size of physical address space: 4290871296 bytes (71 segments)
+       Successfully wrote elf image of memory to mem.dump
+       Kernel directory table base: 0x000000195c5000
+
+        The output of OSXPmem begins by listing the regions it found and wrote to the mem-
+     ory sample. The output ends with a listing of how many pages were acquired, the size
+     of the physical address space, the format and name of the sample file, and the directory
+     table base (DTB) location. This output can be sanity-checked to verify that malware did
+     not interfere with the acquisition process through manipulation of related kernel data
+     structures.
+
+     Mac Volatility Profiles
+     Before you can begin analysis of Mac memory dumps with Volatility, you must download
+     or build the proper profile. A Mac profile includes the structure definitions for the specific
+     kernel version as well as the addresses of important global variables used in analysis. You
+     can find an archive of prebuilt profiles for more than 40 different Mac OS X versions on
+
+the Volatility website—from 10.5 to 10.9.3, including 32-bit and 64-bit kernels. Once you
+download the archive, extract it and then copy or move the individual profiles (.zip files)
+you want to activate into your volatility/plugins/overlays/mac folder. We recommend
+that you activate only the profiles you plan to use, or else it might affect the amount of
+time it takes Volatility to load.
+
+Downloading Profiles
+Here’s an example of how to download the available profiles from a command prompt:
+  $ curl -o MacProfiles.zip \
+       http://downloads.volatilityfoundation.org/MacProfiles.zip
+    % Total    % Received % Xferd Average Speed    Time    Time   Time Current
+                                   Dload Upload    Total   Spent  Left Speed
+  100 41.9M 100 41.9M     0     0 1868k       0 0:00:22 0:00:22 --:--:-- 1911k
+
+  Then decompress the archive like this:
+  $ unzip MacProfiles.zip
+  Archive: MacProfiles.zip
+    inflating: Leopard_10.5.3_Intel.zip
+    inflating: Leopard_10.5.4_Intel.zip
+    inflating: Leopard_10.5.5_Intel.zip
+    inflating: Leopard_10.5.6_Intel.zip
+    inflating: Leopard_10.5.7_Intel.zip
+    inflating: Leopard_10.5.8_Intel.zip
+    inflating: Leopard_10.5_Intel.zip
+    inflating: Lion_10.7.1_AMD.zip
+    inflating: Lion_10.7.1_Intel.zip
+    inflating: Lion_10.7.2_AMD.zip
+  [snip]
+
+   Copy the desired profiles into your mac folder, as shown here (~/volatility is the root
+directory of your Volatility installation):
+  $ cp Leopard_10.5.3_Intel.zip ~/volatility/volatility/plugins/overlays/mac
+
+   Now you can verify that the activation was successful by listing the available profiles,
+like this:
+  $ python vol.py --info | grep Mac
+  [snip]
+  MacLeopard_10_5_Intelx86       - A Profile for Mac Leopard_10.5_Intel x86
+  MacLeopard_10_5_3_Intelx86     - A Profile for Mac Leopard_10.5.3_Intel x86
+  MacLion_10_7_2_Intelx86        - A Profile for Mac Lion_10.7.2_Intel x86
+  MacLion_10_7_AMDx64            - A Profile for Mac Lion_10.7_AMD x64
+  MacMavericks_10_9_AMDx64       - A Profile for Mac Mavericks_10.9_AMD x64
+  MacMountainLion_10_8_1_AMDx64 - A Profile for Mac MountainLion_10.8.1_AMD x64
+  MacMountainLion_10_8_2_AMDx64 - A Profile for Mac MountainLion_10.8.2_AMD x64
+  MacSnowLeopard_10_6_8_Intelx86 - A Profile for Mac SnowLeopard_10.6.8_Intel x86
+
+        Several Mac profiles are loaded into this Volatility installation. Once you determine
+     the one that matches your memory sample, you can pass it to Volatility via the --profile
+     option.
+
+     Building Profiles
+     As you will soon see, generating a Mac profile requires access to the kernel debug kit from
+     Apple. However, there is typically a delay between the time a new kernel is released and
+     when the debug kit becomes available. Although we try to minimize the effects of this
+     gap by releasing tested profiles as soon as the debug kits become available, sometimes
+     you might want to build your own profile. For example, if you must analyze a custom
+     compiled kernel, you need to create a custom Volatility profile.
+       Building a profile requires access to the following software:
+
+        • dwarfdump: A tool to extract debugging symbols from applications (installed by
+          default on Mac OS X). It retrieves the C structure definitions used by Volatility.
+        • dsymutil: A tool to report symbols and addresses from applications (installed by
+          default on Mac OS X), it finds key data structures (process list, kernel module list,
+          etc.) within the memory sample.
+        • Python: Although Python is installed by default on Mac OS X, sometimes it is an
+          old version. You need 2.7 or later (but not 3.x) for building profiles and analyzing
+          memory dumps with Volatility. You can check the version of Python that’s installed
+          on Mac OS X by typing python –-version at a command prompt.
+        • Apple Debug Kit: You need the debug kit (see https://developer.apple.com) for
+          the kernel you want to analyze. After the Debug Kit is downloaded, you can then
+          mount it, and it will appear under /Volumes/KernelDebugKit/.
+
+       In the tools/mac subdirectory of the Volatility source code, you’ll find a script named
+     create_mac_profiles.py. This script automates the process of creating profiles. You can
+     use it in the following manner:
+       $ python mac_create_all_profiles.py
+       Usage: mac_create_all_profiles.py <kit dir> <temp dir> <vol dir> <profile dir>
+
+        The first parameter is a directory containing one or more Kernel Debug Kits—one for
+     each version of Mac OS X for which you want to create a profile. The next parameter is
+     a temporary working directory that the script deletes after it runs. Next is the Volatility
+     root directory (which contains vol.py), and finally the profile directory, where the final
+     .zip is written. In the following example, we use volatility/plugins/overlays/mac for
+     the profile directory, so that the created profiles are automatically installed and enabled:
+
+  $ ls ~/Desktop/kits/
+  kernel_debug_kit_10.8.5_12f37.dmg
+
+  $ python mac_create_all_profiles.py ~/Desktop/kits
+          ~/Desktop/temp
+          ~/volatility
+          ~/volatility/volatility/plugins/overlays/mac
+
+   This script eliminates a lot of the manual work involved in typing commands required
+for generating profiles. In case you need to generate profiles in bulk, just download all
+the Kernel Debug Kits and create the corresponding profiles with a single command!
+
+Mach-O Executable Format
+Mac OS X uses the Mach-O file format for all executable types: application binaries, shared
+libraries, the kernel binary, and kernel extensions. Knowledge of this format is required
+to perform deep memory forensics of Mac systems. In particular, it is important to under-
+stand how to locate the code, data, and metadata (string table, symbol table, and so on) for
+an application. Once you are familiar with the Mach-O format, you can then understand
+many of the attack types (code injection, function hijacking) discussed in Chapter 30.
+Furthermore, knowledge of the format will aid in understanding how Volatility finds
+all the imported and exported symbols for applications and libraries, how to reconstruct
+executables from memory, and how to detect whether function pointers are within a
+known module (shared library, kernel extension, etc.).
+
+Mach-O Header
+The Mach-O header is represented by the mach_header structure and defines several types
+of information about the file:
+
+   • Magic Value: The first four bytes of the file. For files compiled for 32-bit Intel sys-
+     tems, this value is 0xfeedface. For 64-bit systems, this value is 0xfeedfacf.
+   • CPU Type: Defines whether the file supports Intel or PowerPC machines.
+   • File Type: Defines the type of file. Values relevant to forensics are MH_EXECUTE (0x2)
+     for executable files, MH_DYLIB (0x6) for shared libraries, MH_BUNDLE (0x8) for bundle
+     files, and MH_DSYM (0xa) for debug files. The debug files are analogous to the PDB
+     files supported by Windows.
+   • Number and Size of Commands: The number and size of the LOAD commands that
+     follow the file header. They are explained in the next section.
+
+     Command Structures
+     Immediately following the file header is a variable number of LOAD commands, which
+     specify the locations in memory and on disk of the file’s segments and sections. Parsing
+     the LOAD commands is required to find all the interesting parts of the application (code,
+     variables, symbols, etc.). Each LOAD command is represented by a load_command struc-
+     ture whose members define the command type (cmd) and the command structure size
+     (cmdsize). The command types that are relevant to memory forensics and malware analy-
+     sis are the following:
+
+        • LC_SEGMENT and LC_SEGMENT_64: Define a segment that loads into memory at run
+          time. Each segment can contain a variable number of sections after it. As shown
+          later in this section, these segments contain the code and data of an executable.
+        • LC_SYMTAB   and LC_DYSYMTAB: The static and dynamic symbol tables of the applica-
+          tion. You use them to locate symbols (functions, global variables) within a process
+          address space. You can then use this information to detect code injection and data
+          structure manipulation.
+        • LC_ROUTINES    and LC_ROUTINES_64: Store the address of a shared library’s initializa-
+          tion function. This is the starting point for reverse engineering maliciously injected
+          shared libraries because it is the equivalent of an application’s entry point.
+        • LC_UUID: Defines the unique ID of the file. It is used to pair it with its debugging file.
+
+     Segment Commands and Sections
+     The capability to locate segments in memory and enumerate their corresponding sec-
+     tions is vital in a number of memory forensics scenarios. For example, finding the __TEXT
+     segment and its __text section allows you to look for API hooks and other types of code
+     overwrites in the application’s executable instructions. Finding the __DATA segment and
+     its __data section allows you to verify runtime data structures used by the application.
+     Such data structures, particularly those that hold function pointers or that track currently
+     allocated objects, are often targets of rootkit manipulation. The symbol pointer sections
+     within the __DATA segment allow for runtime symbol resolution. You can use this seg-
+     ment to determine the name of symbols within malware, the name of hooked functions,
+     or the runtime address of variables in order to verify them within the address space of
+     a particular process.
+         Each segment command is defined by a segment_command or segment_command_64 struc-
+     ture. These structures define the following for each segment:
+
+        • Segment name
+
+   • Where it will be mapped into memory
+   • Size in memory and on disk
+   • Offset from the beginning of the file in memory and on disk
+   • Protection level; whether it is readable, writable, and/or executable
+   • Number of sections that follow the segment
+  The commonly seen segments are these:
+
+   • __TEXT: Contains the read-only data of an application such as code and constant
+     variables. Segments of this type are mapped readable and executable, but not
+     writable.
+   • __DATA: The writable data (variables) of an application. Segments of this type are
+     mapped readable and writable, but not executable.
+   • __LINKEDIT: Contains information used by a loader, such as the symbol and string
+     table.
+   • __IMPORT: Contains information on symbols (functions and global variables)
+     imported from other applications and libraries.
+
+   A segment’s sections are each represented by a section structure. This structure defines
+the following information about the section:
+
+   • Name
+   • Parent segment’s name
+   • Where it will be mapped into memory
+   • Size of the section in memory
+   • Offset from the beginning of the file in memory and on disk
+   • Relocation entries for any relocations
+  The commonly seen sections of the __TEXT segment are these:
+
+   • __text: The code of the application.
+   • __const and __cstring: Constant data (variables) and strings of the application.
+     They are placed in read-only pages and cannot be changed at run time without
+     manipulating page protection bits.
+   • __stubs: Markers for the dynamically imported functions of an application.
+
+  The commonly seen sections of the __DATA segment are these:
+
+   • __data: Read/write data (variables) of an application.
+
+        • __bss: Data that is initialized to zero at compile time. This section occupies no space
+            in the file on disk and is mapped to pages of all zeroes at run time.
+        •   __la_symbol_ptr and __nl_symbol_ptr: Lazy and non-lazy references to imported
+          symbols. You can use these to determine the names and locations of imported
+          functions in order to detect code hooking.
+        • __got: Indirect references to global variables imported from other applications
+          and libraries.
+
+     Mach-O Address Space
+     In the “Memory Acquisition” section you learned that Mac Memory Reader and OSXPmem
+     write acquired physical memory to a Mach-O file. To support analysis of these captured
+     files, Volatility implements the MachOAddressSpace address space. This address space starts
+     by parsing the first few bytes of the file to determine whether the file is compiled for 32- or
+     64-bit systems. It then instantiates a mach_header_32 or mach_header_64 structure at the
+     beginning of the file. The mach_header_64 structure is shown as follows:
+       >>> dt("mach_header_64")
+       'mach_header_64' (32 bytes)
+       0x0   : magic                                ['unsigned int']
+       0x4   : cputype                              ['int']
+       0x8   : cpusubtype                           ['int']
+       0xc   : filetype                             ['unsigned int']
+       0x10 : ncmds                                 ['unsigned int']
+       0x14 : sizeofcmds                            ['unsigned int']
+       0x18 : flags                                 ['unsigned int']
+       0x1c : reserved                              ['unsigned int']
+
+       Immediately following the header, you can find one or more segment_command_32 or
+     segment_command_64 structures. The number of commands is stored in the ncmds member
+     of the header structure. The commands describe the memory runs, in particular the vir-
+     tual address (vmaddr) and size (vmsize) of the run and the offset within the file (fileoff)
+     where you find the data. Here’s how these structures appear:
+       >>> dt("segment_command_64")
+       'segment_command_64' (72 bytes)
+       0x0   : cmd                                  ['unsigned int']
+       0x4   : cmdsize                              ['unsigned int']
+       0x8   : segname                              ['array', 16, ['char']]
+       0x18 : vmaddr                                ['unsigned long long']
+       0x20 : vmsize                                ['unsigned long long']
+       0x28 : fileoff                               ['unsigned long long']
+       0x30 : filesize                              ['unsigned long long']
+
+   To examine the metadata associated with a Mach-O file, especially the memory run
+information, you can use the machoinfo plugin.
+
+Summary
+An increasing number of digital investigations involve systems running Mac OS X. It is
+important for investigators to be aware of the unique aspects of the Mac OS X operating
+system, how it differs from the other operating systems discussed in the book, and the
+impact those features have on memory forensics. A major component of that awareness
+is making sure that digital investigators know which tools to use for memory acquisition
+and how to build the supporting profiles that are required for analysis. This awareness
+also provides the necessary foundations for the advanced analysis topics covered in later
+chapters.

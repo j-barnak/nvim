@@ -12,6 +12,10 @@
 local M = {}
 
 local repo = "https://github.com/torvalds/linux"
+-- ctags skips only non-code dirs for the kernel (keep every arch + driver: the
+-- user does cross-arch and driver work). Declared here, beside `repo`, because
+-- both the kernel version menu and gs_source need it and they sit far apart.
+local KERNEL_EXCLUDE = { "Documentation", "samples", "tools", "scripts" }
 local data_root = vim.fn.stdpath("data") .. "/docs"
 -- The book library is pre-built and committed to the repo under Resources/docs;
 -- it is read directly (no epub/pdf build step). stdpath("config") keeps this
@@ -53,6 +57,33 @@ local function mkdir(path, quiet)
 	end
 	return ok
 end
+
+-- ── frozen-first path resolution ─────────────────────────────────────────
+-- A doc set can live in two places: committed under Resources/docs (frozen, so
+-- it survives a bare `git clone` onto a new machine) or fetched into the
+-- volatile cache under data_root. The frozen copy always wins, because it is
+-- the one that exists everywhere; the cache is the fallback, and a fetch is
+-- the last resort. Writes always go to data_root: the frozen tree is read-only
+-- at runtime, so a build never touches the repo.
+--   rel     the path a provider uses under EITHER root ("bcc/master", "sdm/vol1")
+--   marker  optional entry that proves the copy is real rather than a
+--           half-finished directory (the same marker the fetch checks)
+-- Returns dir, "frozen"|"cached" -- or nil, nil when neither root has it.
+local function resolve_docs(rel, marker)
+	local function present(root)
+		local p = root .. "/" .. rel
+		local probe = marker and (p .. "/" .. marker) or p
+		return vim.fn.isdirectory(probe) == 1 or vim.fn.filereadable(probe) == 1
+	end
+	if present(frozen_root) then
+		return frozen_root .. "/" .. rel, "frozen"
+	end
+	if present(data_root) then
+		return data_root .. "/" .. rel, "cached"
+	end
+	return nil, nil
+end
+
 local cache_root = data_root .. "/linux"
 local tags_cache = cache_root .. "/tags.txt"
 
@@ -193,6 +224,74 @@ local last_picker -- re-open the current provider's fuzzy finder (D in a doc)
 -- Bumped on every user-initiated open; an async render (pandoc/curl) checks it
 -- before drawing so a slow conversion cannot clobber a doc opened after it.
 local render_seq = 0
+
+-- ── markdown link scanner ────────────────────────────────────────────────
+-- Find the `[label](destination)` spans on a line. Neither pattern form is
+-- correct here: "%[[^%]]*%]" cannot cross the escaped bracket in a caption like
+-- "![The (Modern) Boot Process \[0x01\]](media/x.gif)" and reports no link at
+-- all, while "%[.-%]" walks past it but then lets a NON-link "![phrase]" earlier
+-- on the line swallow a later real link's label. So close the label by hand,
+-- honouring the backslash escape, and only then require the "(" that makes it a
+-- link. One scanner, used by every caller, so the three sites cannot drift.
+--   line   text to scan
+--   init   1-based index to start from
+--   image  true to accept only image links (a "!" immediately before the "[")
+-- Returns start, stop, destination, destination_start -- or nil when the line
+-- holds no further link. `start` is the "[" (the "!" for an image link) and
+-- `stop` the closing ")", so a caller can test the cursor against the span.
+local function md_link(line, init, image)
+	local i = init or 1
+	while i <= #line do
+		local open = line:find("[", i, true)
+		if not open then
+			return nil
+		end
+		i = open + 1
+		local bang = open > 1 and line:sub(open - 1, open - 1) == "!"
+		if not image or bang then
+			-- Walk the label to the "]" that really closes it: "\]" is an
+			-- escaped bracket inside the text, not the terminator.
+			local j, close = open + 1, nil
+			while j <= #line do
+				local c = line:sub(j, j)
+				if c == "\\" then
+					j = j + 2 -- skip the escape AND the character it escapes
+				elseif c == "]" then
+					close = j
+					break
+				else
+					j = j + 1
+				end
+			end
+			if close and line:sub(close + 1, close + 1) == "(" then
+				-- Balance the destination's own parentheses, as CommonMark
+				-- requires. Stopping at the first ")" truncated every path that
+				-- contains one -- the Linternals captures are literally named
+				-- "Linternals_ The (Modern) Boot Process ...", so <CR> looked
+				-- for a file called "…Linternals_ The (Modern".
+				local depth, k, stop = 1, close + 2, nil
+				while k <= #line do
+					local c = line:sub(k, k)
+					if c == "\\" then
+						k = k + 1
+					elseif c == "(" then
+						depth = depth + 1
+					elseif c == ")" then
+						depth = depth - 1
+						if depth == 0 then
+							stop = k
+							break
+						end
+					end
+					k = k + 1
+				end
+				if stop then
+					return (bang and open - 1 or open), stop, line:sub(close + 2, stop - 1), close + 2
+				end
+			end
+		end
+	end
+end
 
 -- ── render lines in a reused right vsplit with the given filetype ─────────
 -- Every caller that renders synchronously bumps render_seq through this, so an
@@ -349,7 +448,12 @@ local function render_lines(lines, ft, dir, title)
 	-- an SDM "Figure N-M" line shows the cropped diagram, anything else
 	-- follows the link under the cursor.
 	vim.keymap.set("n", "<CR>", function()
-		local img = vim.api.nvim_get_current_line():match("!%[[^%]]*%]%(([^)%s]+)")
+		-- md_link, not a pattern: the third and last site that used
+		-- "!%[[^%]]*%]%(" and so found no image on a line whose caption holds an
+		-- escaped bracket. It recovered by falling through to follow_link, which
+		-- is why nothing looked broken, but the fall-through is not the answer.
+		local _, _, dest = md_link(vim.api.nvim_get_current_line(), 1, true)
+		local img = dest and dest:match("^[^%s]+") -- drop a "path \"title\"" suffix
 		if img and dir then
 			local p = img:sub(1, 1) == "/" and img or vim.fs.normalize(dir .. "/" .. img)
 			if vim.fn.filereadable(p) == 1 then
@@ -494,13 +598,34 @@ local function clean_markdown(lines, dir)
 			l = l:gsub("%s*{[#:][^}]*}%s*$", "") -- trailing {#anchor}/{:attrs}
 		end
 		if dir then
-			-- `post` keeps an optional pandoc link title (`media/x.png "caption"`).
-			l = l:gsub("(!%[[^%]]*%]%()([^)%s]+)([^)]*%))", function(pre, url, post)
-				if url:match("^%a[%w+.-]*://") or url:match("^/") then
-					return pre .. url .. post
+			-- Rebuilt through md_link rather than one gsub. "[^%]]*" for the alt
+			-- text could not cross an escaped bracket, so an image captioned
+			-- "The (Modern) Boot Process \[0x01\]" was left relative and never
+			-- resolved (10 references across the markdown books); "%.-" crosses
+			-- it but lets a non-link "![phrase]" earlier on the line swallow a
+			-- later real link. `post` keeps an optional pandoc link title
+			-- (`media/x.png "caption"`). Guarded on "![" so the ~99% of lines
+			-- with no image pay one plain-text find and nothing else.
+			if l:find("![", 1, true) then
+				local pieces, keep, from = {}, 1, 1
+				while true do
+					local _, stop, dest, dstart = md_link(l, from, true)
+					if not stop then
+						break
+					end
+					local url, post = dest:match("^(%S*)(.*)$")
+					if url ~= "" and not url:match("^%a[%w+.-]*://") and url:sub(1, 1) ~= "/" then
+						url = vim.fs.normalize(dir .. "/" .. (url:gsub("^%./", "")))
+					end
+					pieces[#pieces + 1] = l:sub(keep, dstart - 1) -- through the "("
+					pieces[#pieces + 1] = url .. post
+					keep, from = stop, stop + 1 -- next chunk resumes at the ")"
 				end
-				return pre .. vim.fs.normalize(dir .. "/" .. (url:gsub("^%./", ""))) .. post
-			end)
+				if #pieces > 0 then
+					pieces[#pieces + 1] = l:sub(keep)
+					l = table.concat(pieces)
+				end
+			end
 		end
 		if l:match("^%s*not %(.-or.-%)%s*$") or l:match("You are looking at unreleased.-documentation") then
 			return nil -- Sphinx only:: residue / unreleased banner
@@ -646,7 +771,11 @@ follow_link = function()
 	local pick, first
 	local s = 1
 	while true do
-		local a, b, url = line:find("%[[^%]]*%]%(([^)]+)%)", s)
+		-- md_link, not a pattern: a link or image whose text holds an escaped
+		-- bracket ("![... \[0x01\]](media/x.gif)") looked like no link at all
+		-- under "[^%]]*" and gd answered "No link on this line", while "%.-"
+		-- would let an earlier non-link "[phrase]" swallow this one's label.
+		local a, b, url = md_link(line, s)
 		if not a then
 			break
 		end
@@ -702,14 +831,23 @@ follow_link = function()
 	if not url then
 		return vim.notify("No link on this line", vim.log.levels.INFO)
 	end
-	if url:match("^%a[%w+.-]*://") or url:match("^mailto:") then
-		return vim.notify("External link: " .. url, vim.log.levels.INFO)
-	end
 	-- CommonMark destination forms: <path with spaces>, an optional quoted
 	-- title after whitespace, a #fragment, and %XX escapes (decoded last, so
 	-- %23 survives as a literal # in a file name).
+	-- Normalise BEFORE deciding external vs local. Testing the raw destination
+	-- first mis-reported two perfectly good external links as "Link target not
+	-- found", because neither starts with a scheme until it is trimmed: the
+	-- angle-bracket autolink `<https://…>` and a destination written with a
+	-- leading space. Both are faithful to their source, so the bug was purely
+	-- this ordering.
+	url = url:gsub("^%s+", ""):gsub("%s+$", "")
 	url = url:match("^<(.-)>%s*$") or url
-	url = url:gsub("%s+[\"'(][^\"')]*[\"')]%s*$", ""):gsub("#.*$", ""):gsub("%s+$", "")
+	url = url:gsub("^%s+", ""):gsub("%s+$", "")
+	url = url:gsub("%s+[\"'(][^\"')]*[\"')]%s*$", "") -- trailing link title
+	if url:match("^%a[%w+.-]*://") or url:match("^mailto:") then
+		return vim.notify("External link: " .. url, vim.log.levels.INFO)
+	end
+	url = url:gsub("#.*$", ""):gsub("%s+$", "")
 	url = url:gsub("%%(%x%x)", function(h)
 		return string.char(tonumber(h, 16))
 	end)
@@ -973,11 +1111,33 @@ local function with_versions(cb)
 	if vim.fn.filereadable(tags_cache) == 1 then
 		return cb(vim.fn.readfile(tags_cache))
 	end
+	-- Versions already cloned are usable with no network; see versioned_tags.
+	if not have("git") then
+		local ondisk = {}
+		for _, d in ipairs(vim.fn.glob(cache_root .. "/*", false, true)) do
+			local v = vim.fs.basename(d)
+			if vim.fn.isdirectory(d) == 1 and v:match("^v%d") then
+				ondisk[#ondisk + 1] = v
+			end
+		end
+		if #ondisk > 0 then
+			table.sort(ondisk, function(a, b) return a > b end)
+			return cb(ondisk)
+		end
+	end
 	if not mkdir(cache_root) then
 		return
 	end
 	vim.notify("Fetching kernel versions …")
-	local cmd = "git ls-remote --tags --refs " .. repo .. " | grep -oE 'v[0-9]+\\.[0-9]+(\\.[0-9]+)?$' | sort -Vr"
+	-- Every release tag from v4.0 on, newest first. -rc tags drop out because the
+	-- pattern anchors at end of line. Older majors (v2.6.x, v3.x) are cut: they
+	-- predate the docs layout this provider browses and would add ~400 entries
+	-- nobody scrolls to. awk does the major-version test rather than a character
+	-- class, so a future v10 still sorts in instead of being silently excluded.
+	local cmd = "git ls-remote --tags --refs " .. repo
+		.. " | grep -oE 'v[0-9]+\\.[0-9]+(\\.[0-9]+)?$'"
+		.. " | awk -F. '{ m = $1; sub(/^v/, \"\", m); if (m + 0 >= 4) print }'"
+		.. " | sort -Vr"
 	vim.system({ "sh", "-c", cmd }, { text = true, timeout = 30000 }, function(res)
 		local list = vim.split(res.stdout or "", "\n", { trimempty = true })
 		vim.schedule(function()
@@ -990,8 +1150,13 @@ local function with_versions(cb)
 	end)
 end
 
+-- The third entry clones the FULL tree at this same tag, under src/linux/<tag>,
+-- so the source you explore is the source the docs describe. Reachable here as
+-- well as through gs/:Src from a doc page, because wanting to read the source
+-- at a version is not always preceded by wanting to read its documentation.
+-- Each version is a separate shallow checkout, so this costs disk per version.
 local function kernel_menu(version)
-	fzf().fzf_exec({ "Browse Documentation", "API reference" }, {
+	fzf().fzf_exec({ "Browse Documentation", "API reference", "Explore source" }, {
 		prompt = version .. "> ",
 		fzf_opts = { ["--no-multi"] = true },
 		actions = {
@@ -1001,6 +1166,8 @@ local function kernel_menu(version)
 				end
 				if sel[1] == "API reference" then
 					ensure_api(version, api_search)
+				elseif sel[1] == "Explore source" then
+					require("config.src").open("linux/" .. version, repo, nil, KERNEL_EXCLUDE, version)
 				else
 					ensure_docs(version, function(_, docdir)
 						pick_files(docdir, "--extension rst", "Kernel docs> ")
@@ -1033,15 +1200,20 @@ end
 -- ── simple providers: sparse-clone a repo's docs at latest (master) ──────
 -- Lazily sparse-clone `sparse` paths of `url` into `dir`; cb(dir) once the
 -- `marker` subdir exists.
-local function ensure_repo(dir, url, sparse, marker, cb)
+local function ensure_repo(dir, url, sparse, marker, cb, ref)
 	if vim.fn.isdirectory(dir .. "/" .. marker) == 1 then
 		return cb(dir)
 	end
 	mkdir(vim.fs.dirname(dir))
 	-- Clone name: <name>/master -> "<name>"; a flat data_root/<name> -> "<name>".
 	local label = vim.fs.basename(dir)
+	-- "master" or a version ("v8.2.0") names no project, so prefix the parent:
+	-- otherwise a versioned clone announces "Cloning v8.2.0 docs" and the user
+	-- cannot tell what is being fetched.
 	if label == "master" then
 		label = vim.fs.basename(vim.fs.dirname(dir))
+	elseif label:match("^v?%d") then
+		label = vim.fs.basename(vim.fs.dirname(dir)) .. " " .. label
 	end
 	vim.notify("Cloning " .. label .. " docs … (first time only)")
 	-- Kill-atomic: build into <dir>.tmp then rename, so a clone/checkout killed
@@ -1049,7 +1221,9 @@ local function ensure_repo(dir, url, sparse, marker, cb)
 	local tmp = dir .. ".tmp"
 	local script = table.concat({
 		"rm -rf " .. shq(tmp) .. " " .. shq(dir),
-		"git -c core.autocrlf=false clone -n --depth=1 --filter=blob:none " .. shq(url) .. " " .. shq(tmp),
+		"git -c core.autocrlf=false clone -n --depth=1 --filter=blob:none "
+			.. (ref and ("--branch " .. shq(ref) .. " ") or "")
+			.. shq(url) .. " " .. shq(tmp),
 		"git -C " .. shq(tmp) .. " sparse-checkout set --no-cone " .. table.concat(vim.tbl_map(shq, vim.split(sparse, " ", { trimempty = true })), " "),
 		"git -C " .. shq(tmp) .. " checkout",
 		"mv " .. shq(tmp) .. " " .. shq(dir),
@@ -1480,16 +1654,122 @@ local simple = {
 
 local function make_simple(name, spec)
 	return function()
-		local dir = data_root .. "/" .. name .. "/master"
-		-- An already-cloned doc set browses without git (offline, or git missing).
-		if vim.fn.isdirectory(dir .. "/" .. spec.marker) == 1 then
-			return pick_files(dir .. spec.browse, spec.exts, spec.prompt)
+		-- Frozen copy first (a bare clone browses it), then the local cache: an
+		-- already-present doc set browses without git (offline, or git missing).
+		local found = resolve_docs(name .. "/master", spec.marker)
+		if found then
+			return pick_files(found .. spec.browse, spec.exts, spec.prompt)
 		end
+		local dir = data_root .. "/" .. name .. "/master" -- fetches go to the cache
 		if not have("git") then
 			return vim.notify("git not found (needed to fetch " .. name .. " docs)", vim.log.levels.WARN)
 		end
 		ensure_repo(dir, spec.url, spec.sparse, spec.marker, function(d)
 			pick_files(d .. spec.browse, spec.exts, spec.prompt)
+		end)
+	end
+end
+
+-- ── versioned providers: pick a release tag, then docs or source at it ────
+-- Same shape as the kernel provider. The only thing cached eagerly is the TAG
+-- INDEX, a text file of release tags; no version's docs or source is fetched
+-- until it is chosen, and once fetched it is never re-fetched (a tag does not
+-- move, which is also why `Update all cached docs` skips pulling them). That
+-- command deletes the index, so the next open picks up releases made since.
+local function versioned_tags(name, url, minmajor, cb)
+	local idx = data_root .. "/" .. name .. "/tags.txt"
+	-- Versions already fetched stay selectable even when the remote filter would
+	-- exclude them now (an old major, or a tag deleted upstream): losing access
+	-- to something already on disk is never the right answer.
+	local function withdisk(list)
+		local seen = {}
+		for _, v in ipairs(list) do
+			seen[v] = true
+		end
+		for _, d in ipairs(vim.fn.glob(data_root .. "/" .. name .. "/*", false, true)) do
+			local v = vim.fs.basename(d)
+			if not seen[v] and vim.fn.isdirectory(d) == 1 and v:match("^v?%d") then
+				seen[v] = true
+				list[#list + 1] = v
+			end
+		end
+		return list
+	end
+	if vim.fn.filereadable(idx) == 1 then
+		return cb(withdisk(vim.fn.readfile(idx)))
+	end
+	-- No index yet, but versions may already be downloaded. Offer those rather
+	-- than demanding a network fetch: refusing to open content that is sitting
+	-- on disk is the worst possible answer on a machine with no network.
+	local ondisk = withdisk({})
+	if #ondisk > 0 and not have("git") then
+		return cb(ondisk)
+	end
+	if not have("git") then
+		return vim.notify("git not found (needed to list " .. name .. " versions)", vim.log.levels.WARN)
+	end
+	if not mkdir(vim.fs.dirname(idx)) then
+		return
+	end
+	vim.notify("Fetching " .. name .. " versions …")
+	-- Release tags only, newest first: the end-of-line anchor drops -rc and
+	-- -alpha tags, and the awk major test (rather than a character class) keeps
+	-- a future two-digit major sorting in instead of silently vanishing.
+	local cmd = "git ls-remote --tags --refs " .. shq(url)
+		.. " | grep -oE 'v[0-9]+\\.[0-9]+(\\.[0-9]+)?$'"
+		.. " | awk -F. '{ m = $1; sub(/^v/, \"\", m); if (m + 0 >= " .. minmajor .. ") print }'"
+		.. " | sort -Vr"
+	vim.system({ "sh", "-c", cmd }, { text = true, timeout = 30000 }, function(res)
+		local list = vim.split(res.stdout or "", "\n", { trimempty = true })
+		vim.schedule(function()
+			if #list == 0 then
+				return vim.notify("Could not list " .. name .. " versions:\n" .. (res.stderr or ""), vim.log.levels.ERROR)
+			end
+			vim.fn.writefile(list, idx)
+			cb(withdisk(list))
+		end)
+	end)
+end
+
+local function make_versioned(name, spec)
+	local function menu(version)
+		fzf().fzf_exec({ "Browse Documentation", "Explore source" }, {
+			prompt = version .. "> ",
+			fzf_opts = { ["--no-multi"] = true },
+			actions = {
+				["default"] = function(sel)
+					if not (sel and sel[1]) then
+						return
+					end
+					if sel[1] == "Explore source" then
+						return require("config.src").open(name .. "/" .. version, spec.url, nil, spec.excl, version)
+					end
+					local dir = data_root .. "/" .. name .. "/" .. version
+					if vim.fn.isdirectory(dir .. "/" .. spec.marker) == 1 then
+						return pick_files(dir .. spec.browse, spec.exts, spec.prompt)
+					end
+					ensure_repo(dir, spec.url, spec.sparse, spec.marker, function(d)
+						pick_files(d .. spec.browse, spec.exts, spec.prompt)
+					end, version)
+				end,
+			},
+		})
+	end
+	return function()
+		-- No git gate here: versioned_tags needs git only when it must FETCH the
+		-- index, and a version already on disk browses with no git at all.
+		versioned_tags(name, spec.url, spec.minmajor or 0, function(list)
+			fzf().fzf_exec(list, {
+				prompt = (spec.label or name) .. " version> ",
+				fzf_opts = { ["--no-multi"] = true },
+				actions = {
+					["default"] = function(sel)
+						if sel and sel[1] then
+							menu(sel[1])
+						end
+					end,
+				},
+			})
 		end)
 	end
 end
@@ -1533,9 +1813,6 @@ end
 
 -- gs from a docs buffer: explore that project's full source (config.src) in
 -- the same split the docs occupy; `:q` on the source restores the doc there.
--- Skip only non-code dirs for the kernel (keep every arch + driver: the user
--- does cross-arch and driver work).
-local KERNEL_EXCLUDE = { "Documentation", "samples", "tools", "scripts" }
 -- Non-`simple` providers whose docs still have a real upstream source repo, so
 -- gs works from them too (doxygen libs, sqlite, rust, ghidra, the bap wiki).
 local SRC_URLS = {
@@ -1551,6 +1828,12 @@ local SRC_URLS = {
 local GS_OVERRIDE = {
 	aya = "https://github.com/aya-rs/aya",
 }
+-- Providers browsed per release tag: gs must resolve the source to the SAME tag
+-- as the docs being read. The kernel keeps its own branch below because it also
+-- carries ctags excludes.
+local VERSIONED = {
+	qemu = { url = "https://github.com/qemu/qemu" },
+}
 -- Books whose companion source is a real upstream repo worth exploring. Every
 -- book's docs cache lives under docs/books/<key>/<slug>, so the shared "books"
 -- path segment can't identify the repo; key on the slug instead.
@@ -1561,7 +1844,7 @@ gs_source = function(dir)
 	if not dir then
 		return
 	end
-	local srcname, url, excl
+	local srcname, url, excl, ref
 	-- First path segment under the docs cache is the provider name (simple
 	-- providers live at <name>/master, others at <name>/… or <name>/<ver>).
 	local name = dir:match("/docs/([^/]+)")
@@ -1573,10 +1856,22 @@ gs_source = function(dir)
 		end
 	elseif name and GS_OVERRIDE[name] then
 		srcname, url = name, GS_OVERRIDE[name]
+	elseif name and VERSIONED[name] then
+		-- Must precede the `simple` branch: qemu is still in `simple` (the spec is
+		-- reused) and would otherwise resolve to a master clone while the reader
+		-- is in a versioned doc tree.
+		local ver = dir:match("/docs/" .. name .. "/([^/]+)")
+		srcname = name .. (ver and ("/" .. ver) or "")
+		url, excl, ref = VERSIONED[name].url, VERSIONED[name].excl, ver
 	elseif name and simple[name] then
 		srcname, url = name, simple[name].url
 	elseif name == "linux" then
-		srcname, url, excl = "linux", repo, KERNEL_EXCLUDE
+		-- Kernel docs are already per-version (docs/linux/<tag>/Documentation),
+		-- so the source has to be too: exploring v6.6 source while reading v6.1
+		-- docs is worse than having no source, because nothing tells you they
+		-- disagree. One tree per tag, checked out at that tag.
+		local ver = dir:match("/docs/linux/([^/]+)")
+		srcname, url, excl, ref = "linux/" .. (ver or "master"), repo, KERNEL_EXCLUDE, ver
 	elseif name and SRC_URLS[name] then
 		srcname, url = name, SRC_URLS[name]
 	end
@@ -1591,7 +1886,7 @@ gs_source = function(dir)
 	}
 	require("config.src").open(srcname, url, function()
 		render_lines(restore.lines, restore.ft, dir, restore.title)
-	end, excl)
+	end, excl, ref)
 end
 
 -- ── doxygen providers: doxygen (XML) -> moxygen -> per-class/group Markdown ─
@@ -1599,11 +1894,10 @@ end
 -- SFML). Downloads a prebuilt doxygen binary on first use; moxygen (npm) turns
 -- the XML into cross-linked per-class/per-group Markdown, browsed like the rest.
 local tools_dir = data_root .. "/.tools"
--- Local book library (epub/pdf): converted chapters live under books_root, and
--- the source files are copied out of the ephemeral /tmp into books_src so the
--- providers keep working after a reboot.
--- Books are pre-built and committed under Resources/docs/books (read directly).
-local books_root = frozen_root .. "/books"
+-- Local book library (epub/pdf): the converted chapters are pre-built and
+-- committed under Resources/docs/books, so they are read directly and a bare
+-- clone browses them. ensure_book resolves them through resolve_docs, which
+-- keeps a cache-built copy usable if one exists.
 
 local function pick_doxygen(name, url, sparse, input, patterns)
 	if not have("git") then
@@ -2090,7 +2384,9 @@ end
 -- so the picker reads them offline - no curl/pandoc, no fetch.
 local function frozen_web_provider(name, prompt)
 	return function()
-		local idxfile = frozen_root .. "/" .. name .. "/index.tsv"
+		-- Frozen first (the committed index is the one a bare clone gets), with
+		-- the volatile cache as a fallback for an index scraped locally.
+		local idxfile = resolve_docs(name .. "/index.tsv") or (frozen_root .. "/" .. name .. "/index.tsv")
 		if vim.fn.filereadable(idxfile) ~= 1 then
 			return vim.notify(name .. ": frozen index missing", vim.log.levels.WARN)
 		end
@@ -2108,7 +2404,8 @@ local function frozen_web_provider(name, prompt)
 						if not url then
 							return
 						end
-						local cf = frozen_root .. "/.webcache/" .. vim.fn.sha256(url) .. ".txt"
+						local cf = resolve_docs(".webcache/" .. vim.fn.sha256(url) .. ".txt")
+							or (frozen_root .. "/.webcache/" .. vim.fn.sha256(url) .. ".txt")
 						if vim.fn.filereadable(cf) == 1 then
 							render_lines(vim.fn.readfile(cf), "markdown", nil, title)
 						else
@@ -2135,21 +2432,46 @@ local pick_herd7 = frozen_web_provider("herd7", "herd7 manual> ")
 -- wiki.osdev.org: the whole OSDev wiki (778 articles), from the official
 -- offline dump. Titles are grouped and ordered like the Expanded Main Page
 -- ("Hardware / APIC"), with everything the main page does not link under
--- "Other". The wiki is CC0, so the text is ours to carry.
+-- "Other". That last block is the one the main page cannot order, so it is
+-- alphabetical by the title the picker shows, compared case-insensitively:
+-- sorting it by the URL slug instead put "AMD-Vi IOMMU" above "AMD Atombios"
+-- and "C++" above "C Library", because the slug spells a space "_", which
+-- sorts after every letter. The wiki is CC0, so the text is ours to carry.
 local pick_osdev = frozen_web_provider("osdev", "OSDev wiki> ")
 
 -- ── Ghidra: versioned API/docs (pick a release tag, all versions) ────────
 local function pick_ghidra()
-	if not (have("git") and have("fd")) then
-		return vim.notify("git and fd are needed for Ghidra docs", vim.log.levels.WARN)
+	if not have("fd") then
+		return vim.notify("fd is needed for Ghidra docs", vim.log.levels.WARN)
 	end
 	local repo = "https://github.com/NationalSecurityAgency/ghidra"
-	vim.system({ "sh", "-c", "git ls-remote --tags --refs " .. repo .. " | sed 's#.*refs/tags/##' | sort -rV" }, { text = true, timeout = 30000 }, function(res)
-		vim.schedule(function()
-			local tags = vim.split(res.stdout or "", "\n", { trimempty = true })
-			if #tags == 0 then
-				return vim.notify("Ghidra: could not list versions", vim.log.levels.WARN)
+	-- Versions already downloaded, newest first. Ghidra tags are "Ghidra_N.N_build"
+	-- rather than vN.N, so this cannot use the generic versioned_tags helper.
+	local function ondisk()
+		local out = {}
+		for _, d in ipairs(vim.fn.glob(data_root .. "/ghidra/*", false, true)) do
+			-- A real version tree is marked by its sparse-checkout target; that
+			-- also skips any stray directory left by an interrupted run.
+			if vim.fn.isdirectory(d .. "/GhidraDocs") == 1 then
+				out[#out + 1] = vim.fs.basename(d)
 			end
+		end
+		table.sort(out, function(a, b) return a > b end)
+		return out
+	end
+	-- The tag list is not cached, so without git there is no menu at all unless
+	-- we offer what is on disk: refusing to open content already downloaded is
+	-- the wrong answer on a machine with no network.
+	local function fallback(msg)
+		local have_local = ondisk()
+		if #have_local == 0 then
+			return vim.notify(msg, vim.log.levels.WARN)
+		end
+		vim.notify(msg .. " - showing the " .. #have_local .. " already downloaded", vim.log.levels.INFO)
+		return have_local
+	end
+	local menu
+	menu = function(tags)
 			fzf().fzf_exec(tags, {
 				prompt = "Ghidra version> ",
 				fzf_opts = { ["--no-multi"] = true },
@@ -2194,6 +2516,24 @@ local function pick_ghidra()
 					end,
 				},
 			})
+	end
+	if not have("git") then
+		local l = fallback("git not found (needed to list Ghidra versions)")
+		if l then
+			menu(l)
+		end
+		return
+	end
+	vim.system({ "sh", "-c", "git ls-remote --tags --refs " .. repo .. " | sed 's#.*refs/tags/##' | sort -rV" }, { text = true, timeout = 30000 }, function(res)
+		vim.schedule(function()
+			local tags = vim.split(res.stdout or "", "\n", { trimempty = true })
+			if #tags == 0 then
+				tags = fallback("Ghidra: could not list versions")
+				if not tags then
+					return
+				end
+			end
+			menu(tags)
 		end)
 	end)
 end
@@ -2254,14 +2594,31 @@ local function update_all()
 	-- The source clones :Src makes live in a sibling tree and are caches of
 	-- upstream just as much as the doc repos, so update them too.
 	local src_root = vim.fn.stdpath("data") .. "/src"
-	local repos, seen = {}, {}
+	local repos, seen, pinned, broken = {}, {}, 0, {}
 	for _, root in ipairs({ data_root, src_root }) do
 		for _, glob in ipairs({ "/*", "/*/*", "/*/*/*" }) do
 			for _, d in ipairs(vim.fn.glob(root .. glob, false, true)) do
 				-- <dir>.tmp is an in-flight clone (renamed into place when done).
 				if not seen[d] and not d:match("%.tmp$") and vim.fn.isdirectory(d .. "/.git") == 1 then
 					seen[d] = true
-					repos[#repos + 1] = d
+					-- A clone made with --branch <tag> sits on a detached HEAD with a
+					-- tag-only fetch refspec, so a pull can only ever say "already up
+					-- to date": a tag does not move. Skip those, since pulling them
+					-- costs a network round trip each against some very large repos.
+					-- Read .git/HEAD rather than shelling out to `git symbolic-ref`:
+					-- it is one file read instead of one fork per repo (70+ here, on
+					-- the UI thread), and it distinguishes the third case that a
+					-- failed symbolic-ref silently folded into "pinned" -- a corrupt
+					-- or half-finished clone, which the user must be told about
+					-- rather than quietly skipped forever.
+					local head = (vim.fn.readfile(d .. "/.git/HEAD", "", 1) or {})[1]
+					if not head or head == "" then
+						broken[#broken + 1] = d
+					elseif head:match("^ref: ") then
+						repos[#repos + 1] = d -- on a branch: pull it
+					else
+						pinned = pinned + 1 -- detached at a tag: immutable
+					end
 				end
 			end
 		end
@@ -2270,9 +2627,16 @@ local function update_all()
 	-- (a package update changes the pages), whatever happens to the repos.
 	pcall(vim.fn.delete, webcache_dir .. "/local", "rf")
 	if #repos == 0 then
-		return vim.notify("No cached doc repos to update yet (man page cache cleared)", vim.log.levels.INFO)
+		return vim.notify(("No updatable doc repos (%d pinned to a tag, %d unreadable, man page cache cleared)"):format(pinned, #broken), vim.log.levels.INFO)
 	end
-	vim.notify("Updating " .. #repos .. " cached doc repos … (git pull)")
+	if #broken > 0 then
+		local names = {}
+		for _, d in ipairs(broken) do
+			names[#names + 1] = vim.fs.basename(vim.fs.dirname(d)) .. "/" .. vim.fs.basename(d)
+		end
+		vim.notify("Docs update: unreadable clone(s), delete to re-fetch: " .. table.concat(names, ", "), vim.log.levels.WARN)
+	end
+	vim.notify(("Updating %d cached doc repos … (git pull; %d pinned to a tag, skipped)"):format(#repos, pinned))
 	local done, failed = 0, {}
 	for _, d in ipairs(repos) do
 		vim.system({ "git", "-C", d, "pull", "--ff-only" }, { text = true, timeout = 180000 }, function(res)
@@ -2295,7 +2659,12 @@ local function update_all()
 						-- then reused forever, so a pull would otherwise leave them
 						-- describing the old checkout. Drop them; each rebuilds on
 						-- its next use.
-						pcall(vim.fn.delete, tags_cache)
+						-- Every provider's version index, not just the kernel's: these
+						-- are the only caches that must expire, since a new release is
+						-- invisible until the list is refetched.
+						for _, t in ipairs(vim.fn.glob(data_root .. "/*/tags.txt", false, true)) do
+							pcall(vim.fn.delete, t)
+						end
 						for _, idx in ipairs(vim.fn.glob(data_root .. "/*/api-index.tsv", false, true)) do
 							pcall(vim.fn.delete, idx)
 						end
@@ -2306,8 +2675,14 @@ local function update_all()
 						pcall(vim.fn.delete, data_root .. "/aya-api/items.tsv")
 						-- ctags indexes of the source clones, now that those are
 						-- pulled above; each rebuilds on the next gs.
-						for _, t in ipairs(vim.fn.glob(src_root .. "/*/.srctags", false, true)) do
-							pcall(vim.fn.delete, t)
+						-- Only for repos that were actually PULLED. A pinned tree did
+						-- not change, and its index can be enormous (the kernel's is
+						-- 1.2 GB and takes minutes to rebuild), so dropping it would
+						-- charge the user a full re-index for nothing.
+						for _, d in ipairs(repos) do
+							if d:sub(1, #src_root) == src_root then
+								pcall(vim.fn.delete, d .. "/.srctags")
+							end
 						end
 						vim.notify("Docs update: all " .. #repos .. " repos up to date")
 					else
@@ -2541,6 +2916,8 @@ local BOOKS = {
 		{ title = "DisARMing Code", fmt = "pdf", file = "DisARMing Code  545p (2).pdf" },
 	} },
 	{ module = "Operating Systems", key = "books-os", items = {
+		-- https://www.cs.cmu.edu/~410-s07/p4/p4-boot.pdf (CMU 15-410, 2007)
+		{ title = "Writing a Bootloader from Scratch (CMU 15-410)", fmt = "pdf", file = "CMU 15-410 Project 4 - Writing a Bootloader from Scratch.pdf" },
 		{ title = "Operating Systems: Three Easy Pieces", fmt = "pdf", file = "OSTEP.pdf" },
 		{ title = "xv6 (x86)", fmt = "epub", file = "x86-xv6.epub" },
 		{ title = "Advanced Programming in the UNIX Environment", fmt = "pdf", file = "Advanced Programming in the UNIX Environment.pdf" },
@@ -2550,6 +2927,7 @@ local BOOKS = {
 		{ title = "Is Parallel Programming Hard, And, If So, What Can You Do About It?", fmt = "pdf", slug = "is-parallel-programming-hard", file = "perfbook.pdf" },
 	} },
 	{ module = "Compilers", key = "books-compilers", items = {
+		{ title = "Linkers and Loaders", fmt = "pdf", file = "Linkers-and-Loaders.pdf" },
 		{ title = "Crafting Interpreters", fmt = "epub", file = "Crafting Interpreters -- Robert Nystrom -- United States_] _, 2021 -- Genever Benning -- isbn13 9780990582939 -- c96d09f7d0933fc5c9b75228f7f3e2a3 -- Anna’s Archive.epub" },
 		{ title = "Writing a C Compiler", fmt = "epub", file = "WritingaCCompiler.epub" },
 		{ title = "SSA-based Compiler Design", fmt = "pdf", file = "Fabrice Rastello, Florent Bouchez Tichadou - SSA-based Compiler Design-Springer (2022).pdf" },
@@ -2561,6 +2939,7 @@ local BOOKS = {
 		{ title = "Database Internals", fmt = "epub", file = "Database Internals _ A Deep Dive Into How Distributed Data -- Alex  Petrov -- O'Reilly Media, Sebastopol, CA, 2019 -- O'Reilly Media, Incorporated -- 9781492040316 -- 6ed4b5c9518da1d5ff76d1cd6c3aa813 -- Anna’s Arc.epub" },
 	} },
 	{ module = "Linux / Drivers", key = "books-linux", items = {
+		{ title = "Learning eBPF", fmt = "pdf", file = "Learning-eBPF - Full book.pdf" },
 		{ title = "eBPF Developer Tutorial (eunomia)", fmt = "md", slug = "ebpf-developer-tutorial", file = "https://github.com/eunomia-bpf/bpf-developer-tutorial" },
 		{ title = "Linux Insides (0xAX)", fmt = "md", slug = "linux-insides", file = "https://github.com/0xAX/linux-insides" },
 		{ title = "Linux Device Driver Development (Madieu)", fmt = "epub", file = "Linux Device Driver Development_ Everything you need to -- John Madieu -- Packt Publishing, [Place of publication not identified], -- Packt -- isbn13 9781803235943 -- e409561761c67e6644a54ed53a248850 -- Anna’s (1).epub" },
@@ -2575,6 +2954,7 @@ local BOOKS = {
 		{ title = "The Algorithm Design Manual", fmt = "pdf", file = "The-Algorithm-Design-Manual.pdf" },
 	} },
 	{ module = "Security", key = "books-security", items = {
+		{ title = "The Art of Memory Forensics", fmt = "pdf", file = "TheArtOfMemoryForensics.pdf" },
 		{ title = "Linternals + Kernel Exploitation (sam4k)", fmt = "md", slug = "linternals-sam4k", file = "https://sam4k.com/linternals/" },
 		{ title = "Nightmare: Binary Exploitation Course", fmt = "md", slug = "nightmare-binary-exploitation", file = "https://github.com/guyinatuxedo/nightmare" },
 		{ title = "Heap Exploitation (Dhaval Kapil)", fmt = "md", slug = "heap-exploitation-dhaval-kapil", file = "https://github.com/DhavalKapil/heap-exploitation" },
@@ -2628,43 +3008,16 @@ local function ensure_book(mkey, entry)
 		return vim.notify("fd is needed to browse books", vim.log.levels.WARN)
 	end
 	if entry.fmt == "mdbook" then
-		local d = frozen_root .. "/rust/" .. entry.url:match("([^/]+)$") .. "/src"
+		-- The four rust-lang mdBooks are committed under Resources/docs/rust;
+		-- resolve_docs falls back to a cache copy if one was ever built there.
+		local d = resolve_docs("rust/" .. entry.url:match("([^/]+)$") .. "/src") or (frozen_root .. "/rust/" .. entry.url:match("([^/]+)$") .. "/src")
 		return pick_files(d, "-e md", entry.title .. "> ")
 	end
-	local out = books_root .. "/" .. mkey .. "/" .. (entry.slug or book_slug(entry.title))
+	local rel = "books/" .. mkey .. "/" .. (entry.slug or book_slug(entry.title))
+	local out = resolve_docs(rel) or (frozen_root .. "/" .. rel)
 	-- "md" books come from a git repo of markdown (a course or tutorial set)
 	-- rather than an epub or pdf; the chapters are already markdown.
 	pick_files(out, (entry.fmt == "epub" or entry.fmt == "md") and "-e md" or "-e txt", entry.title .. "> ")
-end
-
--- One provider per module: fuzzy-pick a book, then ensure_book opens chapters.
-local function make_books_module(mod)
-	return function()
-		if not have("fd") then
-			return vim.notify("fd not found (needed to browse books)", vim.log.levels.WARN)
-		end
-		local titles = {}
-		for _, e in ipairs(mod.items) do
-			titles[#titles + 1] = e.title
-		end
-		table.sort(titles)
-		fzf().fzf_exec(titles, {
-			prompt = mod.module .. " book> ",
-			fzf_opts = { ["--no-multi"] = true },
-			actions = {
-				["default"] = function(sel)
-					if not (sel and sel[1]) then
-						return
-					end
-					for _, e in ipairs(mod.items) do
-						if e.title == sel[1] then
-							return ensure_book(mod.key, e)
-						end
-					end
-				end,
-			},
-		})
-	end
 end
 
 -- Aya: the book (aya-rs.dev) and the crate reference (docs.rs) under one entry.
@@ -2687,35 +3040,277 @@ local function pick_aya()
 	})
 end
 
--- All books under one entry: pick a subject module, then a book, then a chapter.
+-- Book-shaped web providers: read cover to cover like a book, so they belong in
+-- the same list as the epub/pdf ones even though they are frozen web caches
+-- rather than converted chapters. Their on-disk layout is unchanged.
+local WEB_BOOKS = {
+	{ title = "Hypervisor From Scratch", run = pick_rayanfam },
+	{ title = "Learn C++ (learncpp.com)", run = pick_learncpp },
+	{ title = "Rust Atomics and Locks", run = pick_rust_atomics },
+}
+
+-- All books under one entry, in ONE flat list: Books -> book -> chapter.
+-- No subject submenu: fzf already narrows 60-odd titles faster than picking a
+-- subject first, and a subject step only helps someone who does not know what
+-- they are looking for. The subject modules still exist in BOOKS because the
+-- module key IS the on-disk directory (books/<key>/<slug>), so flattening the
+-- menu changes no path and no builder rule.
 local function pick_books()
-	local mods = {}
+	-- No fd gate here: ensure_book checks fd for the chapter books that need it,
+	-- while the three web books are served from the frozen cache and worked
+	-- without fd before this menu existed.
+	local titles, by_title, dupes = {}, {}, {}
 	for _, m in ipairs(BOOKS) do
-		mods[#mods + 1] = m.module
+		for _, e in ipairs(m.items) do
+			-- Two books sharing a title would silently shadow each other here,
+			-- so keep the first and note the collision rather than lose one.
+			if by_title[e.title] then
+				dupes[#dupes + 1] = e.title
+			else
+				by_title[e.title] = { mkey = m.key, entry = e }
+				titles[#titles + 1] = e.title
+			end
+		end
 	end
-	fzf().fzf_exec(mods, {
-		prompt = "Books (subject)> ",
+	for _, w in ipairs(WEB_BOOKS) do
+		if not by_title[w.title] then
+			by_title[w.title] = w
+			titles[#titles + 1] = w.title
+		end
+	end
+	if #dupes > 0 then
+		-- Titles are the picker's keys, so a collision makes one book
+		-- unreachable. Name them once rather than per occurrence.
+		vim.notify("Books: unreachable duplicate title(s): " .. table.concat(dupes, ", "), vim.log.levels.WARN)
+	end
+	table.sort(titles)
+	fzf().fzf_exec(titles, {
+		prompt = "Books> ",
 		fzf_opts = { ["--no-multi"] = true },
 		actions = {
 			["default"] = function(sel)
 				if not (sel and sel[1]) then
 					return
 				end
-				for _, m in ipairs(BOOKS) do
-					if m.module == sel[1] then
-						return make_books_module(m)()
-					end
+				local hit = by_title[sel[1]]
+				if not hit then
+					return
 				end
+				if hit.run then
+					return hit.run()
+				end
+				return ensure_book(hit.mkey, hit.entry)
 			end,
 		},
 	})
 end
 
+-- ── :Docs list — every source in one picker, with its offline status ──────
+-- The question this answers is "what breaks if I clone this repo onto a new
+-- machine?", so the status is about WHERE a provider's content lives, not
+-- whether it happens to work right now:
+--   PARTIAL       some of the set is frozen and some is missing
+--   NOT FETCHED   nothing on disk; the first open clones it (needs network)
+--   NETWORK       fetched from a live URL on every read; nothing to freeze
+--   CACHED        only under stdpath("data")/docs -> this machine, not a clone
+--   LOCAL SYSTEM  rendered from what is installed here (man pages, pydoc)
+--   FROZEN        committed under Resources/docs -> survives a bare git clone
+-- Status comes from resolve_docs(), never from the key string: key and cache
+-- directory disagree (`kernel` browses docs/linux, `sdm1` browses sdm/vol1)
+-- and three keys are aliases into Books.
+
+-- Rough "how much is in here", bounded: an exact count would walk a
+-- multi-gigabyte tree every time the list opens. Stops at `cap` and says so.
+local function count_docs(dir, cap)
+	if not dir then
+		return nil
+	end
+	cap = cap or 2000
+	local n = 0
+	pcall(function()
+		for name, kind in vim.fs.dir(dir, {
+			depth = 12,
+			-- .git is history, not documents, and its loose objects would eat
+			-- the cap; media/figures are a chapter's images, not entries.
+			skip = function(d)
+				return d ~= ".git" and d ~= "media" and d ~= "figures"
+			end,
+		}) do
+			if kind == "file" and not vim.fs.basename(name):match("^%.") then
+				n = n + 1
+				if n >= cap then
+					return
+				end
+			end
+		end
+	end)
+	return n, n >= cap
+end
+
+-- Where each provider's content lives, under EITHER docs root. Derived from
+-- `simple` for the sparse-clone providers, then overridden for the ones whose
+-- on-disk path is not "<key>/master".
+local LOCATION = {}
+for name, spec in pairs(simple) do
+	LOCATION[name] = { rel = name .. "/master", marker = spec.marker }
+end
+-- Versioned sets: one directory per release tag, so the count is versions.
+LOCATION.kernel = { versions = "linux", unit = "version" }
+LOCATION.qemu = { versions = "qemu", marker = simple.qemu.marker, unit = "version" }
+LOCATION.ghidra = { versions = "ghidra", marker = "GhidraDocs", unit = "version" }
+LOCATION["android-kernel"] = { versions = "android-kernel", marker = "drivers/android", unit = "branch" }
+-- Doxygen providers: the clone alone is not readable, the generated .dox is.
+LOCATION.libdrgn = { rel = "libdrgn/master", marker = ".dox" }
+LOCATION.sfml = { rel = "sfml/master", marker = ".dox" }
+-- Split-PDF providers: `.complete` is the builder's success stamp.
+for vol = 1, 4 do
+	LOCATION["sdm" .. vol] = { rel = "sdm/vol" .. vol, marker = ".complete" }
+end
+for key, std in pairs({
+	cstd = "c-draft",
+	cppstd = "cpp-draft",
+	dwarf = "dwarf5",
+	abi = "x86-64-abi",
+	riscv = "riscv",
+	["arm-a"] = "arm-a",
+	["arm-m"] = "arm-m",
+}) do
+	LOCATION[key] = { rel = "std/" .. std, marker = ".complete" }
+end
+-- Flat clones (no /master segment).
+LOCATION.rust = { rel = "rust/reference", marker = "src" }
+LOCATION.sqlite = { rel = "sqlite", marker = "src" }
+LOCATION.gcc = { rel = "gcc", marker = "gcc/doc" }
+LOCATION.nbsd9 = { rel = "netbsd", marker = "share/man/man9" }
+LOCATION.nbsd4 = { rel = "netbsd", marker = "share/man/man4" }
+LOCATION.bap = { rel = "bap/wiki" }
+-- Frozen web scrapes: an index.tsv of titles plus a .webcache of rendered text.
+LOCATION.herd7 = { index = "herd7/index.tsv", unit = "page" }
+LOCATION.osdev = { index = "osdev/index.tsv", unit = "article" }
+LOCATION.learncpp = { index = "learncpp/index.tsv", unit = "lesson" }
+LOCATION.rayanfam = { index = "rayanfam/index.tsv", unit = "part" }
+LOCATION.atomics = { index = "rust-atomics/index.tsv", unit = "chapter" }
+-- Fetched from a live URL on every read; there is no on-disk set to freeze.
+for _, key in ipairs({ "ocaml", "haskell", "multiboot", "make" }) do
+	LOCATION[key] = { network = true }
+end
+-- Rendered from this machine's own installation, so they can never be frozen
+-- into the repo: what you get is whatever man-db / python3 / cppman has.
+for _, key in ipairs({ "man1", "man2", "man3", "man4", "man5", "man7", "man8", "cppman", "binutils", "ld", "as", "elf", "bash", "pydoc" }) do
+	LOCATION[key] = { system = true }
+end
+LOCATION.books = { books = true, unit = "book" }
+-- `update` is an action, not a source, so it is left out of the list entirely.
+
+-- "1 file", "6 versions", "5 branches": a bare .. "s" wrote "5 branchs".
+local function plural(n, unit)
+	if n == 1 then
+		return n .. " " .. unit
+	end
+	local suffix = (unit:match("[sxz]$") or unit:match("[cs]h$")) and "es" or "s"
+	return n .. " " .. unit .. suffix
+end
+
+-- One directory per version under either root, newest-looking first.
+local function version_dirs(rel, marker)
+	local frozen, cached = {}, {}
+	for _, root in ipairs({ { frozen_root, frozen }, { data_root, cached } }) do
+		for _, d in ipairs(vim.fn.glob(root[1] .. "/" .. rel .. "/*", false, true)) do
+			local probe = marker and (d .. "/" .. marker) or d
+			if vim.fn.isdirectory(probe) == 1 and vim.fs.basename(d):match("^[vA-Za-z0-9]") then
+				root[2][#root[2] + 1] = d
+			end
+		end
+	end
+	return frozen, cached
+end
+
+-- status, count-text for one provider.
+local function docs_status(loc)
+	if not loc then
+		return "UNKNOWN", ""
+	end
+	if loc.system then
+		return "LOCAL SYSTEM", "this machine"
+	end
+	if loc.network then
+		return "NETWORK", "live fetch"
+	end
+	if loc.books then
+		-- Every title the Books picker offers: the converted chapter sets, the
+		-- four rust-lang mdBooks, and the three frozen web books.
+		local total, frozen_n = 0, 0
+		for _, m in ipairs(BOOKS) do
+			for _, e in ipairs(m.items) do
+				total = total + 1
+				local rel = e.fmt == "mdbook" and ("rust/" .. e.url:match("([^/]+)$") .. "/src")
+					or ("books/" .. m.key .. "/" .. (e.slug or book_slug(e.title)))
+				local _, where = resolve_docs(rel)
+				if where == "frozen" then
+					frozen_n = frozen_n + 1
+				end
+			end
+		end
+		for _, w in ipairs(WEB_BOOKS) do
+			total = total + 1
+			local key = w.title:match("^Hypervisor") and "rayanfam" or w.title:match("^Learn") and "learncpp" or "rust-atomics"
+			if select(2, resolve_docs(key .. "/index.tsv")) == "frozen" then
+				frozen_n = frozen_n + 1
+			end
+		end
+		local text = string.format("%d/%d books", frozen_n, total)
+		return frozen_n == total and "FROZEN" or (frozen_n == 0 and "NOT FETCHED" or "PARTIAL"), text
+	end
+	if loc.index then
+		local f, where = resolve_docs(loc.index)
+		if not f then
+			return "NOT FETCHED", ""
+		end
+		local ok, lines = pcall(vim.fn.readfile, f)
+		return where == "frozen" and "FROZEN" or "CACHED", ok and plural(#lines, loc.unit) or ""
+	end
+	if loc.versions then
+		local frozen, cached = version_dirs(loc.versions, loc.marker)
+		local n = #frozen > 0 and #frozen or #cached
+		if n == 0 then
+			return "NOT FETCHED", ""
+		end
+		return #frozen > 0 and "FROZEN" or "CACHED", plural(n, loc.unit)
+	end
+	local dir, where = resolve_docs(loc.rel, loc.marker)
+	if not dir then
+		return "NOT FETCHED", ""
+	end
+	local n, capped = count_docs(dir)
+	return where == "frozen" and "FROZEN" or "CACHED", n and (capped and (n .. "+ files") or plural(n, "file")) or ""
+end
+
+-- Worst first: the point of the list is spotting what would break on a new
+-- workstation, so anything that needs the network sorts to the top and the
+-- frozen sets (which need nothing) sink to the bottom.
+local STATUS_RANK = { PARTIAL = 1, ["NOT FETCHED"] = 2, NETWORK = 3, CACHED = 4, ["LOCAL SYSTEM"] = 5, FROZEN = 6, UNKNOWN = 0 }
+
+-- Assigned after `providers` exists (it lists them); declared here so the
+-- provider entry below can reference it.
+local pick_list
+
 -- ── providers + :Docs command ────────────────────────────────────────────
 local providers = {
 	{ name = "Linux Kernel", key = "kernel", run = pick_kernel_version },
 	{ name = "BCC", key = "bcc", run = make_simple("bcc", simple.bcc) },
-	{ name = "QEMU", key = "qemu", run = make_simple("qemu", simple.qemu) },
+	{ name = "QEMU", key = "qemu", run = make_versioned("qemu", {
+		url = simple.qemu.url,
+		sparse = simple.qemu.sparse,
+		marker = simple.qemu.marker,
+		browse = simple.qemu.browse,
+		exts = simple.qemu.exts,
+		prompt = simple.qemu.prompt,
+		label = "QEMU",
+		-- v4.0 (2019) on. Older majors are 2012-2016 releases whose docs bear
+		-- little relation to the ones anyone reads now; raise or drop the floor
+		-- here if you want them.
+		minmajor = 4,
+	}) },
 	{ name = "libbpf", key = "libbpf", run = make_simple("libbpf", simple.libbpf) },
 	{ name = "bpftrace", key = "bpftrace", run = make_simple("bpftrace", simple.bpftrace) },
 	{ name = "eBPF ABI reference (helpers / kfuncs / maps / program types)", key = "ebpf", run = make_simple("ebpf", simple.ebpf) },
@@ -2762,9 +3357,6 @@ local providers = {
 	{ name = "Miscellaneous (man 7)", key = "man7", run = function() pick_man(7) end },
 	{ name = "System administration (man 8)", key = "man8", run = function() pick_man(8) end },
 	{ name = "CppReference", key = "cppman", run = pick_cppman },
-	{ name = "learncpp.com", key = "cpp", run = pick_learncpp },
-	{ name = "Hypervisor From Scratch", key = "rayanfam", run = pick_rayanfam },
-	{ name = "Rust Atomics and Locks (book)", key = "atomics", run = pick_rust_atomics },
 	{ name = "herd7 / litmus7 manuals", key = "herd7", run = pick_herd7 },
 	{ name = "OSDev wiki", key = "osdev", run = pick_osdev },
 	{ name = "herdtools7 (cat models, litmus tests)", key = "herdtools7", run = make_simple("herdtools7", simple.herdtools7) },
@@ -2819,11 +3411,79 @@ local providers = {
 	{ name = "ELF format", key = "elf", run = man_provider("man 5 elf", "elf(5)") },
 	{ name = "Bash (man bash)", key = "bash", run = man_provider("man bash", "bash(1)") },
 	{ name = "pydoc (any Python pkg)", key = "pydoc", run = pick_pydoc },
+	{ name = "List all sources (offline status)", key = "list", run = function()
+		pick_list()
+	end },
 	{ name = "Update all cached docs", key = "update", run = update_all },
 }
 
--- All books under one entry: Books -> subject module -> book -> chapter.
+-- Every book under one entry, flat: Books -> book -> chapter. Includes the
+-- three book-shaped web providers (Hypervisor From Scratch, learncpp.com,
+-- Rust Atomics and Locks), which used to sit at the top level.
 providers[#providers + 1] = { name = "Books", key = "books", run = pick_books }
+
+-- Every source in one list, each row carrying where its content lives. Rows are
+-- "<index>\t<display>": fzf shows column 2, the action looks the row up by
+-- index, so a name containing a tab or a status word cannot mis-dispatch.
+pick_list = function()
+	last_picker = pick_list
+	local rows = {}
+	local function add(name, key, run)
+		local status, count = docs_status(LOCATION[key])
+		rows[#rows + 1] = { name = name, key = key, run = run, status = status, count = count }
+	end
+	for _, p in ipairs(providers) do
+		-- `update` and `list` are actions, not sources.
+		if p.key ~= "update" and p.key ~= "list" then
+			add(p.name, p.key, p.run)
+		end
+	end
+	-- The three book-shaped web providers moved under Books, but they keep their
+	-- own frozen index and their own key, so the list shows them in their own
+	-- right: "every source" has to mean every source.
+	for _, w in ipairs(WEB_BOOKS) do
+		local key = w.title:match("^Hypervisor") and "rayanfam" or w.title:match("^Learn") and "learncpp" or "atomics"
+		add(w.title, key, w.run)
+	end
+	table.sort(rows, function(a, b)
+		local ra, rb = STATUS_RANK[a.status] or 0, STATUS_RANK[b.status] or 0
+		if ra ~= rb then
+			return ra < rb
+		end
+		return a.name:lower() < b.name:lower()
+	end)
+	-- Pad to the widest actual name rather than a guessed constant, and by
+	-- DISPLAY width rather than byte length: three provider names carry a "…"
+	-- or a "→", and %-Ns pads by bytes, which shifted those rows' columns left.
+	local function w(s)
+		return vim.fn.strdisplaywidth(s)
+	end
+	local function pad(s, n)
+		return s .. string.rep(" ", math.max(0, n - w(s)))
+	end
+	local w_name = 0
+	for _, r in ipairs(rows) do
+		w_name = math.max(w_name, w(r.name))
+	end
+	local entries = {}
+	for i, r in ipairs(rows) do
+		entries[i] = string.format("%d\t%s  %s  %s  %s", i, pad(r.status, 12), pad(r.name, w_name), pad(":Docs " .. r.key, 18), r.count or "")
+	end
+	fzf().fzf_exec(entries, {
+		prompt = "Sources> ",
+		fzf_opts = { ["--with-nth"] = "2..", ["--delimiter"] = "\\t", ["--no-multi"] = true },
+		actions = {
+			["default"] = function(sel)
+				local i = sel and sel[1] and tonumber(sel[1]:match("^(%d+)"))
+				local r = i and rows[i]
+				if r then
+					last_picker = r.run
+					r.run()
+				end
+			end,
+		},
+	})
+end
 
 function M.open()
 	local names = vim.tbl_map(function(p)
@@ -2850,10 +3510,29 @@ function M.open()
 	})
 end
 
+-- Keys that used to be top-level providers and now live under Books. They stay
+-- reachable so a habit or a user mapping does not break, but they are not in the
+-- provider list, so they do not reappear in the menu or in completion.
+local KEY_ALIAS = {
+	cpp = "Learn C++ (learncpp.com)",
+	learncpp = "Learn C++ (learncpp.com)",
+	rayanfam = "Hypervisor From Scratch",
+	atomics = "Rust Atomics and Locks",
+}
+
 vim.api.nvim_create_user_command("Docs", function(o)
 	local key = o.fargs[1]
 	if not key then
 		return M.open()
+	end
+	if KEY_ALIAS[key] then
+		local title = KEY_ALIAS[key]
+		for _, w in ipairs(WEB_BOOKS) do
+			if w.title == title then
+				last_picker = w.run
+				return w.run()
+			end
+		end
 	end
 	for _, p in ipairs(providers) do
 		if p.key == key then

@@ -1,6 +1,6 @@
 # Linux kernel initialization - Part 2
 
-In the previous [part](linux-initialization-1.md), we saw the first assembly instructions of the Linux kernel code. The kernel started the initialization process and performed the following first steps:
+In the previous [part](009%20Initialization%20-%20First%20steps%20in%20the%20kernel.md), we saw the first assembly instructions of the Linux kernel code. The kernel started the initialization process and performed the following first steps:
 
 - Early stack setup
 - Loading of the kernel Global Descriptor Table
@@ -74,7 +74,7 @@ One of the previous kernel steps was to set up new page tables. At this point, t
 
 Since the kernel has switched to running from its high virtual addresses, this identity mapping is no longer needed. At this stage, the top-level page table is referenced by the `early_top_pgt` symbol. The entries of this page table look like this:
 
-![early_top_pgt entries](./images/early-top-pgt-entries.svg)
+![early_top_pgt entries](media/82a1af0670e73d9aeb0a73ef1da96ffa0fd78e52.svg)
 
 The top-level page table contains `PTRS_PER_PGD` entries, which is `512` on `x86_64`. Only the last entry points to the next page table that maps the kernel image. All other entries are either empty or belong to the identity-mapped range. The `reset_early_page_tables` function wipes all of these first `511` entries:
 
@@ -232,7 +232,7 @@ When an interrupt or exception occurs, the CPU uses the vector number as an inde
 
 The structure of the Interrupt Descriptor Table on x86_64 is:
 
-![IDT gate descriptor](./images/idt-gate-descriptor.svg)
+![IDT gate descriptor](media/6465b22b581bf533dae58bc8dea664290d11a38e.svg)
 
 Here:
 
@@ -249,7 +249,7 @@ The remaining bits, including the topmost `Reserved` part, must be zero.
 
 The structure of the descriptor pointing to the Interrupt Descriptor Table is:
 
-![IDT descriptor](./images/idt-descriptor.svg)
+![IDT descriptor](media/5dea74bb92bbe047385b2e14052b2770efe0ad71.svg)
 
 The processor uses this descriptor to find the `IDT` in memory. The `Limit` field holds the size of the table in bytes minus one, and the `Base Address` field holds the virtual address of the first entry of the table. This is exactly the descriptor that the `LIDT` instruction loads into the `IDTR` register.
 
@@ -267,7 +267,7 @@ When an interrupt or exception occurs, the processor takes the vector number and
 
 The interrupt frame consists of the following registers, from higher to lower addresses:
 
-![Interrupt stack frame](./images/interrupt-stack-frame.svg)
+![Interrupt stack frame](media/3f75ffa4bf197fb5884caa91c3177c3c51d86a34.svg)
 
 After the state is saved, the processor loads the handler's code segment selector and offset from the gate into the `cs` and `rip` registers and switches to the execution of the handler.
 
@@ -415,7 +415,7 @@ ffffffff83d3fd59:	e9 52 01 00 00       	jmp    ffffffff83d3feb0 <early_idt_handl
 
 All of these stubs jump to the common `early_idt_handler_common` routine. Before doing anything else, it saves all general purpose registers on the stack so they can be restored when the kernel returns from the exception. After all the registers are saved, the stack looks like this:
 
-![Stack frame after saving general purpose registers](./images/interrupt-stack-frame-full.svg)
+![Stack frame after saving general purpose registers](media/c9a298490d3360991f801e76c807f7321a98665f.svg)
 
 With this stack frame prepared, the kernel calls the `do_early_exception` function. This function first handles a few special early exceptions by vector number, and then falls back to the Linux kernel exception table:
 
@@ -473,7 +473,7 @@ For the 4-level x86_64 layout shown in the [kernel documentation](https://github
 
 Since `0xffff888000000000` maps to physical address `0` in this layout, subtracting it from the faulting virtual address gives us the corresponding physical address.
 
-![Direct mapping of physical memory in the virtual address space](./images/direct-mapping.svg)
+![Direct mapping of physical memory in the virtual address space](media/5c06c36e081423c5cc646f68fbe0c0a70fc510ef.svg)
 
 If the faulting address belongs to the valid direct-mapping range, the kernel can build the missing mapping. This work is done by the `__early_make_pgtable` function. The process itself is very similar to what we have already seen a couple of times while mapping new pages. It looks like this:
 

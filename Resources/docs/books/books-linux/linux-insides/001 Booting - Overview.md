@@ -38,12 +38,12 @@ When reading this and other chapters, you may encounter special notation:
 
 The following parts are presented in this chapter and should be read in this order:
 
-1. [From the bootloader to kernel](linux-bootstrap-1.md) - from power-on to the first instruction in the kernel
-2. [First steps in the kernel setup code](linux-bootstrap-2.md) - early setup, heap init, parameter discovery (EDD, IST, and more)
-3. [Video mode initialization and transition to protected mode](linux-bootstrap-3.md) - video mode setup and the move to protected mode
-4. [Transition to 64-bit mode](linux-bootstrap-4.md) - preparation and the jump into long mode
-5. [Kernel Decompression](linux-bootstrap-5.md) - pre-decompression setup and the decompressor itself
-6. [Kernel load address randomization](linux-bootstrap-6.md) - how KASLR picks a load address
+1. [From the bootloader to kernel](002%20Booting%20-%20From%20bootloader%20to%20kernel.md) - from power-on to the first instruction in the kernel
+2. [First steps in the kernel setup code](003%20Booting%20-%20First%20steps%20in%20the%20kernel%20setup%20code.md) - early setup, heap init, parameter discovery (EDD, IST, and more)
+3. [Video mode initialization and transition to protected mode](004%20Booting%20-%20Video%20mode%20initialization%20and%20transition%20to%20protected%20mode.md) - video mode setup and the move to protected mode
+4. [Transition to 64-bit mode](005%20Booting%20-%20Transition%20to%2064-bit%20mode.md) - preparation and the jump into long mode
+5. [Kernel Decompression](006%20Booting%20-%20Kernel%20decompression.md) - pre-decompression setup and the decompressor itself
+6. [Kernel load address randomization](007%20Booting%20-%20Kernel%20load%20address%20randomization.md) - how KASLR picks a load address
 
 ## Kernel version
 

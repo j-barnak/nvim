@@ -122,21 +122,42 @@ end
 -- Clone only (no indexing): cb runs as soon as the source is on disk. Clone
 -- into <dir>.tmp then rename, so a clone killed midway never leaves a partial
 -- checkout that looks complete. Cache key is <dir>/.git.
-local function ensure_clone(name, url, cb)
+-- `ref` (optional) is a tag or branch to check out, and `name` may contain a
+-- slash, so a versioned project keeps one tree per version (the kernel: docs
+-- are already per-version, and source that disagreed with the docs you are
+-- reading is worse than no source at all).
+local function ensure_clone(name, url, cb, ref)
 	local dir = data_root .. "/" .. name
 	if vim.fn.isdirectory(dir .. "/.git") == 1 then
 		return cb(dir)
 	end
+	-- A versioned name ("linux/v6.12") whose PARENT is itself an old flat clone
+	-- from before this provider was versioned: creating the new tree inside that
+	-- working tree would nest one git repo in another and silently double the
+	-- disk (the kernel's flat clone here is 3.2 GB). Refuse, and say exactly what
+	-- to remove; using the stale tree instead would hand back a checkout that
+	-- does not match the docs being read, which is the bug versioning fixes.
+	local parent = vim.fs.dirname(dir)
+	if parent ~= data_root and vim.fn.isdirectory(parent .. "/.git") == 1 then
+		return vim.notify(
+			("Src: %s is an old unversioned clone. Remove it to use per-version trees:\n  rm -rf %s")
+				:format(parent, parent),
+			vim.log.levels.ERROR
+		)
+	end
 	-- Guarded: vim.fn.mkdir raises, so an unwritable data dir turned gs into
-	-- an E739 traceback instead of a message.
-	if vim.fn.isdirectory(data_root) == 0 and not pcall(vim.fn.mkdir, data_root, "p") then
-		return vim.notify("Src: cannot create " .. data_root, vim.log.levels.ERROR)
+	-- an E739 traceback instead of a message. Make the PARENT, not data_root,
+	-- so a "<project>/<version>" name does not fail on the missing middle dir.
+	if vim.fn.isdirectory(parent) == 0 and not pcall(vim.fn.mkdir, parent, "p") then
+		return vim.notify("Src: cannot create " .. parent, vim.log.levels.ERROR)
 	end
 	vim.notify("Cloning " .. name .. " source (shallow, first time) …")
 	local tmp = dir .. ".tmp"
 	local script = table.concat({
 		"rm -rf " .. shq(tmp) .. " " .. shq(dir),
-		"git -c core.autocrlf=false clone --depth=1 --single-branch --no-tags " .. shq(url) .. " " .. shq(tmp),
+		"git -c core.autocrlf=false clone --depth=1 --single-branch --no-tags "
+			.. (ref and ("--branch " .. shq(ref) .. " ") or "")
+			.. shq(url) .. " " .. shq(tmp),
 		"mv " .. shq(tmp) .. " " .. shq(dir),
 	}, " && ")
 	vim.system({ "sh", "-c", script }, { text = true, timeout = 900000 }, function(res)
@@ -152,20 +173,21 @@ end
 -- Open in the current (docs) window; restore_fn re-renders the doc on :q.
 -- The picker opens IMMEDIATELY (fd files + ripgrep are instant even on the
 -- kernel); ctags indexes in the background and <C-]> lights up when ready.
-function M.open(name, url, restore_fn, excl)
+function M.open(name, url, restore_fn, excl, ref)
 	if not (have("git") and have("ctags")) then
 		return vim.notify("git and ctags are needed for source exploration", vim.log.levels.WARN)
 	end
 	local win = vim.api.nvim_get_current_win()
 	ensure_clone(name, url, function(dir)
 		local tagfile = dir .. "/.srctags"
+		-- (ref is consumed by ensure_clone; the tree on disk is already at it)
 		open_picker(win, dir, tagfile, restore_fn)
 		if vim.fn.filereadable(tagfile) == 0 then
 			build_tags(dir, excl, function()
 				vim.notify("ctags index ready: " .. vim.fs.basename(dir))
 			end)
 		end
-	end)
+	end, ref)
 end
 
 return M

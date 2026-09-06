@@ -1,0 +1,605 @@
+9                       Event Logs
+
+E      vent logs contain a wealth of forensic information and are a staple in almost any type
+       of investigation. They contain details about application errors (such as when Word
+crashes after a heap-spray exploit), interactive and remote logins, changes in the firewall
+policy, and other events that have occurred on the system. Combined with the timestamps
+that are supplied with each event, the logs can help you determine exactly what happened
+on a system, or at least give you a timeframe on which to focus the rest of your efforts.
+   This chapter covers how to locate event logs in RAM and parse them for forensic pur-
+poses. Many of the log files are mapped into memory during the run time of the system,
+so it is typical to find hundreds, if not thousands, of individual records in memory dumps.
+In some cases, you may even be able to extract entries after they are marked for deletion
+by an administrator or maliciously cleared by an attacker.
+
+Event Logs in Memory
+Because event records are recorded throughout the run time of a system, it makes sense
+that you will find these records, or even the event logs files, in memory. To find records
+or event logs, you first need to know their structure—what they look like and where to
+find them in a consistent manner—because methodologies vary greatly depending on
+the target operating system.
+
+Analysis Objectives
+Your objectives are these:
+
+   • Locate event logs in memory: Starting with Vista, Microsoft made several critical
+       changes to the event log facility. To work with event logs across various versions
+       of Windows, you need to understand and account for the differences.
+
+        • Process event logs: Learn when to simply parse records from memory with
+﻿
+
+          Volatility and when to extract the log files for analysis with external tools.
+        • Detect brute force logins: Learn how to identify brute force logon attempts by
+          analyzing failure messages in the event logs.
+        • Identify backdoors: Detect changes to the firewall policy and server port conflicts,
+          which can often indicate backdoor activity.
+        • Identify cleared event logs: Learn what happens when event logs are cleared and
+          how to determine whether malicious code or attackers have attempted to clear
+          the logs.
+
+     Data Structures
+     The output that follows shows select members of the Windows XP and 2003 event log
+     structures. Harlan Carvey also documented the event log structures on his blog (http://
+     windowsir.blogspot.com/2007/06/eventlog-analysis.html). EVTLogHeader is the struc-
+     ture used as the event log file header, whereas EVTRecordStruct is for individual records.
+       >>> dt("EVTLogHeader")
+       'EVTLogHeader' (48 bytes)
+       0x0   : HeaderSize                      ['unsigned int']
+       0x4   : Magic                           ['int']
+       0x10 : OffsetOldest                     ['unsigned int']
+       0x14 : OffsetNextToWrite                ['unsigned int']
+       0x18 : NextID                           ['int']
+       0x1c : OldestID                         ['int']
+       0x20 : MaxSize                          ['unsigned int']
+       0x28 : RetentionTime                    ['int']
+       0x2c : RecordSize                       ['unsigned int']
+
+       >>> dt("EVTRecordStruct")
+       'EVTRecordStruct' (56 bytes)
+       0x0    : RecordLength                   ['unsigned int']
+       0x4    : Magic                          ['int']
+       0x8    : RecordNumber                   ['int']
+       0xc    : TimeGenerated                  ['UnixTimeStamp', {'is_utc': True}]
+       0x10 : TimeWritten                      ['UnixTimeStamp', {'is_utc': True}]
+       0x14 : EventID                          ['unsigned short']
+       0x18 : EventType                        ['Enumeration', [snip]
+       0x1a : NumStrings                       ['unsigned short']
+       [snip]
+
+     Key Points
+     The key points are the following:
+
+        • OldestID: The ID of the oldest event log record in the file.
+
+   • Magic: The signature of an event log and its records. This signature is LfLe.
+   • NextID: The ID of the next event log record that will be written.
+   • RecordLength: The length of the event log record, which can vary, depending on
+       the record, because the message strings are different for each type of message.
+   •   RecordNumber: The ID of the record within the event log.
+   • TimeGenerated: The timestamp showing when the event was generated (UTC).
+   • TimeWritten: The timestamp showing when the event record was written (UTC).
+   • EventID: The ID that describes what type of event has occurred.
+   • NumStrings: The number of messages included with the record that help describe
+       the event. You may need the corresponding message template to properly interpret
+       the meaning of the strings. For more information on how to find the templates,
+       see the note at the end of the “Windows 2000, XP, and 2003 Event Logs” section
+       later in the chapter.
+
+Windows 2000, XP, and 2003 Event Logs
+In Windows 2000, XP, and 2003, the event logs have the same binary record format. The
+default logs are Application, System, and Security, and the default storage location on disk
+for these logs is in %systemroot%\system32\config. These event logs are also mapped in
+the address space of the services.exe process.
+
+Finding Event Log Files
+You can figure out exactly which memory segment holds the file data by finding the ser-
+vices.exe process and searching for the event log file name (extension .Evt), as shown
+in the following output.
+  $ python vol.py -f XPSP3.vmem --profile=WinXPSP3x86 pslist | grep services
+   Volatility Foundation Volatility Framework 2.4
+   0x81d97020 services.exe    692    648    16    352 0 0 2010-12-27 21:34:32
+
+  $ python vol.py -f XPSP3.vmem --profile=WinXPSP3x86 vadinfo -p 692
+   [snip]
+   VAD node @ 0x8230af40 Start 0x009c0000 End 0x009cffff Tag Vad
+   Flags: Protection: 4
+   Protection: PAGE_READWRITE
+   ControlArea @82040f50 Segment e16ad7d8
+   Dereference list: Flink 00000000, Blink 00000000
+   NumberOfSectionReferences:          1 NumberOfPfnReferences:                     1
+   NumberOfMappedViews:                1 NumberOfUserReferences:                    2
+   WaitingForDeletion Event: 00000000
+   Control Flags: Accessed: 1, File: 1, HadUserReference: 1
+   FileObject @82040ed8, Name: \WINDOWS\system32\config\SecEvent.Evt
+   [snip]
+
+        You now know how to find event logs in memory, but what do you do next? You could
+     dump the VAD sections and parse them with a tool external to Volatility, but you might
+     as well just parse the event logs directly from memory.
+
+      NOTE
+      Windows XP/2003 event logs have a maximum size and are treated as a ring buffer.
+      This means that as the maximum size is reached, the pointer to write to the log wraps
+      around to the oldest record and overwrites it with new data. This methodology can
+      break several tools because partial records can corrupt what a tool expects to see—not
+      to mention the fact that several chunks of the log file may be unavailable due to paging.
+
+     Extracting Event Logs
+     The evtlogs plugin (Windows XP and 2003 only) finds and parses the event log records
+     for you automatically. It is also designed to handle corrupt event logs with missing or
+     overwritten data. This plugin works by first finding the services.exe process and then
+     searching its memory for event logs. It then breaks each log up based on its magic (LfLe)
+     and parses each record using the structures defined at the beginning of this chapter. The
+     evtlogs plugin also has an option to dump the raw log if you want to process it using
+     tools external to Volatility. The following shows you example output from running the
+     plugin against a public memory sample (http://sempersecurus.blogspot.com/2011/04/
+     using-volatility-to-study-cve-2011-6011.html) acquired after accessing a Word docu-
+     ment with an embedded Flash exploit:
+       $ python vol.py -f cve2011_0611.dmp --profile=WinXPSP3x86 evtlogs -v
+             --save-evt -D output/
+       Volatility Foundation Volatility Framework 2.4
+       Saved raw .evt file to osession.evt
+       Parsed data sent to osession.txt
+       Saved raw .evt file to internet.evt
+       Parsed data sent to internet.txt
+       Saved raw .evt file to appevent.evt
+       Parsed data sent to appevent.txt
+       Saved raw .evt file to odiag.evt
+       Parsed data sent to odiag.txt
+       Saved raw .evt file to sysevent.evt
+       Parsed data sent to sysevent.txt
+       Saved raw .evt file to secevent.evt
+       Parsed data sent to secevent.txt
+
+   Because this example uses the --save-evt option, the plugin created an .evt file (raw
+binary event log) and a .txt file (parsed records in text format) for each log file. The output
+of the parsed text file is in the following format:
+
+  Date/Time | Log Name | Computer Name | SID | Source | Event ID | Event Type
+| Message Strings
+  Knowing this, you can examine the output from the osession.evt log.
+  $ cat osession.txt
+  2011-04-10 09:14:22 UTC+0000|osession.evt|FINANCE1|N/A|
+      Microsoft Office 12 Sessions|7000|Info|
+      0;Microsoft Office Word;12.0.4518.1014;12.0.4518.1014;1368;0
+
+  2011-04-10 09:33:40 UTC+0000|osession.evt|FINANCE1|N/A|
+      Microsoft Office 12 Sessions|7000|Info|
+      0;Microsoft Office Word;12.0.6425.1000;12.0.6425.1000;1086;60
+
+  [snip]
+
+  2011-04-10 22:29:44 UTC+0000|osession.evt|FINANCE1|N/A|
+      Microsoft Office 12 Sessions|7000|Info|
+      0;Microsoft Office Word;12.0.6545.5000;12.0.6425.1000;80;60
+
+  2011-04-10 22:30:18 UTC+0000|osession.evt|FINANCE1|N/A|
+      Microsoft Office 12 Sessions|7003|Warning|
+      0;Microsoft Office Word;12.0.6545.5000;12.0.6425.1000
+
+  [snip]
+
+   Notice that there is a record of level Warning with ID 7003 , which means that the
+Microsoft Office application terminated unexpectedly. This information is relevant to the
+investigation because the infection vector was the embedded Flash exploit. In Chapter 18,
+you learn how to produce timelines and see how this event combined with other events
+paints a clear picture of the attack.
+
+Logging Policies
+By default, the Security event log is turned off in Windows XP. Thus, you should check
+the audit settings in the registry (HKLM\SECURITY\Policy\PolAdtEv) to verify what types
+of events to expect. The following command shows how to perform the check by using
+the auditpol plugin (S means “successful operations are logged,” and F means “failed
+operations are logged”):
+  $ python vol.py -f XPSP3x86.vmem auditpol --profile=WinXPSP3x86
+   Volatility Foundation Volatility Framework 2.4
+   Auditing is Enabled
+       Audit System Events: S/F
+       Audit Logon Events: S/F
+
+             Audit Object Access: Not Logged
+             Audit Privilege Use: Not Logged
+             Audit Process Tracking: Not Logged
+             Audit Policy Change: S
+             Audit Account Management: S/F
+             Audit Dir Service Access: S/F
+             Audit Account Logon Events: S/F
+
+      NOTE
+      Good references for looking up event log IDs and message strings are these:
+      http://go.microsoft.com/fwlink/events.asp
+      http://www.eventid.net/
+      http://blogs.msdn.com/b/ericfitz/
+      http://www.ultimatewindowssecurity.com/securitylog/encyclopedia/Default.aspx
+
+     Windows Vista, 2008, and 7 Event Logs
+     Windows Vista, 2008, and 7 event logs (which we’ll call “Evtx,” based on their exten-
+     sion) are stored in a completely different file format than those described in the previous
+     section. In particular, these logs are contained in an XML binary format. On a typical
+     machine, you can find more than 60 of these logs on the disk at %systemroot%\system32\
+     winevt\Logs. Such a high number of logs increases the opportunities for finding records
+     of interest on a compromised machine. Also, the description strings are contained within
+     these event logs (unlike the XP/2003 logs), which makes them easier to investigate without
+     having access to the target machine’s disk.
+
+      NOTE
+      To find the equivalent security IDs for Windows Vista, 2008, and 7 machines, add
+      4096 to the ID used for Windows XP/2003. For example, to find events that are
+      related to someone logging on to a Windows 7 machine, the ID of interest would be
+      4624 instead of 528. For more information, see http://blogs.msdn.com/b/ericfitz/
+      archive/2007/04/18/vista-security-events-get-noticed.aspx.
+
+        The newer event logs are not mapped in memory the same way as the old. Therefore,
+     the methodology for dealing with these logs is completely different—you must extract
+     the logs from memory using the dumpfiles plugin (see Chapter 16) and then parse them
+     with a tool external to Volatility. You can choose either a targeted methodology (finding
+     and dumping the event log of choice) or you can choose to dump all event logs by mak-
+     ing use of the dumpfiles plugin’s pattern matching (regular expression) capabilities. Your
+
+approach depends on what you are looking for and how much context you are given
+before your investigation. For example, if you are trying to prove that someone logged
+on to a machine, you might only examine the Security event log. However, if you are not
+sure what the underlying problem is with a machine, you might dump all event logs.
+
+ NOTE
+ Some tools that we’ve used in the past for parsing Evtx event logs include these:
+
+    • Evtxparser: http://computer.forensikblog.de/en/2011/11/evtx-parser-1-1-1
+        .html
+    • EVTXtract: https://github.com/williballenthin/EVTXtract
+    • Python-evtx: http://www.williballenthin.com/evtx/index.html
+    • Libevtx: http://code.google.com/p/libevtx/
+ The EVTXtract project is especially useful, because it will attempt to use known message
+ templates in order to reconstruct corrupt or missing ones. In other words, the tool’s
+ author made an effort to gracefully handle files dumped from memory with missing
+ data due to paging.
+
+  To dump all Evtx files out from a memory sample, you can use the following command:
+  $ python vol.py –f Win7SP1x86.vmem --profile=Win7SP1x86 dumpfiles
+         --regex .evtx$ --ignore-case
+         --dump-dir output
+  Volatility Foundation Volatility Framework 2.4
+  DataSectionObject 0x8509eba8     756    \Device\HarddiskVolume1\Windows\System32\
+      winevt\Logs\Microsoft-Windows-Diagnostics-Performance%4Operational.evtx
+  SharedCacheMap 0x8509eba8    756     \Device\HarddiskVolume1\Windows\System32\
+      winevt\Logs\Microsoft-Windows-Diagnostics-Performance%4Operational.evtx
+  DataSectionObject 0x83eaec48     756    \Device\HarddiskVolume1\Windows\System32\
+      winevt\Logs\Microsoft-Windows-Kernel-WHEA%4Errors.evtx
+  SharedCacheMap 0x83eaec48    756     \Device\HarddiskVolume1\Windows\System32\
+      winevt\Logs\Microsoft-Windows-Kernel-WHEA%4Errors.evtx
+  DataSectionObject 0x845bcab0     756
+  [snip]
+
+   All extracted files will be in your output directory. You can then use the Linux file
+utility to verify that the logs were dumped:
+  $ file output/*
+  output/file.756.0x83f92518.vacb: data
+  output/file.756.0x83f95ea0.vacb: data
+  output/file.756.0x8404b008.vacb: MS Windows Vista Event Log, 2 chunks
+      (no. 1 in use), next record no. 82
+  output/file.756.0x8408fa60.vacb: data
+  output/file.756.0x84090418.dat: MS Windows Vista Event Log, 1 chunks
+
+           (no. 0 in use), next record no. 5
+       output/file.756.0x840a2e38.vacb: MS Windows Vista Event Log, 1 chunks
+           (no. 0 in use), next record no. 2
+       [snip]
+
+        Some extracted files may say data instead of MS Windows Event Vista Event Log
+     because either the header for the log or the log itself was swapped out of memory at the
+     time of acquisition. In either case, you should investigate these files to see if you can
+     find partial records. The following shows how to investigate one of these logs with the
+     evtxdump.pl utility from Evtxparser:
+
+       $ evtxdump.pl output/file.756.0x8404b008.vacb
+       <?xml version="1.0" encoding="utf-8" standalone="yes" ?>
+       <Events>
+       <Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+       <System>
+       <Provider Name="Microsoft-Windows-Application-Experience"
+           Guid="{EEF54E71-0661-422D-9A98-82FD4940B820}" />
+       <EventID>900</EventID>
+       <Version>0</Version>
+       <Level>4</Level>
+       <Task>0</Task>
+       <Opcode>0</Opcode>
+       <Keywords>0x0800000000000000</Keywords>
+       <TimeCreated SystemTime="1341520633" />
+       <EventRecordID>1</EventRecordID>
+       <Correlation />
+       <Execution ProcessID="3336" ThreadID="3580" />
+       [snip]
+
+       As you can see, the output contains all the information about the events that were
+     generated. In particular, you can see the following fields:
+
+        • Provider Name: Tells you from which log this information was extracted.
+        • EventID: Contains the event ID that you would look up online to figure out what
+          event transpired.
+        • TimeCreated: A timestamp for when the event was generated.
+        • EventRecordID: The ID of the record, which helps you figure out the ordering of
+          the generated records.
+
+     Caveats About Event Logs in Memory
+     As previously mentioned, even though event records are found in memory, the entire log
+     file will not be available in most cases. This means that you can theoretically have records
+     that are relevant to your case in the event log on disk, but not in memory. As with most
+     artifacts in memory, event log records have a higher chance of retention if they were
+
+recently created or accessed. This is good news if you obtain memory close to the time
+of compromise, but bad news otherwise.
+   Additionally, adversaries can clear event logs on a machine using the ClearEventLog
+function. This function takes a handle to an event log and a backup location as parameters.
+If a backup location is not given (i.e., it is NULL), the log is simply cleared from disk and
+memory. The function definition obtained from MSDN (http://msdn.microsoft.com/en-us/
+library/windows/desktop/aa363637%28v=vs.85%29.aspx) is shown in the following code:
+
+  BOOL ClearEventLog(
+     _In_ HANDLE hEventLog,
+     _In_ LPCTSTR lpBackupFileName
+  );
+
+ NOTE
+ Here is an example of Visual Basic script (the original source is http://technet
+ .microsoft.com/library/ee176696.aspx) that we modified to clear the Security log.
+ The lines that begin with an apostrophe are comments in Visual Basic:
+    strComputer = "."
+    ' Get proper permissions to access the logs and back them up
+    Set objWMIService = GetObject("winmgmts:" _
+         & "{impersonationLevel=impersonate,(Security)}!\\" & _
+             strComputer & "\root\cimv2")
+    ' Find the event log we want to wipe and obtain its handle
+    '    In this case you want to wipe the Security event log.
+    Set colLogFiles = objWMIService.ExecQuery _
+         ("Select * from Win32_NTEventLogFile " _
+             & "Where LogFileName='Security'")
+    ' Since we don't set BackupEventLog() we lose the
+    ' log when it's wiped below
+    ' For each log that was collected above (in this case just Security)
+    For Each objLogfile in colLogFiles
+         ' Wipe the log
+         objLogFile.ClearEventLog()
+         ' Print a statement that it has been wiped.
+         WScript.Echo "Cleared event log file"
+    Next
+
+    If you place the previous code into a file named clearevt.vbs, you could run it
+ like so:
+    C:\> cscript clearevt.vbs
+
+    Microsoft (R) Windows Script Host Version 5.7
+    Copyright (C) Microsoft Corporation. All rights reserved.
+
+    Cleared event log file
+
+        Because you have to individually specify each log that you want to erase, attackers
+     sometimes forget to erase logs of interest, as you will see in one of the case examples at the
+     end of this chapter. However, solutions exist to erase all logs (see http://blogs.msdn.com/
+     b/jjameson/archive/2011/03/01/script-to-clear-and-save-event-logs.aspx). On the
+     other hand, this action makes it really obvious that something is wrong if suddenly all logs
+     are empty or if someone notices that there’s an extra spike in the machine’s activity while
+     deleting these logs. Most attackers we’ve encountered don’t typically delete all event logs.
+        Just because event logs are cleared does not mean that you should despair. If the
+     Security log is empty or sparse, and you know that events should be logged because
+     you used the auditpol plugin, that in itself is an indication that the event logs have been
+     wiped. If you have a forensic disk image from the suspect machine, you may be able to
+     retrieve useful event log records from restore points, volume shadow copies, or even from
+     unallocated space.
+        If you do not have a disk image, then you can scan the physical address space of
+     the memory dump for records using either the LfLe (Evt) or ElfChnk (Evtx) signatures,
+     and you might be lucky enough to recover historical records. Willi Ballenthin wrote
+     tools that you can use outside of Volatility for both cases; they are appropriately called
+     LfLe (https://github.com/williballenthin/LfLe) and EVTXtract (https://github.com/
+     williballenthin/EVTXtract).
+
+      NOTE
+      Clearing an event log actually creates new artifacts as well. For example, a new event
+      (ID 517) will be added to the Security log to indicate that the Security log was cleared.
+      This is useful because it also contains a timestamp of when the log was cleared:
+         2013-12-05 00:07:10 UTC+0000|secevent.evt|COMPUTER-NAME|S-1-5-18 (Local System)
+             |Security|517|Success|SYSTEM;NT AUTHORITY;(0x0,0x3E7);
+             Administrator;DOMAIN;(0x0,0x11544)
+
+         The following is the reconstructed message:
+         The audit log was cleared
+
+         Primary User Name: SYSTEM
+         Primary Domain: NT AUTHORITY
+         Primary Logon ID: (0x0,0x3E7)
+         Client User Name: Administrator
+         Client Domain: DOMAIN
+         Client Logon ID: (0x0,0x11544)
+
+Real Case Examples
+Event logs pulled from memory have often proved fruitful in our investigations. For the
+examples in this section, some information, such as IP addresses and dates, has been
+redacted to protect the identity of the victims.
+
+The Case of the Unsuccessful Listener
+Attackers often like to install backdoors on compromised machines. This helps them
+easily connect to the machine at their leisure. The following output is from the evtlogs
+plugin on a suspect machine’s Security event log that shows failed attempts of applica-
+tions trying to set up listening ports (event ID 861):
+  XXXX-XX-XX 23:18:46 UTC+0000|secevent.evt|XXXX|
+      S-1-5-21-1417001333-1647877149-682003330-500(Administrator)|Security|
+      861|Failure|wauclt;C:\WINDOWS\system32\wauclt.exe;1900;Administrator;
+      XXXX;No;No;IPv4;TCP;9999;No;No
+
+  XXXX-XX-XX 23:36:36 UTC+0000|secevent.evt|XXXX|
+      S-1-5-21-1417001333-1647877149-682003330-500(Administrator)|Security|
+      861|Failure|wauclt;C:\WINDOWS\system32\wauclt.exe;2312;Administrator;
+      XXXX;No;No;IPv4;TCP;9999;No;No
+
+   In this case, these events are suspicious because the executable (wauclt.exe) does not
+actually exist on a Windows machine by default. Its name has been chosen so that it looks
+like a legitimate process, wuauclt.exe, which is for Windows updates (notice the miss-
+ing u). Also, if the application in question is something like notepad.exe (which should
+not be opening ports at all), the logs may indicate code injection. You can construct the
+entire message string by finding the message template online (http://www.eventid.net/
+display.asp?eventid=861&eventno=4615&source=Security&phase=1):
+
+  Name: wauclt.exe
+  Path: C:\WINDOWS\system32\wauclt.exe
+  Process identifier: 2312
+  User account: Administrator
+  User domain: XXXX (redacted)
+  Service: No
+  RPC server: No
+  IP version: IPv4
+  IP protocol: TDP
+  Port number: 9999
+  Allowed: No
+  User notified: No.
+
+     The Case of the Unsuccessful Logon
+     As you’ve learned, logon and logoff events are collected in the Security event log. In
+     the following example, from a compromised Windows 2003 server, you see two 529
+     (failed logon attempt) event IDs and an event ID of 680. Event ID 680 varies depending
+     on the machine’s operating system, but tracks successful and failed NTLM logons for
+     Windows 2003 machines.
+       XXXX-XX-XX 15:19:20 UTC+0000|secevent.evt|XX|S-1-5-18 (Local System)|Security
+           |529|Failure|administrator;ZZZZZ;3;NtLmSsp ;NTLM;ZZZZZ;-;-;-;-;-;
+           222.186.XX.XX;3054
+
+       XXXX-XX-XX 15:19:20 UTC+0000|secevent.evt|XX|S-1-5-18 (Local System)|Security
+           |680|Failure|MICROSOFT_AUTHENTICATION_PACKAGE_V1_0;
+           administrator;ZZZZZ;0xC000006A
+
+       XXXX-XX-XX 15:19:20 UTC+0000|secevent.evt|XX|S-1-5-18 (Local System)|Security
+           |529|Failure|administrator;ZZZZZ;3;NtLmSsp ;NTLM;ZZZZZ;-;-;-;-;-;
+           222.186.XX.XX;3061
+
+        If you look up the message template for event ID 529 (several links are cited earlier in
+     the chapter), you gain more context regarding this event. The complete message string
+     that shows in the event log viewer would be the following text:
+       Logon Failure
+       Reason: Unknown user name or bad password
+       User Name: administrator
+       Domain: ZZZZZ (redacted)
+       Logon Type: 3
+       Logon Process: NtLmSsp
+       Authentication Package: NTLM
+       Workstation Name: ZZZZZ (redacted)
+       Caller User Name:-
+       Caller Domain:-
+       Caller Logon ID:-
+       Caller Process ID:-
+       Transited Services:-
+       Source Network Address: 222.186.XX.XX (redacted)
+       Source Port: 3061
+
+       You can see that someone tried to log on as administrator over the network (Logon
+     Type: 3), and the remote IP address was from China (222.186.XX.XX). Because the vic-
+     tim machine is located in the United States, and the owning company has no personnel
+     located in China, it is safe to say that this is not a valid logon attempt. If you examine the
+     other event record with ID 680 in the same manner, you will gain more context into why
+     this logon was unsuccessful:
+       Logon attempt by: MICROSOFT_AUTHENTICATION_PACKAGE_V1_0
+
+  Logon account: administrator
+  Source Workstation: ZZZZZ (redacted)
+  Error Code: 0xC000006A
+
+  The error codes for this event are well documented (http://www.ultimatewindowssecurity
+.com/securitylog/encyclopedia/event.aspx?eventid=680). You can see that 0xC000006A
+means that the attacker used a valid username on the system, but an incorrect password.
+This type of event shows one of three things:
+
+   • The account is a default account for the machine
+   • The attacker has done some previous reconnaissance of the system
+   • The attacker is engaged in a brute force attempt to guess credentials on the system
+  In this example, administrator is a default account. However, if the account name
+had been something else like gstanley, and you only find a few failed attempts (that is,
+not a brute force attack), you would know for sure that the attacker(s) have done their
+homework.
+
+The Case of the Impatient Brute Forcer
+Attackers often don’t have valid credentials to a machine when they first encounter it.
+In those cases, as we just described, they might try to guess their way into it by using
+an application that tries multiple username and password combinations. These attempts
+also manifest in event logs and can show both that the machine was targeted as well as
+whether the attacker was successful in gaining access. In the code that follows, you can
+see event log data that illustrates this type of attack on a Windows 2003 machine:
+  XXXX-XX-XX 14:49:07 UTC+0000|secevent.evt|XX|S-1-5-18 (Local System)|Security|
+      680|Failure|MICROSOFT_AUTHENTICATION_PACKAGE_V1_0;administrator;
+      DDDDDD;0xC000006A
+
+  XXXX-XX-XX 14:49:07 UTC+0000|secevent.evt|XX|S-1-5-18 (Local System)|Security|
+      529|Failure|administrator;DDDDDD;3;NtLmSsp ;NTLM;
+      DDDDDD;-;-;-;-;-;XXX.XXX.XXX.XXX;0
+
+  XXXX-XX-XX 14:49:08 UTC+0000|secevent.evt|XX|S-1-5-18 (Local System)|Security|
+      529|Failure|administrator;DDDDDD;3;NtLmSsp ;NTLM;
+      DDDDDD;-;-;-;-;-;XXX.XXX.XXX.XXX;0
+
+  XXXX-XX-XX 14:49:08 UTC+0000|secevent.evt|XX|S-1-5-18 (Local System)|Security|
+      680|Failure|MICROSOFT_AUTHENTICATION_PACKAGE_V1_0;administrator;
+      DDDDDD;0xC000006A
+  [snip]
+
+        Notice that the logon failures are in quick succession of each other—in this case, two
+     attempts per second. In total, more than 600 such records occurred, all within a short
+     span of time. The IP address (redacted) was also determined to have no reason to connect
+     to the target machine.
+        You can also find evidence of brute force attempts in the system event log. For example,
+     the following output shows an attack against a system running Microsoft’s FTP service.
+       XXXX-XX-XX 13:34:38 UTC+0000|sysevent.evt|XXXX|N/A|MSFTPSVC|100|Warning|
+           REDACTED USERNAME;Logon failure: unknown user name or bad password.
+
+       XXXX-XX-XX 13:34:38 UTC+0000|sysevent.evt|XXXX|N/A|MSFTPSVC|100|Warning|
+           REDACTED USERNAME;Logon failure: unknown user name or bad password.
+
+       XXXX-XX-XX 13:34:39 UTC+0000|sysevent.evt|XXXX|N/A|MSFTPSVC|100|Warning|
+           REDACTED USERNAME;Logon failure: unknown user name or bad password.
+
+       XXXX-XX-XX 13:34:39 UTC+0000|sysevent.evt|XXXX|N/A|MSFTPSVC|100|Warning|
+           REDACTED USERNAME;Logon failure: unknown user name or bad password.
+       [snip]
+
+       Again, you see six logon attempts per second using the redacted username. Here’s an
+     example of the reconstructed message:
+       Event Type: Warning
+       Event Source: MSFTPSVC
+       Event Category: None
+           Event ID: 100
+       Date: X/X/XXXX
+       Time: 1:34:39 PM
+       User: N/A
+       Computer: XXXX
+       Description:
+       The server was unable to logon the Windows NT account 'ZZZZ' due to the
+           following error: Logon failure: unknown user name or bad password.
+
+     The Case of the Log Wiper
+     As previously mentioned, attackers often try to clear event logs to cover their tracks on
+     a machine. We had one case in which an attacker logged on to a machine using stolen
+     credentials and started a job on another machine using a different set of stolen creden-
+     tials. Our objective was to track down both accounts that were compromised in order to
+     deactivate them. The attacker was smart enough to wipe the Security event log as well as
+     a few others that would have helped. Furthermore, we didn’t have the hard disk in order
+     to search unallocated space for the missing records. Fortunately, the attacker didn’t real-
+     ize that there was another event log (Microsoft-Windows-TaskScheduler.evtx) containing
+
+the information we needed. This log happened to be memory-resident and had a record
+that pointed us directly to the account we needed to disable:
+  <TimeCreated SystemTime="XXXX-XX-XXT02:09:45.4119Z"/>
+  <EventRecordID>320320</EventRecordID>
+  <Correlation/>
+  <Execution ProcessID="1120" ThreadID="8364" />
+  <Channel>Microsoft-Windows-TaskScheduler/Operational</Channel>
+  <Computer>[REDACTED]</Computer>
+  <Security UserID="S-1-5-18" /></System>
+  <EventData Name="TaskUpdated">
+  <Data Name="TaskName">\At2</Data>
+  <Data Name="UserName">DOMAIN\[REDACTED]</Data></EventData></Event>
+  <Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+  <System>
+
+Summary
+During an investigation, Window’s event log records often play a critical role in recon-
+structing the events of an incident. They can provide valuable insight into the history of
+what happened and when it happened. While investigators have typically focused on
+records they find on disk, volatile memory provides another valuable source for these
+artifacts. Understanding how to extract and analyze those memory-resident records across
+different versions of Windows provides a powerful capability for digital investigators.

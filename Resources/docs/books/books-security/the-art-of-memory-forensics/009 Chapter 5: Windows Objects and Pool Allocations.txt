@@ -1,0 +1,1295 @@
+5                       Windows Objects and
+                        Pool Allocations
+
+A      ll the artifacts that you find in memory dumps share a common origin: They all
+       start out as an allocation. How, when, and why the memory regions were allocated
+sets them apart, in addition to the actual data stored within and around them. From a
+memory forensics perspective, studying these characteristics can help you make infer-
+ences about the content of an allocation, leading to your ability to find and label specific
+types of data throughout a large memory dump. Furthermore, becoming familiar with
+the operating system’s algorithms for allocation and de-allocation of memory can help
+you understand the context of data when you find it—for example, whether it is currently
+in use or marked as free.
+   This chapter introduces you to the concepts of Windows executive objects, kernel pool
+allocations, and pool tag scanning. Specifically, you will use this knowledge to find objects
+(such as processes, files, and drivers) by using a method that is independent of how the
+operating system enumerates the objects. Thus, you can defeat rootkits that try to hide
+by manipulating the operating system’s internal data structures. Furthermore, you can
+identify objects that were used but have since been discarded (but not overwritten), giv-
+ing you valuable insight into events that occurred in the past.
+
+Windows Executive Objects
+A great deal of memory forensics involves finding and analyzing executive objects. In
+Chapter 2, you learned that Windows is written in C and makes heavy use of C structures
+to organize related data and attributes. Several of these structures are called executive
+objects because they are managed (created, protected, deleted, etc.) by the Windows Object
+Manager—a component of the kernel implemented by the NT module.
+   A structure technically becomes an executive object when the operating system pre-
+pends various headers to it in order to manage services such as naming, access control,
+and reference counts. Thus, by this definition, all executive objects are structures, but not
+
+     all structures are executive objects. Distinguishing between the two is critical because as
+     a result of being allocated by the Object Manager, all executive objects will have similar
+     characteristics. For example, all executive objects will have the aforementioned headers,
+     whereas structures allocated by other subsystems such as the TCP/IP stack (tcpip.sys)
+     will not have such headers.
+        The most forensically relevant executive object types are described in Table 5-1, along
+     with their corresponding structure names. You will become familiar with these object
+     types throughout the course of the book, so just consider this a brief initial introduction.
+     In fact, there is at least one Volatility plugin that analyzes each of the objects listed in
+     the table.
+
+     Table 5-1: Forensically Relevant Windows Objects
+
+       Object Name         Structure                      Description
+
+       File                _FILE_OBJECT                   An instance of an open file that represents a
+                                                          process or kernel module’s access into a file,
+                                                          including the permissions, regions of memory
+                                                          that store portions of the file’s contents, and
+                                                          the file’s name.
+
+       Process             _EPROCESS                      A container that allows threads to execute
+                                                          within a private virtual address space and
+                                                          maintains open handles to resources such as
+                                                          files, registry keys, etc.
+
+       SymbolicLink        _OBJECT_SYMBOLIC_LINK          Created to support aliases that can help map
+                                                          network share paths and removable media
+                                                          devices to drive letters.
+
+       Token               _TOKEN                         Stores security context information (such as
+                                                          security identifiers [SIDs] and privileges) for
+                                                          processes and threads.
+
+       Thread              _ETHREAD                       An object that represents a scheduled execu-
+                                                          tion entity within a process and its associated
+                                                          CPU context.
+
+       Mutant              _KMUTANT                       An object that represents mutual exclusion
+                                                          and is typically used for synchronization
+                                                          purposes or to control access to particular
+                                                          resources.
+
+       WindowStation       tagWINDOWSTATION               A security boundary for processes and desk-
+                                                          tops, which also contains a clipboard and atom
+                                                          tables.
+
+       Desktop             tagDESKTOP                     An object that represents the displayable
+                                                          screen surface and contains user objects such
+                                                          as windows, menus, and buttons.
+
+  Object Name        Structure                       Description
+
+  Driver             _DRIVER_OBJECT                  Represents the image of a loaded kernel-mode
+                                                     driver and contains addresses of the driver’s
+                                                     input/output control handler functions.
+
+  Key                _CM_KEY_BODY                    An instance of an open registry key that con-
+                                                     tains information about the key’s values and
+                                                     data.
+
+  Type               _OBJECT_TYPE                    An object with metadata that describes the
+                                                     common properties of all other objects.
+
+ NOTE
+ The executive object types differ across versions of Windows because new objects are
+ often required to support new features, and old ones become deprecated. To see a full
+ list of object types for a given version of Windows by using a graphical user interface
+ (GUI) tool, you can use WinObj from SysInternals (http://technet.microsoft.com/
+ en-us/sysinternals/bb896657.aspx). Later in the chapter, you will learn how to do it
+ programmatically using Volatility.
+
+Object Headers
+One of the common traits shared between all executive object types is the presence of
+an object header ( _OBJECT_HEADER) and zero or more optional headers. The object header
+immediately precedes the executive object structure in memory. Likewise, any optional
+headers that exist precede the object header in a fixed order. This leads to a predictable
+memory layout, as shown in Figure 5-1. Thus, finding the structure (i.e., _FILE_OBJECT in
+the figure) given the address of its _OBJECT_HEADER, or vice versa, is simple because the
+two are always directly adjacent; and the size of _OBJECT_HEADER is consistent per operat-
+ing system.
+   Your ability to determine which optional headers are present (and if so, their respective
+offsets from the start of the object header) relies on the InfoMask member of the object
+header. Before moving into that discussion, take a look at the full structure for an object
+header on 64-bit Windows 7.
+  >>> dt("_OBJECT_HEADER")
+  '_OBJECT_HEADER' (56 bytes)
+  0x0   : PointerCount                  ['long long']
+  0x8   : HandleCount                   ['long long']
+  0x8   : NextToFree                    ['pointer64', ['void']]
+  0x10 : Lock                           ['_EX_PUSH_LOCK']
+
+            0x18    : TypeIndex                    ['unsigned char']
+﻿
+
+            0x19    : TraceFlags                   ['unsigned char']
+            0x1a    : InfoMask                     ['unsigned char']
+            0x1b    : Flags                        ['unsigned char']
+            0x20    : ObjectCreateInfo             ['pointer64', ['_OBJECT_CREATE_INFORMATION']]
+            0x20    : QuotaBlockCharged            ['pointer64', ['void']]
+            0x28    : SecurityDescriptor           ['pointer64', ['void']]
+            0x30    : Body                         ['_QUAD']
+
+                                _OBJECT_HEADER_PROCESS_INFO
+
+                                 _OBJECT_HEADER_QUOTA_INFO
+
+           Optional headers     _OBJECT_HEADER_HANDLE_INFO
+
+                                 _OBJECT_HEADER_NAME_INFO
+
+                                _OBJECT_HEADER_CREATOR_INFO
+          Reference Counts,
+         Security Descriptor,           _OBJECT_HEADER                       0x30 Bytes
+          Object Type, Flags
+
+                                           Object Body                Object size varies
+                                       (e.g. _FILE_OBJECT)            per structure
+
+         Figure 5-1: Executive objects and their headers on 64-bit Windows
+
+         Key Points
+
+            Note the following key points:
+
+             • PointerCount: Contains the total number of pointers to the object, including kernel-
+               mode references.
+             • HandleCount: Contains the number of open handles to the object.
+             • TypeIndex: This value tells you what type of object you’re dealing with (e.g., pro-
+               cess, thread, file).
+             • InfoMask: This value tells you which of the optional headers, if any, are present.
+             • SecurityDescriptor: Stores information on the security restrictions for the object,
+               such as which users can access it for reading, writing, deleting, and so on.
+             • Body: This member is just a placeholder that represents the start of the structure
+               contained within the object.
+
+Optional Headers
+An object’s optional headers contain various types of metadata that help describe the
+object. Obviously, because they’re optional, not all types of objects will have them; and
+even different instances of the same object type may have different combinations of
+optional headers. For example, the kernel does not track quota (resource usage) stats for
+the Idle or System processes, so those two _EPROCESS objects will not have _OBJECT_HEADER_
+QUOTA_INFO headers. Additionally, a mutex only needs a name if it is to be shared between
+multiple processes. Thus, named mutexes will have an _OBJECT_HEADER_NAME_INFO header,
+whereas unnamed mutexes will not. Although many of the optional headers can be useful
+for forensic purposes, it is the name header that investigators most commonly analyze.
+   Table 5-2 shows the optional headers that are available on 64-bit Windows 7 systems. If
+the value in the Bit Mask column is set in the object’s _OBJECT_HEADER.InfoMask, the corre-
+sponding optional header is present. If you recall the layout of the structures in Figure 5-1,
+the optional headers are located at negative offsets from the start of the _OBJECT_HEADER.
+The exact distance depends on which other headers are present and their sizes (shown
+in the Size column of Table 5-2).
+
+Table 5-2: Optional Headers on 64-Bit Windows 7
+
+  Name           Structure               Bit Mask    Size (Bytes)   Description
+
+  Creator Info   _OBJECT_HEADER_         0x1         32             Stores information on the
+                 CREATOR_INFO                                       creator of the object
+
+  Name Info      _OBJECT_HEADER_         0x2         32             Stores the object’s name
+                 NAME_INFO
+
+  Handle Info    _OBJECT_HEADER_         0x4         16             Maintains data about pro-
+                 HANDLE_INFO                                        cesses with open handles to
+                                                                    the object
+
+  Quota Info     _OBJECT_HEADER_         0x8         32             Tracks usage and resource
+                 QUOTA_INFO                                         stats
+
+  Process Info   _OBJECT_HEADER_         0x10        16             Identifies the owning process
+                 PROCESS_INFO
+
+ NOTE
+ Starting in Windows 8 and Server 2012, a new optional header containing audit infor-
+ mation (_OBJECT_HEADER_AUDIT_INFO) with bit mask 0x40 was introduced. To read more
+ about the changes in object header formats between operating system versions, see
+ http://www.codemachine.com/article_objectheader.html.
+
+         Object Type Objects
+﻿
+
+         The TypeIndex member of _OBJECT_HEADER is an index into nt!ObTypeIndexTable—an array
+         of type objects ( _OBJECT_TYPE). As you saw in Table 5-1, these objects contain metadata
+         that describes common properties of all objects. This data is critical to memory forensics
+         because you can use it to determine the type of object that follows an _OBJECT_HEADER.
+         For example, process handle table entries (see Chapter 6) point to object headers. Thus,
+         when you enumerate entries in a handle table, the type of data that follows the header is
+         arbitrary—it could be a _FILE_OBJECT, _EPROCESS, or any other executive object. You can
+         distinguish between the various possibilities by looking at the TypeIndex value, locating
+         the _OBJECT_TYPE that corresponds to the index, and then evaluating the Name member.
+         Refer to Table 5-1 for the mappings between object type names and their structure names.
+
+         Data Structures
+
+           An example of the object type structure for 64-bit Windows 7 follows:
+           >>> dt("_OBJECT_TYPE")
+           '_OBJECT_TYPE' (208 bytes)
+           0x0   : TypeList                       ['_LIST_ENTRY']
+           0x10 : Name                            ['_UNICODE_STRING']
+           0x20 : DefaultObject                   ['pointer64', ['void']]
+           0x28 : Index                           ['unsigned char']
+           0x2c : TotalNumberOfObjects            ['unsigned long']
+           0x30 : TotalNumberOfHandles            ['unsigned long']
+           0x34 : HighWaterNumberOfObjects        ['unsigned long']
+           0x38 : HighWaterNumberOfHandles        ['unsigned long']
+           0x40 : TypeInfo                        ['_OBJECT_TYPE_INITIALIZER']
+           0xb0 : TypeLock                        ['_EX_PUSH_LOCK']
+           0xb8 : Key                             ['unsigned long']
+           0xc0 : CallbackList                    ['_LIST_ENTRY']
+
+         Key Points
+           The key points are these:
+
+            • Name: This is a Unicode string name of the object type (Process, File, Key, etc.).
+            • TotalNumberOfObjects: The total number of objects of this particular object type
+              that exist on the system.
+            • TotalNumberOfHandles: The total number of open handles to objects of this par-
+              ticular type.
+            • TypeInfo: An _OBJECT_TYPE_INITIALIZER structure that tells you the type of mem-
+              ory used to allocate instances of these objects (for example, paged or nonpaged
+              memory).
+
+   • Key: A four-byte tag that is used to uniquely mark memory allocations that contain
+       objects of this particular type.
+
+   The TypeInfo and Key members provide two clues that will prove to be invaluable to
+memory forensics—they essentially tell you where to look (in paged or nonpaged memory)
+and what to look for (a specific four-byte tag) to find all instances of a particular object
+type (for example, all processes or all files). The following example shows how you can
+derive this information dynamically from your memory dump by writing short scripts
+for the volshell plugin:
+  $ python vol.py –f memory.dmp --profile=Win7SP1x64 volshell
+  Volatile Systems Volatility Framework 2.4
+  Current context: process System, pid=4, ppid=0 DTB=0x187000
+  To get help, type 'hh()'
+  >>> kernel_space = addrspace()
+  >>> ObTypeIndexTable = 0xFFFFF80002870300
+  >>> ptrs = obj.Object("Array",
+  ...                   targetType = "Pointer",
+  ...                   offset = ObTypeIndexTable,
+  ...                   count = 100,
+  ...                   vm = kernel_space)
+  >>> ptrs[0]
+  <NoneObject pointer to [0x00000000]>
+  >>> ptrs[1]
+  <NoneObject pointer to [0xBAD0B0B0]>
+  >>> for i, ptr in enumerate(ptrs):
+  ...     objtype = ptr.dereference_as("_OBJECT_TYPE")
+  ...     if objtype.is_valid():
+  ...         print i, str(objtype.Name), "in",
+  ...                  str(objtype.TypeInfo.PoolType),
+  ...                  "with key",
+  ...                  str(objtype.Key)
+  ...
+  2 Type in NonPagedPool with key ObjT
+  3 Directory in PagedPool with key Dire
+  4 SymbolicLink in PagedPool with key Symb
+  5 Token in PagedPool with key Toke
+  6 Job in NonPagedPool with key Job
+  7 Process in NonPagedPool with key Proc
+  8 Thread in NonPagedPool with key Thre
+  9 UserApcReserve in NonPagedPool with key User
+  10 IoCompletionReserve in NonPagedPool with key IoCo
+  11 DebugObject in NonPagedPool with key Debu
+  12 Event in NonPagedPool with key Even
+  [snip]
+
+        As shown in the code, we treated the data at kernel address 0xFFFFF80002870300 as an
+     array of pointers to _OBJECT_TYPE structures. By iterating through the results, you can see
+     that Process objects are in nonpaged memory, and Token objects are in paged memory.
+     Thus, you would expect RAM to always contain the _EPROCESS objects, whereas some _TOKEN
+     objects may be swapped to disk. Furthermore, you have a potential signature to scan for
+     when trying to find the actual objects in memory (Proc for processes and Toke for tokens). Of
+     course, you’ll want a more robust signature than just four bytes, or else false positives will
+     cloud your results. This brings you to the next requirement: understanding pool allocations.
+
+      NOTE
+      To get the address of 0xFFFFF80002870300 for the previous example, we typed
+      x nt!ObTypeIndexTable into Windbg. Your value will be different. If you don’t have
+      access to Windbg, you can generate similar results to the script by using the o­ bjtypescan
+      Volatility plugin, as shown in the following command:
+         $ python vol.py -f win7x64cmd.dd --profile=Win7SP0x64 objtypescan
+         Volatility Foundation Volatility Framework 2.4
+         Offset               nObjects   nHandles Key   Name                 PoolType
+         ------------------ ---------- ---------- ----- -------------------- ---------
+         0xfffffa8001840190       0x2a        0x0 ObjT Type                  NonPaged
+         0xfffffa80018469f0        0x1        0x1 IoCo IoCompletionReserve NonPaged
+         0xfffffa8001846b40        0x0        0x0 User UserApcReserve        NonPaged
+         0xfffffa8001846c90      0x1dc      0x320 Thre Thread                NonPaged
+         0xfffffa8001846de0       0x27       0xd6 Proc Process               NonPaged
+         0xfffffa8001846f30        0x2        0x2 Job   Job                  NonPaged
+         0xfffffa800184bad0     0x2bd5      0x4b9 Toke Token                 Paged
+         0xfffffa800184bde0       0xc2        0x5 Symb SymbolicLink          Paged
+         0xfffffa800184bf30       0x27       0x6f Dire Directory             Paged
+         0xfffffa80018aca50        0x0        0x0 Debu DebugObject           NonPaged
+         0xfffffa80018b7570     0x2023     0x2421 Even Event                 NonPaged
+         0xfffffa80018bc900       0x3f       0x3f TpWo TpWorkerFactory       NonPaged
+         0xfffffa80018bca50        0xa       0x2a Desk Desktop               NonPaged
+         0xfffffa80018c2900        0x0        0x0 Prof Profile               NonPaged
+         0xfffffa80018c2a50       0x84       0x84 Time Timer                 NonPaged
+         0xfffffa80018c3570        0x0        0x0 Even EventPair             NonPaged
+         0xfffffa80018c5570      0x13a      0x17b Muta Mutant                NonPaged
+         0xfffffa80018c6570        0xf        0x0 Call Callback              NonPaged
+         0xfffffa80018c7570      0x358      0x35a Sema Semaphore             NonPaged
+         0xfffffa80018c8900        0x2        0xd Sess Session               NonPaged
+         [snip]
+
+      The offset on the left is the address of the _OBJECT_TYPE in kernel memory. You’ll notice
+      this table contains the same information as the volshell script, but the results are in a
+      different order because the volshell script walked a list starting at nt!ObTypeIndexTable
+      and objtypescan scanned memory and reported results in the order they were found.
+
+Kernel Pool Allocations
+A kernel pool is a range of memory that can be divided up into smaller blocks for storing
+any type of data that a kernel-mode component (the NT module, third-party device driver,
+etc.) requests. Similar to a heap, each allocated block has a header ( _POOL_HEADER) that
+contains accounting and debugging information. You can use this extra data to attribute
+memory blocks back to the driver that owns them—and to an extent make inferences
+about the type of structures or objects contained within the allocation. This is not only
+critical for diagnosing memory leaks and corruption issues but is also invaluable for
+memory forensics.
+
+ NOTE
+ Kernel pool internals are also valuable to the offensive community because a good
+ understanding can lead to exploitation techniques. For more information, see Ker-
+ nel Pool Exploitation on Windows 7 by Tarjei Mandt: http://www.mista.nu/research/
+ MANDT-kernelpool-PAPER.pdf.
+
+   Figure 5-2 is a modified version of Figure 5-1, showing the difference in memory layout
+once you consider the fact that these allocations have a pool header at the base address
+(start of the range).
+
+         Pool allocation
+    (ExAllocatePoolWithTag)
+
+                                                              Size of allocation
+                                 _POOL_HEADER
+
+                        _OBJECT_HEADER_PROCESS_INFO
+
+                         _OBJECT_HEADER_QUOTA_INFO
+
+  Optional headers      _OBJECT_HEADER_HANDLE_INFO
+
+                         _OBJECT_HEADER_NAME_INFO
+
+                        _OBJECT_HEADER_CREATOR_INFO
+ Reference Counts,
+Security Descriptor,           _OBJECT_HEADER                     0x30 Bytes
+ Object Type, Flags
+
+                                   Object Body              Object size varies
+                               (e.g. _FILE_OBJECT)          per structure
+
+Figure 5-2: Executive objects within a pool
+﻿
+
+         Data Structures
+           On a 64-bit Windows 7 system, the pool header looks like this:
+           >>> dt("_POOL_HEADER")
+           '_POOL_HEADER' (16 bytes)
+           0x0 : BlockSize               ['BitField', {'end_bit': 24,
+                                            'start_bit': 16, 'native_type': 'unsigned long'}]
+           0x0 : PoolIndex               ['BitField', {'end_bit': 16,
+                                            'start_bit': 8, 'native_type': 'unsigned long'}]
+           0x0 : PoolType                ['BitField', {'end_bit': 32,
+                                            'start_bit': 24, 'native_type': 'unsigned long'}]
+           0x0 : PreviousSize            ['BitField', {'end_bit': 8,
+                                            'start_bit': 0, 'native_type': 'unsigned long'}]
+           0x0 : Ulong1                  ['unsigned long']
+           0x4 : PoolTag                 ['unsigned long']
+           0x8 : AllocatorBackTraceIndex ['unsigned short']
+           0x8 : ProcessBilled           ['pointer64', ['_EPROCESS']]
+           0xa : PoolTagHash             ['unsigned short']
+
+         Key Points
+           The key points are these:
+
+            • BlockSize: The total size of the allocation, including the pool header, object header,
+              and any optional headers.
+            • PoolType: The type of system memory (paged, nonpaged, etc.) for which this pool
+              header describes.
+            • PoolTag: A four-byte value, typically composed of ASCII characters that should
+              uniquely identify the code path taken to produce the allocation (so troublesome
+              blocks can be traced back to their source). On systems prior to Windows 8 and
+              Server 2012, one of the characters may be modified to set the “protected bit” (which
+              you can read more about in the note near Table 5-3).
+
+         Allocation APIs
+         Before creating an instance of an executive object (or any object, for that matter), a memory
+         block large enough to store the object and its headers must be allocated from one of the
+         operating system’s pools. A commonly used application programming interface (API) for
+         this purpose is ExAllocatePoolWithTag. The function prototype is as follows:
+           PVOID ExAllocatePoolWithTag(
+             _In_ POOL_TYPE PoolType,
+
+     _In_   SIZE_T NumberOfBytes,
+     _In_   ULONG Tag
+  );
+
+   The PoolType argument specifies the type of system memory to use for the allocation.
+NonPagedPool (0) and PagedPool (1) are the enumeration values for nonpageable and page-
+able memory, respectively. As previously shown, most, but not all, executive object types
+are allocated using nonpageable memory—and you can always make the distinction by
+looking at a particular object’s _OBJECT_TYPE.TypeInfo.PoolType member.
+
+ NOTE
+ There are various other flags you can specify that control whether the memory is
+ executable, cache aligned, and so on. For more details, see http://msdn.microsoft.com/
+ en-us/library/windows/hardware/ff559707(v=vs.85).aspx.
+
+   The NumberOfBytes argument contains the number of bytes to allocate. Drivers that
+call ExAllocatePoolWithTag directly can set this to the size of data they need to store in
+the memory block. Executive objects are different, as you have already learned, because
+they require extra space to store the object headers and optional headers. A function in
+the kernel named ObCreateObject is the central point from which all executive objects are
+created. It determines the size of the requested structure (i.e., 1232 bytes for an _EPROCESS
+on 64-bit Windows 7) and adds the size of _OBJECT_HEADER and any optional headers that
+need to be present before calling ExAllocatePoolWithTag.
+   The Tag argument specifies a four-byte value, typically composed of ASCII characters
+that should uniquely identify the code path taken to produce the allocation (so trouble-
+some blocks can be traced back to their source). In the case of executive objects, the tags
+are derived from the _OBJECT_TYPE.Key member—which explains why the Tag is the same
+for all objects of a particular type.
+   Assuming that a process wants to create a new file using the Windows API, the fol-
+lowing steps will occur:
+
+  1. The process calls CreateFileA (ASCII) or CreateFileW (Unicode)—both are exported
+     by kernel32.dll.
+  2. The create file APIs lead into ntdll.dll, which subsequently calls into the kernel
+     and reaches the native NtCreateFile function.
+  3. NtCreateFile will call ObCreateObject to request a new File object type.
+  4. ObCreateObject calculates the size of _FILE_OBJECT , including the extra space
+     needed for its optional headers.
+
+       5.   ObCreateObject finds the _OBJECT_TYPE structure for File objects and determines
+          whether to allocate paged or nonpaged memory, as well as the four-byte tag to
+          use.
+       6. ExAllocatePoolWithTag is called with the appropriate size, memory type, and tag.
+
+        After the listed steps, a new _FILE_OBJECT exists in memory, and the allocation is
+     marked with the specific four-byte tag. This isn’t all that happens, of course—a pointer
+     to the object header is added to the calling process’ handle table, a system-wide pool tag
+     tracking database is updated accordingly, and the individual members of the _FILE_OBJECT
+     are initialized with the path to the file being created and the requested access permissions
+     (e.g., read, write, delete).
+
+      NOTE
+      Sequential allocations using the same size, tag, and memory type will not necessar-
+      ily end up contiguous in memory. Although the operating system attempts to group
+      similarly sized allocations together, if there are no free blocks of the requested size
+      available, the kernel will select a block from the next largest size group. As a result,
+      you may see that allocations containing the same type of object are scattered through-
+      out the pool. Additionally, this allows smaller structures to occupy memory blocks
+      previously used to store larger structures—creating a “slack space” condition if the
+      memory isn’t cleared properly.
+         For more information, see Andreas Schuster’s The Impact of Windows Pool Allocation
+      Strategies on Memory Forensics: http://dfrws.org/2008/proceedings/p58-schuster.pdf.
+
+     De-allocation and Reuse
+     Continuing with the example of a process that creates a new file, the lifetime (i.e., pres-
+     ence in physical memory) of the corresponding _FILE_OBJECT will depend on various
+     factors. The single most important factor is how soon the process indicates (by calling
+     CloseHandle) that it is finished reading or writing the new file. At this time, if no other
+     processes are using the file object, the block of memory will be released back to the
+     pool’s “free list,” where it can be reallocated for a different purpose. While waiting to be
+     reallocated, or at any time before new data is written to the memory block, much of the
+     original _FILE_OBJECT will remain intact.
+        Exactly how long the memory block lingers in this state depends on the activity level
+     of the system. If the machine is thrashing, and the sizes of blocks being requested are
+     less than or equal to the size of _FILE_OBJECT, it will be overwritten quickly. Otherwise,
+     the object could persist for days or weeks—long after the process that created the file
+
+has terminated. In the past, students frequently asked this: After a network connection
+is closed, how soon must memory be acquired in order to preserve the evidence? The
+answer is that it’s unpredictable and can vary per machine or even time of day.
+    To reiterate, when blocks of pool memory are released, they are simply marked as free,
+not immediately overwritten. The same concept applies to disk forensics. When an NTFS
+file is deleted, only the Master File Table (MFT) entry is modified to reflect the changed
+status. The file’s content remains untouched until the sectors are reassigned to a new file and
+write operations take place. As a result of this behavior, you can find executive objects (or
+any memory allocations, for that matter) in RAM long after they’ve been discarded by the
+operating system. This gives you a unique perspective into the system that not only includes
+the list of actively used executive objects but also the resources that existed in the past.
+
+Pool-Tag Scanning
+Pool-tag scanning, or simply pool scanning, refers to finding allocations based on the afore-
+mentioned four-byte tags. For example, to locate process objects, you could find the kernel
+symbol that points to the start of the doubly linked active process list; and then enumer-
+ate the entries by walking the list. Another option, pool scanning, involves searching
+the entire memory dump file for Proc (the four-byte tag associated with _EPROCESS). The
+advantage to the latter method is that you can find historical entries (processes that are
+no longer running) as well as defeat some rootkit hiding techniques, e.g., Direct Kernel
+Object Manipulation (DKOM), that rely on manipulating the list(s) of active objects.
+   When you perform pool tag scanning, the four-byte tag is just your starting point. If it
+were all you relied upon, there would be large numbers of false positives. Consequently,
+Volatility builds a more robust “signature” of what memory around the desired alloca-
+tions looks like, and it’s based on the information described earlier in the chapter. For
+example, the size of the allocation and type of memory (paged, nonpaged) play a large
+role in eliminating false positives. If you’re looking for a 100-byte _EPROCESS and find
+Proc inside a 30-byte allocation, it cannot possibly be a real process because the memory
+block is too small.
+
+ NOTE
+ In addition to the initial criteria (tag, size, memory type), Volatility’s pool-scanning
+ infrastructure allows you to add custom constraints per object type. For example, if
+ a process’ creation timestamp should never be zero, you can configure the scanner
+ based on that knowledge. The scanner will then report only findings with non-zero
+ timestamps.
+
+     Pool Tag Sources
+     Table 5-3 shows the initial criteria that Volatility uses to find the listed executive objects
+     via pool scanning. The minimum size for the table is calculated by adding the size of
+     _EPROCESS (for processes), _OBJECT_HEADER, and _POOL_HEADER.
+
+     Table 5-3: Pool Tag Data Used by Existing Volatility Plugins for Windows XP to 7
+
+                                                         Min. Size
+       Object            Tag         Tag (Protected)     (Win7 x64)       Memory Type   Plugin
+
+       Process           Proc        Pro\xe3             1304             Nonpaged      psscan
+
+       Threads           Thrd        Thr\xe4             1248             Nonpaged      thrdscan
+
+       Desktops          Desk        Des\xeb             296              Nonpaged      deskscan
+
+       Window            Wind        Win\xe4             224              Nonpaged      wndscan
+       Stations
+
+       Mutants           Mute        Mut\xe5             128              Nonpaged      mutantscan
+
+       File Objects      File        Fil\xe5             288              Nonpaged      filescan
+
+       Drivers           Driv        Dri\xf6             408              Nonpaged      driverscan
+
+       Symbolic Links    Link        Lin\xeb             104              Nonpaged      symlinkscan
+
+         Although the data in Table 5-3 was gathered by looking in the Volatility source code,
+     it’s important to understand where to get the original information. For example, you
+     may need to adjust the fields when new versions of Windows are released or create a
+     pool scanner that finds an executive object that existing Volatility plugins don’t cover.
+     Furthermore, if a malicious kernel driver allocates pools to store its data (configurations,
+     command and control packets, names of system resources to hide, etc.), you will need a
+     mechanism to obtain the criteria for finding the memory blocks.
+         Also, notice the Tag(Protected) column in Table 5-3. One of the most infrequently
+     documented intricacies regarding pool tags is the protected bit. When you free a pool with
+     ExFreePoolWithTag, you must supply the same tag supplied to ExAllocatePoolWithTag.
+     This is a technique the operating system uses to prevent drivers from freeing memory
+     by accident. If the tag passed to the free function doesn’t match, the system will raise an
+     exception. This has a substantial impact on memory forensics because you really need to
+     look for the protected version of the pool tag.
+
+ NOTE
+ The protected bit isn’t set for all allocations, only for several of the executive object
+ types. Furthermore, as of Windows 8 and Server 2012, the protected bit seems to
+ be gone. For more information on the protected bit, see http://msmvps.com/blogs/­
+ windrvr/archive/2007/06/15/tag-you-re-it.aspx.
+
+Pooltag File
+As previously mentioned, Microsoft created pool tags for debugging and auditing pur-
+poses. Thus, some installations of the Windows Driver Development Kit (DDK) and
+Debugging Tools for Windows include a pooltag.txt file that you can use to perform
+lookups. For example, given a pool tag, you could determine the purpose of the alloca-
+tions and the owning kernel driver. Because the file contains descriptions, you can also
+start with key words such as “process object” or “file object,” and figure out the pool tag.
+Here is an example of what you’ll see in the pooltag.txt file:
+  rem
+  rem Pooltag.txt
+  rem
+  rem This file lists the tags used for pool allocations by kernel mode components
+  rem and drivers.
+  rem
+  rem The file has the following format:
+  rem    <PoolTag> - <binary-name> - <Description>
+  rem
+  rem Pooltag.txt is installed with Debugging Tools for Windows (%windbg%\triage)
+  rem and with the Windows DDK (in %winddk%\tools\other\platform\poolmon, where
+  rem platform is amd64, i386, or ia64).
+  rem
+
+  AdSv - vmsrvc.sys     - Virtual Machines Additions Service
+  ARPC - atmarpc.sys    - ATM ARP Client
+  ATMU - atmuni.sys     - ATM UNI Call Manager
+
+  [snip]
+
+  Proc - nt!ps          - Process objects
+  Ps   - nt!ps          - general ps allocations
+
+  [snip]
+
+  RaDA - tcpip.sys      - Raw Socket Discretionary ACLs
+  RaEW - tcpip.sys      - Raw Socket Endpoint Work Queue Contexts
+
+        RaJP - tcpip.sys             - Raw Socket Join Path Contexts
+        RaMI - tcpip.sys             - Raw Socket Message Indication Tags
+
+         The line in bold shows that process objects use the Proc tag and are allocated by nt!ps,
+     which is the process subsystem of the NT module. Although this information is useful,
+     it’s just your starting point. Now that you know the tag for process objects, you still have
+     to find the approximate size of the allocations and the type of memory (paged, nonpaged).
+
+      NOTE
+      The pooltag.txt file contains only tags used by Microsoft’s kernel mode components.
+      It does not include data on third-party or malicious drivers. However, there are online
+      databases (e.g., http://alter.org.ua/docs/win/pooltag) for which the community
+      can submit pool tag descriptions. Be aware that the information on these websites is
+      submitted anonymously and may not be accurate.
+
+     PoolMon Utility
+     PoolMon (h t t p : / / m s d n . m i c r o s o f t . c o m / e n - u s / l i b r a r y / w i n d o w s / h a r d w a r e /
+     ff550442(v=vs.85).aspx) is a memory pool monitor distributed with Microsoft’s Driver
+     Development Kit (DDK). It reports live updates about the pool tags that are in use on a
+     system, along with the following information:
+
+         • The memory type (Paged or Nonpaged)
+         • Number of allocations
+         • Number of frees
+         • Total number of bytes occupied by allocations
+         • Average bytes per allocation
+        The output that follows shows an example of using PoolMon. The –b switch sorts the
+     data by the number of bytes so that the most memory-intensive tags are listed first.
+        C:\WinDDK\7600.16385.1\tools\Other\i386> poolmon.exe -b
+        Memory: 2096696K Avail: 1150336K PageFlts: 8135     InRam Krnl: 5004K P:158756K
+         Commit:1535208K Limit:4193392K Peak:2779016K            Pool N:43452K P:187796K
+         System pool information
+         Tag Type      Allocs            Frees            Diff   Bytes       Per Alloc
+
+          CM31 Paged          169392 (        0)       153744 (       0)       15648 74838016 (              0)      4782
+          MmSt Paged          673616 (       16)       656049 (      17)       17567 28286672 (           -184)      1610
+          MmRe Paged           67417 (        0)        66213 (       0)        1204 12613400 (              0)     10476
+
+   CM25 Paged     2404 (   0)         0 (   0)          2404 10678272 (    0)   4441
+   NtfF Paged   105073 (   0)     94672 (   0)         10401 10484208 (    0)   1008
+   Cont Nonp      2582 (   0)       251 (   0)          2331 9996936 (    0)   4288
+   Ntff Paged   426392 (   0)    418603 (   0)          7789 6978944 (    0)    896
+   FMfn Paged  5163318 (   0)   5145133 (   0)         18185 5632928 (    0)    309
+   Pool Nonp        16 (   0)        11 (   0)             5 4318792 (    0) 863758
+   File Nonp 126693501 ( 128) 126675442 ( 132)         18059 3311048 ( -736)    183
+   Ntfx Nonp    563917 (   0)    545668 (   0)         18249 3059312 (    0)    167
+   CIcr Paged    68617 (   0)     67257 (   0)          1360 3026600 (    0)   2225
+   MmCa Nonp    617058 ( 16)     601659 ( 17)          15399 2197152 ( -120)    142
+   vmmp Nonp        19 (   0)        15 (   0)             4 2105480 (    0) 526370
+   AWP6 Nonp        12 (   0)        10 (   0)             2 2007040 (    0) 1003520
+   NtFs Paged 13782497 (   9) 13760105 (    9)         22392 1963432 (    0)     87
+   FSim Paged   245313 (   0)    230460 (   0)         14853 1901184 (    0)    128
+   FMsl Nonp    555526 (   0)    537329 (   0)         18197 1892488 (    0)    104
+   FIcs Paged  2591469 (   0)   2573319 (   0)         18150 1887600 (    0)    104
+   Ntfo Paged  2726359 (   9)   2716000 (   9)         10359 1635912 (    0)    157
+   [snip]
+
+   As you can see, CM31 ranks highest in byte count. Since the system started, there have
+been 169,392 calls to ExAllocatePoolWithTag for the CM31 tag, and 153,744 of them have
+been freed. This leaves the difference of 15,648 currently allocated blocks, together con-
+suming 74,838,016 bytes (approximately 75MB) of memory. On average, that’s 4,782 bytes
+per allocation.
+   The CM25 tag is not too far behind CM31, using about 10MB of memory. The CM in
+these tag names stands for Configuration Manager, which is the kernel component that
+maintains the Windows Registry. Thus, you can conclude that at least 85MB of RAM
+is reserved for storing registry keys and data. Don’t expect to extract all 85MB from a
+memory dump, however—because both tags are in paged memory, some of the data may
+be swapped to disk.
+   Another interesting point is regarding the File tag (allocations that store _FILE_OBJECT
+structures). As shown by PoolMon, more than 126,000,000 have been created since the last
+reboot, which makes sense because a _FILE_OBJECT is allocated each time a file is opened
+or created. However, because file objects are rather small, the 18,000 that are currently
+allocated consume only about 3.5MB total (an average of 183 bytes per allocation).
+   Aside from the insight you gain into the inner workings of the operating system, the
+output from PoolMon complements the information from pooltag.txt. Together, they
+provide you with the pool tag, description, owning kernel driver, allocation size, and
+memory type—just about everything you need to start scanning memory dumps for
+instances of the allocations.
+
+      NOTE
+      The Windows kernel debugger can also help you determine pool tag associations. For
+      example, the !poolfind command performs a search for the desired tag and tells you
+      the memory type and size. You can use it like this:
+         kd> !poolfind Proc
+
+         Searching NonPaged pool (fffffa8000c02000 : ffffffe000000000) for Tag: Proc
+
+         *fffffa8000c77000 size:   430 previous size:    0   (Allocated) Proc (Protected)
+         *fffffa8001346000 size:   430 previous size:    0   (Allocated) Proc (Protected)
+         *fffffa8001361000 size:   430 previous size:    0   (Allocated) Proc (Protected)
+         *fffffa800138f7a0 size:   430 previous size:   30   (Free)      Pro.
+         *fffffa80013cb1e0 size:   430 previous size:   c0   (Allocated) Proc (Protected)
+         *fffffa80013e4460 size:   430 previous size:   f0   (Allocated) Proc (Protected)
+         *fffffa80014fd000 size:   430 previous size:    0   (Allocated) Proc (Protected)
+         *fffffa800153ebd0 size:    10 previous size:   70   (Free)      Pro.
+         [snip]
+
+      The output is truncated for the sake of brevity, but of the results shown, there are six
+      currently allocated blocks and two that are marked as free. One of the free blocks is
+      the same size as the allocated ones (430), and the other is much smaller (10). Thus, it
+      is likely that the free block at 0xfffffa800138f7a0 contains a terminated _EPROCESS;
+      whereas part of the block at 0xfffffa800153ebd0 has been repurposed.
+
+     Pool Tracker Tables
+     Because PoolMon is intended to provide real-time updates of changes in pool tag usage,
+     it must be run on a live system. But what if you only have a memory dump? Luckily,
+     memory actually contains the statistics that PoolMon reads. They are accessible from the
+     same kernel debugger data block ( _KDDEBUGGER_DATA64) that stores the active process
+     and loaded module lists. In particular, the PoolTrackTable member points to an array of
+     _POOL_TRACKER_TABLE structures—one for each unique pool tag in use. Here is how these
+     structures appear on a 64-bit Windows 7 system:
+       >>> dt("_POOL_TRACKER_TABLE")
+       '_POOL_TRACKER_TABLE' (40 bytes)
+       0x0   : Key                                ['long']
+       0x4   : NonPagedAllocs                     ['long']
+       0x8   : NonPagedFrees                      ['long']
+       0x10 : NonPagedBytes                       ['unsigned long long']
+       0x18 : PagedAllocs                         ['unsigned long']
+       0x1c : PagedFrees                          ['unsigned long']
+       0x20 : PagedBytes                          ['unsigned long long']
+
+   As you can see, each tracker table has a Key, which is the four-byte tag. The remaining
+members tell you how many allocations, frees, and total bytes are consumed for both
+nonpaged and paged memory. Although the information isn’t updated in real time (which
+makes sense because the system isn’t running anymore), you can at least determine its
+state at the time when the memory dump was acquired. Here’s an example of running
+the pooltracker plugin and filtering for a few of the tags used by executive objects. The
+column names start with “Np” for nonpaged or “Pg” for paged:
+  $ python vol.py -f win7x64.dd pooltracker
+                     --profile=Win7SP0x64
+                     --tags=Proc,File,Driv,Thre
+
+  Volatility Foundation Volatility Framework 2.4
+  Tag    NpAllocs NpFrees NpBytes PgAllocs PgFrees PgBytes
+  ------ -------- -------- -------- -------- -------- --------
+  Thre     614895   614419   606688        0        0        0
+  File   75346601 75336591 3350912         0        0        0
+  Proc       4193     4154    51728        0        0        0
+  Driv        143        6    67504        0        0        0
+
+   You can tell that all four tags are in nonpaged memory because the three columns
+(NpAllocs, NpFrees, and NpBytes) are nonzero. To determine the approximate size per
+allocation, divide the current number of allocations by the total bytes. For example, for
+the Thre tag (Thread objects), the average size is 606688 / (614895 – 614419) = 1274 bytes.
+Thus, to find all allocations containing threads, you will look for Thre tags in nonpaged
+memory that are at least 1274 bytes.
+
+ NOTE
+ Here are a few critical points about the pool tracker tables:
+
+     • Filtering options: If you run the pooltracker plugin without --tags, it will
+       display statistics for all pool tags.
+     • Verbose display: You can integrate data from the pooltag.txt file (using the
+       --tagfile option) so the output is labeled with the description and owning
+       kernel driver (if available).
+     • Supported   systems: Windows did not start writing statistics to the pool tracker
+       tables by default until after XP and 2003. Thus, the pooltracker plugin works
+       only with Vista and later operating systems.
+     • Limitations: The pool tracker tables only record usage statistics; it does not
+       record the addresses of all allocations of a particular tag.
+
+     Building a Pool Scanner
+     As previously mentioned, all the Volatility plugins listed in Table 5-3 implement the
+     pool-scanning approach to finding objects in memory. The framework provides a base
+     PoolScanner class that you can extend to customize the behavior of the scanner (e.g., what
+     tag to find, size of the allocations, memory type) and an AbstractScanCommand class that
+     provides you with all the command-line options that a pool-scanning plugin will need.
+
+     Extending the PoolScanner
+     The following code shows you the necessary configuration for psscan (a pool scanner for
+     process objects):
+         1 class PoolScanProcess(poolscan.PoolScanner):
+         2     """Pool scanner for process objects"""
+         3
+         4     def __init__(self, address_space, **kwargs):
+         5         poolscan.PoolScanner.__init__(self, address_space, **kwargs)
+         6
+         7         self.struct_name = "_EPROCESS"
+         8         self.object_type = "Process"
+         9         self.pooltag = obj.VolMagic(address_space).ProcessPoolTag.v()
+        10         size = self.address_space.profile.get_obj_size("_EPROCESS")
+        11
+        12         self.checks = [
+        13          ('CheckPoolSize', dict(condition = lambda x: x >= size)),
+        14          ('CheckPoolType', dict(non_paged = True, free = True)),
+        15          ('CheckPoolIndex', dict(value = 0)),
+        16          ]
+
+        On the first line, PoolScanProcess extends PoolScanner, so it inherits the functionality
+     that is shared between all pool scanners. The only customizations you need to make for
+     finding process objects are these:
+
+        • Structure name: On line 7, the structure name is set to _EPROCESS. This tells the pool
+          scanner what type of structure is contained within the allocations.
+        • Object type: On line 8, the executive object type is set to Process, which is used
+          as an additional form of validation. When the scanner finds a possible allocation,
+          it compares the supplied value with the Name member of the _OBJECT_HEADER. For
+          pool scanners that don’t contain executive objects (e.g., network connections and
+          sockets), the object type is not set.
+        • Pool tag: On line 9, the pool tag is set. Instead of hard-coding a value like Proc, the
+          tag is retrieved from a profile-specific container. This is necessary because tags can
+          change when new operating system versions are released.
+
+   • Allocation size: On line 10, the minimum size of an allocation that can store process
+     objects is generated (based on the size of _EPROCESS). This is also not hard-coded
+     because the sizes vary between profiles, especially on 32- and 64-bit systems. The
+     size constraint is applied on line 13.
+   • Memory     type: On line 14, the valid memory types are declared. In this case, the
+     scanner will look for allocations in nonpaged and free memory. It will skip any
+     results in paged memory.
+
+Extending AbstractScanCommand
+Now that you’ve seen how to initialize a pool scanner, the next step is to create a plugin
+that loads the scanner and displays your desired fields into the terminal. An example of
+such code follows:
+    1 class PSScan(common.AbstractScanCommand):
+    2     """Pool scanner for process objects"""
+    3
+    4     scanners = [poolscan.PoolScanProcess]
+    5
+    6     def render_text(self, outfd, data):
+    7         self.table_header(outfd, [('Offset(P)', '[addrpad]'),
+    8                                   ('Name', '16'),
+    9                                   ('PID', '>6'),
+   10                                   ('PPID', '>6'),
+   11                                   ('PDB', '[addrpad]'),
+   12                                   ('Time created', '30'),
+   13                                   ('Time exited', '30')
+   14                                   ])
+   15
+   16         for pool_obj, eprocess in data:
+   17             self.table_row(outfd,
+   18                 eprocess.obj_offset,
+   19                 eprocess.ImageFileName,
+   20                 eprocess.UniqueProcessId,
+   21                 eprocess.InheritedFromUniqueProcessId,
+   22                 eprocess.Pcb.DirectoryTableBase,
+   23                 eprocess.CreateTime or '',
+   24                 eprocess.ExitTime or '')
+
+  As you can see on the first line, the name of the class (P S S c a n ) that extends
+AbstractScanCommand becomes the plugin name. On line 4, the plugin is associated with
+the PoolScanProcess class. Be aware that the scanners variable can accept multiple classes,
+in case you want to find various objects with a single pass through the memory dump
+(this is a huge timesaver). As for the rest, lines 7–14 produce the table header in the text
+output, and lines 16–24 add one row to the table per result found by the scanner. In this
+case, each result is an _EPROCESS object.
+
+       By extending the base AbstractScanCommand, your new plugin comes equipped with
+     various command-line options that allow users to tweak the scanner’s behavior. You will
+     notice them at the bottom of the output from --help, as shown by the following output:
+       $ python vol.py psscan –-help
+
+       [snip]
+
+         -V, --virtual          Scan virtual space instead of physical
+         -W, --show-unallocated
+                                Show unallocated objects (e.g. 0xbad0b0b0)
+         -S START, --start=START
+                                The starting address to begin scanning
+         -L LENGTH, --length=LENGTH
+                                Length (in bytes) to scan from the starting address
+
+       ---------------------------------
+       Module PSScan
+       ---------------------------------
+       Pool scanner for process objects
+
+       Here are descriptions of the options:
+
+        • -V/--virtual: When scanning for pool allocations, you can use a virtual kernel
+          address space or a physical address space. By default, Volatility uses physical
+          space because it covers as much memory as possible—even the blocks that aren’t
+          currently in the kernel’s page table. This enables you to recover objects from “slack
+          space” in RAM. To switch into a mode that scans only the active pages for which
+          the kernel currently has mapped, use the -V/--virtual option.
+        • -W/--show-unallocated: This setting controls whether the plugin shows objects
+          that the operating system explicitly marks as unallocated. For more informa-
+          tion, see Andreas Schuster’s blog post here: http://computer.forensikblog.de/
+          en/2009/04/0xbad0b0b0.html.
+        • -S/--start and –L/--length: If you want to scan only a specific range of memory
+          instead of all memory, you can indicate the desired starting address and length
+          using these options. The address is determined to be a location in physical or virtual
+          memory depending on whether the -V/--virtual flag is set.
+
+     Pool Scanner Algorithm
+     The base PoolScanner (and thus any scanner that extends it) uses the logic shown in
+     Figure 5-3 to generate results.
+
+              No       Does the         Yes
+                    address contain
+                        “Proc”
+
+                          No          Is the block size
+                                         valid for an
+                                        _EPROCESS?
+
+                                               Yes
+
+                          No          Is the allocation
+   Go to the next                     in non-paged or
+      address                           free memory?
+
+                                               Yes
+
+                          No           Do all custom
+                                        constraints
+                                         succeed?
+
+                                               Yes
+
+                                        Report the
+                                          result
+
+Figure 5-3: Pool-scanning algorithm diagram
+
+   If you scan using a physical address space, the code starts looking for the four-byte pool
+tag at offset 0 of the memory dump file and continues until it reaches the end of the file.
+Otherwise, if a virtual address space is selected, it enumerates and scans all pages in the
+kernel’s page table. Of course, if you set an explicit starting address and length using the
+aforementioned command-line options, that overrides the algorithm’s default behavior.
+Before the scanner returns an address, data at the address must pass all the constraints.
+The more checks you have, the less chance there is of false positives.
+
+Finding Terminated Processes
+An example of running the psscan plugin with all the default options is shown in the
+following output:
+  $ python vol.py -f win7x64.dd --profile=Win7SP0x64 psscan
+  Volatility Foundation Volatility Framework 2.4
+
+       Offset(P) Name           PID     PPID   Time created                Time exited
+       --------- -------------- ------ ------ -------------------          -------------------
+       0x02dc1a70 svchost.exe     2016     448 2011-12-30 07:29:13
+       0x0af80b30 conhost.exe     2476     360 2012-01-20 17:54:37
+       [snip]
+       0x1fceca00 svchost.exe     1904     448 2012-01-19 14:27:08
+       0x24ef7630 winlogon.exe      388    344 2011-12-30 08:25:55
+       0x254fc060 iexplore.exe    2552    2328 2012-01-10 18:38:18
+       [snip]
+       0x6963f910 services.exe      448    352 2011-12-30 08:25:57
+       0x77ae6310 lsm.exe           472    352 2011-12-30 08:25:57
+       0x7aa9d060 sppsvc.exe        824    448 2011-12-30 08:26:14
+       [snip]
+       0x7e136540 svchost.exe       632    448 2011-12-30 08:26:01
+       0x7e1ad5c0 cmd.exe         2336     880 2012-01-20 17:54:37
+       0x7e263470 PING.EXE          788   2708 2012-03-11 09:00:03         2012-03-11 09:00:11
+       0x7e36e8e0 IPCONFIG.exe    2072    2708 2012-03-11 09:00:02         2012-03-11 09:00:02
+       0x7e8ec920 svchost.exe     1868     448 2011-12-30 07:29:10
+       [snip]
+       0x7f530800 csrss.exe         316    308 2011-12-30 08:25:45
+       0x7f55a810 iexplore.exe    2328     880 2012-01-10 18:36:48
+
+        The output shows two processes with an exit time, which means they have terminated.
+     Both ipconfig.exe and ping.exe execute for only a matter of seconds (or less), so it makes
+     sense that they would exit soon after they start. If you walk the operating system’s internal
+     list of active processes, you won’t see either process because they had both terminated
+     before the memory dump was acquired. However, by leveraging the pool tag scanning
+     technique in physical space, we were able to find evidence that can support your growing
+     theory that an attacker on the system had been performing reconnaissance against the
+     network using those two utilities.
+        This example just highlights one of the most common use cases for pool tag scanning.
+     Later chapters revisit the topic and use pool scanning to detect the presence of kernel-
+     level rootkits.
+
+     Limitations of Pool Scanning
+     The pool-scanning approach provides a powerful way to find objects without the inter-
+     vention or assistance of the target operating system. However, it does have several limita-
+     tions, which you should understand before drawing conclusions based on the results of
+     pool-scanning plugins.
+
+Non-malicious Limitations
+The following list describes limitations that are not the result of malicious tampering of
+evidence.
+
+   • Untagged pool memory: ExAllocatePoolWithTag is Microsoft’s recommended way
+     for drivers and kernel-mode components to allocate memory, but it’s not the only
+     option. A driver can also use ExAllocatePool, which is in the process of being
+     deprecated, but is still available on many versions of Windows. This API allocates
+     memory, but without a tag—leaving you no easy way to track or scan for the
+     allocations.
+   • False positives: Because the pool-scanning technique is essentially based on pat-
+     tern matching and heuristics, false positives are a possibility. This is especially
+     true when scanning the physical address space because it includes data that the
+     operating system discarded. To resolve false positives, you typically need to con-
+     sider the context of the object (where it was found), if the member values make
+     sense (this can vary per object), and if you found the object by other means such
+     as alternate lists.
+   • Large allocations: The pool tag scanning technique does not work for allocations
+     larger than 4096 bytes (see the upcoming section, “Big Page Pool”). Fortunately,
+     all executive objects are less than this size.
+
+Malicious Limitations (Anti-Forensics)
+The following list describes caveats to pool scanning that exist specifically due to anti-
+forensic attacks.
+
+   • Arbitrary tags: A driver can allocate memory using a generic, or default, tag such
+     as “Ddk “ (the last character is a space). This tag is used throughout the operat-
+     ing system and also third-party code when a tag is not specified. In other words,
+     if malicious drivers use “Ddk “ as their tag, the memory block will blend in with
+     other allocations.
+   • Decoy tags: As stated by Walters and Petroni (https://www.blackhat.com/presen-
+     tations/bh-dc-07/Walters/Paper/bh-dc-07-Walters-WP.pdf) a driver can create
+     fake (or decoy) objects that appear “life-like” to mislead investigators, effectively
+     increasing the signal-to-noise ratio.
+   • Manipulated tags: Because tags are intended for debugging purposes, they aren’t
+     critical for the stability of the operating system. Rootkits running in the kernel can
+     modify pool tags (or any other value in the _POOL_HEADER, such as the block size
+
+             and memory type) without any noticeable difference on the live machine, but the
+             manipulation prevents Volatility’s pool scanner from working properly.
+
+        You can counter most, if not all, of these anti-forensics techniques by corroborating
+     the evidence you see with other sources of data. For example, in Chapter 6 we discuss at
+     least six ways to find processes—only one of which involves pool scanning. To debunk a
+     fake TCP connection object, you should consult network packet captures or firewall logs,
+     and so on, to see if the activity really occurred.
+
+     Big Page Pool
+     As previously mentioned, the Windows kernel will try to group similarly sized alloca-
+     tions together. However, if the requested size exceeds one page (4096 bytes), the block
+     of memory is allocated from a special pool (the big page pool) that is reserved for large
+     allocations. In this case, the _POOL_HEADER, which contains the four-byte tag and exists at
+     the base address for smaller allocations, is not used at all. Thus, pool tag scanning will
+     fail because there is no tag to be found. Figure 5-4 shows the difference in memory layout
+     between two adjacent kernel allocations that are smaller than 4096 bytes and two that
+     are greater than 4096 bytes.
+
+     Two adjacent kernel allocations   Two adjacent kernel allocations
+       Both less than 4096 bytes        Both greater than 4096 bytes
+
+           _POOL_HEADER
+
+             Allocation #1                     Allocation #1
+
+           _POOL_HEADER
+                                                                         Big Page Track Tables
+
+             Allocation #2
+
+                                               Allocation #2
+
+     Figure 5-4: Large allocations lose the pool header
+
+   As you can see, _POOL_HEADER structures aren’t stored for large allocations. As a proof
+of concept, we wrote a kernel driver that hooked the ObCreateObject API and increased
+the size of allocations used to store _EPROCESS objects. As we suspected, Volatility’s psscan
+plugin failed to find the new processes because the Proc tag is nonexistent. On the bright
+side, you’re not completely out of luck; you just have to look in a different place than
+usual. For example, Figure 5-4 illustrates that big page track tables can point you directly
+to the objects in big page pools.
+
+Big Page Track Tables
+The big page track tables are significantly different from the pool track tables mentioned
+earlier in the chapter. The pool track tables ( _POOL_TRACKER_TABLE) for small memory
+blocks store statistics regarding the number of allocations and byte usage; but they don’t
+tell you the addresses of all the allocations (thus the need to scan). Big page track tables,
+on the other hand, don’t store statistics, but they include the addresses of the allocations.
+If you can find the big page track tables, they can serve as your map to locating any large
+allocations in kernel memory.
+    Unfortunately, the kernel symbol nt!PoolBigPageTable, which points to the array of
+_POOL_TRACKER_BIG_PAGES structures, (one for each large allocation), is neither exported
+nor copied to the kernel debugger data block. However, we discovered that this symbol
+can always be found at a predictable location relative to nt!PoolTrackTable (which is
+copied to the debugger data block). Thus, if you can find the pool track tables, you can
+find the big page track tables easily.
+    The following output shows the big page track table structure for 64-bit Windows 7:
+  >>> dt("_POOL_TRACKER_BIG_PAGES")
+  '_POOL_TRACKER_BIG_PAGES' (24 bytes)
+  0x0   : Va                                  ['pointer64', ['void']]
+  0x8   : Key                                 ['unsigned long']
+  0xc   : PoolType                            ['unsigned long']
+  0x10 : NumberOfBytes                        ['unsigned long long']
+
+   The Va member, which is short for virtual address, points to the base address of the
+allocation. You can also see the Key value (pool tag), PoolType (paged or nonpaged), and
+NumberOfBytes (size of the allocation). Keep in mind that although this structure stores
+the pool tag, it is in a completely different location from the allocation, which is pointed
+to by Va. For small allocations, the pool tag is contained within the allocation (recall what
+you saw in Figure 5-4).
+
+     Bigpools Plugin
+     To generate information on large kernel pool allocations in a memory dump, you can use
+     the bigpools plugin. The following command shows an example of the output:
+       $ python vol.py -f win7x64cmd.dd --profile=Win7SP0x64 bigpools
+       Volatility Foundation Volatility Framework 2.4
+       Allocation         Tag      PoolType                   NumberOfBytes
+       ------------------ -------- -------------------------- -------------
+       0xfffff8a003747000 CM31     PagedPoolCacheAligned      0x1000L
+       0xfffff8a00f9a8001 CM31     PagedPoolCacheAligned      0x1000L
+       0xfffff8a004a4f000 CM31     PagedPoolCacheAligned      0x1000L
+       0xfffff8a00861d001 CM31     PagedPoolCacheAligned      0x1000L
+       0xfffffa8002fca000 Cont     NonPagedPool               0x1000L
+       0xfffff8a00a47a001 CM53     PagedPool                  0x1000L
+       0xfffff8a00293c000 CMA?     PagedPool                  0x1000L
+       0xfffff8a00324a000 CM25     PagedPool                  0x1000L
+       [snip]
+
+        The Allocation column tells you the kernel memory address where the allocation
+     begins. If you wanted to see the contents of the region, you could dump data at that
+     address in volshell. Some resources indicate that allocations with an address that ends
+     in 1 (for example, 0xfffff8a00f9a8001) are in nonpaged memory; however, according to
+     our research, the 1 means marked as free. Thus, you can try to display those addresses,
+     but they likely won’t contain what you expect them to, based on the pool tag. For example,
+     compare a few of the CM31 blocks:
+       $ python vol.py -f win7x64cmd.dd --profile=Win7SP0x64 volshell
+       Volatility Foundation Volatility Framework 2.4
+       Current context: process System, pid=4, ppid=0 DTB=0x187000
+       Welcome to volshell! Current memory image is:
+       To get help, type 'hh()'
+       >>> db(0xfffff8a003747000, length=0x1000)
+       0xfffff8a003747000 6862 696e 00b0 1000 0010 0000 0000 0000 hbin............
+       0xfffff8a003747010 0000 0000 0000 0000 0000 0000 0000 0000 ................
+       0xfffff8a003747020 e0ff ffff 766b 0400 0400 0080 0100 0000 ....vk..........
+       0xfffff8a003747030 0400 0000 0100 0000 3134 3036 0000 0000 ........1406....
+       0xfffff8a003747040 e0ff ffff 766b 0400 0400 0080 0300 0000 ....vk..........
+       0xfffff8a003747050 0400 0000 0100 1000 3134 3039 90ae 1000 ........1409....
+       0xfffff8a003747060 e0ff ffff 766b 0400 0400 0080 0000 0000 ....vk..........
+       [snip]
+       >>> db(0xfffff8a00f9a8001, length=0x1000)
+       Memory unreadable at fffff8a00f9a8001
+       >>> db(0xfffff8a00861d001, length=0x1000)
+       0xfffff8a00861d001 0081 034d 6d53 7478 0025 0025 0042 00c0 ...MmStx.%.%.B..
+       0xfffff8a00861d011 180d 1a00 0000 00c0 0430 6b4c 0380 fac0 .........0kL....
+       0xfffff8a00861d021 0430 6b4c 0380 fac0 0430 6b4c 0380 fac0 .0kL.....0kL....
+       0xfffff8a00861d031 0430 6b4c 0380 fac0 0430 6b4c 0380 fac0 .0kL.....0kL....
+
+  0xfffff8a00861d041     0430 6b4c 0380 fac0 0430 6b4c 0380 fac0       .0kL.....0kL....
+  0xfffff8a00861d051     0430 6b4c 0380 fac0 0430 6b4c 0380 fac0       .0kL.....0kL....
+  [snip]
+
+    The first address (0xfffff8a003747000) contains hbin at the base and several instances
+of vk. As previously mentioned, the CM from CM31 stands for Configuration Manager,
+which is the registry component of the kernel. hbin and vk are the signatures for reg-
+istry HBIN blocks and individual values, respectively (see Chapter 10). The second
+­(0xfffff8a00f9a8001) and third (0xfffff8a00861d001) addresses are both marked as free,
+but there is a significant difference between the two. One is not available, perhaps because
+it’s swapped to disk—after all, it is located in paged memory. The other appears to have
+already been reallocated and overwritten because the hbin signature is gone.
+
+Exploring Big Page Pools
+On a typical system, there are thousands of allocations in the big page pool, so you may
+want to filter using the --tags option to the plugin (a comma-separated list of tags to
+find). Otherwise, if you’re just exploring, you can save the list of allocations to a text file
+and then sort based on tag frequency. For example, see the following code:
+  $ python vol.py -f win7x64cmd.dd --profile=Win7SP0x64 bigpools > bigpools.txt
+  $ awk '{print $2}' bigpools.txt | sort | uniq -c | sort -rn
+  9009 CM31
+  3142 CM53
+  2034 CM25
+  1757 PfTt : Pf Translation tables
+  1291 Cont : Contiguous physical memory allocations for device drivers
+   940 MmSt : Mm section object prototype ptes
+   540 MmAc : Mm access log buffers
+   529 CMA?
+   442 MmRe : ASLR relocation blocks
+   432 CM16
+   237 Obtb : object tables via EX handle.c
+   105 Pp
+    99 SpSy
+    78 InPa : Inet Port Assignments
+  [snip]
+
+ NOTE
+ The descriptions for the pool tags are not automatically generated by the commands
+ shown. We manually looked them up in pooltag.txt and added them to annotate the
+ output.
+
+        Based on the descriptions, you can see that data in big page pools contains some very
+     interesting artifacts—from translation tables to memory manager (Mm) page table entries
+     (PTEs) and access logs, Address Space Layout Randomization (ASLR) details, process
+     handle tables (object tables), and Internet port assignments. Interpreting the data in these
+     allocations requires an understanding of the structures and formats that the owning
+     driver uses, but knowing the descriptions and exactly where to find the blocks in memory
+     will speed up your research drastically.
+
+     Pool-Scanning Alternatives
+     Now that you’ve learned the strengths and weaknesses of pool tag scanning for memory
+     forensics, we’ll end this chapter with a quick discussion of a few alternative methods.
+
+     Dispatcher Header Scans
+     Several of the executive object types (such as processes, threads, and mutexes) are synchro-
+     nizable. That means other threads can synchronize with, or wait on, these objects to start,
+     finish, or perform another type of action. To enable this functionality, the kernel stores
+     information about the object’s current state in a substructure called _DISPATCHER_HEADER
+     that appears at the very start (i.e., offset zero) of the executive object structures. More
+     importantly, the header contains several values that are consistent across memory dumps
+     from a given version of Windows, so you can easily build a per-profile signature to find.
+
+      NOTE
+      For more information on the use of dispatcher headers for memory forensics, see
+      Andreas Schuster’s Searching for Processes and Threads in Microsoft Windows Memory
+      Dumps (http://www.dfrws.org/2006/proceedings/2-Schuster.pdf).
+
+       The following output is from a 32-bit Windows XP Service Pack 2 system:
+       >>> dt("_DISPATCHER_HEADER")
+       '_DISPATCHER_HEADER' (16 bytes)
+       0x0   : Type                               ['unsigned char']
+       0x1   : Absolute                           ['unsigned char']
+       0x2   : Size                               ['unsigned char']
+       0x3   : Inserted                           ['unsigned char']
+       0x4   : SignalState                        ['long']
+       0x8   : WaitListHead                       ['_LIST_ENTRY']
+
+   Andreas Schuster found that the Absolute and Inserted fields were always zero for
+Windows 2000, XP, and 2003 systems. The Type and Size fields were a hard-coded value
+that specifies the object type and size of the object, respectively. For example, on 32-bit
+Windows XP machines, the Type is 3 for processes, and the Size is 0x1b, making a four-
+byte signature of \x03\x00\x1b\x00. Similar to a pool tag, you can sweep through the
+memory dump looking for instances of this signature to find all _EPROCESS objects. This
+is how one of the very early memory forensics tools called PTFinder worked: http://
+computer.forensikblog.de/en/2007/11/ptfinder-version-0305.html.
+   One of the disadvantages of dispatcher header scanning is that it can only help find
+objects that are synchronizable. For example, file objects are not synchronizable, so they
+don’t have an embedded _DISPATCHER_HEADER. Thus, you cannot find _FILE_OBJECT instances
+with this method. Furthermore, starting in Windows 2003, the _DISPATCHER_HEADER struc-
+ture was expanded to 10 members instead of just 6; and the Windows 7 version has almost
+30. With that many members, it introduces uncertainty that they’ll stay consistent enough
+to build a signature.
+
+ NOTE
+ An example of a dispatcher header scanner that finds processes can be found in the
+ contrib/plugins/pspdispscan.py file in the Volatility source code. It is provided just
+ as a proof of concept and thus currently works only with 32-bit Windows XP samples.
+
+Robust Signature Scans
+Both the pool headers and dispatcher headers are nonessential to the operating system,
+which means they can be maliciously modified to defeat signature-based scanning with-
+out causing system instability. There is, however, another approach to finding objects in
+memory dumps that is resilient against such modifications. Brendan Dolan-Gavitt and
+his colleagues wrote a paper titled Robust Signatures for Kernel Data Structures (http://
+www.cc.gatech.edu/~brendan/ccs09_siggen.pdf) that describes the methodology. They
+fuzzed the operating system by changing individual members of _EPROCESS and record-
+ing which ones caused the system to crash. Those members were labeled essential. A
+signature was then built based only on the essential members.
+
+ NOTE
+ The fuzzing apparatus was based on using Volatility in write mode against physical
+ memory from Xen and VMware Server virtual machines (VMs).
+
+        An example Volatility plugin named psscan3 (http://www.cc.gatech.edu/~brendan/
+     volatility/dl/psscan3.py) was developed and distributed along with the paper. The
+     following list provides a summary of what Dolan-Gavitt and his colleagues considered
+     to be a robust signature for _EPROCESS objects.
+
+        • DTB alignment: The DirectoryTableBase must be aligned on a 32-bit boundary.
+        • Granted access flags: The GrantedAccess member must have the 0x1F07FB flags set.
+        • Pointer validity: The VadRoot, ObjectTable, ThreadListHead, and ReadyListHead
+          members must all contain valid kernel mode addresses.
+        • Working set list: The VmWorkingSetList member must not only point in kernel
+          mode but it also needs to be above 0xC0000000 (for 32-bit systems).
+        • Lock counts: The WorkingSetLock and AddressCreationLock counts must be equal
+          to 1.
+
+        Any attempt to modify these members to values outside of the specified ones would
+     result in a blue screen of death. Thus, your scanner becomes more robust against the
+     potential changes that an attacker (or malware sample) may try to make. However, this
+     technique requires a fuzzing framework and significant time to validate and test the
+     findings. For this reason, the psscan3 plugin is not currently included with the latest
+     Volatility—but you can download and use it with Volatility 1.3.
+
+     Summary
+     The Windows Object Manager plays a critical role in the creation and deletion of many
+     major artifacts, which investigators rely on analyzing (processes, files, registry keys, and
+     so on). However, the reliability of the evidence you see depends on the manner in which
+     the memory forensics framework finds and validates the data. Although a brute force
+     scan through physical memory (including the free blocks) is quite powerful, it is fragile
+     in the sense that it’s typically based on nonessential signatures. To be an effective ana-
+     lyst, you need to understand how the scanning techniques work and, consequently, how
+     attackers can evade memory forensics tools. In addition, you should grow accustomed to
+     corroborating multiple sources of evidence before drawing conclusions.

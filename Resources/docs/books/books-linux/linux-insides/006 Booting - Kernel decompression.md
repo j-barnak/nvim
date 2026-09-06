@@ -1,6 +1,6 @@
 # Kernel booting process. Part 5
 
-In the previous [part](./linux-bootstrap-4.md), we saw the transition from the [protected mode](https://en.wikipedia.org/wiki/Protected_mode) into [long mode](https://en.wikipedia.org/wiki/Long_mode), but what we have in memory is not yet the kernel image ready to run. We are still in the kernel setup code, which should decompress the kernel and pass control to it. The next step before we see the Linux kernel entrypoint is kernel decompression.
+In the previous [part](005%20Booting%20-%20Transition%20to%2064-bit%20mode.md), we saw the transition from the [protected mode](https://en.wikipedia.org/wiki/Protected_mode) into [long mode](https://en.wikipedia.org/wiki/Long_mode), but what we have in memory is not yet the kernel image ready to run. We are still in the kernel setup code, which should decompress the kernel and pass control to it. The next step before we see the Linux kernel entrypoint is kernel decompression.
 
 ## First steps in the long mode
 
@@ -35,7 +35,7 @@ The `64-bit` entrypoint starts with the same two instructions that `32-bit`:
 
 As we already know from the previous part, the first instruction clears the [direction flag](https://en.wikipedia.org/wiki/Direction_flag) bit in the [flags](https://en.wikipedia.org/wiki/FLAGS_register) register, and the second instruction disables [interrupts](https://en.wikipedia.org/wiki/Interrupt).
 
-The same as the bootloader can load the Linux kernel at the `32-bit` entrypoint instead of [16-bit entry point](linux-bootstrap-1.md#the-beginning-of-the-kernel-setup-stage), in the same way the bootloader can switch the processor into `64-bit` long mode by itself and load the kernel starting from the `64-bit` entry point. 
+The same as the bootloader can load the Linux kernel at the `32-bit` entrypoint instead of [16-bit entry point](002%20Booting%20-%20From%20bootloader%20to%20kernel.md#the-beginning-of-the-kernel-setup-stage), in the same way the bootloader can switch the processor into `64-bit` long mode by itself and load the kernel starting from the `64-bit` entry point. 
 
 The kernel executes these two instructions if the bootloader didn't perform them before transfering the control to the kernel. The `direction flag` ensures that memory copying operations proceed in the correct direction, and disabling interrupts prevents them from disrupting the kernel decompression process.
 
@@ -80,10 +80,10 @@ The next step is to compute the difference between the location the kernel was c
 	addq	%rbp, %rbx
 ```
 
-This operation is very similar to what we have seen already in the [Calculation of the kernel relocation address](./linux-bootstrap-4.md#calculation-of-the-kernel-relocation-address) section of the previous chapter.
+This operation is very similar to what we have seen already in the [Calculation of the kernel relocation address](005%20Booting%20-%20Transition%20to%2064-bit%20mode.md#calculation-of-the-kernel-relocation-address) section of the previous chapter.
 
 > [!TIP]
-> It is highly recommended to read carefully [Calculation of the kernel relocation address](./linux-bootstrap-4.md#calculation-of-the-kernel-relocation-address) before trying to understand this code.
+> It is highly recommended to read carefully [Calculation of the kernel relocation address](005%20Booting%20-%20Transition%20to%2064-bit%20mode.md#calculation-of-the-kernel-relocation-address) before trying to understand this code.
 
 This piece of code is almost a 1:1 copy of what we have seen in protected mode. If you understood it back then, you shouldn't have any problems understanding it now. The main purpose of this code is to set up the `rbp` and `ebx` registers with the base addresses where the kernel will be decompressed, and the address where the kernel image with decompressor code should be relocated for safe decompression.
 
@@ -150,7 +150,7 @@ After the new Global Descriptor Table is loaded, the next step is to load the ne
 
 The `load_stage1_idt` function is defined in [arch/x86/boot/compressed/idt_64.c](https://github.com/torvalds/linux/blob/master/arch/x86/boot/compressed/idt_64.c) and uses the `lidt` instruction to load the address of the new `Interrupt Descriptor Table`. For this moment, the `Interrupt Descriptor Table` has `NULL` entries to avoid handling the interrupts. As you can remember, the interrupts are disabled at this moment anyway. The valid interrupt handlers will be loaded after kernel relocation.
 
-The next steps after this are highly related to the setup of `5-level` paging, if it is configured using the `CONFIG_PGTABLE_LEVELS=5` kernel configuration option. This feature extends the virtual address space beyond the traditional 4-level paging scheme, but it is still relatively uncommon in practice and not essential for understanding the mainline boot flow. As mentioned in the [previous chapter](./linux-bootstrap-5.md), for clarity and focus, we'll set it aside and continue with the standard 4-level paging case.
+The next steps after this are highly related to the setup of `5-level` paging, if it is configured using the `CONFIG_PGTABLE_LEVELS=5` kernel configuration option. This feature extends the virtual address space beyond the traditional 4-level paging scheme, but it is still relatively uncommon in practice and not essential for understanding the mainline boot flow. As mentioned in the [previous chapter](006%20Booting%20-%20Kernel%20decompression.md), for clarity and focus, we'll set it aside and continue with the standard 4-level paging case.
 
 ### Kernel relocation
 
@@ -261,9 +261,9 @@ After the `Interrupt Descriptor Table` is re-loaded, the `initialize_identity_ma
 	call	initialize_identity_maps
 ```
 
-This function is defined in [arch/x86/boot/compressed/ident_map_64.c](https://github.com/torvalds/linux/blob/master/arch/x86/boot/compressed/ident_map_64.c) and clears the memory area for the top-level page table identified by the `top_level_pgt` pointer to initialize a new page table. Yes, the kernel needs to initialize page tables one more time, despite we have seen the initialization and setup of the early page tables in the [previous chapter](./linux-bootstrap-4.md#set-up-paging). The reason for "one more" page table is that if the kernel was loaded at the `64-bit` entrypoint, it uses the page table built by the bootloader. Since the kernel was relocated to a new place, the decompressor code can overwrite these page tables during decompression.
+This function is defined in [arch/x86/boot/compressed/ident_map_64.c](https://github.com/torvalds/linux/blob/master/arch/x86/boot/compressed/ident_map_64.c) and clears the memory area for the top-level page table identified by the `top_level_pgt` pointer to initialize a new page table. Yes, the kernel needs to initialize page tables one more time, despite we have seen the initialization and setup of the early page tables in the [previous chapter](005%20Booting%20-%20Transition%20to%2064-bit%20mode.md#set-up-paging). The reason for "one more" page table is that if the kernel was loaded at the `64-bit` entrypoint, it uses the page table built by the bootloader. Since the kernel was relocated to a new place, the decompressor code can overwrite these page tables during decompression.
 
-The new page table is built in a very similar way to the [previous page table](./linux-bootstrap-4.md#set-up-paging). Each [virtual address](https://en.wikipedia.org/wiki/Virtual_address_space) directly corresponds to the same [physical address](https://en.wikipedia.org/wiki/Physical_address). That is why it is called the identity mapping.
+The new page table is built in a very similar way to the [previous page table](005%20Booting%20-%20Transition%20to%2064-bit%20mode.md#set-up-paging). Each [virtual address](https://en.wikipedia.org/wiki/Virtual_address_space) directly corresponds to the same [physical address](https://en.wikipedia.org/wiki/Physical_address). That is why it is called the identity mapping.
 
 Now let's take a look at the implementation of this function. It starts by initializing an instance of the `x86_mapping_info` structure called `mapping_info`:
 
@@ -363,7 +363,7 @@ We will skip all these initialization steps as we already saw them in the previo
 
 The main reason to set up the heap borders is that the kernel decompressor code uses the heap intensively during decompression.
 
-After the initialization of the heap, the kernel calls the `choose_random_location` function from [arch/x86/boot/compressed/kaslr.c](https://github.com/torvalds/linux/blob/master/arch/x86/boot/compressed/kaslr.c). This function chooses the random location in memory to write the decompressed kernel to. This function performs work only if the address randomization is enabled. At this point, we will skip it and move to the next step, as it is not the most crucial point in the kernel decompression. If you are interested in what this function does, you can find more information in the [next chapter](./linux-bootstrap-6.md).
+After the initialization of the heap, the kernel calls the `choose_random_location` function from [arch/x86/boot/compressed/kaslr.c](https://github.com/torvalds/linux/blob/master/arch/x86/boot/compressed/kaslr.c). This function chooses the random location in memory to write the decompressed kernel to. This function performs work only if the address randomization is enabled. At this point, we will skip it and move to the next step, as it is not the most crucial point in the kernel decompression. If you are interested in what this function does, you can find more information in the [next chapter](007%20Booting%20-%20Kernel%20load%20address%20randomization.md).
 
 Now let's get back to the `extract_kernel` function. Since we assume that the kernel address randomization is disabled, the address where the kernel image will be decompressed is stored in the `output` parameter without any change. The value from this variable is obtained from the `rbp` register as calculated in the previous steps.
 
@@ -499,4 +499,4 @@ Here is the list of the links that you can find useful when reading this chapter
 - [Flat memory model](https://en.wikipedia.org/wiki/Flat_memory_model)
 - [Address space layout randomization](https://en.wikipedia.org/wiki/Address_space_layout_randomization)
 - [ELF](https://en.wikipedia.org/wiki/Executable_and_Linkable_Format)
-- [Previous part](linux-bootstrap-4.md)
+- [Previous part](005%20Booting%20-%20Transition%20to%2064-bit%20mode.md)

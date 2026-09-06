@@ -1,6 +1,6 @@
 # Kernel booting process. Part 6
 
-In the [previous part](./linux-bootstrap-5.md), we finally left the setup code and reached the Linux kernel itself. We explored the last steps of the early boot process - from the kernel decompression to the hand-off to the Linux kernel entrypoint (the `startup_64` function). You may think this is the end of the set of posts about the Linux kernel booting process, but I'd like to come back one more time to the early setup code and look at one more important part of it - `KASLR` or Kernel Address Space Layout Randomization.
+In the [previous part](006%20Booting%20-%20Kernel%20decompression.md), we finally left the setup code and reached the Linux kernel itself. We explored the last steps of the early boot process - from the kernel decompression to the hand-off to the Linux kernel entrypoint (the `startup_64` function). You may think this is the end of the set of posts about the Linux kernel booting process, but I'd like to come back one more time to the early setup code and look at one more important part of it - `KASLR` or Kernel Address Space Layout Randomization.
 
 As you can remember from the previous parts, the entry point of the Linux kernel is the `startup_64` function defined in [arch/x86/kernel/head_64.S](https://github.com/torvalds/linux/blob/master/arch/x86/kernel/head_64.S). In normal cases, the kernel is loaded at the fixed, well-known address defined by the value of the `CONFIG_PHYSICAL_START` configuration option. The description and the default value of this option are defined in [arch/x86/Kconfig](https://github.com/torvalds/linux/blob/master/arch/x86/Kconfig):
 
@@ -23,7 +23,7 @@ In this part, we will look at how this mechanism works.
 
 Before we will start to investigate kernel's code, let's remember where we were and what we have seen. 
 
-In the [previous part](linux-bootstrap-5.md), we followed the kernel decompression code and transition to [long mode](https://en.wikipedia.org/wiki/Long_mode). The kernel's decompressor entrypoint is the `extract_kernel` function defined in [arch/x86/boot/compressed/misc.c](https://github.com/torvalds/linux/blob/master/arch/x86/boot/compressed/misc.c). At this point, the kernel image is about to be decompressed into the specific location in memory.
+In the [previous part](006%20Booting%20-%20Kernel%20decompression.md), we followed the kernel decompression code and transition to [long mode](https://en.wikipedia.org/wiki/Long_mode). The kernel's decompressor entrypoint is the `extract_kernel` function defined in [arch/x86/boot/compressed/misc.c](https://github.com/torvalds/linux/blob/master/arch/x86/boot/compressed/misc.c). At this point, the kernel image is about to be decompressed into the specific location in memory.
 
 Before the kernel's decompressor actually begins to decompress the kernel image, it needs to decide where that image should be placed in memory. While we were going through the kernel's decompression code in the `extract_kernel`, we skipped the next function call:
 
@@ -242,7 +242,7 @@ The whole process of finding a suitable random address to load the kernel image 
 - Find a random physical address
 - Find a random virtual address
 
-You can remember that at this point, the kernel uses identity-mapped page tables. Having this in mind, you can ask why two different addresses are calculated if there is a `1:1` mapping anyway. The answer is that these two random addresses have different purposes. Physical address determines where the kernel image is loaded in memory. Virtual address determines the kernel's address in the virtual address space. Despite the decompressor code now running with identity mapping, all the symbol references in the kernel image are patched during the relocation process with a random virtual address and offset. If it turns out that there is no mapping between the newly chosen physical and virtual addresses in the current page tables, the [page fault](https://en.wikipedia.org/wiki/Page_fault) interrupt handler builds a new identity mapping. You can find more information in the [previous chapter](./linux-bootstrap-5.md#the-last-actions-before-the-kernel-decompression).
+You can remember that at this point, the kernel uses identity-mapped page tables. Having this in mind, you can ask why two different addresses are calculated if there is a `1:1` mapping anyway. The answer is that these two random addresses have different purposes. Physical address determines where the kernel image is loaded in memory. Virtual address determines the kernel's address in the virtual address space. Despite the decompressor code now running with identity mapping, all the symbol references in the kernel image are patched during the relocation process with a random virtual address and offset. If it turns out that there is no mapping between the newly chosen physical and virtual addresses in the current page tables, the [page fault](https://en.wikipedia.org/wiki/Page_fault) interrupt handler builds a new identity mapping. You can find more information in the [previous chapter](006%20Booting%20-%20Kernel%20decompression.md#the-last-actions-before-the-kernel-decompression).
 
 Before generating any random offset, the decompressor determines the lowest possible base address that the kernel can use:
 
@@ -419,4 +419,4 @@ The next chapter will be about kernel initialization and we will study the first
 - [e820](https://en.wikipedia.org/wiki/E820)
 - [Time Stamp Counter](https://en.wikipedia.org/wiki/Time_Stamp_Counter)
 - [rdrand instruction](https://en.wikipedia.org/wiki/RdRand)
-- [Previous part](linux-bootstrap-5.md)
+- [Previous part](006%20Booting%20-%20Kernel%20decompression.md)

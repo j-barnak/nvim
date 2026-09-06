@@ -1,0 +1,1219 @@
+7                       Process Memory
+                        Internals
+
+E     ven after years of experience digging through RAM, the amount of evidence you
+      can find in process memory never ceases to amaze us. Although artifacts in kernel
+memory, such as an _EPROCESS, can provide useful details, the actual memory that the
+process uses is highly concentrated with data that can reveal valuable information about
+the process’ current state. This data includes, but is not limited to, all content processed
+by the application (received via the network or interactive user input); mapped files;
+shared libraries; passwords; credit card transactions (for point-of-sale [POS] systems);
+and private structures for e‑mail, documents, and chat logs.
+   This chapter analyzes the various application programming interfaces (APIs) used
+for allocating the different data types and examines how to enumerate process memory
+regions via memory forensics. In doing so, you’ll see how to leverage characteristics (such
+as permissions, flags, and sizes) of memory ranges to deduce what kind of data they con-
+tain. You’ll also learn the tools and techniques for extracting all process memory (at least
+what’s addressable and memory-resident) or individual ranges to a file, which enables
+you to further analyze it with external tools such as virus scanners, disassemblers, and
+so on. Finally, we present several ways to search for patterns within process memory,
+involving both Volatility’s APIs and Yara signatures.
+
+What’s in Process Memory?
+Figure 7-1 shows a high-level diagram of process memory. Each process has its own private
+view of memory in this range. Because the upper bounds of the range can vary between
+operating systems, we simply represented the highest value as MmHighestUserAddress. This
+is a symbol in the NT module that you can query with a debugger or inside Volatility’s
+­ olshell plugin. Generally speaking, it will be 0x7FFEFFFF on 32-bit systems without
+v
+the /3GB boot switch, 0xBFFEFFFF on 32-bit systems with the /3GB boot switch, and
+0x7FFFFFEFFFF on 64-bit systems. Of course, not every process (or any process for that
+
+     matter) fills up this entire memory space, but even if a small percentage of it is used, that’s
+     still a significant amount of data.
+
+                               MmHighestUserAddress
+          Dynamic DLLs
+       Environment variables
+               PEB
+
+           Process heap
+
+          Thread 1 stack
+          Thread 2 stack
+
+          Mapped file(s)
+         Application data
+              ........
+
+            Executable
+                               0
+
+     Figure 7-1: A high-level diagram of the typical
+     contents of process memory
+
+     Address Space Layout Details
+     We’ll briefly describe the ranges labeled in the figure, from top to bottom. However, it’s
+     important to note that the positions of the ranges are not constant, especially on systems
+     that leverage address space layout randomization (ASLR). In other words, the thread
+     stacks can exist below or above the process executable, or the ranges containing mapped
+     files can be interspersed throughout the entire process space, not gathered contiguously
+     as the diagram shows. You’ll also be learning about each of these components in greater
+     detail throughout this chapter and the next:
+
+         • Dynamic linked libraries (DLLs): This area represents shared libraries (DLLs) that
+           were loaded into the address space, either intentionally by the process or forcefully
+           through library injection.
+         • Environment variables: This range of memory stores the process’ environment
+           variables, such as its executable paths, temporary directories, home folders, and
+           so on.
+         • Process Environment Block (PEB): An extremely useful structure that tells you
+           where to find several of the other items in this list, including the DLLs, heaps, and
+
+     environment variables. It also contains the process’ command line arguments, its
+     current working directory, and its standard handles.
+   • Process heaps: Where you can find a majority of the dynamic input that the process
+     receives. For example, variable-length text that you type into e‑mail or documents
+     is often placed on the heap, as is data sent or received over network sockets.
+   • Thread stacks: Each thread has a dedicated range of process memory set aside for
+     its runtime stack. This is where you can find function arguments, return addresses
+     (allowing you to reconstruct call history), and local variables.
+   • Mapped files and application data: This item is left intentionally vague because
+     the content really depends on the process. Mapped files represent content from files
+     on disk, which could be configuration data, documents, and so on. Application data
+     is anything the process needs to perform its intended duties.
+   • Executable: The process executable contains the primary body of code and read/
+     write variables for the application. This data may be compressed or encrypted on
+     disk, but once loaded into memory, it unpacks, enabling you to dump plain-text
+     code back to disk.
+
+ NOTE
+ To query the highest user address with Microsoft’s debugger, type the following:
+    kd> dq nt!MmHighestUserAddress L1
+    fffff802`821da040 000007ff`fffeffff
+
+ To get the same value from a memory dump with Volatility, you can use these v­ olshell
+ commands:
+    >>> kdbg = win32.tasks.get_kdbg(addrspace())
+    >>> addr = kdbg.MmHighestUserAddress.dereference_as("address")
+    >>> hex(addr)
+    '0x7fffffeffffL'
+
+ The highest address is 0x7FFFFFEFFFF on this 64-bit system, whether you view it from
+ a debugger or Volatility.
+
+Memory Allocation APIs
+Figure 7-2 shows a diagram of APIs used for allocating process memory and how the
+functions relate to each other. As with many components of the operating system, various
+high-level, abstracted interfaces sit on top of the native APIs. This model provides quite
+a bit of flexibility to programmers, along with the capability for subsystems such as the
+
+     heap manager to exist in the middle and help ensure that allocations and deallocations
+     of small memory blocks occur efficiently. Functions that call one another in this manner
+     are connected with arrows.
+
+                         Heap creation                           Heap-based APIs
+                          kernel32.dll                    msvcrt.dll            msvcrt.dll
+        Non-heap         HeapCreate()                     C++ new               malloc()
+        based APIs
+       kernel32.dll                  kernel32.dll       kernel32.dll         kernel32.dll
+       VirtualAlloc()                LocalAlloc()       GlobalAlloc()        HeapAlloc()
+
+        kernel32.dll              ntdll.dll                ntdll.dll
+      VirtualAllocEx()        RtlCreateHeap()         RtlAllocateHeap()
+
+                                                               User mode APIs
+
+                                  ntdll.dll
+                                                               User mode Native APIs
+                         NtAllocateVirtualMemory()
+
+                                ntoskrnl.exe
+                                                               Kernel mode APIs
+                         NtAllocateVirtualMemory()
+
+     Figure 7-2: A diagram showing the relationship of Windows API calls used to allocate process
+     memory
+
+        We provide this diagram of APIs to help visualize how all functions lead to
+     NtAllocateVirtualMemory in the end. Students in our training class often ask the dif-
+     ference between the C++ new function and APIs such as VirtualAlloc. As shown in the
+     diagram, they both result in a call to NtAllocateVirtualMemory; however, new goes through
+     HeapAlloc first, which means the requested memory is allocated from one of the process’
+     existing heaps. This is useful from a theoretical perspective (to become more familiar with
+     memory internals) and also from a forensics standpoint. For example, if you see malware
+     using new, and you want to hunt down its contents after the fact, you can focus on heap
+     segments rather than all of process memory.
+        Generally, the APIs in the diagram differ as discussed in the following sections.
+
+     Permissions
+     Only a few of the APIs allow the programmer full control over permissions for the allo-
+     cated memory. For example, VirtualAlloc enables you to specify whether the memory
+     should be no-access, readable, writeable, executable, guarded, or a combination thereof.
+     On the other hand, heaps are always readable and writeable—and there’s no way to turn
+
+that off. You can, however, control whether data on the heap is executable by supplying
+the HEAP_CREATE_ENABLE_EXECUTE parameter to HeapCreate. Alas, this is a dangerous option
+because it facilitates heap sprays—one of the offensive techniques that Data Execution
+Prevention (DEP) aims to prevent.
+
+Scope and Flexibility
+VirtualAllocEx is the only Windows API function in the diagram that allows one process
+to allocate memory for another process. The Ex in the name stands for Extra because the
+function takes one additional parameter that VirtualAlloc lacks—an open handle to
+the target process. You frequently see this used as a precursor to code injection because
+malware needs to create space in the victim process.
+   These two virtual allocation functions are also the only ones that allow the caller to
+reserve memory (that is, set it aside) before committing it. This allows applications to
+“save” a large region of virtually contiguous memory for later use, without tying up
+the underlying physical pages in the meantime. For more information, see Reserving
+and Committing Memory: http://msdn.microsoft.com/en-us/library/windows/desktop/
+aa366803(v=vs.85).aspx.
+
+ NOTE
+ Once memory ranges are allocated with VirtualAlloc(Ex), programs on the running
+ system can enumerate them with VirtualQueryEx. This is how Dexter and BlackPOS
+ (the Target breach POS malware) identified the available ranges before scanning for
+ credit card numbers (see http://volatility-labs.blogspot.com/2014/01/comparing-
+ dexter-and-blackpos-target.html).
+
+Enumerating Process Memory
+The following list describes a few sources of process memory that you can use to enumer-
+ate memory regions with forensics tools.
+
+   • Page tables: Chapter 1 introduced page tables for a few of the most popular archi-
+     tectures (x86, x64). These are CPU-specific data structures. You can leverage page
+     tables to map virtual addresses in process memory to physical offsets in RAM,
+     determine what pages are swapped to disk, and analyze the hardware-based per-
+     missions applied to the pages.
+   • Virtual address descriptors (VADs): VADs are structures defined by Windows to
+     track reserved or committed, virtually contiguous collections of pages. For example,
+
+          if a page is 4KB and a process commits 10 pages at the same time, a VAD is created
+          in kernel memory that describes the 40KB range of memory. If the region contains
+          a memory-mapped file, the VAD also stores information about the file’s path.
+        • Working set list: A process’ working set describes the collection of recently accessed
+          pages in virtual memory that are present in physical memory (not swapped to disk).
+          It can come in handy for debugging purposes or for cross-referencing with other
+          sources of process memory, but we don’t typically use it for forensics. Unlike page
+          tables, working sets never contain references to nonpageable memory or large
+          pages, so you can’t rely on them to provide a comprehensive list of pages acces-
+          sible to a process. Furthermore, working sets can be emptied on demand (see the
+          EmptyWorkingSet API).
+        • PFN database: Windows uses the PFN database to track the state of each page in
+          physical memory, which can give you a unique view of how memory is being used
+          because page tables, VADs, and working sets all focus on virtual memory. The so-
+          called database is actually just an array of _MMPFN structures that you can access from
+          the kernel’s debugger data block (_KDEBUGGER_DATA64.MmPfnDatabase). For more infor-
+          mation, see Mining the PFN Database for Malware Artifacts, by George Garner: http://
+          volatility-labs.blogspot.com/2012/10/omfw-2012-mining-pfn-database-for.html.
+
+        The reason we leverage various sources of information is because they can both comple-
+     ment and contradict each other. For example, page tables store the authoritative hardware
+     access protections, whereas VADs contain names of mapped files. To get as much informa-
+     tion as possible, you have to query both sources. On the other hand, if malware unlinks
+     a VAD node from the tree to try and hide a memory range, the corresponding page table
+     entries still exist—so you can detect a “hole” in process memory. Likewise, as Garner’s
+     presentation pointed out, the top-level frames in the PFN database entries contain back
+     references to owning processes. Thus, regardless of how well an _EPROCESS is hidden, you
+     can potentially find it, and its memory, by looking in the database.
+
+     Process Page Tables
+     Between Chapter 1 and the previous summary, you should now have a general under-
+     standing of the role that page tables play in memory management. So you can jump right
+     into some analysis scenarios to become familiar with actually using page tables in your
+     investigations.
+
+     Exploring Process Memory
+     The memmap and memdump plugins enable you to list and extract all pages accessible to a
+     process. In this case, accessible includes kernel mode addresses because even threads that
+
+start in user memory transition into kernel memory when system APIs are called. Thus,
+although you may not expect to see kernel addresses in a map of process memory, it is
+not an error.
+   Figure 7-3 shows the scope of data that these plugins report. Notice the large white
+gaps that represent free or reserved ranges. You can also see small holes in committed
+regions, indicating pages that are not memory-resident due to swapping.
+
+ Kernel Memory        Driver
+
+                      Driver
+
+                       DLL
+                       DLL
+                       DLL
+                                   memdump
+                       Exe
+Process Memory
+                   Injected Code                    All
+                                                 pages
+                                                 (single
+                       Heap
+                                                   file)
+
+                       Stack
+
+Figure 7-3: A diagram showing the memdump plugin acquires all
+committed pages accessible to a process
+
+  Here’s an example of how the memmap output appears:
+  $ python vol.py -f memory.dmp --profile=Win7SP0x64 memmap –p 864
+
+  Volatility Foundation Volatility Framework 2.4
+  winlogon.exe pid:    864
+
+  Virtual            Physical                         Size     DumpFileOffset
+  ------------------ ------------------ ------------------ ------------------
+  0x0000000000010000 0x0000000151162000             0x1000                0x0
+  0x0000000000020000 0x0000000158de3000             0x1000             0x1000
+  0x0000000000021000 0x0000000158c64000             0x1000             0x2000
+  0x0000000000022000 0x0000000158d65000             0x1000             0x3000
+  0x0000000000023000 0x0000000158de6000             0x1000             0x4000
+  0x0000000000024000 0x0000000158d67000             0x1000             0x5000
+  [snip]
+  0x000000007efe3000 0x000000015200c000             0x1000           0x29f000
+  0x000000007efe4000 0x000000015208d000             0x1000           0x2a0000
+
+       0x000000007ffe0000 0x00000000001e6000                 0x1000            0x2a1000
+       0x00000000ff4c0000 0x000000015170a000                 0x1000            0x2a2000
+       0x00000000ff4c1000 0x0000000151b77000                 0x1000            0x2a3000
+       [snip]
+       0xfffff80000bab000 0x0000000000bab000                 0x1000            0xae4000
+       0xfffff80000bac000 0x0000000000bac000                 0x1000            0xae5000
+       0xfffff80002800000 0x0000000002800000               0x200000            0xae6000
+       0xfffff80002a00000 0x0000000002a00000               0x200000            0xce6000
+       0xfffff80002c00000 0x0000000002c00000               0x200000            0xee6000
+       0xfffff80002e00000 0x0000000002e00000               0x200000           0x10e6000
+       0xfffff80003c7a000 0x0000000003c7a000                 0x1000           0x12e6000
+       [snip]
+
+       Note the following points about this plugin’s output:
+
+        • Virtual addresses 0x1000 and 0x2000 map to physical offsets 0x151162000 and
+           0x158de3000, respectively. This is further proof that virtually contiguous pages
+           are not contiguous in physical memory.
+        • The virtual address 0x7ffe0000 is the KUSER_SHARED_DATA region—a block of mem-
+          ory created by the kernel and shared with all processes. The value of 0x7ffe0000 is
+          hardcoded into Windows, so it does not change per system. If you used memmap on
+          other processes, you’d see that they all have an identical mapping. This is one way
+          to enumerate shared pages (see the “Detecting Shared Pages” section of Chapter
+          17 for another example).
+        • There is a big gap after the KUSER_SHARED_DATA region. No other pages are avail-
+          able until 0xff4c0000. Those virtual addresses are either not committed or they’re
+          swapped.
+        • Although the system’s default page size is 4KB (0x1000 bytes hex), you can see a
+          few pages of size 0x200000, which is 2MB. These are Page Size Entry (PSE) pages.
+
+        Another key point about the memmap output is the DumpFileOffset column on the right.
+     This value specifies the offset of the corresponding page in the file produced by the
+     memdump plugin. Because process address spaces are sparse—holes or gaps exist between
+     available pages—the output file is also sparse. For example, the data at virtual address
+     0xff4c1000 maps to physical offset 0x151b77000 (5.2GB), but your output file for this pro-
+     cess will be nowhere near that large. Thus, the DumpFileOffset column tells you where
+     to find the contents of 0xff4c1000 in your output file (0x2a3000). Here’s an example of
+     using the memdump plugin:
+       $ python vol.py -f memory.dmp --profile=Win7SP1x64
+             memdump -p 864 -D OUTDIR
+
+       Volatility Foundation Volatility Framework 2.4
+       ************************************************************************
+
+  Writing winlogon.exe [     864] to 864.dmp
+
+  $ ls -alh OUTDIR/864.dmp
+  -rw-r--r-- 1 michael staff       434M Mar 14 14:51 864.dmp
+
+   As you can see, the resulting file (864.dmp) is 434MB. If you use volshell to view the
+contents of virtual address 0xff4c1000, you should be able to match it up with the data
+at offset 0x2a3000 of the 864.dmp file. Here’s a quick sanity check:
+  $ python vol.py -f memory.dmp --profile=Win7SP1x64 volshell -p 864
+  Volatility Foundation Volatility Framework 2.4
+  Current context: process winlogon.exe, pid=864, ppid=388 DTB=0x15140b000
+  To get help, type 'hh()'
+  >>> db(0xff4c1000)
+  0xff4c1000 483b 0de9 3205 000f 8517 4301 0048 c1c1    H;..2.....C..H..
+  0xff4c1010 1066 f7c1 ffff 0f85 0443 0100 c200 0090    .f.......C......
+  0xff4c1020 9090 9090 9090 9090 9090 9090 9090 9090    ................
+  0xff4c1030 488b c453 4883 ec70 33db 4885 c94c 8d40    H..SH..p3.H..L.@
+  0xff4c1040 180f 95c3 4883 c9ff ba08 0000 00ff 1535    ....H..........5
+  0xff4c1050 f303 0085 c078 4848 8b8c 2490 0000 0041    .....xHH..$....A
+  0xff4c1060 b938 0000 0048 8d84 2480 0000 0041 8d51    .8...H..$....A.Q
+  >>> quit()
+
+  $ xxd -s 0x2a3000 864.dmp
+  02a3000: 483b 0de9 3205 000f 8517 4301 0048 c1c1      H;..2.....C..H..
+  02a3010: 1066 f7c1 ffff 0f85 0443 0100 c200 0090      .f.......C......
+  02a3020: 9090 9090 9090 9090 9090 9090 9090 9090      ................
+  02a3030: 488b c453 4883 ec70 33db 4885 c94c 8d40      H..SH..p3.H..L.@
+  02a3040: 180f 95c3 4883 c9ff ba08 0000 00ff 1535      ....H..........5
+  02a3050: f303 0085 c078 4848 8b8c 2490 0000 0041      .....xHH..$....A
+  02a3060: b938 0000 0048 8d84 2480 0000 0041 8d51      .8...H..$....A.Q
+
+   At this point, you should be able to determine which pages are accessible to a process
+and where they map to in physical memory. You know how to dump the available mem-
+ory to a single file on disk, which you can process with external tools such as antivirus
+scanners. The one thing you’re missing is the ability to associate addresses in virtual or
+physical memory with names of mapped files, DLLs, or executables occupying that space.
+For example, if your scanner tells you it found a known bad signature at offset 0x2a3030
+of 864.dmp, you might run into trouble trying to further classify the data. This is where
+VADs come in handy, which we’ll discuss next.
+
+Virtual Address Descriptors
+A process’ VAD tree describes the layout of its memory segments at a slightly higher level
+than the page tables. The operating system, not the CPU, defines and maintains these
+data structures. Thus, the OS can populate the VAD nodes with information about the
+underlying memory ranges that the CPU doesn’t necessarily care about. For example,
+
+     VADs contain the names of memory-mapped files, the total number of pages in the region,
+     the initial protection (read, write, execute), and several other flags that can tell you a lot
+     about what type of data the regions contain.
+        As shown in Figure 7-4, the VAD is a self-balancing binary tree (see Brendan Dolan-
+     Gavitt’s The VAD Tree: A Process-Eye View of Physical Memory at http://www.dfrws.org/2007/
+     proceedings/p62-dolan-gavitt.pdf). Each node in the tree represents one range in process
+     virtual memory. A node that describes a memory range lower than its parent appears on
+     the left, and a node that describes a higher range appears on the right. This schema makes
+     searching, adding, and removing more efficient than a single- or doubly-linked list.
+
+                                                                              Vad
+                                                                       00090000 – 00091fff
+
+                                                    VadS                      Vad
+                                              00040000 – 0007ffff     0010a0000 – 0001affff
+
+                          VadS                       Vad                      VadS
+                    00020000 – 00020fff       00080000 – 00084fff       000a0000 – 0019ffff
+
+             VadS                      VadS                                   Vad
+       00010000 – 00010fff       00030000 – 0003fff                    0001c0000 – 00203fff
+
+     Figure 7-4: A graph produced by the vadtree plugin color codes process memory ranges according
+     to their contents.
+
+       This diagram was produced by Volatility’s vadtree plugin with the --render=dot
+     option, which is discussed more in the next few pages. Besides drawing the relationships
+     between VAD nodes, it also color codes them according to their contents. For example,
+     process heaps are red, thread stacks are green, mapped files are yellow, and DLLs are gray,
+     which enables you to easily visualize what type of data is mapped into process memory.
+
+     VAD Structures
+     For each process, _EPROCESS.VadRoot points to the root of the VAD tree. Although the name
+     of this member is consistent across all versions of Windows from XP to 8.1, the type of the
+     member has frequently changed, as have the names of the VAD nodes. The differences are
+     shown in Table 7-1. For example, on Windows XP and 2003 Server, VadRoot pointed to an
+     _MMVAD_SHORT, _MMVAD, or _MMVAD_LONG. The kernel decides exactly what structure to create
+     based on the API used for allocation and the parameters passed to the API. Together, this
+     information is enough to derive the intended purpose of the memory range—whether it
+
+will store a mapped file, DLL, or just a private allocation. Each node has a LeftChild and
+RightChild, which direct you down the various paths in the tree.
+    As you can see, starting in Vista, VadRoot was redesigned to be an _MM_AVL_TABLE, and
+it changed again in Windows 8.1 to an _RTL_AVL_TREE. Along the way, the nodes also were
+redesigned three times. However, despite the seemingly drastic changes, the VAD has
+always remained a tree, and the algorithms for enumerating the nodes have remained
+quite similar. In fact, as hinted at in Table 7-1, the different node names are essentially
+just aliases to the original _MMVAD[_SHORT,_LONG] structures from XP. When you analyze
+VAD trees with Volatility, these changes are handled transparently.
+
+Table 7-1: Different VAD Structures per OS Version
+
+  Operating System            VadRoot                Node
+
+  Windows XP                  Pointer to a node      _MMVAD_SHORT, _MMVAD, _MMVAD_LONG
+
+  Windows 2003 Server         Same as XP             Same as XP
+
+  Windows Vista               _MM_AVL_TABLE          _MMADDRESS_NODE (alias)
+
+  Windows 2008 Server         Same as Vista          Same as Vista
+
+  Windows 7                   Same as Vista          Same as Vista
+
+  Windows 8, 2012             Same as Vista          _MM_AVL_NODE (alias)
+
+  Windows 8.1, 2012R2         _RTL_AVL_TREE          _RTL_BALANCED_NODE (alias)
+
+   Here are the relevant structures from a 64–bit Windows 7 machine. You can see the
+_MM_AVL_TABLE has a BalancedRoot member, which is an _MMADDRESS_NODE. Each node has
+a set of pointers to its child nodes and a StartingVpn and EndingVpn. From these virtual
+page numbers (VPNs), you can derive the addresses of the first and last pages in the
+target process’ virtual memory. We said derive because the VPNs are page numbers, not
+addresses. To get the address, you have to multiply the page number by the size of a page.
+   >>> dt("_MM_AVL_TABLE")
+   '_MM_AVL_TABLE' (64 bytes)
+   0x0    : BalancedRoot                   ['_MMADDRESS_NODE']
+   0x28 : DepthOfTree                      ['BitField', {'end_bit': 5,
+       'start_bit': 0, 'native_type': 'unsigned long long'}]
+   0x28 : NumberGenericTableElements       ['BitField', {'end_bit': 64,
+       'start_bit': 8, 'native_type': 'unsigned long long'}]
+   0x28 : Unused                           ['BitField', {'end_bit': 8,
+       'start_bit': 5, 'native_type': 'unsigned long long'}]
+   0x30 : NodeHint                         ['pointer64', ['void']]
+   0x38 : NodeFreeHint                     ['pointer64', ['void']]
+
+   >>> dt("_MMADDRESS_NODE")
+
+       '_MMADDRESS_NODE' (40 bytes)
+       -0xc : Tag                                 ['String', {'length': 4}]
+       0x0   : u1                                 ['__unnamed_15cd']
+       0x8   : LeftChild                          ['pointer64', ['_MMADDRESS_NODE']]
+       0x10 : RightChild                          ['pointer64', ['_MMADDRESS_NODE']]
+       0x18 : StartingVpn                         ['unsigned long long']
+       0x20 : EndingVpn                           ['unsigned long long']
+
+        Table 7-1 labels _MMADDRESS_NODE as an alias because it is really one of the _MMVAD*
+     structures. Notice in the following listings that the short node ( _MMVAD_SHORT) starts with
+     the exact same members as _MMADDRESS_NODE. Likewise, the regular node ( _MMVAD) and
+     long node ( _MMVAD_LONG) build on top of the smaller structures, but include additional
+     members at the end. In particular, they add the Subsection, which the OS uses to track
+     information on files or DLLs mapped into the region:
+       >>> dt("_MMVAD_SHORT")
+       '_MMVAD_SHORT' (64 bytes)
+       -0xc : Tag                                 ['String', {'length': 4}]
+       0x0   : u1                                 ['__unnamed_15bf']
+       0x8   : LeftChild                          ['pointer64', ['_MMVAD']]
+       0x10 : RightChild                          ['pointer64', ['_MMVAD']]
+       0x18 : StartingVpn                         ['unsigned long long']
+       0x20 : EndingVpn                           ['unsigned long long']
+       0x28 : u                                   ['__unnamed_15c2']
+       0x30 : PushLock                            ['_EX_PUSH_LOCK']
+       0x38 : u5                                  ['__unnamed_15c5']
+
+       >>> dt("_MMVAD")
+       '_MMVAD' (120 bytes)
+       -0xc : Tag                                 ['String', {'length': 4}]
+       0x0   : u1                                 ['__unnamed_15bf']
+       0x8   : LeftChild                          ['pointer64', ['_MMVAD']]
+       0x10 : RightChild                          ['pointer64', ['_MMVAD']]
+       0x18 : StartingVpn                         ['unsigned long long']
+       0x20 : EndingVpn                           ['unsigned long long']
+       0x28 : u                                   ['__unnamed_15c2']
+       0x30 : PushLock                            ['_EX_PUSH_LOCK']
+       0x38 : u5                                  ['__unnamed_15c5']
+       0x40 : u2                                  ['__unnamed_15d2']
+       0x48 : MappedSubsection                    ['pointer64', ['_MSUBSECTION']]
+       0x48 : Subsection                          ['pointer64', ['_SUBSECTION']]
+       0x50 : FirstPrototypePte                   ['pointer64', ['_MMPTE']]
+       0x58 : LastContiguousPte                   ['pointer64', ['_MMPTE']]
+       0x60 : ViewLinks                           ['_LIST_ENTRY']
+       0x70 : VadsProcess                         ['pointer64', ['_EPROCESS']]
+
+       >>> dt("_MMVAD_LONG")
+       '_MMVAD_LONG' (144 bytes)
+       -0xc : Tag                                 ['String', {'length': 4}]
+       0x0   : u1                                 ['__unnamed_15bf']
+
+   0x8    : LeftChild                           ['pointer64', ['_MMVAD']]
+   0x10   : RightChild                          ['pointer64', ['_MMVAD']]
+   0x18   : StartingVpn                         ['unsigned long long']
+   0x20   : EndingVpn                           ['unsigned long long']
+   0x28   : u                                   ['__unnamed_15c2']
+   0x30   : PushLock                            ['_EX_PUSH_LOCK']
+   0x38   : u5                                  ['__unnamed_15c5']
+   0x40   : u2                                  ['__unnamed_15d2']
+   0x48   : Subsection                          ['pointer64', ['_SUBSECTION']]
+   0x50   : FirstPrototypePte                   ['pointer64', ['_MMPTE']]
+   0x58   : LastContiguousPte                   ['pointer64', ['_MMPTE']]
+   0x60   : ViewLinks                           ['_LIST_ENTRY']
+   0x70   : VadsProcess                         ['pointer64', ['_EPROCESS']]
+   0x78   : u3                                  ['__unnamed_1c7f']
+   0x88   : u4                                  ['__unnamed_1c85']
+
+    This discussion should help you begin to understand how you can classify the potential
+purpose of a memory range based on the node type. For example, a short node does not
+have a Subsection, thus it cannot possibly store a mapped file. On the other hand, shell
+code that gets injected into a process never needs to exist on disk. Thus, it won’t be backed
+by a file. As a result, if you’re hunting for code injection, you can probably ignore the regu-
+lar and long nodes because the OS would not typically select one of the larger structures
+if the extra members they provide would never get used—it would be wasteful to do so.
+
+VAD Tags
+After reading the previous discussions, you might wonder how Volatility determines
+which of the three _MMVAD* structures is aliased by an _MMADDRESS_NODE. The answer lies
+with the Tag member of the _MMVAD* structures. Notice that the offset of this member is
+-0xc (or 12 bytes behind the start of the structure) for 64-bit platforms. In typical program-
+ming languages, such as C and C++, you never see members at negative offsets. Indeed,
+this is a convenient hack allowed when defining structures with Volatility. Essentially
+what we’re doing is accessing the PoolTag member of the _POOL_HEADER, which exists in
+memory directly before the node. If you recall from Chapter 5, Windows assigns tags to
+pools to indicate what type of data they contain. Table 7-2 lists the relevant entries.
+
+Table 7-2: A Mapping of VAD-Related Pool Tags to the Containing Structure Type
+
+  Tag                    Node Type
+
+  Vadl                   _MMVAD_LONG
+
+  Vadm                   _MMVAD_LONG
+
+  Vad                    _MMVAD_LONG
+
+  VadS                   _MMVAD_SHORT
+
+  VadF                   _MMVAD_SHORT
+
+             Memory regions that contain injected shell code won’t be backed by a file. Thus,
+     you would be looking for nodes with a VadS or VadF tag. Assuming that you have an
+     instance of a node structure (we’ll show you how to enumerate them shortly) in the vari-
+     able vad, you can easily print, or check, the value by referencing vad.Tag in your Python
+     code.
+
+     VAD Flags
+     Each node has one or more sets of flags that contain characteristics about the memory
+     range. These flags are located in embedded unions named u, u1, u2, u3, and so on. For
+     example, the short node’s u member is of type __unnamed_15c2. This naming schema is
+     based on the <unnamed-tag> fields found in Microsoft debugging symbols because the
+     unions don’t have associated types. To give you the ability to uniquely identify them in
+     Volatility’s type language, an integer is appended to the end (the _15c2 part). This par-
+     ticular union appears like so:
+       >>> dt("__unnamed_15c2")
+       '__unnamed_15c2' (8 bytes)
+       0x0   : LongFlags                          ['unsigned long long']
+       0x0   : VadFlags                           ['_MMVAD_FLAGS']
+
+        Both members exist at offset 0, so they occupy the same space. You can refer to a node’s
+     flags by either the full 8-byte value ( _MMVAD.u.LongFlags) or individually by accessing
+     the predefined bit fields of _MMVAD.u.VadFlags. The following structure displays the pos-
+     sible flags. For example, bits 0 to 51 of the 8-byte value are for CommitCharge, and bits 56
+     to 61 are the Protection.
+       >>> dt("_MMVAD_FLAGS")
+       '_MMVAD_FLAGS' (8 bytes)
+       0x0    : CommitCharge       ['BitField', {'end_bit': 51, 'start_bit': 0,
+           'native_type': 'unsigned long long'}]
+       0x0    : NoChange           ['BitField', {'end_bit': 52, 'start_bit': 51,
+           'native_type': 'unsigned long long'}]
+       0x0    : VadType            ['BitField', {'end_bit': 55, 'start_bit': 52,
+           'native_type': 'unsigned long long'}]
+       0x0    : MemCommit          ['BitField', {'end_bit': 56, 'start_bit': 55,
+           'native_type': 'unsigned long long'}]
+       0x0    : Protection         ['BitField', {'end_bit': 61, 'start_bit': 56,
+           'native_type': 'unsigned long long'}]
+       0x0    : Spare              ['BitField', {'end_bit': 63, 'start_bit': 61,
+           'native_type': 'unsigned long long'}]
+       0x0    : PrivateMemory      ['BitField', {'end_bit': 64, 'start_bit': 63,
+           'native_type': 'unsigned long long'}]
+
+       The following sections describe some of the more critical fields.
+
+CommitCharge
+CommitCharge specifies the number of pages committed in the region described by the
+VAD node. This member is similar to MemCommit, which tells you whether the memory was
+committed when the virtual allocation API (NtAllocateVirtualMemory) was first called.
+The reason we care about this field is because historically when code injecting malware
+sets up the target process’ address space to receive the malicious code, it commits all pages
+up front—it doesn’t reserve them and then go back and commit them later (although
+it very well could). Thus, you can use these additional characteristics to help identify
+injected memory regions.
+
+Protection
+This field indicates what type of access should be allowed to the memory region. This
+value is loosely coupled with the memory protection constants passed to the virtual
+allocation APIs. These constants (shown in the following list) are self-explanatory for the
+most part, but there are indeed some subtle facts that can help you ascertain the type of
+data in an unknown region. For example, you cannot use PAGE_EXECUTE to store mapped
+files, whereas PAGE_EXECUTE_WRITECOPY is valid only for mapped files—most often DLLs.
+
+   • PAGE_EXECUTE: The memory can be executed, but not written. This protection can-
+     not be used for mapped files.
+   • PAGE_EXECUTE_READ: The memory can be executed or read, but not written.
+   • PAGE_EXECUTE_READWRITE: The memory can be executed, read, or written. Injected
+     code regions almost always have this protection.
+   • PAGE_EXECUTE_WRITECOPY: Enables execute, read-only, or copy-on-write access to a
+     mapped view of a file. It cannot be set by calling VirtualAlloc or VirtualAllocEx.
+     DLLs almost always have this protection.
+   • PAGE_NOACCESS    : Disables all access to the memory. This protection cannot be used
+     for mapped files. Applications can prevent accidental reads/writes to data by set-
+     ting this protection.
+   • PAGE_READONLY: The memory can be read, but not executed or written.
+   • PAGE_READWRITE: The memory can be read or written, but not executed.
+   • PAGE_WRITECOPY: Enables read-only or copy-on-write access to a mapped view of
+     a file. It cannot be set by calling VirtualAlloc or VirtualAllocEx.
+
+   One of the most misleading and poorly documented aspects of the Protection field
+from the VAD flags is that it’s only the initial protection specified for all pages in the
+range when they were first reserved or committed. Thus, the current protection can be
+drastically different. For example, you can call VirtualAlloc and reserve ten pages with
+PAGE_NOACCESS. Later, you can commit three of the pages as PAGE_EXECUTE_READWRITE and
+
+     four others as PAGE_READONLY, but the Protection field still contains PAGE_NOACCESS. Older
+     Zeus samples from 2006 used this technique, so its injected memory regions appeared
+     as PAGE_NOACCESS.
+        This makes sense because there’s only one Protection value for all pages in the range,
+     but permissions can be applied at page granularity. Thus, don’t be surprised if you find
+     injected code, which by definition needs to be executable, hiding among a node that claims
+     all its pages are inaccessible or read-only. For an authoritative look at page permissions,
+     you need to consult the bits in the page table. In other words, this Protection field can
+     be useful, but only if you’re aware of its reliability limitations. Tools that run on a live
+     system and use VirtualQueryEx don’t have the same limitation, however, because the API
+     doesn’t directly query the Protection value.
+
+      NOTE
+      For additional descriptions, see Memory Protection Constants at http://msdn.microsoft.com/
+      en-us/library/windows/desktop/aa366786(v=vs.85).aspx.
+         Also, the Protection member is loosely coupled with the constants, but is not an
+      exact match. The Protection is actually an index into nt!MmProtectToValue, which is a
+      lookup table whose positions store the constant values. This relationship is described
+      in Recipe 16-4 of Malware Analyst’s Cookbook.
+
+     Private Memory
+     Private memory, in this context, refers to committed regions that cannot typically be shared
+     with or inherited by other processes. Mapped files, named shared memory, and copy-on-
+     write DLLs can be shared with other processes (although they may not be). Thus, if the
+     PrivateMemory bit is set for a memory region, it does not contain one of the aforemen-
+     tioned types of data. A process’ heaps, stacks, and ranges allocated with VirtualAlloc
+     or VirtualAllocEx are usually marked as private. As previously described, because
+     VirtualAllocEx is used to allocate memory in a remote process, the PrivateMemory mem-
+     ber is yet another factor you can look at when looking for injected shell code.
+
+     Volatility VAD Plugins
+     Volatility provides the following plugins for inspecting VADs:
+
+        • vadinfo: Displays the most verbose output, including the starting and ending
+          addresses, the protection level, flags, and full paths to mapped files or DLLs.
+        • vadtree: In text mode, this plugin prints a tree-view of the nodes, so you can see
+          the parent and child relationships on your console. It also supports generating the
+          color-coded graphs shown in Figure 7-4.
+
+   • vaddump: Extracts the range of process memory each VAD node describes to a
+       separate file on disk. Unlike memmap (discussed earlier), the output from this plugin
+       is padded with zeros if any pages in the range are swapped to disk to maintain
+       spatial integrity (offsets).
+
+   An example of the vadinfo output for a 64–bit Windows 7 sample follows. Naturally,
+each process contains hundreds of regions, so we just selected a few for demonstration
+purposes.
+   The first one indicates that you can find the VAD node at 0xfffffa80012184a0 in kernel
+memory; and the tag is VadS, which means the type of structure is _MMVAD_SHORT. This
+node describes the range 0x50000 – 0x51fff in process memory. Given the size of this
+range (two pages), and the fact that MemCommit is set and CommitCharge is 2, you know that
+both pages were committed with the first call to the virtual allocation API. Based on the
+protection, this memory is readable and writeable, but not executable.
+  $ python vol.py –f memory.dmp --profile=Win7SP1x64 vadinfo –p 1080
+  Volatility Foundation Volatility Framework 2.4
+
+   [snip]
+
+  VAD node @ 0xfffffa80012184a0
+  Start 0x0000000000050000 End 0x0000000000051fff Tag VadS
+  Flags: CommitCharge: 2, MemCommit: 1, PrivateMemory: 1, Protection: 4
+  Protection: PAGE_READWRITE
+  Vad Type: VadNone
+
+   The following entry is similar to the first in that it’s also a short node. It describes
+memory in the range 0x7f0e0000 – 0x7ffdffff, which is about 15MB. However, the
+CommitCharge and MemCommit flags don’t appear, which essentially means that they’re
+both zero. Thus, this range of memory has simply been reserved—the OS has not paired
+it with any physical pages:
+  VAD node @ 0xfffffa8000e17460
+  Start 0x000000007f0e0000 End 0x000000007ffdffff Tag VadS
+  Flags: PrivateMemory: 1, Protection: 1
+  Protection: PAGE_READONLY
+  Vad Type: VadNone
+
+   The next two nodes describe the ranges 0x4200000 – 0x4207fff and 0x77070000 –
+0x77218fff in process memory. The tag for both nodes is Vad, which means that they’re
+using one of the larger _MMVAD structures that allow files to be mapped into the region and
+subsequently shared with other processes. Indeed, this is what you see—index.dat and
+ntdll.dll exist at these locations. Despite the similarities, only one of the mappings (for
+
+     ntdll.dll) is executable. You can tell because the protection is PAGE_EXECUTE_WRITECOPY,
+     the type is VadImageMap, and the Image bit in the control flags is set:
+       VAD node @ 0xfffffa800158af80
+       Start 0x0000000004200000 End 0x0000000004207fff Tag Vad
+       Flags: Protection: 4
+       Protection: PAGE_READWRITE
+       Vad Type: VadNone
+       ControlArea @fffffa8002dcfb60 Segment fffff8a0053d0850
+       NumberOfSectionReferences:          1 NumberOfPfnReferences:           8
+       NumberOfMappedViews:                1 NumberOfUserReferences:          2
+       Control Flags: Accessed: 1, File: 1
+       FileObject @fffffa8001a88310, Name: \Users\Admin\AppData\Local\Microsoft\
+           Windows\Temporary Internet Files\Content.IE5\index.dat
+       First prototype PTE: fffff8a002cfecd0 Last contiguous PTE: fffff8a002cfed08
+       Flags2: Inherit: 1
+
+       [snip]
+
+       VAD node @ 0xfffffa800133d550
+       Start 0x0000000077070000 End 0x0000000077218fff Tag Vad
+       Flags: CommitCharge: 12, Protection: 7, VadType: 2
+       Protection: PAGE_EXECUTE_WRITECOPY
+       Vad Type: VadImageMap
+       ControlArea @fffffa8001979c60 Segment fffff8a000139010
+       NumberOfSectionReferences:          2 NumberOfPfnReferences:         423
+       NumberOfMappedViews:               37 NumberOfUserReferences:         39
+       Control Flags: Accessed: 1, File: 1, Image: 1
+       FileObject @fffffa8001965970, Name: \Windows\System32\ntdll.dll
+       First prototype PTE: fffff8a000139058 Last contiguous PTE: fffffffffffffffc
+       Flags2: Inherit: 1
+
+         Using the vadinfo plugin is a great way to query details about process memory. Suppose
+     that you found a region that interests you, whether because you recognize the mapped
+     file as being on your list of indicators, or because you found a pointer or other artifact that
+     directs you to an address within the range the node describes. The following example
+     shows how to use volshell to cross-reference what the VAD node tells you about the
+     region (it should contain index.dat) with the data that actually exists there. As shown,
+     at 0x4200000 in this process, an IE history URL cache header is indeed present:
+       $ python vol.py -f memory.dmp --profile=Win7SP1x64 volshell -p 1080
+       Volatility Foundation Volatility Framework 2.4
+       Current context: process explorer.exe, pid=1080, ppid=1452 DTB=0x19493000
+       To get help, type 'hh()'
+       >>> db(0x0000000004200000)
+       0x04200000 436c 6965 6e74 2055 726c 4361 6368 6520    Client.UrlCache.
+       0x04200010 4d4d 4620 5665 7220 352e 3200 0080 0000    MMF.Ver.5.2.....
+       0x04200020 0000 0000 8000 0000 2000 0000 0000 0000    ................
+       0x04200030 0000 2003 0000 0000 0000 0000 0000 0000    ................
+
+   0x04200040    0000 0000 0000 0000 0400 0000 0000 0000            ................
+   0x04200050    4552 4635 5239 4e43 0000 0000 454b 4f37            ERF5R9NC....EKO7
+   0x04200060    4631 4745 0000 0000 4638 3048 4c52 4d4c            F1GE....F80HLRML
+   0x04200070    0000 0000 5230 5856 5145 5458 0000 0000            ....R0XVQETX....
+
+  You can dump this specific region to disk by using the --base option to vaddump, as
+shown here:
+   $ python vol.py -f memory.dmp --profile=Win7SP1x64 vaddump
+       -p 1080 --base 0x0000000004200000 -D OUTDIR
+
+   Volatility Foundation Volatility Framework 2.4
+   Pid        Process              Start              End                Result
+   ---------- -------------------- ------------------ ------------------ ------
+         1080 explorer.exe         0x0000000004200000 0x0000000004207fff
+   ./explorer.exe.3fa08060.0x0000000004200000-0x0000000004207fff.dmp
+
+   By default, if you don’t specify --base, the plugin dumps all regions to separate files
+and then names them according to the location in process memory where they were found.
+Figure 7-5 shows a diagram of what this plugin extracts. You can compare the diagram
+with memmap from Figure 7-3 to see the differences. In particular, vaddump gives you one
+zero-padded file per region of process memory instead of a condensed single file that
+contains all addressable pages across process and kernel memory.
+
+                        DLL
+                        DLL
+                        DLL                                Region
+                                     vaddump
+                        Exe
+Process Memory
+                   Injected Code
+                                               Each region dumped to a
+                       Heap                          separate file
+
+                       Stack
+
+Figure 7-5: A diagram showing the vaddump plugin extracting each region to a separate zero-
+padded file
+
+    Chapter 9 discusses the evtlogs plugin, which leverages the same functionality as
+vaddump , but extracts only ranges that contain memory-mapped event log files. If you
+didn’t zero-pad the dumped files, a single swapped page could cause all offsets in the
+file to shift unexpectedly. Thus, because the next step in analysis is frequently to analyze
+the dumped regions in external tools (event log parsers, disassemblers, and so on), the
+zero-padding is essential.
+
+     Traversing the VAD in Python
+     Many Volatility plugins that harvest data from process memory begin by traversing the
+     VAD tree. For example, svcscan locates Windows service records (Chapter 12) and cmdscan
+     finds command histories (Chapter 17). Inevitably, you’ll want to find other artifacts in pro-
+     cess memory—whether by using an existing plugin or building your own. The following
+     examples demonstrate some of the APIs you can use to make your life easier when that
+     time comes.
+        The first example shows how to iterate through the VADs, read a specified amount of
+     data from each range, search the data for a signature, and report the results. Notice that
+     we supply -p 1080 when invoking the volshell plugin, so we’ll start off in the context
+     of the process with PID 1080. This is just a shortcut to changing contexts with cc(pid =
+     1080) once inside the shell. Next, we assign the value of proc(), which is the _EPROCESS
+     object for PID 1080, to another variable named process—just for the sake of readability.
+     You can acquire a process address space with the get_process_address_space() function,
+     which you can then use to read process memory:
+       $ python vol.py -f memory.dmp --profile=Win7SP1x64 volshell -p 1080
+       Volatility Foundation Volatility Framework 2.4
+       Current context: process explorer.exe, pid=1080, ppid=1452 DTB=0x19493000
+       To get help, type 'hh()'
+       >>> process = proc()
+       >>> process_space = process.get_process_address_space()
+
+        The following loop does most of the work. It uses the VadRoot.traverse() API to gener-
+     ate a VAD object for each node in the tree. The nodes identify their starting and ending
+     page numbers using the StartingVpn and EndingVpn members, respectively. However, you
+     must multiply them by the size of a page to get the actual address in process memory.
+     This is all handled for you in the background by helper methods that Volatility attaches
+     to the VAD objects. For example, Start() returns a properly calculated starting address.
+     You can see this value being passed to the address space’s read() function:
+       >>> for vad in process.VadRoot.traverse():
+       ...    data = process_space.read(vad.Start, 1024)
+       ...    if data:
+       ...      found = data.find("MZ")
+       ...      if found != -1:
+       ...        print "Found signature in VAD", hex(vad.Start)
+       ...
+       Found signature in VAD 0x3840000L
+       Found signature in VAD 0xd0000L
+       Found signature in VAD 0x140000L
+       Found signature in VAD 0x1ff0000L
+       Found signature in VAD 0x2070000L
+       Found signature in VAD 0x2770000L
+       Found signature in VAD 0x29b0000L
+       [snip]
+
+   If the read completes successfully, the data is scanned for an “MZ” signature (a poten-
+tial executable). The starting address of the containing range is then reported to your
+console. Other plugins exist (such as dlllist, ldrmodules, and malfind) that automate
+finding executables throughout process memory, so this example familiarizes you with
+how to implement simple searches that can yield useful results. Typically, you would have
+a post-processor for the data you find to further validate it, extract it to disk, and so on.
+
+Passwords in Browser Memory
+A weakness with the previous algorithm is that it searched only the first 1024 bytes of
+each range and it reported only whether a single pattern was found. The existing search_­
+process_memory() function accepts multiple inputs and it scans all accessible data in the
+range and reports the address of each occurrence. In the following example, we leverage
+this functionality to find Gmail passwords in the memory of a Google Chrome browser. If
+you use a web proxy to capture outgoing POST data during a login, you’ll notice that the
+POST parameters include &Email and &Passwd. Thus, these two strings become our criteria.
+   As shown in the following code, we get started with volshell in the same manner as
+before, but for PID 3660 (chrome.exe). The criteria variable is a list that gets filled with
+the Unicode (utf_16_le) version of the two strings. Then we iterate through the results
+that search_process_memory() produces and create a String object at each address:
+  $ python vol.py -f memory.dmp --profile=Win7SP1x64 volshell –p 3660
+  Volatility Foundation Volatility Framework 2.4
+  Current context: process chrome.exe, pid=3660, ppid=3560 DTB=0x1b9fc000
+  To get help, type 'hh()'
+  >>> process = proc()
+  >>> process_space = process.get_process_address_space()
+  >>> criteria = []
+  >>> criteria.append("&Email".encode("utf_16_le"))
+  >>> criteria.append("&Passwd".encode("utf_16_le"))
+  >>> for addr in process.search_process_memory(criteria):
+  ...   string = obj.Object("String",
+  ...                  offset = addr, vm = process_space,
+  ...                  encoding = "utf16", length = 64)
+  ...   print str(string)
+  ...
+  &Email=hack4life2&Passwd=dater7-
+  &Passwd=dater7-tarry&signIn=Sign
+  &Email=hack4life200&Passwd=dater
+  &Passwd=dater7-tarry&signIn=Sign
+
+   The username and password for the account are both in plain text in process memory,
+even when SSL is in use. Some of the strings appear truncated, but that’s just because we
+specified a maximum length of 64 when creating the String object. As you can imagine,
+the types of forensic data you can find in process memory are quite limitless, as are the
+
+     possibilities of what you can do after finding such data (in terms of postprocessing,
+     automated analysis, and so on).
+
+     Scanning Memory with Yara
+     Yara is a tool by Victor M. Alvarez (http://plusvic.github.io/yara) for fast and flex-
+     ible pattern matching within arbitrary data sets. In other words, it works against files,
+     memory dumps, packet captures, and so on. Although you can easily scan across a physi-
+     cal memory dump file, remember that contiguous virtual addresses may be fragmented
+     in physical memory. Thus, your signatures can fail to match patterns that truly exist in
+     memory if they happen to cross page boundaries. Volatility’s yarascan plugin enables
+     you to scan through virtual memory, so fragmentation at the physical layer isn’t an issue.
+     Furthermore, when you find hits, you can attribute them back to the process or kernel
+     module that owned the memory—giving you context and a powerful frame of reference.
+
+      NOTE
+      Volatility also provides a linux_yarascan and mac_yarascan plugin that operate simi-
+      larly on Linux and Mac memory dumps, respectively.
+
+       The main capabilities of the yarascan plugin are these:
+
+        • Scan one, multiple, or all processes for a given signature provided on the command
+          line (--pid and --yara-rules options).
+        • Scan a hidden process that you identify via the physical offset of its _EPROCESS
+          (--offset).
+        • Scan the entire range of kernel memory (--kernel) and show the name of the
+          kernel module, if any.
+        • Any of the preceding options, but find signatures in the supplied Yara rules file
+          (--yara-file). The argument to this option can also be an index file that includes
+          various other files.
+        • Optionally, extract the memory ranges that contain positive hits to disk (--dump-dir).
+          This process saves you a few steps—rather than analyzing results and then extracting
+          data for further analysis, it can all be automated.
+
+       Here is the full display of command line options for this plugin:
+       $ python vol.py yarascan -h
+       Volatility Foundation Volatility Framework 2.4
+
+         [snip]
+
+    -o OFFSET, --offset=OFFSET
+                          EPROCESS offset (in hex) in the physical address space
+    -p PID, --pid=PID     Operate on these Process IDs (comma-separated)
+    -K, --kernel          Scan kernel modules
+    -W, --wide            Match wide (unicode) strings
+    -Y YARA_RULES, --yara-rules=YARA_RULES
+                          Yara rules (as a string)
+    -y YARA_FILE, --yara-file=YARA_FILE
+                          Yara rules (rules file)
+    -D DUMP_DIR, --dump-dir=DUMP_DIR
+                          Directory in which to dump the files
+    -s 256, --size=256    Size of preview hexdump (in bytes)
+    -R REVERSE, --reverse=REVERSE Reverse this number of bytes
+  ---------------------------------
+  Module YaraScan
+  ---------------------------------
+  Scan process or kernel memory with Yara signatures
+
+   In terms of what to actually search for, numerous possibilities exist. You can always
+begin by reading the Yara user manual (linked from the main page) that tells you the
+syntax and rules for writing signatures. Otherwise, here are a few ideas and sources of
+existing signatures that you can leverage:
+
+   • IP addresses (in string or decimal form), domain names, or URLs.
+   • Regular expressions for Social Security numbers, credit card numbers, phone num-
+     bers, birthdays, password hashes, and so on.
+   • Packer signatures. Recipe 3-4 in Malware Analyst’s Cookbook provided a Python
+     script (peid_to_yara.py) that converts PEiD signatures to Yara rules.
+   • Antivirus signatures. Recipe 3-3 in Malware Analyst’s Cookbook provided a Python
+     script (clamav_to_yara.py) that converts ClamAV signatures to Yara rules.
+   • Join the Yara Signature Exchange Google Group: http://www.deependresearch.
+      org/2012/08/yara-signature-exchange-google-group.html
+   • Signatures from AlienVault Labs: https://github.com/AlienVault-Labs/
+      AlienVaultLabs
+
+  For example, to scan all processes for a particular domain name, do the following:
+  $ python vol.py –f mem.dmp yarascan --profile=Win7SP1x64
+       --yara-rules="windows-update-http.com"
+
+  To scan two specific processes for a Unicode version of the same domain, use this com-
+mand (the --wide parameter indicates that the search string is Unicode):
+  $ python vol.py –f mem.dmp yarascan --profile=Win7SP1x64
+       --pid=1080,1140 --wide
+       --yara-rules="windows-update-http.com"
+
+        To scan an unlinked or hidden process using all signatures in a given rules file (plus
+     any files included with the Yara include directive), do the following (make sure to sub-
+     stitute OFFSET with the physical offset of the target _EPROCESS):
+       $ python vol.py –f mem.dmp yarascan --profile=Win7SP1x64
+            --offset=OFFSET
+            --yara-file=/path/to/your/yara.rules
+
+        To look for CPU opcodes or other types of byte sequences in all processes, and auto-
+     matically dump the containing memory segments to a specified output directory, use the
+     following command (note that the hex bytes are enclosed in curly braces):
+       $ python vol.py –f mem.dmp yarascan --profile=Win7SP1x64
+            --yara-rules="{eb 90 ff e4 88 32 0d}"
+            --dump-dir=OUTDIR
+
+        Finally, although we’re in the process memory chapter, here’s a preview of scanning ker-
+     nel memory for regular expressions. The syntax is to enclose the regex in forward slashes:
+       $ python vol.py –f mem.dmp yarascan --profile=Win7SP1x64
+            --yara-rules="/(www|net|com|org)/"
+            --kernel
+
+       Now that you’ve seen some of the example use cases, here’s how the output appears. A
+     few pages back, you used search_process_memory() to find Gmail passwords in browser
+     memory. The same memory dump is used for this example but shown from the Yara
+     perspective:
+       $ python vol.py -f memory.dmp --profile=Win7SP1x64 yarascan
+           --yara-rules="&Email" --wide -p 3560,3660,3808
+
+       Volatility Foundation Volatility Framework 2.4
+       Rule: r1
+       Owner: Process chrome.exe Pid 3660
+       0x03172652 2600 4500 6d00 6100 6900 6c00 3d00 6800         &.E.m.a.i.l.=.h.
+       0x03172662 6100 6300 6b00 3400 6c00 6900 6600 6500         a.c.k.4.l.i.f.e.
+       0x03172672 3200 2600 5000 6100 7300 7300 7700 6400         2.&.P.a.s.s.w.d.
+       0x03172682 3d00 6400 6100 7400 6500 7200 3700 2d00         =.d.a.t.e.r.7.-.
+       Rule: r1
+       Owner: Process chrome.exe Pid 3660
+       0x0260b078 2600 4500 6d00 6100 6900 6c00 3d00 6800         &.E.m.a.i.l.=.h.
+       0x0260b088 6100 6300 6b00 3400 6c00 6900 6600 6500         a.c.k.4.l.i.f.e.
+       0x0260b098 3200 3000 3000 2600 5000 6100 7300 7300         2.0.0.&.P.a.s.s.
+       0x0260b0a8 7700 6400 3d00 6400 6100 7400 6500 7200         w.d.=.d.a.t.e.r
+
+       We found the expected results in the memory of PID 3660. By default, yarascan shows
+     only a preview of content that triggered your signature, but you can control the amount of
+
+data shown or extracted with the --size option. Because the search criteria were specified
+on the command line, all hits display as triggering the generic rule r1. However, when
+you have thousands of rules within a rules file, it would display the name of the rule that
+actually matched the data.
+
+Zeus Encryption Keys in Memory
+So far, you’ve seen three very powerful aspects of memory analysis: the ability to classify
+memory regions based on their metadata, develop and scan for complex patterns, and
+postprocess the results with custom Python code. The following example shows what’s
+possible when you combine these capabilities. In particular, you learn how to locate Zeus’
+256–byte RC4 encryption key in process memory, find the corresponding encrypted con-
+figuration block and then use the key to decrypt the configuration. An initial version of
+this analysis (Abstract Memory Analysis: Zeus Encryption Keys) is available here: http://
+mnin.blogspot.com/2011/09/abstract-memory-analysis-zeus.html.
+   Before you begin, you should know a little about Zeus’ history. Near the end of 2008
+(approximately version 1.2.0), Zeus started using unique 256–byte RC4 keys embedded
+in each binary to decrypt configurations, which prevented analysts from using the key
+from one sample to decrypt the configuration used by another sample. Furthermore, if
+investigators found a configuration, they couldn’t decrypt it without the corresponding
+binary—even if they knew the algorithm was RC4. The same concept applied to Zeus’
+stolen data files, which were protected with a separate RC4 key (so you need two keys
+per binary to recover all the data).
+
+ NOTE
+ For a more in-depth description of Zeus’ encryption algorithm, see Config Decryptor
+ for Zeus 2.0 by Sergei Shevchenko: http://blog.threatexpert.com/2010/05/
+ config-decryptor-for-zeus-20.html.
+
+   The first step of figuring out how to automate the required actions in a Volatility plugin
+was to reverse-engineer the Zeus binary. It took a bit of time to identify where the keys
+and configuration data were stored in the binary, but after that was done, we could focus
+our efforts on finding them in a memory dump. Figure 7-6 shows a disassembly of the
+critical functions. We look for sequences of instructions that reference global variables in
+the binary, which can then lead to the RC4 key, encrypted configuration data, and other
+information. Many of the functions and variables that we need have been labeled.
+
+     Figure 7-6: A disassembly of the Zeus functions that reference critical variables for finding and
+     decoding the configuration
+
+        The figure shows that a function named decode_config_data calls custom_memcpy,
+     which is just an inline version of the standard memcpy API. The second parameter (source
+     of data being copied) in this case is supplied by the push offset config_data instruction.
+     Thus, the config_data variable contains an offset relative to the base of the executable being
+     analyzed where we can find the encrypted configuration data. Likewise, you can also see
+     the function labeled rc4_decrypt. Expectedly, one of the parameters to this function is
+     the location of the key. The push offset real_rc4_key instruction provides this offset.
+        To find the variables that contain the required offsets, we built signatures for the
+     functions that you see in the figure. For example, you can express the function named
+     signature_function using wildcards (indicated by question marks) like this:
+
+        PUSH 102h
+        LEA EAX, [ESP+????????]
+        PUSH EAX
+
+  LEA EAX, [ESP+??]
+  PUSH EAX
+  CALL ????????        ; custom_memcpy
+  MOV EAX, 1E6h
+  PUSH EAX
+  PUSH OFFSET ???????? ; real_rc4_key
+
+   The bytes that store the offset to the RC4 key are in bold. If you can find the signature,
+you can easily extract the key. Keep in mind that the wildcards are important because
+there might be variations in Zeus binaries due to compiler differences. So you also should
+look for EBP-based frames, such as the following:
+  PUSH 102h
+  LEA EAX, [EBP-????????]
+  PUSH EAX
+  LEA EAX, [EBP-????????]
+  PUSH EAX
+  CALL ????????        ; custom_memcpy
+  MOV EAX, 1E6h
+  PUSH EAX
+  PUSH OFFSET ???????? ; real_rc4_key
+
+  You can express the function named decode_config_data like this:
+  PUSH ESI
+  MOV EDX, ????0000    ; config size (immediate)
+  PUSH EDX
+  PUSH OFFSET ???????? ; config_data
+  PUSH EAX
+  CALL ????????        ; custom_memcpy
+  MOV ESI, ????????    ; last_section_rva
+  MOV ECX, ????????    ; imagebase
+
+  There are several variations of these patterns, once again due to compiler differences
+and usage of general-purpose registers, but it’s nothing that Yara rules can’t handle. By
+converting the previous instructions into opcodes (that is, hex bytes that correspond to
+CPU operations), we have the following signatures:
+
+ NOTE
+ To convert instructions to opcodes, you can use ndisasm on Linux. Alternately, if you’re
+ already viewing the code in IDA Pro, just go to View ➪ Options ➪ Disassembly and
+ increase the number of opcode bytes. It then displays the corresponding hex values
+ next to the instructions.
+
+  signatures = {
+      'namespace1':'rule z1 {strings: $a = {56 BA ?? ?? 00 00 52
+
+                68 ?? ?? ?? ?? 50 E8 ?? ?? ?? ?? 8B 35 ?? ??
+                ?? ?? 8B 0D ?? ?? ?? ??} condition: $a}',
+            'namespace5':'rule z5 {strings: $a = {56 BA ?? ?? 00 00 52
+                68 ?? ?? ?? ?? 50 E8 ?? ?? ?? ?? 8B 0D ?? ?? ?? ?? 03
+                0D ?? ?? ?? ??} condition: $a}',
+            'namespace2':'rule z2 {strings: $a = {55 8B EC 51 A1 ?? ??
+                ?? ?? 8B 0D ?? ?? ?? ?? 56 8D 34 01 A1 ?? ?? ?? ?? 8B
+                0D ?? ?? ?? ??} condition: $a}',
+            'namespace3':'rule z3 {strings: $a = {68 02 01 00 00 8D 84
+                24 ?? ?? ?? ?? 50 8D 44 24 ?? 50 E8 ?? ?? ?? ?? B8 E6
+                01 00 00 50 68 ?? ?? ?? ??} condition: $a}',
+            'namespace4':'rule z4 {strings: $a = {68 02 01 00 00 8D 85
+                ?? ?? ?? ?? 50 8D 85 ?? ?? ?? ?? 50 E8 ?? ?? ?? ?? B8
+                E6 01 00 00 50 68 ?? ?? ?? ??} condition: $a}'
+            }
+
+        Although we could scan through every memory range in every process for these signa-
+     tures, that would be excessive. We know from previous work that Zeus injects its binary
+     code into processes. Thus, you can leverage some of the knowledge we discussed earlier
+     in the chapter. Rather than scanning all memory ranges, you can filter VAD nodes that
+     are executable, not backed by a file, and committed. This narrows your search space and
+     increases the overall performance of the plugin.
+        The following output shows the results of the zeusscan2 plugin built based on this
+     research. For the sake of brevity, the 256–byte RC4 keys have been truncated to just a few
+     bytes. You can see the URL to the Zeus configuration, the unique identifier assigned to
+     the infected machine, and the randomly generated registry keys and filenames it uses
+     for persistence, among other data.
+       $ python vol.py --plugins=contrib/plugins/malware -f zeus2x4.vmem zeusscan2
+       --------------------------------------------------
+       Process:     wuauclt.exe
+       Pid:         940
+       Address:     0xD80000
+       URL:         http://193.43.134.14/eu2.bin
+       Identifier: JASONRESACC69_7875768F16073AAF
+       Mutant key: 0x17703072
+       XOR key:     0x2006B8FE
+       Registry:    HKEY_CURRENT_USER\SOFTWARE\Microsoft\Izozo
+       Value 1:     Kealtuuxd
+       Value 2:     Yrdii
+       Value 3:     Kebooqu
+       Executable: Obyt\ihah.exe
+       Data file:   Ebupzu\uzugl.dat
+
+       Config RC4 Key:
+       0x00000000   4a ba 2c 63 eb 7c fc 45 c4 f3 b6 2d 31 29 21 2e         J.,c.|.E...-1)!.
+       0x00000010   53 0f 3f ef 9a 2a f8 82 96 6b e1 a2 3b 5f 34 fd         S.?..*...k..;_4.
+       0x00000020   a6 02 cc 39 0b 16 40 33 1f a1 dc af 93 9b 5b 94         ...9..@3......[.
+
+  0x00000030    68 62 84 46 ca 64 8d 43 13 d4 d9 72 00 5c 2b bc        hb.F.d.C...r..+.
+  0x00000040    f6 d7 88 91 24 9f bd 1e 7a 07 c5 6e 1a 4e 90 92        ....$...z..n.N..
+  0x00000050    c1 42 0c 75 47 3a 9e 1d c2 ec 0d ed b8 71 b4 ab        .B.uG:.......q..
+  0x00000060    e6 5d e3 14 48 b9 e9 e8 b2 10 ee f4 e2 2f a4 09        .]..H......../..
+  [snip]
+
+  Credential RC4 Key:
+  0x00000000   6f e4 94 f2 f1 5e 5c c1 8c e8 66 c5 13 2a 23 39         o....^....f..*#9
+  0x00000010   84 36 6a 83 b2 55 6c 11 5a f3 b6 20 07 6d ba de         .6j..Ul.Z.. .m..
+  0x00000020   52 8e 34 bf 8a 05 0f 64 35 29 cb 5f ff 00 87 fc         R.4....d5)._....
+  0x00000030   b5 5b 67 b8 eb 1a 0e 1f 32 ae 54 3a 88 ed c3 51         .[g.....2.T:...Q
+  0x00000040   40 14 3e 53 dc 7c a7 0b 79 26 e5 45 99 7d 1c d0         @.>S.|..y&.E.}..
+  0x00000050   90 8f 80 95 71 58 41 5d f9 af 9e a1 6e ef 25 4e         ....qXA]....n.%N
+  0x00000060   48 2d b1 bd 33 ab d3 b7 4d 10 7e 44 65 7b cd 2f         H-..3...M.~De{./
+  [snip]
+
+  The Zeus plugin described in this section has led to many other related capabilities in
+memory forensics. Here is a list of the ones we currently know about:
+
+   • Andreas Schuster (http://computer.forensikblog.de/) based his Poison Ivy con-
+     figuration scanners on the original zeusscan2 plugin.
+   • Santiago Vicente later added support for finding and decrypting Citadel configura-
+     tions (http://blog.buguroo.com/?p=10291&lang=en) from process memory.
+   • Brian Baskin wrote about extracting JavaRAT configurations with Volatility (http://
+      www.ghettoforensics.com/2013/10/dumping-malware-configuration-data-from.
+      html).
+   • The Cassidian CyberSecurity group released a plugin for detecting and ana-
+     lyzing PlugX samples ( http://bitbucket.cassidiancybersecurity.com/
+     volatility_plugins/wiki/Home).
+   • We’ve also seen alumni of our training courses, namely Ian Ahl, produce similar
+     plugins for developing Yara signatures to find DarkComet in memory (http://
+     www.tekdefense.com/news/2013/12/23/analyzing-darkcomet-in-memory.html).
+
+Summary
+The data in process memory is often a valuable source of information, but it may be
+difficult to find when it is interspersed with other irrelevant data. Learning the flags
+and attributes of virtual address descriptors helps you limit the search space to specific
+regions of memory, such as the stack, heap, or a particular DLL. Additionally, under-
+standing the layout of process memory makes you better equipped to perform investiga-
+tions that require analysis of process resources. Using a highly configurable signature or
+
+     pattern-based scanning engine (Yara) is a great way to find evidence fast. Yara signatures
+     also allow abstract capabilities such as finding encryption keys, sequences of CPU instruc-
+     tions, and so on. In the following chapters, you’ll see how this fundamental knowledge
+     can be expanded upon.

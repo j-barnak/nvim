@@ -14,7 +14,7 @@ Welcome back! [Last time](https://sam4k.com/linternals-exploring-the-mm-subsyste
 
 The aim of this series is to explore the inner workings of the Linux kernel’s memory management (mm) subsystem by examining how this simple program is implemented:
 
-``` chroma
+``` c
 #include <sys/mman.h>
 
 int main()
@@ -60,13 +60,13 @@ So without further ado, let’s dive back into how (anonymous) memory is mapped 
 
 Broadly speaking, there are 3 things happening in our program: mapping some anonymous memory, writing to it and then unmapping it. Currently, we’re digging into the first part:
 
-``` chroma
+``` c
 addr = mmap(NULL, 0x1000, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
 ```
 
 Let’s quickly recap how deep in the mm subsystem we are, since making our `mmap(2)` system call from our userspace program. Using gdb we can set a breakpoint on `do_mmap()`, which is where we left off, and check the backtrace:
 
-``` chroma
+``` gdb
 (gdb) bt
 #0  do_mmap (file=file@entry=0x0 <fixed_percpu_data>, addr=0, len=4096, prot=3, flags=34, vm_flags=vm_flags@entry=0, pgoff=0, 
     populate=0xffffc90001a17e80, uf=0xffffc90001a17ea0) at mm/mmap.c:1215
@@ -95,7 +95,7 @@ When we call `[mmap()](https://man7.org/linux/man-pages/man2/mmap.2.html)` in ou
 
 So a mapping in this context is essentially a virtual address range which is mapped to some physical memory. We can explore a processes mappings via `procfs`. Let’s see if we can find our programs `0x1000` byte mapping:
 
-``` chroma
+``` console
 $ cat /proc/91280/maps
 00400000-00401000 r--p 00000000 00:2b 12253872                           mm_example
 00401000-0047c000 r-xp 00001000 00:2b 12253872                           mm_example
@@ -118,7 +118,7 @@ So now we have a general idea of what a mapping is, how exactly does the kernel 
 
 #### `struct vm_area_struct`
 
-``` chroma
+``` c
 /*
  * This struct describes a virtual memory area. There is one of these
  * per VM-area/task. A VM area is any part of the process virtual memory
@@ -216,7 +216,7 @@ Okay, so a vma describes a single memory area, but as we saw, even our little pr
 
 Each process is responsible for tracking its memory areas, and as we know, each process’s memory is managed by a `[mm_struct](https://elixir.bootlin.com/linux/v6.11.5/source/include/linux/mm_types.h#L779)`! So this is where we’ll find our answer:
 
-``` chroma
+``` c
 struct mm_struct {
       // SNIP
       struct maple_tree mm_mt;
@@ -238,7 +238,7 @@ The key details to highlight are that:
 
 ![](./Linternals_%20Exploring%20The%20mm%20Subsystem%20via%20mmap%20%5B0x02%5D%20_%20sam4k_files/so_where_we_were.gif)
 
-``` chroma
+``` c
 /*
  * The caller must write-lock current->mm->mmap_lock.
  */
@@ -262,7 +262,7 @@ Okay, let’s get back to it! For some context, upon entering `[do_mmap()](https
 
 Okay, so what’s the goal of this function? We know from exploring the previous functions in the call stack that the return value is the value that `mmap(2)` returns to userspace: on success, the userspace address of the mapping; on error, the `MAP_FAILED` value (`(void *) -1`).  So where does `do_mmap(2)`’s return value come from?
 
-``` chroma
+``` c
 unsigned long do_mmap(struct file *file, unsigned long addr,
           unsigned long len, unsigned long prot,
           unsigned long flags, vm_flags_t vm_flags,
@@ -301,7 +301,7 @@ Otherwise, in case B, the kernel will determine the `addr`. The value of `addr` 
 
 In either case, `[__get_unmapped_area()](https://elixir.bootlin.com/linux/v6.11.5/source/mm/mmap.c#L1923)` is called to determine an appropriate `addr`:
 
-``` chroma
+``` c
   /* Obtain the address to map to. we verify (or select) it and ensure
    * that it represents a valid section of the address space.
    */
@@ -328,7 +328,7 @@ Either way it will end up using `mm_get_unmapped_area_vmflags()`, so that’s wh
 
 On x86_64 this is set, which leads us to `[arch_get_unmapped_area_topdown_vmflags()](https://elixir.bootlin.com/linux/v6.11.5/source/arch/x86/kernel/sys_x86_64.c#L161)`:
 
-``` chroma
+``` gdb
 (gdb) bt
 #0  arch_get_unmapped_area_topdown_vmflags (filp=0x0 <fixed_percpu_data>, addr0=0, len=4096, pgoff=0, flags=34, vm_flags=115)
     at arch/x86/kernel/sys_x86_64.c:164
@@ -351,7 +351,7 @@ On x86_64 this is set, which leads us to `[arch_get_unmapped_area_topdown_vmflag
 
 We made it! Okay, let’s dig into how the address is fetched by walking through the function. There are various checks but for brevity I will focus on the addr finding:
 
-``` chroma
+``` c
 unsigned long
 arch_get_unmapped_area_topdown_vmflags(struct file *filp, unsigned long addr0,
             unsigned long len, unsigned long pgoff,
@@ -372,7 +372,7 @@ arch_get_unmapped_area_topdown_vmflags(struct file *filp, unsigned long addr0,
 
 If `MAP_FIXED` is set, `addr` is returned as-is, no questions asked.
 
-``` chroma
+``` c
     if (addr) {
       addr &= PAGE_MASK;                              [0]
       if (!mmap_address_hint_valid(addr, len))        [1]
@@ -392,7 +392,7 @@ To check if the address range our new mapping will use is free, it calls `[find_
 
 However, if there is a mapping somewhere at or after `addr`, we need to make sure it starts AFTER the end of our new mapping. It does this by comparing where our new mapping will end  (`addr + len`) and the start address of the `vma` (`[vm_start_gap(vma)](https://elixir.bootlin.com/linux/v6.11.5/source/include/linux/mm.h#L3513)`; the `gap` part is because the function factors in any potential padding). If there’s no overlap, our mapping’s area is unmapped and we can use the hint! \[3\]
 
-``` chroma
+``` c
 struct vm_unmapped_area_info {
   unsigned long flags;        // informs search behaviour
    unsigned long length;       // length of the mapping in bytes
@@ -410,7 +410,7 @@ If the hint isn’t valid or overlaps an existing mapping, the function will pro
 
 Remember, as we’re searching topdown, `high_limit` defines the start point (base) for our search. So how is this calculated? By default, the function will use the value that is handily stored in `mm->mmap_base` (the base user vaddr for topdown allocations). But what is this?
 
-![](./Linternals_%20Exploring%20The%20mm%20Subsystem%20via%20mmap%20%5B0x02%5D%20_%20sam4k_files/image.png)
+![](media/d2ef7c909d2e92af40de9fe02e77891d645ddf45.png)
 
 From [these slides](https://www.slideshare.net/slideshow/process-address-space-the-way-to-create-virtual-address-page-table-of-userspace-application-251425396/251425396#3) by Adrian Huang
 
@@ -418,7 +418,7 @@ Let’s remind ourselves of the x86_64 process virtual address space. We can see
 
 However, more bits may be used for the virtual address on some systems. So while the implementation defaults to `mmap_base` as the `high_limit`, if the hint is outside of this window, then the `high_limit` will instead be set to the true upper bounds of the user virtual address space (where `TASK_SIZE_MAX` defines the size virtual user address space).
 
-``` chroma
+``` c
   info.high_limit = get_mmap_base(0);
   // SNIP
 
@@ -439,7 +439,7 @@ The `info` structure is then passed to `[vm_unmapped_area(&info)](https://elixir
 
 Using the magic of gdb, we can set a breakpoint to examine the `info` structure for our program’s mapping to make sure everything aligns with our understanding:
 
-``` chroma
+``` gdb
 (gdb) p/x *((struct vm_unmapped_area_info*)info)
 $2 = {
   flags = VM_UNMAPPED_AREA_TOPDOWN, 
@@ -454,7 +454,7 @@ $2 = {
 
 Now `unmapped_area_topdown()` has all the information it needs to search the address space from `high_limit` to `low_limit`, looking for a gap that fits our mapping of `len` (taking into account any alignment or gaps required before the mapping):
 
-``` chroma
+``` c
 static unsigned long unmapped_area_topdown(struct vm_unmapped_area_info *info)
 {
   // SNIP
@@ -480,7 +480,7 @@ There are then some additional checks to make sure it conforms with the supplied
 
 For context, this is where we are in the callstack at this point:
 
-``` chroma
+``` gdb
 #0  0xffffffff81243e86 in unmapped_area_topdown (info=<optimized out>) at mm/mmap.c:1719
 #1  vm_unmapped_area (info=info@entry=0xffffc900004b7d80) at mm/mmap.c:1770
 #2  0xffffffff81037ce5 in arch_get_unmapped_area_topdown_vmflags (filp=0x0 <fixed_percpu_data>, addr0=0, len=4096, pgoff=0, flags=34, 
@@ -507,7 +507,7 @@ We’re going to head back up to `do_mmap()` and cover the final bit of logic fo
 
 ![](./Linternals_%20Exploring%20The%20mm%20Subsystem%20via%20mmap%20%5B0x02%5D%20_%20sam4k_files/this_is_it.gif)
 
-``` chroma
+``` c
  addr = mmap_region(file, addr, len, vm_flags, pgoff, uf);
 ```
 
@@ -526,7 +526,7 @@ Now we’re ready to jump into `mmap_region()`! The goal of this function is to 
 
 Well … as you might expect, there are a lot of cases, edge cases and validation that needs to be done to do this correctly. For now we’ll continue to focus on those relating specifically to anonymous mappings and our case study.
 
-``` chroma
+``` c
 unsigned long mmap_region(struct file *file, unsigned long addr,
       unsigned long len, vm_flags_t vm_flags, unsigned long pgoff,
       struct list_head *uf)
@@ -542,7 +542,7 @@ unsigned long mmap_region(struct file *file, unsigned long addr,
 
 Right off the bat we can see the `VMA_ITERATOR()` macro again, which will be doing a lot of heavy lifting in this function for navigating the `mm->mm_t` maple tree. Note that it’s initialised with our `addr`, so the iterator will be initialised with `addr` as its index.
 
-``` chroma
+``` c
     /* Check against address space limit. */
   if (!may_expand_vm(mm, vm_flags, len >> PAGE_SHIFT)) {
       unsigned long nr_pages;
@@ -562,7 +562,7 @@ Then, we hit a quirk of `MAP_FIXED` behaviour we touched one earlier. Notably, w
 
 If it does overlap any existing mappings, these will get unmapped. This behaviour is implemented by `do_vmi_munmap()`, which uses the vma iterator to unmap any vmas whose start address lies in `addr` to `addr + len`. Note mappings can be “sealed”[\[2\]](https://www.kernel.org/doc/html/next/userspace-api/mseal.html) and can’t be unmapped like this, causing the current `mmap()` to fail.
 
-``` chroma
+``` c
  next = vma_next(&vmi);
   prev = vma_prev(&vmi);
 ```
@@ -578,7 +578,7 @@ Next, the iterator is used to fetch first vma from where the iterator starts (i.
 
 #### VMA Merging
 
-``` chroma
+``` c
   /* Attempt to expand an old mapping */
   /* Check next */
   if (next && next->vm_start == end && !vma_policy(next) &&
@@ -606,11 +606,11 @@ If these checks fail a vma will be allocated for our new mapping.
 
 #### VMA Allocation
 
-![](./Linternals_%20Exploring%20The%20mm%20Subsystem%20via%20mmap%20%5B0x02%5D%20_%20sam4k_files/lonely.gif)
+![](media/196787293f552f94e40b74af4d38472a014b9a69.gif)
 
 So, there’s no one for our mapping to merge with. In this case, a new vma will be allocated, initialised and insert into the `mm->mm_mt` tree:
 
-``` chroma
+``` c
    vma = vm_area_alloc(mm);                           [0]
   // SNIP
 
@@ -663,7 +663,7 @@ Finally our new mapping is inserted into the `mm->mm_mt` tree via the iterator \
 
 ### Final Bits
 
-``` chroma
+``` c
  vm_stat_account(mm, vm_flags, len >> PAGE_SHIFT);
   // SNIP
     
@@ -694,7 +694,7 @@ Now, regardless of whether this is a new or expanded vma, the `VM_SOFTDIRTY` fla
 
 And last, but not least, we return the `addr` of our new mapping, which will propagate back, if all is valid, to the return value of the userspace `mmap()` call.
 
-``` chroma
+``` gdb
 #0  mmap_region (file=file@entry=0x0 <fixed_percpu_data>, addr=addr@entry=140379443372032, len=len@entry=4096, vm_flags=vm_flags@entry=115, 
     pgoff=pgoff@entry=34272325042, uf=uf@entry=0xffffc900006bbef0) at mm/mmap.c:2852
 #1  0xffffffff81247544 in do_mmap (file=file@entry=0x0 <fixed_percpu_data>, addr=140379443372032, addr@entry=0, len=len@entry=4096, 
@@ -718,7 +718,7 @@ Then we’re pretty much back in userspace, with a shiny new (or merged) mapping
 
 It’s only been, uh, 6000 words or so but just like that we’ve covered this line of code:
 
-``` chroma
+``` c
 addr = mmap(NULL, 0x1000, PROT_READ | PROT_WRITE, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
 ```
 

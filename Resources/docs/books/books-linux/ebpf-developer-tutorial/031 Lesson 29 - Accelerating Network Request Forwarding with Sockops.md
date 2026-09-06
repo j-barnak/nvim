@@ -18,7 +18,7 @@ Here, the `sock_map` is a key component that stores socket rules, i.e., it selec
 
 The Merbridge project has achieved acceleration for Istio by replacing iptables with eBPF. After using Merbridge (eBPF) optimization, the inbound and outbound traffic bypasses many kernel modules, significantly improving performance, as shown in the following diagram:
 
-![merbridge](merbridge.png)
+![merbridge](media/b2fe3a7d2ca8cd9df872225550a2a136651d7f95.png)
 
 ## Example Program
 

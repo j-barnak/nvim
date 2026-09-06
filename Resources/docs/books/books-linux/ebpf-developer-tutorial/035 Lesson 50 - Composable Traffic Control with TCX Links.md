@@ -234,7 +234,7 @@ COUNTERS stats_hits=... classifier_hits=... last_ifindex=1 last_protocol=0x0800 
 
 ## Comparison with Lesson 20 (Classic TC)
 
-[Lesson 20](../20-tc/README.md) teaches the classic TC path: creating a `clsact` qdisc, attaching a `SEC("tc")` program as a filter, and inspecting packets with `__sk_buff`. That lesson remains valuable because the **data-plane model** is identical: TCX programs use the same context structure and the same helpers for packet access.
+[Lesson 20](022%20Lesson%2020%20-%20tc%20Traffic%20Control.md) teaches the classic TC path: creating a `clsact` qdisc, attaching a `SEC("tc")` program as a filter, and inspecting packets with `__sk_buff`. That lesson remains valuable because the **data-plane model** is identical: TCX programs use the same context structure and the same helpers for packet access.
 
 TCX replaces the **control plane**:
 

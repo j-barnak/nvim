@@ -58,7 +58,7 @@ We’ll touch more on the implementation later, but for now it’s worth remembe
 
 Using the `self` link we talked about earlier, and the `maps` file, we can use `cat` to output the details of it’s own memory mappings:
 
-``` chroma
+``` console
 $ cat /proc/self/maps 
 5577277d1000-5577277d3000 r--p 00000000 00:19 868257                     /usr/bin/cat
 5577277d3000-5577277d8000 r-xp 00002000 00:19 868257                     /usr/bin/cat
@@ -128,7 +128,7 @@ In the last part we mentioned that system calls act as the fundamental interface
 
 Now that we know what’s being mapped, let’s have a closer look on how, by revisiting `strace`. `strace` simply traces the system calls and signals made by a program. As we know memory mapping is handled by the kernel and system calls are how programs get the kernel to do this, `strace` seems like a good bet!
 
-``` chroma
+``` console
 $ strace cat /proc/self/maps
 execve("/usr/bin/cat", ["cat", "/proc/self/maps"], 0x7fff3a014fd8 /* 61 vars */) = 0
 brk(NULL)                               = 0x5622ee613000

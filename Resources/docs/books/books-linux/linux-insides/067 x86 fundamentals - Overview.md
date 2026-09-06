@@ -44,8 +44,8 @@ When reading this and other chapters, you may encounter special notation:
 
 The topics in this chapter are independent of one another, so you can read the sections in any order. The chapter covers the following topics:
 
-- [Paging](linux-x86-1.md)
-- [Interrupt Descriptor Table](linux-x86-2.md)
+- [Paging](068%20x86%20fundamentals%20-%20Paging.md)
+- [Interrupt Descriptor Table](069%20x86%20fundamentals%20-%20Interrupt%20Descriptor%20Table.md)
 
 ## Kernel version
 

