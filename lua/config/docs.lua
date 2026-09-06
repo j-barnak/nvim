@@ -2570,6 +2570,7 @@ local BOOKS = {
 		{ title = "The Algorithm Design Manual", fmt = "pdf", file = "The-Algorithm-Design-Manual.pdf" },
 	} },
 	{ module = "Security", key = "books-security", items = {
+		{ title = "Linternals + Kernel Exploitation (sam4k)", fmt = "md", slug = "linternals-sam4k", file = "https://sam4k.com/linternals/" },
 		{ title = "Nightmare: Binary Exploitation Course", fmt = "md", slug = "nightmare-binary-exploitation", file = "https://github.com/guyinatuxedo/nightmare" },
 		{ title = "Heap Exploitation (Dhaval Kapil)", fmt = "md", slug = "heap-exploitation-dhaval-kapil", file = "https://github.com/DhavalKapil/heap-exploitation" },
 		{ title = "ir0nstone: Binary Exploitation Notes", fmt = "md", slug = "ir0nstone-binary-exploitation", file = "https://github.com/ir0nstone/cybersec-notes" },

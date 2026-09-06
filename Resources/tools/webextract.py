@@ -78,7 +78,7 @@ elif mode == "content":
     el = s.select_one(arg) or s.find("article")
     if not el:
         sys.exit(1)
-    for t in el.select("script, style, ins, iframe, nav, #comments, .comments, .code-block-buttons, .prevnext, .share-buttons, .page__share, .pagination, .code-header"):
+    for t in el.select("script, style, ins, iframe, nav, #comments, .comments, .code-block-buttons, .prevnext, .share-buttons, .page__share, .pagination, .code-header, .breadcrumbs, .paginav, .post-tags, .entry-footer, .post-footer"):
         t.decompose()
     # Jekyll/Rouge highlight blocks put line numbers in a gutter (pre.lineno)
     # that pandoc turns into a bogus ```lineno block of bare numbers. Rebuild
