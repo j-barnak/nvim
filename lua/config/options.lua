@@ -8,7 +8,21 @@ vim.opt.autoindent = true
 vim.opt.splitbelow = true
 vim.opt.splitright = true
 vim.opt.swapfile = false
-vim.opt.termguicolors = true
+-- Truecolor, confirmed rather than forced. Nvim auto-detects since 0.10, but
+-- the detection fails inside tmux: tmux-256color's terminfo carries no RGB
+-- capability and tmux does not export COLORTERM, so a forced `= true` was the
+-- only reason the hex colours below applied. tmux does render truecolor (and
+-- downsamples when the outer terminal cannot), so ask it instead of assuming.
+if not vim.o.termguicolors then
+	local colorterm = vim.env.COLORTERM
+	if colorterm == "truecolor" or colorterm == "24bit" then
+		vim.o.termguicolors = true
+	elseif vim.env.TMUX and vim.fn.executable("tmux") == 1 then
+		-- ~2 ms, and only on the path where nothing else could answer.
+		local feats = vim.fn.system({ "tmux", "display", "-p", "#{client_termfeatures}" })
+		vim.o.termguicolors = feats:find("RGB", 1, true) ~= nil
+	end
+end
 vim.opt.undofile = true
 vim.opt.undodir = vim.env.HOME .. "/.vim/undodir" -- shared with Vim; Nvim's default would also persist
 vim.opt.updatetime = 50
