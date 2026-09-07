@@ -1,0 +1,227 @@
+While not graphics per-se, recompilers in emulation is an interesting topic. They are notoriously complex and difficult to implement, but promise incredible performance improvements. While emulating weaker hardware is serviced well with interpreters, more powerful hardware needs recompilers to shine. Starting with the PlayStation 1 era of hardware, recompilers are common, and beyond that, recompilers are required to have any hope of reaching real-time performance.
+
+This is a multi-part post. I’m not sure how many posts it will take, but there’s a lot of stuff to write about. In this round, I’ll introduce the experiment, we’ll parse a MIPS ELF file, and make it ready for execution in our emulated Linux environment.
+
+### What is the goal of a recompiler
+
+The main purpose of the recompiler is to look at the foreign machine code an application is running, and converting that to equivalent machine code on the hardware you are running on.
+
+Conversely, an interpreter looks at instructions one at a time, and performs the action it requires, which wastes a lot of work in decoding instructions and branching dynamically to whatever code snippet you need to execute.
+
+#### Isn’t this what Java and .NET runtimes do?
+
+Basically, yes. Just replace “foreign machine code” with “byte code”.
+
+### The portability problem
+
+Since a recompiler needs to target the raw machine code of the hardware you’re running on, this is a serious hazard for portability. Typical recompilers aiming to be portable need to write backends for all kinds of machines you want to run on, and deal with operating-system specific ABIs along the way. Today, the most relevant targets would be:
+
+- x86
+- x86-64/amd64
+- ARMv7 (older mobile devices)
+- AArch64 (newer mobile devices)
+
+To target something exotic, like homebrew on consoles, you might have recompilers targeting PowerPC, which was very popular as well for two console generations.
+
+This is too much, so I’ve been interested in the prospect of leveraging LLVM instead. If I can just target LLVM IR, LLVM could generate machine code in runtime (ORC JIT) for me, targeting any of these architectures. It is also a good excuse to learn some LLVM internals. We’ll be generating LLVM code with the C++ API, and pass that along to the JIT runtime to generate machine code on the fly.
+
+#### Ahead-of-time recompilation and re-targeting?
+
+If we target LLVM, we could in theory dump all LLVM IR code we have encountered to disk, optimize the code more aggressively (maybe some LTO), and build everything into a single dynamic library for any target we’d like. Once we have warmed up all the known code paths we should be able to avoid almost all run-time recompilation on subsequent runs. I wonder how practical it is, but it’s something I’d like to experiment with.
+
+#### Patching speed critical sections with native C?
+
+If we can dump LLVM IR to disk it doesn’t seem to farfetched to replace functions at known addresses with our own native versions written in C or something.
+
+#### Recompilation efficiency
+
+A big advantage of having a dedicated recompiler is how quickly the code can be generated as it barely needs to qualify as a compiler to get the job done. LLVM is a complex beast which needs to target all sorts of use cases, and using it as a just-in-time compiler like this is going to create some performance issues. It will be interesting to see how slow it is in practice.
+
+### Why MIPS?
+
+MIPS is found in lots of gaming console hardware from the 90s and early 00s.
+
+- PlayStation 1
+- Nintendo 64 (CPU and RSP)
+- PlayStation 2
+- PlayStation Portable
+
+MIPS is also a very simple ISA to understand and get started with. The core, original MIPS I ISA is probably the simplest, practical ISA to learn, and it’s often part of the curriculum when studying for an electronics degree. As part of my undergrad digital design course, we hacked on a trivial MIPS CPU core in VHDL, which was very fun and educational.
+
+### What should we emulate?
+
+I felt like doing something I could get results from quickly, so rather than emulating a full game console, I wanted to try pretending to be a MIPS Linux kernel, running fully fleshed-out MIPS ELF binaries compiled with GCC 8.2 backed by glibc and libstdc++. That way I could build my way up from running trivial test cases written in assembly without any run-time all the way to emulating complicated programs using STL and the modern C/C++ run-times. We can also get a much better picture of performance differences between a natively compiled C++ application compared to a recompiled one.
+
+The MIPS we’re going to target is a 32-bit MIPS I with whatever extra instructions we need when running real applications. GCC can target MIPS I with -march=mips1, but there are a few instructions from MIPS II and up GCC will use anyways to run any glibc application, due to a couple extra fundamental features:
+
+- RDHWR – Reads a hardware register, used to query thread local storage (TLS). To run any non-trivial C program, we need this because of errno, which is defined by POSIX to be thread local.
+- LL/SC – Load linked and store conditional serve as the backbone for atomic operations. glibc needs it in a few places. We’re not going to bother with threading, so we can trivially implement it as normal load/store.
+
+As for endianness, MIPS can support both little and big-endian. Little is the easiest to start with since it matches our target hardware, but we’ll want to support big-endian as well, as it is the default, and the only MIPS endianness I know of in the wild.
+
+### User-space Linux application – ELF parsing and syscalls
+
+Our program will need to read an ELF file, set up a virtual 32-bit address space and begin execution. We will need to implement various Linux syscalls required to host a real application. Common linux syscalls like:
+
+- open
+- read
+- write
+- exit
+- kill
+- llseek
+- mmap
+- munmap
+- brk
+
+… and so on will be enough to get us over the printf stage. We do not have to concern ourselves with interrupts, CPU exceptions, memory-mapped I/O and other complicated things a game console emulator would have to deal with, fortunately.
+
+## Step \#0 – Getting a MIPS cross compiler
+
+The first step is getting some code to compile to MIPS. This took a surprisingly long time as the PKGBUILDs for Arch Linux did not work properly with some weird incompatibilities. To cut the long story short, I made some PKGBUILDs for Arch Linux which worked for me to create fully functional cross-compilers for both little and big-endian 32-bit MIPS. <https://github.com/Themaister/MIPS-Toolchain-PKGBUILD/>
+
+To build a little-endian binary once you build the toolchain:
+
+```
+mipsel-linux-gnu-gcc -o test test.c -static -march=mips1 -O2
+```
+
+```
+# CMake toolchain file for little endian.
+set(CMAKE_SYSTEM_NAME Linux)
+set(CMAKE_SYSTEM_PROCESSOR mipsel)
+set(CMAKE_C_COMPILER mipsel-linux-gnu-gcc)
+set(CMAKE_CXX_COMPILER mipsel-linux-gnu-g++)
+set(CMAKE_C_FLAGS "-mgp32 -march=mips1")
+set(CMAKE_CXX_FLAGS "-mgp32 -march=mips1")
+set(CMAKE_ASM_FLAGS "-mgp32 -march=mips1")
+set(CMAKE_C_LINK_FLAGS "-static")
+set(CMAKE_CXX_LINK_FLAGS "-static")
+```
+
+The -static flag is important as we do not want to have to deal with dynamically loading the C runtime in our ELF loader. Fortunately, static libgcc/libstdc++ seems to work just fine for our purpose here.
+
+## Step \#1 – Parsing an ELF file
+
+Before starting I did not know much about ELF (Executable and Linkable Format). It is the executable format used on Linux and many other systems. It is surprisingly simple when we just want to run a statically linked executable like this. It is helpful to use the readelf tool (mipsel-linux-gnu-readelf) to study the ELF, this will help us to understand what’s going on.
+
+```
+# mipsel-linux-gnu-readelf -h mips.elf
+ELF Header:
+  Magic:   7f 45 4c 46 01 01 01 00 00 00 00 00 00 00 00 00 
+  Class:                             ELF32
+  Data:                              2's complement, little endian
+  Version:                           1 (current)
+  OS/ABI:                            UNIX - System V
+  ABI Version:                       0
+  Type:                              EXEC (Executable file)
+  Machine:                           MIPS R3000
+  Version:                           0x1
+  Entry point address:               0x400630
+  Start of program headers:          52 (bytes into file)
+  Start of section headers:          628984 (bytes into file)
+  Flags:                             0x1007, noreorder, pic, cpic, o32, mips1
+  Size of this header:               52 (bytes)
+  Size of program headers:           32 (bytes)
+  Number of program headers:         7
+  Size of section headers:           40 (bytes)
+  Number of section headers:         38
+  Section header string table index: 37
+```
+
+This is the first few bytes of the binary. The structure is defined in the system header “elf.h” on Linux, which is very handy when we want to write a parser. There are a few things we care about here:
+
+- We can verify that we have a MIPS binary, and in which endianness.
+- What the entry point address is, i.e. where do we start executing.
+- How to find the program headers
+- How to find the section headers
+
+### The program headers
+
+The program headers contain information about where data is located in the binary and what to do with it. We only care about LOAD and TLS blobs.
+
+```
+# mipsel-linux-gnu-readelf -l mips.elf                                            
+
+Elf file type is EXEC (Executable file)
+Entry point 0x400630
+There are 7 program headers, starting at offset 52
+
+Program Headers:
+  Type           Offset   VirtAddr   PhysAddr   FileSiz MemSiz  Flg Align
+  ABIFLAGS       0x000138 0x00400138 0x00400138 0x00018 0x00018 R   0x8
+  REGINFO        0x000150 0x00400150 0x00400150 0x00018 0x00018 R   0x4
+  LOAD           0x000000 0x00400000 0x00400000 0x813d4 0x813d4 R E 0x10000
+  LOAD           0x082000 0x00492000 0x00492000 0x041e0 0x04f9c RW  0x10000
+  NOTE           0x000114 0x00400114 0x00400114 0x00020 0x00020 R   0x4
+  NOTE           0x000168 0x00400168 0x00400168 0x00024 0x00024 R   0x4
+  TLS            0x0820b0 0x004920b0 0x004920b0 0x00010 0x00030 R   0x4
+
+...
+```
+
+We see two LOAD blocks. One has the read/execute flags set. This is our code segments, which we load from Offset in the ELF into virtual address “VirtAddr”. The read/write is the data segment, where global variables live. Note that FileSiz may be != MemSiz. This is to support zero-initialized global variables, they simply need memory allocated to them.
+
+TLS is a bit special, it marks which global data needs to be thread local. Any data here needs to be copied out to a new allocation per-thread if we create a new one (we won’t, but we still need to implement it).
+
+### The section headers
+
+The section headers don’t seem vital to execution, but they contain the symbol table, which is useful for debugging.
+
+### The virtual address space
+
+Linux has a virtual address space, so we need to copy all relevant data out to our own virtualized address space. This is simply represented as a page table (4k pages) spanning the entire 32-bit address space. Through our syscall emulation, applications/glibc can use mmap() to either allocate memory dynamically or memory map files. We cannot assume a fixed address space layout if we want to emulate Linux binaries.
+
+Having an address space like this means all memory access becomes indirect. This will certainly be a performance problem. There might be a better way if we abuse mmap(), but sounds very hard.
+
+### Setting up the stack
+
+Before we can call the entry point we must set up a stack. Normally, we would think this stack only contains “argc” and “argv”, ala:
+
+```
+int main(int argc, char **argv)
+```
+
+but we actually need to pass a lot more information. All of this extra information is used by the C runtime entry point, which seems to be called \_\_start in MIPS. We allocate the stack space at the top of the virtual address space, and push some data to the stack. The \$sp register will point to:
+
+- argc
+- argv argument \#0 (char \*)
+- argv argument \#1
+- …
+- NULL // Terminates argv
+- environment variable key \#0 (char \*)
+- environment variable value \#0 (char \*)
+- environment variable key \#1
+- environment variable value \#1
+- …
+- NULL // Terminates envp
+
+The environment variables are passed in like this, and the C runtime will parse it. However, there is more data we need to pass on the stack on Linux, which was rather surprising. glibc will crash deep into its initialization if this is not done properly.
+
+```
+// ELF AUXV, see <elf.h>
+stack_data.push_back(AT_PHDR);
+stack_data.push_back(misc.phdr_addr);
+stack_data.push_back(AT_PHENT);
+stack_data.push_back(ehdr.e_phentsize);
+stack_data.push_back(AT_PHNUM);
+stack_data.push_back(ehdr.e_phnum);
+stack_data.push_back(AT_PAGESZ);
+stack_data.push_back(VirtualAddressSpace::PageSize);
+stack_data.push_back(AT_ENTRY);
+stack_data.push_back(ehdr.e_entry);
+stack_data.push_back(AT_UID);
+stack_data.push_back(getuid());
+stack_data.push_back(AT_EUID);
+stack_data.push_back(geteuid());
+stack_data.push_back(AT_GID);
+stack_data.push_back(getgid());
+stack_data.push_back(AT_EGID);
+stack_data.push_back(getegid());
+stack_data.push_back(AT_RANDOM);
+stack_data.push_back(stack_top); // Just point to something. glibc needs this.
+stack_data.push_back(AT_NULL);
+```
+
+glibc needs to have a pointer to its own ELF headers and some other information like user IDs, page sizes, and some other things. The headers are used to set up TLS properly. It also needs a random number created by the Linux kernel, which it uses in early initialization to set up stack protection canaries.
+
+Now, everything is set up, and we can start executing … I mean generating some LLVM IR … in part 2.

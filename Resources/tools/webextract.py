@@ -77,6 +77,30 @@ and differ only in <mode> <selector> <opts>. --preserve-tabs is not optional
                      ch 8 (0xten.gitbook.io) is a React SPA curl cannot render;
                      its cache is GitBook markdown, fixed in place by the gitbook
                      clean opt ({% embed %} -> bare autolink).
+    emulator         51 chapters from many different sites (emulator internals:
+                     interpreters, JITs, IR/SSA, register allocation, rasterizers).
+                     Wikipedia articles go through mediawiki mode with the wiki
+                     opt; the rest are ordinary "content <sel> <url> abs" extracts
+                     except the ones that needed a repair, recorded here:
+                     content article.markdown-body <url> ghcode,abs
+                                                 (GitHub README/wiki/blob: ch 8,
+                                                  43, 45)
+                     content div#article <url> rsh,abs   (gregorygaines: ch 50-51)
+                     content body <url> man7,abs         (man7.org: ch 41)
+                     content div.entry <url> jetpack,abs (fgiesen: ch 46)
+                     content 'div[class="328363900-25082007"]' <url> abs
+                                                 (emulators.com, a Word-exported
+                                                  page whose only content wrapper
+                                                  is a numeric class: ch 5)
+                     mediawiki "" http://emulation.gametechwiki.com wiki (ch 2)
+                     the 9 .pdf chapters have no HTML stage: pdftotext into one
+                     text file the same way the dojo does (reading order for the
+                     two-column papers, "-layout" for the single-column book and
+                     doc), piped through cat -s.
+                     Wayback (live fetch failed/blocked/JS-only): ch 3 (noxa 500),
+                     7 (wikiwand 403), 21 (link.springer bot wall), 39 and 47
+                     (dolphin-emu 403), 49 (redream 404). The cache key is still
+                     the sha256 of the original spec URL, not the snapshot URL.
 
 The <opts> are a comma-separated set. Each one exists because a real source in
 this library needs it; each is named after the generator that emits the markup,
@@ -119,6 +143,20 @@ and every one is documented at the point it runs:
     nbsp       (clean opt) normalise U+00A0 in PROSE too, for a WordPress page
                that sprinkles it as an extraction artifact (exodusintel)
     gitbook    (clean opt) unwrap GitBook's {% embed url="<U>" %} to bare <U>
+    ghcode     GitHub's rendered markdown code fence,
+               <div class="highlight highlight-source-LANG"><pre> (READMEs,
+               wikis, .md blobs viewed on github.com); "assembly" -> asm
+    rsh        react-syntax-highlighter's inline line-number spans
+               (<span class="react-syntax-highlighter-line-number">), welded
+               into the <code> gutter (gregorygaines.com)
+    precode    a <pre>\n<code class="language-X"> whose whitespace between the
+               tags makes pandoc write an indented, unlabelled block instead of
+               a fence (andrewkelley.me, mattkeeter.com)
+    man7       man7.org's site chrome around a manual page selected as "body":
+               the masthead, search box, top nav table and hit counter
+    wiki       (mediawiki mode) Wikipedia furniture the OSDev dump lacks:
+               infoboxes, sidebars, hatnotes, amboxes, vertical navboxes and
+               the [N] reference superscripts
 
 Some rules are unconditional because the markup they repair is never anything
 but damage: Cloudflare's data-cfemail obfuscation (which eats real text such as
@@ -720,6 +758,72 @@ if mode == "content":
     # --- opt-in, per-generator rules, run before the generic ones so the
     # generic ones see the shapes they know.
 
+    if opt("man7"):
+        # man7.org serves each manual page as a flat run of <h2>/<pre> section
+        # blocks directly under <body>, with no article container, framed by
+        # the site's own chrome. Selecting "body" is the only way to reach the
+        # page, so drop the masthead, the search box, the top navigation table
+        # and the hit counter; the section index and the colophon table are the
+        # page and stay.
+        for t in el.select("div.page-top, div.nav-bar, div.man-search-box, "
+                           "div.footer, div.statcounter, table.nav-table, "
+                           "table.sec-table"):
+            t.decompose()
+
+    if opt("ghcode"):
+        # GitHub's rendered markdown (a repo README, a wiki page, or a .md blob
+        # viewed on github.com) highlights every fenced block as
+        # <div class="highlight highlight-source-LANG"><pre>...</pre></div>, with
+        # the language ONLY in the "highlight-source-LANG" class and none on the
+        # <pre> or <code>, so pandoc writes an INDENTED block and the label is
+        # lost. Rebuild each as a fenced block. GitHub spells x86 assembly
+        # "assembly", which the fence allow-list does not know; map it to "asm".
+        _GH = {"assembly": "asm"}
+        for div in el.select("div.highlight[class*=highlight-source-]"):
+            lang = next((c[len("highlight-source-"):] for c in (div.get("class") or [])
+                         if c.startswith("highlight-source-")), "")
+            pre_in = div.select_one("pre")
+            if pre_in is None:
+                continue
+            div.replace_with(code_block(pre_in.get_text(), _GH.get(lang, lang), s))
+
+    if opt("rsh"):
+        # gregorygaines.com renders each listing with react-syntax-highlighter
+        # inside a badge/file-name card: <pre><div><span>Java</span><span>
+        # Customer.java</span><code class="language-java"><span class="...line-
+        # number">1</span>...</code></div></pre>. pandoc sees a <pre> whose only
+        # child is a <div> (mixed content, not a bare <code>), so it writes an
+        # INDENTED block, drops the language, and welds the "Java" badge and the
+        # file name onto the first code line ("JavaCustomer.javapublic class").
+        # Rebuild each listing from its inner <code>, dropping the line-number
+        # gutter and the badge/file-name chrome, so it fences with the language
+        # the <code> declares.
+        for pre in el.find_all("pre"):
+            code = pre.find("code")
+            if code is None:
+                continue
+            for sp in code.select("span.react-syntax-highlighter-line-number"):
+                sp.decompose()
+            lang = next((c[len("language-"):] for c in (code.get("class") or [])
+                         if c.startswith("language-")), "")
+            pre.replace_with(code_block(code.get_text().rstrip("\n") + "\n", lang, s))
+
+    if opt("precode"):
+        # Some blogs write a listing as <pre>\n<code class="language-X">...
+        # </code>\n</pre>, with whitespace-only text nodes between the <pre> and
+        # the <code>. pandoc reads that <pre> as mixed content and writes an
+        # INDENTED block, dropping BOTH the fence and the declared language
+        # (andrewkelley.me's 6502/llvm listings, mattkeeter.com's armasm). When
+        # a <pre>'s only element child is a single <code>, rebuild it as the
+        # tight <pre><code class="language-X"> that pandoc fences.
+        for pre in el.find_all("pre"):
+            kids = [c for c in pre.children if getattr(c, "name", None)]
+            if len(kids) == 1 and kids[0].name == "code":
+                code = kids[0]
+                lang = next((c[len("language-"):] for c in (code.get("class") or [])
+                             if c.lower().startswith("language-")), "")
+                pre.replace_with(code_block(code.get_text(), lang, s))
+
     if opt("phrack"):
         # phrack.org renders the whole issue's article index as a table INSIDE
         # div.framed, above the phile: navigation, not content.
@@ -1256,6 +1360,18 @@ elif mode == "mediawiki":
         sys.exit(1)
     for t in el.select("script, style, .toc, #toc, .toctitle, .mw-editsection, .mw-jump-link, .printfooter, .noprint, .navbox, #catlinks, .mw-empty-elt, .metadata"):
         t.decompose()
+    if opt("wiki"):
+        # Wikipedia and other public MediaWiki wikis (not the OSDev dump) hang a
+        # ring of furniture around the prose that the OSDev pages do not carry:
+        # infoboxes and sidebars, the "not to be confused with" hatnotes, the
+        # maintenance amboxes, the vertical navboxes and the short-description /
+        # thumbnail-caption chrome. Drop those; the body prose and the reference
+        # list are the article and stay. Opt-in so the OSDev rebuild, whose
+        # markup has none of these, is untouched.
+        for t in el.select(".infobox, .sidebar, .hatnote, .ambox, .vertical-navbox, "
+                           ".navigation-not-searchable, .mbox-small, .side-box, "
+                           ".shortdescription, sup.reference"):
+            t.decompose()
     # OSDev renders its maintenance templates (Stub, In Progress, Disputed,
     # BadPractice, Beginner, Tutorial, Tone, ...) as a message box carrying no
     # class at all, only the inline style below, so none of the class-based

@@ -1,0 +1,201 @@
+This article aims to describe the topic of lowering parallel moves in a compiler. Many compiler textbooks do not cover this topic at all, rendering their treatment of things such as emitting register arguments (for calls) incorrect in general.
+
+### Introduction
+
+A set of parallel moves (or assignments), \$(l_1, l_2, \ldots, l_n) := (l’\_1, l’\_2, \ldots, l’\_n)\$ , is a set of moves between locations (typically, registers or stack slots) that, semantically, must be done at the same time. The naive lowering of such a construct, by means of emitting a sequence of individual moves, is not correct in general. A correct lowering must take care to honour dependencies between moves (in the case that the destination and source locations intersect) and to deal with cycles appropriately (often by introducing a temporary location to break the cycle).
+
+### Example
+
+Parallel moves appear in a few places in compilers. Most notably, in the destruction of ϕ-nodes when going out of SSA and when populating register arguments for calls. This article will focus on the latter for demonstration.
+
+Consider the following C snippet:
+
+```
+int bar(int y, int x);
+
+int foo(int x, int y) {
+  return bar(y, x);
+}
+```
+
+If we assume a calling convention where arguments are passed in registers `r0`, `r1`, `...`, `rN`, then we expect that this function will enter with `x` within `r0` and `y` within `r1`. These variables are then passed to `bar` in reverse order. In order to do this shuffling of registers correctly, some care must be taken.
+
+For example, consider the naive (incorrect) lowering of this function:
+
+```
+foo:
+  mov r0, r1
+  mov r1, r0
+  b bar
+```
+
+This is clearly incorrect as it will logically result in a call similar to `bar(y, y)`. In other words, we have overwritten one of our source registers because it also appears as a destination register within our parallel move. This example is a canonical example of the "swap" problem (as it is known in SSA literature).
+
+In order to do this lowering correctly, the compiler must identify that there is a cycle between these assignment locations and either break the cycle with a temporary register (to preserve the overwritten value) or with a dedicated swap instruction (such as `xchg` in x86_64).
+
+For example, the following is a correct lowering:
+
+```
+foo:
+  mov r2, r0
+  mov r0, r1
+  mov r1, r2
+  b bar
+```
+
+As we will see later, it turns out you can always sequentialise parallel moves with a single temporary location (per register class). The following sections describe how we can tackle this problem in a principled way by identifying the two major categories of dependencies between locations.
+
+### Location Transfer Graph
+
+In order to visualise dependencies between locations involved in a parallel move, it is convenient to create a graph representation.
+
+For each \$(l_i, l’\_i)\$ pair involved in the parallel move \$(l_1, l_2, \ldots, l_n) := (l’\_1, l’\_2, \ldots, l’\_n)\$, we add an edge \$l’\_i \to l_i\$ to the graph. This edge can be read “\$l’\_i\$ populates \$l_i\$” or “\$l_i\$ gets its value from \$l’\_i\$”.
+
+Consider the graph created for the parallel moves \$(B, D, C) := (A, A, B)\$:
+
+![example location transfer graph](https://compiler.club/img/parallel-moves/one.svg)
+
+To aid the presentation, each edge is labelled with its index as it appears in the parallel move notation.
+
+If we were to naively introduce copies in order of appearance, we’d get:
+
+```
+B := A
+D := A
+C := B
+```
+
+This is wrong, as \$B\$’s value is overwritten whilst another move’s destination depends on it as a source. In the above case, a correct sequentialisation of copies does not require a temporary, as no swap occurs between locations (there is no cycle in the graph).
+
+Consider a correct lowering:
+
+```
+C := B
+B := A
+D := A
+```
+
+This is correct because \$B\$’s value is used by its dependent move before it itself is overwritten (as part of the move it’s involved in with \$A\$). Similarly, the following is also a correct lowering:
+
+```
+C := B
+D := A
+B := A
+```
+
+Each correct lowering corresponds to traversing the transfer location graph in post-order. This makes sense when you consider that post-order traversals of graphs result in a node visitation order that corresponds to a valid topological sort of the transpose (reverse) graph. This knowledge motivates an algorithm that, before emitting a move \$t_i := t’\_i\$ considers all moves whose source depends on \$t_i\$ (in other words, processes its successors before itself - exactly a post-order traversal).
+
+### Dealing with Cycles
+
+However, what if cycles exist in the location transfer graph? In the case of cycles, we can always use a single temporary to break the cycle. The basic idea is that if we begin processing edge \$X_1 \to X_2\$ in post-order, by considering edges \$X_2 \to \ldots\$ first, if we ever get to the point of considering an edge \$X_j \to X_1\$, we have found a cycle. The strategy for resolving cycles uses a temporary location to preserve \$X_1\$’s in the meantime so that all post-order dependent moves can be emitted as normal. Then, when we get around to emitting the move for \$X_1 \to X_2\$ (after all dependents), we instead use the temporary register we preserved \$X_1\$’s value in to populate \$X_2\$.
+
+Let us add a cycle to the previous example to see how this works. The parallel moves under consideration below are now \$(B, D, C, A) := (A, A, B, C)\$.
+
+![example location transfer graph](https://compiler.club/img/parallel-moves/two.svg)
+
+Suppose we start by considering edge \$A \overset{0}{\to} B\$. From there, we must consider \$B \overset{2}{\to} C\$. Then, from there, we must consider the edge \$C \overset{3}{\to} A\$. Again, we consider the edges that have \$A\$ as their source, so \$A \overset{0}{\to} B\$ (and \$A \overset{1}{\to} D\$). The algorithm records the status of each move and so, having already seen \$A \overset{0}{\to} B\$, identifies a cycle. As described above, the cycle must be broken. To do this, \$A\$ is spilled to a temporary, \$t\$.
+
+```
+t := A
+```
+
+Then, \$A \overset{1}{\to} D\$ is processed. No other move depends on \$D\$ for its value, so the move is emitted:
+
+```
+t := A
+D := A
+```
+
+Then, as our post-order traversal works its way back up the traversal/recursion stack, we continue to emit the moves for \$C \overset{3}{\to} A\$ and \$B \overset{2}{\to} C\$:
+
+```
+t := A
+D := A
+A := C
+C := B
+```
+
+Then, when we get back to the first move we considered, \$A \overset{0}{\to} B\$, we note that \$A\$’s value is preserved in \$t\$ and emit the move \$B := t\$:
+
+```
+t := A
+D := A
+A := C
+C := B
+B := t
+```
+
+It should be clear that the order in which certain moves are emitted depends on which (successive) edges the algorithm considers first at each point (if there is more than 1 successive edge). This is similar in concept to the fact that many valid topological orderings can exist for the same DAG.
+
+### Topological Sort Algorithm
+
+Earlier, there was a mention of the fact that a post-order traversal produces a node visitation order that is a valid topological ordering of the transpose graph (ignoring the fact that true topological orderings can only be produced for DAGs). Indeed, we could formulate an algorithm based on Kahn’s algorithm that works on the transpose graph by processing the edges for nodes that have no predecessors first (removing such nodes, and related edges, as it goes). Then, if the graph still contains edges, there must be a cycle, so chooses an edge at random to preserve the edge’s destination location into a temporary location and then continues to process nodes with no successors. Care must be taken in such an algorithm to process the components of the location transfer graph in order, as the graph may have many components! (we wouldn’t want cycle resolution in one component to utilise the same temporary location currently in use by another component that hasn’t been fully processed - so we must break one cycle at a time and fully process one component before focusing on another)
+
+In the next section, we’ll see how we can dispense with the idea of a graph-centric algorithm, choosing, instead, to implement an algorithm that ensures coverage of each edge in one pass by maintaining a set of processed edges as it processes each move in the order given.
+
+# Algorithm
+
+The following algorithm is taken (with comments added) from page 5 of the paper [Tilting at windmills with Coq](https://xavierleroy.org/publi/parallel-move.pdf).
+
+```
+(* state of each edge being considered in the algorithm *)
+type status = To_move | Being_moved | Moved
+
+let parallel_move src dst tmp =
+  (* initialise state array *)
+  let n = Array.length src in
+  let status = Array.make n To_move in
+  (* procedure to process one edge and its dependent moves *)
+  let rec move_one i =
+    (* don't process redundant self-edges *)
+    if src.(i) <> dst.(i) then
+      begin
+        (* mark node as being visited *)
+        status.(i) <- Being_moved;
+        (* visit its children first (recursive post-order) *)
+        for j = 0 to n - 1 do
+          (* found an child; move whose source depends on current move's destination *)
+          if src.(j) = dst.(i) then
+            match status.(j) with
+            | To_move -> (* yet to be moved, move it *)
+               move_one j
+            | Being_moved -> (* cycle detected, emit a preservation *)
+               let t = tmp src.(j) in
+               Printf.printf "%s := %s\n" t src.(j);
+               (* destructively book-keep the fact j's source is the temporary *)
+               src.(j) <- t
+            | Moved -> () (* already moved, do nothing *)
+        done;
+        Printf.printf "%s := %s\n" dst.(i) src.(i);
+        status.(i) <- Moved
+      end
+  in
+  (* loop to ensure each move is considered at least once *)
+  for i = 0 to n - 1 do
+    if status.(i) = To_move then move_one i
+  done
+```
+
+The purpose of the `tmp` parameter is because we need a single temporary register per register class (floating point registers, for example, will require a different temporary register).
+
+An iterative version of the same algorithm can be found [here](https://gist.github.com/contificate/87377cd9f451891b58d5b9b24906720b).
+
+### Demo
+
+Go
+
+Location Transfer Graph
+
+Post-Order Traversal Stack
+
+Output
+
+### Notes
+
+- The algorithm is described above is quadratic because of the way it finds successive edges in the location transfer graph (linear search). A real implementation may wish to preprocess the edges to make this lookup faster. However, it’s often taken that \$n\$ is very small in compiler’s use cases for parallel moves, so it probably doesn’t matter in practice. A practical implementation may wish to replace recursion with iteration, this is straightforward with a stack and extra book-keeping (gist).
+
+- The fact that each component in the location transfer graph can have at most one cycle is a consequence of the destination locations \$l_1, l_2, \ldots, l_n\$ being distinct - this is crucial to the definition of a parallel move.
+
+- In the paper by Leroy et al., it is noted that one could process the “windmills” (the name given to the shape of components in a location transfer graph for parallel moves) by processing the “blades” of each windmill followed by the “axles”. This idea is exactly the variant of Kahn’s algorithm described in this article for conceptual purposes. An extant compiler back-end that uses the Leroy et al. algorithm is QBE (and of course, CompCert, for which the algorithm was originally intended).
+
+- There are other strategies in instruction set architectures for swapping the contents of two registers. Notably, in x86(\_64), the `xchg` instruction can be used. However, I don’t know of a mainstream compiler that uses it for the purpose of swapping registers in lowering parallel moves before calls to functions. In fact, GCC - when pushed - will actually spill to the stack (see [here](https://godbolt.org/z/f34q16Yjx)) rather than emit an `xchg` (it seems there’s no code path in GCC that would ever emit `xchg` in this case). The reason for not emitting xchg in general is probably because: (1) the instruction issues 3 micro-ops that cannot benefit from mov elision, and (2) using a memory operand with xchg implies atomicity. Of course, other swapping strategies such as XOR swapping could be used but are probably equally as undesirable.

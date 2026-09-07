@@ -2480,6 +2480,7 @@ local pick_llvm_tutorial = frozen_web_provider("llvm-tutorial", "LLVM Tutorial> 
 local pick_browser_engineering = frozen_web_provider("browser-engineering", "Web Browser Engineering> ")
 local pick_learnopengl = frozen_web_provider("learnopengl", "LearnOpenGL> ")
 local pick_revers_hypervisor = frozen_web_provider("revers-hypervisor", "Hypervisor Development> ")
+local pick_emulator = frozen_web_provider("emulator", "Emulator> ")
 
 -- ── glibc: frozen manual (docs) + per-version source (:Src) ──────────────
 -- Docs are the frozen latest manual (one book, same for every release). Source
@@ -3215,6 +3216,7 @@ local WEB_BOOKS = {
 	{ title = "Web Browser Engineering", key = "browser-engineering", run = pick_browser_engineering },
 	{ title = "LearnOpenGL", key = "learnopengl", run = pick_learnopengl },
 	{ title = "Hypervisor Development (revers.engineering)", key = "revers-hypervisor", run = pick_revers_hypervisor },
+	{ title = "Emulator (emudev.org resources)", key = "emulator", run = pick_emulator },
 }
 
 -- All books under one entry, in ONE flat list: Books -> book -> chapter.
@@ -3372,6 +3374,7 @@ LOCATION["browser-engineering"] = { index = "browser-engineering/index.tsv", uni
 LOCATION["learnopengl"] = { index = "learnopengl/index.tsv", unit = "chapter" }
 LOCATION["revers-hypervisor"] = { index = "revers-hypervisor/index.tsv", unit = "chapter" }
 LOCATION["glibc"] = { index = "glibc/index.tsv", unit = "chapter" }
+LOCATION["emulator"] = { index = "emulator/index.tsv", unit = "chapter" }
 -- Fetched from a live URL on every read; there is no on-disk set to freeze.
 for _, key in ipairs({ "ocaml", "haskell", "multiboot", "make" }) do
 	LOCATION[key] = { network = true }
