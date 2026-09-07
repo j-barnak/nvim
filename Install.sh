@@ -46,15 +46,20 @@ SUDO=""
 if [ "$(id -u)" -ne 0 ]; then have sudo && SUDO="sudo" || warn "not root and no sudo; package installs may fail"; fi
 
 # ── 1. system packages ──────────────────────────────────────────────────────
-# The logical tools the config needs, mapped per package manager below:
-#   neovim git curl  - the editor and the fetch/clone machinery
-#   ripgrep fd fzf   - fzf-lua pickers, :Docs and :Src search
-#   pandoc           - HTML->markdown stage of every frozen web book
-#   poppler(pdftotext) - PDF book extraction
-#   ctags            - :Src symbol index
-#   texinfo(makeinfo) - info/texi doc rendering
-#   python3          - runs the doc builders
-# Optional (installed if the manager has them, never fatal): cppman, tmux.
+# The logical tools the config needs (this list mirrors health.lua's TOOLS),
+# mapped per package manager below:
+#   neovim git curl    - the editor and the fetch/clone machinery
+#   ripgrep fd fzf     - fzf-lua pickers, :Docs and :Src search
+#   pandoc             - HTML->markdown stage of every frozen web book
+#   poppler(pdftotext/pdfinfo/pdftoppm) - PDF book extraction and figures
+#   mupdf(mutool)      - PDF spec chapter splitting + the Shared-Memory glyph oracle
+#   ctags              - :Src symbol index
+#   texinfo(makeinfo)  - info/texi doc rendering (GCC internals, etc.)
+#   man(man-db) col    - man-page providers and their rendering (col -bx)
+#   perl               - kernel-doc on older kernel trees
+#   python3            - runs the doc builders
+# Optional (installed if the manager has them, never fatal): cppman,
+# imagemagick(convert)+xdg-utils (Intel SDM figures), tmux.
 detect_pm() {
   for pm in apt-get dnf pacman zypper apk brew; do have "$pm" && { echo "$pm"; return; }; done
   echo ""
@@ -67,41 +72,50 @@ install_packages() {
   case "$pm" in
     apt-get)
       $SUDO apt-get update
+      # mupdf-tools = mutool (PDF spec splitting + the Shared-Memory glyph oracle);
+      # man-db = man; bsdextrautils = col (man rendering); perl = kernel-doc on
+      # older trees. poppler-utils covers pdftotext/pdfinfo/pdftoppm.
       $SUDO apt-get install -y neovim git curl ripgrep fd-find fzf pandoc \
-        poppler-utils universal-ctags texinfo python3 python3-pip \
-        python3-bs4 python3-lxml python3-yaml || warn "some apt packages failed"
+        poppler-utils mupdf-tools universal-ctags texinfo man-db bsdextrautils perl \
+        python3 python3-pip python3-bs4 python3-lxml python3-yaml || warn "some apt packages failed"
       # Debian names the binary fd-find/fdfind; fzf-lua looks for 'fd'.
       if ! have fd && have fdfind; then
         $SUDO ln -sf "$(command -v fdfind)" /usr/local/bin/fd 2>/dev/null || true
       fi
-      $SUDO apt-get install -y cppman tmux 2>/dev/null || true
+      # optional: cppman (CppReference), imagemagick+xdg-utils (Intel SDM figures), tmux
+      $SUDO apt-get install -y cppman imagemagick xdg-utils tmux 2>/dev/null || true
       ;;
     dnf)
       $SUDO dnf install -y neovim git curl ripgrep fd-find fzf pandoc \
-        poppler-utils ctags texinfo python3 python3-pip \
-        python3-beautifulsoup4 python3-lxml python3-pyyaml || warn "some dnf packages failed"
-      $SUDO dnf install -y cppman tmux 2>/dev/null || true
+        poppler-utils mupdf ctags texinfo man-db util-linux perl \
+        python3 python3-pip python3-beautifulsoup4 python3-lxml python3-pyyaml || warn "some dnf packages failed"
+      $SUDO dnf install -y cppman ImageMagick xdg-utils tmux 2>/dev/null || true
       ;;
     pacman)
       $SUDO pacman -Sy --needed --noconfirm neovim git curl ripgrep fd fzf pandoc \
-        poppler ctags texinfo python python-beautifulsoup4 python-lxml python-yaml \
+        poppler mupdf-tools ctags texinfo man-db util-linux perl \
+        python python-beautifulsoup4 python-lxml python-yaml \
         || warn "some pacman packages failed"
-      $SUDO pacman -S --needed --noconfirm tmux 2>/dev/null || true
+      $SUDO pacman -S --needed --noconfirm imagemagick xdg-utils tmux 2>/dev/null || true
       ;;
     zypper)
       $SUDO zypper install -y neovim git curl ripgrep fd fzf pandoc \
-        poppler-tools ctags texinfo python3 python3-pip \
-        python3-beautifulsoup4 python3-lxml python3-PyYAML || warn "some zypper packages failed"
+        poppler-tools mupdf-tools ctags texinfo man util-linux perl \
+        python3 python3-pip python3-beautifulsoup4 python3-lxml python3-PyYAML || warn "some zypper packages failed"
+      $SUDO zypper install -y ImageMagick xdg-utils tmux 2>/dev/null || true
       ;;
     apk)
-      $SUDO apk add neovim git curl ripgrep fd fzf pandoc poppler-utils \
-        ctags texinfo python3 py3-pip py3-beautifulsoup4 py3-lxml py3-yaml \
+      $SUDO apk add neovim git curl ripgrep fd fzf pandoc poppler-utils mupdf-tools \
+        ctags texinfo mandoc man-pages util-linux perl \
+        python3 py3-pip py3-beautifulsoup4 py3-lxml py3-yaml \
         || warn "some apk packages failed"
+      $SUDO apk add imagemagick xdg-utils tmux 2>/dev/null || true
       ;;
     brew)
-      brew install neovim git curl ripgrep fd fzf pandoc poppler universal-ctags texinfo python3 \
-        || warn "some brew packages failed"
-      brew install cppman tmux 2>/dev/null || true
+      # macOS ships man, col and perl; add mutool and imagemagick.
+      brew install neovim git curl ripgrep fd fzf pandoc poppler mupdf-tools \
+        universal-ctags texinfo python3 || warn "some brew packages failed"
+      brew install cppman imagemagick tmux 2>/dev/null || true
       ;;
   esac
 }
@@ -164,7 +178,7 @@ bootstrap_plugins
 echo
 log "checking the toolchain:"
 ok=1
-for t in nvim git curl rg fd fzf pandoc pdftotext ctags python3; do
+for t in nvim git curl rg fd fzf pandoc pdftotext pdfinfo mutool ctags makeinfo man col perl python3; do
   if have "$t" || { [ "$t" = fd ] && have fdfind; }; then
     printf '  \033[1;32m✓\033[0m %s\n' "$t"
   else
