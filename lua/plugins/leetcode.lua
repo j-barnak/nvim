@@ -4,8 +4,9 @@ return {
 	"kawre/leetcode.nvim",
 	cmd = "Leet",
 	-- leetcode.nvim renders problem statements as HTML, so it needs the html
-	-- treesitter parser; this config already runs nvim-treesitter.
-	build = ":TSUpdate html",
+	-- treesitter parser. No build step here: this config runs nvim-treesitter's
+	-- `main` branch (where ":TSUpdate html" is not a valid command) and already
+	-- lists "html" in its ensure list, so the parser is installed there.
 	dependencies = {
 		"nvim-lua/plenary.nvim",
 		"MunifTanjim/nui.nvim",
