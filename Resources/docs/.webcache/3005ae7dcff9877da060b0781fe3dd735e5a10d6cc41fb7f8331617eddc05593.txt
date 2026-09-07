@@ -1,0 +1,519 @@
+![](https://dangokyo.wordpress.com/wp-content/uploads/2018/10/20181030004.jpg?w=809&h=455)
+
+## Introduction
+
+I will continue to talk about the exploitation of CVE-2017-7308. In this post, I will discuss the implementation details of buddy allocator and SLUB allocator in Linux-4.10.6. I will show how to put the victim object (struct packet_sock in this post) next adjacent to the vulnerable buffer (packet rv_ring buffer in [previous post](http://dangokyo.me/2018/10/11/linux-kernel-exploitation-setting-up-debugging-environment/)).  
+In \[3\], a general abstraction of Linux Kernel memory management is given as following picture. From the picture, we can find that two types of allocators (slab allocator and buddy allocator) are provided for Linux kernel functions. For both allocators, I will give some debugging info to give a straight view on how those objects are allocated and shaped in memory combined with some explanation on the source code.  
+
+![](https://dangokyo.wordpress.com/wp-content/uploads/2018/10/20181027001.png?w=809)
+
+To avoid potential confusions, I need to explain what is “slab allocator”, “SLAB allocator” and “SLUB allocator” based on the explanation in \[5\] and \[6\].  
+“slab” is a special data structure, which is used in the memory management in Linux kernel.  
+“slab allocator” is in the core of the kernel’s memory management, which is built upon slab.  
+“SLAB allocator” is one of the implementations of slab allocator, which is the default allocator for entire 2.4 and early 2.6 Linux Kernel releases.\[7\]  
+“SLUB allocator” is another implementation of slab allocator, which has become the default allocator since 2.6.30.\[7\]  
+In this post, I will only discuss the SLUB allocator. For other information about SLAB allocator and SLUB allocator could be found on Phrack magazine.\[8\]\[9\]
+
+## Buddy Allocator
+
+We will introduce the Buddy allocator starting from the invoking *alloc_pg_vec* in *packet_set_ring* function.
+
+``` cpp
+// net/packet/af_packet.c:4100
+static struct pgv *alloc_pg_vec(struct tpacket_req *req, int order)
+{
+	unsigned int block_nr = req->tp_block_nr;
+	pg_vec = kcalloc(block_nr, sizeof(struct pgv), GFP_KERNEL);
+	if (unlikely(!pg_vec))
+		goto out;
+
+	for (i = 0; i < block_nr; i++) {
+		pg_vec[i].buffer = alloc_one_pg_vec_page(order);
+		if (unlikely(!pg_vec[i].buffer))
+			goto out_free_pgvec;
+	}
+}
+
+// net/packet/af_packet.c#L4075
+static char *alloc_one_pg_vec_page(unsigned long order)
+{
+	char *buffer;
+	gfp_t gfp_flags = GFP_KERNEL | __GFP_COMP |
+			  __GFP_ZERO | __GFP_NOWARN | __GFP_NORETRY;
+
+	buffer = (char *) __get_free_pages(gfp_flags, order);
+	if (buffer)
+		return buffer;
+}
+
+// mm/page_alloc.c:3869
+unsigned long __get_free_pages(gfp_t gfp_mask, unsigned int order)
+{
+	struct page *page;
+	page = alloc_pages(gfp_mask, order);
+	if (!page)
+		return 0;
+	return (unsigned long) page_address(page);
+}
+
+// mm/page_alloc.c:3768
+/*
+ * This is the 'heart' of the zoned buddy allocator.
+ */
+struct page *
+__alloc_pages_nodemask(gfp_t gfp_mask, unsigned int order,
+			struct zonelist *zonelist, nodemask_t *nodemask)
+{
+	/* First allocation attempt */
+	page = get_page_from_freelist(alloc_mask, order, alloc_flags, &ac);
+	if (likely(page))
+		goto out;
+
+no_zone:
+	/*
+	 * Runtime PM, block IO and its error handling path can deadlock
+	 * because I/O on the device might not complete.
+	 */
+	alloc_mask = memalloc_noio_flags(gfp_mask);
+	ac.spread_dirty_pages = false;
+	if (unlikely(ac.nodemask != nodemask))
+		ac.nodemask = nodemask;
+	page = __alloc_pages_slowpath(alloc_mask, order, &ac);
+}
+
+// mm/page_alloc.c:1789
+/*
+ * Go through the free lists for the given migratetype and remove
+ * the smallest available page from the freelists
+ */
+static inline
+struct page *__rmqueue_smallest(struct zone *zone, unsigned int order,
+						int migratetype)
+{
+	unsigned int current_order;
+	struct free_area *area;
+	struct page *page;
+
+	/* Find a page of the appropriate size in the preferred list */
+	for (current_order = order; current_order < MAX_ORDER; ++current_order) {
+		area = &(zone->free_area[current_order]);
+		page = list_first_entry_or_null(&area->free_list[migratetype],
+							struct page, lru);
+		if (!page)
+			continue;
+		list_del(&page->lru);
+		rmv_page_order(page);
+		area->nr_free--;
+		expand(zone, page, order, current_order, area, migratetype);
+		set_pcppage_migratetype(page, migratetype);
+		return page;
+	}
+	return NULL;
+}
+```
+
+At present, I give a execution flow from invoking buddy allocator API to the low-level implementation. Let me give an overview of buddy allocator now.
+
+``` cpp
+struct free_area  free_area[MAX_ORDER];
+
+struct free_area {
+	struct list_head	free_list[MIGRATE_TYPES];
+	unsigned long		nr_free;
+};
+```
+
+And the overview of memory management of buddy allocator is given below:  
+![](https://dangokyo.wordpress.com/wp-content/uploads/2018/10/20181029001.png?w=809&h=294)
+
+The size of each page is decided by the **order** and can be calculated as 2^(order) \* PAGE_SIZE. In my test, PAGE_SIZE is 4KB. To be more particular, if **order** is 0, the size of allocated page is 0x1000 bytes. If **order** is 3, the size of allocated page is 0x8000 bytes.
+
+We give \[10\] to present a direct view of how the allocated pages are arranged. Via setting the breakpoint in *alloc_one_pg_vec_page*, we can get the address of every allocated page in memory as below in the chronological order:  
+![](https://dangokyo.wordpress.com/wp-content/uploads/2018/10/20181029002.png?w=809)  
+Since there are hundreds of allocated pages there, I list the allocated page below
+
+``` bash
+0xffff88007a7c0000 -> 0xffff88007a7d8000 [4]
+0xffff8800798a0000 -> 0xffff880079bf8000 [108]
+0xffff880076c00000 -> 0xffff880076ff8000 [128]
+0xffff880076800000 -> 0xffff880076bf8000 [128]
+0xffff880076400000 -> 0xffff8800767f8000 [128]
+0xffff880076000000 -> 0xffff8800763f8000 [128]
+0xffff880075c00000 -> 0xffff880075ff8000 [128]
+0xffff880075800000 -> 0xffff880075bf8000 [128]
+0xffff880075400000 -> 0xffff8800757f8000 [128]
+0xffff880075000000 -> 0xffff880075088000 [18]
+```
+
+From the observation above, we can find that what we do here is de-fragmentation. We can find that the first line and second line is to exhaust all of the available pages of size 0x8000 bytes in *free_area*. From third line to ninth line, buddy allocator allocates 128 pages of size 0x8000 bytes (0x400000 bytes in total). Another interesting observation is that the base address of allocated memory for holding the 128 pages is actually decreasing.  
+Next job is to put the victim object right after the buffer.
+
+## SLUB Allocator
+
+For SLUB allocator, let me start from the **socket** syscall as below:
+
+``` cpp
+SYSCALL_DEFINE3(socket, int, family, int, type, int, protocol)
+{
+	int retval;
+	struct socket *sock;
+	int flags;
+	flags = type & ~SOCK_TYPE_MASK;
+	type &= SOCK_TYPE_MASK;
+	retval = sock_create(family, type, protocol, &sock);
+}
+```
+
+For AF_PACKET protocol, it is function *packet_create* is called.
+
+``` cpp
+
+static int packet_create(struct net *net, struct socket *sock, int protocol,
+			 int kern)
+{
+	struct sock *sk;
+	struct packet_sock *po;
+	__be16 proto = (__force __be16)protocol; /* weird, but documented */
+	int err;
+
+	if (!ns_capable(net->user_ns, CAP_NET_RAW))
+		return -EPERM;
+	if (sock->type != SOCK_DGRAM && sock->type != SOCK_RAW &&
+	    sock->type != SOCK_PACKET)
+		return -ESOCKTNOSUPPORT;
+	sk = sk_alloc(net, PF_PACKET, GFP_KERNEL, &packet_proto, kern);
+}
+
+
+/**
+ *	sk_alloc - All socket objects are allocated here
+ *	@net: the applicable net namespace
+ *	@family: protocol family
+ *	@priority: for allocation (%GFP_KERNEL, %GFP_ATOMIC, etc)
+ *	@prot: struct proto associated with this new sock instance
+ *	@kern: is this to be a kernel socket?
+ */
+struct sock *sk_alloc(struct net *net, int family, gfp_t priority,
+		      struct proto *prot, int kern)
+{
+	struct sock *sk;
+	sk = sk_prot_alloc(prot, priority | __GFP_ZERO, family);
+        return sk;
+}
+
+static struct sock *sk_prot_alloc(struct proto *prot, gfp_t priority,
+		int family)
+{
+	struct sock *sk;
+	struct kmem_cache *slab;
+	slab = prot->slab;
+	if (slab != NULL) {
+		sk = kmem_cache_alloc(slab, priority & ~__GFP_ZERO);
+		if (!sk)
+			return sk;
+		if (priority & __GFP_ZERO)
+			sk_prot_clear_nulls(sk, prot->obj_size);
+	} else
+		sk = kmalloc(prot->obj_size, priority);
+
+	if (sk != NULL) {
+		kmemcheck_annotate_bitfield(sk, flags);
+		if (security_sk_alloc(sk, family, priority))
+			goto out_free;
+		if (!try_module_get(prot->owner))
+			goto out_free_sec;
+		sk_tx_queue_clear(sk);
+	}
+	return sk;
+}
+```
+
+At this moment, we came across the most important data structure in SLUB allocator *struct kmem_cache*
+
+``` cpp
+/*
+ * Slab cache management.
+ */
+struct kmem_cache {
+	struct kmem_cache_cpu __percpu *cpu_slab;
+	/* Used for retriving partial slabs etc */
+	unsigned long flags;
+	unsigned long min_partial;
+	int size;		/* The size of an object including meta data */
+	int object_size;	/* The size of an object without meta data */
+	int offset;		/* Free pointer offset. */
+	int cpu_partial;	/* Number of per cpu partial objects to keep around */
+	struct kmem_cache_order_objects oo;
+
+	/* Allocation and freeing of slabs */
+	struct kmem_cache_order_objects max;
+	struct kmem_cache_order_objects min;
+	gfp_t allocflags;	/* gfp flags to use on each alloc */
+	int refcount;		/* Refcount for slab cache destroy */
+	void (*ctor)(void *);
+	int inuse;		/* Offset to metadata */
+	int align;		/* Alignment */
+	int reserved;		/* Reserved bytes at the end of slabs */
+	const char *name;	/* Name (only for display!) */
+	struct list_head list;	/* List of slab caches */
+	int red_left_pad;	/* Left redzone padding size */
+#ifdef CONFIG_SYSFS
+	struct kobject kobj;	/* For sysfs */
+#endif
+#ifdef CONFIG_MEMCG
+	struct memcg_cache_params memcg_params;
+	int max_attr_size; /* for propagation, maximum size of a stored attr */
+#ifdef CONFIG_SYSFS
+	struct kset *memcg_kset;
+#endif
+#endif
+
+#ifdef CONFIG_NUMA
+	/*
+	 * Defragmentation by allocating from a remote node.
+	 */
+	int remote_node_defrag_ratio;
+#endif
+
+#ifdef CONFIG_SLAB_FREELIST_RANDOM
+	unsigned int *random_seq;
+#endif
+
+#ifdef CONFIG_KASAN
+	struct kasan_cache kasan_info;
+#endif
+
+	struct kmem_cache_node *node[MAX_NUMNODES];
+};
+```
+
+We dump the memory content of *prot* at the time of invoking sk_prot_alloc.
+
+``` bash
+Breakpoint 1 at 0xffffffff8173be9d: file /home/dango/Kernel/linux-4.10.6/net/core/sock.c, line 1333.
+
+Breakpoint 1, sk_prot_alloc (prot=0xffffffff81ee8720 <packet_proto>, priority=21004480, family=17) at /home/dango/Kernel/linux-4.10.6/net/core/sock.c:1333
+1333		if (slab != NULL) {
+$1 = 0x0
+(gdb) p/x packet_proto
+$2 = {close = 0x0, connect = 0x0, disconnect = 0x0, accept = 0x0, ioctl = 0x0, init = 0x0, destroy = 0x0, shutdown = 0x0, setsockopt = 0x0, getsockopt = 0x0, compat_setsockopt = 0x0, compat_getsockopt = 0x0, compat_ioctl = 0x0, sendmsg = 0x0, recvmsg = 0x0, sendpage = 0x0, bind = 0x0, backlog_rcv = 0x0, release_cb = 0x0, hash = 0x0, unhash = 0x0, rehash = 0x0, get_port = 0x0, inuse_idx = 0xc, stream_memory_free = 0x0, enter_memory_pressure = 0x0, memory_allocated = 0x0, sockets_allocated = 0x0, memory_pressure = 0x0, sysctl_mem = 0x0, sysctl_wmem = 0x0, sysctl_rmem = 0x0, max_header = 0x0, no_autobind = 0x0, slab = 0x0, obj_size = 0x580, slab_flags = 0x0, orphan_count = 0x0, rsk_prot = 0x0, twsk_prot = 0x0, h = {hashinfo = 0x0, udp_table = 0x0, raw_hash = 0x0}, owner = 0x0, name = {0x50, 0x41, 0x43, 0x4b, 0x45, 0x54, 0x0 <repeats 26 times>}, node = {next = 0xffffffff81ee6f60, prev = 0xffffffff81eda340}, diag_destroy = 0x0}
+(gdb) p/x packet_proto->obj_size
+$3 = 0x580
+```
+
+According to the execution flow above, we can find that *\_\_kmalloc* is finally called as below:
+
+``` cpp
+void *__kmalloc(size_t size, gfp_t flags)
+{
+	struct kmem_cache *s;
+	void *ret;
+	if (unlikely(size > KMALLOC_MAX_CACHE_SIZE))
+		return kmalloc_large(size, flags);
+	s = kmalloc_slab(size, flags);
+	if (unlikely(ZERO_OR_NULL_PTR(s)))
+		return s;
+	ret = slab_alloc(s, flags, _RET_IP_);
+	return ret;
+}
+EXPORT_SYMBOL(__kmalloc);
+```
+
+The picture below gives an overview of how SLUB allocator is organized.  
+![](https://dangokyo.wordpress.com/wp-content/uploads/2018/10/20181029003.png?w=809&h=611)
+
+We can find that *cpu_slab* actually holds the freelist of available objects. Let me first dump the memory content of corresponding *kmem_cache*. Then we go deeper to see what happens in *slab_alloc*.
+
+``` cpp
+Breakpoint 1, __kmalloc (size=1407, flags=0) at /home/dango/Kernel/linux-4.10.6/mm/slub.c:3734
+3734		if (unlikely(ZERO_OR_NULL_PTR(s)))
+$1 = 0xffff88007d001400
+
+(gdb) bt 5
+#0  __kmalloc (size=1407, flags=0) at /home/dango/Kernel/linux-4.10.6/mm/slub.c:3734
+#1  0xffffffff8173bf01 in kmalloc (flags=<optimized out>, size=<optimized out>) at /home/dango/Kernel/linux-4.10.6/include/linux/slab.h:495
+#2  sk_prot_alloc (prot=0xffffffff81ee8720 <packet_proto>, priority=21004480, family=17) at /home/dango/Kernel/linux-4.10.6/net/core/sock.c:1340
+#3  0xffffffff8173bfde in sk_alloc (net=0xffffffff81eda440 <init_net>, family=17, priority=<optimized out>, prot=0xffffffff81ee8720 <packet_proto>, kern=0) at /home/dango/Kernel/linux-4.10.6/net/core/sock.c:1396
+#4  0xffffffff8185c72d in packet_create (net=0xffffffff81eda440 <init_net>, sock=0xffff880079dda280, protocol=1544, kern=0) at /home/dango/Kernel/linux-4.10.6/net/packet/af_packet.c:3147
+
+
+(gdb) p/x *s
+$2 = {cpu_slab = 0x1aca0, flags = 0x40000000, min_partial = 0x5, size = 0x800, object_size = 0x800, offset = 0x0, cpu_partial = 0x6, oo = {x = 0x20008}, max = {x = 0x20008}, min = {x = 0x2}, allocflags = 0x4000, refcount = 0x4, ctor = 0x0, inuse = 0x800, align = 0x8, reserved = 0x0, name = 0xffffffff81bc5e51, list = {next = 0xffff88007d001568, prev = 0xffff88007d001368}, red_left_pad = 0x0, kobj = {name = 0xffff88007c5fc170, entry = {next = 0xffff88007d001588, prev = 0xffff88007d001388}, parent = 0xffff88007c8bb558, kset = 0xffff88007c8bb540, ktype = 0xffffffff81e5b340, sd = 0xffff88007c6fc528, kref = {refcount = {counter = 0x1}}, state_initialized = 0x1, state_in_sysfs = 0x1, state_add_uevent_sent = 0x1, state_remove_uevent_sent = 0x0, uevent_suppress = 0x0}, remote_node_defrag_ratio = 0x3e8, node = {0xffff88007d000d40, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1ac80, 0x40000000, 0x5, 0x40000000400, 0x600000000, 0x10008, 0x10008, 0x4, 0x600004000, 0x0, 0x800000400, 0x0, 0xffffffff81bc5e44, 0xffff88007d001668, 0xffff88007d001468, 0x0, 0xffff88007c5fc190, 0xffff88007d001688, 0xffff88007d001488, 0xffff88007c8bb558, 0xffff88007c8bb540, 0xffffffff81e5b340, 0xffff88007c6ea4b0, 0x700000001, 0x3e8, 0xffff88007d000d80, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x1ac60, 0x40000000, 0x5, 0x20000000200, 0xd00000000, 0x8, 0x8, 0x8, 0x300000000, 0x0, 0x800000200, 0x0, 0xffffffff81bc5e38, 0xffff88007d001768, 0xffff88007d001568, 0x0, 0xffff88007c5fc1b0, 0xffff88007d001788, 0xffff88007d001588, 0xffff88007c8bb558, 0xffff88007c8bb540, 0xffffffff81e5b340, 0xffff88007c1c2438, 0x700000001, 0x3e8}}
+
+(gdb) p/s s->name
+$3 = 0xffffffff81bc5e51 "kmalloc-2048"
+```
+
+For now, we can confirm that the *slab_cache* used for packet_sock allocation is “kmalloc-2048”. We can use command “cat /prcat /proc/slabinfooc/” to view the status of allocated chunks. Here the kernel is using “kmalloc-2048” slab_cache because the size of *packet_sock* is 0x580 (1408) bytes, which is between 1024 and 2048.
+
+An interesting observation here is the value of *s-\>cpu_clab* is 0x1aca0. So we dive deeper into *slab_alloc(s, flags, *RET_IP*)* layer by layer.
+
+``` cpp
+// mm/slub.c:2720
+static __always_inline void *slab_alloc(struct kmem_cache *s,
+		gfp_t gfpflags, unsigned long addr)
+{
+	return slab_alloc_node(s, gfpflags, NUMA_NO_NODE, addr);
+}
+
+/*
+ * Important!!!! I simplify the slab_alloc_node function here
+ */
+
+/*
+ * Inlined fastpath so that allocation functions (kmalloc, kmem_cache_alloc)
+ * have the fastpath folded into their functions. So no function call
+ * overhead for requests that can be satisfied on the fastpath.
+ *
+ * The fastpath works by first checking if the lockless freelist can be used.
+ * If not then __slab_alloc is called for slow processing.
+ *
+ * Otherwise we can simply pick the next object from the lockless free list.
+ */
+static __always_inline void *slab_alloc_node(struct kmem_cache *s,
+		gfp_t gfpflags, int node, unsigned long addr)
+{
+    void *object;
+    struct kmem_cache_cpu *c;
+    struct page *page;
+    unsigned long tid;
+    
+    tid = this_cpu_read(s->cpu_slab->tid);
+    c = raw_cpu_ptr(c->cpu_slab);
+
+    object = c->freelist;
+    page = c->page;
+
+    if(!object || !node_match(page, node) )
+    {
+         object = __slab__alloc(s, gfpflags, node, addr, c);
+         stat(s, ALLOC_SLOWPATH);
+    }
+    else
+    {
+         void *next_object = get_freepointer_safe(s, object);
+         /*
+	  * The cmpxchg will only match if there was no additional
+	  * operation and if we are on the right processor.
+	  *
+	  * The cmpxchg does the following atomically (without lock
+	  * semantics!)
+	  * 1. Relocate first pointer to the current per cpu area.
+	  * 2. Verify that tid and freelist have not been changed
+	  * 3. If they were not changed replace tid and freelist
+	  *
+	  * Since this is without lock semantics the protection is only
+	  * against code executing on this cpu *not* from access by
+	  * other cpus.
+	  */
+         this_cpu_cmpxchg_double(s->cpu_slab->freelist, s->cpu_slab->tid,
+                                 object, tid,
+                                 next_object, next_tid(tid));
+         
+	 stat(s, ALLOC_FASTPATH);
+    }
+    return object;
+}
+```
+
+From the code above, we can find that if the *kmem_cache_cpu* of current CPU is holding a freelist, which contains some free objects, one object will be removed from the list via a routine linked list removal operation. But the operation is done via *cmpxchg* instruction. If there is no more available objects, the slow path will be taken. Since the code of slow path is extremely long, we just put the comment describing the process below:
+
+``` cpp
+/*
+ * Slow path. The lockless freelist is empty or we need to perform
+ * debugging duties.
+ *
+ * Processing is still very fast if new objects have been freed to the
+ * regular freelist. In that case we simply take over the regular freelist
+ * as the lockless freelist and zap the regular freelist.
+ *
+ * If that is not working then we fall back to the partial lists. We take the
+ * first element of the freelist as the object to allocate now and move the
+ * rest of the freelist to the lockless freelist.
+ *
+ * And if we were unable to get a new slab from the partial slab lists then
+ * we need to allocate a new slab. This is the slowest path since it involves
+ * a call to the page allocator and the setup of a new slab.
+ *
+ * Version of __slab_alloc to use when we know that interrupts are
+ * already disabled (which is the case for bulk allocation).
+ */
+```
+
+To this end, we can find that the objects allocated from SLUB allocator and buddy allocator are actually mixed together in memory. What an attacker does is to put the victim *packet_sock* right after the vulnerable buffer.
+
+Still with given \[10\], we can use some magic value to locate the address of allocated *packet_sock* structure as below
+
+``` bash
+(gdb) find 0xffff880075088000, +0x8000, 0xffffffff81eda440
+0xffff880075090030
+0xffff880075090830
+0xffff880075091030
+0xffff880075091830
+0xffff880075092030
+0xffff880075092830
+```
+
+We can find that there is a *packet_sock* object allocated right after the *pg_vec\[i\].buffer* allocated at 0xffff880075088000
+
+## Overwrite the Victim
+
+We use some debugging script to test \[11\].
+
+``` bash
+Breakpoint 1, 0xffffffff8174206c in skb_copy_from_linear_data_offset (skb=<optimized out>, len=<optimized out>, to=<optimized out>, offset=<optimized out>) at /home/dango/Kernel/linux-4.10.6/include/linux/skbuff.h:3172
+3172		memcpy(to, skb->data + offset, len);
+
+(gdb) x/10i $rip
+=> 0xffffffff8174206c <skb_copy_bits+92>:	callq  0xffffffff8134c330 <memcpy>
+   0xffffffff81742071 <skb_copy_bits+97>:	sub    %r12d,%r13d
+   0xffffffff81742074 <skb_copy_bits+100>:	mov    -0x38(%rbp),%r10
+   0xffffffff81742078 <skb_copy_bits+104>:	je     0xffffffff817421ec <skb_copy_bits+476>
+   0xffffffff8174207e <skb_copy_bits+110>:	add    %rbx,-0x30(%rbp)
+   0xffffffff81742082 <skb_copy_bits+114>:	mov    %r14d,%ebx
+   0xffffffff81742085 <skb_copy_bits+117>:	mov    0xc4(%r10),%eax
+   0xffffffff8174208c <skb_copy_bits+124>:	xor    %ecx,%ecx
+   0xffffffff8174208e <skb_copy_bits+126>:	mov    $0x30,%r9d
+   0xffffffff81742094 <skb_copy_bits+132>:	add    0xc8(%r10),%rax
+(gdb) x/8gx $rsi
+0xffff88007a6c9010:	0x4242424242424242	0x4242424242424242
+0xffff88007a6c9020:	0x0000000000024242	0x0000000000022ca0
+0xffff88007a6c9030:	0x0000000000200000	0x0000000600000001
+0xffff88007a6c9040:	0x0000000000023bc0	0x0000000000223bc0
+(gdb) p/x $rdx
+$1 = 0x12
+
+(gdb) x/8gx $rdi-0x37a
+0xffff880075068800:	0x0000000000000000	0x0000000000000000
+0xffff880075068810:	0x0000000040070011	0x0000000000000000
+0xffff880075068820:	0x0000000000000000	0xffffffff81ee8720
+0xffff880075068830:	0xffffffff81eda440	0x0000000000000000
+(gdb) x/8gx $rdi-0x37a-0x800
+0xffff880075068000:	0x0000000000000000	0x0000000000000000
+0xffff880075068010:	0x0000000040070011	0x0000000000000000
+0xffff880075068020:	0x0000000000000000	0xffffffff81ee8720
+0xffff880075068030:	0xffffffff81eda440	0x0000000000000000
+```
+
+We can clearly observe that we can successfully overwrite a *packet_sock* structure in memory.
+
+By far, there is another question arising during to the test: must the value be 0x8000 in function *pagealloc_pad(int count)*? According to our test, the answer is no. I change to value to 0x4000, 0x2000 and 0x1000, the overwrite on *packet_sock* is still successful.
+
+## Conclusion
+
+In this post, I give a detailed explanation on how two types of allocators work in the Linux Kernel. Based on their implementation details, I give two PoC files of CVE-2017-7308 to successfully overwrite the victim *packet_sock*.  
+The next post should be about basic ROP chain to gain root privilege.
+
+## Reference
+
+\[1\] [https://googleprojectzero.blogspot.com/2017/05/exploiting-linux-kernel-via-packet.html](https://googleprojectzero.blogspot.com/2017/05/exploiting-linux-kernel-via-packet.html)  
+\[2\] [https://events.static.linuxfound.org/sites/events/files/slides/slaballocators.pdf](https://events.static.linuxfound.org/sites/events/files/slides/slaballocators.pdf)  
+\[3\] [http://students.mimuw.edu.pl/ZSO/Wyklady/05_pamiec/5_pamiec_en.html](http://students.mimuw.edu.pl/ZSO/Wyklady/05_pamiec/5_pamiec_en.html)  
+\[4\] [http://fliphtml5.com/traq/olio/basic](http://fliphtml5.com/traq/olio/basic)  
+\[5\] [https://lwn.net/Articles/229984/](https://lwn.net/Articles/229984/)  
+\[6\] [https://events.static.linuxfound.org/images/stories/pdf/klf2012_kim.pdf](https://events.static.linuxfound.org/images/stories/pdf/klf2012_kim.pdf)  
+\[7\] A Guide to Kernel Exploitation Attacking the Core, p160  
+\[8\] [http://phrack.org/issues/64/6.html](http://phrack.org/issues/64/6.html)  
+\[9\] [http://phrack.org/issues/66/15.html](http://phrack.org/issues/66/15.html)  
+\[10\] [https://github.com/dangokyo/LinuxKernelExploit/blob/master/CVE-2017-7308/HeapPOC/HeapShapePOC.c](https://github.com/dangokyo/LinuxKernelExploit/blob/master/CVE-2017-7308/HeapPOC/HeapShapePOC.c)  
+\[11\] [https://github.com/dangokyo/LinuxKernelExploit/blob/master/CVE-2017-7308/HeapPOC/HeapCrash.c](https://github.com/dangokyo/LinuxKernelExploit/blob/master/CVE-2017-7308/HeapPOC/HeapCrash.c)

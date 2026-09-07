@@ -1474,13 +1474,17 @@ local simple = {
 		prompt = "Keystone> ",
 	},
 	android = {
-		-- In-depth Android systems docs: bionic (libc + dynamic linker), the
-		-- C API headers, ELF-TLS/ABI/fortify notes. (Framework/SDK is web-only.)
+		-- In-depth Android systems docs: bionic (libc + dynamic linker),
+		-- ELF-TLS/ABI/fortify notes. (Framework/SDK is web-only.)
+		-- Prose only. This used to list "-e md -e h", which made the picker 95%
+		-- header files (262 .h against 14 .md) and buried the documentation.
+		-- The headers are source, so they belong to :Src, which already resolves
+		-- this provider to the same repo.
 		url = "https://github.com/aosp-mirror/platform_bionic",
-		sparse = "/docs /libc/include /linker",
+		sparse = "/docs /linker",
 		marker = "docs",
 		browse = "",
-		exts = "-e md -e h",
+		exts = "-e md",
 		prompt = "Android (bionic)> ",
 	},
 	pwntools = {
@@ -1833,6 +1837,9 @@ local GS_OVERRIDE = {
 -- carries ctags excludes.
 local VERSIONED = {
 	qemu = { url = "https://github.com/qemu/qemu" },
+	-- Docs are per ACK branch, so the source must be too. The branch name is the
+	-- directory name (android14-5.15), which is also the git branch to check out.
+	["android-kernel"] = { url = "https://github.com/aosp-mirror/kernel_common", excl = KERNEL_EXCLUDE },
 }
 -- Books whose companion source is a real upstream repo worth exploring. Every
 -- book's docs cache lives under docs/books/<key>/<slug>, so the shared "books"
@@ -2426,6 +2433,20 @@ local pick_rayanfam = frozen_web_provider("rayanfam", "Hypervisor From Scratch> 
 -- marabos.nl/atomics: Rust Atomics and Locks (Mara Bos), free to read by the
 -- author's arrangement with O'Reilly. Foreword, preface, 10 chapters, index.
 local pick_rust_atomics = frozen_web_provider("rust-atomics", "Rust Atomics and Locks> ")
+-- Curated reading lists assembled from many sites: the main article plus the
+-- works it cites (astra), and a set of write-ups on one topic (kernel-ctf).
+-- Same frozen shape as the others, so they are offline from a bare clone.
+local pick_astra = frozen_web_provider("astra", "The Astra Book> ")
+local pick_kernel_ctf = frozen_web_provider("kernel-ctf", "Kernel CTF> ")
+local pick_packer = frozen_web_provider("packer", "Executable Packer> ")
+local pick_snapshot_fuzzer = frozen_web_provider("snapshot-fuzzer", "Snapshot Fuzzer> ")
+local pick_kernel_labs = frozen_web_provider("kernel-labs", "Linux Kernel Labs> ")
+local pick_slub = frozen_web_provider("slub", "SLUB> ")
+-- 482 chapters, the second-largest thing in the library after the OSDev wiki.
+-- Titles carry their full nav ancestry ("Section / Subsection / Group / Article")
+-- because the site's own hierarchy is four levels deep and flattening it loses
+-- the reading order.
+local pick_kernel_internals = frozen_web_provider("kernel-internals", "Kernel Internals> ")
 -- diy.inria.fr: the herd7, litmus7 and diy7 reference manuals. The memory
 -- models and litmus tests they describe are in the herdtools7 provider.
 local pick_herd7 = frozen_web_provider("herd7", "herd7 manual> ")
@@ -2804,10 +2825,21 @@ local function pick_android_kernel()
 						end
 						local br = sel[1]
 						local dir = data_root .. "/android-kernel/" .. br
-						local marker = dir .. "/drivers/android"
-						local sparse = "/drivers/android /drivers/staging/android /Documentation/admin-guide /Documentation/driver-api /Documentation/dev-tools"
+						-- The whole Documentation tree, not three subtrees of it: the
+						-- old set took admin-guide, driver-api and dev-tools and left
+						-- out userspace-api, networking, filesystems, bpf, core-api,
+						-- mm, trace and the rest, which is most of what a reader wants.
+						-- No source: drivers/android is code, so it belongs to :Src
+						-- (VERSIONED routes this provider to kernel_common at the same
+						-- branch), and listing 14 .c/.h files here only buried the docs.
+						-- Marker is a subtree the OLD three-directory sparse set never
+						-- had, so a cache made by the previous version fails the check
+						-- and is re-fetched with the full tree, instead of looking
+						-- complete forever.
+						local marker = dir .. "/Documentation/userspace-api"
+						local sparse = "/Documentation"
 						local function browse()
-							pick_files(dir, "-e c -e h -e rst -e md -e txt", "ACK " .. br .. "> ")
+							pick_files(dir, "-e rst -e md -e txt", "ACK " .. br .. "> ")
 						end
 						if vim.fn.isdirectory(marker) == 1 then
 							return browse()
@@ -3045,8 +3077,15 @@ end
 -- rather than converted chapters. Their on-disk layout is unchanged.
 local WEB_BOOKS = {
 	{ title = "Hypervisor From Scratch", run = pick_rayanfam },
+	{ title = "Kernel CTF", run = pick_kernel_ctf },
 	{ title = "Learn C++ (learncpp.com)", run = pick_learncpp },
+	{ title = "Kernel Internals", run = pick_kernel_internals },
+	{ title = "Linux Kernel Labs", run = pick_kernel_labs },
+	{ title = "Making Our Own Executable Packer", run = pick_packer },
 	{ title = "Rust Atomics and Locks", run = pick_rust_atomics },
+	{ title = "SLUB", run = pick_slub },
+	{ title = "Snapshot Fuzzer", run = pick_snapshot_fuzzer },
+	{ title = "The Astra Book", run = pick_astra },
 }
 
 -- All books under one entry, in ONE flat list: Books -> book -> chapter.

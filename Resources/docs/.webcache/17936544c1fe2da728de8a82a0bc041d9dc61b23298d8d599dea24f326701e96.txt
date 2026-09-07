@@ -1,0 +1,1901 @@
+# Dynamic symbol resolution
+
+Let’s pick up where we left off: we had just taught `elk` to load not only an executable, but also its dependencies, and then their dependencies as well.
+
+We discovered that `ld-linux` walked the dependency graph breadth-first, and so we did that too. Of course, it’s a little bit overkill since we only have one dependency, but, nevertheless, `elk` happily loads our executable and its one dependency:
+
+``` shell
+$ ./target/debug/elk ./samples/hello-dl
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elk/samples"
+Loading "/home/amos/ftl/elk/samples/libmsg.so"
+Process {
+    search_path: [
+        "/usr/lib",
+        "/home/amos/ftl/elk/samples",
+    ],
+    objects: [
+        Object {
+            path: "/home/amos/ftl/elk/samples/hello-dl",
+            base: 00400000,
+        },
+        Object {
+            path: "/home/amos/ftl/elk/samples/libmsg.so",
+            base: 00400000,
+        },
+    ],
+    objects_by_path: {
+        "/home/amos/ftl/elk/samples/hello-dl": 0,
+        "/home/amos/ftl/elk/samples/libmsg.so": 1,
+    },
+}
+```
+
+Something doesn’t look quite right though - right now they have the same `base` address. Of course, this is a half-lie: we haven’t mapped either of these into memory yet, so it’s not like there’s a conflict *yet*. But we’re definitely going to have to pick different memory addresses.
+
+So far, we’ve been giving `mmap` (via the `mmap` crate) explicit addresses. In other words, we’ve picked exactly where we thought the objects should be mapped in memory, and we crossed our fingers hoping that the region we picked was free.
+
+We observed that `0x0` definitely couldn’t be mapped, and if we had picked a memory picked by `ld-linux` for `elk` itself, it wouldn’t have worked either, but we’ve had relatively good luck and `0x400000` worked out for us.
+
+So we could do something dumb, like put the first object at `0x400000`, the second one at `0x800000`, and hope we never run into a region we *cannot* map (because it’s already mapped somewhere else), and also hope that none of our regions are larger than `0x400000`, because then they’d overlap.
+
+It might look something like that:
+
+``` rust
+// in `elk/src/process.rs`
+
+impl Process {
+    pub fn load_object<P: AsRef<Path>>(&mut self, path: P) -> Result<usize, LoadError> {
+        // omitted: load/parse ELF file, add any RPATH entries to search path, etc.
+
+        let index = self.objects.len();
+        let base = delf::Addr(((index + 1) * 0x400000) as u64);
+
+        let object = Object {
+            path: path.clone(),
+            base,
+            maps: Vec::new(),
+            file,
+        };
+
+        self.objects.push(object);
+        self.objects_by_path.insert(path, index);
+
+        Ok(index)
+    }
+}
+```
+
+``` shell
+./target/debug/elk ./samples/hello-dl
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elk/samples"
+Loading "/home/amos/ftl/elk/samples/libmsg.so"
+Process {
+    search_path: [
+        "/usr/lib",
+        "/home/amos/ftl/elk/samples",
+    ],
+    objects: [
+        Object {
+            path: "/home/amos/ftl/elk/samples/hello-dl",
+            base: 00400000,
+        },
+        Object {
+            path: "/home/amos/ftl/elk/samples/libmsg.so",
+            base: 00800000,
+        },
+    ],
+    objects_by_path: {
+        "/home/amos/ftl/elk/samples/hello-dl": 0,
+        "/home/amos/ftl/elk/samples/libmsg.so": 1,
+    },
+}
+```
+
+When I say that’s “dumb”, I’m mostly shooting myself down, because that’s exactly what I did when I first prototyped “loading multiple ELF objects”, because the previous article was getting long, and I got lazy. But when that happens, I just split the article into two articles (and so on, recursively, until the series is over).
+
+And so in this article, we’re going to do it right. And by right, I mean, “we’ll let the OS pick a region large enough that’s free”.
+
+But in order to do that, we need to figure out how big the region needs to be.
+
+The way I’m thinking about this, ideally the “Load” segments in the executable are organized like that:
+
+![segments-contiguous](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-7/assets/segments-contiguous~46359f27d2ca8908.svg)
+
+In practice, maybe there are some gaps, like that:
+
+![segments-gaps](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-7/assets/segments-gaps~2a97df0a2f9e18ec.svg)
+
+Overlaps like these should never happen though:
+
+![segments-overlap](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-7/assets/segments-overlap~d9371c27d9807521.svg)
+
+Each of these memory regions are represented as a `Range<Addr>` - or at least, that’s what `ProgramHeader::mem_range` returns.
+
+I have an idea how to proceed, so stay with me - first off, we’re going to need a function that computes the “convex hull” of two memory ranges, ie. the minimal range that contains both ranges:
+
+![convex-hull](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-7/assets/convex-hull~130695cbcfe1ae7a.svg)
+
+That part is super simple:
+
+``` rust
+// in `elk/src/process.rs`
+
+use std::{ops::Range, cmp::{min, max}};
+
+fn convex_hull(a: Range<delf::Addr>, b: Range<delf::Addr>) -> Range<delf::Addr> {
+    (min(a.start, b.start))..(max(a.end, b.end))
+}
+```
+
+Now that we have that though… we can generalize it to N memory ranges, and we can do that in a functional way - since we’ve been feeling that way ever since the last article.
+
+We’ll use `Iterator::fold` to do it - the way it’s usually taught is with addition, like so:
+
+``` rust
+fn main() {
+    let sum = (1..10).fold(0, |acc, x| acc + x);
+    dbg!(sum);
+}
+
+// output: sum = 45
+```
+
+The first argument to `fold` is an initial value, and the second value is a closure that takes the accumulator value, one of the items, and returns the new accumulator value.
+
+In this case, we do:
+
+- 0 + 1 (initial value + first item)
+- 1 + 2 (accumulator value + second item)
+- 3 + 3 (accumulator value + third item)
+- 6 + 4 (accumulator value + fourth item)
+- etc.
+
+We’re going to do pretty much the same thing with memory ranges. There’s just one wrinkle: we don’t have an “initial value”. If we take the `0..0` range as the initial value, the result will always be `0..y`, which is wrong - the proper result could definitely be `x..y` where `x` is greater than zero.
+
+So we’re going to go with an `Option<T>`. The convex of hull of… no memory regions at all.. does not exist. It’s `None`. It’s not a zero-sized memory region anywhere, it just.. isn’t.
+
+As for the closure we’ll pass to `fold`, well:
+
+- If the accumulator is `None`, then the result is just the current item
+- If the accumulator is `Some()`, then we call `convex_hull`
+
+Sounds like a plan? Good! Let’s proceed.
+
+We’ll add a `mem_range` field to the `Object` struct:
+
+``` rust
+// in `elk/src/process.rs`
+
+#[derive(CustomDebug)]
+pub struct Object {
+    // omitted: other fields
+    pub mem_range: Range<delf::Addr>,
+}
+```
+
+A new error variant to `LoadError`:
+
+``` rust
+// in `elk/src/process.rs`
+
+#[derive(Error, Debug)]
+pub enum LoadError {
+    // omitted: other variants
+    #[error("ELF object has no load segments")]
+    NoLoadSegments,
+}
+```
+
+And in `Object::load_object`, find all the Load segments, and reduce them:
+
+``` rust
+// in `elk/src/process.rs`
+// in `impl Object`
+// in `fn load_object`
+
+        let mem_range = file
+            .program_headers
+            .iter()
+            .filter(|ph| ph.r#type == delf::SegmentType::Load)
+            .map(|ph| ph.mem_range())
+            .fold(None, |acc, range| match acc {
+                None => Some(range),
+                Some(acc) => Some(convex_hull(acc, range)),
+            })
+            .ok_or(LoadError::NoLoadSegments)?;
+
+        // (cut)
+
+        let object = Object {
+            path: path.clone(),
+            base,
+            maps: Vec::new(),
+            mem_range, // new!
+            file,
+        };
+```
+
+Let’s see how this looks:
+
+``` shell
+$ ./target/debug/elk ./samples/hello-dl
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elk/samples"
+Loading "/home/amos/ftl/elk/samples/libmsg.so"
+Process {
+    search_path: [
+        "/usr/lib",
+        "/home/amos/ftl/elk/samples",
+    ],
+    objects: [
+        Object {
+            path: "/home/amos/ftl/elk/samples/hello-dl",
+            base: 00400000,
+            mem_range: 00000000..00003028,
+        },
+        Object {
+            path: "/home/amos/ftl/elk/samples/libmsg.so",
+            base: 00800000,
+            mem_range: 00000000..00002026,
+        },
+    ],
+    objects_by_path: {
+        "/home/amos/ftl/elk/samples/hello-dl": 0,
+        "/home/amos/ftl/elk/samples/libmsg.so": 1,
+    },
+}
+```
+
+Those `mem_range` lines look legit. Well, for me to be really reassured, I’d need to see a run of `elk` on an executable with a memory range that *didn’t* start at `0x0`, just to make sure we didn’t flub the `.fold()`.
+
+How about we run `elk` on [butler](https://github.com/itchio/butler) ?
+
+``` shell
+$ ./target/debug/elk $(which butler)
+Loading "/home/amos/go/bin/butler"
+Loading "/usr/lib/libpthread-2.30.so"
+Loading "/usr/lib/libdl-2.30.so"
+Loading "/usr/lib/libm-2.30.so"
+Loading "/usr/lib/libc-2.30.so"
+Loading "/usr/lib/ld-2.30.so"
+Process {
+    search_path: [
+        "/usr/lib",
+    ],
+    objects: [
+        Object {
+            path: "/home/amos/go/bin/butler",
+            base: 00400000,
+            mem_range: 00400000..018272c0,
+        },
+        Object {
+            path: "/usr/lib/libpthread-2.30.so",
+            base: 00800000,
+            mem_range: 00000000..000211a8,
+        },
+(cut)
+```
+
+Ah, good! A `mem_range` that starts in the `0x400000`. This is actually the `base` we’ve picked earlier on in this series - I’m sure it’s just a coincidence, nothing to worry about.
+
+So, next up, reserve a big block of memory, large enough for all our segments - and that’ll be our base!
+
+We’ll need a new error variant, mapping memory is an operation that can fail:
+
+``` rust
+// in `elk/src/process.rs`
+
+#[derive(Error, Debug)]
+pub enum LoadError {
+    // omitted: other fields
+    #[error("ELF object could not be mapped in memory: {0}")]
+    MapError(#[from] mmap::MapError),
+}
+```
+
+``` rust
+// in `elk/src/process.rs`
+
+// in `impl Process`
+// in `fn load_object`
+
+        // let's introduce a helper for these - I have a feeling we're going to
+        // need it later. Don't question it! It's easy to see into the future when
+        // you're writing the whole timeline.
+        let load_segments = || {
+            file.program_headers
+                .iter()
+                .filter(|ph| ph.r#type == delf::SegmentType::Load)
+        };
+
+        let mem_range = load_segments()
+            .map(|ph| ph.mem_range())
+            .fold(None, |acc, range| match acc {
+                None => Some(range),
+                Some(acc) => Some(convex_hull(acc, range)),
+            })
+            .ok_or(LoadError::NoLoadSegments)?;
+
+        let mem_size: usize = (mem_range.end - mem_range.start).into();
+        let mem_map = MemoryMap::new(mem_size, &[])?;
+        let base = delf::Addr(mem_map.data() as _) - mem_range.start;
+        // note: we need to subtract "mem_range.start" in case the leftmost load
+        // segment has a vaddr that is greater than zero. We don't allocate
+        // memory for the "void" to the left of it, but we still have to take it
+        // into account in our calculations, otherwise things can go terribly,
+        // terribly wrong.
+
+        let index = self.objects.len();
+        // don't forget to remove the fixed `base` we picked earlier
+
+        let object = Object {
+            path: path.clone(),
+            base,
+            maps: Vec::new(),
+            mem_range,
+            file,
+        };
+```
+
+Now we should have OS-chosen `base` values! Let’s try it on `hello-dl`:
+
+``` shell
+$ ./target/debug/elk ./samples/hello-dl
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elk/samples"
+Loading "/home/amos/ftl/elk/samples/libmsg.so"
+Process {
+    search_path: [
+        "/usr/lib",
+        "/home/amos/ftl/elk/samples",
+    ],
+    objects: [
+        Object {
+            path: "/home/amos/ftl/elk/samples/hello-dl",
+            base: 7fe6bccf2000,
+            mem_range: 00000000..00003028,
+        },
+        Object {
+            path: "/home/amos/ftl/elk/samples/libmsg.so",
+            base: 7fe6bccf3000,
+            mem_range: 00000000..00002026,
+        },
+    ],
+    objects_by_path: {
+        "/home/amos/ftl/elk/samples/hello-dl": 0,
+        "/home/amos/ftl/elk/samples/libmsg.so": 1,
+    },
+}
+```
+
+Mh. Well `7fe6bccf2000` definitely doesn’t look human-picked, but also, there’s not enough space from there until `7fe6bccf3000` to map all the segments of `hello-dl`. We need at least `0x2ec0` - I’d assumed `mmap` would round it up to a nice even `0x3000`.
+
+> **Cool Bear's hot tip**
+>
+> Oh, oh, I know! *raises paw*
+
+*sigh* yes cool bear?
+
+> **Cool Bear's hot tip**
+>
+> We never store `mem_map` anywhere! So it’s dropped! So it’s unmapped!
+
+Very well, if you think it’ll make a difference:
+
+``` rust
+// in `elk/src/process.rs`
+
+        let object = Object {
+            path: path.clone(),
+            base,
+            maps: vec![mem_map], // new!
+            mem_range,
+            file,
+        };
+```
+
+``` shell
+$ ./target/debug/elk ./samples/hello-dl
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elk/samples"
+Loading "/home/amos/ftl/elk/samples/libmsg.so"
+Process {
+    search_path: [
+        "/usr/lib",
+        "/home/amos/ftl/elk/samples",
+    ],
+    objects: [
+        Object {
+            path: "/home/amos/ftl/elk/samples/hello-dl",
+            base: 7fc4f5ea8000,
+            mem_range: 00000000..00003028,
+        },
+        Object {
+            path: "/home/amos/ftl/elk/samples/libmsg.so",
+            base: 7fc4f5ea5000,
+            mem_range: 00000000..00002026,
+        },
+    ],
+    objects_by_path: {
+        "/home/amos/ftl/elk/samples/libmsg.so": 1,
+        "/home/amos/ftl/elk/samples/hello-dl": 0,
+    },
+}
+```
+
+Oh that’s.. different! Of course, for some reason `libmsg.so` is now mapped *before* `hello-dl` but hey, memory managers have reasons that userland programs don’t need to know about.
+
+Here’s a cool trick: did you know [Wolfram Alpha](https://www.wolframalpha.com/) lets you do hexadecimal math? Just use the `_16` suffix to let it know you’re speaking hexadecimal and… voilà!
+
+![wolframalpha-hex](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-7/assets/wolframalpha-hex~8dcdaceb27ea5340.webp)
+
+Wait, `0x3000` is still not en… ooohh I see what you did there, haha - it’s not enough for `hello-dl`, but it is for `libmsg.so`, and since `libmsg.so` is first, well, that’s alright.
+
+Next up, I guess we should copy data from the input to our memory mapping, right? That’s what we did last time and it worked out great, but wait - doesn’t `mmap`, you know, map *files* into memory?
+
+Let’s review: mmap accepts a file descriptor (I’m sure we can conjure one out of our `std::fs::File`), a file offset (very good), a memory address (which I guess we just reserved?), and some flags.
+
+We’re going to be applying relocations in memory, but we don’t want those to modify the underlying file… is there a flag for that?
+
+``` shell
+$ man 2 mmap
+(cut)
+
+MAP_PRIVATE
+              Create a private copy-on-write mapping.  Updates to the
+              mapping are not visible to other processes mapping the same
+              file, and are not carried through to the underlying file.  It
+              is unspecified whether changes made to the file after the
+              mmap() call are visible in the mapped region.
+```
+
+Would you look at that. It’s even the default the `mmap` crate uses! The `MapNonStandard` flag option’s documentation says:
+
+> `MapNonStandardFlags(c_int)`
+>
+> On POSIX, this can be used to specify the default flags passed to `mmap`. By default it uses `MAP_PRIVATE` and, if not using `MapFd`, `MAP_ANON`. This will override both of those. This is platform-specific (the exact values used) and ignored on Windows.
+
+So, instead of copying sections of the file, we can just… map them!
+
+Wonderful.
+
+But first… a little helper, in `delf` this time:
+
+``` rust
+// in `delf/src/lib.rs`
+
+impl Addr {
+    /// # Safety
+    ///
+    /// This can create dangling pointers and all sorts of eldritch
+    /// errors.
+    pub unsafe fn as_ptr<T>(&self) -> *const T {
+        std::mem::transmute(self.0 as usize)
+    }
+
+    /// # Safety
+    ///
+    /// This can create dangling pointers and all sorts of eldritch
+    /// errors.
+    pub unsafe fn as_mut_ptr<T>(&self) -> *mut T {
+        std::mem::transmute(self.0 as usize)
+    }
+}
+```
+
+Since we’re going to need a file descriptor, `std::fs::read` doesn’t cut it anymore - we’re going to have to get ahold of an `std::fs::File` instance.
+
+That’s easy enough:
+
+``` rust
+// in `elk/src/process.rs`
+// in `load_object`
+
+        // omitted: canonicalize path
+
+        use std::io::Read;
+        let mut fs_file = std::fs::File::open(&path).map_err(|e| LoadError::IO(path.clone(), e))?;
+        let mut input = Vec::new();
+        fs_file
+            .read_to_end(&mut input)
+            .map_err(|e| LoadError::IO(path.clone(), e))?;
+        println!("Loading {:?}", &path);
+
+        // omitted: use delf to parse ELF file, etc.
+```
+
+And then.. well then I guess we’re ready for some mapping!
+
+``` rust
+// later in `load_object`
+
+        use std::os::unix::io::AsRawFd;
+        let maps = load_segments()
+            .map(|ph| {
+                println!("Mapping {:#?}", ph);
+                MemoryMap::new(
+                    ph.memsz.into(),
+                    &[
+                        MapOption::MapFd(fs_file.as_raw_fd()),
+                        MapOption::MapOffset(ph.offset.into()),
+                        MapOption::MapAddr(unsafe { (base + ph.vaddr).as_ptr() }),
+                    ],
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+// later still:
+
+        let object = Object {
+            path: path.clone(),
+            base,
+            maps, // used to be `vec![mem_map]`
+            mem_range,
+            file,
+        };
+```
+
+Look how beautiful this is. Look how every field of the program headers maps directly to the `mmap` call… it’s almost… almost as if… as if the ELF format was designed exactly for this purpose.
+
+I’m sure it’ll work first time!
+
+``` shell
+$ ./target/debug/elk ./samples/hello-dl
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elk/samples"
+Mapping file 00000000..000002d8 | mem 00000000..000002d8 | align 00001000 | R.. Load
+Mapping file 00001000..00001025 | mem 00001000..00001025 | align 00001000 | R.X Load
+Mapping file 00002000..00002000 | mem 00002000..00002000 | align 00001000 | R.. Load
+Error: MapError(ErrZeroLength)
+```
+
+Ah, right, our funky assembly program has zero-length segments. Ah well, slight change of plan: let’s return `Some()` if we *are* mapping that segment, and `None` otherwise, and let `filter_map` worry about filtering out the duds for us.
+
+``` rust
+        use std::os::unix::io::AsRawFd;
+        let maps = load_segments()
+            .filter_map(|ph| {
+                if ph.memsz.0 > 0 {
+                    println!("Mapping {:#?}", ph);
+                    Some(MemoryMap::new(
+                        ph.memsz.into(),
+                        &[
+                            MapOption::MapFd(fs_file.as_raw_fd()),
+                            MapOption::MapOffset(ph.offset.into()),
+                            MapOption::MapAddr(unsafe { (base + ph.vaddr).as_ptr() }),
+                        ],
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+```
+
+``` shell
+$ ./target/debug/elk ./samples/hello-dl
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elk/samples"
+Mapping file 00000000..000002d8 | mem 00000000..000002d8 | align 00001000 | R.. Load
+Mapping file 00001000..00001025 | mem 00001000..00001025 | align 00001000 | R.X Load
+Mapping file 00002ec0..00003000 | mem 00002ec0..00003028 | align 00001000 | RW. Load
+Error: MapError(ErrUnaligned)
+```
+
+Well. So much for “first try”, but let’s keep soldiering on. Here’s my thinking: we align the “vaddr”, ie. the memory address, and then we displace the file offset by the same amount.
+
+``` rust
+        use std::os::unix::io::AsRawFd;
+        let maps = load_segments()
+            .filter_map(|ph| {
+                if ph.memsz.0 > 0 {
+                    let vaddr = delf::Addr(ph.vaddr.0 & !0xFFF);
+                    let padding = ph.vaddr - vaddr;
+                    let offset = ph.offset - padding;
+                    let memsz = ph.memsz + padding;
+                    println!("> {:#?}", ph);
+                    println!(
+                        "< file {:#?} | mem {:#?}",
+                        offset..(offset + memsz),
+                        vaddr..(vaddr + memsz)
+                    );
+                    Some(MemoryMap::new(
+                        memsz.into(),
+                        &[
+                            MapOption::MapFd(fs_file.as_raw_fd()),
+                            MapOption::MapOffset(offset.into()),
+                            MapOption::MapAddr(unsafe { (base + vaddr).as_ptr() }),
+                        ],
+                    ))
+                } else {
+                    None
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+```
+
+``` shell
+$ ./target/debug/elk ./samples/hello-dl
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elk/samples"
+Mapping file 00000000..000002d8 | mem 00000000..000002d8 | align 00001000 | R.. Load
+...with offset 00000000, vaddr 00000000
+Mapping file 00001000..00001025 | mem 00001000..00001025 | align 00001000 | R.X Load
+...with offset 00001000, vaddr 00001000
+Mapping file 00002ec0..00003000 | mem 00002ec0..00003028 | align 00001000 | RW. Load
+...with offset 00002000, vaddr 00002000
+Loading "/home/amos/ftl/elk/samples/libmsg.so"
+Mapping file 00000000..00001000 | mem 00000000..00001000 | align 00001000 | R.. Load
+...with offset 00000000, vaddr 00000000
+Mapping file 00001f40..00002026 | mem 00001f40..00002026 | align 00001000 | RW. Load
+...with offset 00001000, vaddr 00001000
+Process {
+    search_path: [
+        "/usr/lib",
+        "/home/amos/ftl/elk/samples",
+    ],
+    objects: [
+        Object {
+            path: "/home/amos/ftl/elk/samples/hello-dl",
+            base: 7fe2f75a0000,
+            mem_range: 00000000..00002ec0,
+        },
+        Object {
+            path: "/home/amos/ftl/elk/samples/libmsg.so",
+            base: 7fe2f75a1000,
+            mem_range: 00000000..00001f40,
+        },
+    ],
+    objects_by_path: {
+        "/home/amos/ftl/elk/samples/libmsg.so": 1,
+        "/home/amos/ftl/elk/samples/hello-dl": 0,
+    },
+}
+```
+
+Cool! Now we’re getting somewhere.
+
+Did the mapping work though? Let’s see… according to `nm`, `msg` should be at `0x2000` in `libmsg.so`:
+
+``` shell
+$ nm ./samples/libmsg.so
+0000000000001f40 d _DYNAMIC
+0000000000002000 D msg
+0000000000002026 d msg.end
+```
+
+So, accounting for the base address, we should be able to read it from our freshly-mapped memory…
+
+``` rust
+// in `elk/src/process.rs`
+// in `load_object`
+// after mapping the memory
+// only added temporarily, for testing
+
+        if path.to_str().unwrap().ends_with("libmsg.so") {
+            let msg_addr: *const u8 = unsafe { (base + delf::Addr(0x2000)).as_ptr() };
+            dbg!(msg_addr);
+            let msg_slice = unsafe { std::slice::from_raw_parts(msg_addr, 0x26) };
+            let msg = std::str::from_utf8(msg_slice).unwrap();
+            dbg!(msg);
+        }
+```
+
+And now the magic happens. Watch this. Just watch this:
+
+``` shell
+./target/debug/elk ./samples/hello-dl
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elk/samples"
+> file 00000000..000002d8 | mem 00000000..000002d8 | align 00001000 | R.. Load
+< file 00000000..000002d8 | mem 00000000..000002d8
+> file 00001000..00001025 | mem 00001000..00001025 | align 00001000 | R.X Load
+< file 00001000..00001025 | mem 00001000..00001025
+> file 00002ec0..00003000 | mem 00002ec0..00003028 | align 00001000 | RW. Load
+< file 00002000..00003028 | mem 00002000..00003028
+Loading "/home/amos/ftl/elk/samples/libmsg.so"
+> file 00000000..00001000 | mem 00000000..00001000 | align 00001000 | R.. Load
+< file 00000000..00001000 | mem 00000000..00001000
+> file 00001f40..00002026 | mem 00001f40..00002026 | align 00001000 | RW. Load
+< file 00001000..00002026 | mem 00001000..00002026
+[src/process.rs:193] msg_addr = 0x00007fbb672a7000
+[1]    28258 segmentation fault (core dumped)  ./target/debug/elk ./samples/hello-dl
+```
+
+Uhh nevermind. So, ideas, ideas everyone - right now I’m thinking *rubs temples* that either our mapping completely failed and we just accessed random memory, OR we maybe forgot… a few flags.
+
+Okay we definitely forgot a few flags. Eventually we’re going to need to need to make those memory mapping have the *proper* protection, but for now we can just make them `Read+Write`, that’s enough.
+
+Since we *are* going to need to change them to their proper protection later though, we should probably store the permissions we’re going to need to apply, so, chop chop:
+
+``` shell
+$ cargo add enumflags2@0.6
+      Adding enumflags2 v0.6.4 to dependencies
+```
+
+``` rust
+// in `elk/src/process.rs`
+
+use enumflags2::BitFlags;
+
+#[derive(custom_debug_derive::Debug)]
+pub struct Segment {
+    #[debug(skip)]
+    pub map: MemoryMap,
+    pub padding: delf::Addr,
+    pub flags: BitFlags<delf::SegmentFlag>,
+}
+
+#[derive(CustomDebug)]
+pub struct Object {
+    // omitted: other fields
+
+    // this replaces the "maps" field
+    pub segments: Vec<Segment>,
+}
+```
+
+Later in the same file:
+
+``` rust
+// in `elk/src/process.rs`
+// in `load_object`
+
+        // omitted: a whole lot of stuff
+        let segments = load_segments()
+            .filter_map(|ph| {
+                if ph.memsz.0 > 0 {
+                    let vaddr = delf::Addr(ph.vaddr.0 & !0xFFF);
+                    let padding = ph.vaddr - vaddr;
+                    let offset = ph.offset - padding;
+                    let memsz = ph.memsz + padding;
+                    let map_res = MemoryMap::new(
+                        memsz.into(),
+                        &[
+                            // those are new
+                            MapOption::MapReadable,
+                            MapOption::MapWritable,
+                            MapOption::MapFd(fs_file.as_raw_fd()),
+                            MapOption::MapOffset(offset.into()),
+                            MapOption::MapAddr(unsafe { (base + vaddr).as_ptr() }),
+                        ],
+                    );
+                    // this new - we store a Vec<Segment> now, and Segment structs
+                    // contain the padding we used, and the flags (for later mprotect-ing)
+                    Some(map_res.map(|map| Segment {
+                        map,
+                        padding,
+                        flags: ph.flags,
+                    }))
+                } else {
+                    None
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+
+        let index = self.objects.len();
+
+        let object = Object {
+            path: path.clone(),
+            base,
+            segments,
+            mem_range,
+            file,
+        };
+
+        if path.to_str().unwrap().ends_with("libmsg.so") {
+            let msg_addr: *const u8 = unsafe { (base + delf::Addr(0x2000)).as_ptr() };
+            dbg!(msg_addr);
+            let msg_slice = unsafe { std::slice::from_raw_parts(msg_addr, 0x26) };
+            let msg = std::str::from_utf8(msg_slice).unwrap();
+            dbg!(msg);
+        }
+```
+
+And now for the big show:
+
+``` rust
+./target/debug/elk ./samples/hello-dl
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elk/samples"
+Loading "/home/amos/ftl/elk/samples/libmsg.so"
+[src/process.rs:214] msg_addr = 0x00007f6805cda000
+[src/process.rs:217] msg = "this is way longer than sixteen bytes\n"
+Process {
+    search_path: [
+        "/usr/lib",
+        "/home/amos/ftl/elk/samples",
+    ],
+    objects: [
+        Object {
+            path: "/home/amos/ftl/elk/samples/hello-dl",
+            base: 7f6805cd7000,
+            mem_range: 00000000..00002ec0,
+            segments: [
+                Segment {
+                    padding: 00000000,
+                    flags: BitFlags<SegmentFlag> {
+                        bits: 0b100,
+                        flags: Read,
+                    },
+                },
+                Segment {
+                    padding: 00000000,
+                    flags: BitFlags<SegmentFlag> {
+                        bits: 0b101,
+                        flags: Execute | Read,
+                    },
+                },
+                Segment {
+                    padding: 00000ec0,
+                    flags: BitFlags<SegmentFlag> {
+                        bits: 0b110,
+                        flags: Write | Read,
+                    },
+                },
+            ],
+        },
+        Object {
+            path: "/home/amos/ftl/elk/samples/libmsg.so",
+            base: 7f6805cd8000,
+            mem_range: 00000000..00001f40,
+            segments: [
+                Segment {
+                    padding: 00000000,
+                    flags: BitFlags<SegmentFlag> {
+                        bits: 0b100,
+                        flags: Read,
+                    },
+                },
+                Segment {
+                    padding: 00000f40,
+                    flags: BitFlags<SegmentFlag> {
+                        bits: 0b110,
+                        flags: Write | Read,
+                    },
+                },
+            ],
+        },
+    ],
+    objects_by_path: {
+        "/home/amos/ftl/elk/samples/hello-dl": 0,
+        "/home/amos/ftl/elk/samples/libmsg.so": 1,
+    },
+}
+```
+
+I’m not going to show the full output every time, but in case you’re not coding along, I thought you should see how it looks because it is **neato**.
+
+Now that we’ve gotten memory mapping out of the way, I suppose it’s time to apply some relocations, yes?
+
+Yes.
+
+Let’s start by printing what we find. We’ll proceed in *reverse order*, so that we handle the outermost (deepest?) dependencies first, and the executable last.
+
+``` rust
+// in `elk/src/process.rs`
+
+impl Process {
+    pub fn apply_relocations(&self) -> Result<(), std::convert::Infallible> {
+        for obj in self.objects.iter().rev() {
+            println!("Applying relocations for {:?}", obj.path);
+            match obj.file.read_rela_entries() {
+                Ok(rels) => {
+                    for rel in rels {
+                        println!("Found {:?}", rel);
+                    }
+                }
+                Err(e) => println!("Nevermind: {:?}", e),
+            }
+        }
+
+        Ok(())
+    }
+}
+```
+
+``` rust
+// in `elk/src/main.rs`
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let input_path = env::args().nth(1).expect("usage: elk FILE");
+
+    let mut proc = process::Process::new();
+    proc.load_object_and_dependencies(input_path)?;
+    proc.apply_relocations()?;
+
+    Ok(())
+}
+```
+
+``` shell
+$ ./target/debug/elk ./samples/hello-dl
+Loading "/home/amos/ftl/elf-series/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elf-series/samples"
+Loading "/home/amos/ftl/elf-series/samples/libmsg.so"
+[elk/src/process.rs:158] msg_addr = 0x00007f68332ad000
+[elk/src/process.rs:161] msg = "this is way longer than sixteen bytes\n"
+Applying relocations for "/home/amos/ftl/elf-series/samples/libmsg.so"
+Nevermind: RelaNotFound
+Applying relocations for "/home/amos/ftl/elf-series/samples/hello-dl"
+Found Rela { offset: 00001007, type: Known(_64), sym: 1, addend: 00000000 }
+Found Rela { offset: 00003000, type: Known(Copy), sym: 1, addend: 00000000 }
+```
+
+Turns out `libmsg.so` has no relocations at all! Okay.
+
+Let’s start with `_64`. For that one, we simply need to write the sum of the address of symbol `sym` and the value of `addend` to memory offset `offset`.
+
+Except the “address of the symbol” needs to be adjusted with the base address of the ELF object in which it resides. And the “memory offset” needs to be adjusted with the base address of the ELF object we’re currently relocating.
+
+Since we’re dealing with symbols, we probably want to read the symbol table of each object at load time, so, let’s get going:
+
+``` rust
+// in `src/elk/process.rs`
+
+#[derive(CustomDebug)]
+pub struct Object {
+    // omitted: other fields
+    #[debug(skip)]
+    pub syms: Vec<delf::Sym>,
+}
+
+#[derive(Error, Debug)]
+pub enum LoadError {
+    // omitted: other fields
+    #[error("Could not read symbols from ELF object: {0}")]
+    ReadSymsError(#[from] delf::ReadSymsError),
+}
+
+impl Process {
+    pub fn load_object<P: AsRef<Path>>(&mut self, path: P) -> Result<usize, LoadError> {
+        // cut
+
+        let syms = file.read_syms()?;
+
+        let object = Object {
+            path: path.clone(),
+            base,
+            segments,
+            mem_range,
+            file,
+            syms,
+        };
+
+        // cut
+    }
+}
+```
+
+Now, we can look up the name of the symbol we’re looking for fairly easily:
+
+``` rust
+// in `elk/src/process.rs`
+
+#[derive(thiserror::Error, Debug)]
+pub enum RelocationError {
+    #[error("unknown relocation: {0}")]
+    UnknownRelocation(u32),
+    #[error("unimplemented relocation: {0:?}")]
+    UnimplementedRelocation(delf::KnownRelType),
+    #[error("unknown symbol number: {0}")]
+    UnknownSymbolNumber(u32),
+    #[error("undefined symbol: {0}")]
+    UndefinedSymbol(String),
+}
+
+impl Object {
+    pub fn sym_name(&self, index: u32) -> Result<String, RelocationError> {
+        self.file
+            .get_string(self.syms[index as usize].name)
+            .map_err(|_| RelocationError::UnknownSymbolNumber(index))
+    }
+}
+
+impl Process {
+    pub fn apply_relocations(&self) -> Result<(), RelocationError> {
+        for obj in self.objects.iter().rev() {
+            println!("Applying relocations for {:?}", obj.path);
+
+            match obj.file.read_rela_entries() {
+                Ok(rels) => {
+                    for rel in rels {
+                        println!("Found {:?}", rel);
+                        match rel.r#type {
+                            delf::RelType::Known(t) => match t {
+                                delf::KnownRelType::_64 => {
+                                    let sym = obj.sym_name(rel.sym)?;
+                                    println!("Should look up {:?}", sym);
+                                }
+                                _ => return Err(RelocationError::UnimplementedRelocation(t)),
+                            },
+                            delf::RelType::Unknown(num) => {
+                                return Err(RelocationError::UnknownRelocation(num))
+                            }
+                        }
+                    }
+                }
+                Err(e) => println!("Nevermind: {:?}", e),
+            }
+        }
+        Ok(())
+    }
+}
+```
+
+Now that we know that, let’s make a symbol lookup function! In this case, we’ll use load order, so we can simply iterate through `self.objects`.
+
+``` rust
+impl Process {
+    pub fn lookup_symbol(
+        &self,
+        name: &str,
+    ) -> Result<Option<(&Object, &delf::Sym)>, RelocationError> {
+        for obj in &self.objects {
+            for (i, sym) in obj.syms.iter().enumerate() {
+                if obj.sym_name(i as u32)? == name {
+                    return Ok(Some((obj, sym)));
+                }
+            }
+        }
+        Ok(None)
+    }
+}
+```
+
+There! We use `.iter().enumerate()` so that each item of the iterator is a tuple composed of the index of the symbol and its struct, and we return references.
+
+Well, we return a `Result<T, E>`, because `get_string` can fail, and our `T` is an `Option<_>`, because it’s entirely possible we don’t find the symbol at all.
+
+Using that, we should be able to compute the real (well, “mapped”) address of `msg`, and write it to the real offset of the relocation.
+
+Mind the indentation:
+
+``` rust
+// in `elk/src/process.rs`
+// in `apply_relocations`
+
+                                delf::KnownRelType::_64 => {
+                                    let name = obj.sym_name(rel.sym)?;
+                                    println!("Looking up {:?}", name);
+                                    let (lib, sym) = self
+                                        .lookup_symbol(&name)?
+                                        .ok_or(RelocationError::UndefinedSymbol(name))?;
+                                    println!("Found at {:?} in {:?}", sym.value, lib.path);
+                                    let offset = obj.base + rel.offset;
+                                    let value = sym.value + lib.base + rel.addend;
+                                    println!("Value: {:?}", value);
+
+                                    unsafe {
+                                        let ptr: *mut u64 = offset.as_mut_ptr();
+                                        println!("Applying reloc @ {:?}", ptr);
+                                        *ptr = value.0;
+                                    }
+                                }
+```
+
+``` shell
+$ ./target/debug/elk ./samples/hello-dl
+Loading "/home/amos/ftl/elf-series/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elf-series/samples"
+Loading "/home/amos/ftl/elf-series/samples/libmsg.so"
+[elk/src/process.rs:165] msg_addr = 0x00007fd70f1fe000
+[elk/src/process.rs:168] msg = "this is way longer than sixteen bytes\n"
+Applying relocations for "/home/amos/ftl/elf-series/samples/libmsg.so"
+Nevermind: RelaNotFound
+Applying relocations for "/home/amos/ftl/elf-series/samples/hello-dl"
+Found Rela { offset: 00001007, type: Known(_64), sym: 1, addend: 00000000 }
+Looking up "msg"
+Found at 00003000 in "/home/amos/ftl/elf-series/samples/hello-dl"
+Value: 7fd70f1fe000
+Applying reloc @ 0x7fd70f1fc007
+[1]    1276 segmentation fault  ./target/debug/elk ./samples/hello-dl
+```
+
+Uh oh.
+
+Oh no.
+
+Why are we segfaulting? Did we compute the address wrong?
+
+The last time we got an inadvertent segfault, it was because the permissions were wrong. But since then we’ve added `MapReadable` and `MapWritable`, so we shouldn’t be running into that particular problem anymore.
+
+In fact, we were able to read from the mapped file just moments ago! What happened since? Did we lose our mappings? What’s happening??
+
+We know that we can list all the memory mappings for a process by reading the file `/proc/:pid/maps`, so let’s introduce a helper to do that:
+
+``` rust
+// in `elk/src/process.rs`
+
+fn dump_maps(msg: &str) {
+    use std::{fs, process};
+
+    println!("======== MEMORY MAPS: {}", msg);
+    fs::read_to_string(format!("/proc/{pid}/maps", pid = process::id()))
+        .unwrap()
+        .lines()
+        .filter(|line| line.contains("hello-dl") || line.contains("libmsg.so"))
+        .for_each(|line| println!("{}", line));
+    println!("=============================");
+}
+```
+
+Let’s use it *right before* we apply relocations.
+
+``` rust
+// in `elk/src/process.rs`
+
+impl Process {
+    pub fn apply_relocations(&self) -> Result<(), RelocationError> {
+        dump_maps("before relocations");
+
+        // (cut)
+    }
+}
+```
+
+``` shell
+$ ./target/debug/elk ./samples/hello-dl
+Loading "/home/amos/ftl/elf-series/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elf-series/samples"
+Loading "/home/amos/ftl/elf-series/samples/libmsg.so"
+[elk/src/process.rs:161] msg_addr = 0x00007f62d2481000
+[elk/src/process.rs:164] msg = "this is way longer than sixteen bytes\n"
+======== MEMORY MAPS: before relocations
+=============================
+Applying relocations for "/home/amos/ftl/elf-series/samples/libmsg.so"
+Nevermind: RelaNotFound
+Applying relocations for "/home/amos/ftl/elf-series/samples/hello-dl"
+Found Rela { offset: 00001007, type: Known(_64), sym: 1, addend: 00000000 }
+Looking up "msg"
+Found at 00003000 in "/home/amos/ftl/elf-series/samples/hello-dl"
+Value: 7f62d2481000
+Applying reloc @ 0x7f62d247f007
+```
+
+Well that’s not good at all.
+
+We should definitely see `hello-dl` and `libmsg.so` being mapped here!
+
+So what’s happening?
+
+Let’s try calling `dump_maps` after every time we map a segment:
+
+``` rust
+// in `elk/src/process.rs`
+// in `load_object`
+
+        use std::os::unix::io::AsRawFd;
+        let segments = load_segments()
+            .filter_map(|ph| {
+                if ph.memsz.0 > 0 {
+                    let vaddr = delf::Addr(ph.vaddr.0 & !0xFFF);
+                    let padding = ph.vaddr - vaddr;
+                    let offset = ph.offset - padding;
+                    let memsz = ph.memsz + padding;
+                    let map_res = MemoryMap::new(
+                        memsz.into(),
+                        &[ /* cut */ ],
+                    );
+                    Some(map_res.map(|map| {
+                        // new!
+                        dump_maps(&format!(
+                            "after mapping {:?} segment to {:?}",
+                            path,
+                            (base + vaddr)..(base + vaddr + memsz)
+                        ));
+                        Segment {
+                            map,
+                            padding,
+                            flags: ph.flags,
+                        }
+                    }))
+                } else {
+                    None
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+```
+
+Let’s get to the bottom of this:
+
+``` shell
+$ ./target/debug/elk ./samples/hello-dl
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elk/samples"
+======== MEMORY MAPS: after mapping "/home/amos/ftl/elk/samples/hello-dl" segment to 7fd547e57000..7fd547e572d8
+7fd547e57000-7fd547e58000 rw-p 00000000 08:01 3293905                    /home/amos/ftl/elk/samples/hello-dl
+=============================
+```
+
+So far so good - we just mapped `0x1000` bytes of `hello-dl` into memory.
+
+``` shell
+======== MEMORY MAPS: after mapping "/home/amos/ftl/elk/samples/hello-dl" segment to 7fd547e58000..7fd547e58025
+7fd547e57000-7fd547e59000 rw-p 00000000 08:01 3293905                    /home/amos/ftl/elk/samples/hello-dl
+=============================
+```
+
+At this point apparently the memory manager figured out that the second mapping we did was adjacent to the first, not only in memory, but also in the (same) file being mapped, so it just merged those into a single mapping.
+
+Instead of it spanning `7000..8000`, it spans `8000..9000`
+
+Let’s keep going:
+
+``` shell
+======== MEMORY MAPS: after mapping "/home/amos/ftl/elk/samples/hello-dl" segment to 7fd547e59000..7fd547e5a028
+7fd547e57000-7fd547e5b000 rw-p 00000000 08:01 3293905                    /home/amos/ftl/elk/samples/hello-dl
+=============================
+```
+
+Same deal, all three of our mappings are now a single mapping that spans `7000..b000`.
+
+``` shell
+Loading "/home/amos/ftl/elk/samples/libmsg.so"
+======== MEMORY MAPS: after mapping "/home/amos/ftl/elk/samples/libmsg.so" segment to 7fd547e58000..7fd547e59000
+7fd547e58000-7fd547e59000 rw-p 00000000 08:01 3293934                    /home/amos/ftl/elk/samples/libmsg.so
+=============================
+```
+
+Okay, `libmsg.so`’s mapping looks fine but.. what happened to our `hello-dl` mapping? It’s just.. gone?
+
+``` shell
+======== MEMORY MAPS: after mapping "/home/amos/ftl/elk/samples/libmsg.so" segment to 7fd547e59000..7fd547e5a026
+7fd547e58000-7fd547e5b000 rw-p 00000000 08:01 3293934                    /home/amos/ftl/elk/samples/libmsg.so
+=============================
+```
+
+Okay, okay, the two `libmsg.so` mappings got merged, but…
+
+``` shell
+======== MEMORY MAPS: before relocations
+=============================
+Applying relocations for "/home/amos/ftl/elk/samples/libmsg.so"
+```
+
+There! It the `libmsg.so` mapping disappeared too!
+
+Mh. Anybody has an idea?
+
+> **Cool Bear's hot tip**
+>
+> In doubt, `strace` it!
+
+Okay. We can do that. Let’s do that.
+
+``` shell
+$ strace -e trace=mmap ./target/debug/elk ./samples/hello-dl
+(cut)
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elk/samples"
+mmap(NULL, 16384, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0x7fa4115f9000
+mmap(0x7fa4115f9000, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED, 3, 0) = 0x7fa4115f9000
+======== MEMORY MAPS: after mapping "/home/amos/ftl/elk/samples/hello-dl" segment to 7fa4115f9000..7fa4115f92d8
+7fa4115f9000-7fa4115fa000 rw-p 00000000 08:01 3293905                    /home/amos/ftl/elk/samples/hello-dl
+=============================
+mmap(0x7fa4115fa000, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED, 3, 0x1000) = 0x7fa4115fa000
+======== MEMORY MAPS: after mapping "/home/amos/ftl/elk/samples/hello-dl" segment to 7fa4115fa000..7fa4115fa025
+7fa4115f9000-7fa4115fb000 rw-p 00000000 08:01 3293905                    /home/amos/ftl/elk/samples/hello-dl
+=============================
+mmap(0x7fa4115fb000, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED, 3, 0x2000) = 0x7fa4115fb000
+======== MEMORY MAPS: after mapping "/home/amos/ftl/elk/samples/hello-dl" segment to 7fa4115fb000..7fa4115fc028
+7fa4115f9000-7fa4115fd000 rw-p 00000000 08:01 3293905                    /home/amos/ftl/elk/samples/hello-dl
+=============================
+Loading "/home/amos/ftl/elk/samples/libmsg.so"
+mmap(NULL, 12288, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0x7fa4115fa000
+mmap(0x7fa4115fa000, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED, 3, 0) = 0x7fa4115fa000
+======== MEMORY MAPS: after mapping "/home/amos/ftl/elk/samples/libmsg.so" segment to 7fa4115fa000..7fa4115fb000
+7fa4115fa000-7fa4115fb000 rw-p 00000000 08:01 3293934                    /home/amos/ftl/elk/samples/libmsg.so
+=============================
+mmap(0x7fa4115fb000, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED, 3, 0x1000) = 0x7fa4115fb000
+======== MEMORY MAPS: after mapping "/home/amos/ftl/elk/samples/libmsg.so" segment to 7fa4115fb000..7fa4115fc026
+7fa4115fa000-7fa4115fd000 rw-p 00000000 08:01 3293934                    /home/amos/ftl/elk/samples/libmsg.so
+=============================
+======== MEMORY MAPS: before relocations
+=============================
+Applying relocations for "/home/amos/ftl/elk/samples/libmsg.so"
+```
+
+Of course, the addresses are all different now. This is what we get for letting the OS pick address ranges for us. But nothing immediately jumps out.
+
+Before each “after mapping {file} segment to {range}”, there’s a successful `mmap()` call that returns the requested address.
+
+On closer inspection though… what’s with those lines?
+
+``` shell
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elk/samples"
+mmap(NULL, 16384, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0x7fa4115f9000
+
+Loading "/home/amos/ftl/elk/samples/libmsg.so"
+mmap(NULL, 12288, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0x7fa4115fa000
+```
+
+Hey. That’s us reserving memory (in other words, us letting the OS pick an available address range).
+
+What even happens to that mapping? We didn’t really concern ourselves with it, since we ended up remapping regions of it immediately after, but… what if we trace `munmap`, too?
+
+``` shell
+$ strace -e trace=mmap,munmap ./target/debug/elk ./samples/hello-dl
+(cut)
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elk/samples"
+mmap(NULL, 16384, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0x7f93159dd000
+mmap(0x7f93159dd000, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED, 3, 0) = 0x7f93159dd000
+======== MEMORY MAPS: after mapping "/home/amos/ftl/elk/samples/hello-dl" segment to 7f93159dd000..7f93159dd2d8
+7f93159dd000-7f93159de000 rw-p 00000000 08:01 3293905                    /home/amos/ftl/elk/samples/hello-dl
+=============================
+mmap(0x7f93159de000, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED, 3, 0x1000) = 0x7f93159de000
+======== MEMORY MAPS: after mapping "/home/amos/ftl/elk/samples/hello-dl" segment to 7f93159de000..7f93159de025
+7f93159dd000-7f93159df000 rw-p 00000000 08:01 3293905                    /home/amos/ftl/elk/samples/hello-dl
+=============================
+mmap(0x7f93159df000, 8192, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED, 3, 0x2000) = 0x7f93159df000
+======== MEMORY MAPS: after mapping "/home/amos/ftl/elk/samples/hello-dl" segment to 7f93159df000..7f93159e0028
+7f93159dd000-7f93159e1000 rw-p 00000000 08:01 3293905                    /home/amos/ftl/elk/samples/hello-dl
+=============================
+munmap(0x7f93159dd000, 16384)           = 0
+Loading "/home/amos/ftl/elk/samples/libmsg.so"
+```
+
+AhAH! That initial mapping is unmapped! Let’s watch that again but with the important bits highlighted:
+
+``` shell
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+mmap(NULL, 16384, PROT_NONE, MAP_PRIVATE|MAP_ANONYMOUS, -1, 0) = 0x7f93159dd000
+^^^^
+ |
+here, we reserve memory for the whole ELF object
+
+(omitted: here, we map all the segments)
+
+munmap(0x7f93159dd000, 16384)           = 0
+^^^^^^
+  |
+ here, the "reserve" mapping we created gets unmapped!
+```
+
+Interesting! Very interesting. Why does it get unmapped?
+
+Because we don’t store it anywhere, that’s why!
+
+We used to store it in `Object`, but now we only store the individual segment mappings in `Object`. So it eventually goes out of scope, and the `Drop` implementation for `MemoryMap` is called, which in turns calls `munmap`.
+
+I’m happy with that explanation.
+
+What this means though, is that not all of `mmap`’s semantics map cleanly to [the RAII pattern](https://en.wikipedia.org/wiki/Resource_acquisition_is_initialization).
+
+While we *do* want `MemoryMap` to call `mmap` when it’s constructed, to reserve an address range, we do *not* want it to call `munmap` - ever.
+
+> **Cool Bear's hot tip**
+>
+> You can probably fix everything by storing it in the `Object` struct again!
+
+Quite right, cool bear, but… I have a slightly more evil idea.
+
+Can we.. maybe… destroy that initial `MemoryMap` object, but *without* calling its destructor? Maybe with some `unsafe` function?
+
+Ooh, look what I found:
+
+> ## Function [std::mem::forget](https://doc.rust-lang.org/std/mem/fn.forget.html)
+>
+> `pub fn forget<T>(t: T)`
+>
+> Takes ownership and “forgets” about the value without running its destructor.
+>
+> Any resources the value manages, such as heap memory or a file handle, will linger forever in an unreachable state. However, it does not guarantee that pointers to this memory will remain valid.
+
+That sound like something we could really use here. But wait - it’s not `unsafe`? I thought Rust was *the* safe language?
+
+> ### Safety
+>
+> `forget` is not marked as `unsafe`, because Rust’s safety guarantees do not include a guarantee that destructors will always run. For example, a program can create a reference cycle using `Rc`, or call `process::exit` to exit without running destructors. Thus, allowing `mem::forget` from safe code does not fundamentally change Rust’s safety guarantees.
+>
+> That said, leaking resources such as memory or I/O objects is usually undesirable. The need comes up in some specialized use cases for FFI or unsafe code, but even then, `ManuallyDrop` is typically preferred.
+>
+> Because forgetting a value is allowed, any `unsafe` code you write must allow for this possibility. You cannot return a value and expect that the caller will necessarily run the value’s destructor.
+
+Okay. So `std::mem::ManuallyDrop` is recommended, let’s use that instead:
+
+``` rust
+// in `elk/src/process.rs`
+// in `load_object`
+
+        let mem_size: usize = (mem_range.end - mem_range.start).into();
+        // new!
+        let mem_map = std::mem::ManuallyDrop::new(MemoryMap::new(mem_size, &[])?);
+        let base = delf::Addr(mem_map.data() as _) - mem_range.start;
+```
+
+Did that fix everything?
+
+``` shell
+$ ./target/debug/elk ./samples/hello-dl
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elk/samples"
+======== MEMORY MAPS: after mapping "/home/amos/ftl/elk/samples/hello-dl" segment to 7fefe71f9000..7fefe71f92d8
+7fefe71f9000-7fefe71fa000 rw-p 00000000 08:01 3293905                    /home/amos/ftl/elk/samples/hello-dl
+=============================
+======== MEMORY MAPS: after mapping "/home/amos/ftl/elk/samples/hello-dl" segment to 7fefe71fa000..7fefe71fa025
+7fefe71f9000-7fefe71fb000 rw-p 00000000 08:01 3293905                    /home/amos/ftl/elk/samples/hello-dl
+=============================
+======== MEMORY MAPS: after mapping "/home/amos/ftl/elk/samples/hello-dl" segment to 7fefe71fb000..7fefe71fc028
+7fefe71f9000-7fefe71fd000 rw-p 00000000 08:01 3293905                    /home/amos/ftl/elk/samples/hello-dl
+=============================
+Loading "/home/amos/ftl/elk/samples/libmsg.so"
+======== MEMORY MAPS: after mapping "/home/amos/ftl/elk/samples/libmsg.so" segment to 7fefe71f6000..7fefe71f7000
+7fefe71f6000-7fefe71f7000 rw-p 00000000 08:01 3293934                    /home/amos/ftl/elk/samples/libmsg.so
+7fefe71f9000-7fefe71fd000 rw-p 00000000 08:01 3293905                    /home/amos/ftl/elk/samples/hello-dl
+=============================
+======== MEMORY MAPS: after mapping "/home/amos/ftl/elk/samples/libmsg.so" segment to 7fefe71f7000..7fefe71f8026
+7fefe71f6000-7fefe71f9000 rw-p 00000000 08:01 3293934                    /home/amos/ftl/elk/samples/libmsg.so
+7fefe71f9000-7fefe71fd000 rw-p 00000000 08:01 3293905                    /home/amos/ftl/elk/samples/hello-dl
+=============================
+======== MEMORY MAPS: before relocations
+7fefe71f6000-7fefe71f9000 rw-p 00000000 08:01 3293934                    /home/amos/ftl/elk/samples/libmsg.so
+7fefe71f9000-7fefe71fd000 rw-p 00000000 08:01 3293905                    /home/amos/ftl/elk/samples/hello-dl
+=============================
+Applying relocations for "/home/amos/ftl/elk/samples/libmsg.so"
+Nevermind: RelaNotFound
+Applying relocations for "/home/amos/ftl/elk/samples/hello-dl"
+Found Rela { offset: 00001007, type: Known(_64), sym: 1, addend: 00000000 }
+Looking up "msg"
+Found at 00003000 in "/home/amos/ftl/elk/samples/hello-dl"
+Value: 7fefe71fc000
+Applying reloc @ 0x7fefe71fa007
+(cut)
+$
+```
+
+We didn’t segfault! It did fix everything!
+
+Well… we won’t really know if it did the right thing up until we try to run the program but, you know. Things are happening.
+
+Actually, you know what, enough theory, let’s run the program. Just so we can `gdb` it and see what’s up.
+
+How do we do that? Easy!
+
+First we get rid of `dump_maps` - everything is working fine on that front.
+
+Then, we stub out the `Copy` relocation:
+
+``` rust
+// in `elk/src/process.rs`
+
+                                delf::KnownRelType::Copy => {
+                                    println!("Copy: stub!");
+                                },
+```
+
+Then, I suppose we can implement `Process::adjust_protections` real quick - doing it the proper way is not a lot more effort than doing it the hacky way. Our main goal is for the executable segment to be executable, but we might as well get the whole thing out of the way:
+
+``` rust
+// in `elk/src/process.rs`
+
+impl Process {
+    pub fn adjust_protections(&self) -> Result<(), region::Error> {
+        use region::{protect, Protection};
+
+        for obj in &self.objects {
+            for seg in &obj.segments {
+                let mut protection = Protection::NONE;
+                for flag in seg.flags.iter() {
+                    protection |= match flag {
+                        delf::SegmentFlag::Read => Protection::READ,
+                        delf::SegmentFlag::Write => Protection::WRITE,
+                        delf::SegmentFlag::Execute => Protection::EXECUTE,
+                    }
+                }
+                unsafe {
+                    protect(seg.map.data(), seg.map.len(), protection)?;
+                }
+            }
+        }
+        Ok(())
+    }
+}
+```
+
+Then we make extra sure that we do *not* forget to call it from `main`, right before we jump to the entry point:
+
+``` rust
+// in `elk/src/main.rs`
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let input_path = env::args().nth(1).expect("usage: elk FILE");
+
+    let mut proc = process::Process::new();
+    let exec_index = proc.load_object_and_dependencies(input_path)?;
+    proc.apply_relocations()?;
+    proc.adjust_protections()?;
+
+    let exec_obj = &proc.objects[exec_index];
+    let entry_point = exec_obj.file.entry_point + exec_obj.base;
+    unsafe { jmp(entry_point.as_ptr()) };
+
+    Ok(())
+}
+
+// as a reminder, `jmp` looks like this:
+
+unsafe fn jmp(addr: *const u8) {
+    let fn_ptr: fn() = std::mem::transmute(addr);
+    fn_ptr();
+}
+```
+
+Now, quick pause here. What do we expect?
+
+We don’t want to end up running the program, witness some crazy result, throw our hands up in the air and exclaim “well, I don’t know what I expected”, so let’s make a prediction.
+
+First off, there are no compilation errors in all of `elk` and `delf` right now, which is a good sign. *However*, there is also a whole lot of unsafe code, because we are dealing with raw memory addresses instead of comfy, high-level abstractions, so anything may still happen.
+
+Second, we’ve stubbed out the `Copy` relocation type, so we know it’s not going to *fully work*, but we did apply the `_64` relocation, at offset `0x1007`.
+
+That one:
+
+``` shell
+$ objdump -dR ./samples/hello-dl
+
+./samples/hello-dl:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+0000000000001000 <_start>:
+    1000:       bf 01 00 00 00          mov    edi,0x1
+    1005:       48 be 00 00 00 00 00    movabs rsi,0x0
+    100c:       00 00 00
+                        1007: R_X86_64_64       msg
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+                           over here!
+    100f:       ba 26 00 00 00          mov    edx,0x26
+    1014:       b8 01 00 00 00          mov    eax,0x1
+    1019:       0f 05                   syscall
+    101b:       48 31 ff                xor    rdi,rdi
+    101e:       b8 3c 00 00 00          mov    eax,0x3c
+    1023:       0f 05                   syscall
+```
+
+So we won’t be moving `0x0` into `rsi`, so the `write` syscall is *not* going to try and read from `0x0` - it’ll try to read from a valid memory location.
+
+So, prediction \#1: our program will not crash. It ought not to, at the very least.
+
+Prediction \#2: the address `write` will read from does *not* contain the actual message (that one is in `libmsg.so`), it will read from valid memory that… probably doesn’t contain anything? Like, `0x26` bytes that are all zero?
+
+Let’s verify prediction \#1:
+
+``` shell
+$ ./target/debug/elk ./samples/hello-dl
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elk/samples"
+Loading "/home/amos/ftl/elk/samples/libmsg.so"
+Applying relocations for "/home/amos/ftl/elk/samples/libmsg.so"
+Nevermind: RelaNotFound
+Applying relocations for "/home/amos/ftl/elk/samples/hello-dl"
+Found Rela { offset: 00001007, type: Known(_64), sym: 1, addend: 00000000 }
+Looking up "msg"
+Found at 00003000 in "/home/amos/ftl/elk/samples/hello-dl"
+Value: 7fc09c224000
+Applying reloc @ 0x7fc09c222007
+Found Rela { offset: 00003000, type: Known(Copy), sym: 1, addend: 00000000 }
+Copy: stub!
+$
+```
+
+Success! We didn’t crash!
+
+In fact, if we run it through `ugdb`, break at `jmp` and `stepi` a few times, we see that the `_64` relocation was applied correctly:
+
+![relocation-64-successful](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-7/assets/relocation-64-successful~c0a528603585fd9c.webp)
+
+And if we use gdb’s “examine” command (`x` for short), we can see that it is indeed a valid memory location, and it is full of zeros:
+
+``` shell
+# x (examine) / 8 (eight) x (hexadecimal-formatted) b (bytes)
+(gdb) x/8xb 0x7ffff7fc7000
+0x7ffff7fc7000: 0x00    0x00    0x00    0x00    0x00    0x00    0x00    0x00
+```
+
+So… zero bytes don’t really show up in a terminal. If only we had a way to show a hex dump of anything.
+
+Oh wait, we do! We can pipe everything into `xxd`:
+
+``` shell
+$ ./target/debug/elk ./samples/hello-dl | xxd
+00000000: 4c6f 6164 696e 6720 222f 686f 6d65 2f61  Loading "/home/a
+00000010: 6d6f 732f 6674 6c2f 656c 6b2f 7361 6d70  mos/ftl/elk/samp
+00000020: 6c65 732f 6865 6c6c 6f2d 646c 220a 466f  les/hello-dl".Fo
+00000030: 756e 6420 5250 4154 4820 656e 7472 7920  und RPATH entry
+
+(cut)
+
+00000210: 7065 3a20 4b6e 6f77 6e28 436f 7079 292c  pe: Known(Copy),
+00000220: 2073 796d 3a20 312c 2061 6464 656e 643a   sym: 1, addend:
+00000230: 2030 3030 3030 3030 3020 7d0a 436f 7079   00000000 }.Copy
+00000240: 3a20 7374 7562 210a 0000 0000 0000 0000  : stub!.........
+00000250: 0000 0000 0000 0000 0000 0000 0000 0000  ................
+00000260: 0000 0000 0300 0100 0002 0000 0000       ..............
+```
+
+And there they are! Prediction \#2 was right on the money, too.
+
+I guess all that’s left is to implement `Copy` now. But we need to think about this properly. Our symbol lookup function is kinda naive right now:
+
+``` rust
+// in `elk/src/process.rs`
+
+impl Process {
+    pub fn lookup_symbol(
+        &self,
+        name: &str,
+    ) -> Result<Option<(&Object, &delf::Sym)>, RelocationError> {
+        for obj in &self.objects {
+            for (i, sym) in obj.syms.iter().enumerate() {
+                if obj.sym_name(i as u32)? == name {
+                    return Ok(Some((obj, sym)));
+                }
+            }
+        }
+        Ok(None)
+    }
+}
+```
+
+For one, it’s *incredibly wasteful*, but that’s not what I’m worried about. The real problem is that it starts looking from the first object (in load order), all the way to the last object.
+
+And for this Copy relocation:
+
+``` shell
+Found Rela { offset: 00003000, type: Known(Copy), sym: 1, addend: 00000000 }
+```
+
+…if we look for symbol `msg` with the current `lookup_symbol`, we’ll find it alright. But we’ll find the `msg` in `hello-dl`. The one that’s currently full of zeros.
+
+The *whole point* of a `Copy` relocation is to copy it from *somewhere else* (in this case, `libmsg.so`). So we should probably make our `lookup_symbol` function take an argument: an object file to ignore.
+
+``` rust
+impl Process {
+    pub fn lookup_symbol(
+        &self,
+        name: &str,
+        ignore: Option<&Object>,
+    ) -> Result<Option<(&Object, &delf::Sym)>, RelocationError> {
+        let candidates = self.objects.iter();
+        let candidates: Box<dyn Iterator<Item = &Object>> = if let Some(ignored) = ignore {
+            Box::new(candidates.filter(|&obj| !std::ptr::eq(obj, ignored)))
+        } else {
+            Box::new(candidates)
+        };
+
+        for obj in candidates {
+            for (i, sym) in obj.syms.iter().enumerate() {
+                if obj.sym_name(i as u32)? == name {
+                    return Ok(Some((obj, sym)));
+                }
+            }
+        }
+        Ok(None)
+    }
+}
+```
+
+Whew, there’s a lot going on here. First off, we want `candidates` to be an iterator over all the `elk::Object` items we want to look up the symbol from.
+
+If there *is* an object to ignore, we filter out all the objects that are reference-equivalent to it (using `std::ptr::eq`). If not, we just iterate over all the objects we’ve ever loaded, in load order.
+
+You may be wondering “why use a `Box` here”? And the good news is, if this interests you, [I’ve written a whole thing about this](https://fasterthanli.me/articles/recursive-iterators-rust).
+
+If it doesn’t interest you so much, just know that `self.objects.iter()` and `self.objects.iter().filter(...)` are not the same type, they don’t have the same size, and so they’re incompatible `if` arms, whereas a boxed trait object has the same size.
+
+Let’s take a quick look at what happens if we don’t box at all:
+
+``` rust
+        let candidates = self.objects.iter();
+        let candidates = if let Some(ignored) = ignore {
+            candidates.filter(|&obj| !std::ptr::eq(obj, ignored))
+        } else {
+            candidates
+        };
+```
+
+``` shell
+error[E0308]: if and else have incompatible types
+   --> src/process.rs:327:13
+    |
+324 |           let candidates = if let Some(ignored) = ignore {
+    |  __________________________-
+325 | |             candidates.filter(|&obj| !std::ptr::eq(obj, ignored))
+    | |             ----------------------------------------------------- expected because of this
+326 | |         } else {
+327 | |             candidates
+    | |             ^^^^^^^^^^ expected struct `std::iter::Filter`, found struct `std::slice::Iter`
+328 | |         };
+    | |_________- if and else have incompatible types
+    |
+    = note: expected type `std::iter::Filter<std::slice::Iter<'_, _>, [closure@src/process.rs:325:31: 325:65 ignored:_]>`
+               found type `std::slice::Iter<'_, _>`
+```
+
+And if we `Box` without explicitly asking for trait objects:
+
+``` rust
+        let candidates = self.objects.iter();
+        let candidates = if let Some(ignored) = ignore {
+            Box::new(candidates.filter(|&obj| !std::ptr::eq(obj, ignored)))
+        } else {
+            Box::new(candidates)
+        };
+```
+
+``` shell
+error[E0308]: if and else have incompatible types
+   --> src/process.rs:327:13
+    |
+324 |           let candidates = if let Some(ignored) = ignore {
+    |  __________________________-
+325 | |             Box::new(candidates.filter(|&obj| !std::ptr::eq(obj, ignored)))
+    | |             --------------------------------------------------------------- expected because of this
+326 | |         } else {
+327 | |             Box::new(candidates)
+    | |             ^^^^^^^^^^^^^^^^^^^^ expected struct `std::iter::Filter`, found struct `std::slice::Iter`
+328 | |         };
+    | |_________- if and else have incompatible types
+    |
+    = note: expected type `std::boxed::Box<std::iter::Filter<std::slice::Iter<'_, _>, [closure@src/process.rs:325:40: 325:74 ignored:_]>>`
+               found type `std::boxed::Box<std::slice::Iter<'_, _>>`
+```
+
+Note that we can let the compiler infer the `Item` type parameter of `Iterator`, so this actually works fine:
+
+``` rust
+        let candidates = self.objects.iter();
+        // note the `Item = _` part:
+        let candidates: Box<dyn Iterator<Item = _>> = if let Some(ignored) = ignore {
+            Box::new(candidates.filter(|&obj| !std::ptr::eq(obj, ignored)))
+        } else {
+            Box::new(candidates)
+        };
+```
+
+Now we have to adjust the call site for `_64` relocations:
+
+``` rust
+                                delf::KnownRelType::_64 => {
+                                    let name = obj.sym_name(rel.sym)?;
+                                    let (lib, sym) = self
+                                        .lookup_symbol(&name, None)? // new argument: `None`
+                                        .ok_or(RelocationError::UndefinedSymbol(name))?;
+                                    let offset = obj.base + rel.offset;
+                                    let value = sym.value + lib.base + rel.addend;
+
+                                    unsafe {
+                                        *offset.as_mut_ptr() = value.0;
+                                    }
+                                }
+```
+
+And immediately notice get bitten by us getting smart just now:
+
+``` shell
+$ cargo b -q
+error[E0597]: `ignored` does not live long enough
+   --> src/process.rs:320:66
+    |
+319 |           let candidates: Box<dyn Iterator<Item = _>> = if let Some(ignored) = ignore {
+    |  _______________________________________________________-
+320 | |             Box::new(candidates.filter(|&obj| !std::ptr::eq(obj, ignored)))
+    | |                                        ------                    ^^^^^^^ borrowed value does not live long enough
+    | |                                        |
+    | |                                        value captured here
+321 | |         } else {
+    | |         - `ignored` dropped here while still borrowed
+322 | |             Box::new(candidates)
+323 | |         };
+    | |_________- borrow later used here
+
+error: aborting due to previous error
+```
+
+And, immediately after, fall back to something much simpler:
+
+``` rust
+impl Process {
+    pub fn lookup_symbol(
+        &self,
+        name: &str,
+        ignore: Option<&Object>,
+    ) -> Result<Option<(&Object, &delf::Sym)>, RelocationError> {
+        for obj in &self.objects {
+            if let Some(ignored) = ignore {
+                if std::ptr::eq(ignored, obj) {
+                    continue;
+                }
+            }
+
+            for (i, sym) in obj.syms.iter().enumerate() {
+                if obj.sym_name(i as u32)? == name {
+                    return Ok(Some((obj, sym)));
+                }
+            }
+        }
+        Ok(None)
+    }
+}
+```
+
+(Collecting candidates into a Vec would have probably solved the lifetime issue just as well, I’m not sure how they would compare performance-wise though!)
+
+Now `elk` runs `hello-dl` again, and still has it output a bunch of mostly-zero bytes instead of our message, but we’re finally all set to implement `Copy`.
+
+First we look up the symbol anywhere *except* the current object:
+
+``` rust
+// in `src/elk/process.rs`
+// in `apply_relocations`
+
+                                delf::KnownRelType::Copy => {
+                                    let name = obj.sym_name(rel.sym)?;
+                                    let (lib, sym) =
+                                        self.lookup_symbol(&name, Some(obj))?.ok_or_else(|| {
+                                            RelocationError::UndefinedSymbol(name.clone())
+                                        })?;
+                                    println!(
+                                        "Found {:?} at {:?} (size {:?}) in {:?}",
+                                        name, sym.value, sym.size, lib.path
+                                    );
+
+                                    println!("Copy: stub!");
+                                }
+```
+
+``` shell
+$ ./target/debug/elk ./samples/hello-dl
+(cut)
+Found Rela { offset: 00003000, type: Known(Copy), sym: 1, addend: 00000000 }
+Found "msg" at 00002000 (size 38) in "/home/amos/ftl/elk/samples/libmsg.so"
+Copy: stub!
+```
+
+That seems correct! We even have the symbol size, so we’ve got everything we might want to copy it.
+
+``` rust
+                                delf::KnownRelType::Copy => {
+                                    let name = obj.sym_name(rel.sym)?;
+                                    let (lib, sym) =
+                                        self.lookup_symbol(&name, Some(obj))?.ok_or_else(|| {
+                                            RelocationError::UndefinedSymbol(name.clone())
+                                        })?;
+                                    unsafe {
+                                        let src = (sym.value + lib.base).as_ptr();
+                                        let dst = (rel.offset + obj.base).as_mut_ptr();
+                                        std::ptr::copy_nonoverlapping::<u8>(
+                                            src,
+                                            dst,
+                                            sym.size as usize,
+                                        );
+                                    }
+                                }
+```
+
+Well.
+
+We’ve done everything in our power to make `hello-dl` run.
+
+When you gotta go, you gotta go.
+
+``` shell
+$ ./target/debug/elk ./samples/hello-dl
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elk/samples"
+Loading "/home/amos/ftl/elk/samples/libmsg.so"
+Applying relocations for "/home/amos/ftl/elk/samples/libmsg.so"
+Nevermind: RelaNotFound
+Applying relocations for "/home/amos/ftl/elk/samples/hello-dl"
+Found Rela { offset: 00001007, type: Known(_64), sym: 1, addend: 00000000 }
+Found Rela { offset: 00003000, type: Known(Copy), sym: 1, addend: 00000000 }
+this is way longer than sixteen bytes
+```
+
+YES! We did it! 🙌🙌🙌

@@ -1,0 +1,2022 @@
+# Loading multiple ELF objects
+
+Up until now, we’ve been loading a single ELF file, and there wasn’t much structure to how we did it: everyhing just kinda happened in `main`, in no particular order.
+
+But now that [shared libraries are in the picture](https://fasterthanli.me/series/making-our-own-executable-packer/part-5), we have to load *multiple* ELF files, with search paths, and keep them around so we can resolve symbols, and apply relocations across different objects.
+
+After a long period of trawling through references, painstakingly turning C struct definitions into `nom` parsers and hunting down valid enum values… it’s time for some graphs.
+
+The dependency graph of `hello-dl` is quite simple. The simplest:
+
+![hello-dl-dep-graph](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-6/assets/hello-dl-dep-graph~156cab40cc3ab4b7.svg)
+
+To run `hello-dl`, we need the *whole graph*. Since we have to pick a name for “the whole graph”, and our purpose is to execute it, we’ll call it “Process”.
+
+We’ll even put it in its own module:
+
+``` rust
+// in `elk/src/main.rs`
+
+mod process;
+```
+
+``` rust
+// in `elk/src/process.rs`
+
+use mmap::MemoryMap;
+
+#[derive(Debug)]
+pub struct Process {}
+```
+
+Each node in the graph maps to one ELF file. We already have a type for that, `delf::File`. But when *executing*, we need to keep track of a bit more than just the `delf::File`.
+
+For example, we need to keep track of *memory mappings*. If we were writing this in C, we’d need to keep track of them so we can eventually free them (or we could just let the OS do that on process exit).
+
+This being Rust, we need to keep track of them so that they don’t get dropped prematurely, which would unmap them before we’ve even had a chance to jump to the entry point.
+
+Since nodes could be either executables or libraries, we’ll just call them the generic term for an ELF thingy - `Object`:
+
+``` shell
+$ # in elk/
+$ cargo add custom_debug_derive@0.5
+      Adding custom_debug_derive v0.5.0 to dependencies
+```
+
+``` rust
+// in `elk/src/process.rs`
+
+use custom_debug_derive::Debug as CustomDebug;
+
+#[derive(CustomDebug)]
+pub struct Object {
+    // we're skipping this one because it would get *real* verbose
+    #[debug(skip)]
+    pub file: delf::File,
+
+    // `MemoryMap` does not implement `Debug`, so we need to skip it.
+    // if we weren't using `custom_debug_derive`, we would have to do an
+    // entirely custom `fmt::Debug` implementation for `Object`!
+    #[debug(skip)]
+    pub maps: Vec<MemoryMap>,
+}
+```
+
+But that’s not all! When we map an ELF object in memory, we decide on its “base address”. We’ve been hardcoding `0x400000` as a base address when we were loading a single object, and it worked out fine, but now we have multiple objects, so we’re going to have to assign each one its own base address, and keep track of it.
+
+Finally, we’ll probably want to remember the path an ELF object was loaded from. Just for us. As a treat.
+
+``` rust
+// in `elk/src/process.rs`
+
+use std::path::PathBuf;
+
+#[derive(custom_debug_derive::Debug)]
+pub struct Object {
+    // new!
+    pub path: PathBuf,
+    // new!
+    pub base: delf::Addr,
+
+    #[debug(skip)]
+    pub file: delf::File,
+    #[debug(skip)]
+    pub maps: Vec<MemoryMap>,
+}
+```
+
+Of course, we’re going to want to keep those objects in the `Process` struct:
+
+> **Cool Bear's hot tip**
+>
+> Well, they’re not technically “in” the `Process` struct, they’re just *owned by* that struct. In practice, since they end up in a `Vec`, they’re in a different heap allocation.
+>
+> But conceptually, we can think of them as “in” the `Process` struct.
+
+``` rust
+// in `elk/src/process.rs`
+
+#[derive(Debug)]
+pub struct Process {
+    // new!
+    pub objects: Vec<Object>,
+}
+```
+
+Now, what should our API look like?
+
+We definitely need a constructor:
+
+``` rust
+// in `elk/src/process.rs`
+
+impl Process {
+    pub fn new() -> Self {
+        Self {
+            objects: Vec::new(),
+        }
+    }
+}
+```
+
+We also need a method to load ELF objects by path, like so:
+
+``` rust
+// in `elk/src/process.rs`
+
+impl Process {
+    pub fn load_object(&mut self, path: &str) -> Object {
+        unimplemented!()
+    }
+}
+```
+
+And then, from `main`, we could use it like this:
+
+``` rust
+fn main() -> Result<(), Box<dyn Error>> {
+    let input_path = env::args().nth(1).expect("usage: elk FILE");
+
+    let mut proc = process::Process::new();
+    let obj = proc.load_object(input_path);
+    println!("{:#?}", obj);
+
+    Ok(())
+}
+```
+
+But actually, that already doesn’t work, because `input_path` is not an `&str`, it’s a `String`. We’ve been over that in [Making our own ping Part 5](https://fasterthanli.me/series/making-our-own-ping/part-5).
+
+If we want to accept both, we need a generic type parameter that implements `AsRef`, and when using, we need to call `.as_ref()` first:
+
+``` rust
+use std::fs;
+
+impl Process {
+    pub fn load_object<P: AsRef<str>>(&mut self, path: P) -> Object {
+        let input = fs::read(path.as_ref());
+
+        unimplemented!()
+    }
+}
+```
+
+But is `&str` really the type we want? What if the object we want contains `RPATH` dynamic entries? And one of the entries contains `$ORIGIN`? Then we’d need to replace `$ORIGIN` with the path of the directory containing the object.
+
+> **Cool Bear's hot tip**
+>
+> For example: if we’re loading `~/rust/elk/samples/hello-dl` and it has a `RPATH` entry of `$ORIGIN`, we need to add `~/rust/elk/samples` to the search path of `Process`.
+
+How do we even get the “path of the directory containing a file”, given the path of a file?
+
+``` rust
+// in `src/std/path.rs`
+
+impl Path {
+    /// Returns the `Path` without its final component, if there is one.
+    ///
+    /// Returns [`None`] if the path terminates in a root or prefix.
+    ///
+    /// [`None`]: ../../std/option/enum.Option.html#variant.None
+    #[stable(feature = "rust1", since = "1.0.0")]
+    pub fn parent(&self) -> Option<&Path> {}
+}
+```
+
+So there *is* a better type than `&str`. The `std::path::Path` will let us do path manipulation, like canonicalizing a path:
+
+```
+"./hello-dl" => "~/rust/elk/samples/hello-dl"
+```
+
+And getting a path’s “parent”:
+
+```
+"~/rust/elk/samples/hello-dl" => "~/rust/elk/samples"
+```
+
+Besides, when loading shared libraries, the path of the library will be computed from the search path and a name specified in a `NEEDED` dynamic section, so it’ll probably be an `std::path::PathBuf`, not a `String`, because we’ll use the proper methods for joining paths, not string formatting routines.
+
+So, for `Process::load_object`, we definitely want to take an `AsRef<Path>`:
+
+``` rust
+// in `elk/src/process.rs`
+
+use std::path::{Path, PathBuf};
+
+impl Process {
+    pub fn load_object<P: AsRef<Path>>(&mut self, path: P) -> Object {
+        let input = fs::read(path.as_ref());
+
+        unimplemented!()
+    }
+}
+```
+
+Let’s implement the rest of `load_object` real quick:
+
+``` rust
+    pub fn load_object<P: AsRef<Path>>(&mut self, path: P) -> Object {
+        let input = fs::read(path.as_ref()).unwrap();
+        let file = delf::File::parse_or_print_error(&input[..]).unwrap();
+        let res = Object {
+            path: path.as_ref().to_path_buf(),
+            base: delf::Addr(0x400000),
+            maps: Vec::new(),
+            file,
+        };
+        res
+    }
+```
+
+And try it out:
+
+``` shell
+$ # in `elk/`
+$ cargo b -q
+$ ./target/debug/elk samples/hello-dl
+Object {
+    path: "samples/hello-dl",
+    base: 00400000,
+}
+```
+
+Good.
+
+Well.. I don’t feel great about this `path` being relative - I say we canonicalize it as soon as possible:
+
+``` rust
+// in `elk/src/process.rs`
+impl Process {
+    pub fn load_object<P: AsRef<Path>>(&mut self, path: P) -> Object {
+        let path = path.as_ref().canonicalize().unwrap();
+        let input = fs::read(&path).unwrap();
+        let file = delf::File::parse_or_print_error(&input[..]).unwrap();
+
+        let res = Object {
+            path,
+            base: delf::Addr(0x400000),
+            maps: Vec::new(),
+            file,
+        };
+        res
+    }
+}
+```
+
+``` shell
+$ cargo b -q
+$ ./target/debug/elk samples/hello-dl
+Object {
+    path: "/home/amos/ftl/elk/samples/hello-dl",
+    base: 00400000,
+}
+```
+
+Now, I suppose `load_object` would be a good place to check for `RPATH` dynamic entries, right? Right!
+
+``` rust
+// in `elk/src/process.rs`
+impl Process {
+    pub fn load_object<P: AsRef<Path>>(&mut self, path: P) -> Object {
+        let path = path.as_ref().canonicalize().unwrap();
+        let input = fs::read(&path).unwrap();
+
+        println!("Loading {:?}", path);
+        let file = delf::File::parse_or_print_error(&input[..]).unwrap();
+
+        for rpath in file.dynamic_entry_strings(delf::DynamicTag::RPath) {
+            println!("Found RPATH entry {:?}", rpath);
+        }
+
+        let res = Object {
+            path,
+            base: delf::Addr(0x400000),
+            maps: Vec::new(),
+            file,
+        };
+        res
+    }
+}
+```
+
+``` shell
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+Found RPATH entry "$ORIGIN"
+Object {
+    path: "/home/amos/ftl/elk/samples/hello-dl",
+    base: 00400000,
+}
+```
+
+Now, when considering RPATH entries, we need to replace the special `$ORIGIN` token with the parent path.
+
+We don’t really need to check for its presence first - if we call `replace` on an entry that does not contain it, nothing will happen. It’s not a particularly hot path, so we don’t care about performance much:
+
+``` rust
+// in `elk/src/process.rs`
+impl Process {
+    pub fn load_object<P: AsRef<Path>>(&mut self, path: P) -> Object {
+        let path = path.as_ref().canonicalize().unwrap();
+        let input = fs::read(&path).unwrap();
+
+        println!("Loading {:?}", path);
+        let file = delf::File::parse_or_print_error(&input[..]).unwrap();
+
+        let origin = path.parent().unwrap().to_str().unwrap();
+        for rpath in file.dynamic_entry_strings(delf::DynamicTag::RPath) {
+            let rpath = rpath.replace("$ORIGIN", &origin);
+            println!("Found RPATH entry {:?}", rpath);
+        }
+        // cut
+    }
+}
+```
+
+``` shell
+$ cargo b -q
+$ ./target/debug/elk samples/hello-dl
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elk/samples"
+Object {
+    path: "/home/amos/ftl/elk/samples/hello-dl",
+    base: 00400000,
+}
+```
+
+Great! Now, since we’re going to be using this `RPATH` to find the dependencies of `hello-dl`, we’ll need to keep track of all our “library directories”, probably somewhere in `Process`:
+
+``` rust
+// in `elk/src/process.rs`
+
+#[derive(Debug)]
+pub struct Process {
+    pub objects: Vec<Object>,
+    // we want `Process` to own those paths, so we're picking
+    // `PathBuf`, which is to `&Path` what `String` is to `&str`.
+    pub search_path: Vec<PathBuf>,
+}
+
+impl Process {
+    // Let's not forget to initialize `search_path` in the constructor:
+    pub fn new() -> Self {
+        Self {
+            objects: Vec::new(),
+            search_path: Vec::new(),
+        }
+    }
+
+    // ...and add to it
+    pub fn load_object<P: AsRef<Path>>(&mut self, path: P) -> Object {
+        // (cut)
+
+        for rpath in file.dynamic_entry_strings(delf::DynamicTag::RPath) {
+            let rpath = rpath.replace("$ORIGIN", &origin);
+            println!("Found RPATH entry {:?}", rpath);
+
+            // new:
+            self.search_path.push(PathBuf::from(rpath));
+        }
+
+        // (cut)
+    }
+}
+```
+
+Let’s also adjust `main` to print the whole `Process` struct:
+
+``` rust
+// `elk/src/main.rs`
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let input_path = env::args().nth(1).expect("usage: elk FILE");
+
+    let mut proc = process::Process::new();
+    proc.load_object(input_path);
+    println!("{:#?}", proc);
+
+    Ok(())
+}
+```
+
+``` shell
+$ cargo b -q
+$ ./target/debug/elk ./samples/hello-dl
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elk/samples"
+Process {
+    objects: [],
+    search_path: [
+        "/home/amos/ftl/elk/samples",
+    ],
+}
+```
+
+Ah, `Process::search_path` looks good but `Process::objects` probably shouldn’t be empty - no problem, let’s just add it:
+
+``` rust
+// in `elk/src/process.rs`
+
+    pub fn load_object<P: AsRef<Path>>(&mut self, path: P) -> Object {
+        let path = path.as_ref().canonicalize().unwrap();
+        let input = fs::read(&path).unwrap();
+
+        println!("Loading {:?}", path);
+        let file = delf::File::parse_or_print_error(&input[..]).unwrap();
+
+        let origin = path.parent().unwrap().to_str().unwrap();
+        for rpath in file.dynamic_entry_strings(delf::DynamicTag::RPath) {
+            let rpath = rpath.replace("$ORIGIN", &origin);
+            println!("Found RPATH entry {:?}", rpath);
+            self.search_path.push(PathBuf::from(rpath));
+        }
+
+        let object = Object {
+            path,
+            base: delf::Addr(0x400000),
+            maps: Vec::new(),
+            file,
+        };
+        self.objects.push(object);
+        object
+    }
+```
+
+``` shell
+$ cargo b -q
+error[E0382]: use of moved value: `object`
+  --> src/process.rs:94:9
+   |
+87 |         let object = Object {
+   |             ------ move occurs because `object` has type `process::Object`, which does not implement the `Copy` trait
+...
+93 |         self.objects.push(object);
+   |                           ------ value moved here
+94 |         object
+   |         ^^^^^^ value used here after move
+
+error: aborting due to previous error
+```
+
+Oh, uh, that doesn’t work.
+
+We can’t *both* store the `Object` in `Process` *and* return it. We have to make a choice. And we need `Process` to hang onto any `Object` we load, because we’ll need to apply relocations.
+
+But we also need to return something from `load_object`. A reference maybe?
+
+``` rust
+    pub fn load_object<P: AsRef<Path>>(&mut self, path: P) -> &Object {
+        // cut
+
+        self.objects.push(object);
+        &object
+    }
+```
+
+``` shell
+$ cargo b -q
+error[E0515]: cannot return reference to local variable `object`
+  --> src/process.rs:94:9
+   |
+94 |         &object
+   |         ^^^^^^^ returns a reference to data owned by the current function
+
+error[E0382]: borrow of moved value: `object`
+  --> src/process.rs:94:9
+   |
+87 |         let object = Object {
+   |             ------ move occurs because `object` has type `process::Object`, which does not implement the `Copy` trait
+...
+93 |         self.objects.push(object);
+   |                           ------ value moved here
+94 |         &object
+   |         ^^^^^^^ value borrowed here after move
+
+error: aborting due to 2 previous errors
+```
+
+That won’t do it either. We obviously can’t borrow the object *after* it has moved.
+
+But we can borrow it from its new location…
+
+``` rust
+    pub fn load_object<P: AsRef<Path>>(&mut self, path: P) -> &Object {
+        // cut
+
+        let index = self.objects.len();
+        self.objects.push(object);
+        &self.objects[index]
+    }
+```
+
+Great! Surely we won’t run into any problems with this new scheme. In particular, it’s *definitely* not going to fall apart completely because of the very next thing we try to do.
+
+``` rust
+// in `elk/src/main.rs`
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let input_path = env::args().nth(1).expect("usage: elk FILE");
+
+    let mut proc = process::Process::new();
+    let exe = proc.load_object(input_path);
+    let lib = proc.load_object("./samples/libmsg.so");
+
+    Ok(())
+}
+```
+
+See? Everything’s fine. All good. No sweat. We sure dodged a bullet.
+
+What’s that? We don’t do anything with `exe` and `lib`? Fair, fair, okay let’s print them then:
+
+``` rust
+fn main() -> Result<(), Box<dyn Error>> {
+    let input_path = env::args().nth(1).expect("usage: elk FILE");
+
+    let mut proc = process::Process::new();
+    let exe = proc.load_object(input_path);
+    let lib = proc.load_object("./samples/libmsg.so");
+    println!("exe = {:#?}", exe);
+    println!("lib = {:#?}", lib);
+
+    Ok(())
+}
+```
+
+``` shell
+$ cargo b -q
+error[E0499]: cannot borrow `proc` as mutable more than once at a time
+  --> src/main.rs:19:15
+   |
+18 |     let exe = proc.load_object(input_path);
+   |               ---- first mutable borrow occurs here
+19 |     let lib = proc.load_object("./samples/libmsg.so");
+   |               ^^^^ second mutable borrow occurs here
+20 |     println!("exe = {:#?}", exe);
+   |                             --- first borrow later used here
+
+error: aborting due to previous error
+```
+
+…okay everything is not fine.
+
+The issue here is hard to see, because of [elided lifetimes](https://doc.rust-lang.org/nomicon/lifetime-elision.html).
+
+We wrote this:
+
+``` rust
+pub fn load_object<P: AsRef<Path>>(&mut self, path: P) -> &Object {}
+```
+
+But what it really means is this:
+
+``` rust
+pub fn load_object<'a, P: AsRef<Path>>(&'a mut self, path: P) -> &'a Object {}
+                   ^^                   ^^                        ^^
+```
+
+Which means that the receiver `&mut self`, and the return type `&Object` have the *same lifetime*.
+
+We’re only able to return a reference to a field of a field of `self` because `self` *continues to be borrowed* after we return from the function.
+
+Here’s the first scenario:
+
+``` rust
+    let mut proc = process::Process::new();
+    let exe = proc.load_object(input_path);
+    // `exe` is never used beyond this point. In fact, there's a warning
+    // about it being unused. It's simply stripped - the return value is unused,
+    // and `proc` is no longer borrowed.
+    let lib = proc.load_object("./samples/libmsg.so");
+    // same here with `lib`
+```
+
+But in the second scenario:
+
+``` rust
+    let mut proc = process::Process::new();
+    let exe = proc.load_object(input_path);
+    let lib = proc.load_object("./samples/libmsg.so");
+
+    // `exe` is used below, so `proc` never stopped being borrowed,
+    // so the second `load_object` call is illegal
+    println!("exe = {:#?}", exe);
+```
+
+There’s a pattern we can use to work around this.
+
+We don’t *need* to hold a reference to `exe` while we load `lib`. We just need to have enough information so that we can borrow `exe` later.
+
+In fact, its position in the `Vec` would suffice. Then we could do this:
+
+``` rust
+// in `elk/src/process.rs`
+
+    pub fn load_object<P: AsRef<Path>>(&mut self, path: P) -> usize {
+        // (cut)
+
+        let index = self.objects.len();
+        self.objects.push(object);
+        index
+    }
+```
+
+And use it like that:
+
+``` rust
+fn main() -> Result<(), Box<dyn Error>> {
+    let input_path = env::args().nth(1).expect("usage: elk FILE");
+
+    let mut proc = process::Process::new();
+    let exe = proc.load_object(input_path);
+    // `exe` is just an `usize`, `proc` is no longer borrowed.
+    let lib = proc.load_object("./samples/libmsg.so");
+    // again, `proc` was borrowed just for that `load_object` call
+    println!("exe = {:#?}", proc.objects[exe]);
+    // same here, `proc` is no longer borrowed
+    println!("lib = {:#?}", proc.objects[lib]);
+    // same here again, `proc` is no longer borrowed
+```
+
+This is the “arena” pattern. We treat the `Vec<Object>` purely as storage, and we pass around just enough information to borrow an `Object` *when we need it*, and not one second sooner.
+
+> **Cool Bear's hot tip**
+>
+> “Seriously? We’re going to be passing around `usize` values?”
+>
+> Yup! Although, if you want something slightly more strongly-typed, you might want to look into [the atree crate](https://lib.rs/crates/atree).
+>
+> We could do it ourselves, but we have a lot of other things to attend to.
+
+Good! Now that *that’s* settled, there is the small matter of error handling.
+
+`load_object` manipulates paths, reads a file, and parses it. Many things can go wrong, and, right now, we just `.unwrap()`, which isn’t great.
+
+Let’s do a quick pass with [the thiserror crate](https://lib.rs/crates/thiserror) to add proper error handling:
+
+``` shell
+$ cd elk/
+$ cargo add thiserror@1
+      Adding thiserror v1.0.22 to dependencies
+```
+
+> **Cool Bear's hot tip**
+>
+> We’re going to go over this fairly quickly, if you need a more in-depth review, check out [Improving error handling - panics vs. proper errors](https://fasterthanli.me/series/making-our-own-ping/part-10), from the “Making our own ping” series.
+
+``` rust
+// `elk/src/process.rs`
+
+#[derive(thiserror::Error, Debug)]
+pub enum LoadError {
+    #[error("ELF object not found: {0}")]
+    NotFound(String),
+    #[error("An invalid or unsupported path was encountered")]
+    InvalidPath(PathBuf),
+    #[error("I/O error: {0}")]
+    IO(#[from] std::io::Error),
+    #[error("ELF object could not be parsed: {0}")]
+    ParseError(PathBuf),
+}
+```
+
+First off, we need to change the return type to `Result<T, E>`:
+
+``` rust
+    pub fn load_object<P: AsRef<Path>>(&mut self, path: P) -> Result<usize, LoadError> {
+```
+
+Our first `unwrap()` can panic for various reasons:
+
+``` rust
+        let path = path.as_ref().canonicalize().unwrap();
+```
+
+For example, `path` might not actually exist on disk. Or it might exist, but it might be a symbolic link that points to a non-existent file. Luckily, the errors it *can* return are of type `std::io::Error`, and our `IO` variant takes care of that.
+
+Since we used the `#[from]` attribute, the `thiserror` crate is considerate enough to implement `From<std::io::Error>` for `elk::process::LoadError`, so `?` works out of the box.
+
+The same goes for `fs::read`, which also returns an `std::io::Error`:
+
+``` rust
+        let path = path.as_ref().canonicalize()?; // used to be .unwrap()
+        let input = fs::read(&path)?; // also used to be .unwrap()
+```
+
+The next `unwrap` is more complicated:
+
+``` rust
+        println!("Loading {:?}", path);
+        let file = delf::File::parse_or_print_error(&input[..]).unwrap();
+```
+
+…because `File::parse_or_print_error` doesn’t return a `Result<T, E>`. It returns an `Option<T>`. See, we’re paying the price for our earlier decisions.
+
+But it’ll be fine - we can easily turn an `Option` into a `Result`, even if it won’t contain much contextual information about the actual error (instead, `parse_or_print_error` prints it to stderr).
+
+``` rust
+        let file = delf::File::parse_or_print_error(&input[..])
+            .ok_or_else(|| LoadError::ParseError(path.clone()))?;
+```
+
+We’ve used `ok_or` before in this series. `ok_or_else` is its lazy counterpart - the closure is only called if there’s *actually* an error. Which is good, because the closure clones a `PathBuf`.
+
+> **Cool Bear's hot tip**
+>
+> “Wait, I thought we didn’t care about performance?”
+>
+> Sure, yep. But now you know!
+
+That one is the hairiest, because there’s two operations that can fail:
+
+``` rust
+        let origin = path.parent().unwrap().to_str().unwrap();
+```
+
+First of all, `path` may not even *have* a parent, and second of all, it might have a parent, but with a path that isn’t valid utf-8 - and then `to_str` would fail.
+
+We’re going to call both of those an “invalid path” and go on with our day:
+
+``` rust
+        let origin = path
+            .parent()
+            .ok_or_else(|| LoadError::InvalidPath(path.clone()))?
+            .to_str()
+            .ok_or_else(|| LoadError::InvalidPath(path.clone()))?;
+```
+
+And finally the value we return should be a `Result<usize, LoadError>` - not just an `usize`, so we need to wrap it in `Ok`:
+
+``` rust
+        Ok(index)
+```
+
+Our function now looks like this:
+
+``` rust
+    pub fn load_object<P: AsRef<Path>>(&mut self, path: P) -> Result<usize, LoadError> {
+        let path = path.as_ref().canonicalize()?;
+        let input = fs::read(&path)?;
+
+        println!("Loading {:?}", path);
+        let file = delf::File::parse_or_print_error(&input[..])
+            .ok_or_else(|| LoadError::ParseError(path.clone()))?;
+
+        let origin = path
+            .parent()
+            .ok_or_else(|| LoadError::InvalidPath(path.clone()))?
+            .to_str()
+            .ok_or_else(|| LoadError::InvalidPath(path.clone()))?;
+        for rpath in file.dynamic_entry_strings(delf::DynamicTag::RPath) {
+            let rpath = rpath.replace("$ORIGIN", &origin);
+            println!("Found RPATH entry {:?}", rpath);
+            self.search_path.push(PathBuf::from(rpath));
+        }
+
+        let object = Object {
+            path,
+            base: delf::Addr(0x400000),
+            maps: Vec::new(),
+            file,
+        };
+        let index = self.objects.len();
+        self.objects.push(object);
+        Ok(index)
+    }
+```
+
+Do we have time for one last bit of [bikeshedding](https://en.wiktionary.org/wiki/bikeshedding)?
+
+I don’t like this part:
+
+``` rust
+        for rpath in file.dynamic_entry_strings(delf::DynamicTag::RPath) {
+            let rpath = rpath.replace("$ORIGIN", &origin);
+            println!("Found RPATH entry {:?}", rpath);
+            self.search_path.push(PathBuf::from(rpath));
+        }
+```
+
+Sure, it works. But it’s awfully imperative. Can’t we come up with something shorter?
+
+Iterators can be mapped, so we can do this:
+
+``` rust
+        for rpath in file
+            .dynamic_entry_strings(delf::DynamicTag::RPath)
+            .map(|path| path.replace("$ORIGIN", &origin))
+        {
+            println!("Found RPATH entry {:?}", rpath);
+            self.search_path.push(PathBuf::from(rpath));
+        }
+```
+
+Iterators can also be inspected, so we can do this:
+
+``` rust
+        for rpath in file
+            .dynamic_entry_strings(delf::DynamicTag::RPath)
+            .map(|path| path.replace("$ORIGIN", &origin))
+            .inspect(|path| println!("Found RPATH entry {:?}", path))
+        {
+            self.search_path.push(PathBuf::from(rpath));
+        }
+```
+
+Transforming a `String` into a `PathBuf` is also technically a map, so we can do this:
+
+``` rust
+        for rpath in file
+            .dynamic_entry_strings(delf::DynamicTag::RPath)
+            .map(|path| path.replace("$ORIGIN", &origin))
+            .inspect(|path| println!("Found RPATH entry {:?}", path))
+            .map(PathBuf::from)
+        {
+            self.search_path.push(rpath);
+        }
+```
+
+And for our grand finale… `Vec` implements the `Extend` trait, which means we can do `some_vec.extend(some_iterator)`, so:
+
+``` rust
+        self.search_path.extend(
+            file.dynamic_entry_strings(delf::DynamicTag::RPath)
+                .map(|path| path.replace("$ORIGIN", &origin))
+                .inspect(|path| println!("Found RPATH entry {:?}", path))
+                .map(PathBuf::from),
+        );
+```
+
+And voilà! Now it actually *looks* like a pipeline.
+
+Let’s get our `main` back to what it should be, and give our program another run:
+
+``` rust
+// in `elk/src/main.rs`
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let input_path = env::args().nth(1).expect("usage: elk FILE");
+
+    let mut proc = process::Process::new();
+    proc.load_object(input_path)?;
+    println!("{:#?}", proc);
+
+    Ok(())
+}
+```
+
+``` shell
+$ cargo b -q
+$ ./target/debug/elk samples/hello-dl
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elk/samples"
+Process {
+    objects: [
+        Object {
+            path: "/home/amos/ftl/elk/samples/hello-dl",
+            base: 00400000,
+        },
+    ],
+    search_path: [
+        "/home/amos/ftl/elk/samples",
+    ],
+}
+```
+
+Good.
+
+What were we doing again?
+
+Oh right, load `hello-dl` *and* all its dependencies. Which is only has one of.
+
+Well, that’s easy!
+
+``` rust
+// in `elk/src/main.rs`
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let input_path = env::args().nth(1).expect("usage: elk FILE");
+
+    let mut proc = process::Process::new();
+    let exec = proc.load_object(input_path)?;
+    let dependencies: Vec<_> = proc.objects[exec]
+        .file
+        .dynamic_entry_strings(delf::DynamicTag::Needed)
+        .collect();
+    for dep in dependencies {
+        proc.load_object(dep)?;
+    }
+    println!("{:#?}", proc);
+}
+```
+
+Simplest thing that could possibly work. Boom. Done. See y’all next week.
+
+``` shell
+$ ./target/debug/elk samples/hello-dl
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elk/samples"
+Error: IO(Os { code: 2, kind: NotFound, message: "No such file or directory" })
+```
+
+Okay, so it doesn’t actually work. And there’s worse: the standard IO error for “file not found” does not include a path - as of rustc 1.40.0.
+
+> **Cool Bear's hot tip**
+>
+> I hear the team is working on it, though!
+>
+> It’s not *that* easy to fix, though. The reason it does not include a path is so that there’s no allocation. We are working from the comfort of a desktop operating system with a lot of RAM for us to \~\~~waste\~\~~ use, and we don’t mind copying a string now and then.
+>
+> But Rust is also used on embedded systems - microcontrollers with tiny tiny amounts of memory. And in that scenario, we might not want the standard library to allocate left and right.
+>
+> Hell, there might not even be an allocator available!
+
+So, let’s just make our own error type a tiny bit more specific:
+
+``` rust
+// in `elk/src/process.rs`
+
+#[derive(thiserror::Error, Debug)]
+pub enum LoadError {
+    // omitted: other fields
+
+    // changed:
+    #[error("I/O error on {0}: {1}")]
+    IO(PathBuf, std::io::Error),
+}
+
+// much later:
+
+impl Process {
+    pub fn load_object<P: AsRef<Path>>(&mut self, path: P) -> Result<usize, LoadError> {
+        let path = path
+            .as_ref()
+            .canonicalize()
+            .map_err(|e| LoadError::IO(path.as_ref().to_path_buf(), e))?;
+        let input = fs::read(&path).map_err(|e| LoadError::IO(path.clone(), e))?;
+
+        // (cut)
+}
+```
+
+Sure, yes, it’s not as elegant. But it might actually help us figure out what’s going wrong, so I’ll allow it.
+
+``` shell
+$ cargo b -q
+$ ./target/debug/elk samples/hello-dl
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elk/samples"
+Error: IO("libmsg.so", Os { code: 2, kind: NotFound, message: "No such file or directory" })
+```
+
+Okay! So it can’t find `libmsg.so`. No wonder, we kinda skipped over the whole “using the search path to find libraries” part of the ordeal.
+
+So let’s make a helper for that:
+
+``` rust
+// in `elk/src/process.rs`
+
+impl Process {
+    pub fn object_path(&self, name: &str) -> Result<PathBuf, LoadError> {
+        for prefix in &self.search_path {
+            let path = prefix.join(name);
+            if path.exists() {
+                return Ok(path);
+            }
+        }
+        Err(LoadError::NotFound(name.into()))
+    }
+}
+```
+
+Gather round class, who can tell me what’s good and what’s bad about this?
+
+> **Cool Bear's hot tip**
+>
+> Well, I like that it returns a `Result`. This way when we call it, we can just use `?` to bubble up the error if it’s not found.
+
+Correct, cool bear. And what’s bad about it?
+
+> **Cool Bear's hot tip**
+>
+> I suppose it.. could be a bit more functional?
+
+Yes. Yes it could. We basically have another pipelines on our hands here:
+
+- For every entry in the search path..
+- Construct a “full path” out of the entry and the `name` parameter..
+- Return the first one that exists
+
+So, naively, something like that:
+
+``` rust
+    pub fn object_path(&self, name: &str) -> Result<PathBuf, LoadError> {
+        for path in self.search_path.iter().map(|prefix| prefix.join(name)) {
+            if path.exists() {
+                return Ok(path);
+            }
+        }
+        Err(LoadError::NotFound(name.into()))
+    }
+```
+
+Or maybe we could filter out the non-existing ones, and take the first one, like so:
+
+``` rust
+    pub fn object_path(&self, name: &str) -> Result<PathBuf, LoadError> {
+        if let Some(path) = self
+            .search_path
+            .iter()
+            .map(|prefix| prefix.join(name))
+            .filter(|path| path.exists())
+            .next()
+        {
+            Ok(path)
+        } else {
+            Err(LoadError::NotFound(name.into()))
+        }
+    }
+```
+
+But there’s already a function to “find the first item of an iterator that satisfies a predicate”, and that’s `find`:
+
+``` rust
+    pub fn object_path(&self, name: &str) -> Result<PathBuf, LoadError> {
+        if let Some(path) = self
+            .search_path
+            .iter()
+            .map(|prefix| prefix.join(name))
+            .find(|path| path.exists())
+        {
+            Ok(path)
+        } else {
+            Err(LoadError::NotFound(name.into()))
+        }
+    }
+```
+
+And there’s a functional way of turning an `Option<T>` into a `Result<T, E>`:
+
+``` rust
+    pub fn object_path(&self, name: &str) -> Result<PathBuf, LoadError> {
+        self.search_path
+            .iter()
+            .map(|prefix| prefix.join(name))
+            .find(|path| path.exists())
+            .ok_or_else(|| LoadError::NotFound(name.into()))
+    }
+```
+
+And we probably want to canonicalize the resulting path, at this point. Just in case it’s a symbolic link.
+
+> **Cool Bear's hot tip**
+>
+> Spoiler alert, but: a *lot* of names in `/usr/lib` are symbolic links.
+>
+> Like, most of them. And not just the obvious ones like `libz.so -> libz.so.1.2.11`, but some funky ones, like `ld-linux-x86-64.so.2 -> ld-2.30.so`.
+
+``` rust
+    pub fn object_path(&self, name: &str) -> Result<PathBuf, LoadError> {
+        self.search_path
+            .iter()
+            .map(|prefix| prefix.join(name))
+            .filter_map(|path| path.canonicalize().ok())
+            .find(|path| path.exists())
+            .ok_or_else(|| LoadError::NotFound(name.into()))
+    }
+```
+
+And we can probably do those two “map” operations in one step:
+
+``` rust
+    pub fn object_path(&self, name: &str) -> Result<PathBuf, LoadError> {
+        self.search_path
+            .iter()
+            .filter_map(|prefix| prefix.join(name).canonicalize().ok())
+            .find(|path| path.exists())
+            .ok_or_else(|| LoadError::NotFound(name.into()))
+    }
+```
+
+And now it looks pretty good, doesn’t it? Very functional. Very nice.
+
+Now that we’ve polished this to death - is it even useful?
+
+``` rust
+// in `elk/src/main.rs`
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let input_path = env::args().nth(1).expect("usage: elk FILE");
+
+    let mut proc = process::Process::new();
+    let exec = proc.load_object(input_path)?;
+    let dependencies: Vec<_> = proc.objects[exec]
+        .file
+        .dynamic_entry_strings(delf::DynamicTag::Needed)
+        .collect();
+    for dep in dependencies {
+        proc.load_object(proc.object_path(&dep)?)?;
+    }
+    println!("{:#?}", proc);
+
+    Ok(())
+}
+```
+
+``` shell
+$ cargo b -q
+$ ./target/debug/elk samples/hello-dl
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elk/samples"
+Loading "/home/amos/ftl/elk/samples/libmsg.so"
+Process {
+    objects: [
+        Object {
+            path: "/home/amos/ftl/elk/samples/hello-dl",
+            base: 00400000,
+        },
+        Object {
+            path: "/home/amos/ftl/elk/samples/libmsg.so",
+            base: 00400000,
+        },
+    ],
+    search_path: [
+        "/home/amos/ftl/elk/samples",
+    ],
+}
+```
+
+Yeah! It *is* useful.
+
+But we still have some issues to sort out. What if our dependencies themselves have dependencies?
+
+Currently, we only go one level deep. So, for example, if we run it on `samples/entry_point`, our C program, we’ll see that:
+
+``` shell
+$ ./target/debug/elk ./samples/entry_point
+Loading "/home/amos/ftl/elk/samples/entry_point"
+Error: NotFound("libc.so.6")
+```
+
+Uhhh hold on one second
+
+``` shell
+$ locate libc.so.6
+/usr/lib/libc.so.6
+/usr/lib32/libc.so.6
+```
+
+``` rust
+// in `elk/src/process.rs`
+
+impl Process {
+    pub fn new() -> Self {
+        Self {
+            objects: Vec::new(),
+            search_path: vec!["/usr/lib".into()],
+        }
+    }
+}
+```
+
+As I was saying, if we run it on `samples/entry_point`, our C program, we’ll see that:
+
+``` shell
+$ cargo b -q
+$ ./target/debug/elk ./samples/entry_point
+Loading "/home/amos/ftl/elk/samples/entry_point"
+Loading "/usr/lib/libc-2.30.so"
+Process {
+    objects: [
+        Object {
+            path: "/home/amos/ftl/elk/samples/entry_point",
+            base: 00400000,
+        },
+        Object {
+            path: "/usr/lib/libc-2.30.so",
+            base: 00400000,
+        },
+    ],
+    search_path: [
+        "/usr/lib",
+    ],
+}
+```
+
+…we are missing some dependencies.
+
+How do I know? I checked!
+
+``` shell
+$ readelf -a ./samples/entry_point | grep NEEDED
+ 0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]
+$ readelf -a /usr/lib/libc.so.6 | grep NEEDED
+ 0x0000000000000001 (NEEDED)             Shared library: [ld-linux-x86-64.so.2]
+$ readelf -a /usr/lib/ld-linux-x86-64.so.2 | grep NEEDED
+$
+```
+
+So maybe we load dependencies recursively - instead of doing it from `main`, we do it from `Process::load_object`:
+
+``` rust
+// in `elk/src/process.rs`
+
+impl Process {
+    pub fn load_object<P: AsRef<Path>>(&mut self, path: P) -> Result<usize, LoadError> {
+        // omitted: canonicalizing path, parsing ELF file,
+        // manipulating path to find origin, extending search path
+
+        // new:
+        let deps: Vec<_> = file
+            .dynamic_entry_strings(delf::DynamicTag::Needed)
+            .collect();
+
+        let object = Object {
+            path,
+            base: delf::Addr(0x400000),
+            maps: Vec::new(),
+            file,
+        };
+
+        let index = self.objects.len();
+        self.objects.push(object);
+
+        // also new:
+        for dep in deps {
+            self.load_object(self.object_path(&dep)?)?;
+        }
+
+        Ok(index)
+    }
+}
+```
+
+And then our `main` goes back to being:
+
+``` rust
+// in `elk/src/main.rs`
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let input_path = env::args().nth(1).expect("usage: elk FILE");
+
+    let mut proc = process::Process::new();
+    proc.load_object(input_path)?;
+    println!("{:#?}", proc);
+
+    Ok(())
+}
+```
+
+And then it all works:
+
+``` shell
+$ cargo b -q
+$ ./target/debug/elk samples/entry_point
+Loading "/home/amos/ftl/elk/samples/entry_point"
+Loading "/usr/lib/libc-2.30.so"
+Loading "/usr/lib/ld-2.30.so"
+```
+
+Or does it?
+
+Let’s try loading a less trivial executable - one that has a few more dependencies. I went rummaging into `/usr/bin` and found… [hunspell](https://en.wikipedia.org/wiki/Hunspell)! (Yes, the “Hun” is for “Hungarian”).
+
+First, let’s see in which order the *real* dynamic linker loads its dependencies.
+
+To do that we need to:
+
+- Set the `LD_DEBUG` environment variable so that `ld-linux` will print out debugging output to stderr
+- Execute `hunspell`, we could ask it to print out its version number, that way we’re sure it doesn’t run for too long
+- Redirect stderr to stdout using `2>&1`, that way we can…
+- Pipe it to `grep` so we can print only the lines we want.
+
+Put all the dry ingredients in a bowl, start whisking while gradually incorporating the wet ingredients and…
+
+``` shell
+$ LD_DEBUG=all hunspell --version 2>&1 | grep 'needed by'
+      6159:     file=libhunspell-1.7.so.0 [0];  needed by hunspell [0]
+      6159:     file=libncursesw.so.6 [0];  needed by hunspell [0]
+      6159:     file=libreadline.so.8 [0];  needed by hunspell [0]
+      6159:     file=libstdc++.so.6 [0];  needed by hunspell [0]
+      6159:     file=libgcc_s.so.1 [0];  needed by hunspell [0]
+      6159:     file=libc.so.6 [0];  needed by hunspell [0]
+      6159:     file=libm.so.6 [0];  needed by /usr/lib/libhunspell-1.7.so.0 [0]
+```
+
+…voilà!
+
+> **Cool Bear's hot tip**
+>
+> These lines alone are enough to establish that our approach and ld-linux’s approach are different.
+>
+> If you’ve already found out why, shh! Don’t spoil it for the others!
+
+We can use `elk` (in its current state) to do roughly the same, with a much simpler command:
+
+``` shell
+$ ./target/debug/elk $(which hunspell) | grep Loading
+Loading "/usr/bin/hunspell"
+Loading "/usr/lib/libhunspell-1.7.so.0.0.1"
+Loading "/usr/lib/libncursesw.so.6.1"
+Loading "/usr/lib/libc-2.30.so"
+Loading "/usr/lib/ld-2.30.so"
+Loading "/usr/lib/libstdc++.so.6.0.27"
+Loading "/usr/lib/libm-2.30.so"
+Loading "/usr/lib/libc-2.30.so"
+Loading "/usr/lib/ld-2.30.so"
+Loading "/usr/lib/ld-2.30.so"
+Loading "/usr/lib/libc-2.30.so"
+Loading "/usr/lib/ld-2.30.so"
+Loading "/usr/lib/ld-2.30.so"
+Loading "/usr/lib/libgcc_s.so.1"
+(cut)
+```
+
+Wait, wait, hold on, we forgot something.
+
+Apparently damn near everything `hunspell` needs depends on `ld-2.30.so`. But we only need to load it once!
+
+We’re going to need to keep track of which files we’ve loaded. Like, say, a map of canonical paths to their index in the `Vec<Object>`. Do you think that would work?
+
+``` rust
+// in `elk/src/process.rs`
+
+use std::collections::HashMap;
+
+#[derive(Debug)]
+pub struct Process {
+    pub objects: Vec<Object>,
+    // new!
+    pub objects_by_path: HashMap<PathBuf, usize>,
+
+    pub search_path: Vec<PathBuf>,
+}
+
+impl Process {
+    pub fn new() -> Self {
+        Self {
+            objects: Vec::new(),
+            objects_by_path: HashMap::new(),
+            search_path: vec!["/usr/lib".into()],
+        }
+    }
+}
+```
+
+Now, whenever we load a new object, we’ll have to update `objects_by_path`:
+
+``` rust
+// in `elk/src/process.rs`
+
+impl Process {
+    pub fn load_object<P: AsRef<Path>>(&mut self, path: P) -> Result<usize, LoadError> {
+        let object = Object {
+            // new: clone `path` here, we still need it for later
+            path: path.clone(),
+            base: delf::Addr(0x400000),
+            maps: Vec::new(),
+            file,
+        };
+
+        let index = self.objects.len();
+        self.objects.push(object);
+        self.objects_by_path.insert(path, index);
+
+        for dep in deps {
+            self.load_object(self.object_path(&dep)?)?;
+        }
+
+        Ok(index)
+    }
+}
+```
+
+That.. doesn’t really fix our problem though does it?
+
+We never *read* from `objects_by_path`. `Process::load_object` always, unconditionally loads an object, even if it was already loaded. We’ll need another method, `get_object`, that eithers:
+
+- Returns the index of an already-loaded object
+- Loads the object and returns its fresh index
+
+``` rust
+// in `elk/src/process.rs`
+
+impl Process {
+    pub fn get_object(&mut self, name: &str) -> Result<usize, LoadError> {
+        let path = self.object_path(name)?;
+        self.objects_by_path
+            .get(&path)
+            .map(|&index| Ok(index))
+            .unwrap_or_else(|| self.load_object(path))
+    }
+}
+```
+
+Now we can adjust `load_object` to use this helper instead:
+
+``` rust
+impl Process {
+    pub fn load_object<P: AsRef<Path>>(&mut self, path: P) -> Result<usize, LoadError> {
+        // (cut)
+
+        let deps: Vec<_> = file
+            .dynamic_entry_strings(delf::DynamicTag::Needed)
+            .collect();
+
+        let object = Object {
+            // (cut)
+        };
+
+        let index = self.objects.len();
+        self.objects.push(object);
+        self.objects_by_path.insert(path, index);
+
+        for dep in deps {
+            // new:
+            self.get_object(&dep)?;
+        }
+
+        Ok(index)
+    }
+}
+```
+
+With that change, we won’t be loading any object more than once.
+
+Hopefully.
+
+If `canonicalize` is as good as I think it is. Which, it better be.
+
+``` shell
+$ cargo b -q
+$ ./target/debug/elk $(which hunspell) | grep Loading
+Loading "/usr/bin/hunspell"
+Loading "/usr/lib/libhunspell-1.7.so.0.0.1"
+Loading "/usr/lib/libncursesw.so.6.1"
+Loading "/usr/lib/libc-2.30.so"
+Loading "/usr/lib/ld-2.30.so"
+Loading "/usr/lib/libstdc++.so.6.0.27"
+Loading "/usr/lib/libm-2.30.so"
+Loading "/usr/lib/libgcc_s.so.1"
+Loading "/usr/lib/libreadline.so.8.0"
+```
+
+Alright! No duplicates. But that’s.. not the same order `ld-linux` loaded them in. With `ld-linux`, `libm-2.30.so` was last:
+
+``` shell
+LD_DEBUG=all hunspell --version 2>&1 | grep 'needed by'
+      6159:     file=libhunspell-1.7.so.0 [0];  needed by hunspell [0]
+      6159:     file=libncursesw.so.6 [0];  needed by hunspell [0]
+      6159:     file=libreadline.so.8 [0];  needed by hunspell [0]
+      6159:     file=libstdc++.so.6 [0];  needed by hunspell [0]
+      6159:     file=libgcc_s.so.1 [0];  needed by hunspell [0]
+      6159:     file=libc.so.6 [0];  needed by hunspell [0]
+      6159:     file=libm.so.6 [0];  needed by /usr/lib/libhunspell-1.7.so.0 [0]
+```
+
+It’s time to talk about… **graph traversal**.
+
+What *we* did was traverse the dependency graph **depth-first**.
+
+If we were loading a binary, `foobar`, that depended on `libyes` and `libnah`, and both of these depended on `libbase`, then our current approach would proceed like so:
+
+![depth-first](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-6/assets/depth-first~de8f79f039c691d1.svg)
+
+What `ld-linux` did, is traverse the dependency graph **breadth-first**, like so:
+
+![breadth-first](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-6/assets/breadth-first~f26df8a2e2f29ebc.svg)
+
+We put our initial ELF object (`hello-dl`) into a set we call “set A”.
+
+We enumerate all the dependencies - *that we haven’t loaded yet* of all the objects in set A, and call that set B.
+
+If B is empty, we’re done!
+
+If not, we load all the objects in set B, and rename it “set A” (throwing the previous “set A” away).
+
+Then, again, we construct set B from set A by enumerating dependencies. If it’s empty, we’re done! If not, load them, rename to set A, and so on and so forth.
+
+It’s not *that* hard to do. But we can’t do it from `load_object`, because `load_object` is lower-level. `load_object` should only load *one* object, not its dependencies.
+
+Let’s introduce `load_object_and_dependencies` instead.
+
+> **Cool Bear's hot tip**
+>
+> Removing the dependency-loading code from `load_object` is left as an exercise to the reader.
+>
+> But remember, the rule is: `load_object` should only load *one* object.
+
+``` rust
+// in `elk/src/process.rs`
+
+impl Process {
+    pub fn load_object_and_dependencies<P: AsRef<Path>>(
+        &mut self,
+        path: P,
+    ) -> Result<usize, LoadError> {
+        let index = self.load_object(path)?;
+
+        let mut a = vec![index];
+        while !a.is_empty() {
+            let mut b = vec![];
+            for index in a {
+                for dep in self.objects[index]
+                    .file
+                    .dynamic_entry_strings(delf::DynamicTag::Needed)
+                {
+                    b.push(dep);
+                }
+            }
+
+            let mut b2 = vec![];
+            for dep in b {
+                b2.push(self.get_object(&dep)?);
+            }
+
+            a = b2;
+        }
+
+        Ok(index)
+    }
+}
+```
+
+Okay. Well, that looks more or less like the description I just made.
+
+It’s not, you know, a masterpiece. But, gotta start somewhere.
+
+Did it fix the order?
+
+``` rust
+// in `elk/src/main.rs`
+fn main() -> Result<(), Box<dyn Error>> {
+    let input_path = env::args().nth(1).expect("usage: elk FILE");
+
+    let mut proc = process::Process::new();
+    proc.load_object_and_dependencies(input_path)?;
+    println!("{:#?}", proc);
+}
+```
+
+``` shell
+./target/debug/elk $(which hunspell) | grep Loading
+Loading "/usr/bin/hunspell"
+Loading "/usr/lib/libhunspell-1.7.so.0.0.1"
+Loading "/usr/lib/libncursesw.so.6.1"
+Loading "/usr/lib/libreadline.so.8.0"
+Loading "/usr/lib/libstdc++.so.6.0.27"
+Loading "/usr/lib/libgcc_s.so.1"
+Loading "/usr/lib/libc-2.30.so"
+Loading "/usr/lib/libm-2.30.so"
+Loading "/usr/lib/ld-2.30.so"
+```
+
+Hey, that’s the right order!
+
+There’s an extra `ld-2.30.so` at the end, but I don’t think that’s really our fault. Because that’s just what `/usr/lib/ld-linux-x86-64.so.2` points to:
+
+``` shell
+$ readlink -f /usr/lib/ld-linux-x86-64.so.2
+/usr/lib/ld-2.30.so
+```
+
+And `libc.so.6` depends on it:
+
+``` shell
+$ readelf -a /usr/lib/libc.so.6 | grep NEEDED
+0x0000000000000001 (NEEDED)             Shared library: [ld-linux-x86-64.so.2]
+```
+
+And, well, `ld-linux-x86-64.so.2` *also* happens to be… the dynamic linker itself. You know, the thing that’s actually loading libraries, when we’re not doing it ourselves via `elk`.
+
+The uhh what’s the name again
+
+``` shell
+$ file $(which hunspell)
+/usr/bin/hunspell: ELF 64-bit LSB shared object, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib64/ld-linux-x86-64.so.2, for GNU/Linux 3.2.0, BuildID[sha1]=f5e9f9f8e25d412842d90913ded2ee1a810cd47b, stripped
+```
+
+The *interpreter*! Now I remember.
+
+By the way, `/lib64`? Also a symlink:
+
+``` shell
+$ readlink -f /lib64/ld-linux-x86-64.so.2
+/usr/lib/ld-2.30.so
+```
+
+At least, that’s the case in 2020, on ArchLinux (well, Manjaro, but who’s counting).
+
+So we *did* get it right.
+
+But I’m not really happy with the code in `load_object_and_dependencies`. We can do better.
+
+For example, this bit?
+
+``` rust
+            let mut b = vec![];
+            for index in a {
+                for dep in self.objects[index]
+                    .file
+                    .dynamic_entry_strings(delf::DynamicTag::Needed)
+                {
+                    b.push(dep);
+                }
+            }
+```
+
+That’s a `map`! Sort of. If we just mapped each `delf::File` to all its `Needed` entries, we’d have a `Vec<Vec<String>>`. And we really want a `Vec<String>`.
+
+That’s what `flatten` is for.
+
+``` rust
+            use delf::DynamicTag::Needed;
+            let b = a
+                .into_iter()
+                .map(|index| self.objects[index].file.dynamic_entry_strings(Needed))
+                .flatten()
+                .collect();
+```
+
+That… does not quite work as-is:
+
+``` shell
+error[E0282]: type annotations needed
+  --> src/process.rs:93:17
+   |
+93 |             let b = a
+   |                 ^ consider giving `b` a type
+
+error: aborting due to previous error
+```
+
+Alright, I suppose you *can* collect an `Iterator` into something other than a `Vec` - the compiler is not prescient, so we’ve gotta help a little bit.
+
+There’s two ways to do this - either we give `b` a type:
+
+``` rust
+            use delf::DynamicTag::Needed;
+            // note: the type of the *items* in the Vec can be inferred,
+            // so we can just use `_` as a placeholder.
+            let b: Vec<_> = a
+                .into_iter()
+                .map(|index| self.objects[index].file.dynamic_entry_strings(Needed))
+                .flatten()
+                .collect();
+```
+
+Or we use… a [turbofish](https://turbo.fish/)!
+
+``` rust
+            use delf::DynamicTag::Needed;
+            let b = a
+                .into_iter()
+                .map(|index| self.objects[index].file.dynamic_entry_strings(Needed))
+                .flatten()
+                .collect::<Vec<_>>();
+```
+
+It’s nothing to be afraid of! I know, I know, at first glance, it doesn’t look particularly… well-disposed?
+
+But if you think about it, it’s just the same `::` we know and love. We do `crate::module::Type::function` all the time (sometimes omitting `crate` and `module`). We’re just specifying the path *even further* - it’s the version of that generic function that satisfies *these concrete types*.
+
+Onto the next part:
+
+``` rust
+            let mut b2 = vec![];
+            for dep in b {
+                b2.push(self.get_object(dep)?);
+            }
+```
+
+This is also, very much, a `map`. The catch? `get_object` can fail.
+
+We can pretty easily use `?` in a `for..in` loop. But when we’re building a pipeline of iterators and transformation functions, we have to resort to… `collect`.
+
+Yeah. The same `collect`. If we have an `Iterator` with items of type `Result<T, E>`, we can either collect into a `Result<Vec<T>, E>` (where the first error is returned), or a `Vec<Result<T, E>>` (where every item can fail or succeed independently).
+
+In our case, we want the first item that fails to fail the whole pipeline, so we want to collect the whole thing into a single `Result`, and then use `?` on it:
+
+``` rust
+            let b2 = b
+                .into_iter()
+                .map(|dep| self.get_object(&dep))
+                .collect::<Result<_, _>>()?;
+```
+
+Now, our entire loop looks like this:
+
+``` rust
+        while !a.is_empty() {
+            use delf::DynamicTag::Needed;
+            let b: Vec<_> = a
+                .into_iter()
+                .map(|index| self.objects[index].file.dynamic_entry_strings(Needed))
+                .flatten()
+                .collect();
+
+            let b2 = b
+                .into_iter()
+                .map(|dep| self.get_object(&dep))
+                .collect::<Result<_, _>>()?;
+
+            a = b2;
+        }
+```
+
+Not bad!
+
+But we can do better. Why even name `b`? Or `b2`? Why not just chain the whole thing, assigning the result to `a`?
+
+``` rust
+        while !a.is_empty() {
+            use delf::DynamicTag::Needed;
+            a = a
+                .into_iter()
+                .map(|index| self.objects[index].file.dynamic_entry_strings(Needed))
+                .flatten()
+                .collect()
+                .into_iter()
+                .map(|dep| self.get_object(&dep))
+                .collect::<Result<_, _>>()?;
+        }
+```
+
+Woops, we broke it:
+
+``` shell
+$ cargo b -q
+error[E0282]: type annotations needed
+  --> src/process.rs:97:18
+   |
+97 |                 .collect()
+   |                  ^^^^^^^ cannot infer type for `B`
+   |
+   = note: type must be known at this point
+```
+
+No worries! We can turbofish our way out of this one:
+
+``` rust
+        while !a.is_empty() {
+            use delf::DynamicTag::Needed;
+            a = a
+                .into_iter()
+                .map(|index| self.objects[index].file.dynamic_entry_strings(Needed))
+                .flatten()
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|dep| self.get_object(&dep))
+                .collect::<Result<_, _>>()?;
+        }
+```
+
+Cool!
+
+But… I don’t like that first `map`. It’s too long. Just because we’re making a “multi-line one-liner” pipeline kinda thing, doesn’t mean it should be unreadable.
+
+``` rust
+        while !a.is_empty() {
+            use delf::DynamicTag::Needed;
+            a = a
+                .into_iter()
+                .map(|index| &self.objects[index].file)
+                .map(|file| file.dynamic_entry_strings(Needed))
+                .flatten()
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|dep| self.get_object(&dep))
+                .collect::<Result<_, _>>()?;
+        }
+```
+
+Okay, more readable.
+
+Another thing: we’re doing `.map().flat()`.
+
+There’s a shortcut for that.
+
+It’s called `flat_map()`. Boom.
+
+``` rust
+        while !a.is_empty() {
+            use delf::DynamicTag::Needed;
+            a = a
+                .into_iter()
+                .map(|index| &self.objects[index].file)
+                .flat_map(|file| file.dynamic_entry_strings(Needed))
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|dep| self.get_object(&dep))
+                .collect::<Result<_, _>>()?;
+        }
+```
+
+Now. In our initial code, we had three `Vec`s - `a`, `b`, and `b2`. But do we *really* need `b` to exist as a `Vec`? Couldn’t it just be part of the pipeline?
+
+``` rust
+        while !a.is_empty() {
+            use delf::DynamicTag::Needed;
+            a = a
+                .into_iter()
+                .map(|index| &self.objects[index].file)
+                .flat_map(|file| file.dynamic_entry_strings(Needed))
+                .map(|dep| self.get_object(&dep))
+                .collect::<Result<_, _>>()?;
+        }
+```
+
+``` shell
+$ cargo b -q
+error[E0500]: closure requires unique access to `self` but it is already borrowed
+  --> src/process.rs:97:22
+   |
+95 |                 .map(|index| &self.objects[index].file)
+   |                      -------  ---- first borrow occurs due to use of `self` in closure
+   |                      |
+   |                      borrow occurs here
+96 |                 .flat_map(|file| file.dynamic_entry_strings(Needed))
+97 |                 .map(|dep| self.get_object(&dep))
+   |                  --- ^^^^^ ---- second borrow occurs due to use of `self` in closure
+   |                  |   |
+   |                  |   closure construction occurs here
+   |                  first borrow later used by call
+```
+
+Huh. I don’t know about you, but I’m gonna take a few seconds to be in awe at the quality of this error message.
+
+*phew*.
+
+*That’s a good error message*.
+
+We cannot do it that way because `self.get_object()` requires `&mut self`, but `self` is already borrowed by us.. being in the middle of an Iterator that requires `&self`.
+
+So we *do* have to collect.
+
+We’re back to this version of the code:
+
+``` rust
+        while !a.is_empty() {
+            use delf::DynamicTag::Needed;
+            a = a
+                .into_iter()
+                .map(|index| &self.objects[index].file)
+                .flat_map(|file| file.dynamic_entry_strings(Needed))
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|dep| self.get_object(&dep))
+                .collect::<Result<_, _>>()?;
+        }
+```
+
+There’s something else bothering me. And it’s not purely bikeshedding this time.
+
+When I described breadth-first dependency loading, I mentioned that the `B` set should be built from all the dependencies of the `A` set… **that we haven’t loaded yet**.
+
+But that’s not what we’re doing. In fact, currently, we have no way of telling whether `Process::get_object` returned the index of an already-loaded object, or if it just now loaded it for us.
+
+Luckily, that’s pretty easy to change.
+
+``` rust
+// in `elk/src/process.rs`
+
+pub enum GetResult {
+    Cached(usize),
+    Fresh(usize),
+}
+
+impl Process {
+    pub fn get_object(&mut self, name: &str) -> Result<GetResult, LoadError> {
+        let path = self.object_path(name)?;
+        self.objects_by_path
+            .get(&path)
+            .map(|&index| Ok(GetResult::Cached(index)))
+            .unwrap_or_else(|| self.load_object(path).map(GetResult::Fresh))
+    }
+}
+```
+
+Now for `load_object_with_dependencies` - we only want to retain the *Fresh* variants when building the new set:
+
+``` rust
+        while !a.is_empty() {
+            use delf::DynamicTag::Needed;
+            a = a
+                .into_iter()
+                .map(|index| &self.objects[index].file)
+                .flat_map(|file| file.dynamic_entry_strings(Needed))
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|dep| self.get_object(&dep))
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .filter_map(|res| match res {
+                    GetResult::Cached(_) => None,
+                    GetResult::Fresh(index) => Some(index),
+                })
+                .collect();
+        }
+```
+
+Okay. Okay, we’re getting somewhere.
+
+We can make things slightly better for us by adding a method to `GetResult`, the similar to `Result::ok`:
+
+``` rust
+impl GetResult {
+    fn fresh(self) -> Option<usize> {
+        if let Self::Fresh(index) = self {
+            Some(index)
+        } else {
+            None
+        }
+    }
+}
+```
+
+Using `fresh`, we can shorten the pipeline a little bit more.
+
+The entire `load_object_and_dependencies` function now looks like this:
+
+``` rust
+    pub fn load_object_and_dependencies<P: AsRef<Path>>(
+        &mut self,
+        path: P,
+    ) -> Result<usize, LoadError> {
+        let index = self.load_object(path)?;
+
+        let mut a = vec![index];
+        while !a.is_empty() {
+            use delf::DynamicTag::Needed;
+            a = a
+                .into_iter()
+                .map(|index| &self.objects[index].file)
+                .flat_map(|file| file.dynamic_entry_strings(Needed))
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|dep| self.get_object(&dep))
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .filter_map(GetResult::fresh)
+                .collect();
+        }
+
+        Ok(index)
+    }
+```
+
+Does our entire program still work?
+
+``` shell
+$ cargo b -q
+$ ./target/debug/elk ./samples/hello-dl
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elk/samples"
+Loading "/home/amos/ftl/elk/samples/libmsg.so"
+Process {
+    search_path: [
+        "/usr/lib",
+        "/home/amos/ftl/elk/samples",
+    ],
+    objects: [
+        Object {
+            path: "/home/amos/ftl/elk/samples/hello-dl",
+            base: 00400000,
+        },
+        Object {
+            path: "/home/amos/ftl/elk/samples/libmsg.so",
+            base: 00400000,
+        },
+    ],
+    objects_by_path: {
+        "/home/amos/ftl/elk/samples/libmsg.so": 1,
+        "/home/amos/ftl/elk/samples/hello-dl": 0,
+    },
+}
+```
+
+It does! I think we’re in a good place.
+
+Of course, we still need to:
+
+- actually map segments to memory
+- apply relocations (across multiple ELF objects!)
+- set the correct protection levels for said segments
+
+But let’s not rush it. Everything we have right now is working.
+
+We got some decent iterator usage in there, probably enough to warrant light usage of “semi-functional” in our README. Definitely enough to feel a slightly misplaced sense of pride.
+
+We did good. Time to let the dough rest for a bit.
+
+> **What did we learn?**
+>
+> `std::path`’s `PathBuf` and `&Path` are great for working with, well, paths. They’re the filesystem equivalent of `String` and `&str`. Note that not every path is necessarily valid utf-8 and thus, not necessarily a valid Rust string.
+>
+> The Arena pattern allows referring to structs without borrowing them. Instead of holding references, we hold “tokens” that allow us to borrow them later. It is a very useful pattern, especially when dealing with graphs. I wouldn’t be surprised if you found it in compiler code.
+>
+> The Linux dynamic linker loads dependencies *breadth-first*. With just the right methods on our types, implementing breadth-first graph traversal is actually not *that* complicated. We even handled errors properly.
+>
+> `.map().flatten()` can generally be reduced to a single `.flat_map()`, and `.map().filter()` can generally be reduced to a single `.filter_map()`.
+>
+> `.collect()` is useful in many scenarios. When you need to collect all elements of an iterator into a `Vec`, at the end of the pipeline. When you need to handle errors in the middle of a pipeline, and stop as soon as an error is encountered. And finally, when you’re trying to avoid borrowing the same variable both mutably *and* immutably.

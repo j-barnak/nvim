@@ -63,7 +63,10 @@ function M.check()
 	end
 	-- Every frozen web provider, so a truncated or missing index is reported
 	-- rather than passing silently.
-	for _, w in ipairs({ { "learncpp", 356 }, { "osdev", 778 }, { "rust-atomics", 13 }, { "rayanfam", 8 }, { "herd7", 3 } }) do
+	for _, w in ipairs({ { "learncpp", 356 }, { "osdev", 778 }, { "rust-atomics", 13 }, { "rayanfam", 8 }, { "herd7", 3 },
+		{ "astra", 7 }, { "kernel-ctf", 10 },
+		{ "packer", 18 }, { "snapshot-fuzzer", 13 }, { "kernel-labs", 27 },
+		{ "slub", 14 }, { "kernel-internals", 482 } }) do
 		local idx = fr .. "/" .. w[1] .. "/index.tsv"
 		if vim.fn.filereadable(idx) == 1 then
 			local n = #vim.fn.readfile(idx)

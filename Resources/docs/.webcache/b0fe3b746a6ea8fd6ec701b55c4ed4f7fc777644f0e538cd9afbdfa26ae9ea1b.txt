@@ -1,0 +1,380 @@
+## Introduction
+
+In this article we discuss changes in the Linux kernel slab allocator implementation and exploitation challenges associated with kernel heap-related vulnerabilities. We focus on the SLUB (unqueued slab allocator) implementation in this article since it is the most common allocator enabled by default on most Linux distributions and Android devices.
+
+We discuss some major changes in modern kernels that affect exploitability of heap-related vulnerabilities. Some of these changes/features were intentional where others were a side-effect hindering or aiding the exploitation process.
+
+## Background
+
+The two common dynamic object allocation mechanisms in the kernel are:
+
+1.  General-purpose allocations performed using `kmalloc/kzalloc/...` API
+2.  Special-purpose allocations via `kmem_cache_create/kmem_cache_alloc`
+
+Special-purpose caches are generally created for frequently allocated/used objects such as `task_struct`, `cred`, `inode`, `sock`, etc.
+
+A standard kernel general-purpose allocation may look similar to the following:
+
+    kmalloc(sizeof(struct some_struct), GFP_KERNEL)
+
+There are other flags besides `GFP_KERNEL` that could make the allocation atomic, request high memory, etc. but `GFP_KERNEL` indicates a normal kernel allocation and represents the most common case for the allocation of a vulnerable object in UAF / heapovf related vulnerabilities.
+
+On a standard Linux system, SLUB general-purpose caches are named as `kmalloc-*` and start with as small as 8 bytes object caches and go up to 8k, in power of two increments, with an exception of 96- and 192-byte caches:
+
+    # cat /proc/slabinfo | grep ^kmalloc
+    kmalloc-8192          40     40   8192    4    8 : tunables    0    0    0 : slabdata     10     10      0
+    kmalloc-4096         127    136   4096    8    8 : tunables    0    0    0 : slabdata     17     17      0
+    kmalloc-2048         256    256   2048    8    4 : tunables    0    0    0 : slabdata     32     32      0
+    kmalloc-1024         896    896   1024    8    2 : tunables    0    0    0 : slabdata    112    112      0
+    kmalloc-512          537    608    512    8    1 : tunables    0    0    0 : slabdata     76     76      0
+    kmalloc-256         1613   1680    256   16    1 : tunables    0    0    0 : slabdata    105    105      0
+    kmalloc-192         1525   1596    192   21    1 : tunables    0    0    0 : slabdata     76     76      0
+    kmalloc-128         1184   1184    128   32    1 : tunables    0    0    0 : slabdata     37     37      0
+    kmalloc-96          1260   1260     96   42    1 : tunables    0    0    0 : slabdata     30     30      0
+    kmalloc-64          5760   5760     64   64    1 : tunables    0    0    0 : slabdata     90     90      0
+    kmalloc-32          3072   3072     32  128    1 : tunables    0    0    0 : slabdata     24     24      0
+    kmalloc-16          1792   1792     16  256    1 : tunables    0    0    0 : slabdata      7      7      0
+    kmalloc-8           2048   2048      8  512    1 : tunables    0    0    0 : slabdata      4      4      0
+
+When a new allocation is requested, e.g., `kmalloc(24, GFP_KERNEL)`, this allocation gets rounded up to the next closest cache size. In this case, the requested 24 bytes will get served from the `kmalloc-32` general-purpose cache. Objects of the same size (or when rounded up to the next closest general-purpose cache size) allocated via `k*alloc` API, get allocated in the same cache, assuming they get served by the same core (if SMP). This makes refills / heap sprays trivial if both vulnerable and target / refill objects are allocated via `k*alloc`.
+
+For comparison, on Android/arm64 the smallest general-purpose cache is `kmalloc-128`. *From the exploitation point of view this could be an advantage or a disadvantage.*
+
+- If there are less general-purpose caches, there are more candidates for a refill. For example, on Android, all `k*alloc` allocations less than or equal to 128 bytes are served from the `kmalloc-128` cache.
+- This could be a disadvantage as well. If all allocations ≤ 128 bytes are served by `kmalloc-128`, the cache becomes *hot* and refills become less reliable, i.e., it is more likely that some other unintended allocation takes the slab spot of the freed vulnerable object before the actual refill.
+
+Finally, special-purpose caches / allocations are created using `kmem_cache_create/kmem_cache_alloc` API. For example, creating a special-purpose cache `test_cache` for objects of size 86 bytes and requesting a single allocation:
+
+    struct kmem_cache *
+    kmem_cache_create(const char *name, size_t size, size_t align,
+    		  unsigned long flags, void (*ctor)(void *));
+    ...
+
+    struct kmem_cache *s = kmem_cache_create("test_cache", 86, 0,
+                               SLAB_HWCACHE_ALIGN, NULL);
+    void *test_obj = kmem_cache_alloc(s, GFP_KERNEL);
+
+There are no restriction on special-purpose cache sizes - they can be arbitrary without any specific alignment. `SLAB_HWCACHE_ALIGN` indicates that the cache needs to be aligned on the cache line size (which is 64 bytes on both x86_64 and aarch64) and almost all special-purpose caches would be using this flag. This flag is also import from the exploitation perspective, since it may influence cache aliasing/mergeability with one of the general-purpose caches (depending on the kernel version, see below).
+
+## Cache aliasing / mergeability
+
+From the exploitation perspective, it is important to determine if a vulnerable object and its refill (UAF) or vulnerable and target objects (heapovf) are allocated in the same cache/slab.
+
+As discussed above, if both vulnerable and target objects are allocated via `k*alloc`, the allocations get served from the same general-purpose cache (subject to size requirements). What if a vulnerable or target object is allocated in a special-purpose cache? For example, the vulnerable object *A* of size 86 bytes is allocated in a special-purpose cache and its refill of size 128 bytes *B* is allocated via `k*alloc` (a very common exploitation scenario). For this particular example, successful exploitation depends on whether *A's* cache is *merged* or *aliased* with *B's* general-purpose cache.
+
+SLUB cache aliasing is used to reduce kernel memory fragmentation by merging caches with similar characteristics. For example, when a special-purpose cache is created without any specific flags such as `SLAB_ACCOUNT` (more on this below), this cache *may* get aliased with one of the general-purpose caches or possibly several other special-purpose caches. The following function determines cache *mergeability* when a special-purpose cache is created:
+
+    struct kmem_cache *find_mergeable(size_t size, size_t align,
+                    slab_flags_t flags, const char *name, void (*ctor)(void *))
+    {
+            struct kmem_cache *s;
+
+            if (slab_nomerge)
+                    return NULL;
+
+            if (ctor)
+                    return NULL;
+
+            size = ALIGN(size, sizeof(void *));
+            align = calculate_alignment(flags, align, size);                        [1]
+            size = ALIGN(size, align);                                              [2]
+            flags = kmem_cache_flags(size, flags, name, NULL);
+
+            if (flags & SLAB_NEVER_MERGE)
+                    return NULL;
+
+            list_for_each_entry_reverse(s, &slab_root_caches, root_caches_node) {   [3]
+                    if (slab_unmergeable(s))
+                            continue;
+
+                    if (size > s->size)
+                            continue;
+
+                    if ((flags & SLAB_MERGE_SAME) != (s->flags & SLAB_MERGE_SAME))
+                            continue;
+                    /*
+                     * Check if alignment is compatible.
+                     * Courtesy of Adrian Drzewiecki
+                     */
+                    if ((s->size & ~(align - 1)) != s->size)
+                            continue;
+
+                    if (s->size - size >= sizeof(void *))
+                            continue;
+
+                    if (IS_ENABLED(CONFIG_SLAB) && align &&
+                            (align > s->align || s->align % align))
+                            continue;
+
+                    return s;
+            }
+            return NULL;
+    }
+
+Object alignment and size calculation are performed in \[1\] and \[2\]. The loop in \[3\] then iterates over all available caches checking several conditions such size, alignment and certain flags to determine cache mergeability. `calculate_alignment()` function is shown below:
+
+    unsigned long calculate_alignment(slab_flags_t flags,
+                    unsigned long align, unsigned long size)
+    {
+            /*
+             * If the user wants hardware cache aligned objects then follow that
+             * suggestion if the object is sufficiently large.
+             *
+             * The hardware cache alignment cannot override the specified
+             * alignment though. If that is greater then use it.
+             */
+            if (flags & SLAB_HWCACHE_ALIGN) {
+                    unsigned long ralign = cache_line_size();
+                    while (size <= ralign / 2)
+                            ralign /= 2;
+                    align = max(align, ralign);
+            }
+
+            if (align < ARCH_SLAB_MINALIGN)
+                    align = ARCH_SLAB_MINALIGN;
+
+            return ALIGN(align, sizeof(void *));
+    }
+
+As mentioned above, almost all special-purpose caches are aligned on the cache line size (64 bytes). The alignment returned by `calculate_alignment()` is then used to calculate cache object size in \[2\]. In our example above, `test_obj` size aligned on the cache line size becomes 128 bytes. The loop in \[1\] iterates over all available caches checking several conditions such size, alignment and certain flags to determine cache mergeability. On kernels prior to 4.16, the `test_cache` special-purpose cache will get *aliased* with `kmalloc-128` general-purpose cache since their sizes match after alignment and there are no special flags that prevent cache aliasing. On the other hand, if the `test_cache` object size was 286 bytes, this cache will not get aliased with any general-purpose caches since its size after alignment on the cache line size becomes 320 bytes.
+
+Cache aliasing information is available in `/sys/kernel/slab/`. For example, the following caches are all merged together:
+
+    # ls -al /sys/kernel/slab | grep ':t-0000128'
+    lrwxrwxrwx   1 root root 0 May 16 21:30 aio_kiocb -> :t-0000128
+    lrwxrwxrwx   1 root root 0 May 16 21:30 btree_node -> :t-0000128
+    lrwxrwxrwx   1 root root 0 May 16 21:30 cifs_mpx_ids -> :t-0000128
+    lrwxrwxrwx   1 root root 0 May 16 21:30 ecryptfs_key_tfm_cache -> :t-0000128
+    lrwxrwxrwx   1 root root 0 May 16 21:30 eventpoll_epi -> :t-0000128
+    lrwxrwxrwx   1 root root 0 May 16 21:30 fib6_nodes -> :t-0000128
+    lrwxrwxrwx   1 root root 0 May 16 21:30 ip6_mrt_cache -> :t-0000128
+    lrwxrwxrwx   1 root root 0 May 16 21:30 ip_mrt_cache -> :t-0000128
+    lrwxrwxrwx   1 root root 0 May 16 21:30 kmalloc-128 -> :t-0000128
+    lrwxrwxrwx   1 root root 0 May 16 21:30 pid -> :t-0000128
+    lrwxrwxrwx   1 root root 0 May 16 21:30 scsi_sense_cache -> :t-0000128
+    drwxr-xr-x   3 root root 0 May 16 21:30 :t-0000128
+    lrwxrwxrwx   1 root root 0 May 16 21:30 uid_cache -> :t-0000128
+
+All special-purpose caches above (`aio_kiocb`, `btree_node`, etc.) are merged/aliased with `kmalloc-128`. There is also a `slabinfo` tool shipped with the [kernel source](https://elixir.bootlin.com/linux/latest/source/tools/vm/slabinfo.c) that can print the aliasing information in a nicer format (i.e., `slabinfo -a`) by parsing `/sys/kernel/slabinfo`.
+
+    # ./slabinfo -a
+
+    :at-0000104  <- ext4_prealloc_space buffer_head
+    :at-0000256  <- dquot jbd2_transaction_s
+    :t-0000016   <- kmalloc-16 ecryptfs_file_cache
+    :t-0000024   <- numa_policy scsi_data_buffer
+    :t-0000032   <- dnotify_struct ecryptfs_dentry_info_cache sd_ext_cdb kmalloc-32
+    :t-0000040   <- khugepaged_mm_slot Acpi-Namespace ext4_system_zone
+    :t-0000048   <- fasync_cache shared_policy_node ip_fib_trie ftrace_event_field ksm_mm_slot jbd2_inode
+    :t-0000056   <- fanotify_event_info Acpi-Parse uhci_urb_priv dm_io ip_fib_alias zswap_entry file_lock_ctx nsproxy
+    :t-0000064   <- ecryptfs_key_sig_cache dmaengine-unmap-2 io secpath_cache anon_vma_chain task_delay_info tcp_bind_bucket ksm_stable_node kmalloc-64 ksm_rmap_item fanotify_perm_event_info fs_cache ecryptfs_global_auth_tok_cache
+    :t-0000072   <- eventpoll_pwq Acpi-Operand
+    :t-0000080   <- Acpi-State fsnotify_mark Acpi-ParseExt
+    :t-0000088   <- trace_event_file dnotify_mark inotify_inode_mark
+    :t-0000112   <- dm_rq_target_io flow_cache
+    :t-0000120   <- kernfs_node_cache cfq_io_cq
+    :t-0000128   <- uid_cache eventpoll_epi pid ecryptfs_key_tfm_cache ip6_mrt_cache kmalloc-128 scsi_sense_cache btree_node aio_kiocb ip_mrt_cache cifs_mpx_ids fib6_nodes
+    :t-0000192   <- bio_integrity_payload cred_jar inet_peer_cache dmaengine-unmap-16 kmalloc-192 key_jar
+    ...
+
+## SLAB_ACCOUNT
+
+This flag is used to account all objects of a particular kmem cache. When kmem accounting is enabled (or disabled but compiled in), special-purpose caches created with `SLAB_ACCOUNT` will not get aliased with any other caches (special- or general-purpose) that are created without the `SLAB_ACCOUNT` flag. For example, the `test_cache` created with `SLAB_ACCOUNT` will not get merged with `kmalloc-128` this time:
+
+    struct kmem_cache *s = kmem_cache_create("test_cache", 86, 0,
+                               SLAB_HWCACHE_ALIGN|SLAB_ACCOUNT, NULL);
+    void *test_obj = kmem_cache_alloc(s, GFP_KERNEL);
+
+From the exploitation perspective, if the vulnerable object is allocated in a kmem accounted cache, and it does not contain any function pointers or other useful data for privilege escalation, this vulnerability may be unexploitable. Since the cache becomes *standalone*, the refill can only be performed by the same object type.
+
+For example, `struct cred` was often used for privilege escalation, since the `cred_jar` special-purpose cache was mergeable (after cache line alignment) with `kmalloc-192`, where `sizeof(struct cred)` was around 168-176 bytes depending on the kernel version. `struct cred` was typically used in heap overflow vulnerabilities in 192-byte caches - it was trivial to trigger `cred` allocation using standard `set*uid/set*gid` syscalls and overflowing the first reference counter (first 4 bytes) with zeros had no major impact on stability.
+
+However, in kernel versions after 4.4, `SLAB_ACCOUNT` was added to the `cred_jar` cache:
+
+    void __init cred_init(void)
+    {
+    	/* allocate a slab in which we can store credentials */
+    	cred_jar = kmem_cache_create("cred_jar", sizeof(struct cred), 0,
+    			SLAB_HWCACHE_ALIGN|SLAB_PANIC|SLAB_ACCOUNT, NULL);
+    }
+
+`cred_jar` became *standalone* and this direct exploitation vector was closed.
+
+That being said, there are still ways to refill objects when dealing with standalone caches. For example, consider a UAF where the vulnerable object is allocated in general-purpose cache *A* of size *Y* and the target object is allocated in special-purpose cache *B* of size *X*. Sizes *Y* and *X* can be *almost* arbitrary. The general technique is to
+
+1.  Spray cache *A* (which should be trivial given it is a general-purpose cache) filling in all partial slabs.
+2.  Trigger freeing the vulnerable object and then free all sprayed objects at the same time.
+3.  Spray objects from cache *B*.
+4.  Trigger the UAF.
+
+Once objects from cache *A* start getting freed in step 2, entire slabs (which generally span multiple pages) will become free. We then reallocate those freed slabs with new slabs belonging to cache *B* in step 3 before triggering the UAF. This exact technique was used in this [LPE](https://duasynt.com/blog/ubuntu-centos-redhat-privesc) where freed slabs were refilled with slabs belonging to the `cred_jar` cache and the UAF was overwriting a few members of the `struct cred` with zeros. The technique itself is obviously less reliable since it relies on the entire slab being reallocated to another cache, but given there are no memory restrictions, it can achieve a high success rate.
+
+## Post 4.16 / hardened usercopy
+
+As discussed above, prior to 4.16, special-purpose caches created via `kmem_cache_create`/`kmem_cache_alloc` were *mergeable* with general-purpose caches as long as their size *matched* one of the general-purpose caches and there was no kmem accounting used.
+
+Hardened usercopy (`CONFIG_HARDENED_USERCOPY`) was introduced as a mitigation against heap overflows/infoleaks when copying data from/to user space. It was introduced prior to 4.16 but starting from 4.16 two new members `useroffset` and `usersize` were added to `struct kmem_cache`.
+
+These two members provide more fine-grained access for user- / kernel-space data transfer functions such as `copy_to_user`/`copy_from_user`, etc. For example, instead of marking the entire object as user accessible via `copy_to_user()`, it can be accessed partially to prevent infoleaks. Furthermore, not all caches should be *user-space accessible* - `kmem_cache_create_usercopy` was introduced specifically for creating user-space accessible caches and the original `kmem_cache_create` was kept for all other caches. The signatures for both functions are shown below:
+
+    struct kmem_cache *kmem_cache_create(const char *name, unsigned int size,
+    			unsigned int align, slab_flags_t flags,
+    			void (*ctor)(void *));
+
+    struct kmem_cache *kmem_cache_create_usercopy(const char *name,
+                            unsigned int size, unsigned int align,
+                            slab_flags_t flags,
+                            unsigned int useroffset, unsigned int usersize,
+                            void (*ctor)(void *));
+
+`kmem_cache_create_usercopy` takes `useroffset` and `usersize` parameters and initialises the corresponding `struct kmem_cache` with those values. `kmem_cache_create` on the other hand sets values in `struct kmem_cache` to 0 making the cache inaccessible to user space via `copy_to/from_user()`, etc.
+
+One side effect of these API changes (starting from 4.16) is that `slab_unmergeable()` now has a check for `usersize` in \[4\]:
+
+    int slab_unmergeable(struct kmem_cache *s)
+    {
+    	if (slab_nomerge || (s->flags & SLAB_NEVER_MERGE))
+    		return 1;
+
+    	if (!is_root_cache(s))
+    		return 1;
+
+    	if (s->ctor)
+    		return 1;
+
+    	if (s->usersize)                          [4]
+    		return 1;
+
+    	/*
+    	 * We may have set a slab to be unmergeable during bootstrap.
+    	 */
+    	if (s->refcount < 0)
+    		return 1;
+
+    	return 0;
+    }
+
+**If `usersize` is non-zero (i.e., the cache is user-space accessible), this cache is not merged with any other cache on the system.**This is a major downside from the exploitation perspective since all general-purpose caches are now marked as user-space accessible in `create_boot_cache()` where `useroffset` is set to `0` and `usersize` is the entire cache/object size. As a result, general-purpose caches are no longer mergeable with special-purpose caches. This is true even if `CONFIG_HARDENED_USERCOPY` is disabled!
+
+    # cat /sys/kernel/slab/kmalloc-128/aliases 
+    0
+
+It is still possible to cross the general- / special-purpose cache boundary when refilling/spraying using the technique discussed in the previous section (i.e., freeing entire slabs and reallocating with slabs belonging to different caches).
+
+## Post 5.9 / GFP_KERNEL_ACCOUNT
+
+Prior to 5.9 kernels, kmem cache accounting for general-purpose allocation was implemented using standalone caches. The following general-purpose allocation with the `GFP_KERNEL_ACCOUNT` flag set would get served from a stand-alone cache:
+
+    void *obj1 = kmalloc(..., GFP_KERNEL_ACCOUNT);
+
+However, [significant changes](https://github.com/torvalds/linux/commit/10befea91b61c4e2c2d1df06a2e978d182fcf792) were introduced to 5.9 kernels and this limitation was removed. For example, the following two general-purpose allocations are now served from the same `kmalloc-512` cache:
+
+    void *obj1 = kmalloc(286, GFP_KERNEL);
+    void *obj2 = kmalloc(286, GFP_KERNEL_ACCOUNT);
+
+This is obviously an advantage from the exploitation perspective since there are several public refills/sprays using the `GFP_KERNEL_ACCOUNT` flag. However, starting from 5.14 versions, separate caches for accounted objects were [reintroduced](https://github.com/torvalds/linux/commit/494c1dfe855ec1f70f89552fce5eadf4a1717552) and as of today, 5.14+ kernels have separate caches for accounted and unaccounted objects.
+
+## FREELIST pointer randomisation
+
+A freelist pointer randomisation `CONFIG_SLAB_FREELIST_RANDOM` was introduced in 4.8 and is now enabled by default on most modern distributions.
+
+A common misconception is that freelist pointer randomisation is a mitigation against UAF since it affects the order in which objects are allocated. The later part of this statement is partially true, i.e., when a new slab is allocated (consisting of one or several pages), allocations from this slab are no longer sequential. This was done primarily as a mitigation against kernel heap overflow vulnerabilities when vulnerable and target objects need to placed next to each other in the same slab before triggering the overflow. A common technique to *shape* the heap was to *exhaust* the cache by allocating objects of the same size as the target cache (taking into account object/cache alignments). When all partial/fragmented slabs are filled, new slabs will get allocated and all allocations from those slabs become sequential. However, when freelist pointer randomisation is enabled, allocations from a new empty slab are now randomised preventing deterministic placement of vulnerable and target objects on the heap.
+
+When a new cache is created, a random pre-computed list/sequence (`random_seq` int array member of the `kmem_cache` struct) is allocated \[5\] for that cache and shuffled using the Fisher-Yates algorithm \[6\]:
+
+    int cache_random_seq_create(struct kmem_cache *cachep, unsigned int count,
+                                        gfp_t gfp)
+    {
+            struct rnd_state state;
+
+            if (count < 2 || cachep->random_seq)
+                    return 0;
+
+            cachep->random_seq = kcalloc(count, sizeof(unsigned int), gfp);   [5]
+            if (!cachep->random_seq)
+                    return -ENOMEM;
+
+            /* Get best entropy at this stage of boot */
+            prandom_seed_state(&state, get_random_long());
+
+            freelist_randomize(&state, cachep->random_seq, count);            [6]
+            return 0;
+    }
+
+This code path is common for both SLAB and SLUB implementations. For SLUB specifically, `random_seq` is converted from an array of freelist indices to an array of offsets within the new slab (based on the cache object size). When a new slab is allocated, a random *starting* position/index within `random_seq` for the first object is generated \[7\] and then all other objects are assigned an allocation sequence based on that starting position \[8\]:
+
+    static bool shuffle_freelist(struct kmem_cache *s, struct page *page)
+    {
+            void *start;
+            void *cur;
+            void *next;
+            unsigned long idx, pos, page_limit, freelist_count;
+
+            if (page->objects < 2 || !s->random_seq)
+                    return false;
+
+            freelist_count = oo_objects(s->oo);
+            pos = get_random_int() % freelist_count;                  [7]
+
+            page_limit = page->objects * s->size;
+            start = fixup_red_left(s, page_address(page));
+
+            /* First entry is used as the base of the freelist */
+            cur = next_freelist_entry(s, page, &pos, start, page_limit,
+                                    freelist_count);
+            page->freelist = cur;
+
+            for (idx = 1; idx < page->objects; idx++) {               [8]
+                    setup_object(s, page, cur);
+                    next = next_freelist_entry(s, page, &pos, start, page_limit,
+                            freelist_count);
+                    set_freepointer(s, cur, next);
+                    cur = next;
+            }
+            setup_object(s, page, cur);
+            set_freepointer(s, cur, NULL);
+
+            return true;
+    }
+
+where `next_freelist_entry()` simply returns the address of the next object based on the next index value (or offset within the slab) in the pre-computed list and wraps around if the current position reaches the end of the pre-computed list:
+
+    static void *next_freelist_entry(struct kmem_cache *s, struct page *page,
+                                    unsigned long *pos, void *start,
+                                    unsigned long page_limit,
+                                    unsigned long freelist_count)
+    {
+            unsigned int idx;
+    	...
+            do {
+                    idx = s->random_seq[*pos];
+                    *pos += 1;
+                    if (*pos >= freelist_count)
+                            *pos = 0;
+            } while (unlikely(idx >= page_limit));
+
+            return (char *)start + idx;
+    }
+
+For example, for `kmalloc-8`, the following pre-computed index sequence with starting `pos = 2` would result in the following slab layout:
+
+![kmalloc-8 new slab layout](https://duasynt.com/static/img/freelist_random_example-kmalloc-8.svg)
+
+In the example above, there is no way to deterministically place target and vulnerable objects next to each other (when a new `kmalloc-8` slab is created) by simply performing sequential heap allocations. Instead, a common technique to exploit heap overflows with freelist pointer randomisation enabled is to
+
+1.  Exhaust the cache by allocating objects of the right size to fill in all partial slabs and start allocating new slabs.
+2.  Start filling in new slabs with target objects.
+3.  Free one target object and allocate the vulnerable object.
+4.  Perform the overflow and check which target object was modified.
+
+Checking which target object was overflown in step 4 may or may not be possible depending the overflow itself, target cache and/or chosen target object. To improve reliability of this technique, often a few "holes" are made in the slab(s) in step 3 (instead of freeing only one target object) and refilled with multiple vulnerable objects.
+
+As mentioned above, freelist pointer randomisation is not a mitigation against UAF vulnerabilities and does not affect the order of the refill - it is always performed in the FILO order with or without freelist pointer randomisation. **This means that the last freed spot in the slab will get allocated first.**
+
+## Conclusion
+
+Modern kernels introduced changes that hinder successful exploitation of kernel heap-related vulnerabilities. Some of these changes were intentional (such as freelist pointer randomisation) and others were a mere side-effect.
+
+Cache aliasing is one of the most import features from the exploitation perspective. Newer kernels keep general `kmalloc` caches unmergeable as a side-effect of hardened usercopy implementation (regardless `CONFIG_HARDENED_USERCOPY` being enabled or disabled).
+
+5.9+ kernels (up to 5.14), however, made kmem accounted (`GFP_KERNEL_ACCOUNT`) general-purpose allocations mergeable with other unaccounted objects turning some previously unexploitable memory corruption bugs into exploitable vulnerabilities.

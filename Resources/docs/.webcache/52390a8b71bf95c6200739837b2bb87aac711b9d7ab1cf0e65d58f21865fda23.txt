@@ -1,0 +1,1939 @@
+# Thread-local storage
+
+Welcome back and thanks for joining us for the *reads notes*… the thirteenth installment of our series on ELF files, what they are, what they can do, what does the dynamic linker do to them, and how can we do it ourselves.
+
+I’ve been pretty successfully avoiding talking about TLS so far (no, [not that one](https://twitter.com/fasterthanlime/status/1252633745116598272)) but I guess we’ve reached a point where it cannot be delayed any further, so.
+
+So. Thread-local storage.
+
+We know from our adventures in [reading files the hard way](https://fasterthanli.me/series/reading-files-the-hard-way/part-2) that, as a userland application, we are a *guest* on the computer.
+
+Sure, we may execute some instructions, we may even politely request that certain devices tend to our needs but ultimately the one who’s calling the shots is the kernel. We are *tolerated* here. Honestly, the kernel would rather nothing execute at all.
+
+> **Cool Bear's hot tip**
+>
+> In fact, if you haven’t read that article yet, go read it.
+>
+> I’ll even [link it again](https://fasterthanli.me/series/reading-files-the-hard-way/part-2). I’m serious. I’ll wait, don’t worry.
+
+Occasionally though, the kernel will let non-kernel code execute. And again, it’s in charge of exactly how and when that happens - and for how long.
+
+By now we’ve formed a fairly good idea of how processes are loaded into memory: the kernel itself parses the file we want to execute, if it’s ELF it parses it (it’s not interested in nearly as many things as we are, though), maps a few things, then “hands off” control to it.
+
+But what does *hand off* mean? In concrete terms, what happens? Well, today’s not the day we get into kernel debugging (although… nah. unless? no.), but we sure can get a rough idea what’s going on.
+
+What is a computer? A miserable little pile of registers. That’s right - it’s global variables all the way down.
+
+Here’s the value of *some* of the CPU registers just as `echidna`’s main function starts executing:
+
+![gdb-info-reg](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-13/assets/gdb-info-reg~65f7cf2c74534ae9.webp)
+
+Is that all of them? Nope! There’s 128-bit registers (SSE), 256-bit registers (AVX), 512-bit registers (AVX-512) - and of course we still have the x87/FPU registers, from back when [you needed a co-processor for that](https://en.wikipedia.org/wiki/X87).
+
+TL;DR - it’s a *whole mess*. The point is, we have a bunch of global variables that are, like, *really* fast to read from and write to. So optimizing compilers tend to want to use them whenever possible.
+
+And by “them” I mean the general-purpose ones in the bunch - from `%rax` to `%r15`. And sometimes, if your optimizer feels particularly giddy, some of the `%xmmN` registers as well (as we have painfully learned in the [last article](https://fasterthanli.me/series/making-our-own-executable-packer/part-12)).
+
+And then there’s special-purpose registers, like `cs`, `ss`, `ds`, `es`, etc. We’re not overly concerned with those four in particular, because on we’re on 64-bit Linux and our memory model is somewhat simpler.
+
+In fact, we’ve been using registers all this time to send the kernel love letters - in `echidna`’s `write` function for example:
+
+``` rust
+pub unsafe fn write(fd: u32, buf: *const u8, count: usize) {
+    let syscall_number: u64 = 1;
+    asm!(
+        "syscall",
+        inout("rax") syscall_number => _,
+        in("rdi") fd,
+        in("rsi") buf,
+        in("rdx") count,
+        lateout("rcx") _, lateout("r11") _,
+        options(nostack)
+    );
+}
+```
+
+So both the kernel and userland applications use registers. One of my favorite registers - seeing as I’m in the middle of writing a series about ELF files - is `%rip`, the instruction pointer.
+
+I’m being told that it wasn’t always that simple, but on 64-bit Linux, it just points to the (virtual) address of the code we’re currently executing. Whenever program execution moves forward, so does `%rip` - by however many bytes it took to encode the instruction that was just executed:
+
+![gdb-rip](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-13/assets/gdb-rip~7f74283cad3749d2.webp)
+
+So, this answers part of our question - how does the kernel “hand off” control to a program: it just changes `%rip`! And the processor does the rest. Well. Sorta kinda. “Among other things”, let’s say.
+
+(Note that, on x86, you can’t write to the `%rip` register directly - you have to use instructions like `jmp`, `call`, or `ret`.)
+
+To be fair, it also switches from ring 0 to ring 3 - again, something we’ve briefly discussed in [Reading files the hard way Part 2](https://fasterthanli.me/series/reading-files-the-hard-way/part-2). And it switches from the “kernel virtual address space” to the “userland virtual address space”.
+
+And other stuff happens too. I lied earlier. It’s actually quite involved.
+
+Point is - that’s also how switching *between processes* works. As far as the user is concerned, processes execute in parallel, but as far as the kernel is concerned, its scheduler is handing out slices of time. Whenever it lets process “foo” execute for a bit, it:
+
+- Sets up a system timer interrupt
+- Restores the state of all CPU registers to what it was for that process
+- Switches from Ring 0 to Ring 3, also jumping to whatever address `%rip` had when process “foo” was last interrupted
+
+Eventually, the system timer interrupt goes off, and execution immediately jumps back to the kernel’s interrupt handler - at which point the kernel decides whether the process has been naughty or nice and whether it merits more time.
+
+If not - for example, if it decides we really should be giving process “bar” more time next, then the kernel saves the state of “foo”, (most of the registers), resets a bunch of CPU state (mostly memory caches), and switches to “bar” the way we’ve just described.
+
+That’s the *very distant* overview of things. It’s also not entirely correct. But for our purposes, it’s correct enough.
+
+That’s for processes. But what about threads? Threads are also “preemptive multitasking” - instead of explicitly relinquishing control, their execution can be violently interrupted (ie. “preempted”) so that other threads can be executed.
+
+> **Cool Bear's hot tip**
+>
+> The “other” multitasking is cooperative multitasking - which you don’t need the kernel’s help to do. That’s how coroutines work - just bits of userland state that all play nice together when it comes to deciding whose turn is it.
+
+Switching between threads is simpler though. Because of all threads of a given process share the same address space. So there’s less state to save and restore when switching from one to the other.
+
+But then… the question arises: how do you tell threads apart? If several threads are started with the same entry point, how do you know which is which? Is that something the CPU handles? or the kernel?
+
+What’s the story here?
+
+Let’s run a little experiment.
+
+``` shell
+$ cd samples/
+$ mkdir twothreads
+```
+
+``` c
+// in `samples/twothreads/twothreads.c`
+
+#include <unistd.h>
+#include <pthread.h>
+
+void *in_thread(void *unused) {
+    while (1) {
+        sleep(1);
+    }
+}
+
+int main() {
+    pthread_t t1, t2;
+    pthread_create(&t1, NULL, in_thread, NULL);
+    pthread_create(&t2, NULL, in_thread, NULL);
+    pthread_join(t1, NULL);
+    pthread_join(t2, NULL);
+}
+```
+
+There. Two threads, one entry point. Two enter, neither leaves.
+
+``` shell
+$ cd samples/twothreads
+$ gcc twothreads.c -pthread -o twothreads
+$ ./twothreads
+(program doesn't print anything and never exits)
+```
+
+Now, let’s run that program under GDB, break on `in_thread` and compare registers.
+
+``` shell
+$ gdb --quiet ./twothreads
+Reading symbols from ./twothreads...
+(gdb) break in_thread
+Breakpoint 1 at 0x1175: file twothreads.c, line 6.
+(gdb) run
+Starting program: /home/amos/ftl/elf-series/samples/twothreads/twothreads
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/usr/lib/libthread_db.so.1".
+[New Thread 0x7ffff7dbe640 (LWP 27480)]
+[New Thread 0x7ffff75bd640 (LWP 27481)]
+[Switching to Thread 0x7ffff7dbe640 (LWP 27480)]
+
+Thread 2 "twothreads" hit Breakpoint 1, in_thread (unused=0x0) at twothreads.c:6
+6               sleep(1);
+```
+
+Everything makes sense so far. We’ve got three threads - the main thread, and the two other we created. So really, the program should be named “threethreads”.
+
+Using the GDB command `bt` (or `backtrace`) shows us the backtrace *of the current thread*:
+
+``` shell
+(gdb) bt
+#0  in_thread (unused=0x0) at twothreads.c:6
+#1  0x00007ffff7f943e9 in start_thread (arg=0x7ffff7dbe640) at pthread_create.c:463
+#2  0x00007ffff7ec2293 in clone () at ../sysdeps/unix/sysv/linux/x86_64/clone.S:95
+```
+
+Just like `info registers`, GDB has `info threads`, which lets us know what’s going on with all of them:
+
+``` shell
+(gdb) info threads
+  Id   Target Id                                      Frame
+  1    Thread 0x7ffff7dbf740 (LWP 27476) "twothreads" __pthread_clockjoin_ex (threadid=140737351771712, thread_return=0x0,
+    clockid=<optimized out>, abstime=<optimized out>, block=<optimized out>) at pthread_join_common.c:145
+* 2    Thread 0x7ffff7dbe640 (LWP 27480) "twothreads" in_thread (unused=0x0) at twothreads.c:6
+  3    Thread 0x7ffff75bd640 (LWP 27481) "twothreads" in_thread (unused=0x0) at twothreads.c:6
+```
+
+We can set the “current GDB thread” to whatever we want, for example if we want to see what the main thread is up to:
+
+``` shell
+(gdb) thread 1
+[Switching to thread 1 (Thread 0x7ffff7dbf740 (LWP 27476))]
+#0  __pthread_clockjoin_ex (threadid=140737351771712, thread_return=0x0, clockid=<optimized out>, abstime=<optimized out>,
+    block=<optimized out>) at pthread_join_common.c:145
+145                 lll_futex_wait_cancel (&pd->tid, tid, LLL_SHARED);
+```
+
+I’m curious - our `t1` and `t2` variables - what do they contain exactly?
+
+``` shell
+(gdb) frame 1
+#1  0x00005555555551e3 in main () at twothreads.c:14
+14          pthread_join(t1, NULL);
+(gdb) info locals
+t1 = 140737351771712
+t2 = 140737343379008
+(gdb) p/x {t1, t2}
+$5 = {0x7ffff7dbe640, 0x7ffff75bd640}
+```
+
+Those look like pointers. Okay. So, now that we know how to inspect the state of various threads, let’s see what’s going on with our two threads - here they are back-to-back:
+
+![thread1](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-13/assets/thread1~61d955bba439a83b.webp)
+
+![thread2](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-13/assets/thread2~f8cdbd9b0a2e9cf3.webp)
+
+Things look *eerily similar*. And they should - both threads are doing exactly the same thing - waiting for time to run out, one second at a time.
+
+Sure, some register values are off by `0x1000` (`%rbp` through `%r10`), but, for example, `%rip` is exactly the same for both. Which is reassuring, to be honest. Not *all* our assumptions are wrong.
+
+But there has to be a way to tell them apart. For starters, “pthreads” (POSIX threads) are implemented as a userland library:
+
+``` shell
+(gdb) info sharedlibrary
+From                To                  Syms Read   Shared Object Library
+0x00007ffff7fd2090  0x00007ffff7ff2746  Yes         /lib64/ld-linux-x86-64.so.2
+0x00007ffff7f92a70  0x00007ffff7fa1025  Yes         /usr/lib/libpthread.so.0
+0x00007ffff7de8650  0x00007ffff7f336bd  Yes         /usr/lib/libc.so.6
+```
+
+…and it exposes functions like `pthread_self()` - which returns the ID of the calling thread. So it *must* know which thread we’re currently in. And *all we have to go by* are… registers.
+
+But which one?
+
+Let’s do something I *wish* I had figured out months ago, when I was still researching whether “rolling your own dynamic linker” was even a halfway reasonable thing to do.
+
+Let’s disassemble `pthread_self`.
+
+``` shell
+(gdb) disas pthread_self
+Dump of assembler code for function pthread_self:
+   0x00007ffff7e48730 <+0>:     endbr64
+   0x00007ffff7e48734 <+4>:     mov    rax,QWORD PTR fs:0x10
+   0x00007ffff7e4873d <+13>:    ret
+End of assembler dump.
+```
+
+And with that, the hunt is over.
+
+It’s `%fs`. That was the culprit all along.
+
+> The 6 Segment Registers are:
+>
+> - Stack Segment (SS). Pointer to the stack.
+> - Code Segment (CS). Pointer to the code.
+> - Data Segment (DS). Pointer to the data.
+> - Extra Segment (ES). Pointer to extra data (‘E’ stands for ‘Extra’).
+> - F Segment (FS). Pointer to more extra data (‘F’ comes after ‘E’).
+> - G Segment (GS). Pointer to still more extra data (‘G’ comes after ‘F’).
+>
+> Source: [X86 Assembly Wikibook](https://en.wikibooks.org/wiki/X86_Assembly/X86_Architecture#Segment_Registers)
+
+Great. So the “s” stands for “segment” and the “f” stands for “fxtra data”.
+
+We’ve reached peak x86.
+
+But hold on a second. I’m pretty sure `%fs` was 0x0 every time we looked at it. Let’s double check:
+
+```
+(gdb) t a a i r fs
+
+Thread 3 (Thread 0x7ffff75bd640 (LWP 27481) "twothreads"):
+fs             0x0                 0
+
+Thread 2 (Thread 0x7ffff7dbe640 (LWP 27480) "twothreads"):
+fs             0x0                 0
+
+Thread 1 (Thread 0x7ffff7dbf740 (LWP 27476) "twothreads"):
+fs             0x0                 0
+```
+
+> **Cool Bear's hot tip**
+>
+> `t a a i r fs` is just the obscure way of saying `thread apply all info register fs`.
+>
+> That’s right - whenever it’s not ambiguous, GDB lets you shorten *any* command or option name. In fact, if you see a shortcut being used and you’re not sure what it does, you can ask gdb, since its `help` command also accepts the shortcut form.
+>
+> For example:
+>
+> ``` shell
+> (gdb) help ni
+> nexti, ni
+> Step one instruction, but proceed through subroutine calls.
+> Usage: nexti [N]
+> Argument N means step N times (or till program stops for another reason).
+> ```
+
+So, GDB tells us `%fs` is `0x0` for all three of our threads.
+
+Is this a lie? Yes. If that was the case, `pthread_self` would try to read from memory address `0x0+0x10` and *definitely* segfault.
+
+But it doesn’t:
+
+``` shell
+(gdb) print (void*) pthread_self()
+[Switching to Thread 0x7ffff75bd640 (LWP 27481)]
+
+Thread 3 "twothreads" hit Breakpoint 1, in_thread (unused=0x0) at twothreads.c:6
+6               sleep(1);
+The program stopped in another thread while making a function call from GDB.
+Evaluation of the expression containing the function
+(pthread_self) will be abandoned.
+When the function is done executing, GDB will silently stop.
+```
+
+It uh… *reads notes* hang on a minute:
+
+``` shell
+(gdb) set scheduler-locking on
+(gdb) print (void*) pthread_self()
+$7 = (void *) 0x7ffff75bd640
+```
+
+It doesn’t! It doesn’t segfault.
+
+> **Cool Bear's hot tip**
+>
+> `scheduler-locking` is a feature of GDB that politely asks the Linux kernel to, like, not preempt the current thread, because we’re looking at it.
+>
+> More info is [available on Kevin Pouget’s blog](https://blog.0x972.info/?d=2017/02/07/17/22/34-gdb-scheduler-locking-function-calls-and-multi-threading).
+
+So GDB is lying. But it’s not entirely surprising - the `%fs` register *is* thread-local (on Linux 64-bit! remember that whatever a register is used for is entirely defined in the ABI and it’s up to the kernel to make it so), and GDB itself is running its own threads distinct from the inferior’s threads.
+
+> **Cool Bear's hot tip**
+>
+> It’s been a while since we’ve been over weird GDB terminology, so, just in case, the “inferior” is the “process being debugged”. I know. Weird. Moving on.
+
+Is there another way to grab the contents of the `%fs` register? Sure there is! We can ask the kernel politely via the `arch_prctl` syscall. We’ll use libc’s wrapper for it:
+
+``` c
+#include <asm/prctl.h>
+#include <sys/prctl.h>
+
+int arch_prctl(int code, unsigned long addr);
+int arch_prctl(int code, unsigned long *addr);
+
+#define ARCH_SET_GS	0x1001
+#define ARCH_SET_FS	0x1002
+#define ARCH_GET_FS	0x1003
+#define ARCH_GET_GS	0x1004
+```
+
+That’s right. The same function is defined once as taking an `uint64_t`, and a second time as taking a *pointer* to an `uint64_t`. You know, since it can both get and set things.
+
+That’s just how libc rolls, baby. Whoever tells you C has a type system is either delusional or mischievous.
+
+``` shell
+(gdb) print (void) arch_prctl(0x1003, $rsp-0x8)
+$8 = void
+(gdb) x/gx $rsp-0x8
+0x7ffff75bce38: 0x00007ffff75bd640
+```
+
+That looks like a real value!
+
+Why the ceremony? Well, `%fs` and `%gs` aren’t general-purpose registers - they’re segment registers. Segment registers were a lot more relevant before the 64-bit era.
+
+Let’s go back in time for a little while…
+
+## A short (and mostly incorrect) history of Intel chips
+
+The year is 1976. Four years have passed since the released of the 8-bit [Intel 8008](https://en.wikipedia.org/wiki/Intel_8008), and other companies are releasing 16-bit microprocessors left and right.
+
+![intel-8008](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-13/assets/intel-8008~8a3ac7cb3e142f19.webp)
+
+An Intel 8008 chip
+
+[Christian Bassow](https://commons.wikimedia.org/wiki/File:Intel_8008_1.jpg)
+
+Digital Equipment Corporation (DEC), Fairchild Semiconductor and National Semiconductor have all released some form of 16-bit microprocessor. One year prior, National even released the [PACE](https://en.wikipedia.org/wiki/National_Semiconductor_PACE), a single chip based loosely on its own IMP-16 design.
+
+Meanwhile, Intel is one year into the [iAPX 432](https://en.wikipedia.org/wiki/Intel_iAPX_432) project, which.. really warrants at least one entire article. Ada was the intended programming language for the processor, and it supported object-oriented programming and [capability-based addressing](https://en.wikipedia.org/wiki/Capability-based_addressing).
+
+The iAPX 432 project was struggling though - turns out those abstractions weren’t free. Not only did they require significantly more transistors, performance of equivalent programs suffered compared to competing microprocessors.
+
+So, in May of 1976, the folks at Intel go “okay let’s work on *some* 16-bit chip that we can release before iAPX 432 is done cooking. This is one month before Texas Instruments (TI) releases the [TMS9900](https://en.wikipedia.org/wiki/Texas_Instruments_TMS9900), another single-ship 16-bit microprocessor - the pressure is real.
+
+But what does “a 16-bit chip” really mean? Well actually… it all depends.
+
+For example, I’ve referred to the [Intel 8008](https://en.wikipedia.org/wiki/Intel_8008) as an “8-bit chip” - but it’s not that simple.
+
+Sure, the registers of the 8008 were eight bits. Each bit can be on or off:
+
+![4-bits](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-13/assets/4-bits~735ea4eed9da8ac9.svg)
+
+Each bit also corresponds to a power of two - by adding the power of two of each of the “on” bits, we get the value as an unsigned integer:
+
+![msb-lsb](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-13/assets/msb-lsb~4bca5942ea59ac2e.svg)
+
+Signed integers are a bit more involved - and floating-point numbers are even move involved. But let’s not get too distracted.
+
+If you only used eight bits to encode memory addresses, then you could only address, well, 256 bytes of memory.
+
+Which is *very* little. Like, not enough for a non-trivial program.
+
+So, even eight-bit chips usually had a larger “address bus”. The 8008 had a 14-bit address bus - which means the width of its `PC` register (program counter, which we call instruction pointer on x86-64) was.. 14 bits.
+
+How do you manipulate 14-bit addresses with 8-bit general-purpose registers? With two of them! Why 14-bit and not 16-bit? Well, when you’re making a chip, every pin counts:
+
+> The chip has a 8 bit wide data bus and 14 bit wide address bus, which can address 16 KB of memory. Since Intel could only manufacture 18 pin DIP packages at 1972, the bus has to be three times multiplexed. Therefore the chip’s performance is very limited and it requires a lot external logic to decode all signals.
+>
+> Source: [The Intel 8008 support page](https://petsd.net/8008.php#gd)
+
+So, thanks to pin multiplexing, the 8008 could address 16KiB of memory. Which is *still* not a lot. And back in the 70s, [Intel was a startup devoted to making memory chips](https://www.computerworld.com/article/2532590/forgotten-pc-history--the-true-origins-of-the-personal-computer.html). It stands to reason they’d like people to use microprocessors that allow addressing a lot more memory.
+
+The 8086’s design is bigger. It ships in a 40-pin package, so they’re able to bump the number of data pins to 20 - still with some multiplexing. And with a 20-bit address bus, the 8086 is able to provide a whopping *1 MiB* physical address space.
+
+![8086-chip](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-13/assets/8086-chip~1e0a4b983af808ad.webp)
+
+Intel C8086 Chip
+
+[Thomas Nguyen](https://commons.wikimedia.org/wiki/File:Intel_C8086.jpg)
+
+But just as before, the 8086’s general-purpose registers are smaller - they’re only 16 bits. A single register is still not enough to refer to a physical memory address.
+
+What to do? Use segments! The 8086 introduces four segment registers: the code segment (`CS`), from which instructions are read, the data segment (`DS`) for general memory, the stack segment (`SS`), and the extra segment (`ES`), useful as a temporary storage space when you need to copy from one area of memory to another.
+
+Instructions would typically take 16-bit offset arguments, and depending on the nature of the instruction, it would add up that offset with the relevant segment register. Each of the 8086’s segment registers were… also 16 bits. 16 + 16 = 20, all is well.
+
+> **Cool Bear's hot tip**
+>
+> Uhhh…..
+
+No, wait, all is not well.
+
+Actually, the computation was `segment << 4 + offset`:
+
+$$\begin{matrix}
+ & {0110\ } & {1000\ } & {1000\ } & {0111\ } & \  & {\text{Segment}\ } & {\text{(16 bits)}\ \text{(shifted left by 4)}} \\
+\text{+} & \  & {0011\ } & {0100\ } & {1010\ } & {1001\ } & {\text{Offset}\ } & \text{(16 bits)} \\
+ & & & & & & & \\
+ & {0110\ } & {1011\ } & {1101\ } & {0001\ } & {1001\ } & {\text{Address}\ } & \text{(20 bits)} \\
+ & & & & & & & 
+\end{matrix}$$
+
+That means that, for the 8086, each single memory address can be referred to by 4096 different `segment:offset` pairs.
+
+This also means that, as long as your entire program (code and data) fits within a single 64K segment, you can have nice offsets that start at 0 (for your segment).
+
+If it *doesn’t* fit in a single 64K segment, well then your offsets don’t fit in 16 bits anymore, and you have to start juggling between different segments, and deal with funky pointer sizes.
+
+If you want to refer to memory in the same segment, you can use a **near** pointer:
+
+![near](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-13/assets/near~529b179a7aa8bbea.svg)
+
+If you want to refer to memory in another segment, you can use a **far** pointer
+
+![far](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-13/assets/far~320f8d1a15e40efb.svg)
+
+If you want to refer to memory in another segment *and* you may have pointer arithmetic that changes the pointer’s value to refer to yet *another* segment, you can use a **huge** pointer:
+
+![huge](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-13/assets/huge~35b7fd7d1906a483.svg)
+
+Needless to say, writing code for this architecture was *not pleasant*.
+
+## The 286
+
+In 1982, Intel launches the `80286`, which we’ll just call the `286`, which introduce several novelties. First off, the data pins are no longer multiplexed - the chip has 68 pins, 16 of which are dedicated to the address bus.
+
+![80286](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-13/assets/80286~cb97cf4c4c3f53c8.webp)
+
+Intel C80286-6 Chip
+
+[Thomas Nguyen](https://commons.wikimedia.org/w/index.php?curid=416101)
+
+![286-pinout](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-13/assets/286-pinout~27a2abc3382cc964.webp)
+
+80286 Pinout
+
+[AMD Datasheet, June 1989](https://en.wikichip.org/w/images/6/68/AMD_80286_Datasheet_%28June_1989%29.pdf)
+
+Second: the 286 introduces “protected virtual-address mode”. Whereas, on the 8086, code, stack and data segment could (and did!) overlap, the 286 prevents that. Segments can also be assigned “privilege levels” - segments with lower privilege levels cannot access segments with higher privilege levels.
+
+> **Cool Bear's hot tip**
+>
+> Remember protection rings? We talked about ring 0 and ring 3 in [Reading files the hard way part 2](https://fasterthanli.me/series/reading-files-the-hard-way/part-2) - those are it!
+>
+> A “ring” is a privilege level, and the current privilege level is stored in the lower two bits of the CS register. And what do you know, our sample program is running…
+>
+> ``` shell
+> (gdb) p/u $cs & 0b11
+> $24 = 3
+> ```
+>
+> …in Ring 3! As it should, since it’s a regular userland program, not kernel code.
+
+However the 286’s protected mode is kind of annoying to use - for starters, it breaks compatibility with old 8086 applications. And to make things worse, once you switch it from “real” mode to “protected” mode, you can’t switch back without performing a hard reset.
+
+But, the few applications that *do* make use of the 286’s protected mode are able to use the full 24-bit physical address space: 16 MiB. In theory. In practice, 286 motherboards only support up to 4 MiB of RAM - and even then, buying that much memory is prohibitively expensive.
+
+Fast forward to 1985. The [Japan-US semiconductor war](https://web.archive.org/web/20200229223250/http://www.shmj.or.jp/makimoto/en/pdf/makimoto_E_01_12.pdf) is raging. Intel eventually decides to stop producing DRAM, now focusing on microprocessors.
+
+## The 386
+
+In October of 1985, Intel releases the `80386` (which we’ll call “the 386”) - the first implementation of the 32-bit extension to the `80286` architecture. Finally, *finally*, the data width and the address width are the same: 32 bits.
+
+![80386-chip](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-13/assets/80386-chip~3d4912547c9a436c.webp)
+
+Intel 80386DX Chip
+
+Which means - in theory - the 386 is able to address 4 GiB of RAM.
+
+![jram-3](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-13/assets/jram-3~16d2160e6f4b7d96.webp)
+
+Advertisement for Memory Boards by Tall Tree Systems
+
+InfoWorld, September of 1985
+
+In practice though, boards that let you have that much memory - or anywhere close to it - do not exist. Even a couple megabytes of RAM will set you back.
+
+The advertisement shown above reads:
+
+> Tall Tree Systems presents JRAM-3, the newest member of the JRAM family. JRAM-3 is a fourth generation multifunction memory board and the successor of the highly praised JRAM-2. Designed to meet the latest expanded memory specification standard being implemented by the major spreadsheet vendors, JRAM-3 can access up to eight megabytes of memory for larger, more efficient spreadsheets. JRAM-3 can also be used for DOS memory, electronic disk, print spooler, and program swapping applications!
+>
+> Determined to maintain our reputation as the price leader in memory expansion, Tall Tree Systems offers JRAM-3 fully populated with **two megabytes for an amazing \$699.**
+
+Nevertheless, the 386 is a game changer. So much so that Intel will go on to produce 386 chips [until 2007](https://web.archive.org/web/20061007151235/http://developer.intel.com/design/pcn/Processors/D0106013.pdf).
+
+It’s much better at running 8086 programs than the 286 was, thanks to [Virtual 8086 mode](https://en.wikipedia.org/wiki/Virtual_8086_mode). But more importantly, it includes an on-chip [Memory management unit (MMU)](https://en.wikipedia.org/wiki/Memory_management_unit) that supports paging.
+
+Paging is a *huge* deal. Although the concept existed previously in [non-mass market computers](https://en.wikipedia.org/wiki/Atlas_(computer)), having it in the 386, a consumer-grade x86 device enabled tons of cool tricks.
+
+We said the 8086 had “segment registers”. And we’ve also used the word “segments” to refer to different parts of an ELF file…
+
+> **Cool Bear's hot tip**
+>
+> Oh look at him, tying his history lesson back into the series… nice going pal.
+
+…and that’s not a coincidence! Before paging, even in protected mode, a program had to be loaded contiguously in *physical memory*. If you didn’t have a contiguous area in physical memory that could fit the entire program, you.. could not load it.
+
+![8086-fragmentation](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-13/assets/8086-fragmentation~098837aa3a830883.svg)
+
+This issue of “memory fragmentation” became much less of a problem with virtual address spaces, since you could map virtual pages to any available physical pages:
+
+![80386-fragmentation](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-13/assets/80386-fragmentation~b470ea0ba33ef815.svg)
+
+The program’s memory *appears* contiguous - in virtual memory it is. In physical memory, it isn’t, but that’s an implementation detail. It’s the MMU’s job.
+
+## The 64-bit era
+
+The story doesn’t end with the 386 of course. In 2001, Intel and HP introduce the `IA-64` architecture, with a [VLIW](https://en.wikipedia.org/wiki/Very_long_instruction_word) instruction set.
+
+IA-64 makes a *lot of changes*, mostly as a means to enable parallelism with the help of the compiler. It has 128 64-bit integer and floating-pointer registers, performs speculation and branch prediction, and other cool tricks.
+
+This new architecture completely breaks compatibility with x86, which is *fine* because it’s geared for enterprise servers - and those clients can afford to recompile their applications for a new architecture. Right? Right.
+
+Anyway, in 2003, AMD releases its *own* 64-bit architecture, which is “just” a set of x86 extensions, which means it’s backward-compatible with… pretty much everything relevant on desktop? The exception being [PowerPC](https://en.wikipedia.org/wiki/PowerPC), which Apple will still be shipping [for 3 years](https://en.wikipedia.org/wiki/Apple%27s_transition_to_Intel_processors).
+
+AMD releases not only a series of workstation processors, [Opteron](https://en.wikipedia.org/wiki/Opteron), but also consumer-grade processors like the [Athlon 64](https://en.wikipedia.org/wiki/Athlon_64).
+
+And with that move, 64-bit computing moves into the mainstream. The IA-64 architecture eventually loses the war against the more traditional AMD64, and Intel starts shipping AMD64 processors, rebranding the architecture as, successively, “IA-32e”, “EM64T”, and finally “Intel 64”.
+
+The first Intel consumer-grade desktop processor to implement “Intel 64” is the Pentium 4 “Prescott” - and this paves the way for at least two decades of the architecture we usually refer to “x86-64” being mainstream.
+
+![prescott-malay](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-13/assets/prescott-malay~bbff1c5425f46daf.webp)
+
+Intel Pentium 4 Prescott SL79K chip
+
+[Köf3](https://commons.wikimedia.org/wiki/File:Intel_Pentium_4_Prescott_SL79K_PGA478.jpg)
+
+So there you have it - in just 31 years, we moved from 8-bit chips to 64-bit chips. And for one glorious moment in the 2000s, AMD led the charge and Intel had to follow:
+
+|      |                |     |     |     |        |
+|------|----------------|-----|-----|-----|--------|
+| 1972 | Intel 8008     | 18  | 8   | 14  | 16 KiB |
+| 1978 | Intel 8086     | 40  | 16  | 20  | 1 MiB  |
+| 1982 | Intel 80286    | 68  | 16  | 24  | 16 MiB |
+| 1985 | Intel 80386    | 132 | 32  | 32  | 4 GiB  |
+| 2003 | AMD Athlon 64  | 754 | 64  | 64  | 16 EiB |
+| 2004 | Intel P4 SL79K | 478 | 64  | 64  | 16 EiB |
+
+## What about segmentation?
+
+Back to memory models. The *real* game-changer here was the 386. When the data width and the address width are equal, you **don’t need segmentation anymore**.
+
+Whereas on the 286, you had to have *one* code segment at a time, that started on a 64K boundary, and could not overlap the other segments:
+
+![segmented-model](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-13/assets/segmented-model~5965ed4718bbc9a0.svg)
+
+…on the 386, you can just set all the segment bases to 0, and since the offsets are 32-bit, pointers can refer to *anywhere in the virtual address space*:
+
+![flat-model](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-13/assets/flat-model~a862c55e40a51a31.svg)
+
+Additionally, the 386 introduces two other segment register: `FS` ( for “fxtra data”) and `GS` (for “gxtra data”). Those don’t really have a specific purpose… but we can make good use of them.
+
+How?
+
+Well, consider a program loaded into memory. Among other things, we have the `.text` section, with code, and the `.data`, with (mutable) global variables, mapped at a constant offset of each other.
+
+![tls-1](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-13/assets/tls-1~58fdebe9268e07f4.svg)
+
+Since the combo can be loaded at any base address in memory, the `.text` segment uses the `%rip` register to refer to global variables *in the same object*.
+
+For variables in *other* objects, as we’ve seen, it uses the GOT (global offset table), and for functions in other objects, the PLT (procedure linkage table).
+
+But with thread-local data… we need another section:
+
+![tls-2](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-13/assets/tls-2~34724ef960e3ccf6.svg)
+
+Again, this is for mutable data. Immutable data can all go in `.rodata`, which isn’t shown here.
+
+The problem with the `.tdata` section is we must have one copy of it per thread. Threads share the `.text` section, the `.data` section, even the `.bss` section - and those are at the same place for every thread - but the `.tdata` section is somewhere different for every thread - at a different offset from `.code`:
+
+![tls-3](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-13/assets/tls-3~fc053f88915d08de.svg)
+
+So we can’t use rip-relative addressing! There has to be a place, *somewhere* that says to the thread “this is the start of the `.tdata` section *for you*”.
+
+And we can’t use a general-purpose register like `%rax` or `%rdi` because those are taken by the ABI - to return values or pass arguments. They’re also taken by the compiler - whenever it’s *not* calling functions, the compiler is free to use `%rax` through `%r15` to store temporary values.
+
+So, what to do? Use those extra segment registers! They’re not used for anything right now - so `%gs` becomes used to indicate the address of the thread-local storage area on Linux x86, and `%fs` on Linux x86-64.
+
+Let’s see that in action.
+
+We’re going to add some thread-local variables in our `echidna` test program
+
+- it’s the `no_std` Rust binary we’ve made in the [last article](https://fasterthanli.me/series/making-our-own-executable-packer/part-12).
+
+We’re going to need to opt into the `thread_local` Rust feature:
+
+``` rust
+// in `samples/echidna/src/main.rs`
+
+#![no_std]
+#![no_main]
+#![allow(incomplete_features)]
+#![feature(const_generics)]
+#![feature(asm)]
+#![feature(lang_items)]
+#![feature(link_args)]
+#![feature(thread_local)] // new!
+```
+
+And then we’re going to add variables named foo and bar, and we’re gonna read and write to them:
+
+``` rust
+// in `samples/echidna/src/main.rs`
+
+#[thread_local]
+static mut FOO: u32 = 10;
+#[thread_local]
+static mut BAR: u32 = 100;
+
+#[inline(never)]
+fn blackbox(x: u32) {
+    println!(x as usize);
+}
+
+#[inline(never)]
+#[no_mangle]
+unsafe fn play_with_tls() {
+    blackbox(FOO);
+    blackbox(BAR);
+    FOO *= 3;
+    BAR *= 6;
+    blackbox(FOO);
+    blackbox(BAR);
+}
+
+#[no_mangle]
+pub unsafe fn main(stack_top: *const u8) {
+    play_with_tls();
+
+    // rest of main
+}
+```
+
+Let’s make a release build and see if it runs:
+
+``` shell
+$ cd samples/echidna
+$ cargo build --release
+$ ./target/release/echidna
+10
+100
+30
+600
+(cut)
+```
+
+Yeah! It seems to work okay.
+
+Let’s look at what sections we have in our executable:
+
+``` shell
+$ readelf -WS ./target/release/echidna
+There are 15 section headers, starting at offset 0x35c0:
+
+Section Headers:
+  [Nr] Name              Type            Address          Off    Size   ES Flg Lk Inf Al
+  [ 0]                   NULL            0000000000000000 000000 000000 00      0   0  0
+  [ 1] .interp           PROGBITS        00000000000002e0 0002e0 00001c 00   A  0   0  1
+  [ 2] .note.gnu.build-id NOTE            00000000000002fc 0002fc 000024 00   A  0   0  4
+  [ 3] .gnu.hash         GNU_HASH        0000000000000320 000320 00001c 00   A  4   0  8
+  [ 4] .dynsym           DYNSYM          0000000000000340 000340 000018 18   A  5   1  8
+  [ 5] .dynstr           STRTAB          0000000000000358 000358 000001 00   A  0   0  1
+  [ 6] .text             PROGBITS        0000000000001000 001000 000782 00  AX  0   0 16
+  [ 7] .rodata           PROGBITS        0000000000002000 002000 0001ca 00   A  0   0 16
+  [ 8] .eh_frame_hdr     PROGBITS        00000000000021cc 0021cc 00003c 00   A  0   0  4
+  [ 9] .eh_frame         X86_64_UNWIND   0000000000002208 002208 0000d8 00   A  0   0  8
+  [10] .tdata            PROGBITS        0000000000003f18 002f18 000008 00 WAT  0   0  4
+  [11] .dynamic          DYNAMIC         0000000000003f20 002f20 0000e0 10  WA  5   0  8
+  [12] .symtab           SYMTAB          0000000000000000 003000 000318 18     13  26  8
+  [13] .strtab           STRTAB          0000000000000000 003318 00021d 00      0   0  1
+  [14] .shstrtab         STRTAB          0000000000000000 003535 000086 00      0   0  1
+Key to Flags:
+  W (write), A (alloc), X (execute), M (merge), S (strings), I (info),
+  L (link order), O (extra OS processing required), G (group), T (TLS),
+  C (compressed), x (unknown), o (OS specific), E (exclude),
+  l (large), p (processor specific)
+```
+
+> **Cool Bear's hot tip**
+>
+> `.tdata` has flags `WAT`? Cool stuff.
+
+As expected, there’s a `.tdata` section in there. At 0x2f18 in the file.
+
+Let’s dump it, see what’s in there:
+
+``` shell
+$ xxd -e -s 0x2f18 -g 4 ./target/release/echidna | head -1
+00002f18: 0000000a 00000064 6ffffef5 00000000  ....d......o....
+$ echo $((0x0a)) $((0x64))
+10 100
+```
+
+There they are! The initial values of `FOO` and `BAR`.
+
+What can GDB tell us about those?
+
+> **Cool Bear's hot tip**
+>
+> Now’s a good time to enable debug symbols for `echidna`. If it’s part of a cargo workspace, set the following in the workspace’s `Cargo.toml`, otherwise, set it in echidna’s `Cargo.toml`:
+>
+> ``` toml
+> [profile.release]
+> debug = true
+> ```
+>
+> Don’t forget to recompile it with `cargo b --release`!
+
+``` shell
+$ gdb --quiet --args ./target/release/echidna
+Reading symbols from ./target/release/echidna...
+(gdb) break play_with_tls
+Breakpoint 1 at 0x1034: file /home/amos/ftl/elf-series/samples/echidna/src/main.rs, line 27.
+(gdb) r
+Starting program: /home/amos/ftl/elf-series/samples/echidna/target/release/echidna
+
+Breakpoint 1, echidna::play_with_tls () at /home/amos/ftl/elf-series/samples/echidna/src/main.rs:27
+27          blackbox(FOO);
+(gdb) p FOO
+Cannot find thread-local storage for process 31251, executable file /home/amos/ftl/elf-series/samples/echidna/target/release/echidna:
+Cannot find thread-local variables on this target
+```
+
+Oh. GDB cannot find thread-local storage for our process… because we’re not using glibc! And by extension, we’re not using pthreads. So it’s kinda lost.
+
+But if we disassemble `play_with_tls`, we can see usage of the `%fs` register clearly:
+
+``` shell
+(gdb) x/4i $rip
+=> 0x555555555034 <echidna::play_with_tls+4>:   mov    edi,DWORD PTR fs:0xfffffffffffffff8
+   0x55555555503c <echidna::play_with_tls+12>:  call   0x555555555000 <_ZN7echidna8blackbox17h1bd0fc19d75cdd18E>
+   0x555555555041 <echidna::play_with_tls+17>:  mov    edi,DWORD PTR fs:0xfffffffffffffffc
+   0x555555555049 <echidna::play_with_tls+25>:  call   0x555555555000 <_ZN7echidna8blackbox17h1bd0fc19d75cdd18E>
+```
+
+But how do we get the contents of the `%fs` register?
+
+> **Cool Bear's hot tip**
+>
+> I’m getting déjà-vu here…
+
+Well, we’ve seen how to use `arch_prctl` to get the base of the FS segment… but since GDB 8, there’s an easier way. Just use the `$fs_base` pseudo-variable:
+
+``` shell
+(gdb) p/x $fs_base
+$1 = 0x7ffff7fc9b00
+```
+
+There it is! That was easy! In fact, if we go back to our `twothreads` C example from half an article ago, we can see that all three threads have a unique `$fs_base`:
+
+``` shell
+(gdb) thread apply all info register fs_base
+
+Thread 3 (Thread 0x7ffff75bd640 (LWP 32040) "twothreads"):
+fs_base        0x7ffff75bd640      140737343379008
+
+Thread 2 (Thread 0x7ffff7dbe640 (LWP 32039) "twothreads"):
+fs_base        0x7ffff7dbe640      140737351771712
+
+Thread 1 (Thread 0x7ffff7dbf740 (LWP 32035) "twothreads"):
+fs_base        0x7ffff7dbf740      140737351776064
+```
+
+So, this instruction:
+
+``` x86asm
+mov    edi,DWORD PTR fs:0xfffffffffffffff8
+```
+
+Moves memory from `0xfffffffffffffff8` *in the `fs` segment*, so, relative to `$fs_base`. But what’s up with the huge constant?
+
+``` shell
+(gdb) p/d 0xfffffffffffffff8
+$3 = -8
+```
+
+Ah, negative offsets. Fair enough.
+
+So if our understanding is correct, then `FOO` and `BAR` should be pretty easy to find:
+
+``` shell
+(gdb) x/w $fs_base - 8
+0x7ffff7fc9af8: 10
+(gdb) x/w $fs_base - 4
+0x7ffff7fc9afc: 100
+```
+
+Is there anything on the positive side of `$fs_base`? Yes there is!
+
+There’s the thread control block. That part is highly OS and architecture-specific, but for Linux x86-64, we can get the definition of the struct from glibc’s sources.
+
+And since GDB understands C debug info, we can make a small C file with just the C struct definition:
+
+``` c
+// in `samples/glibc-symbols/tcbhead.c`
+// extracted from `glibc/sysdeps/x86_64/nptl/tls.h`
+
+#include <stdint.h> // for uintptr_t
+typedef void dtv_t; // used in tcbhead_t
+
+/* Replacement type for __m128 since this file is included by ld.so,
+   which is compiled with -mno-sse.  It must not change the alignment
+   of rtld_savespace_sse.  */
+typedef struct
+{
+  int i[4];
+} __128bits;
+
+typedef struct
+{
+  void *tcb;            /* Pointer to the TCB.  Not necessarily the
+                           thread descriptor used by libpthread.  */
+  dtv_t *dtv;
+  void *self;           /* Pointer to the thread descriptor.  */
+  int multiple_threads;
+  int gscope_flag;
+  uintptr_t sysinfo;
+  uintptr_t stack_guard;
+  uintptr_t pointer_guard;
+  unsigned long int vgetcpu_cache[2];
+  /* Bit 0: X86_FEATURE_1_IBT.
+     Bit 1: X86_FEATURE_1_SHSTK.
+   */
+  unsigned int feature_1;
+  int __glibc_unused1;
+  /* Reservation of some values for the TM ABI.  */
+  void *__private_tm[4];
+  /* GCC split stack support.  */
+  void *__private_ss;
+  /* The lowest address of shadow stack,  */
+  unsigned long long int ssp_base;
+  /* Must be kept even if it is no longer used by glibc since programs,
+     like AddressSanitizer, depend on the size of tcbhead_t.  */
+  __128bits __glibc_unused2[8][4] __attribute__ ((aligned (32)));
+
+  void *__padding[8];
+} tcbhead_t;
+
+// dummy variable so the struct gets recorded in the debug information
+tcbhead_t t;
+```
+
+…compile that file with debug information:
+
+``` shell
+$ cd samples/glibc-symbols
+$ gcc -c -g tcbhead.c
+$ ls
+tcbhead.c  tcbhead.o
+```
+
+…and add its symbols to our GDB session:
+
+``` shell
+(gdb) add-symbol-file ~/ftl/elf-series/samples/glibc-symbols/tcbhead.o
+add symbol table from file "/home/amos/ftl/elf-series/samples/glibc-symbols/tcbhead.o"
+(y or n)
+Reading symbols from /home/amos/ftl/elf-series/samples/glibc-symbols/tcbhead.o...
+```
+
+Now, since `echidna` is a Rust program, GDB is in “Rust language” mode, so if we want to use `tcbhead_t`, we’ll need to switch to C language mode for a bit:
+
+``` shell
+(gdb) set language c
+Warning: the current language does not match this frame.
+(gdb) set print pretty on
+(gdb) p/x $fs_base
+$3 = 0x7ffff7fc9b00
+(gdb) p *(tcbhead_t*) $fs_base
+$4 = {
+  tcb = 0x7ffff7fc9b00,
+  dtv = 0x7ffff7fca4f0,
+  self = 0x7ffff7fc9b00,
+  multiple_threads = 0,
+  gscope_flag = 0,
+  sysinfo = 0,
+  stack_guard = 9732507507496503552,
+  pointer_guard = 6388124310047224200,
+  vgetcpu_cache = {0, 0},
+  feature_1 = 0,
+  __glibc_unused1 = 0,
+  __private_tm = {0x0 <t>, 0x0 <t>, 0x0 <t>, 0x0 <t>},
+  __private_ss = 0x0 <t>,
+  ssp_base = 0,
+  __glibc_unused2 = {{{
+      (cut - all zeros)
+    }}},
+  __padding = {0x0 <t>, 0x0 <t>, 0x0 <t>, 0x0 <t>, 0x0 <t>, 0x0 <t>, 0x0 <t>, 0x0 <t>}
+}
+```
+
+So, let’s review! For every thread - even the initial thread, *even* if it’s the only thread, ever - we must allocate a block of memory, with enough size for two categories of things:
+
+- Some bookkeeping structs, including `tcbhead_t` (but also a bunch of `dtv_t`)
+- Thread-local storage for each ELF object loaded in memory
+
+And the `%fs` segment register? Points smack dab between those two categories:
+
+![tls-vs-tcb](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-13/assets/tls-vs-tcb~c8b12e50ec06ce93.svg)
+
+New bookkeeping structs are appended (to the right), and thread-local storage for newly loaded objects (via `dlopen`, for example) are prepended (to the left).
+
+What’s a simply way to verify that?
+
+Well, let’s go back to our C program, `twothreads`, again, and look up symbols from one of its dependencies - say, `libc.so.6`.
+
+What kind of symbol does `libc` export? Let’s pick two at random: `environ` and `errno`, and compare their position relative to `$fs_base`.
+
+``` shell
+(gdb) p/d (unsigned long long)&environ - $fs_base
+$1 = 2353744
+```
+
+Okay, that’s… over 2 megabytes apart. I’d say `environ` is *probably* not a thread-local variable. And that makes sense - the environment is the same for the whole process - all its threads.
+
+And I’m sure it’s read-only right? There’s no way C would expose a global mutable variable to various threads? Let’s check the man page:
+
+``` c
+extern char **environ;
+```
+
+Oh dear. But at least `putenv` and `setenv` are thread-safe right? Let’s check the POSIX standard:
+
+> The `setenv()` function need not be reentrant. A function that is not required to be reentrant is not required to be thread-safe.
+
+Oooooooh dear. Let’s stop looking at C stuff for today.
+
+So we’ve seen `environ`, what about `errno`?
+
+``` shell
+(gdb) p/d (unsigned long long)&errno - $fs_base
+$2 = -120
+```
+
+Closer! A lot closer! Also - on the correct side of `$fs_base` (the left side).
+
+There’s one last thing we have to address though. What happens when you refer to a thread-local variable *from another object*?
+
+Well, let’s check `errno` from `twothreads.c`:
+
+``` c
+// in `samples/twothreads/twothreads.c`
+
+#include <stdio.h>
+#include <errno.h>
+
+int main() {
+    printf("errno = %d\n", errno);
+    // rest of main
+}
+```
+
+``` shell
+$ gcc -g twothreads.c -o twothreads -pthread
+$ objdump --disassemble=main ./twothreads | grep -v 'Disassembly of' | grep -v '^$' | head -15
+./twothreads:     file format elf64-x86-64
+00000000000011a1 <main>:
+    11a1:       55                      push   rbp
+    11a2:       48 89 e5                mov    rbp,rsp
+    11a5:       48 83 ec 20             sub    rsp,0x20
+    11a9:       64 48 8b 04 25 28 00    mov    rax,QWORD PTR fs:0x28
+    11b0:       00 00
+    11b2:       48 89 45 f8             mov    QWORD PTR [rbp-0x8],rax
+    11b6:       31 c0                   xor    eax,eax
+    11b8:       e8 83 fe ff ff          call   1040 <__errno_location@plt>
+    11bd:       8b 00                   mov    eax,DWORD PTR [rax]
+    11bf:       89 c6                   mov    esi,eax
+    11c1:       48 8d 3d 3c 0e 00 00    lea    rdi,[rip+0xe3c]        # 2004 <_IO_stdin_used+0x4>
+    11c8:       b8 00 00 00 00          mov    eax,0x0
+    11cd:       e8 8e fe ff ff          call   1060 <printf@plt>
+```
+
+Aww… looks like it’s calling a function that returns the address of `errno`. That’s no fun at all.
+
+Ok, let’s cheat a little:
+
+``` c
+// in `samples/twothreads/twothreads.c`
+
+// new: we no longer include <errno.h>
+
+// new: we declare `errno` ourselves:
+extern __thread int errno;
+```
+
+``` shell
+$ gcc -g twothreads.c -o twothreads -pthread
+$ nm -D ./twothreads | grep errno
+                 U errno@@GLIBC_PRIVATE
+```
+
+Yes yes, private. Well the linker thinks otherwise.
+
+``` shell
+$ objdump --disassemble=main ./twothreads | grep -v 'Disassembly of' | grep -v '^$' | head -15
+./twothreads:     file format elf64-x86-64
+0000000000001191 <main>:
+    1191:       55                      push   rbp
+    1192:       48 89 e5                mov    rbp,rsp
+    1195:       48 83 ec 20             sub    rsp,0x20
+    1199:       64 48 8b 04 25 28 00    mov    rax,QWORD PTR fs:0x28
+    11a0:       00 00
+    11a2:       48 89 45 f8             mov    QWORD PTR [rbp-0x8],rax
+    11a6:       31 c0                   xor    eax,eax
+    11a8:       48 8b 05 29 2e 00 00    mov    rax,QWORD PTR [rip+0x2e29]        # 3fd8 <errno@GLIBC_PRIVATE>
+    11af:       64 8b 00                mov    eax,DWORD PTR fs:[rax]
+    11b2:       89 c6                   mov    esi,eax
+    11b4:       48 8d 3d 49 0e 00 00    lea    rdi,[rip+0xe49]        # 2004 <_IO_stdin_used+0x4>
+    11bb:       b8 00 00 00 00          mov    eax,0x0
+    11c0:       e8 8b fe ff ff          call   1050 <printf@plt>
+```
+
+There! At `11a8`, it reads a value from.. somewhere, that’s rip-relative, then it dereferences it, relative to the `%fs` segment register.
+
+Where does it read that address from exactly?
+
+``` shell
+$ readelf -SW twothreads | grep 3fd
+  [21] .got              PROGBITS        0000000000003fd0 002fd0 000030 08  WA  0   0  8
+```
+
+Of course! The global offset table! And there must be a relocation that changes that offset, right?
+
+``` shell
+$ readelf -Wr twothreads | grep 3fd8
+0000000000003fd8  0000000300000012 R_X86_64_TPOFF64       0000000000000000 errno@GLIBC_PRIVATE + 0
+```
+
+Perfect.
+
+I think we have all the pieces we need to implement thread-local storage in `elk`.
+
+First, we’re going to make a `TLS` struct to represent thread-local storage:
+
+``` rust
+// in `elk/src/process.rs`
+
+#[derive(Debug)]
+pub struct TLS {
+    offsets: HashMap<delf::Addr, delf::Addr>,
+    block: Vec<u8>,
+    tcb_addr: delf::Addr,
+}
+```
+
+…and then we’ll add it to our `Process` struct:
+
+``` rust
+// in `elk/src/process.rs`
+
+#[derive(Debug)]
+pub struct Process {
+    pub search_path: Vec<PathBuf>,
+
+    pub objects: Vec<Object>,
+    pub objects_by_path: HashMap<PathBuf, usize>,
+
+    // 👇
+    pub tls: TLS,
+}
+```
+
+And then… and then we have a design problem on our hands.
+
+We can’t really initialize the `tls` field to anything *meaningful* in `Process::new`:
+
+``` rust
+// in `elk/src/process.rs`
+
+impl<S> Process<S> {
+    pub fn new() -> Process<StateLoading> {
+        Self {
+            objects: Vec::new(),
+            objects_by_path: HashMap::new(),
+            search_path: vec!["/usr/lib".into()],
+            // what should this be set to??
+            tls: unimplemented!(),
+        }
+    }
+}
+```
+
+Sure, we could use an `Option<T>`. But then we could have a process that’s in an inconsistent state!
+
+We want to achieve the following steps, in order:
+
+- Load the executable ELF and all its dependencies (and their dependencies, too)
+- Allocate thread-local storage and determine TLS offset for all ELF objects with thread-local variables
+- Apply relocations (using the offsets we just computed)
+- Initialize thread-local storage by copying over from the relevant TLS segments
+- Adjust protections of the various memory segments
+- Set the `%fs` segment register base
+- Set up the stack
+- Jump to the entry point
+
+And if we did something like:
+
+``` rust
+// imaginary user code
+
+let mut proc = process::Process::new();
+let exec_index = proc.load_object_and_dependencies("./target/release/echidna")?;
+proc.apply_relocations()?;
+```
+
+…then we’d crash in `Process::apply_relocations()` - since we haven’t called `Process::allocate_tls()`, the `tls` field is still `None`, and we can’t apply `TPOFF64` relocations.
+
+Ideally, our API would be designed in such a way that it would be *impossible* for us to do those operations out of order. But it would *still* let us inspect fields like `objects` and `tls` at various stages, if we wanted to add a little debug printing - as a treat.
+
+There’s a design pattern that’s perfectly suited to this problem: typestates.
+
+## A quick detour through typestates
+
+There’s a couple ways to do typestates, but the basic idea is to prevent invalid states by leveraging the type system.
+
+In this design pattern, the type of a value doesn’t only determine its *type*, but also its *state* (hence, “typestate”), along with a set of operations that can be applied to it.
+
+In our case, we’re going to add a type parameter to `Process`:
+
+``` rust
+// in `src/elk/process.rs`
+
+pub struct Process<S: ProcessState> {
+    pub state: S,
+}
+```
+
+And then we’re going to make up types that represent the various, well, states that a `Process` can have, along with its associated data.
+
+They’re all going to implement a common trait: `ProcessState`:
+
+``` rust
+// everything is in `src/elk/process.rs`, I'm going to stop adding those because
+// there's going to be a *lot* of snippets.
+
+pub trait ProcessState {
+    fn loader(&self) -> &Loader;
+}
+```
+
+No matter what state it’s in, the `Process` instance always has a `Loader` - which regroups all the fields we had before:
+
+``` rust
+pub struct Loader {
+    pub search_path: Vec<PathBuf>,
+    pub objects: Vec<Object>,
+    pub objects_by_path: HashMap<PathBuf, usize>,
+}
+```
+
+Then we can start implementing our states: the initial state is `Loading`:
+
+``` rust
+pub struct Loading {
+    pub loader: Loader,
+}
+impl ProcessState for Loading {
+    fn loader(&self) -> &Loader {
+        &self.loader
+    }
+}
+```
+
+This is the state you get the `Process` in when you call `Process::new()`:
+
+``` rust
+impl Process<Loading> {
+    pub fn new() -> Self {
+        Self {
+            state: Loading {
+                loader: Loader {
+                    objects: Vec::new(),
+                    objects_by_path: HashMap::new(),
+                    search_path: vec!["/usr/lib".into()],
+                },
+            },
+        }
+    }
+}
+```
+
+From there, we can define a set of methods that can be called on `Process` *in this state*:
+
+``` rust
+impl Process<Loading> {
+    pub fn object_path(&self, name: &str) -> Result<PathBuf, LoadError> {
+         // same as before, except references like
+         //    self.objects
+         // turn into
+         //    self.state.loader.objects
+         // etc.
+    }
+
+    pub fn get_object(&mut self, name: &str) -> Result<GetResult, LoadError> {
+         // etc.
+    }
+
+    pub fn load_object_and_dependencies<P: AsRef<Path>>(
+        &mut self,
+        path: P,
+    ) -> Result<usize, LoadError> {
+         // etc.
+    }
+
+    pub fn load_object<P: AsRef<Path>>(&mut self, path: P) -> Result<usize, LoadError> {
+         // etc.
+    }
+}
+```
+
+We can also define methods that are callable *in any state*. For example, `Process::lookup_symbol()` needs only read access, it doesn’t have any side effects, why not allow it all the time, for debugging purposes?
+
+``` rust
+impl<S: ProcessState> Process<S> {
+    fn lookup_symbol(&self, wanted: &ObjectSym, ignore_self: bool) -> ResolvedSym {
+         // `S` could be anything that implements `ProcessState` here.
+         // Instead of accessing `self.state.loader`, we need to use the
+         // trait method `self.state.loader()`
+    }
+}
+```
+
+Finally, we can implement methods that *change the object’s state*. In Rust, with the way we set things up, we encode that by taking `self` (consuming it), and returning another `Process`.
+
+One of these is `Process::allocate_tls`, which transitions from the `Loading` state to the `TLSAllocated` state.
+
+Incidentally, this is core to our TLS implementation, so pay attention!
+
+``` rust
+pub struct TLSAllocated {
+    // This field used to be pub, and now it's not. That way,
+    // we don't have to worry about users of the API mutating
+    // `objects`, `objects_by_path`, `search_path`, etc.
+    loader: Loader,
+    // This state has an extra field! It's not optional,
+    // it didn't exist in the previous state, and it now exists.
+    pub tls: TLS,
+}
+impl ProcessState for TLSAllocated {
+    fn loader(&self) -> &Loader {
+        &self.loader
+    }
+}
+
+impl Process<Loading> {
+    pub fn allocate_tls(mut self) -> Process<TLSAllocated> {
+        let mut offsets = HashMap::new();
+        // total space needed for all thread-local variables of all ELF objects
+        let mut storage_space = 0;
+        for obj in &mut self.state.loader.objects {
+            let needed = obj
+                .file
+                .segment_of_type(delf::SegmentType::TLS)
+                .map(|ph| ph.memsz.0)
+                .unwrap_or_default() as u64;
+
+            // if we have a non-empty TLS segment for this object...
+            if needed > 0 {
+                // Compute a "backwards offset", going left from tcb_addr
+                let offset = delf::Addr(storage_space + needed);
+                // Note: this requires deriving `Hash` for `delf::Addr`,
+                // which is left as an exercise to the reader.
+                offsets.insert(obj.base, offset);
+                storage_space += needed;
+            }
+        }
+
+        let storage_space = storage_space as usize;
+        let tcbhead_size = 704; // per our GDB session
+        let total_size = storage_space + tcbhead_size;
+
+        // Allocate the whole capacity upfront so the vector doesn't
+        // get resized, and `tcb_addr` doesn't get invalidated
+        let mut block = Vec::with_capacity(total_size);
+        // This is what we'll be setting `%fs` to
+        let tcb_addr = delf::Addr(block.as_ptr() as u64 + storage_space as u64);
+        for _ in 0..storage_space {
+            // For now, zero out storage
+            block.push(0u8);
+        }
+
+        // Build a "somewhat fake" tcbhead structure
+        block.extend(&tcb_addr.0.to_le_bytes()); // tcb
+        block.extend(&0_u64.to_le_bytes()); // dtv
+        block.extend(&tcb_addr.0.to_le_bytes()); // thread pointer
+        block.extend(&0_u32.to_le_bytes()); // multiple_threads
+        block.extend(&0_u32.to_le_bytes()); // gscope_flag
+        block.extend(&0_u64.to_le_bytes()); // sysinfo
+        block.extend(&0xDEADBEEF_u64.to_le_bytes()); // stack guard
+        block.extend(&0xFEEDFACE_u64.to_le_bytes()); // pointer guard
+        while block.len() < block.capacity() {
+            // We don't care about the other fields, just pad out with zeros
+            block.push(0u8);
+        }
+
+        let tls = TLS {
+            offsets,
+            block: block,
+            tcb_addr,
+        };
+
+        // This returns a `Process<TLSAllocated>`, with our new TLS information
+        Process {
+            state: TLSAllocated {
+                loader: self.state.loader,
+                tls,
+            },
+        }
+    }
+}
+```
+
+Let’s look at this API from the user’s point of view. What we’ve done so far enables correct usage, like this:
+
+``` rust
+// imaginary user code
+
+let mut proc = process::Process::new();
+// proc => Process<Loading>
+proc.load_object_and_dependencies("./injected-libs/libsuspicious.so")?;
+// proc => Process<Loading>
+proc.load_object_and_dependencies("./target/release/echidna")?;
+// proc => Process<Loading>
+let proc = proc.allocate_tls();
+// proc => Process<TLSAllocated>
+```
+
+But incorrect usage would trigger a compiler error:
+
+``` rust
+// imaginary user code
+
+let mut proc = process::Process::new();
+// proc => Process<Loading>
+proc.load_object_and_dependencies("./injected-libs/libsuspicious.so")?;
+// proc => Process<TLSAllocated>
+let proc = proc.allocate_tls();
+// proc => Process<Loading>
+proc.load_object_and_dependencies("./target/release/echidna")?;
+```
+
+``` shell
+cargo check
+    Checking elk v0.1.0 (/home/amos/ftl/elk)
+error[E0599]: no method named `load_object_and_dependencies` found for struct `process::Process<process::TLSAllocated>` in the current scope
+   --> src/main.rs:248:10
+    |
+248 |     proc.load_object_and_dependencies("./injected-libs/libsuspicious.so")?;
+    |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^ method not found in `process::Process<process::TLSAllocated>`
+    |
+   ::: src/process.rs:88:1
+    |
+88  | pub struct Process<S: ProcessState> {
+    | ----------------------------------- method `load_object_and_dependencies` not found for this
+
+error: aborting due to previous error
+```
+
+And this is *exactly what we’ve been looking for*.
+
+Moving on: after allocating TLS, we want to be able to apply relocations, so we have an impl block for *precisely* `Process<TLSAllocated>`:
+
+``` rust
+/// This is our state after applying relocations
+pub struct Relocated {
+    loader: Loader,
+    tls: TLS,
+}
+
+impl ProcessState for Relocated {
+    fn loader(&self) -> &Loader {
+        &self.loader
+    }
+}
+
+impl Process<TLSAllocated> {
+    // now taking self by value 👇
+    pub fn apply_relocations(self) -> Result<Process<Relocated>, RelocationError> {
+        // same as before, except...
+
+        // we return a different type
+        let res = Process {
+            state: Relocated {
+                loader: self.state.loader,
+                tls: self.state.tls,
+            },
+        };
+        Ok(res)
+    }
+
+    // This one isn't pub - it's internal. But we can also only call it in the
+    // "TLSAllocated" state. Also, it takes `&self` - it doesn't change the process's
+    // state by itself.
+    fn apply_relocation(&self, objrel: ObjectRel) -> Result<(), RelocationError> {
+        // same as before
+    }
+}
+```
+
+Once we have a `Process<Relocated>`, we can initialize TLS by copying it from the ELF object’s TLS segments. This returns a `Process<TLSInitialized>`
+
+``` rust
+/// Our state after initializing TLS
+pub struct TLSInitialized {
+    loader: Loader,
+    tls: TLS,
+}
+
+impl ProcessState for TLSInitialized {
+    fn loader(&self) -> &Loader {
+        &self.loader
+    }
+}
+
+
+impl Process<Relocated> {
+    pub fn initialize_tls(self) -> Process<TLSInitialized> {
+        let tls = &self.state.tls;
+
+        for obj in &self.state.loader.objects {
+            if let Some(ph) = obj.file.segment_of_type(delf::SegmentType::TLS) {
+                if let Some(offset) = tls.offsets.get(&obj.base).cloned() {
+                    unsafe {
+                        (tls.tcb_addr - offset)
+                            .write((ph.vaddr + obj.base).as_slice(ph.filesz.into()));
+                    }
+                }
+            }
+        }
+
+        Process {
+            state: TLSInitialized {
+                loader: self.state.loader,
+                tls: self.state.tls,
+            },
+        }
+    }
+}
+```
+
+> **Cool Bear's hot tip**
+>
+> This code uses the *extremely unsafe* memory-manipulation-from-raw-addresses helpers we made all the way back in [Part 8](https://fasterthanli.me/series/making-our-own-executable-packer/part-8).
+
+Now, once we have a `TLSInitialized` process, we can adjust the protections for our various segments…
+
+``` rust
+/// Our state after adjusting protections for segments
+pub struct Protected {
+    loader: Loader,
+    tls: TLS,
+}
+
+impl ProcessState for Protected {
+    fn loader(&self) -> &Loader {
+        &self.loader
+    }
+}
+
+// only when TLS is already initialized...
+impl Process<TLSInitialized> {
+    // same as before but      👇     and      👇
+    pub fn adjust_protections(self) -> Result<Process<Protected>, region::Error> {
+        use region::{protect, Protection};
+
+        for obj in &self.objects {
+            for seg in &obj.segments {
+                let mut protection = Protection::NONE;
+                for flag in seg.flags.iter() {
+                    protection |= match flag {
+                        delf::SegmentFlag::Read => Protection::READ,
+                        delf::SegmentFlag::Write => Protection::WRITE,
+                        delf::SegmentFlag::Execute => Protection::EXECUTE,
+                    }
+                }
+                unsafe {
+                    protect(seg.map.data(), seg.map.len(), protection)?;
+                }
+            }
+        }
+
+        Ok(Process {
+            state: Protected {
+                loader: self.state.loader,
+                tls: self.state.tls,
+            },
+        })
+    }
+}
+```
+
+…and once we have a `Process<Protected>`, we can start it!
+
+In that case, the `start` methods consumes `self` and… never returns.
+
+``` rust
+pub struct StartOptions {
+    // new: we take an `usize` index rather than a `&'a Object` so that
+    // `Process::start` can consume `self`.
+    // (which it cannot do if the `Process` is already borrowed by the
+    // `StartOptions`)
+    pub exec_index: usize,
+    pub args: Vec<CString>,
+    pub env: Vec<CString>,
+    pub auxv: Vec<Auxv>,
+}
+
+impl Process<Protected> {
+    // consuming 👇 and     never returning 👇
+    pub fn start(self, opts: &StartOptions) -> ! {
+        let exec = &self.state.loader.objects[opts.exec_index];
+        let entry_point = exec.file.entry_point + exec.base;
+        let stack = Self::build_stack(opts);
+
+        unsafe {
+            // new!
+            set_fs(self.state.tls.tcb_addr.0);
+            jmp(entry_point.as_ptr(), stack.as_ptr(), stack.len())
+        };
+    }
+
+    fn build_stack(opts: &StartOptions) -> Vec<u64> {
+        // same as before
+    }
+}
+
+// new return type: `!`
+#[inline(never)]
+unsafe fn jmp(entry_point: *const u8, stack_contents: *const u64, qword_count: usize) -> ! {
+    asm!(
+        // same inline asm as before
+    )
+    // 👇 this block is new. it tells LLVM we never return,
+    // and it will throw a SIGILL if we somehow end up executing
+    // this code
+    asm!("ud2", options(noreturn));
+}
+
+// We could use libc's wrapper for it but, darn it, we know
+// how to make a syscall! (I think!)
+#[inline(never)]
+unsafe fn set_fs(addr: u64) {
+    let syscall_number: u64 = 158;
+    let arch_set_fs: u64 = 0x1002;
+
+    asm!(
+        "syscall",
+        inout("rax") syscall_number => _,
+        in("rdi") arch_set_fs,
+        in("rsi") addr,
+        lateout("rcx") _, lateout("r11") _,
+    )
+}
+```
+
+> **Cool Bear's hot tip**
+>
+> It’s important to note that after calling `set_fs`, we should avoid doing a *lot* of things.
+>
+> For example, calling `println!` will lock stdout, and locks use thread-local storage, so that will crash now.
+>
+> Allocating memory on the heap will call `malloc`, and malloc uses thread-local storage, so that will also crash.
+>
+> In fact, we should try doing as few things as possible. If we did need logging *after* `set_fs`, we should write our own logging functions on top of the `write!` syscall, and only do stack-allocation. Which, as it turns out, is relatively easy to do in Rust, as we’ve seen in `echidna`!
+
+Now that we’re done messing with `process.rs`, we should invoke it correctly from `main.rs`:
+
+``` rust
+fn cmd_run(args: RunArgs) -> Result<(), Box<dyn Error>> {
+    let mut proc = process::Process::new();
+    let exec_index = proc.load_object_and_dependencies(&args.exec_path)?;
+
+    // each of these now returns a different type - we simply
+    // shadow the previous `proc` with it.
+    let proc = proc.allocate_tls();
+    let proc = proc.apply_relocations()?;
+    let proc = proc.initialize_tls();
+    let proc = proc.adjust_protections()?;
+
+    use std::ffi::CString;
+
+    let args = std::iter::once(CString::new(args.exec_path.as_bytes()).unwrap())
+        .chain(
+            args.args
+                .iter()
+                .map(|s| CString::new(s.as_bytes()).unwrap()),
+        )
+        .collect();
+
+    let opts = process::StartOptions {
+        // we no longer borrow `exec` here, we just pass the index
+        exec_index,
+        args,
+        env: std::env::vars()
+            .map(|(k, v)| CString::new(format!("{}={}", k, v).as_bytes()).unwrap())
+            .collect(),
+        auxv: process::Auxv::get_known(),
+    };
+    proc.start(&opts);
+}
+```
+
+And that’s all we need to run our TLS-using version of `echidna`!
+
+``` shell
+$ cargo b --release --quiet
+$ cd samples/echidna
+$ ../../target/release/elk run ./target/release/echidna
+   Compiling delf v0.1.0 (/home/amos/ftl/delf)
+   Compiling elk v0.1.0 (/home/amos/ftl/elk)
+    Finished release [optimized + debuginfo] target(s) in 6.61s
+Loading "/home/amos/ftl/samples/echidna/target/release/echidna"
+10
+100
+30
+600
+received 1 arguments:
+ - ./target/release/echidna
+environment variables:
+(cut)
+```
+
+We can even dig a little deeper with GDB.
+
+> **Cool Bear's hot tip**
+>
+> For the next part, there’s a couple adjustments to make.
+>
+> First, enable debug symbols for release builds of `elk` if you haven’t already (by editing its `Cargo.toml` and rebuilding it).
+>
+> Second, re-install `elk` with `cargo install --path ./elk` so that when it’s invoked from GDB, it knows about that new `SectionType` we added.
+>
+> That’s it!
+
+As I was saying, we can even dig a little deeper with GDB.
+
+``` shell
+$ gdb --quiet --args ./target/debug/elk run ./samples/echidna/target/release/echidna
+Reading symbols from ./target/debug/elk...
+warning: Missing auto-load script at offset 0 in section .debug_gdb_scripts
+of file /home/amos/ftl/elf-series/target/debug/elk.
+Use `info auto-load python-scripts [REGEXP]' to list them.
+(gdb) break elk::process::Process<elk::process::Protected>::start
+Breakpoint 1 at 0x300bc: file /home/amos/ftl/elf-series/elk/src/process.rs, line 742.
+(gdb) r
+Starting program: /home/amos/ftl/elf-series/target/debug/elk run ./samples/echidna/target/release/echidna
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/usr/lib/libthread_db.so.1".
+Loading "/home/amos/ftl/elf-series/samples/echidna/target/release/echidna"
+
+Breakpoint 1, elk::process::Process<elk::process::Protected>::start (self=..., opts=0x7fffffffd6f0) at /home/amos/ftl/elf-series/elk/src/process.rs:742
+742             let exec = &self.state.loader.objects[opts.exec_index];
+(gdb)
+```
+
+Now by this point we’ve loaded everything in memory, but GDB doesn’t know it yet:
+
+``` shell
+$ (gdb) info addr play_with_tls
+No symbol "play_with_tls" in current context.
+```
+
+Luckily, we’ve been there before! And we’ve gone the extra kilometer, by leveraging `delf` and `elk` to augment GDB:
+
+``` shell
+(gdb) autosym
+add symbol table from file "/home/amos/ftl/elf-series/target/debug/elk" at
+        .text_addr = 0x555555565080
+add symbol table from file "/usr/lib/libpthread-2.32.so" at
+        .text_addr = 0x7ffff7da9a70
+add symbol table from file "/usr/lib/libgcc_s.so.1" at
+        .text_addr = 0x7ffff7dc7020
+add symbol table from file "/usr/lib/libc-2.32.so" at
+        .text_addr = 0x7ffff7e04650
+add symbol table from file "/usr/lib/libdl-2.32.so" at
+        .text_addr = 0x7ffff7fa8210
+add symbol table from file "/home/amos/ftl/elf-series/samples/echidna/target/release/echidna" at
+        .text_addr = 0x7ffff7fc5000
+add symbol table from file "/usr/lib/ld-2.32.so" at
+        .text_addr = 0x7ffff7fd2090
+```
+
+And now the symbols from `echidna` are available:
+
+``` shell
+(gdb) info addr play_with_tls
+Symbol "play_with_tls" is at 0x7ffff7fc5030 in a file compiled without debugging.
+```
+
+Let’s inspect `$fs_base` *before* we set it:
+
+``` shell
+(gdb) p/x $fs_base
+$1 = 0x7ffff7da0c00
+(gdb) add-symbol-file ~/ftl/elf-series/samples/glibc-symbols/tcbhead.o
+add symbol table from file "/home/amos/ftl/elf-series/samples/glibc-symbols/tcbhead.o"
+(y or n) y
+Reading symbols from /home/amos/ftl/elf-series/samples/glibc-symbols/tcbhead.o...
+(gdb) set language c
+Warning: the current language does not match this frame.
+(gdb) set print pretty on
+(gdb) print *(tcbhead_t*)$fs_base
+$2 = {
+  tcb = 0x7ffff7da0c00,
+  dtv = 0x7ffff7da1600,
+  self = 0x7ffff7da0c00,
+  multiple_threads = 0,
+  gscope_flag = 0,
+  sysinfo = 0,
+  stack_guard = 9987186611923698944,
+  pointer_guard = 9879317338541963000,
+(etc.)
+```
+
+So this is the *real* TCB - that glibc set up for `elk` when it started.
+
+Now let’s inspect it again right after `set_fs` returns:
+
+``` shell
+$ gdb --quiet --args ./target/debug/elk run ./samples/echidna/target/release/echidna
+Reading symbols from ./target/debug/elk...
+warning: Missing auto-load script at offset 0 in section .debug_gdb_scripts
+of file /home/amos/ftl/elf-series/target/debug/elk.
+Use `info auto-load python-scripts [REGEXP]' to list them.
+(gdb) break set_fs
+Breakpoint 1 at 0x305d9: file /home/amos/ftl/elf-series/elk/src/process.rs, line 833.
+(gdb) r
+Starting program: /home/amos/ftl/elf-series/target/debug/elk run ./samples/echidna/target/release/echidna
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/usr/lib/libthread_db.so.1".
+Loading "/home/amos/ftl/elf-series/samples/echidna/target/release/echidna"
+
+Breakpoint 1, elk::process::set_fs (addr=93824993772920) at /home/amos/ftl/elf-series/elk/src/process.rs:833
+833         let syscall_number: u64 = 158;
+(gdb) finish
+Run till exit from #0  elk::process::set_fs (addr=93824993772920) at /home/amos/ftl/elf-series/elk/src/process.rs:833
+0x0000555555584148 in elk::process::Process<elk::process::Protected>::start (self=..., opts=0x7fffffffd6f0) at /home/amos/ftl/elf-series/elk/src/process.rs:748
+748                 set_fs(self.state.tls.tcb_addr.0);
+(gdb) add-symbol-file ~/ftl/elf-series/samples/glibc-symbols/tcbhead.o
+add symbol table from file "/home/amos/ftl/elf-series/samples/glibc-symbols/tcbhead.o"
+(y or n) y
+Reading symbols from /home/amos/ftl/elf-series/samples/glibc-symbols/tcbhead.o...
+(gdb) set language c
+Warning: the current language does not match this frame.
+(gdb) set print pretty on
+(gdb) p *(tcbhead_t*)($fs_base)
+$1 = {
+  tcb = 0x5555556cc578,
+  dtv = 0x0 <t>,
+  self = 0x5555556cc578,
+  multiple_threads = 0,
+  gscope_flag = 0,
+  sysinfo = 0,
+  stack_guard = 3735928559,
+  pointer_guard = 4277009102,
+  unused_vgetcpu_cache = {0, 0},
+```
+
+Looks good! All the addresses that seem to matter are set properly. We even made our own little `stack_guard` and `pointer_guard` - even though they should probably be bigger, and perhaps not hardcoded.
+
+``` shell
+(gdb) p/x ((tcbhead_t*)($fs_base))->stack_guard
+$2 = 0xdeadbeef
+(gdb) p/x ((tcbhead_t*)($fs_base))->pointer_guard
+$3 = 0xfeedface
+```
+
+## C programs
+
+But then the question arises: can we run C programs now? Are we there yet?
+
+Let’s try out!
+
+``` shell
+$ cd elk/
+$ cargo b
+$ ./target/debug/elk run /bin/ls
+Loading "/usr/bin/ls"
+Loading "/usr/lib/libcap.so.2.47"
+Loading "/usr/lib/libc-2.32.so"
+Fatal error: Could not read symbols from ELF object: Parsing error: String("Unknown SymType 6 (0x6)"):
+input: 16 00 19 00 10 00 00 00 00 00 00 00 04 00 00 00 0
+```
+
+Ohh. Right. We haven’t done anything to fix that. Well, it just so happens that symbol type 0x6 is… TLS!
+
+``` rust
+// in `delf/src/lib.rs`
+
+#[derive(Debug, TryFromPrimitive, Clone, Copy)]
+#[repr(u8)]
+pub enum SymType {
+    None = 0,
+    Object = 1,
+    Func = 2,
+    Section = 3,
+    File = 4,
+    // New:
+    TLS = 6,
+    IFunc = 10,
+}
+```
+
+Moving on:
+
+``` shell
+$ cargo b -q && ./target/debug/elk run /bin/ls
+Loading "/usr/bin/ls"
+Loading "/usr/lib/libcap.so.2.47"
+Loading "/usr/lib/libc-2.32.so"
+Fatal error: Could not read relocations from ELF object: Parsing error: String("Unknown RelType 18 (0x12)"):
+input: 12 00 00 00 00 00 00 00 38 00 00 00 00 00 00 00 40 1d 1c 00
+```
+
+Ooh, a new relocation type! We’ve kind of ignored relocation higher than `Relative` (8) so far, but the table does continue:
+
+|         |     |        |     |
+|---------|-----|--------|-----|
+| TPOFF64 | 18  | word64 |     |
+
+> **Cool Bear's hot tip**
+>
+> Again, this is taken from the “System V AMD64 ABI” document.
+
+Of course, the empty “calculation” column doesn’t bode well, but… we’ve seen the assembly, we know pretty much what’s expected here: a negative offset which, added to `tcb_addr`, will give the actual address of the symbol.
+
+We should probably take a look what the `TLS` symbols look like in the file though:
+
+```
+$ readelf -Wa /usr/lib/libc-2.32.so | grep TLS
+  L (link order), O (extra OS processing required), G (group), T (TLS),
+  TLS            0x1be418 0x00000000001bf418 0x00000000001bf418 0x000010 0x000088 R   0x8
+ 0x000000000000001e (FLAGS)              BIND_NOW STATIC_TLS
+   324: 0000000000000010     4 TLS     GLOBAL DEFAULT   25 errno@@GLIBC_PRIVATE
+  1996: 000000000000006c     4 TLS     GLOBAL DEFAULT   25 __h_errno@@GLIBC_PRIVATE
+  2040: 0000000000000008     8 TLS     GLOBAL DEFAULT   24 __resp@@GLIBC_PRIVATE
+```
+
+Non-TLS symbols had addresses like `0x0cb680`, which referred to virtual addresses in the ELF object. But TLS symbols have offsets from the start of `.tdata`.
+
+With that, I think we can implement `TPOFF64` relocations correctly:
+
+``` rust
+// in `delf/src/lib.rs`
+
+#[derive(Debug, TryFromPrimitive, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum RelType {
+    _64 = 1,
+    Copy = 5,
+    GlobDat = 6,
+    JumpSlot = 7,
+    Relative = 8,
+    // New!
+    TPOff64 = 18,
+    IRelative = 37,
+}
+```
+
+``` rust
+// in `elk/src/process.rs`
+impl Process<TLSAllocated> {
+    fn apply_relocation(&self, objrel: ObjectRel) -> Result<(), RelocationError> {
+        use delf::RelType as RT;
+
+        // (cut)
+
+        match reltype {
+            // (omitted: other arms)
+            RT::TPOff64 => unsafe {
+                if let ResolvedSym::Defined(sym) = found {
+                    let obj_offset = self
+                        .state
+                        .tls
+                        .offsets
+                        .get(&sym.obj.base)
+                        .unwrap_or_else(|| panic!("No thread-local storage allocated for object {:?}", sym.obj.file));
+                    let obj_offset = -(obj_offset.0 as i64);
+                    // sym sym sym hurray!
+                    let offset = obj_offset + sym.sym.sym.value.0 as i64 + objrel.rel.addend.0 as i64;
+                    objrel.addr().set(offset);
+                }
+            },
+        }
+        Ok(())
+    }
+```
+
+Seems okay. Does it run?
+
+``` shell
+$ cargo b -q && ./target/debug/elk run /bin/ls
+Loading "/usr/bin/ls"
+Loading "/usr/lib/libcap.so.2.47"
+Loading "/usr/lib/libc-2.32.so"
+Loading "/usr/lib/ld-2.32.so"
+[1]    11064 segmentation fault  ./target/debug/elk run /bin/ls
+```
+
+Not quite.
+
+I know, I know, you’re disappointed. So am I! So is cool bear. But do not worry. The series is reaching critical mass… and so that must mean the dénouement will be upon us soon. Very soon.
+
+> **What did we learn?**
+>
+> In 2020, *as far as CPU memory models are concerned*, we have it somewhat good. Segmentation is mostly a thing of the past, *except* for thread-local storage, where Linux 64-bit uses the `%fs` segment register to store the address of the “TCB head” (thread control block).
+>
+> In GDB, the `$fs` pseudo-variable is always 0 - we can use `$fs_base` to find the value we’re looking for. In code, we can use the `arch_prctl` syscall with `ARCH_GET_FS` and `ARCH_SET_FS` values.
+>
+> TLS variables come with a new type of relocation: `TPOFF64`. The way the value is computed is specific to the dynamic loader - in elk’s case, we chose to only support a single thread, and we store object offsets in a HashMap. The resulting value is always a negative offset from `$fs_base`.
+>
+> **Typestates** are a neat way to encode the state of an object in its type, to prevent API misuse. They probably would’ve warranted a whole article, but adding that pattern after-the-fact to elk’s codebase was all in all relatively painless.

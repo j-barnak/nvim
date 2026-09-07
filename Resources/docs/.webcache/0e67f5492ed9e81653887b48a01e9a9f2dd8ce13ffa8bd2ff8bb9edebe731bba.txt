@@ -1,0 +1,3199 @@
+# GDB scripting and Indirect functions
+
+In the last article, we cleaned up our dynamic linker a little. We even implemented the `Dynamic` relocation.
+
+But it’s still pretty far away from running real-world applications.
+
+Let’s try running a simple C application with it:
+
+``` c
+// in `samples/puts.c`
+
+#include <stdio.h>
+
+int main() {
+    puts("Hello from C");
+    return 0;
+}
+```
+
+``` shell
+$ cd samples/
+$ gcc puts.c -o puts
+$ ../target/debug/elk ./puts
+Loading "/home/amos/ftl/elk/samples/puts"
+Loading "/usr/lib/libc-2.32.so"
+Fatal error: Could not read symbols from ELF object: Parsing error: String("Unknown SymType 10 (0xa)"):
+input: 1a 00 10 00 a0 bf 0b 00 00 00 00 00 c1 00 00 00 00 00 00 00
+```
+
+Even if we *did* add that variant to `SymType`, I’m sure there’d be other relocation types, and other subtle things we’re not doing quite right yet.
+
+Although, the problem here really is loading `libc-2.32.so`, right? Loading the `puts` executable itself went no problem. Of course, `libc` is the library that provides the `puts()` function, so, there’s that.
+
+But if we could have a C program.. that does *not* depend on libc, then we could probably load it.
+
+Right?
+
+Let’s try one
+
+``` c
+// in `samples/nolibc.c`
+
+int main() {
+    return 0;
+}
+```
+
+GCC does link to libc (and a bunch of other libraries) by default, but it lets us disable that behavior, which we’re going to take full advantage of:
+
+``` shell
+$ # in samples/
+$ gcc -nostartfiles -nodefaultlibs nolibc.c -o nolibc
+/usr/bin/ld: warning: cannot find entry symbol _start; defaulting to 0000000000001000
+```
+
+Oh. OH. C programs have a `main` function, but `ld` expects the entry point to be named `_start`.
+
+This makes sense - when we wrote test programs in assembly, our entry point was always named `_start`. It also wasn’t really a function - it didn’t take any arguments, and we never returned from it — we just invoked the `exit` syscall.
+
+So maybe… `main` is provided by gcc only when “startfiles” is enabled. That would make sense. I’m too lazy to check right now, but I’m fairly sure our executable won’t run as-is.
+
+``` shell
+$ ./nolibc
+[1]    9994 segmentation fault (core dumped)  ./nolibc
+```
+
+Right.
+
+Let’s name our entry point `_start` then:
+
+``` c
+// in `samples/nolibc.c`
+
+int _start() {
+    return 0;
+}
+```
+
+``` shell
+$ gcc -nostartfiles -nodefaultlibs nolibc.c -o nolibc
+$
+```
+
+No warnings this time!
+
+``` shell
+$ ./nolibc
+[1]    10208 segmentation fault (core dumped)  ./nolibc
+```
+
+That’s not much better.
+
+What went wrong this time? Well… we just said we don’t really return from `_start`. We call `exit` or die.
+
+Okay, let’s try calling `exit`. I guess we can also make `_start` void, since we’re never - ever - going to return from it.
+
+``` c
+// in `samples/nolibc.c`
+
+#include <stdlib.h>
+
+void _start() {
+    exit(42);
+}
+```
+
+``` shell
+$ gcc -nostartfiles -nodefaultlibs nolibc.c -o nolibc
+/usr/bin/ld: /tmp/ccKtXh1Q.o: in function `_start':
+nolibc.c:(.text+0xa): undefined reference to `exit'
+collect2: error: ld returned 1 exit status
+```
+
+Ah, of course, `exit` in a C program isn’t just “the syscall”, it’s a function provided by the C library:
+
+``` shell
+$ nm -D /usr/lib/libc-2.32.so | grep "T exit"
+000000000003e730 T exit
+```
+
+So… how do we do a syscall in C… without the C standard library?
+
+> **Cool Bear's hot tip**
+>
+> *chants* Inline assembly! Inline assembly!
+
+Ohkay, here we go:
+
+``` c
+// in `samples/nolibc.c`
+
+void _start() {
+    // note: GCC inline assembly syntax is kinda funky, just go with it
+    __asm__ ("movq $42,%rdi\n\t"
+             "mov $60,%rax\n\t"
+             "syscall");
+}
+```
+
+Well, this doesn’t look like C at all anymore, but it.. should work.
+
+``` shell
+$ gcc -nostartfiles -nodefaultlibs nolibc.c -o nolibc
+$ ./nolibc
+$
+```
+
+Hooray! No crash!
+
+Since the exit code is the only means of communication has with the outside, let’s check it:
+
+``` shell
+$ ./nolibc
+$ echo $?
+42
+```
+
+Wonderful! But now… will `elk` run it?
+
+``` shell
+$ ../target/debug/elk ./nolibc
+Loading "/home/amos/ftl/elk/samples/nolibc"
+$ echo $?
+42
+```
+
+It does! ✨
+
+Well, that was a short one. We can run a C program! We’re pretty much done. Thanks for tuning in.
+
+Just kidding, let’s try some other stuff.
+
+How about making our *own* libc-like functions?
+
+> **Cool Bear's hot tip**
+>
+> You might need [GCC’s Extended Asm documentation page](https://gcc.gnu.org/onlinedocs/gcc/Extended-Asm.html) handy if you really want to understand every bit of the code below.
+>
+> But this is just a one-off. If you’re able to map it roughly to the assembly code we’ve written before, it’s good enough!
+
+``` c
+// in `samples/hello-nolibc.c`
+
+// This mimics libc's `exit` function, but has a different name,
+// because *even* with -nostartfiles and -nodefaultlibs, and no #include
+// directives, GCC will complain that `exit`, which is declared *somewhere*
+// as "noreturn", does in fact return.
+void ftl_exit(int code) {
+    // note: in AT&T syntax, it's "mov src, dst"
+    // the exact opposite of what we're used to in this series!
+    // also, the "%" in register names like "%edi" needs to be
+    // escaped, that's why it's doubled as "%%"
+    __asm__ (
+            " \
+            mov     %[code], %%edi \n\t\
+            mov     $60, %%rax \n\t\
+            syscall"
+            : // no outputs
+            : [code] "r" (code)
+            );
+}
+
+void ftl_print(char *msg) {
+    // this is a little ad-hoc "strlen"
+    int len = 0;
+    while (msg[len]) {
+        len++;
+    }
+
+    __asm__ (
+            " \
+            mov      $1, %%rdi \n\t\
+            mov      %[msg], %%rsi \n\t\
+            mov      %[len], %%edx \n\t\
+            mov      $1, %%rax \n\t\
+            syscall"
+            // outputs
+            :
+            // inputs
+            : [msg] "r" (msg), [len] "r" (len)
+            );
+}
+
+// here's our fake `main()` function
+int main() {
+    ftl_print("Hello from C!\n");
+    return 0;
+}
+
+// and here's the *actual* entry point
+void _start() {
+    ftl_exit(main());
+}
+```
+
+Let’s run it!
+
+``` shell
+$ gcc -nostartfiles -nodefaultlibs hello-nolibc.c -o hello-nolibc
+$ ./hello-nolibc
+Hello from C!
+```
+
+Wonderful! Does it run in elk?
+
+``` shell
+$ ../target/debug/elk ./hello-nolibc
+Loading "/home/amos/ftl/elk/samples/hello-nolibc"
+Hello from C!
+```
+
+It does! So we *can* run non-trivial C programs. As long as they don’t use glibc.
+
+And… glibc is kinda ubiquitous. And it’s kinda the hard part.
+
+So let’s try to get it loading for real.
+
+What were we missing again?
+
+``` shell
+$ ../target/debug/elk ./puts
+Loading "/home/amos/ftl/elk/samples/puts"
+Loading "/usr/lib/libc-2.32.so"
+Fatal error: Could not read symbols from ELF object: Parsing error: String("Unknown SymType 10 (0xa)"):
+input: 1a 00 10 00 a0 bf 0b 00 00 00 00 00 c1 00 00 00 00 00 00 00
+```
+
+Ah, right!
+
+A quick search reveals that it’s a new symbol type, a GNU-specific one even: `STT_GNU_IFUNC`.
+
+It is specified in the [Linux extensions to gABI](https://github.com/hjl-tools/linux-abi/wiki/Linux-Extensions-to-gABI) document, and here’s what it says about it:
+
+> This symbol type is the same as `STT_FUNC` except that it always points to a resolve function or piece of executable code which takes no arguments and returns a function pointer. If an `STT_GNU_IFUNC` symbol is referred to by a relocation, then evaluation of that relocation is delayed until load-time. The value used in the relocation is the function pointer returned by an invocation of the `STT_GNU_IFUNC` symbol.
+>
+> The purpose of the `STT_GNU_IFUNC` symbol type is to allow the run-time to select between multiple versions of the implementation of a specific function. The selection made in general will take the currently available hardware into account and select the most appropriate version
+
+Interesting!
+
+So glibc has multiple versions of some functions, and they’re selected… either at load time? Or the first time they’re called. We’ll do it at load time - we don’t really do lazy symbol resolution yet, and there’s little upside to doing so.
+
+We’re probably not going to get glibc working in the next 5 minutes, so let’s see if we can manage to make our own C program that has an `STT_GNU_IFUNC` symbol.
+
+The `ifunc` attribute is documented in [the GCC manual](https://gcc.gnu.org/onlinedocs/gcc-9.2.0/gcc/Common-Function-Attributes.html#Common-Function-Attributes), which we’re reading a lot lately.
+
+We’ll make a simple program with an indirect function (that’s what the `i` stands for, probably!) called `get_msg`, which has two different implementations, depending on whether the current user is root or not.
+
+This is not really what ifunc is for - we should probably select the implementation based on processor capabilities instead, but it’s good enough for an example.
+
+``` c
+// in `samples/ifunc-nolibc.c`
+
+// this used to be part of `ftl_print`.
+int ftl_strlen(char *s) {
+    int len = 0;
+    while (s[len]) {
+        len++;
+    }
+    return len;
+}
+
+void ftl_print(char *msg) {
+    int len = ftl_strlen(msg);
+
+    // I just wanted to show off that, in the input/output mappings,
+    // you can use any old C expression - here, a call to `ftl_strlen`
+    __asm__ (
+            " \
+            mov      $1, %%rdi \n\t\
+            mov      %[msg], %%rsi \n\t\
+            mov      %[len], %%edx \n\t\
+            mov      $1, %%rax \n\t\
+            syscall"
+            // outputs
+            :
+            // inputs
+            : [msg] "r" (msg), [len] "r" (ftl_strlen(msg))
+            );
+}
+
+// same as before
+void ftl_exit(int code) {
+    __asm__ (
+            " \
+            mov     %[code], %%edi \n\t\
+            mov     $60, %%rax \n\t\
+            syscall"
+            : // no outputs
+            : [code] "r" (code)
+            );
+}
+
+// Here's the implementation of `get_msg` for the root user
+char *get_msg_root() {
+    return "Hello, root!\n";
+}
+
+// Here's the implementation of `get_msg` for a regular user
+char *get_msg_user() {
+    return "Hello, regular user!\n";
+}
+
+// C function pointer syntax is.. well, "funky" doesn't even
+// start to cover it, so let's make a typedef with the type
+// of `get_msg`:
+typedef char *(*get_msg_t)();
+
+// Here's our selector for `get_msg` - it'll return the
+// right implementation based on the current "uid" (user ID).
+static get_msg_t resolve_get_msg() {
+    int uid;
+
+    // make a `getuid` syscall. It has no parameters,
+    // and returns in the `%rax` register.
+    __asm__ (
+            " \
+            mov     $102, %%rax \n\t\
+            syscall \n\t\
+            mov     %%eax, %[uid]"
+            : [uid] "=r" (uid)
+            : // no inputs
+            );
+
+    if (uid == 0) {
+        // UID 0 is root
+        return get_msg_root;
+    } else {
+        // otherwise, it's a regular user
+        return get_msg_user;
+    }
+}
+
+// And here's our `get_msg` declaration, finally!
+// Using the GCC-specific `ifunc` attribute.
+char *get_msg() __attribute__ ((ifunc ("resolve_get_msg")));
+
+int main() {
+    // print whatever `get_msg` returns
+    ftl_print(get_msg());
+    return 0;
+}
+
+void _start() {
+    ftl_exit(main());
+}
+```
+
+Apologies, that sample program was a bit on the long side. But hopefully the idea is clear!
+
+Let’s try to run it normally:
+
+``` shell
+$ gcc -nostartfiles -nodefaultlibs ifunc-nolibc.c -o ifunc-nolibc
+$ ./ifunc-nolibc
+Hello, regular user!
+```
+
+And as root:
+
+``` shell
+$ gcc -nostartfiles -nodefaultlibs ifunc-nolibc.c -o ifunc-nolibc
+$ sudo ./ifunc-nolibc
+[sudo] password for coolbear
+Hello, root!
+```
+
+Wonderful! Everything appears to function as expected.
+
+Let’s run it through `elk`:
+
+``` shell
+$ ../target/debug/elk ./ifunc-nolibc
+Loading "/home/amos/ftl/elk/samples/ifunc-nolibc"
+[1]    21183 segmentation fault (core dumped)  ../target/debug/elk ./ifunc-nolibc
+```
+
+Ah, of course, we haven’t implemented it yet.
+
+But.. hang on.
+
+Why does it segfault?
+
+In [Dynamic linker speed and correctness](https://fasterthanli.me/articles/dynamic-linker-speed-and-correctness), we changed our code to be pretty defensive, so for example:
+
+- An unknown symbol type should show a proper error, not segfault
+- An unknown or unhandled relocation type should show a proper error, not segfault
+
+Why didn’t our program simply show us a nice error?
+
+Let’s try running it under GDB:
+
+``` shell
+$ gdb --args ../target/debug/elk ./ifunc-nolibc
+(gdb) break jmp
+Breakpoint 1 at 0x25539: file src/main.rs, line 49.
+(gdb) r
+Starting program: /home/amos/ftl/elk/target/debug/elk ./ifunc-nolibc
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/usr/lib/libthread_db.so.1".
+Loading "/home/amos/ftl/elk/samples/ifunc-nolibc"
+
+Breakpoint 1, elk::jmp (addr=0x7ffff7fc810a "UH\211\345\270\000") at src/main.rs:49
+49          let fn_ptr: fn() = std::mem::transmute(addr);
+```
+
+Then `Ctrl-x 2` to switch to the TUI (text user interface) mode, and `stepi` a few times:
+
+![ifunc-nolibc-1](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-9/assets/ifunc-nolibc-1~5776eb1700f08365.webp)
+
+Okay, so it’s not immediately obvious what function we’re in. We *should* be in `_start`, though, which has this C code:
+
+``` c
+void _start() {
+    ftl_exit(main());
+}
+```
+
+So this assembly code makes sense:
+
+``` x86asm
+    ; function prologue
+    push rbp
+    mov rbp, rsp
+
+    ; not sure why this is necessary
+    mov eax, 0x0
+    ; call `ftl_main`
+    call 0x7ffff7fc40ed
+
+    ; mov return value of `main` to first argument of `ftl_exit`
+    mov edi, eax
+    ; call `ftl_exit`
+    call 0x7ffff7fc4091
+```
+
+But are we *sure* that’s what `0x7ffff7fc80ed` and `0x7ffff7fc8091` are?
+
+GDB sure doesn’t know about them:
+
+``` shell
+(gdb) info sym 0x7ffff7fc40ed
+No symbol matches 0x7ffff7fc40ed.
+(gdb) info sym 0x7ffff7fc40ed
+No symbol matches 0x7ffff7fc40ed.
+```
+
+And that’s normal! We had `elk` load them itself. Normally, `GDB` hooks itself into the GNU dynamic linker-loader so it knows when a new ELF object file is loaded. But we bypassed that entirely, so poor GDB is lost.
+
+Not to worry though, we can definitely figure out what those addresses are by ourselves.
+
+First get the process ID:
+
+``` shell
+(gdb) info proc
+process 26835
+cmdline = '/home/amos/ftl/elk/target/debug/elk ./ifunc-nolibc'
+cwd = '/home/amos/ftl/elk/samples'
+exe = '/home/amos/ftl/elk/target/debug/elk'
+```
+
+Then look at the memory mappings:
+
+``` shell
+$ cat /proc/26835/maps | grep nolibc
+7ffff7fc3000-7ffff7fc4000 r--p 00000000 08:30 564454                     /home/amos/ftl/elf-series/samples/ifunc-nolibc
+7ffff7fc4000-7ffff7fc5000 r-xp 00001000 08:30 564454                     /home/amos/ftl/elf-series/samples/ifunc-nolibc
+7ffff7fc5000-7ffff7fc6000 r--p 00002000 08:30 564454                     /home/amos/ftl/elf-series/samples/ifunc-nolibc
+7ffff7fc6000-7ffff7fc8000 rw-p 00002000 08:30 564454                     /home/amos/ftl/elf-series/samples/ifunc-nolibc
+```
+
+The executable segment (permissions `r-xp`) is mapped to `7ffff7fc4000-7ffff7fc5000`! Both our addresses were in that range, so that’s promising.
+
+Then, let’s look at the program headers:
+
+``` shell
+$ readelf -a ./ifunc-nolibc
+Program Headers:
+  Type           Offset             VirtAddr           PhysAddr
+                 FileSiz            MemSiz              Flags  Align
+  PHDR           0x0000000000000040 0x0000000000000040 0x0000000000000040
+                 0x0000000000000268 0x0000000000000268  R      0x8
+  INTERP         0x00000000000002a8 0x00000000000002a8 0x00000000000002a8
+                 0x000000000000001c 0x000000000000001c  R      0x1
+      [Requesting program interpreter: /lib64/ld-linux-x86-64.so.2]
+  LOAD           0x0000000000000000 0x0000000000000000 0x0000000000000000
+                 0x0000000000000340 0x0000000000000340  R      0x1000
+  LOAD           0x0000000000001000 0x0000000000001000 0x0000000000001000
+                 0x0000000000000122 0x0000000000000122  R E    0x1000
+  LOAD           0x0000000000002000 0x0000000000002000 0x0000000000002000
+                 0x00000000000001b4 0x00000000000001b4  R      0x1000
+  LOAD           0x0000000000002ef0 0x0000000000003ef0 0x0000000000003ef0
+                 0x0000000000000130 0x0000000000000130  RW     0x1000
+```
+
+The executable segment (flags `R E`) should be mapped at virtual address `1000`.
+
+Which means… the non-relocated addresses of our functions are:
+
+``` shell
+(gdb) p/x 0x7ffff7fc40ed - 0x7ffff7fc4000 + 0x1000
+$1 = 0x10ed
+(gdb) p/x 0x7ffff7fc4091 - 0x7ffff7fc4000 + 0x1000
+$2 = 0x1091
+```
+
+`0x10ed` and `0x1091`, respectively! Which we can find in `ifunc-nolibc` with `nm`:
+
+``` shell
+$ nm samples/ifunc-nolibc | grep -E '(10ed|1091)'
+0000000000001091 T ftl_exit
+00000000000010ed T main
+```
+
+Wonderful! All our assumptions were correct.
+
+That is, however, a *lot* of steps just to figure out where we crashed.
+
+And I want to take a moment to say - I took those steps. Every time a glibc-using program crashed in elk. For, like, 3 days. That’s a lot of hexadecimal math!
+
+But I didn’t really see an alternative… after all, GDB doesn’t know about those object files, so what can we do, right? It’s not like there is a command to let GDB know about additional object files mapped in memory - surely it’s not that flexible.
+
+Unless… it is? No. They wouldn’t. Unless…
+
+> `add-symbol-file *filename* [ -readnow | -readnever ] [ -o *offset* ] [ *textaddress* ] [ -s *section* *address* ... ]`
+>
+> The `add-symbol-file` command reads additional symbol table information from the file *filename*. You would use this command when *filename* has been dynamically loaded (by some other means) into the program that is running. The *textaddress* parameter gives the memory address at which the file’s text section has been loaded. You can additionally specify the base address of other sections using an arbitrary number of ‘`-s *section* *address*`’ pairs. If a section is omitted, GDB will use its default addresses as found in *filename*. Any *address* or *textaddress* can be given as an expression.
+>
+> If an optional *offset* is specified, it is added to the start address of each section, except those for which the address was specified explicitly.
+>
+> The symbol table of the file *filename* is added to the symbol table originally read with the `symbol-file` command. You can use the `add-symbol-file` command any number of times; the new symbol data thus read is kept in addition to the old.
+>
+> Changes can be reverted using the command `remove-symbol-file`.
+
+I uh… excuse me?
+
+By *some other means*? You mean there are *other* people just `mmap`-ing ELF objects into memory, bypassing `ld-linux`? The GNU ecosystem truly does cater to the eccentric.
+
+Very well then! We definitely have the `filename` parameter that `add-symbol-file` takes, but what about `textaddress`? It says it should be the address of the `.text` section of the ELF file.
+
+We, erm, haven’t really bothered with sections much so far, is there an easy way to retrieve that, maybe via `readelf`?
+
+``` shell
+$ readelf --sections ifunc-nolibc | head -10
+There are 18 section headers, starting at offset 0x3480:
+
+Section Headers:
+  [Nr] Name              Type             Address           Offset
+       Size              EntSize          Flags  Link  Info  Align
+  [ 0]                   NULL             0000000000000000  00000000
+       0000000000000000  0000000000000000           0     0     0
+  [ 1] .interp           PROGBITS         00000000000002a8  000002a8
+       000000000000001c  0000000000000000   A       0     0     1
+(cut)
+  [ 8] .text             PROGBITS         0000000000001020  00001020
+       0000000000000102  0000000000000000  AX       0     0     1
+```
+
+Ah yes, here they are! So:
+
+- `ifunc-nolibc`’s executable segment starts at `0x1000` into the file, and it’s mapped at `0x7ffff7fc4000` - keeping in mind that that corresponds to virtual address `0x1000` for that ELF object
+- the `.text` section is at virtual address `0x1020`
+
+So if we take the address it’s mapped to, subtract the virtual address of the executable segment, and add the `.text`’s section virtual address, we should get the address where the `.text` section is actually mapped!
+
+```
+(gdb) p/x 0x7ffff7fc8000 - 0x1000 + 0x1020
+$3 = 0x7ffff7fc8020
+```
+
+And then we should be able to call `add-symbol-file`;
+
+```
+(gdb) add-symbol-file ./ifunc-nolibc 0x7ffff7fc4020
+add symbol table from file "./ifunc-nolibc" at
+        .text_addr = 0x7ffff7fc4020
+(y or n) y
+Reading symbols from ./ifunc-nolibc...
+(No debugging symbols found in ./ifunc-nolibc)
+```
+
+And then, *just like that* everything is annotated:
+
+![ifunc-nolibc-symbols](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-9/assets/ifunc-nolibc-symbols~52abe70eaa4abf44.webp)
+
+And we can instantly see that, yes, indeed we are in `_start`, we’re about to call `main` and then `ftl_exit`. This is so much more comfortable.
+
+I wish I had done that from the start, it probably would’ve saved me days. But hey, live and learn!
+
+Still, doing there’s a bunch of steps we have to do by hand:
+
+- Figure out where the executable object is mapped in memory
+- Find its text section
+- Do some hex math
+- Run a GDB command
+
+And we’ve only done it for *one* object. What if elk loads several objects? Then, rinse, repeat. It gets old *really* quick. And I want you to know that I did that. For one or two days. Which probably means I went through these steps about a hundred times.
+
+So much wasted energy. I really didn’t need to do that.
+
+See, GDB is scriptable! I never really explored that before this series, because I’ve always tried to stay as far away from Python as humanly possible, but here we are, it is our *only option*.
+
+So, let’s give it a shot:
+
+``` python
+# in samples/autosym.py
+
+pid = gdb.selected_inferior().pid
+print("the inferior's PID is %d" % pid)
+```
+
+> **Cool Bear's hot tip**
+>
+> The entire GDB Python API is [well-documented](https://sourceware.org/gdb/current/onlinedocs/gdb/Python-API.html#Python-API).
+>
+> It’s just a hassle to find the function you need. Nothing a well-formed Google search can’t fix though:
+>
+> ![gdb-python-google](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-9/assets/gdb-python-google~4c32e626e343a0c4.webp)
+>
+> It helps if you skim the rest of the manual first, to get acquainted with GDB’s [nomenclature](https://en.wikipedia.org/wiki/Nomenclature) - here, the “inferior” is the process GDB is currently debugging.
+>
+> Now that that’s out of the way, onward!
+
+``` shell
+(gdb) source autosym.py
+the inferior's PID is 21562
+```
+
+So, we can execute Python code inside GDB. And from that code, we can get the inferior’s PID.
+
+The logical next step would be to read `/proc/:pid/maps`. Which we definitely can do from Python:
+
+``` python
+maps = open("/proc/%d/maps" % pid).read()
+print(maps)
+```
+
+Then we could split it into lines, split those lines into tokens, parse some of those tokens as hexadecimal numbers, etc.
+
+We could pretty much anything in Python! It’s a real language, honest. In fact, my first version was [all Python](https://gist.github.com/fasterthanlime/394722850ebb73683760f5a718c4af8d). Except for a call to `readelf`, because I’m *not* re-implementing an ELF parser in Python, and I’m not messing with installing Python libraries.
+
+But here’s the thing. I *really* dislike writing Python. It’s fine, yes! Just not for me. When I first came up with the script, there was a lot of trial and error - most of which could’ve been caught by compile-time checks!
+
+And then the script was half-working for a while, but it broke on some new executable file, because `readelf` gave slightly different output and, well, parsing the textual output of another tool is always error-prone.
+
+And, you know, we don’t *need* `readelf`. We have a full ELF parser right there! In Rust! So we could just write a Rust program that, given a PID, looks at the memory mappings, parses any `.so` files, figures out where the text section is, does some maths, and spits out a bunch of GDB commands to execute.
+
+In fact, `elk` stands for “executable & linker kit” - emphasis on the “kit”. It’s time we made `elk` a real command-line application, with subcommands.
+
+I would usually use the [clap](https://lib.rs/crates/clap) or [pico-args](https://lib.rs/crates/pico-args) crates for that, but there is a new kid on the block.
+
+Let’s give [argh](https://lib.rs/crates/argh) a chance.
+
+``` shell
+$ cd elk/
+$ cargo add argh@0.1
+cargo add argh
+      Adding argh v0.1.4 to dependencies
+```
+
+Okay, let’s go, chop chop:
+
+``` rust
+// in `elk/src/main.rs`
+
+use argh::FromArgs;
+
+#[derive(FromArgs, PartialEq, Debug)]
+/// Top-level command
+struct Args {
+    #[argh(subcommand)]
+    nested: SubCommand,
+}
+
+#[derive(FromArgs, PartialEq, Debug)]
+#[argh(subcommand)]
+enum SubCommand {
+    Autosym(AutosymArgs),
+    Run(RunArgs),
+}
+
+#[derive(FromArgs, PartialEq, Debug)]
+#[argh(subcommand, name = "autosym")]
+/// Given a PID, spit out GDB commands to load all .so files
+/// mapped in memory.
+struct AutosymArgs {
+    #[argh(positional)]
+    /// the PID of the process to examine
+    pid: u32,
+}
+
+#[derive(FromArgs, PartialEq, Debug)]
+#[argh(subcommand, name = "run")]
+/// Load and run an ELF executable
+struct RunArgs {
+    #[argh(positional)]
+    /// the absolute path of an executable file to load and run
+    exec_path: String,
+}
+```
+
+I won’t go over all of this - `argh`’s documentation is adequate, and hopefully it’s easy enough to read (easier than it is to write, anyway).
+
+What we’ve done so far is declare data structures for: two subcommands, an “autosym” command, which takes an `u32` PID, and a “run” command, which takes the path to an executable.
+
+To *actually* have `argh` do the argument parsing, we have to move around a few things:
+
+``` rust
+// in `src/elk/main.rs`
+
+// this is unchanged - it's just our way of using the `Display` trait rather
+// than `Debug` when an `Error` bubbles all the way up. Since we use the
+// `thiserror` crate, this gives us nicer output.
+fn main() {
+    if let Err(e) = do_main() {
+        eprintln!("Fatal error: {}", e);
+    }
+}
+
+fn do_main() -> Result<(), Box<dyn Error>> {
+    // we now have several subcommands to run so, after `argh`
+    // parsed them, we need to run the right one.
+    let args: Args = argh::from_env();
+    match args.nested {
+        SubCommand::Run(args) => cmd_run(args),
+        SubCommand::Autosym(args) => cmd_autosym(args),
+    }
+    // Note that everything is strongly typed: we couldn't call
+    // `cmd_run` with `AutosymArgs`, or the other way around.
+    //
+    // Note also that rustc does an exhaustiveness check here -
+    // if `SubCommand` had another variant, it would tell us
+    // (at compile time) to handle it, or add a catch-all arm
+    // to our `match`.
+}
+
+fn cmd_autosym(args: AutosymArgs) -> Result<(), Box<dyn Error>> {
+    todo!()
+}
+
+// this function is largely what `do_main` used to be...
+fn cmd_run(args: RunArgs) -> Result<(), Box<dyn Error>> {
+    let mut proc = process::Process::new();
+    // ...except we now take `exec_path` from the `args` argument instead of
+    // calling `std::env::args()` ourselves!
+    let exec_index = proc.load_object_and_dependencies(args.exec_path)?;
+    proc.apply_relocations()?;
+    proc.adjust_protections()?;
+
+    let exec_obj = &proc.objects[exec_index];
+    let entry_point = exec_obj.file.entry_point + exec_obj.base;
+    unsafe { jmp(entry_point.as_ptr()) };
+
+    Ok(())
+}
+```
+
+Now if we run elk again:
+
+``` shell
+$ cargo build -q
+$ ../target/debug/elk
+One of the following subcommands must be present:
+    help
+    autosym
+    run
+```
+
+Hey! Neat!
+
+``` shell
+$ ../target/debug/elk help
+../target/debug/elk help
+Usage: ../target/debug/elk <command> [<args>]
+
+Top-level command
+
+Options:
+  --help            display usage information
+
+Commands:
+  autosym           Given a PID, spit out GDB commands to load all .so files
+                    mapped in memory.
+  run               Load and run an ELF executable
+```
+
+Neater!
+
+``` shell
+$ ../target/debug/elk help run
+Usage: ../target/debug/elk run <exec_path>
+
+Load and run an ELF executable
+
+Options:
+  --help            display usage information
+```
+
+Neatest!
+
+``` shell
+$ ../target/debug/elk run ./hello-dl
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+hi there
+```
+
+And it still works. Wonderful.
+
+So. Now we can get started on our `autosym` command.
+
+Step one: reading the memory mappings pseudo-file:
+
+``` rust
+// in `elk/src/main.rs`
+
+fn cmd_autosym(args: AutosymArgs) -> Result<(), Box<dyn Error>> {
+    let maps = std::fs::read_to_string(format!("/proc/{}/maps", args.pid))?;
+    println!("maps = \n{}", maps);
+
+    todo!()
+}
+```
+
+Step two: use `nom` to parse it, because why not?
+
+``` shell
+$ cd elk/
+$ cargo add nom@5
+      Adding nom v5.1.2 to dependencies
+```
+
+``` rust
+// in `elk/src/main.rs`
+
+mod procfs;
+```
+
+Brace yourselves - this is quite the code listing. I’m awful proud of this one:
+
+``` rust
+// in `elk/src/procfs.rs`
+
+use nom::{
+    branch::alt,
+    bytes::complete::{tag, take_while, take_while1},
+    combinator::{all_consuming, map, opt, value},
+    error::ParseError,
+    multi::many0,
+    sequence::{delimited, preceded, separated_pair, terminated, tuple},
+    IResult, InputTakeAtPosition,
+};
+use std::fmt;
+
+/// returns true if a character is a (lower-case) hexadecimal digit
+fn is_hex_digit(c: char) -> bool {
+    "0123456789abcdef".contains(c)
+}
+
+/// parses 0 or more spaces and tabs
+fn whitespace<I, E>(i: I) -> IResult<I, I, E>
+where
+    I: InputTakeAtPosition<Item = char>,
+    E: ParseError<I>,
+{
+    take_while(|c| " \t".contains(c))(i)
+}
+
+/// execute and return the child parser's result, ignoring leading and trailing
+/// spaces and tabs
+fn spaced<I, O, E>(f: impl Fn(I) -> IResult<I, O, E>) -> impl Fn(I) -> IResult<I, O, E>
+where
+    I: InputTakeAtPosition<Item = char> + Clone + PartialEq,
+    E: ParseError<I>,
+{
+    preceded(whitespace, terminated(f, whitespace))
+}
+
+/// parses a lower-case hexadecimal number as a delf::Addr
+fn hex_addr(i: &str) -> IResult<&str, delf::Addr> {
+    // `take_while1` requires at least one character
+    let (i, num) = take_while1(is_hex_digit)(i)?;
+    // FIXME: reckless use of expect
+    let u = u64::from_str_radix(num, 16).expect("our hex parser is wrong");
+    Ok((i, u.into()))
+}
+
+/// parses a delf::Addr range in the form 0000-ffff
+fn hex_addr_range(i: &str) -> IResult<&str, std::ops::Range<delf::Addr>> {
+    let (i, (start, end)) = separated_pair(hex_addr, tag("-"), hex_addr)(i)?;
+    Ok((i, start..end))
+}
+
+/// memory mapping permission bits
+pub struct Perms {
+    /// readable
+    pub r: bool,
+    /// writable
+    pub w: bool,
+    /// executable
+    pub x: bool,
+    /// not sure, tbh
+    pub p: bool,
+}
+
+impl fmt::Debug for Perms {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let bit = |val, display| {
+            if val {
+                display
+            } else {
+                "-"
+            }
+        };
+        write!(
+            f,
+            "{}{}{}{}",
+            bit(self.r, "r"),
+            bit(self.w, "w"),
+            bit(self.x, "x"),
+            bit(self.p, "p"),
+        )
+    }
+}
+
+/// parses mapping permissions as seen in `/proc/:pid/maps`
+fn perms(i: &str) -> IResult<&str, Perms> {
+    /// parses a single permission bit. for example, the readable
+    /// bit can be either "r" or "-".
+    fn bit(c: &'static str) -> impl Fn(&str) -> IResult<&str, bool> {
+        move |i: &str| -> IResult<&str, bool> {
+            alt((value(false, tag("-")), value(true, tag(c))))(i)
+        }
+    }
+    let (i, (r, w, x, p)) = tuple((bit("r"), bit("w"), bit("x"), bit("p")))(i)?;
+    Ok((i, Perms { r, w, x, p }))
+}
+
+/// parses a decimal number as an u64
+fn dec_number(i: &str) -> IResult<&str, u64> {
+    let (i, s) = take_while1(|c| "0123456789".contains(c))(i)?;
+    // FIXME: reckless use of expect
+    let num: u64 = s.parse().expect("our decimal parser is wrong");
+    Ok((i, num))
+}
+
+/// parses a hexadecimal number as an u64
+fn hex_number(i: &str) -> IResult<&str, u64> {
+    let (i, s) = take_while1(|c| "0123456789abcdefABCDEF".contains(c))(i)?;
+    // FIXME: reckless use of expect
+    let num = u64::from_str_radix(s, 16).expect("our hexadecimal parser is wrong");
+    Ok((i, num))
+}
+
+/// a Linux device number
+pub struct Dev {
+    pub major: u64,
+    pub minor: u64,
+}
+
+impl fmt::Debug for Dev {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}:{}", self.major, self.minor)
+    }
+}
+
+/// parses a Linux device number in form major:minor, where
+/// major and minor are hexadecimal numbers
+fn dev(i: &str) -> IResult<&str, Dev> {
+    let (i, (major, minor)) = separated_pair(hex_number, tag(":"), hex_number)(i)?;
+    Ok((i, Dev { major, minor }))
+}
+
+/// Source for a mapping: could be special (stack, vdso, etc.),
+/// a file, or an anonymous mapping
+#[derive(Debug)]
+pub enum Source<'a> {
+    /// not backed by a file
+    Anonymous,
+    /// not backed by a file either, *and* special-purpose
+    Special(&'a str),
+    /// backed by a file
+    File(&'a str),
+}
+
+impl<'a> Source<'_> {
+    pub fn is_file(&self) -> bool {
+        matches!(self, Self::File(_))
+    }
+}
+
+fn source(i: &str) -> IResult<&str, Source<'_>> {
+    fn is_path_character(c: char) -> bool {
+        // kinda jank, and won't support files with actual spaces in them,
+        // but largely good enough for our use case.
+        c != ']' && !c.is_whitespace()
+    }
+
+    fn path(i: &str) -> IResult<&str, &str> {
+        take_while(is_path_character)(i)
+    }
+
+    alt((
+        map(delimited(tag("["), path, tag("]")), Source::Special),
+        map(path, |s| {
+            if s.is_empty() {
+                Source::Anonymous
+            } else {
+                Source::File(s)
+            }
+        }),
+    ))(i)
+}
+
+#[derive(Debug)]
+pub struct Mapping<'a> {
+    pub addr_range: std::ops::Range<delf::Addr>,
+    pub perms: Perms,
+    pub offset: delf::Addr,
+    pub dev: Dev,
+    pub len: u64,
+    pub source: Source<'a>,
+    pub deleted: bool,
+}
+
+fn mapping(i: &str) -> IResult<&str, Mapping> {
+    let (i, (addr_range, perms, offset, dev, len, source, deleted)) = tuple((
+        spaced(hex_addr_range),
+        spaced(perms),
+        spaced(hex_addr),
+        spaced(dev),
+        spaced(dec_number),
+        spaced(source),
+        spaced(map(opt(tag("(deleted)")), |o| o.is_some())),
+    ))(i)?;
+    let res = Mapping {
+        addr_range,
+        perms,
+        offset,
+        dev,
+        len,
+        source,
+        deleted,
+    };
+    Ok((i, res))
+}
+
+pub fn mappings(i: &str) -> IResult<&str, Vec<Mapping>> {
+    all_consuming(many0(terminated(spaced(mapping), tag("\n"))))(i)
+}
+```
+
+What does it look like? I’m so glad you asked!
+
+``` rust
+// in `elk/src/main.rs`
+
+fn cmd_autosym(args: AutosymArgs) -> Result<(), Box<dyn Error>> {
+    let maps = std::fs::read_to_string(format!("/proc/{}/maps", args.pid))?;
+
+    match procfs::mappings(&maps) {
+        Ok((_, mappings)) => {
+            println!("Found {} mappings", mappings.len());
+            for mapping in &mappings {
+                println!("{:?}", mapping);
+            }
+        }
+        Err(e) => panic!("parsing failed: {:?}", e),
+    };
+
+    Ok(())
+}
+```
+
+``` shell
+$ cargo build
+$ ../target/debug/elk autosym 27113
+Found 45 mappings
+Mapping { addr_range: 0000555555554000..0000555555562000, perms: r--p, offset: 0000000000000000, dev: 8:1, len: 3336791, source: File("/home/amos/ftl/elk/target/debug/elk"), deleted: true }
+Mapping { addr_range: 0000555555562000..0000555555630000, perms: r-xp, offset: 000000000000e000, dev: 8:1, len: 3336791, source: File("/home/amos/ftl/elk/target/debug/elk"), deleted: true }
+Mapping { addr_range: 0000555555630000..0000555555665000, perms: r--p, offset: 00000000000dc000, dev: 8:1, len: 3336791, source: File("/home/amos/ftl/elk/target/debug/elk"), deleted: true }
+Mapping { addr_range: 0000555555666000..000055555566c000, perms: r--p, offset: 0000000000111000, dev: 8:1, len: 3336791, source: File("/home/amos/ftl/elk/target/debug/elk"), deleted: true }
+Mapping { addr_range: 000055555566c000..000055555566d000, perms: rw-p, offset: 0000000000117000, dev: 8:1, len: 3336791, source: File("/home/amos/ftl/elk/target/debug/elk"), deleted: true }
+Mapping { addr_range: 000055555566d000..000055555568e000, perms: rw-p, offset: 0000000000000000, dev: 0:0, len: 0, source: Special("heap"), deleted: false }
+Mapping { addr_range: 00007ffff7d85000..00007ffff7d87000, perms: rw-p, offset: 0000000000000000, dev: 0:0, len: 0, source: Anonymous, deleted: false }
+Mapping { addr_range: 00007ffff7d87000..00007ffff7d8a000, perms: r--p, offset: 0000000000000000, dev: 8:1, len: 790795, source: File("/usr/lib/libgcc_s.so.1"), deleted: false }
+Mapping { addr_range: 00007ffff7d8a000..00007ffff7d9b000, perms: r-xp, offset: 0000000000003000, dev: 8:1, len: 790795, source: File("/usr/lib/libgcc_s.so.1"), deleted: false }
+Mapping { addr_range: 00007ffff7d9b000..00007ffff7d9f000, perms: r--p, offset: 0000000000014000, dev: 8:1, len: 790795, source: File("/usr/lib/libgcc_s.so.1"), deleted: false }
+Mapping { addr_range: 00007ffff7d9f000..00007ffff7da0000, perms: r--p, offset: 0000000000017000, dev: 8:1, len: 790795, source: File("/usr/lib/libgcc_s.so.1"), deleted: false }
+Mapping { addr_range: 00007ffff7da0000..00007ffff7da1000, perms: rw-p, offset: 0000000000018000, dev: 8:1, len: 790795, source: File("/usr/lib/libgcc_s.so.1"), deleted: false }
+Mapping { addr_range: 00007ffff7da1000..00007ffff7da8000, perms: r--p, offset: 0000000000000000, dev: 8:1, len: 801521, source: File("/usr/lib/libpthread-2.30.so"), deleted: false }
+Mapping { addr_range: 00007ffff7da8000..00007ffff7db8000, perms: r-xp, offset: 0000000000007000, dev: 8:1, len: 801521, source: File("/usr/lib/libpthread-2.30.so"), deleted: false }
+Mapping { addr_range: 00007ffff7db8000..00007ffff7dbd000, perms: r--p, offset: 0000000000017000, dev: 8:1, len: 801521, source: File("/usr/lib/libpthread-2.30.so"), deleted: false }
+Mapping { addr_range: 00007ffff7dbd000..00007ffff7dbe000, perms: r--p, offset: 000000000001b000, dev: 8:1, len: 801521, source: File("/usr/lib/libpthread-2.30.so"), deleted: false }
+Mapping { addr_range: 00007ffff7dbe000..00007ffff7dbf000, perms: rw-p, offset: 000000000001c000, dev: 8:1, len: 801521, source: File("/usr/lib/libpthread-2.30.so"), deleted: false }
+Mapping { addr_range: 00007ffff7dbf000..00007ffff7dc3000, perms: rw-p, offset: 0000000000000000, dev: 0:0, len: 0, source: Anonymous, deleted: false }
+Mapping { addr_range: 00007ffff7dc3000..00007ffff7dc4000, perms: r--p, offset: 0000000000000000, dev: 8:1, len: 800745, source: File("/usr/lib/libdl-2.30.so"), deleted: false }
+Mapping { addr_range: 00007ffff7dc4000..00007ffff7dc5000, perms: r-xp, offset: 0000000000001000, dev: 8:1, len: 800745, source: File("/usr/lib/libdl-2.30.so"), deleted: false }
+Mapping { addr_range: 00007ffff7dc5000..00007ffff7dc6000, perms: r--p, offset: 0000000000002000, dev: 8:1, len: 800745, source: File("/usr/lib/libdl-2.30.so"), deleted: false }
+Mapping { addr_range: 00007ffff7dc6000..00007ffff7dc7000, perms: r--p, offset: 0000000000002000, dev: 8:1, len: 800745, source: File("/usr/lib/libdl-2.30.so"), deleted: false }
+Mapping { addr_range: 00007ffff7dc7000..00007ffff7dc8000, perms: rw-p, offset: 0000000000003000, dev: 8:1, len: 800745, source: File("/usr/lib/libdl-2.30.so"), deleted: false }
+Mapping { addr_range: 00007ffff7dc8000..00007ffff7ded000, perms: r--p, offset: 0000000000000000, dev: 8:1, len: 800644, source: File("/usr/lib/libc-2.32.so"), deleted: false }
+Mapping { addr_range: 00007ffff7ded000..00007ffff7f3a000, perms: r-xp, offset: 0000000000025000, dev: 8:1, len: 800644, source: File("/usr/lib/libc-2.32.so"), deleted: false }
+Mapping { addr_range: 00007ffff7f3a000..00007ffff7f84000, perms: r--p, offset: 0000000000172000, dev: 8:1, len: 800644, source: File("/usr/lib/libc-2.32.so"), deleted: false }
+Mapping { addr_range: 00007ffff7f84000..00007ffff7f85000, perms: ---p, offset: 00000000001bc000, dev: 8:1, len: 800644, source: File("/usr/lib/libc-2.32.so"), deleted: false }
+Mapping { addr_range: 00007ffff7f85000..00007ffff7f88000, perms: r--p, offset: 00000000001bc000, dev: 8:1, len: 800644, source: File("/usr/lib/libc-2.32.so"), deleted: false }
+Mapping { addr_range: 00007ffff7f88000..00007ffff7f8b000, perms: rw-p, offset: 00000000001bf000, dev: 8:1, len: 800644, source: File("/usr/lib/libc-2.32.so"), deleted: false }
+Mapping { addr_range: 00007ffff7f8b000..00007ffff7f91000, perms: rw-p, offset: 0000000000000000, dev: 0:0, len: 0, source: Anonymous, deleted: false }
+Mapping { addr_range: 00007ffff7fc7000..00007ffff7fc8000, perms: r--p, offset: 0000000000000000, dev: 8:1, len: 3304895, source: File("/home/amos/ftl/elk/samples/ifunc-nolibc"), deleted: false }
+Mapping { addr_range: 00007ffff7fc8000..00007ffff7fc9000, perms: r-xp, offset: 0000000000001000, dev: 8:1, len: 3304895, source: File("/home/amos/ftl/elk/samples/ifunc-nolibc"), deleted: false }
+Mapping { addr_range: 00007ffff7fc9000..00007ffff7fca000, perms: r--p, offset: 0000000000002000, dev: 8:1, len: 3304895, source: File("/home/amos/ftl/elk/samples/ifunc-nolibc"), deleted: false }
+Mapping { addr_range: 00007ffff7fca000..00007ffff7fcc000, perms: rw-p, offset: 0000000000002000, dev: 8:1, len: 3304895, source: File("/home/amos/ftl/elk/samples/ifunc-nolibc"), deleted: false }
+Mapping { addr_range: 00007ffff7fcc000..00007ffff7fce000, perms: rw-p, offset: 0000000000000000, dev: 0:0, len: 0, source: Anonymous, deleted: false }
+Mapping { addr_range: 00007ffff7fce000..00007ffff7fd1000, perms: r--p, offset: 0000000000000000, dev: 0:0, len: 0, source: Special("vvar"), deleted: false }
+Mapping { addr_range: 00007ffff7fd1000..00007ffff7fd2000, perms: r-xp, offset: 0000000000000000, dev: 0:0, len: 0, source: Special("vdso"), deleted: false }
+Mapping { addr_range: 00007ffff7fd2000..00007ffff7fd4000, perms: r--p, offset: 0000000000000000, dev: 8:1, len: 795324, source: File("/usr/lib/ld-2.30.so"), deleted: false }
+Mapping { addr_range: 00007ffff7fd4000..00007ffff7ff3000, perms: r-xp, offset: 0000000000002000, dev: 8:1, len: 795324, source: File("/usr/lib/ld-2.30.so"), deleted: false }
+Mapping { addr_range: 00007ffff7ff3000..00007ffff7ffb000, perms: r--p, offset: 0000000000021000, dev: 8:1, len: 795324, source: File("/usr/lib/ld-2.30.so"), deleted: false }
+Mapping { addr_range: 00007ffff7ffc000..00007ffff7ffd000, perms: r--p, offset: 0000000000029000, dev: 8:1, len: 795324, source: File("/usr/lib/ld-2.30.so"), deleted: false }
+Mapping { addr_range: 00007ffff7ffd000..00007ffff7ffe000, perms: rw-p, offset: 000000000002a000, dev: 8:1, len: 795324, source: File("/usr/lib/ld-2.30.so"), deleted: false }
+Mapping { addr_range: 00007ffff7ffe000..00007ffff7fff000, perms: rw-p, offset: 0000000000000000, dev: 0:0, len: 0, source: Anonymous, deleted: false }
+Mapping { addr_range: 00007ffffffde000..00007ffffffff000, perms: rw-p, offset: 0000000000000000, dev: 0:0, len: 0, source: Special("stack"), deleted: false }
+Mapping { addr_range: ffffffffff600000..ffffffffff601000, perms: --xp, offset: 0000000000000000, dev: 0:0, len: 0, source: Special("vsyscall"), deleted: false }
+```
+
+This is a *pretty robust* parser for procfs output.
+
+It’s certainly much stricter and correct than my original Python script ever was.
+
+And everything is strongly typed, so we can easily filter down to *only* executable mappings that correspond to files on disk, for example:
+
+``` rust
+// in `src/elk/main.rs`
+
+fn cmd_autosym(args: AutosymArgs) -> Result<(), Box<dyn Error>> {
+    let maps = std::fs::read_to_string(format!("/proc/{}/maps", args.pid))?;
+
+    match procfs::mappings(&maps) {
+        Ok((_, mappings)) => {
+            println!("Found {} mappings for PID {}", mappings.len(), args.pid);
+
+            println!("Executable file mappings:");
+            let xmappings = mappings
+                .iter()
+                .filter(|m| m.perms.x && m.source.is_file())
+                .collect::<Vec<_>>();
+            for mapping in &xmappings {
+                println!("{:?}", mapping);
+            }
+        }
+        Err(e) => panic!("parsing failed: {:?}", e),
+    };
+
+    Ok(())
+}
+```
+
+``` shell
+$ cargo build
+$ ../target/debug/elk autosym 27113
+Found 45 mappings for PID 27113
+Executable file mappings:
+Mapping { addr_range: 0000555555562000..0000555555630000, perms: r-xp, offset: 000000000000e000, dev: 8:1, len: 3336791, source: File("/home/amos/ftl/elk/target/debug/elk"), deleted: true }
+Mapping { addr_range: 00007ffff7d8a000..00007ffff7d9b000, perms: r-xp, offset: 0000000000003000, dev: 8:1, len: 790795, source: File("/usr/lib/libgcc_s.so.1"), deleted: false }
+Mapping { addr_range: 00007ffff7da8000..00007ffff7db8000, perms: r-xp, offset: 0000000000007000, dev: 8:1, len: 801521, source: File("/usr/lib/libpthread-2.30.so"), deleted: false }
+Mapping { addr_range: 00007ffff7dc4000..00007ffff7dc5000, perms: r-xp, offset: 0000000000001000, dev: 8:1, len: 800745, source: File("/usr/lib/libdl-2.30.so"), deleted: false }
+Mapping { addr_range: 00007ffff7ded000..00007ffff7f3a000, perms: r-xp, offset: 0000000000025000, dev: 8:1, len: 800644, source: File("/usr/lib/libc-2.32.so"), deleted: false }
+Mapping { addr_range: 00007ffff7fc8000..00007ffff7fc9000, perms: r-xp, offset: 0000000000001000, dev: 8:1, len: 3304895, source: File("/home/amos/ftl/elk/samples/ifunc-nolibc"), deleted: false }
+Mapping { addr_range: 00007ffff7fd4000..00007ffff7ff3000, perms: r-xp, offset: 0000000000002000, dev: 8:1, len: 795324, source: File("/usr/lib/ld-2.30.so"), deleted: false }
+```
+
+From there, our work is cut out for us.
+
+We just need to make a *tiny* adjustment to `delf` so that we can access the index of the section header table entry that contains the section names - we’ve been ignoring it so far.
+
+``` rust
+// in `delf/src/lib.rs`
+
+#[derive(Debug)]
+pub struct File {
+    // (cut: existing fields)
+    // new:
+    pub shstrndx: usize,
+}
+
+impl File {
+    const MAGIC: &'static [u8] = &[0x7f, 0x45, 0x4c, 0x46];
+
+    #[allow(unused_variables)]
+    pub fn parse(i: parse::Input) -> parse::Result<Self> {
+        // cut: parser
+
+        let res = Self {
+            // cut: existing fields
+            shstrndx: sh_nidx as _,
+        };
+        Ok((i, res))
+    }
+}
+```
+
+We’ll also add a helper to grab a section’s name. Since we won’t be mapping our ELF objects into memory, we have to work with file offsets instead of virtual addresses, and we’ll return an `&[u8]` instead of a `String` to avoid allocations and avoid crashing on non-utf8 input.
+
+``` rust
+// in `delf/src/lib.rs`
+
+impl File {
+    pub fn get_section_name<'a>(
+        &self,
+        file_contents: &'a [u8],
+        offset: Addr,
+    ) -> Result<&'a [u8], GetStringError> {
+        use GetStringError as E;
+
+        let tab_start = self.section_headers[self.shstrndx].off + offset;
+        let tab_slice = &file_contents[tab_start.into()..];
+        let string_slice = tab_slice
+            .split(|&c| c == 0)
+            .next()
+            .ok_or(E::StringNotFound)?;
+        Ok(string_slice)
+    }
+}
+```
+
+Now, since we have everything we need, we’ll change our `autosym` command to *only* print GDB commands.
+
+Here’s the full thing:
+
+``` rust
+// in `elk/src/main.rs`
+
+fn cmd_autosym(args: AutosymArgs) -> Result<(), Box<dyn Error>> {
+    let maps = std::fs::read_to_string(format!("/proc/{}/maps", args.pid))?;
+
+    match procfs::mappings(&maps) {
+        Ok((_, mappings)) => {
+            let xmappings = mappings
+                .iter()
+                .filter(|m| m.perms.x && m.source.is_file())
+                .collect::<Vec<_>>();
+
+            fn analyze(mapping: &procfs::Mapping) -> Result<(), Box<dyn Error>> {
+                if mapping.deleted {
+                    // skip deleted mappings
+                    return Ok(());
+                }
+
+                let path = match mapping.source {
+                    procfs::Source::File(path) => path,
+                    _ => return Ok(()),
+                };
+
+                let contents = std::fs::read(path)?;
+                let file = match delf::File::parse_or_print_error(&contents) {
+                    Some(x) => x,
+                    _ => return Ok(()),
+                };
+
+                let section = match file
+                    .section_headers
+                    .iter()
+                    .find(|sh| file.get_section_name(&contents, sh.name).unwrap() == b".text")
+                {
+                    Some(section) => section,
+                    _ => return Ok(()),
+                };
+
+                let textaddress = mapping.addr_range.start - mapping.offset + section.off;
+                println!("add-symbol-file {:?} 0x{:?}", path, textaddress);
+
+                Ok(())
+            }
+
+            for mapping in &xmappings {
+                analyze(mapping)?;
+            }
+        }
+        Err(e) => panic!("parsing failed: {:?}", e),
+    };
+
+    Ok(())
+}
+```
+
+Nice! Now, we can use that from our Python script…
+
+``` python
+# in samples/autosym.py
+
+import subprocess
+
+pid = gdb.selected_inferior().pid
+
+cmd = ["elk", "autosym", "%d" % pid]
+lines = subprocess.check_output(cmd).decode("utf-8").split("\n")
+
+for line in lines:
+    gdb.execute(line)
+```
+
+…and in order to get `elk` in our `$PATH`, we should install it!
+
+``` shell
+$ cd elk/
+$ cargo install --path .
+```
+
+And now, let’s take it for a spin! We’ll make a fresh GDB session:
+
+> **Cool Bear's hot tip**
+>
+> Don’t forget, `elk` now has subcommands, so we need to add `run` in there:
+
+``` shell
+$ cd elk/samples/
+$ gdb --args ../target/debug/elk run ./ifunc-nolibc
+(gdb) break jmp
+(gdb) r
+(gdb) source autosym.py
+add symbol table from file "/home/amos/ftl/elk/target/debug/elk" at
+        .text_addr = 0x555555562150
+add symbol table from file "/usr/lib/libgcc_s.so.1" at
+        .text_addr = 0x7ffff7d8a020
+add symbol table from file "/usr/lib/libpthread-2.30.so" at
+        .text_addr = 0x7ffff7da8b30
+add symbol table from file "/usr/lib/libdl-2.30.so" at
+        .text_addr = 0x7ffff7dc4210
+add symbol table from file "/usr/lib/libc-2.32.so" at
+        .text_addr = 0x7ffff7ded670
+add symbol table from file "/home/amos/ftl/elk/samples/ifunc-nolibc" at
+        .text_addr = 0x7ffff7fc8020
+add symbol table from file "/usr/lib/ld-2.30.so" at
+        .text_addr = 0x7ffff7fd4100
+(gdb) stepi
+(gdb) stepi
+(gdb) stepi
+```
+
+Then `Ctrl-x 2` and…
+
+![ifunc-nolibc-gdb-autosym](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-9/assets/ifunc-nolibc-gdb-autosym~17f90060c344929c.webp)
+
+Voilà!
+
+This is going to come in *extremely handy*.
+
+Of course, I don’t expect it to be useful in a lot of other scenarios, but we learned:
+
+- How to semi-reliably parse a text format
+- How to add subcommands to a program using [the argh crate](https://lib.rs/crates/argh)
+- How to script GDB
+
+And that is going to make our life, like, a *lot* easier.
+
+So, now that we have all our ELF objects loaded in memory, and that GDB is aware of them, let’s continue:
+
+``` shell
+(gdb) c
+Continuing.
+
+Program received signal SIGSEGV, Segmentation fault.
+0x0000000000001016 in ?? ()
+Cannot access memory at address 0x1016
+(gdb) bt
+#0  0x0000000000001016 in ?? ()
+#1  0x00007ffff7fc80fb in main ()
+#2  0x00007ffff7fc8118 in _start ()
+#3  0x0000555555587857 in elk::jmp (addr=0x7ffff7fc810a <_start> "UH\211\345\270\000") at src/main.rs:144
+#4  0x0000555555587713 in elk::cmd_run (args=...) at src/main.rs:125
+#5  0x0000555555586240 in elk::do_main () at src/main.rs:60
+#6  0x000055555558602c in elk::main () at src/main.rs:52
+```
+
+Mh. Let’s back up a frame:
+
+``` shell
+(gdb) frame 1
+```
+
+![gdb-jmp-to-garbage](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-9/assets/gdb-jmp-to-garbage~9133f62f915df2b9.webp)
+
+Note that GDB highlights `mov rdi,rax`, but the instruction we *just* executed was `call 0x7ffff7fc8010`. Interestingly, there’s no symbol associated with this address!
+
+```
+(gdb) info addr 0x7ffff7fc8010
+No symbol "0x7ffff7fc8010" in current context.
+```
+
+But it looks suspiciously close to, say, `ftl_print`’s address. So it’s not a completely garbage address.
+
+We could do the hex math ourselves… or we could add another subcommand to `elk`, that gives us additional information.
+
+Let’s do the latter.
+
+But first - it’s a bit annoying to have to `source autosym.py` every time, and I don’t really want to make a second Python script - one is quite enough.
+
+As it turns out - you can add new commands to GDB with Python scripting!
+
+Let’s try it out:
+
+``` python
+# in `elk/gdb-elk.py`
+
+import subprocess
+
+
+class AutoSym(gdb.Command):
+    """Load symbols for all executable files mapped in memory, through elk"""
+
+    def __init__(self):
+        super(AutoSym, self).__init__("autosym", gdb.COMMAND_USER)
+
+    def invoke(self, arg, from_tty):
+        pid = gdb.selected_inferior().pid
+        if pid == 0:
+            print("No inferior.")
+            return
+
+        cmd = ["elk", "autosym", str(pid)]
+        lines = subprocess.check_output(cmd).decode("utf-8").split("\n")
+
+        for line in lines:
+            gdb.execute(line)
+
+
+AutoSym()
+
+
+class Dig(gdb.Command):
+    """Display all the information ELK can find about a memory address for the current inferior"""
+
+    def __init__(self):
+        super(Dig, self).__init__(
+            "dig", gdb.COMMAND_USER, gdb.COMPLETE_EXPRESSION)
+
+    def invoke(self, arg, from_tty):
+        if arg == "":
+            print("Usage: dig ADDR")
+            return
+
+        addr = int(arg, 0)
+
+        pid = gdb.selected_inferior().pid
+        if pid == 0:
+            print("No inferior.")
+            return
+
+        cmd = ["elk", "dig", "--pid", str(pid), "--addr", str(addr)]
+
+        # note: `check_call` would print stdout directly, but this somehow
+        # breaks GDB TUI, so we print every line ourselves
+        lines = subprocess.check_output(cmd).decode("utf-8").split("\n")
+
+        for line in lines:
+            print(line)
+
+Dig()
+```
+
+We can get rid of our old `samples/autosym.py` script.
+
+Now, we can source `gdb-elk.py` from our `~/.gdbinit` file, which gets executed every time we start up gdb.
+
+``` shell
+# in `~/.gdbinit`
+
+# those are from earlier - if you didn't have these,
+# now's your chance
+set history save on
+set disassembly-flavor intel
+
+# this is the important bit:
+source ~/ftl/elk/gdb-elk.py
+```
+
+And let’s take it for a spin:
+
+``` shell
+$ gdb --args ../target/debug/elk run ./ifunc-nolibc
+(gdb) break jmp
+(gdb) r
+(gdb) autosym
+add symbol table from file "/home/amos/ftl/elk/target/debug/elk" at
+        .text_addr = 0x555555562150
+add symbol table from file "/usr/lib/libgcc_s.so.1" at
+        .text_addr = 0x7ffff7d8a020
+add symbol table from file "/usr/lib/libpthread-2.30.so" at
+        .text_addr = 0x7ffff7da8b30
+add symbol table from file "/usr/lib/libdl-2.30.so" at
+        .text_addr = 0x7ffff7dc4210
+add symbol table from file "/usr/lib/libc-2.32.so" at
+        .text_addr = 0x7ffff7ded670
+add symbol table from file "/home/amos/ftl/elk/samples/ifunc-nolibc" at
+        .text_addr = 0x7ffff7fc8020
+add symbol table from file "/usr/lib/ld-2.30.so" at
+        .text_addr = 0x7ffff7fd4100
+(gdb) stepi
+(gdb) stepi
+(gdb) stepi
+(gdb) bt
+#0  0x00007ffff7fc810a in _start ()
+#1  0x0000555555587857 in elk::jmp (addr=0x7ffff7fc810a <_start> "UH\211\345\270\000") at src/main.rs:144
+#2  0x0000555555587713 in elk::cmd_run (args=...) at src/main.rs:125
+#3  0x0000555555586240 in elk::do_main () at src/main.rs:60
+#4  0x000055555558602c in elk::main () at src/main.rs:52
+(gdb) dig
+Usage: dig ADDR
+(gdb) dig 0x00007ffff7fc810a
+Unrecognized argument: dig
+
+Python Exception <class 'subprocess.CalledProcessError'> Command '['elk', 'dig', '--pid', '19658', '--addr', '140737353908490']' returned non-zero exit status 1.:
+Error occurred in Python: Command '['elk', 'dig', '--pid', '19658', '--addr', '140737353908490']' returned non-zero exit status 1.
+```
+
+Very nice! Now we just need to add a `dig` command to `elk`.
+
+``` rust
+// in `elk/src/main.rs`
+
+#[derive(FromArgs, PartialEq, Debug)]
+#[argh(subcommand)]
+enum SubCommand {
+    Autosym(AutosymArgs),
+    Run(RunArgs),
+    // new:
+    Dig(DigArgs),
+}
+
+#[derive(FromArgs, PartialEq, Debug)]
+#[argh(subcommand, name = "dig")]
+/// Shows information about an address in a memory's address space
+struct DigArgs {
+    #[argh(option)]
+    /// the PID of the process whose memory space to examine
+    pid: u32,
+    #[argh(option)]
+    /// the address to look for
+    addr: u64,
+}
+
+type AnyError = Box<dyn Error>;
+
+fn do_main() -> Result<(), AnyError> {
+    let args: Args = argh::from_env();
+    match args.nested {
+        SubCommand::Run(args) => cmd_run(args),
+        SubCommand::Autosym(args) => cmd_autosym(args),
+        // new:
+        SubCommand::Dig(args) => cmd_dig(args),
+    }
+}
+
+use thiserror::*;
+
+#[derive(Error, Debug)]
+enum WithMappingsError {
+    #[error("parsing failed: {0}")]
+    Parse(String),
+}
+
+// We're doing this in both `autosym` and `dig`, so it makes
+// sense to have a helper for it.
+// "Mapping<'a>" is annoying to manipulate, so we can't really
+// return it, but we *can* take a closure that operates on it!
+fn with_mappings<F, T>(pid: u32, f: F) -> Result<T, AnyError>
+where
+    F: Fn(&Vec<procfs::Mapping<'_>>) -> Result<T, Box<dyn Error>>,
+{
+    let maps = std::fs::read_to_string(format!("/proc/{}/maps", pid))?;
+    match procfs::mappings(&maps) {
+        Ok((_, maps)) => f(&maps),
+        Err(e) => {
+            // parsing errors borrow the input, so we wouldn't be able
+            // to return it. to prevent that, format it early.
+            Err(Box::new(WithMappingsError::Parse(format!("{:?}", e))))
+        }
+    }
+}
+
+// Does the same as previously, just refactored to use `with_mappings`:
+fn cmd_autosym(args: AutosymArgs) -> Result<(), Box<dyn Error>> {
+    fn analyze(mapping: &procfs::Mapping) -> Result<(), AnyError> {
+        if mapping.deleted {
+            // skip deleted mappings
+            return Ok(());
+        }
+
+        let path = match mapping.source {
+            procfs::Source::File(path) => path,
+            _ => return Ok(()),
+        };
+
+        let contents = std::fs::read(path)?;
+        let file = match delf::File::parse_or_print_error(&contents) {
+            Some(x) => x,
+            _ => return Ok(()),
+        };
+
+        let section = match file
+            .section_headers
+            .iter()
+            .find(|sh| file.get_section_name(&contents, sh.name).unwrap() == b".text")
+        {
+            Some(section) => section,
+            _ => return Ok(()),
+        };
+
+        let textaddress = mapping.addr_range.start - mapping.offset + section.off;
+        println!("add-symbol-file {:?} 0x{:?}", path, textaddress);
+
+        Ok(())
+    }
+
+    with_mappings(args.pid, |mappings| {
+        for mapping in mappings.iter().filter(|m| m.perms.x && m.source.is_file()) {
+            analyze(mapping)?;
+        }
+        Ok(())
+    })
+}
+
+// Here's our new command:
+fn cmd_dig(args: DigArgs) -> Result<(), Box<dyn Error>> {
+    let addr = delf::Addr(args.addr);
+
+    with_mappings(args.pid, |mappings| {
+        for mapping in mappings {
+            if mapping.addr_range.contains(&addr) {
+                println!("Found mapping: {:#?}", mapping);
+                return Ok(());
+            }
+        }
+        Ok(())
+    })
+}
+```
+
+To use it from GDB, we’ll need to “install” elk again - since it’s already installed, we’ll need to give it a little nudge with the `--force` flag:
+
+``` shell
+$ cd elk/
+$ cargo install --force --path .
+  Installing elk v0.1.0 (/home/amos/ftl/elk)
+    Updating crates.io index
+    Finished release [optimized] target(s) in 0.30s
+   Replacing /home/amos/.cargo/bin/elk
+    Replaced package `elk v0.1.0 (/home/amos/ftl/elk/)` with `elk v0.1.0 (/home/amos/ftl/elk)` (executable `elk`)
+```
+
+And try it out:
+
+``` shell
+$ gdb --args ../target/debug/elk run ./ifunc-nolibc
+(gdb) break jmp
+(gdb) r
+(gdb) autosym
+(gdb) bt
+#0  elk::jmp (addr=0x7ffff7fc810a <_start> "UH\211\345\270\000") at src/main.rs:143
+#1  0x0000555555587713 in elk::cmd_run (args=...) at src/main.rs:125
+#2  0x0000555555586240 in elk::do_main () at src/main.rs:60
+#3  0x000055555558602c in elk::main () at src/main.rs:52
+(gdb) dig 0x0000555555587713
+Found mapping: Mapping {
+    addr_range: 0000555555562000..000055555564b000,
+    perms: r-xp,
+    offset: 000000000000e000,
+    dev: 8:1,
+    len: 3337208,
+    source: File(
+        "/home/amos/ftl/elk/target/debug/elk",
+    ),
+    deleted: false,
+}
+(gdb) dig 0x7ffff7fc810a
+Found mapping: Mapping {
+    addr_range: 00007ffff7fc8000..00007ffff7fc9000,
+    perms: r-xp,
+    offset: 0000000000001000,
+    dev: 8:1,
+    len: 3304895,
+    source: File(
+        "/home/amos/ftl/elk/samples/ifunc-nolibc",
+    ),
+    deleted: false,
+}
+```
+
+Very nice! One thing I’d like `dig` to do in particular is display the virtual address *with respect to the ELF object*, so that we can compare with `objdump` and `readelf`’s outputs.
+
+That’s easy enough to do, since we have all the information at our fingertips.
+
+I’d also like to show symbols, like GDB does, but we have a slight problem: in dynamic ELF files, there’s often *two* symbol tables. In terms of sections (linker view), there’s `.strtab`, which has all the symbols, and `.dynsym`, which has only the symbols we need when loading a dynamic executable or library.
+
+We’ve only ever read the `.dynsym` segment, by looking for the `DYNAMIC` segment, which contains dynamic entries, finding the entry with tag `SymTab`, and reading it.
+
+Since the `SymTab` dynamic entry didn’t include a size, just an address, we ended up looking for a *section* that starts at that same address, and since sections have size, we used that to know how many symbols we can expect to read.
+
+So our `File::read_syms` method was a little round-about.
+
+What we could do instead is: have a proper enum type for *section* types, and have two methods: `read_symtab_entries` and `read_dynsym_entries`, which would read from the relevant section. We’d use the `symtab` variant for `elk dig`, and we’d use the `dynsym` variant in `src/elk/process.rs`, when we’re loading ELF objects that we want to map in memory and run.
+
+But now that we’re dealing with “sections” (`SectionHeader`, the linker view) *and* “segments” (`ProgramHeader`, the loader view), our `data: Vec<u8>` field in `ProgramHeader` makes even less sense than it did before. If we added a similar field to `SectionHeader`, we’d have duplicates everywhere - a single segment can point to a range of memory that multiple sections point to.
+
+And we have some inconsistencies in the API now: `File::get_string` only takes an `Addr`, and returns a `String`, but `File::get_section_name` takes a `file_contents: &[u8]` and returns a `&[u8]` borrowed from that same `file_contents`.
+
+Here are the changes I want to make:
+
+- Let `delf::File` have a view into the file’s contents
+- Remove the `data` field from `ProgramHeader`, use slices of the `File`’s contents instead
+- Never deal with `String` in `delf`. We don’t know if ELF names are valid utf-8 - just return borrowed `&[u8]`.
+- Have a proper enum for `SectionType`, rather than an `u32`.
+
+Let’s get started. First, removing the `data` field:
+
+``` rust
+// in `delf/src/lib.rs`
+
+pub struct ProgramHeader {
+    pub r#type: SegmentType,
+    pub flags: BitFlags<SegmentFlag>,
+    pub offset: Addr,
+    pub vaddr: Addr,
+    pub paddr: Addr,
+    pub filesz: Addr,
+    pub memsz: Addr,
+    pub align: Addr,
+    pub contents: SegmentContents,
+
+    // note: the `data` field is gone
+}
+```
+
+Then adding a proper `SectionType` type, and using it:
+
+``` rust
+// in `delf/src/lib.rs`
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
+#[repr(u32)]
+pub enum SectionType {
+    Null = 0,
+    ProgBits = 1,
+    SymTab = 2,
+    StrTab = 3,
+    Rela = 4,
+    Hash = 5,
+    Dynamic = 6,
+    Note = 7,
+    NoBits = 8,
+    Rel = 9,
+    ShLib = 10,
+    DynSym = 11,
+    InitArray = 14,
+    FiniArray = 15,
+    PreinitArray = 16,
+    Group = 17,
+    SymTabShndx = 18,
+    Num = 19,
+    GnuAttributes = 0x6ffffff5,
+    GnuHash = 0x6ffffff6,
+    GnuLiblist = 0x6ffffff7,
+    Checksum = 0x6ffffff8,
+    GnuVerdef = 0x6ffffffd,
+    GnuVerneed = 0x6ffffffe,
+    GnuVersym = 0x6fffffff,
+}
+
+impl_parse_for_enum!(SectionType, le_u32);
+
+#[derive(Debug)]
+pub struct SectionHeader {
+    pub name: Addr,
+    // was: u32
+    pub r#type: SectionType,
+    // flags are still untyped, we don't really care about
+    // them for now
+    pub flags: u64,
+    pub addr: Addr,
+    // was: `off`
+    pub offset: Addr,
+    pub size: Addr,
+    pub link: u32,
+    pub info: u32,
+    pub addralign: Addr,
+    pub entsize: Addr,
+}
+```
+
+Note: the `SectionHeader` parser needs to be adjusted, swapping an `le_u32` for `SectionType::parse`, and renaming `off` to `offset` - this is left as an exercise to the reader.
+
+Now, for completeness, we can add `file_range` and `mem_range` methods to `SectionHeader`, just like we had for `ProgramHeader`:
+
+``` rust
+// in `delf/src/lib.rs`
+
+impl SectionHeader {
+    /**
+     * File range where the section is stored
+     */
+    pub fn file_range(&self) -> Range<Addr> {
+        self.offset..self.offset + self.size
+    }
+
+    /**
+     * Memory range where the section is mapped
+     */
+    pub fn mem_range(&self) -> Range<Addr> {
+        self.addr..self.addr + self.size
+    }
+}
+```
+
+While we’re at it, we can add a few missing symbol types:
+
+``` rust
+#[derive(Debug, TryFromPrimitive, Clone, Copy)]
+#[repr(u8)]
+pub enum SymType {
+    None = 0,
+    Object = 1,
+    Func = 2,
+    Section = 3,
+    // new:
+    File = 4,
+    IFunc = 10,
+}
+```
+
+Next up, the `ProgramHeader` parser needs to be adjusted to *not* set the `data` field. Again, I’m not going to show this, it’s a simple change.
+
+We’re now going to add a `contents` field to `File`. But what should it be?
+
+If we do it like this:
+
+``` rust
+pub struct File<'a> {
+    // omitted: other fields
+    contents: &[u8],
+}
+```
+
+…then all our `File` instances will have lifetimes, so, we’ll have trouble storing them in structs later, like we do in `elk/src/process.rs`.
+
+If we do it like this:
+
+``` rust
+pub struct File {
+    // omitted: other fields
+    contents: Vec<u8>,
+}
+```
+
+…then our `File` will always take ownership of the contents, even though it really just needs to be able to see it as an `&[u8]`!
+
+We’re going to try something else instead: we’ll make our `File` dynamic over the contents type. The contents type can be anything, *as long as* we can get a `&[u8]` out of it.
+
+We’re also going to split of all of `File`’s current fields into a new struct, `FileContents`.
+
+After those changes, we’ll have:
+
+- `FileContents`, which has our parsed fields (from the ELF header, program headers, section headers), and has a nom parser as an associated function
+- `File`, which owns a `FileContents` and an `AsRef<u8>`, and has a bunch of methods that read symbol tables, string tables, etc.
+
+This is probably an anti-pattern or something, but we’re *also* going to implement `Deref<Target=FileContents>`on `File`, so that we can *mostly* use `File` as if it was a `FileContents`.
+
+So here’s our new `File`:
+
+``` rust
+// in `delf/src/lib.rs`
+
+#[derive(Debug)]
+pub struct File<I>
+where
+    I: AsRef<[u8]>,
+{
+    pub input: I,
+    pub contents: FileContents,
+}
+```
+
+Here’s our naughty `Deref` impl:
+
+``` rust
+impl<I> std::ops::Deref for File<I>
+where
+    I: AsRef<[u8]>,
+{
+    type Target = FileContents;
+    fn deref(&self) -> &Self::Target {
+        &self.contents
+    }
+}
+```
+
+And here’s our `FileContents` - pretty much what `File` was before that change:
+
+``` rust
+#[derive(Debug)]
+pub struct FileContents {
+    pub r#type: Type,
+    pub machine: Machine,
+    pub entry_point: Addr,
+    pub program_headers: Vec<ProgramHeader>,
+    pub section_headers: Vec<SectionHeader>,
+    pub shstrndx: usize,
+}
+```
+
+Now, we need to have `FileContents::parse`, which is pretty much what `File::parse` was:
+
+``` rust
+impl FileContents {
+    const MAGIC: &'static [u8] = &[0x7f, 0x45, 0x4c, 0x46];
+
+    #[allow(unused_variables)]
+    pub fn parse(i: parse::Input) -> parse::Result<Self> {
+        let full_input = i;
+
+        use nom::{
+            bytes::complete::{tag, take},
+            error::context,
+            sequence::tuple,
+        };
+        let (i, _) = tuple((
+            // -------
+            context("Magic", tag(Self::MAGIC)),
+            context("Class", tag(&[0x2])),
+            context("Endianness", tag(&[0x1])),
+            context("Version", tag(&[0x1])),
+            context("OS ABI", nom::branch::alt((tag(&[0x0]), tag(&[0x3])))),
+            // -------
+            context("Padding", take(8_usize)),
+        ))(i)?;
+
+        use nom::{
+            combinator::verify,
+            number::complete::{le_u16, le_u32},
+        };
+
+        let (i, (r#type, machine)) = tuple((Type::parse, Machine::parse))(i)?;
+        let (i, _) = context("Version (bis)", verify(le_u32, |&x| x == 1))(i)?;
+        let (i, entry_point) = Addr::parse(i)?;
+
+        use nom::combinator::map;
+        let u16_usize = map(le_u16, |x| x as usize);
+
+        let (i, (ph_offset, sh_offset)) = tuple((Addr::parse, Addr::parse))(i)?;
+        let (i, (flags, hdr_size)) = tuple((le_u32, le_u16))(i)?;
+        let (i, (ph_entsize, ph_count)) = tuple((&u16_usize, &u16_usize))(i)?;
+        let (i, (sh_entsize, sh_count, sh_nidx)) = tuple((&u16_usize, &u16_usize, &u16_usize))(i)?;
+
+        let ph_slices = (&full_input[ph_offset.into()..]).chunks(ph_entsize);
+        let mut program_headers = Vec::new();
+        for ph_slice in ph_slices.take(ph_count) {
+            let (_, ph) = ProgramHeader::parse(full_input, ph_slice)?;
+            program_headers.push(ph);
+        }
+
+        let sh_slices = (&full_input[sh_offset.into()..]).chunks(sh_entsize);
+        let mut section_headers = Vec::new();
+        for sh_slice in sh_slices.take(sh_count) {
+            let (_, sh) = SectionHeader::parse(sh_slice)?;
+            section_headers.push(sh);
+        }
+
+        let res = Self {
+            machine,
+            r#type,
+            entry_point,
+            program_headers,
+            section_headers,
+            shstrndx: sh_nidx as usize,
+        };
+        Ok((i, res))
+    }
+}
+```
+
+We can also have methods on `FileContents` that don’t need access to the input.
+
+Here’s a few:
+
+``` rust
+impl FileContents {
+    /// Returns the first segment of a given type
+    pub fn segment_of_type(&self, r#type: SegmentType) -> Option<&ProgramHeader> {
+        self.program_headers.iter().find(|ph| ph.r#type == r#type)
+    }
+
+    /// Returns the first section of a given type
+    pub fn section_of_type(&self, r#type: SectionType) -> Option<&SectionHeader> {
+        self.section_headers.iter().find(|sh| sh.r#type == r#type)
+    }
+
+    /// Attempts to find a Load segment whose memory range contains the given virtual address
+    pub fn segment_containing(&self, addr: Addr) -> Option<&ProgramHeader> {
+        self.program_headers
+            .iter()
+            .find(|ph| ph.r#type == SegmentType::Load && ph.mem_range().contains(&addr))
+    }
+
+    /// Attempts to find the Dynamic segment and return its entries as a slice
+    pub fn dynamic_table(&self) -> Option<&[DynamicEntry]> {
+        match self.segment_of_type(SegmentType::Dynamic) {
+            Some(ProgramHeader {
+                contents: SegmentContents::Dynamic(entries),
+                ..
+            }) => Some(entries),
+            _ => None,
+        }
+    }
+
+    /// Returns an iterator of all dynamic entries with the given tag.
+    /// Especially useful with DynamicTag::Needed
+    pub fn dynamic_entries(&self, tag: DynamicTag) -> impl Iterator<Item = Addr> + '_ {
+        self.dynamic_table()
+            .unwrap_or_default()
+            .iter()
+            .filter(move |e| e.tag == tag)
+            .map(|e| e.addr)
+    }
+
+    /// Returns the value of the first dynamic entry with the given tag, or None
+    pub fn dynamic_entry(&self, tag: DynamicTag) -> Option<Addr> {
+        self.dynamic_entries(tag).next()
+    }
+
+    /// Returns the value of the first dynamic entry with the given tag, or an error
+    pub fn get_dynamic_entry(&self, tag: DynamicTag) -> Result<Addr, GetDynamicEntryError> {
+        self.dynamic_entry(tag)
+            .ok_or(GetDynamicEntryError::NotFound(tag))
+    }
+}
+```
+
+And then it’s time for `File`’s methods. The first one is a helper we use in `elk` so we don’t have to deal with `nom` errors too much. It also ends up building a `File` out of the `FileContents` and the given input:
+
+``` rust
+// in `delf/src/lib.rs`
+
+impl<I> File<I>
+where
+    I: AsRef<[u8]>,
+{
+    pub fn parse_or_print_error(input: I) -> Option<Self> {
+        match FileContents::parse(input.as_ref()) {
+            Ok((_, contents)) => Some(File { input, contents }),
+            Err(nom::Err::Failure(err)) | Err(nom::Err::Error(err)) => {
+                use nom::Offset;
+
+                eprintln!("Parsing failed:");
+                for (input, err) in err.errors {
+                    let offset = input.as_ref().offset(input);
+                    eprintln!("{:?} at position {}:", err, offset);
+                    eprintln!("{:>08x}: {:?}", offset, HexDump(input));
+                }
+                None
+            }
+            Err(_) => panic!("unexpected nom error"),
+        }
+    }
+}
+```
+
+And then we have all sorts of slicing helpers that *do* need the input:
+
+``` rust
+// in `delf/src/lib.rs`
+
+impl<I> File<I>
+where
+    I: AsRef<[u8]>,
+{
+    /// Returns a slice of the input, indexed by file offsets
+    pub fn file_slice(&self, addr: Addr, len: usize) -> &[u8] {
+        &self.input.as_ref()[addr.into()..len]
+    }
+
+    /// Returns a slice of the input corresponding to the given section
+    pub fn section_slice(&self, section: &SectionHeader) -> &[u8] {
+        self.file_slice(section.file_range().start, section.file_range().end.into())
+    }
+
+    /// Returns a slice of the input corresponding to the given segment
+    pub fn segment_slice(&self, segment: &ProgramHeader) -> &[u8] {
+        self.file_slice(segment.file_range().start, segment.file_range().end.into())
+    }
+
+    /// Returns a slice of the input, indexed by virtual addresses
+    pub fn mem_slice(&self, addr: Addr, len: usize) -> Option<&[u8]> {
+        self.segment_containing(addr).map(|segment| {
+            let start: usize = (addr - segment.mem_range().start).into();
+            &self.segment_slice(segment)[start..start + len]
+        })
+    }
+
+    /// Returns an iterator of string values (or rather, u8 slices) of
+    /// dynamic entries for the given tag.
+    pub fn dynamic_entry_strings(&self, tag: DynamicTag) -> impl Iterator<Item = &[u8]> + '_ {
+        self.dynamic_entries(tag)
+            .map(move |addr| self.dynstr_entry(addr))
+    }
+
+    /// Read relocation entries from the table pointed to by `DynamicTag::Rela`
+    pub fn read_rela_entries(&self) -> Result<Vec<Rela>, ReadRelaError> {
+        use DynamicTag as DT;
+        use ReadRelaError as E;
+
+        let addr = match self.dynamic_entry(DT::Rela) {
+            Some(addr) => addr,
+            None => return Ok(vec![]),
+        };
+
+        let len = self.get_dynamic_entry(DT::RelaSz)?;
+        let i = self
+            .mem_slice(addr, len.into())
+            .ok_or(E::RelaSegmentNotFound)?;
+
+        let n: usize = len.0 as usize / Rela::SIZE;
+        match nom::multi::many_m_n(n, n, Rela::parse)(i) {
+            Ok((_, rela_entries)) => Ok(rela_entries),
+            Err(nom::Err::Failure(err)) | Err(nom::Err::Error(err)) => {
+                Err(E::ParsingError(format!("{:?}", err)))
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    /// Read symbols from the given section (internal)
+    fn read_symbol_table(&self, section_type: SectionType) -> Result<Vec<Sym>, ReadSymsError> {
+        let section = match self.section_of_type(section_type) {
+            Some(section) => section,
+            None => return Ok(vec![]),
+        };
+
+        let i = self.section_slice(section);
+        let n = i.len() / section.entsize.0 as usize;
+        use nom::multi::many_m_n;
+
+        match many_m_n(n, n, Sym::parse)(i) {
+            Ok((_, syms)) => Ok(syms),
+            Err(nom::Err::Failure(err)) | Err(nom::Err::Error(err)) => {
+                Err(ReadSymsError::ParsingError(format!("{:?}", err)))
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    /// Read symbols from the ".dynsym" section (loader view)
+    pub fn read_dynsym_entries(&self) -> Result<Vec<Sym>, ReadSymsError> {
+        self.read_symbol_table(SectionType::DynSym)
+    }
+
+    /// Read symbols from the ".symtab" section (linker view)
+    pub fn read_symtab_entries(&self) -> Result<Vec<Sym>, ReadSymsError> {
+        self.read_symbol_table(SectionType::SymTab)
+    }
+
+    /// Returns a null-terminated "string" from the ".shstrtab" section as an u8 slice
+    pub fn shstrtab_entry(&self, offset: Addr) -> &[u8] {
+        let section = &self.contents.section_headers[self.contents.shstrndx];
+        let slice = &self.section_slice(section)[offset.into()..];
+        slice.split(|&c| c == 0).next().unwrap_or_default()
+    }
+
+    /// Get a section by name
+    pub fn section_by_name(&self, name: &[u8]) -> Option<&SectionHeader> {
+        self.section_headers
+            .iter()
+            .find(|sh| self.shstrtab_entry(sh.name) == name)
+    }
+
+    /// Returns an entry from a string table contained in the section with a given name
+    fn string_table_entry(&self, name: &[u8], offset: Addr) -> &[u8] {
+        self.section_by_name(name)
+            .map(|section| {
+                let slice = &self.section_slice(section)[offset.into()..];
+                slice.split(|&c| c == 0).next().unwrap_or_default()
+            })
+            .unwrap_or_default()
+    }
+
+    /// Returns a null-terminated "string" from the ".strtab" section as an u8 slice
+    pub fn strtab_entry(&self, offset: Addr) -> &[u8] {
+        self.string_table_entry(b".strtab", offset)
+    }
+
+    /// Returns a null-terminated "string" from the ".dynstr" section as an u8 slice
+    pub fn dynstr_entry(&self, offset: Addr) -> &[u8] {
+        self.string_table_entry(b".dynstr", offset)
+    }
+}
+```
+
+Now then. I think we’ve achieved our goals in terms of refactoring, but we need to do a few adjustments to `elk`’s code - thankfully the *only* user of the `delf` crate right now.
+
+In `elk/src/process.rs`, we need to account for the fact that `delf::File` is now a generic type, so, in the definition for the `Object` type:
+
+``` rust
+#[derive(CustomDebug)]
+pub struct Object {
+    // cut: other fields
+
+    #[debug(skip)]
+    pub file: delf::File<Vec<u8>>, // was: just delf::File
+}
+```
+
+Next up! A bunch of code in `elk` depended on the fact that `delf` handed us `String` values, and now we have `&[u8]` values, so we’re in a pickle.
+
+In `Process::load_object_and_dependencies`, our wonderful iterator chain now fails:
+
+``` rust
+// in `elk/src/process.rs`
+// in `impl Object`
+// in `fn load_object_and_dependencies`
+
+        while !a.is_empty() {
+            use delf::DynamicTag::Needed;
+            a = a
+                .into_iter()
+                .map(|index| &self.objects[index].file)
+                // this now returns &[u8] with the same lifetime as &self
+                .flat_map(|file| file.dynamic_entry_strings(Needed))
+                .collect::<Vec<_>>()
+                .into_iter()
+                // this needs exclusive access to self (because we need &mut self)
+                // so it doesn't work.
+                .map(|dep| self.get_object(&dep))
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .filter_map(GetResult::fresh)
+                .collect();
+        }
+```
+
+For now we’ll settle for a janky workaround: do the `String` conversion there, and, since `from_utf8_lossy` returns a `Cow` (see [The Secret Life of Cows](https://deterministic.space/secret-life-of-cows.html)), we’ll call `to_string` on it, just so we get proper, owned `String`s, and not references.
+
+So, we add:
+
+``` rust
+                // same as before
+                .flat_map(|file| file.dynamic_entry_strings(Needed))
+                // new:
+                .map(|s| String::from_utf8_lossy(s).to_string())
+                // same as before
+                .collect::<Vec<_>>()
+```
+
+In `load_object`, instead of passing `&input[..]`, a `&[u8]`, to `File::parse_or_print_error`, we now pass `input`, a `Vec<u8>`, transferring ownership:
+
+``` rust
+// in `elk/src/process.rs`
+// in `impl Process`
+// in `fn load_object`
+
+        println!("Loading {:?}", &path);
+
+        // was: &input[..]
+        let file = delf::File::parse_or_print_error(input)
+            .ok_or_else(|| LoadError::ParseError(path.clone()))?;
+```
+
+Lower down in the same function, we used `String::replace` on some dynamic entry strings, so we also need to use `String::from_utf8_lossy`, because again, we’re getting back `u8` slices now:
+
+``` rust
+// in `elk/src/process.rs`
+// in `impl Process`
+// in `fn load_object`
+
+        self.search_path.extend(
+            file.dynamic_entry_strings(delf::DynamicTag::RPath)
+                .map(|path| String::from_utf8_lossy(path)) // new
+                .map(|path| path.replace("$ORIGIN", &origin))
+                .inspect(|path| println!("Found RPATH entry {:?}", path))
+                .map(PathBuf::from),
+        );
+```
+
+And lastly - and this is a non-trivial one, because it’s not a compile error, but: `delf` graciously returns an empty vec from `File::read_dynsym_entries` if there is no `.dynsym` section - which happens with statically-linked ELF objects.
+
+Although we can’t run those with our loader right now, fixing it isn’t that hard.
+
+Our old code was:
+
+``` rust
+// previously in `elk/src/process.rs`
+
+        let syms = file.read_syms()?;
+
+        let strtab = file
+            .get_dynamic_entry(delf::DynamicTag::StrTab)
+            .unwrap_or_else(|_| panic!("String table not found in {:?}", path));
+        let syms: Vec<_> = syms
+            .into_iter()
+            .map(|sym| unsafe {
+                let name = Name::from_addr(base + strtab + sym.name);
+                NamedSym { sym, name }
+            })
+            .collect();
+```
+
+And our new code is:
+
+``` rust
+// now in `elk/src/process.rs`:
+
+        let syms = file.read_dynsym_entries()?;
+        let syms: Vec<_> = if syms.is_empty() {
+            vec![]
+        } else {
+            let strtab = file
+                .get_dynamic_entry(delf::DynamicTag::StrTab)
+                .unwrap_or_else(|_| panic!("String table not found in {:?}", path));
+            syms.into_iter()
+                .map(|sym| unsafe {
+                    let name = Name::from_addr(base + strtab + sym.name);
+                    NamedSym { sym, name }
+                })
+                .collect()
+        };
+```
+
+This way, if there’s no `.dynsym` section, our loader won’t complain that we can’t find the `.strtab` section - which might not exist either, but which we don’t have any use for.
+
+Moving on to the `autosym` and `dig` subcommands of `elk`, there’s a few changes here too, but nothing too involved:
+
+``` rust
+fn cmd_autosym(args: AutosymArgs) -> Result<(), Box<dyn Error>> {
+    fn analyze(mapping: &procfs::Mapping) -> Result<(), AnyError> {
+        if mapping.deleted {
+            // skip deleted mappings
+            return Ok(());
+        }
+
+        let path = match mapping.source {
+            procfs::Source::File(path) => path,
+            _ => return Ok(()),
+        };
+
+        let contents = std::fs::read(path)?;
+        let file = match delf::File::parse_or_print_error(&contents) {
+            Some(x) => x,
+            _ => return Ok(()),
+        };
+
+        let section = match file
+            .section_headers
+            .iter()
+            // 👇 this was "get_section_name", and it used to be fallible
+            .find(|sh| file.shstrtab_entry(sh.name) == b".text")
+        {
+            Some(section) => section,
+            _ => return Ok(()),
+        };
+
+        // 👇 the `SectionHeader` field used to be called `off`, not `offset`
+        let textaddress = mapping.addr_range.start - mapping.offset + section.offset;
+        println!("add-symbol-file {:?} 0x{:?}", path, textaddress);
+
+        Ok(())
+    }
+
+    with_mappings(args.pid, |mappings| {
+        for mapping in mappings.iter().filter(|m| m.perms.x && m.source.is_file()) {
+            analyze(mapping)?;
+        }
+        Ok(())
+    })
+}
+```
+
+And now, *finally*, we can write our `dig` command proper.
+
+This is mostly fresh code, so I’ve added a bunch of comments:
+
+``` rust
+fn cmd_dig(args: DigArgs) -> Result<(), Box<dyn Error>> {
+    let addr = delf::Addr(args.addr);
+
+    with_mappings(args.pid, |mappings| {
+        if let Some(mapping) = mappings.iter().find(|m| m.addr_range.contains(&addr)) {
+            println!("Mapped {:?} from {:?}", mapping.perms, mapping.source);
+            println!(
+                "(Map range: {:?}, {:?} total)",
+                mapping.addr_range,
+                Size(mapping.addr_range.end - mapping.addr_range.start)
+            );
+
+            // we've used this pattern a bunch of times already, but in case you don't
+            // see the point: this avoids deep indentation. If we didn't use that, we'd
+            // soon find ourselves several levels deep into `if let` statements, whereas
+            // really, if we get a `None` or an `Err`, we just want to bail out early
+            // and gracefully.
+            let path = match mapping.source {
+                procfs::Source::File(path) => path,
+                // if it's not a file mapping, bail out
+                _ => return Ok(()),
+            };
+
+            let contents = std::fs::read(path)?;
+            let file = match delf::File::parse_or_print_error(&contents) {
+                Some(x) => x,
+                // if we couldn't parse the file, a message was printed,
+                // and we can bail out
+                _ => return Ok(()),
+            };
+
+            let offset = addr + mapping.offset - mapping.addr_range.start;
+
+            // Segments (loader view, `delf::ProgramHeader` type) determine what parts
+            // of the ELF file get mapped where, so we try to determine which
+            // segment this mapping corresponds to.
+            let segment = match file
+                .program_headers
+                .iter()
+                .find(|ph| ph.file_range().contains(&offset))
+            {
+                Some(s) => s,
+                None => return Ok(()),
+            };
+
+            // This is the main thing I wanted `elk dig` to do - display
+            // the virtual address *for this ELF object*, so that it matches
+            // up with the output from `objdump` and `readelf`
+            let vaddr = offset + segment.vaddr - segment.offset;
+            println!("Object virtual address: {:?}", vaddr);
+
+            // But we can go a bit further: we can find to which section
+            // this corresponds, and show *where* in this section the
+            // dug address was.
+            let section = match file
+                .section_headers
+                .iter()
+                .find(|sh| sh.mem_range().contains(&vaddr))
+            {
+                Some(s) => s,
+                None => return Ok(()),
+            };
+
+            let name = file.shstrtab_entry(section.name);
+            let sect_offset = vaddr - section.addr;
+            println!(
+                "At section {:?} + {} (0x{:x})",
+                String::from_utf8_lossy(name),
+                sect_offset.0,
+                sect_offset.0
+            );
+
+            // And, even further, we can try to map it to a symbol. This is all
+            // stuff GDB does in its `info addr 0xABCD` command, but isn't it
+            // satisfying to re-implement it ourselves?
+            match file.read_symtab_entries() {
+                Ok(syms) => {
+                    for sym in &syms {
+                        let sym_range = sym.value..(sym.value + delf::Addr(sym.size));
+                        // the first check is for zero-sized symbols, since `sym_range`
+                        // ends up being a 0-sized range.
+                        if sym.value == vaddr || sym_range.contains(&vaddr) {
+                            let sym_offset = vaddr - sym.value;
+                            let sym_name = String::from_utf8_lossy(file.strtab_entry(sym.name));
+                            println!(
+                                "At symbol {:?} + {} (0x{:x})",
+                                sym_name, sym_offset.0, sym_offset.0
+                            );
+                        }
+                    }
+                }
+                Err(e) => println!("Could not read syms: {:?}", e),
+            }
+        }
+        Ok(())
+    })
+}
+```
+
+The `Size` in that code is a [newtype](https://doc.rust-lang.org/rust-by-example/generics/new_types.html) that allows formatting an `Addr` as a size in bytes:
+
+``` rust
+struct Size(pub delf::Addr);
+
+use std::fmt;
+impl fmt::Debug for Size {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        const KIB: u64 = 1024;
+        const MIB: u64 = 1024 * KIB;
+
+        let x = (self.0).0;
+        #[allow(overlapping_patterns)]
+        #[allow(clippy::clippy::match_overlapping_arm)]
+        match x {
+            0..=KIB => write!(f, "{} B", x),
+            KIB..=MIB => write!(f, "{} KiB", x / KIB),
+            _ => write!(f, "{} MiB", x / MIB),
+        }
+    }
+}
+```
+
+And finally, we can install `elk` again, so we’ll get those new features when we use it from GDB:
+
+``` shell
+$ cd elk/
+$ cargo install --force --path .
+```
+
+Now then, uh… what were we actually trying to do again?
+
+> **Cool Bear's hot tip**
+>
+> Well, half an hour ago, I think we were trying to run our `ifunc-nolibc` sample through `elk`.
+
+Oh, right! Thanks cool bear.
+
+Let’s try that again.
+
+``` shell
+$ cd elk/samples
+$ gdb --args ../target/debug/elk run ifunc-nolibc
+(gdb) break jmp
+(gdb) r
+(gdb) autosym
+```
+
+After a `Ctrl-x 2` to enable the TUI (text user interface) and a few `stepi`, we’re about to jump to `ifunc-nolibc`’s `main`:
+
+![ifunc-1](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-9/assets/ifunc-1~6eedbcd59e5e184a.webp)
+
+Now’s as good a time as any to give our new and improved `dig` command a try:
+
+![ifunc-2](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-9/assets/ifunc-2~d183468a9015a2ca.webp)
+
+Cool! `elk dig` and GDB agree, I’m pretty happy about that, no lie.
+
+Let’s step a little bit further:
+
+![ifunc-3](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-9/assets/ifunc-3~4d8f58e9859891ea.webp)
+
+And here’s that `call` to some address that does *not* correspond to a symbol.
+
+Let’s `dig` it!
+
+``` shell
+(gdb) dig 0x7ffff7fc4010
+Mapped r-xp from File("/home/amos/ftl/elf-series/samples/ifunc-nolibc")
+(Map range: 00007ffff7fc4000..00007ffff7fc5000, 4 KiB total)
+Object virtual address: 0000000000001010
+At section ".plt" + 16 (0x10)
+```
+
+Hooray! Our subcommand has proved itself useful at least once.
+
+Only [two more times](https://en.wikipedia.org/wiki/Rule_of_three_(computer_programming)) until we can justify it to management.
+
+So, it’s in the `.plt` section.
+
+We’ve never talked about the `.plt` section! And I don’t intend to spend too long on it - we’ve avoided it pretty successfully so far.
+
+The PLT (Procedure Linkage Table) is used to implement lazy symbol lookup.
+
+Let’s say you have a program that uses `printf`. When `ld-linux` loads your program, and execution arrives at that point where it should call `printf`, it… doesn’t call `printf`!
+
+It calls `printf@plt`, which ends up calling back to the dynamic linker, and asks it gently to please look up `printf`. If it can’t find it, the program crashes with an error message.
+
+If it *can* find it, it ends up writing its address to the GOT (Global Offset Table), so that the *next* time `printf@plt` is called, it jumps straight to the already-resolved address of the real `printf` - the one from `/usr/lib/libc-2.32.so`.
+
+So, the program flow for the first call looks like this:
+
+![plt](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-9/assets/plt~2273883f5cc2a576.svg)
+
+And all subsequent calls are much faster, since they don’t invoke the dynamic linker - although there’s still an additional layer of indirection - reading `printf`’s address from the GOT:
+
+![plt2](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-9/assets/plt2~1f218af998eebaff.svg)
+
+We can see that in action if we disassemble the `.plt` section of `ifunc-nolibc`:
+
+``` x86asm
+$ objdump -dR --section=.plt ifunc-nolibc
+
+ifunc-nolibc:     file format elf64-x86-64
+
+
+Disassembly of section .plt:
+
+0000000000001000 <.plt>:
+    1000:       ff 35 02 30 00 00       push   QWORD PTR [rip+0x3002]        # 4008 <_GLOBAL_OFFSET_TABLE_+0x8>
+    1006:       ff 25 04 30 00 00       jmp    QWORD PTR [rip+0x3004]        # 4010 <_GLOBAL_OFFSET_TABLE_+0x10>
+    100c:       0f 1f 40 00             nop    DWORD PTR [rax+0x0]
+    1010:       ff 25 02 30 00 00       jmp    QWORD PTR [rip+0x3002]        # 4018 <_GLOBAL_OFFSET_TABLE_+0x18>
+    1016:       68 00 00 00 00          push   0x0
+    101b:       e9 e0 ff ff ff          jmp    1000 <.plt>
+```
+
+Remember that `dig` gave us the address `0x1010` - we can see it’s jumping to address `0x4018` (through rip-relative addressing, which we’ve seen earlier in this series).
+
+And if we inspect what’s at address `0x4018` from GDB:
+
+``` shell
+(gdb) x/1xg 0x7ffff7fc4010 - 0x1010 + 0x4018
+0x7ffff7fc7018: 0x0000000000001016
+```
+
+Hey, that’s familiar! Well, not a big surprise but - that’s what was on the stack when we had `ifunc-nolibc` crash.
+
+Okay, so, first of all - we’re not going to do lazy symbol resolution. I’ve had to set a few hard limits for this series, so it doesn’t balloon out of control (any more than it already has), and *absolutely no lazy loading* is one of them.
+
+We’ll do everything eagerly, if it’s the end of us.
+
+So, `0x1016` is a suspicious value isn’t it? It almost looks like it corresponds to this bit of the `.plt` section:
+
+``` x86asm
+0000000000001000 <.plt>:
+    1000:       ff 35 02 30 00 00       push   QWORD PTR [rip+0x3002]        # 4008 <_GLOBAL_OFFSET_TABLE_+0x8>
+    1006:       ff 25 04 30 00 00       jmp    QWORD PTR [rip+0x3004]        # 4010 <_GLOBAL_OFFSET_TABLE_+0x10>
+    100c:       0f 1f 40 00             nop    DWORD PTR [rax+0x0]
+    1010:       ff 25 02 30 00 00       jmp    QWORD PTR [rip+0x3002]        # 4018 <_GLOBAL_OFFSET_TABLE_+0x18>
+    ; 👇
+    1016:       68 00 00 00 00          push   0x0
+    101b:       e9 e0 ff ff ff          jmp    1000 <.plt>
+```
+
+But also… `0x1016` is really not a value we should see *in a loaded executable*. Because it hasn’t been adjusted for the loaded object’s base address.
+
+In other words: we’re *probably* missing a relocation.
+
+But, as I said earlier… we’re erroring on unknown and unhandled relocations, so what’s going on?
+
+Let’s take a look at `readelf`’s output:
+
+``` shell
+$ readelf -a ifunc-nolibc
+
+(cut)
+
+  [ 6] .rela.plt         RELA             0000000000000328  00000328
+       0000000000000018  0000000000000018  AI       4    13     8
+```
+
+Ohhh. A relocation table, just for the PLT? But we’re looking at a section here, that’s the “linker view” into the ELF.
+
+Is there anything else in the “loader view” (ie, program headers) that also point to that same address?
+
+``` shell
+(cut)
+
+Dynamic section at offset 0x2ef0 contains 12 entries:
+  Tag        Type                         Name/Value
+ 0x000000006ffffef5 (GNU_HASH)           0x2e8
+ 0x0000000000000005 (STRTAB)             0x320
+ 0x0000000000000006 (SYMTAB)             0x308
+ 0x000000000000000a (STRSZ)              1 (bytes)
+ 0x000000000000000b (SYMENT)             24 (bytes)
+ 0x0000000000000015 (DEBUG)              0x0
+ 0x0000000000000003 (PLTGOT)             0x4000
+ 0x0000000000000002 (PLTRELSZ)           24 (bytes)
+ 0x0000000000000014 (PLTREL)             RELA
+ 0x0000000000000017 (JMPREL)             0x328        <----------
+ 0x000000006ffffffb (FLAGS_1)            Flags: PIE
+ 0x0000000000000000 (NULL)               0x0
+```
+
+There is! We’ve seen this! It’s the `DynamicTag::JmpRel` tag. But right now, we’re only reading from the `DT::Rela` tag.
+
+So we have *two* sets of relocations.
+
+It’s time to go back to `delf` for a little while:
+
+``` rust
+// in `delf/src/lib.rs`
+// in `impl File`
+
+    // we're going to be reading relocations twice, and I don't want any
+    // code duplication, so here's a re-usable internal helper:
+    fn read_relocations(
+        &self,
+        addr_tag: DynamicTag,
+        size_tag: DynamicTag,
+    ) -> Result<Vec<Rela>, ReadRelaError> {
+        use ReadRelaError as E;
+
+        let addr = match self.dynamic_entry(addr_tag) {
+            Some(addr) => addr,
+            None => return Ok(vec![]),
+        };
+
+        let len = self.get_dynamic_entry(size_tag)?;
+        let i = self
+            .mem_slice(addr, len.into())
+            .ok_or(E::RelaSegmentNotFound)?;
+
+        let n: usize = len.0 as usize / Rela::SIZE;
+        match nom::multi::many_m_n(n, n, Rela::parse)(i) {
+            Ok((_, rela_entries)) => Ok(rela_entries),
+            Err(nom::Err::Failure(err)) | Err(nom::Err::Error(err)) => {
+                Err(E::ParsingError(format!("{:?}", err)))
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    /// Read relocation entries from the table pointed to by `DynamicTag::Rela`
+    pub fn read_rela_entries(&self) -> Result<Vec<Rela>, ReadRelaError> {
+        // those are the ones we already knew about:
+        self.read_relocations(DynamicTag::Rela, DynamicTag::RelaSz)
+    }
+
+    /// Read relocation entries from the table pointed to by `DynamicTag::JmpRel`
+    pub fn read_jmp_rel_entries(&self) -> Result<Vec<Rela>, ReadRelaError> {
+        // those we *just* learned about:
+        self.read_relocations(DynamicTag::JmpRel, DynamicTag::PltRelSz)
+    }
+```
+
+Now, in `elk`, we can read.. both of these!
+
+``` rust
+// in `elk/src/process.rs`
+// in `impl Process`
+// in `fn load_object`
+
+        // previously:
+        let rels = file.read_rela_entries()?;
+
+        // now:
+        let mut rels = Vec::new();
+        rels.extend(file.read_rela_entries()?);
+        rels.extend(file.read_jmp_rel_entries()?);
+```
+
+And try loading `ifunc-nolibc` again:
+
+``` shell
+$ cd elk/samples/
+$ cargo b
+$ ../target/debug/elk run ifunc-nolibc
+Loading "/home/amos/ftl/elk/samples/ifunc-nolibc"
+Fatal error: Could not read relocations from ELF object: Parsing error: String("Unknown RelType 37 (0x25)"):
+input: 25 00 00 00 00 00 00 00 c3 10 00 00 00 00 00 00
+```
+
+Theeeeeeeeeeeere we go.
+
+There it is.
+
+It was hiding!
+
+Alright then, what’s relocation type 37? The “System V Application Binary Interface (AMD64 Architecture Processor Supplement)” tells us it’s called `R_X86_64_IRELATIVE`.
+
+Isn’t that interesting! We know about `Relative` already, this is `IRelative`, and I’m ready to bet the “i” stands for “indirect”.
+
+![irelative](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-9/assets/irelative~fa398dd578266c69.webp)
+
+It’s a bingo!
+
+What does “indirect” mean? Let’s find out.
+
+We’ll handle it just like a “Relative” relocation at first:
+
+``` rust
+// in `delf/src/lib.rs`
+
+#[derive(Debug, TryFromPrimitive, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum RelType {
+    _64 = 1,
+    Copy = 5,
+    GlobDat = 6,
+    JumpSlot = 7,
+    Relative = 8,
+    // new:
+    IRelative = 37,
+}
+```
+
+``` rust
+// in `elk/src/process.rs`
+// in `impl Process`
+// in `fn apply_relocation`
+
+        match reltype {
+            RT::_64 => unsafe {
+                objrel.addr().set(found.value() + addend);
+            },
+            RT::Relative => unsafe {
+                objrel.addr().set(obj.base + addend);
+            },
+            // new!
+            RT::IRelative => unsafe {
+                objrel.addr().set(obj.base + addend);
+            },
+            RT::Copy => unsafe {
+                objrel.addr().write(found.value().as_slice(found.size()));
+            },
+            _ => return Err(RelocationError::UnimplementedRelocation(reltype)),
+        }
+```
+
+Now, at the very least, it should load and jump to the entry point:
+
+``` shell
+$ cargo b
+$ ../target/debug/elk run ifunc-nolibc
+Loading "/home/amos/ftl/elk/samples/ifunc-nolibc"
+$
+```
+
+Eyyyy! It didn’t even crash! Although, we didn’t get a message.
+
+…or did we?
+
+``` shell
+$ ../target/debug/elk run ifunc-nolibc | xxd
+00000000: 4c6f 6164 696e 6720 222f 686f 6d65 2f61  Loading "/home/a
+00000010: 6d6f 732f 6674 6c2f 656c 6b2f 7361 6d70  mos/ftl/elk/samp
+00000020: 6c65 732f 6966 756e 632d 6e6f 6c69 6263  les/ifunc-nolibc
+00000030: 220a 5548 89e5 488d 054d 0f              ".UH..H..M.
+```
+
+Uhhm indeed.
+
+So there *is* output - it’s just not text. What *is* that output?
+
+``` shell
+$ ../target/debug/elk run ifunc-nolibc | dd bs=1 skip=$((0x32)) | ndisasm -b 64 -
+9+0 records in
+9+0 records out
+9 bytes copied, 0,000529187 s, 17,0 kB/s
+00000000  55                push rbp
+00000001  4889E5            mov rbp,rsp
+00000004  48                rex.w
+00000005  8D                db 0x8d
+00000006  05                db 0x05
+00000007  4D                rex.wrb
+00000008  0F                db 0x0f
+```
+
+> **Cool Bear's hot tip**
+>
+> The value for `skip` depends on the total length of the path of `ifunc-nolibc` on disk, so you may need to adjust it for it to work for you.
+
+Well… it looks suspiciously like the prologue of a C function.
+
+Let’s step through it with GDB. You know the drill:
+
+``` shell
+$ gdb --args ../target/debug/elk run ifunc-nolibc
+(gdb) break jmp
+(gdb) r
+(gdb) autosym
+```
+
+![as-rel-1](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-9/assets/as-rel-1~374d4504edeea3f6.webp)
+
+Here we are again, about to jump into the PLT.
+
+Let’s go!
+
+![as-rel-2](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-9/assets/as-rel-2~319f33636ac07b91.webp)
+
+Before we follow that jump, let’s examine:
+
+``` shell
+(gdb) x/xg 0x7ffff7fc7018
+0x7ffff7fc7018: 0x00007ffff7fc40c3
+```
+
+Hey! That used to be `0x1016`, but now it’s an address that makes sense.
+
+The address of… what exactly?
+
+``` shell
+(gdb) info addr 0x00007ffff7fc40c3
+No symbol "0x00007ffff7fc40c3" in current context.
+```
+
+No known symbol, that’s for sure. Well, that’s why we made `elk dig`:
+
+``` shell
+(gdb) dig 0x00007ffff7fc40c3
+Mapped r-xp from File("/home/amos/ftl/elf-series/samples/ifunc-nolibc")
+(Map range: 00007ffff7fc4000..00007ffff7fc5000, 4 KiB total)
+Object virtual address: 00000000000010c3
+At section ".text" + 163 (0xa3)
+At symbol "resolve_get_msg" + 0 (0x0)
+At symbol "get_msg" + 0 (0x0)
+```
+
+Ahhhhhhhhhh. Doesn’t that feel great? Sure, we spent half the article scripting GDB and refactoring `delf`, but do you see what kind of insight we got out of it?
+
+We can see the *inner workings of ifuncs*, effortlessly. So, both symbols `resolve_get_msg`, (our selector), and `get_msg` (the actual function) have the same address. Interesting.
+
+Let’s keep stepping.
+
+![as-rel-3](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-9/assets/as-rel-3~d9c25e76ba77cce0.webp)
+
+Nice! This is *definitely* the assembly for `resolve_get_msg` which, as a reminder, looked like this in `ifunc-nolibc.c`:
+
+``` c
+static get_msg_t resolve_get_msg() {
+    int uid;
+
+    // make a `getuid` syscall. It has no parameters,
+    // and returns in the `%rax` register.
+    __asm__ (
+            " \
+            mov     $102, %%rax \n\t\
+            syscall \n\t\
+            mov     %%eax, %[uid]"
+            : [uid] "=r" (uid)
+            : // no inputs
+            );
+
+    if (uid == 0) {
+        // UID 0 is root
+        return get_msg_root;
+    } else {
+        // otherwise, it's a regular user
+        return get_msg_user;
+    }
+}
+```
+
+So, let’s keep stepping.
+
+![as-rel-4](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-9/assets/as-rel-4~de7253a1a71b80c7.webp)
+
+The `getuid` syscall has spoken - we are *not* root, so it’s about to return the address of `get_msg_user`.
+
+…but what happens afterwards?
+
+Here’s what our call stack looks like currently:
+
+``` shell
+(gdb) bt
+#0  0x00007ffff7fc40e4 in resolve_get_msg ()
+#1  0x00007ffff7fc40fb in main ()
+#2  0x00007ffff7fc4118 in _start ()
+#3  0x00005555555c6db4 in elk::jmp (addr=0x7ffff7fc410a <_start>) at elk/src/main.rs:295
+#4  0x00005555555c6422 in elk::cmd_run (args=...) at elk/src/main.rs:80
+#5  0x00005555555c5f78 in elk::do_main () at elk/src/main.rs:66
+#6  0x00005555555c5d6c in elk::main () at elk/src/main.rs:58
+```
+
+Well, after stepping through a few instructions, we’re back in `main`:
+
+![as-rel-5](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-9/assets/as-rel-5~40c0337c785dc2f5.webp)
+
+And we’re moving the return value of `resolve_get_msg` (from rax) into the argument to `ftl_print` (into rdi).
+
+And… that’s why we’re printing binary.
+
+Here’s a GDB dump of what we pass to `ftl_print`, alongside what we got via `elk run ifunc-nolibc | xxd` earlier:
+
+``` shell
+(gdb) x/10xb $rax
+0x7ffff7fc40b6 <get_msg_user>:  0x55    0x48    0x89    0xe5    0x48    0x8d    0x05    0x4d
+0x7ffff7fc40be <get_msg_user+8>:        0x0f    0x00
+
+$ ../target/debug/elk run ifunc-nolibc | xxd
+(cut)
+00000030: 220a 5548 89e5 488d 054d 0f              ".UH..H..M.
+               ^^^^ ^^^^ ^^^^ ^^^^ ^^
+```
+
+It just stopped printing the first time it encountered a null byte!
+
+[C strings are like that sometimes.](https://fasterthanli.me/articles/working-with-strings-in-rust)
+
+So, what’s the remedy?
+
+We have to… call the selector at load time. Straight from `elk`, *before* we jump to the entry point.
+
+That should be fun.
+
+``` rust
+// in `elk/src/process.rs`
+// in `impl Process`
+// in `fn apply_relocation`
+
+        match reltype {
+            RT::_64 => unsafe {
+                objrel.addr().set(found.value() + addend);
+            },
+            RT::Relative => unsafe {
+                objrel.addr().set(obj.base + addend);
+            },
+            RT::IRelative => unsafe {
+                // new! and *very* unsafe!
+                let selector: extern "C" fn() -> delf::Addr =
+                    std::mem::transmute(obj.base + addend);
+                objrel.addr().set(selector());
+            },
+            RT::Copy => unsafe {
+                objrel.addr().write(found.value().as_slice(found.size()));
+            },
+            _ => return Err(RelocationError::UnimplementedRelocation(reltype)),
+        }
+```
+
+That’s it right? We’re home free?
+
+``` shell
+$ ../target/debug/elk run ifunc-nolibc
+Loading "/home/amos/ftl/elk/samples/ifunc-nolibc"
+[1]    324 segmentation fault (core dumped)  ../target/debug/elk run ifunc-nolibc
+```
+
+Awwwww no.
+
+What happened?
+
+``` shell
+$ gdb --args ../target/debug/elk run ifunc-nolibc
+(gdb) r
+Starting program: /home/amos/ftl/elk/target/debug/elk run ifunc-nolibc
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/usr/lib/libthread_db.so.1".
+Loading "/home/amos/ftl/elk/samples/ifunc-nolibc"
+
+Program received signal SIGSEGV, Segmentation fault.
+0x00007ffff7fc80c3 in ?? ()
+```
+
+Okay…
+
+``` shell
+(gdb) bt
+#0  0x00007ffff7fc40c3 in ?? ()
+#1  0x000055555559a75f in elk::process::Process::apply_relocation (self=0x7fffffffd600, objrel=...) at elk/src/process.rs:365
+#2  0x000055555559a19e in elk::process::Process::apply_relocations (self=0x7fffffffd600) at elk/src/process.rs:313
+#3  0x00005555555c6148 in elk::cmd_run (args=...) at elk/src/main.rs:75
+#4  0x00005555555c5fb8 in elk::do_main () at elk/src/main.rs:66
+#5  0x00005555555c5dac in elk::main () at elk/src/main.rs:58
+```
+
+Nice! A proper stack trace. This happens *before* we jump to the entry point, while we’re still applying relocations.
+
+``` shell
+(gdb) autosym
+add symbol table from file "/home/amos/ftl/elf-series/target/debug/elk" at
+        .text_addr = 0x555555564080
+add symbol table from file "/usr/lib/libpthread-2.32.so" at
+        .text_addr = 0x7ffff7db1a70
+add symbol table from file "/usr/lib/libgcc_s.so.1" at
+        .text_addr = 0x7ffff7dcf020
+add symbol table from file "/usr/lib/libc-2.32.so" at
+        .text_addr = 0x7ffff7e0c650
+add symbol table from file "/usr/lib/libdl-2.32.so" at
+        .text_addr = 0x7ffff7fb0210
+add symbol table from file "/usr/lib/ld-2.32.so" at
+        .text_addr = 0x7ffff7fd2090
+```
+
+Also neat: `autosym` already works, even in the middle of applying relocations.
+
+I want to hear it from everyone, even those in the back, and those with a flu:
+
+Let’s, `dig`, it!
+
+``` shell
+(gdb) dig 0x00007ffff7fc40c3
+Mapped rw-p from File("/home/amos/ftl/elf-series/samples/ifunc-nolibc")
+(Map range: 00007ffff7fc3000..00007ffff7fc6000, 12 KiB total)
+Object virtual address: 00000000000010c3
+At section ".text" + 163 (0xa3)
+At symbol "resolve_get_msg" + 0 (0x0)
+At symbol "get_msg" + 0 (0x0)
+```
+
+Well, okay, no big surprise, that’s the only function we run at *load time* as opposed to run time.
+
+But I encourage you to take a *very* close look to `dig`’s output here.
+
+I swear I hadn’t planned this moment - I just threw everything I could think of in `dig`’s output, but, the first thing I notice is, it’s crashing at the *very beginning* of `resolve_get_msg`.
+
+``` shell
+At symbol "resolve_get_msg" + 0 (0x0)
+```
+
+It hasn’t even had a chance to execute a single instruction.
+
+Can you notice the *other* thing that’s slightly.. off?
+
+I’ll pad the page with a cool bear tip so you (hopefully) don’t get spoiled.
+
+> **Cool Bear's hot tip**
+>
+> Have you been wondering why the GOT (Global Offset Table) is a thing, distinct from the `.text` section?
+>
+> It has to do with maximizing the amount of memory that can be shared across processes.
+>
+> If two different applications depend on `libsample.so`, and both run concurrently, well, the code from `libsample.so` is the same. But the dynamic symbols that `libsample.so` calls might resolve to different things!
+>
+> Maybe one of the process has `LD_PRELOAD` set to intercept some calls. Or maybe it has weak symbols that are defined in one application, and not the other.
+>
+> But the logic of `libsample.so` doesn’t change. So, anything that can differ across process is grouped in the PLT and GOT, and the rest of the code - that should be the same across all processes, is somewhere else in the `.text` section.
+>
+> When the first application starts, it maps `libsample.so` into memory, and applies its own relocations. When the second application starts, it does the same. But the kernel notices that `libsample.so` is *already* mapped into memory, so it maps it to the same kernel buffers.
+>
+> As relocations are applied, the second application writes to its own mapping of `libsample.so`. But the mappings are copy-on-write! So *only at that point* does the kernel allocate separate buffers, just for the second application, and only for the GOT/PLT.
+>
+> The `.text` section is still backed by the same kernel buffers, shared across both applications.
+>
+> This introduces a new security vulnerability - we now jump to an address we read from memory pages that are *writable*. If our program has a vulnerability, malicious user input could cause us to overwrite the GOT, eventually making our program jumping to an arbitrary address.
+>
+> And that’s why there’s a GNU extension to make the GOT read-only after relocations have been processed: that’s what the `GnuRelRo` SegmentType is all about.
+>
+> You can check it out with `readelf -a ifunc-nolibc` - look for `GNU_RELRO`.
+
+Welcome back!
+
+Did you see it?
+
+Our segment isn’t currently executable! It’s mapped as read-write!
+
+``` shell
+(gdb) dig 0x00007ffff7fc40c3
+Mapped rw-p from File("/home/amos/ftl/elf-series/samples/ifunc-nolibc")
+        ☝
+        not executable!
+```
+
+So, we’re going to have to make a compromise - when we first map our segments, we’ll have to make them readable (obviously), writable (for relocations), *and* executable (for indirect functions).
+
+We’re adjusting the permissions before jumping to the entry point anyway, so don’t worry about it.
+
+``` rust
+// in `elk/src/process.rs`
+// in `impl Process`
+// in `load_object`
+
+                let map = MemoryMap::new(
+                    filesz.into(),
+                    &[
+                        MapOption::MapReadable,
+                        MapOption::MapWritable,
+                        MapOption::MapExecutable, // new!
+                        MapOption::MapFd(fs_file.as_raw_fd()),
+                        MapOption::MapOffset(offset.into()),
+                        MapOption::MapAddr(unsafe { (base + vaddr).as_ptr() }),
+                    ],
+                )?;
+```
+
+And, with that one change…
+
+``` shell
+$ cargo b -q
+$ ../target/debug/elk run ifunc-nolibc
+Loading "/home/amos/ftl/elk/samples/ifunc-nolibc"
+Hello, regular user!
+$ sudo ../target/debug/elk run ifunc-nolibc
+[sudo] password for coolbear
+Loading "/home/amos/ftl/elk/samples/ifunc-nolibc"
+Hello, root!
+```
+
+We did it.
+
+We did it! 🎉🎉🎉

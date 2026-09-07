@@ -1,0 +1,2853 @@
+
+    SLUB Internals
+for Exploit Developers
+
+   Andrey Konovalov, xairy.io
+
+  Linux Security Summit, Vienna
+         Sep 16th, 2024
+
+Why this talk
+●   Few/no resources that connect SLUB internals with Slab shaping in exploits
+    ○   Exploit write-ups usually only briefly cover Slab shaping for specific bug
+    ○   Articles that focus on SLUB don't cover Slab shaping in exploits
+
+●   This talk aims to fill the void and cover both:
+    ○   Core SLUB internals: memory layout, allocation, and freeing
+    ○   How Slab shaping works for basic memory corruption bugs
+        based on knowledge of SLUB internals
+
+                                                                                        2
+
+Dynamic memory allocators
+    in the Linux kernel              Link to slides
+
+    (Skipped in presentation mode)
+
+                                                           3
+
+Linux kernel virtual memory layout (x86-64)
+               0xffffffffffffffff
+                                    Modules
+
+                                    vmlinux
+
+                                    vmalloc
+
+        RAM                                   Direct linear mapping of RAM
+                                    physmap
+   (phys. memory)                             (except memory reserved by
+                                              bootloader/BIOS)
+
+                                      ...
+
+               0xffff800000000000                             Kernel address space
+                                                                                          4
+
+Dynamic memory allocators
+●   Non-reserved physmap memory passed to dynamic memory allocators
+
+●   Many of them:
+    ○   During early boot: memblock
+    ○   Physical memory: Slab, mempool, page_alloc, CMA
+    ○   Virtual memory: vmalloc, percpu (backing memory is still physical)
+
+●   Most often, memory corruptions affect Slab allocations
+    ○   In write-ups, "heap" usually means Slab
+
+                                                                                  5
+
+Dynamic memory allocators hierarchy [partial]
+
+                       memblock
+ During early boot
+
+ After early boot
+                       page_alloc
+
+              Slab      vmalloc           CMA
+
+           mempool      percpu
+
+                                                     6
+
+  Slab and page_alloc in hierarchy
+
+                                memblock
+  Allocate contiguous regions
+  of memory in physmap (RAM)
+
+                                page_alloc   Granularity: 1 page (4 KB)
+
+Granularity:
+                Slab             vmalloc                         CMA
+    8 bytes
+
+               mempool           percpu
+
+                                                                               7
+
+    Slab allocator:
+   Core idea and API
+(Partially skipped in presentation mode)
+
+                                                8
+
+Slab allocator: slabs and objects
+●   Slab allows allocating small regions of physical memory called objects
+●   Slab stores objects in slabs — big regions intended for objects of the same size
+     ○    Backing memory for slabs is allocated from page_alloc
+●   Slab allocates and frees objects from/to slots in these slabs
+
+    Object slot   Object slot    Object slot   Object slot   Object slot   Object slot   Object slot   Object slot
+
+                                One slab with 8 object slots of the same size;
+                                 backing memory allocated from page_alloc
+
+                                                                                                                          9
+
+Slab allocator API
+●   On API side, objects are allocated from caches
+    ○    Internally, caches allocate/free slabs to store objects
+
+●   Slab allocator provides two types of caches:
+    1.   Type-specific caches: each serves specific type of object with fixed size
+    2.   General-purpose (aka kmalloc) caches: used for generic allocations of
+         varying sizes
+
+                                                                                      10
+
+Slab allocator API: type-specific caches
+●   Creating cache to allocate objects of size size:
+
+    struct kmem_cache *kmem_cache_create(const char *name, unsigned int size,
+                                      unsigned int align, slab_flags_t flags,
+                                      void (*ctor)(void *));
+
+●   Allocating and freeing objects from/to created cache:
+
+    void *kmem_cache_alloc(struct kmem_cache *s, gfp_t flags);
+    void kmem_cache_free(struct kmem_cache *s, void *objp);
+
+                                                                                11
+
+kmem_cache_create/alloc/free usage example
+cred_jar = kmem_cache_create("cred_jar", sizeof(struct cred), 0,
+              SLAB_HWCACHE_ALIGN|SLAB_PANIC|SLAB_ACCOUNT, NULL);
+
+struct cred *new = kmem_cache_alloc(cred_jar, GFP_KERNEL);
+
+// Use new.
+
+kmem_cache_free(cred_jar, new);
+
+                                                                       12
+
+Slab allocator: kmalloc caches
+●   Slab allocator precreates caches for generic usage — kmalloc caches
+
+●   kmalloc-8, kmalloc-16, kmalloc-32, kmalloc-64, kmalloc-96,
+    kmalloc-128, kmalloc-192, kmalloc-256, kmalloc-512,
+    kmalloc-1k, kmalloc-2k, kmalloc-4k, kmalloc-8k
+    on Ubuntu
+
+●   sudo cat /proc/slabinfo to see all caches
+
+                                                                              13
+
+Slab allocator API: kmalloc
+●   Allocating and freeing objects from/to kmalloc caches:
+
+    void *kmalloc(size_t size, gfp_t flags);
+    void kfree(const void *objp);
+
+●   kmalloc uses smallest fitting kmalloc cache
+    ○   Example: kmalloc(100, GFP_KERNEL) uses kmalloc-128
+
+                                                                 14
+
+kmalloc/kfree usage example
+void *data = kmalloc(142, GFP_KERNEL);
+
+// Use data.
+
+kfree(data);
+
+                                             15
+
+Slab allocator variants
+●   Linux kernel (used to) provides 3 variants of Slab allocator
+    ○   All follow the same API but have different implementations
+
+●   SLUB — Default allocator, used most frequently
+    ○   Ubuntu and Android use SLUB
+●   SLAB — Reportedly faster than SLUB for certain workloads
+    ○   Removed in 6.8 (all users moved to SLUB)
+●   SLOB — Has small memory footprint, used for embedded devices
+    ○   Removed in 6.4 (CONFIG_SLUB_TINY=y to be used instead)
+
+                                                                         16
+
+Slab bugs
+
+                17
+
+Slab bugs
+●   Are typical bugs with dynamic memory:
+    ○   Out-of-bounds (OOB) read or write
+    ○   Use-after-free (UAF) read or write
+    ○   Double-free and invalid-free
+
+●   Focus on OOB and UAF
+    ○   Some notes on double-free at the end, invalid-free is out-of-scope
+
+                                                                                 18
+
+Out-of-bounds scenario example #1
+
+                      Vulnerable object       Free object slot
+
+                                Out-of-bounds access
+
+●   Vulnerable object — particular object affected by bug
+●   Free object slot — another slot in the same slab not occupied by any object
+
+                                                                                      19
+
+Out-of-bounds scenario example #2
+
+                      Vulnerable object       Another object
+
+                                Out-of-bounds access
+
+●   Vulnerable object — particular object affected by bug
+●   Another object — some object that follows vulnerable object in slab
+
+                                                                              20
+
+Use-after-free scenario example #1
+
+        1. vuln_ptr = kmalloc(...)               Vulnerable object
+
+        2. kfree(vuln_ptr)                        Free object slot
+
+                         Use-after-free access
+        3. *vuln_ptr = ...                        Free object slot
+
+                                                                         21
+
+Use-after-free scenario example #2
+
+        1. vuln_ptr = kmalloc(...)                 Vulnerable object
+
+        2. kfree(vuln_ptr)                          Free object slot
+
+        3. Another object allocated in slot         Another object
+
+                           Use-after-free access
+        4. *vuln_ptr = ...                          Another object
+
+                                                                           22
+
+Goal of Slab attack
+●   Use Slab bug to overwrite and/or leak either:
+    ○   Metadata in free object slot
+         ■   For example, to gain better Slab corruption primitive
+         ■   Spoiler: possible but tricky
+    ○   Another object
+         ■   For example, leak vmlinux address to bypass KASLR
+         ■   Or gain a better primitive (Arbitrary Address Execution or AARW)
+             to escalate privileges
+         ■   Spoiler: easy and thus the go-to approach
+
+                                                                                    23
+
+Required for attack [1/3]
+1.   Need kernel bug that leads to OOB or UAF access for vulnerable object
+     ○   Will analyze a few different scenarios
+     ○   Discussing specific bugs is out-of-scope
+
+                                                                                 24
+
+Required for attack [2/3]
+1.   Need kernel bug that leads to OOB or UAF access for vulnerable object
+
+2.   Need to choose target object to leak or overwrite
+     ○   Many good objects, discussing specific ones is out-of-scope
+     ○   Assume we chose one
+
+                                                                                 25
+
+Required for attack [3/3]
+1.   Need kernel bug that leads to OOB or UAF access for vulnerable object
+
+2.   Need to choose target object to leak or overwrite
+
+3.   Need to shape (aka groom or massage) Slab memory
+     ○   For OOB: Put vulnerable and target object next to each other
+     ○   For UAF: Put target object into slot of freed vulnerable object
+
+●    SLUB internals and shaping approaches are focus of the talk
+
+                                                                                 26
+
+SLUB internals
+
+                     27
+
+Constraints
+●   Latest longterm kernel 6.6 (things might change in the future)
+●   Typical distro (Ubuntu) kernel config:
+    ○   CONFIG_SLUB_CPU_PARTIAL=y
+    ○   # CONFIG_SLUB_DEBUG_ON is not set
+    ○   # CONFIG_SLUB_TINY is not set
+    ○   ...
+●   Focus on basics: locking details and racy Slab shaping are out-of-scope
+●   Focus on single cache: cache merging and cross-cache are out-of-scope
+
+                                                                                  28
+
+  SLUB internals:
+struct kmem_cache
+
+                        29
+
+Each cache has kmem_cache structure
+                             struct kmem_cache {
+                                  // Per-CPU cache data:
+                                  struct kmem_cache_cpu __percpu *cpu_slab;
+           kmem_cache_cpu
+                                  // Per-node cache data:
+                                  struct kmem_cache_node *node[MAX_NUMNODES];
+  ->cpu_slab
+                                  ...
+ kmem_cache                       const char *name;         // Cache name
+                                  slab_flags_t flags;       // Cache flags
+  ->node
+                                  unsigned int object_size; // Size of objects
+                                  unsigned int offset;      // Freelist pointer offset
+           kmem_cache_node        unsigned long min_partial;
+                                  unsigned int cpu_partial_slabs;
+                             };
+
+                                                                                         30
+
+kmem_cache has per-CPU state kmem_cache_cpu
+                      kmem_cache_cpu   struct kmem_cache {
+                        for CPU #0
+                                            // Per-CPU cache data:
+                                            struct kmem_cache_cpu __percpu *cpu_slab;
+                      kmem_cache_cpu
+                        for CPU #1          // Per-node cache data:
+                                            struct kmem_cache_node *node[MAX_NUMNODES];
+         ->cpu_slab
+                                            ...
+                           ...
+    kmem_cache                         };
+
+●     One instance of kmem_cache_cpu for each CPU (core)
+●     Assume we have only one CPU for now for simplicity
+
+                                                                                          31
+
+kmem_cache has per-node state kmem_cache_node
+                      kmem_cache_cpu       struct kmem_cache {
+                        for CPU #0
+                                                // Per-CPU cache data:
+                                                struct kmem_cache_cpu __percpu *cpu_slab;
+                      kmem_cache_cpu
+                        for CPU #1              // Per-node cache data:
+                                                struct kmem_cache_node *node[MAX_NUMNODES];
+      ->cpu_slab
+                                                ...
+ kmem_cache                                };
+
+      ->node
+               kmem_cache_node    ●    One kmem_cache_node for each NUMA node
+                 for node #0
+                                       ○     Non-Uniform Memory Access
+                    ...           ●    Assume one node (typical non-server system)
+
+                                                                                              32
+
+Assume one CPU and one NUMA node
+                            ● Assume one CPU for now
+                               ○ Effectively true during Slab shaping
+          kmem_cache_cpu          due to CPU pinning (explained later)
+
+ ->cpu_slab
+                            ● Assume one NUMA node
+ kmem_cache                    ○ Effectively true during Slab shaping:
+ ->node                           interacting with node slabs brings
+                                  unreliability and typically avoided anyway
+          kmem_cache_node      ○ SLUB behaviour with multiple nodes
+                                  is out-of-scope
+
+                                                                                   33
+
+kmem_cache_cpu/node contain pointers to slabs
+                                    struct kmem_cache_cpu {
+                             slab        struct slab *slab;    // Active slab
+                                         struct slab *partial; // Partial slabs
+           kmem_cache_cpu    slab
+                                         ...
+                             ...    };
+  ->cpu_slab
+
+ kmem_cache                         struct kmem_cache_node {
+                                         struct list_head partial; // Slabs
+  ->node
+                             slab        ...
+                                    };
+           kmem_cache_node   slab
+                                     ●   Before studying these pointers,
+                             ...         let's explore struct slab
+
+                                                                                  34
+
+      SLUB internals:
+struct slab and its memory
+
+                                 35
+
+Each slab has slab structure
+                      struct slab { // Aliased with struct page
+                           struct kmem_cache *slab_cache; // Cache this slab belongs to
+                           struct slab *next;                 // Next slab in per-cpu list
+                           int slabs;                         // Slabs left in per-cpu list
+    slab                   struct list_head slab_list;        // List links in per-node list
+       ->freelist          void *freelist;                    // Per-slab freelist
+                           ...
+                      };
+
+   Allocated   Free        Free    Allocated    Allocated   Allocated   Allocated   Free
+
+                                                                                               36
+
+Each slab has backing memory
+                      ●   Backing memory allocated via page_alloc
+                      ●   Contains object slots
+                      ●   Size is calculated based on object size
+    slab                  ○      Might span across multiple pages
+       ->freelist
+
+   Allocated   Free       Free      Allocated    Allocated   Allocated   Allocated   Free
+
+                                        page allocation
+                                                                                                37
+
+/proc/slabinfo shows sizes of slabs for caches
+# name       <active_objs> <num_objs> <objsize> <objperslab> <pagesperslab>
+cred_jar              7644         7644         192             21             1
+kmalloc-8k             456          460        8192              4             8
+kmalloc-4k            3118         3160        4096              8             8
+kmalloc-2k            3621         3696        2048             16             8
+kmalloc-32          54789         55808          32            128             1
+
+●   pagesperslab — size of slab backing memory for particular cache in pages
+●   objsize — size of objects, objperslab — number of objects in each slab
+
+                                                                                       38
+
+struct slab has freelist pointer
+                      struct slab { // Aliased with struct page
+                           void *freelist; // Per-slab freelist
+                           ...
+                      };
+    slab
+
+       ->freelist
+                       ●   freelist points to first free slot within slab
+                            ○     There is no pointer to start of backing memory
+                                  (no need for it, struct slab is struct page)
+
+   Allocated   Free        Free      Allocated   Allocated   Allocated   Allocated   Free
+
+                                                                                                39
+
+Free object slots are connected via freelist
+                      ●   Pointer to first free slot is in slab->freelist
+                      ●   Pointer to each next free slot is stored inside of free slot
+                      ●   Pointer in last slot on freelist is NULL
+    slab              ●   Objects allocated from front of freelist
+       ->freelist         and freed to front of freelist
+
+   Allocated   Free       Free     Allocated   Allocated   Allocated   Allocated    Free
+
+                                                                             NULL
+                                                                                               40
+
+Freelist pointer in object slot
+●   Freelist pointer is stored near middle of object slot
+    ○   For non-SLAB_TYPESAFE_BY_RCU caches without constructors
+    ○   To prevent small-sized overflows corrupting freelist pointer
+
+    cache->offset = ALIGN_DOWN(cache->object_size / 2, sizeof(void *));
+    freeptr_addr = (unsigned long)object + cache->offset;
+
+                         Object slot       Freelist pointer
+
+                                                              To next free slot
+    Small-sized overflow cannot reach freelist pointer
+                                                                                      41
+
+Freelist pointer is hashed
+●   Freelist pointer is hashed with CONFIG_SLAB_FREELIST_HARDENED=y
+    ○   To make it hard to fake freelist pointer by overwriting it
+
+    cache->random = get_random_long();
+    freelist_ptr = (void *)(
+        (unsigned long)ptr ^ cache->random ^ swab(ptr_addr));
+
+    // ptr — actual value of freelist pointer
+    // ptr_addr — location where freelist pointer is stored
+    // swab() — exchanges adjacent even and odd bytes
+
+                                                                          42
+
+Freelist pointer is not great target for OOB/UAF
+●   Freelist pointer is hashed with CONFIG_SLAB_FREELIST_HARDENED=y
+    ○   To make it hard to fake freelist pointer by overwriting it
+
+●   ⇒ Targeting freelist pointer via OOB/UAF is hard
+    ○   Used to be common before CONFIG_SLAB_FREELIST_HARDENED
+    ○   Technically still possible, but need to leak cache->random and ptr_addr
+
+●   ⇒ Most modern Slab exploits overwrite objects instead
+    ○   Or other type of memory via cross-allocator attacks (out-of-scope)
+
+                                                                                      43
+
+Objects placed onto freelist in random order for new slabs
+                      ●   SLUB shuffles order of objects on freelist
+                          when new slab is allocated
+                      ●   With CONFIG_SLAB_FREELIST_RANDOM=y
+   new slab           ●   ⇒ Two consecutive allocations are unlikely
+                            to follow each other in memory
+       ->freelist
+
+                                                     NULL
+
+     Free      Free       Free      Free      Free          Free      Free   Free
+
+                                                                                        44
+
+Freelist pointer is NULL for full slabs
+                            ●    Once all objects in slab are allocated,
+                                 slab->freelist == NULL
+
+   full slab
+
+        ->freelist
+
+               NULL
+
+   Allocated    Allocated       Allocated   Allocated   Allocated   Allocated   Allocated   Allocated
+
+                                                                                                            45
+
+Multiple slabs can be linked together
+          ->slabs
+                                         struct slab {
+       slab             slab
+                                              struct slab *next;
+          ->next           ->list_head        int slabs;
+                                              struct list_head slab_list;
+       slab             slab
+                                              ...
+                                         };
+       slab             slab
+                                          ●   next and slabs used for per-CPU list
+                                          ●   slab_list used for per-node list
+        ...             ...
+
+     Linking for     Linking for
+    per-CPU list    per-node list
+                                                                                     46
+
+struct slab and its memory: Summary
+                     ●   Each slab has struct slab, aliased with struct page
+                     ●   Each slab has backing memory, allocated via page_alloc
+                     ●   Free slots within slab linked via freelist in unknown order
+    slab             ●   Faking freelist pointers via OOB/UAF is hard
+                     ●   Multiple slabs can be linked together
+      ->freelist
+
+  Allocated   Free       Free    Allocated   Allocated   Allocated   Allocated    Free
+
+                                                                           NULL
+                                                                                             47
+
+ SLUB internals:
+Back to kmem_cache
+
+                         48
+
+kmem_cache_cpu/node contain pointers to slabs
+                                    struct kmem_cache_cpu {
+                             slab        struct slab *slab;    // Active slab
+                                         struct slab *partial; // Partial slabs
+           kmem_cache_cpu    slab
+                                         ...
+                             ...    };
+  ->cpu_slab
+
+ kmem_cache                         struct kmem_cache_node {
+                                         struct list_head partial; // Slabs
+  ->node
+                             slab        ...
+                                    };
+           kmem_cache_node   slab
+
+                             ...
+
+                                                                                  49
+
+kmem_cache_cpu contains pointers to per-CPU slabs
+                                    struct kmem_cache_cpu {
+                             slab        struct slab *slab;    // Active slab
+                                         struct slab *partial; // Partial slabs
+           kmem_cache_cpu    slab
+                                         ...
+                             ...    };
+  ->cpu_slab
+                                     ●   Per-CPU slabs bound to particular CPU
+ kmem_cache
+                                           ○ Aka frozen slabs (note change in 6.8)
+  ->node
+                                     ●   Allocations on that CPU will happen
+                             slab
+                                         from these slabs first
+           kmem_cache_node   slab    ●   Done for performance reasons
+                                         (locking, CPU caches, etc.)
+                             ...
+
+                                                                                     50
+
+kmem_cache_node contains pointer to per-node slabs
+                                    struct kmem_cache_node {
+                             slab        struct list_head partial; // Slabs
+                                         ...
+           kmem_cache_cpu    slab
+                                    };
+                             ...
+  ->cpu_slab                         ●   Per-node slabs have backing memory
+                                         coming from corresponding NUMA node
+ kmem_cache
+                                     ●   Not bound to any CPU yet
+  ->node
+                             slab
+                                     ●   But still belong to cache
+                                         (contain objects allocated from it)
+           kmem_cache_node   slab
+
+                             ...
+
+                                                                                  51
+
+kmem_cache_cpu has one active slab
+
+                                        active slab
+                                  ab
+                               sl
+                             ->
+           kmem_cache_cpu
+                                       struct kmem_cache_cpu {
+                                            void **freelist;     // Per-CPU freelist
+  ->cpu_slab
+                                            struct slab *slab;   // Active slab
+ kmem_cache                                 ...
+                                       };
+  ->node
+
+                                        ●   One of per-CPU slabs is designated active
+           kmem_cache_node                   ○ Aka "the CPU slab" in SLUB source code
+                                        ●   Pointed to by kmem_cache_cpu->slab
+                                        ●   Allocations served from this slab first
+
+                                                                                            52
+
+Active slab has two freelists
+                           t
+                      eelis                              ->fr
+                 ->fr                                           eeli
+                                          active slab               st
+                                    ab
+                                 sl                                              NULL
+                               ->
+           kmem_cache_cpu
+                                         struct kmem_cache_cpu {
+                                              void **freelist;           // Per-CPU freelist
+  ->cpu_slab
+                                              struct slab *slab;         // Active slab
+  kmem_cache                                  ...
+                                         };
+  ->node
+                                         struct slab {
+           kmem_cache_node                    void *freelist;            // Per-slab freelist
+                                              ...
+                                         };
+                                                                                                    53
+
+Two freelists of active slab
+●   Lockless per-CPU freelist kmem_cache_cpu->freelist
+     ○ Used for allocations and frees by this CPU
+
+                                                       ●   Per-slab freelist for active slab
+                                                           kmem_cache_cpu->slab->freelist
+                        ->slab                              ○ Used for frees by other CPUs
+    kmem_cache_cpu                active slab
+                                                            ○ Moved to lockless freelist
+                                         ->fr
+                ->fre                         eelist            once it runs out of slots
+                     elist
+
+    Allocated      Free          Free     Allocated    Free     Allocated   Allocated    Free
+
+                                                                NULL              NULL
+                                                                                                    54
+
+kmem_cache_cpu has list of per-CPU partial slabs [1/2]
+                           t
+                      eelis                                    ->fr
+                 ->fr                                                 eeli
+                                              active slab                 st
+                                    ab
+                                 sl
+                               ->
+           kmem_cache_cpu      ->pa                                    struct kmem_cache_cpu {
+                                      rtia
+                                          l
+                                                  cpu slab
+                                                                            // Per-CPU partial slabs:
+                                                      ->next
+  ->cpu_slab                                                                struct slab *partial;
+                                                  cpu slab
+                                                                            ...
+ kmem_cache
+                                                    ...                };
+  ->node
+                                              ●    List of per-CPU partial slabs
+           kmem_cache_node                          ○ Partial — with free slots
+                                                         (and might be fully free)
+
+                                                                                                            55
+
+kmem_cache_cpu has list of per-CPU partial slabs [2/2]
+                           t
+                      eelis                                    ->fr
+                 ->fr                                                 eeli
+                                              active slab                 st
+                                    ab
+                                 sl                                                  NULL
+                               ->                                      ist
+           kmem_cache_cpu                                      ->freel
+                               ->pa
+                                      rtia
+                                          l
+                                                  cpu slab
+                                                      ->next          NULL
+  ->cpu_slab
+                                                  cpu slab
+ kmem_cache                                                                        ...
+                                                    ...
+  ->node
+                                              ●    Partial slabs have backing memory
+           kmem_cache_node                    ●    Partial slabs have only one freelist each
+                                              ●    Used for allocations once active slab gets full
+                                                   (one of partial slabs gets designated as active)
+
+                                                                                                          56
+
+kmem_cache_node has list of per-node partial slabs
+                                      ●         List of per-node partial slabs
+                                                 ○ Partial — with free slots
+           kmem_cache_cpu                             (and might be fully free)
+                                      ●         Each has backing memory with one freelist
+  ->cpu_slab                          ●         Used for allocations once all per-CPU slabs get full
+                                                on one of CPUs (list partially migrated)
+ kmem_cache
+                                                 t
+  ->node
+                                           n   ex
+                                       al.
+                                  r ti               node slab
+                                a
+                             ->p
+           kmem_cache_node                                ->slab_list.next
+                                                     node slab
+                                                                                     ...
+                                                       ...
+                                                                                                           57
+
+Maximum number of kept per-CPU partial slabs is limited
+
+                                               active slab     struct kmem_cache {
+                                 lab                                unsigned int cpu_partial;
+                             ->s
+                                                                    unsigned int cpu_partial_slabs;
+           kmem_cache_cpu    ->pa
+                                     rtia        cpu slab           ...
+                                           l
+                                                     ->next    };                  an
+  ->cpu_slab                                                                 o   more th
+                                                 cpu slab             Keep n
+ kmem_cache
+                                                   ...
+  ->node
+
+                                       ●       Limit calculated based on object and slab sizes
+           kmem_cache_node             ●       Tied to /sys/kernel/slab/$CACHE/cpu_partial
+                                       ●       Extra slabs are freed (if possible)
+                                               or moved to per-node list (discussed later)
+                                                                                                      58
+
+Minimum number of kept per-node slabs is maintained
+                                   ●          Number calculated based on object size
+                                   ●          Shown in /sys/kernel/slab/$CACHE/min_partial
+           kmem_cache_cpu          ●          Slabs are kept on list even if fully free
+                                              if number of slabs is <= limit
+  ->cpu_slab
+
+ kmem_cache                                                   struct kmem_cache {
+                                              t                    unsigned long min_partial;
+  ->node
+                                          nex
+                                    a  l.                          ...
+                                  ti              node slab
+                               par                            };
+                             ->
+           kmem_cache_node                                                    eep
+                                                                      Try to k is many
+                                                                               th
+                                                                      at least
+                                                  node slab
+                                                    ...
+                                                                                                    59
+
+Limits for kmalloc caches
+   Cache                      cpu_partial   cpu_partial_slabs   min_partial
+
+   kmalloc-8, kmalloc-16      120           1                   5
+
+   kmalloc-32                 120           2                   5
+
+   kmalloc-64                 120           4                   5
+
+   kmalloc-128                120           8                   5
+                                                                              Per-CPU numbers
+                                                                              changed in 5.16
+   kmalloc-192                120           12                  5
+
+   kmalloc-256, kmalloc-512   52            7                   5
+
+   kmalloc-1k, kmalloc-2k     24            3                   5
+
+   kmalloc-4k                 6             2                   6
+
+   kmalloc-8k                 6             3                   6
+                                                                                                60
+
+Slab of each type might be fully empty
+                           t
+                      eelis                                            ->fr
+                 ->fr                                                         eeli
+                                                     active slab                  st
+                                     ab
+                                 sl                                                     ...         ...
+                               ->                                                   t
+                                                                              eelis
+           kmem_cache_cpu      ->pa                                    ->fr
+                                      rtia
+                                           l
+                                                         cpu slab
+                                                              ->next          NULL
+  ->cpu_slab
+                                                         cpu slab
+ kmem_cache                                                                               ...
+                                                            ...
+  ->node                                            xt                                              ...
+                                                e
+                                             .n
+                                          al
+                                      ti                 node slab
+                                 p  ar
+                               ->
+           kmem_cache_node                                    ->slab_list.next
+                                                         node slab
+                                                                                              ...
+                                                           ...
+                                                                                                              61
+
+Full slabs are not tracked
+                             ●   No pointers to full slabs (unless slub_debug is enabled)
+                             ●   Pointer gained once any object from full slab gets freed
+           kmem_cache_cpu        (via virt_to_slab)
+
+  ->cpu_slab
+
+  kmem_cache
+  ->node
+
+           kmem_cache_node
+                                  full slab
+                                   full slab
+
+                                                                                            62
+
+My vs SLUB namings for slab types
+
+                   (the) (per-)CPU slab     active slab   Active slab
+
+                        Frozen slabs
+                     (Before 6.8)            cpu slab
+
+                (per-)CPU partial slabs                   Per-CPU partial slabs
+SLUB namings                                 cpu slab                              My namings
+
+                                                ...
+
+                                             node slab
+
+               (per-)(node) partial slabs                 Per-node partial slabs
+                                             node slab
+                                               ...
+                                                                                                63
+
+                       st
+                   eeli                                                  ->fr
+               ->fr                                                             eeli
+                                                          active slab               st
+                                     b
+                                 sla                                                         NULL
+                            ->                                                         t
+                                                                                lis
+         kmem_cache_cpu     ->pa                                         ->free
+                                     rtia
+                                               l
+                                                           cpu slab
+                                                                ->next          NULL
+->cpu_slab
+                                                           cpu slab
+kmem_cache                                                                                 ...
+                                                              ...
+                                                       t                                            ...
+->node
+                                                 n   ex
+                                              l.
+                                         ia
+                                rt                         node slab
+                              pa
+                            ->
+         kmem_cache_node                                        ->slab_list.next
+                                                           node slab
+                                                                                             ...
+                                                              ...
+SLUB layout
+                                                           full slab
+summary                                                     full slab
+                                                                                                              64
+
+ SLUB internals:
+Allocation process
+
+                         65
+
+Preview: 5 tiers of allocation process
+                             t                                                     2
+                        eelis                                              ->fr
+               1   ->fr                                                           eeli
+                                                         active slab                   st
+                                       ab
+                                   sl                                                         NULL
+                                 ->                                                ist
+           kmem_cache_cpu                                                  ->freel
+                                 ->pa
+                                          rtia
+                                              l
+                                                             cpu slab
+                                      3                           ->next          NULL
+  ->cpu_slab
+                                                             cpu slab
+  kmem_cache                                                                                ...
+                                                                ...
+  ->node                                                xt                                           ...
+                                  4              .n
+                                                    e
+                                            al
+                                        ti                   node slab
+                                   p  ar
+                                 ->
+           kmem_cache_node                                        ->slab_list.next
+                                                             node slab
+                                                                                              ...
+                                                               ...
+                   5 Create new slab                                                                           66
+
+Tier 1: Allocating from lockless per-CPU freelist [0/2]
+                             t
+                        eelis                            ->fr
+               1   ->fr                                         eeli
+                                           active slab              st
+                                      ab
+                                   sl                                            NULL
+                                 ->
+           kmem_cache_cpu
+                                           ●   If lockless per-CPU freelist is not empty
+  ->cpu_slab
+
+  kmem_cache
+  ->node
+
+           kmem_cache_node
+
+                                                                                               67
+
+Tier 1: Allocating from lockless per-CPU freelist [1/2]
+                             t
+                        eelis                            ->fr
+               1   ->fr                                         eeli
+                                           active slab              st
+                                      ab
+                                   sl                                                NULL
+                                 ->
+           kmem_cache_cpu
+                                           ●   If lockless per-CPU freelist is not empty,
+  ->cpu_slab                                   return first object on that freelist
+                                               (and advance freelist)
+  kmem_cache
+  ->node
+
+           kmem_cache_node
+
+                                                                                                68
+
+Tier 1: Allocating from lockless per-CPU freelist [2/2]
+                             t
+                        eelis    NULL                    ->fr
+               1   ->fr                                         eeli
+                                           active slab              st
+                                      ab
+                                   sl                                                NULL
+                                 ->
+           kmem_cache_cpu
+                                           ●   If lockless per-CPU freelist is not empty,
+  ->cpu_slab                                   return first object on that freelist
+                                               (and advance freelist)
+  kmem_cache
+  ->node
+                                           ●   If lockless per-CPU freelist is empty,
+                                               goto Tier 2 (next slide)
+           kmem_cache_node
+
+                                                                                                69
+
+Tier 2: Allocating from active slab freelist [0/3]
+                           t                                   2
+                      eelis    NULL                    ->fr
+                 ->fr                                         eeli
+                                         active slab               st
+                                    ab
+                                 sl                                                 NULL
+                               ->
+           kmem_cache_cpu
+                                         ●   If active slab freelist is not empty
+  ->cpu_slab
+
+  kmem_cache
+  ->node
+
+           kmem_cache_node
+
+                                                                                               70
+
+Tier 2: Allocating from active slab freelist [1/3]
+                        list
+                    ree
+                 ->f                     active slab
+                                    ab
+                                 sl           ->freelist                         NULL
+                               ->                          NULL
+           kmem_cache_cpu
+                                         ●   If active slab freelist is not empty:
+  ->cpu_slab                                 1.   Move active slab freelist
+                                                  to lockless per-CPU freelist
+  kmem_cache
+  ->node
+
+           kmem_cache_node
+
+                                                                                            71
+
+Tier 2: Allocating from active slab freelist [2/3]
+                        list
+                    ree
+                 ->f                     active slab
+                                    ab
+                                 sl           ->freelist                         NULL
+                               ->                          NULL
+           kmem_cache_cpu
+                                         ●   If active slab freelist is not empty:
+  ->cpu_slab                                 1.   Move active slab freelist
+                                                  to lockless per-CPU freelist
+  kmem_cache
+                                             2.   Allocate from lockless per-CPU freelist
+  ->node
+                                                  (and advance that freelist)
+
+           kmem_cache_node
+
+                                                                                                72
+
+Tier 2: Allocating from active slab freelist [3/3]
+                           t
+                      eelis    NULL                    ->freelist            Or kmem_cache_cpu->slab
+                 ->fr                                               NULL
+                                         active slab                            == NULL
+                                   lab
+                               ->s
+           kmem_cache_cpu
+                                         ●   If active slab freelist is not empty:
+  ->cpu_slab                                 1.   Move active slab freelist
+                                                  to lockless per-CPU freelist
+  kmem_cache
+                                             2.   Allocate from lockless per-CPU freelist
+  ->node
+                                                  (and advance that freelist)
+                                         ●   If active slab freelist is empty,
+           kmem_cache_node
+                                             goto Tier 3 (next slide)
+
+                                                                                                           73
+
+Tier 3: Allocating from per-CPU partial slabs [0/3]
+                           t
+                      eelis    NULL
+                 ->fr                           NULL
+                                    ab
+                                 sl
+                               ->
+                                                                      eelist
+           kmem_cache_cpu      ->pa                              ->fr
+                                        rtia
+                                            l
+                                                    cpu slab
+                                    3                   ->next        NULL
+  ->cpu_slab
+                                                    cpu slab
+  kmem_cache                                                                         ...
+                                                      ...
+  ->node
+                                                ●    If have per-CPU partial slabs
+           kmem_cache_node
+
+                                                                                               74
+
+Tier 3: Allocating from per-CPU partial slabs [1/3]
+                              st                                    eelist
+                   > f r eeli    NULL                          ->fr
+                 -
+                                               active slab
+                                      ab
+                                    sl                              NULL
+                                ->
+           kmem_cache_cpu
+                                                   cpu slab
+                               ->
+                                 pa                                 NULL
+  ->cpu_slab                         rt
+                                         ia
+                                           l       cpu slab
+  kmem_cache                                                                         ...
+                                                     ...
+  ->node
+                                               ●    If have per-CPU partial slabs:
+           kmem_cache_node                           1.    Designate first as active (and advance list)
+
+                                                                                                             75
+
+Tier 3: Allocating from per-CPU partial slabs [2/3]
+                              st                                    eelist
+                   > f r eeli    NULL                          ->fr
+                 -
+                                               active slab
+                                      ab
+                                    sl                              NULL
+                                ->
+           kmem_cache_cpu
+                               ->
+                                 pa
+  ->cpu_slab                         rt
+                                         ia
+                                           l       cpu slab
+  kmem_cache                                                                         ...
+                                                     ...
+  ->node
+                                               ●    If have per-CPU partial slabs:
+           kmem_cache_node                           1.    Designate first as active (and advance list)
+                                                     2.    Goto Tier 2 (allocate from active slab freelist)
+
+                                                                                                              76
+
+Tier 3: Allocating from per-CPU partial slabs [3/3]
+                           t
+                      eelis    NULL
+                 ->fr                         NULL
+                                    ab
+                                 sl
+                               ->
+           kmem_cache_cpu      ->pa
+                                      rtia    NULL
+                                          l
+  ->cpu_slab
+
+  kmem_cache
+  ->node
+                                              ●   If per-CPU partial slab list is empty,
+           kmem_cache_node                        goto Tier 4 (next slide)
+
+                                                                                               77
+
+Tier 4: Allocating from per-node partial slabs [0/4]
+                           t
+                      eelis    NULL
+                 ->fr                                NULL
+                                     ab
+                                 sl
+                               ->
+                                                                        ●    If have per-node partial slabs
+           kmem_cache_cpu      ->pa
+                                      rtia           NULL
+                                           l
+  ->cpu_slab
+
+  kmem_cache
+  ->node                                            xt                                                 ...
+                                4            .n
+                                                e
+                                          al
+                                      ti                 node slab
+                                 p  ar
+                               ->
+           kmem_cache_node                                    ->slab_list.next
+                                                         node slab
+                                                                                              ...
+                                                           ...
+                                                                                                                  78
+
+Tier 4: Allocating from per-node partial slabs [1/4]
+                                                                  list                          ...
+                              st                                ee
+                   > f r eeli    NULL                      ->fr
+                 -
+                                             active slab
+                                     ab
+                                  sl
+                                ->
+                                                              ●      If have per-node partial slabs:
+           kmem_cache_cpu
+                                                                     1.   Designate first as active
+  ->cpu_slab
+
+  kmem_cache
+  ->node                                                                                        ...
+
+                                              node slab
+                              ->partial.ne
+           kmem_cache_node                xt
+                                              node slab
+                                                                                      ...
+                                                ...
+                                                                                                           79
+
+Tier 4: Allocating from per-node partial slabs [2/4]
+                                                                        list                          ...
+                              st                                      ee
+                   > f r eeli    NULL                            ->fr
+                 -
+                                                 active slab
+                                     ab
+                                  sl
+                                ->
+                                                                    ●      If have per-node partial slabs:
+           kmem_cache_cpu      ->pa
+                                       rtia
+                                           l
+                                                     cpu slab              1.   Designate first as active
+  ->cpu_slab                                           ...                 2.   Move some per-node slabs
+
+  kmem_cache
+                                                                                to per-CPU partial list
+
+  ->node
+                                                                                (up to cpu_partial_slabs / 2)
+
+           kmem_cache_node
+                                                     node slab
+                                               ...                                          ...
+                                                       ...
+                                                                                                                 80
+
+Tier 4: Allocating from per-node partial slabs [3/4]
+                                                                            list                           ...
+                              st                                          ee
+                   > f r eeli    NULL                                ->fr
+                 -
+                                                       active slab
+                                     ab
+                                  sl
+                                ->
+                                                                        ●      If have per-node partial slabs:
+           kmem_cache_cpu      ->pa
+                                       rtia
+                                              l
+                                                        cpu slab               1.   Designate first as active
+  ->cpu_slab                                              ...                  2.   Move some per-node slabs
+
+  kmem_cache
+                                                                                    to per-CPU partial list
+
+  ->node
+                                                                                    (up to cpu_partial_slabs / 2)
+                                                                               3.   Goto allocating from
+                              ->p
+           kmem_cache_node
+                                 art
+                                        ial
+                                                                                    active slab
+                                           .ne
+                                               x   t
+                                                  ...
+
+                                                                                                                     81
+
+Tier 4: Allocating from per-node partial slabs [4/4]
+                           t
+                      eelis    NULL
+                 ->fr                             NULL
+                                     ab
+                                  sl
+                                ->
+                                                         ●   If per-node partial list is empty,
+           kmem_cache_cpu      ->pa
+                                       rtia
+                                           l      NULL       goto Tier 5 (next slide)
+  ->cpu_slab
+
+  kmem_cache
+  ->node
+
+                               ->partial.n
+                                               ext
+           kmem_cache_node
+                                     Empty list
+
+                                                                                                      82
+
+Tier 5: Allocating from new slab
+                           t
+                      eelis     ...                           ->freelist
+                 ->fr                                                      ...
+                                                active slab
+                                     ab
+                                  sl
+                                ->
+                                                         ●    Allocate from new slab:
+           kmem_cache_cpu      ->pa
+                                       rtia
+                                           l      NULL         1.   Allocate new slab from page_alloc
+  ->cpu_slab                                                        (and shuffle its freelist)
+
+ kmem_cache
+                                                               2.   Assign as active
+
+  ->node
+                                                               3.   Allocate object from this slab
+
+                               ->partial.n
+                                               ext
+           kmem_cache_node
+                                     Empty list
+
+                 5 Create new slab                                                                          83
+
+Summary: 5 tiers of allocation process
+                             t                                                     2
+                        eelis                                              ->fr
+               1   ->fr                                                           eeli
+                                                         active slab                   st
+                                       ab
+                                   sl                                                         NULL
+                                 ->                                                ist
+           kmem_cache_cpu                                                  ->freel
+                                 ->pa
+                                          rtia
+                                              l
+                                                             cpu slab
+                                      3                           ->next          NULL
+  ->cpu_slab
+                                                             cpu slab
+ kmem_cache                                                                                 ...
+                                                                ...
+  ->node                                                xt                                           ...
+                                  4              .n
+                                                    e
+                                            al
+                                        ti                   node slab
+                                   p  ar
+                                 ->
+           kmem_cache_node                                        ->slab_list.next
+                                                             node slab
+                                                                                              ...
+                                                               ...
+                   5 Create new slab                                                                           84
+
+Exploitation-relevant outcomes
+1.   Each cache has many slabs that store objects
+     ○   With allocated objects from previous kernel operation
+     ○   And with holes — empty object slots
+
+2.   Allocations happen from active slab
+     ○   Another slab gets assigned as active once free slots in current one run out
+
+3.   Allocating many objects leads to allocation of new empty active slab
+     ○   Once all holes in existing slabs are plugged
+
+                                                                                       85
+
+Shaping Slab memory:
+Out-of-bounds, case #1
+
+                             86
+
+Required for attack [1/3]
+1.   Need kernel bug that leads to OOB access for vulnerable object
+
+●    Case #1: Separate allocation and out-of-bounds trigger
+     ○   IOCTL_ALLOC — Allocates vulnerable object
+     ○   IOCTL_OOB — Writes or reads data out-of-bounds of vulnerable object
+
+                                                                                   87
+
+Required for attack [2/3]
+1.   Need kernel bug that leads to OOB access for vulnerable object
+
+2.   Need to choose target object to leak or overwrite
+     ●   Assume we chose one
+
+                                                                          88
+
+Required for attack [1/3]
+1.   Need kernel bug that leads to OOB access for vulnerable object
+
+2.   Need to choose target object to leak or overwrite
+
+3.   Need to shape Slab memory
+     ○   Put vulnerable and target object next to each other
+
+●    Focus of this section
+
+                                                                          89
+
+Shaping Slab memory for OOB
+●   How can we achieve the following scenario?
+●   Cannot just allocate vulnerable and then target, freelist is randomized
+
+                      Vulnerable object        Target object
+
+                                Out-of-bounds access
+
+●   Vulnerable object — particular object affected by found bug
+●   Target object — object we chose to leak or corrupt
+
+                                                                                  90
+
+Slab shaping for OOB [0/4]
+1.   Allocate enough target objects to get new active slab
+      ○   Why? Want slab with controlled objects only
+               (and don't want other CPUs to mess around)
+      ○   Why target objects? Will discuss later
+      ○   How many to allocate? Let's discuss this
+
+     Want new active slab like this:
+
+      Target              Target                             Target
+
+                                                                          91
+
+Slab memory state before shaping
+                           t
+                      eelis                                            ->fr
+                 ->fr                                                         eeli
+                                                     active slab                  st
+                                     ab
+                                 sl                                                      NULL
+                               ->                                              ist
+           kmem_cache_cpu                                              ->freel
+                               ->pa
+                                      rtia
+                                           l
+                                                         cpu slab
+                                                              ->next          NULL
+  ->cpu_slab
+                                                         cpu slab
+ kmem_cache                                                                            ...
+                                                            ...
+  ->node                                            xt                                          ...
+                                                e
+                                             .n
+                                          al
+                                      ti                 node slab
+                                 p  ar
+                               ->
+           kmem_cache_node                                    ->slab_list.next
+                                                         node slab
+                                                                                         ...
+                                                           ...
+                                                                                                          92
+
+Need to plug all holes (allocate free slots) to reach Tier 5
+                           t
+                      eelis                                            ->fr
+                 ->fr                                                         eeli
+                                                     active slab                  st
+                                     ab
+                                 sl                                                      NULL
+                               ->                                              ist
+           kmem_cache_cpu                                              ->freel
+                               ->pa
+                                      rtia
+                                           l
+                                                         cpu slab
+                                                              ->next          NULL
+  ->cpu_slab
+                                                         cpu slab
+  kmem_cache                                                                           ...
+                                                            ...
+  ->node                                            xt                                          ...
+                                                e
+                                             .n
+                                          al
+                                      ti                 node slab
+                                 p  ar
+                               ->
+           kmem_cache_node                                    ->slab_list.next
+                                                         node slab
+                                                                                         ...
+                                                           ...
+                 5 Create new slab                                                                        93
+
+Finding out number of holes [1/2]
+●   No way to find out exact number on target system as unprivileged user
+    ○   /proc/slabinfo and related files are not user-readable
+
+●   No upper limit on total number of holes
+    ○   Active — up to objperslab holes
+    ○   Per-CPU partials — up to objperslab * cpu_partial_slabs holes
+    ○   Per-node partials — no limit on number of slabs ⇒ no limit on holes
+
+                                                                                  94
+
+Finding out number of holes [2/2]
+●   One approach: get an estimate:
+    1.   Reproduce target environment locally (give it some uptime as well)
+    2.   Use /proc/slabinfo to estimate number of holes (next slides)
+    3.   Allocate more than the estimate (x2 is a good start)
+
+●   Alternative: Rely on timing side channels (more links at the end)
+    ○    Basic idea: system call that allocates new slab takes longer to finish
+
+                                                                                     95
+
+/proc/slabinfo
+# name        <active_objs> <num_objs> <objsize> <objperslab> <pagesperslab>
+cred_jar              7644           7644         192             21             1
+kmalloc-8k             456             460      8192               4             8
+kmalloc-4k            3118           3160       4096               8             8
+kmalloc-2k            3621           3696       2048              16             8
+kmalloc-32           54789         55808           32            128             1
+
+●   active_objs — allocated objects, num_objs — total slots in existing slabs
+●   Numbers are not kept up to date:
+    updated when a slab is allocated, freed, or moved to per-node partial list
+
+                                                                                         96
+
+Forcing /proc/slabinfo update
+# name       <active_objs> <num_objs>
+kmalloc-32          25216         25216       // Before shrinking.
+kmalloc-32          23132         24320       // After shrinking.
+
+●   Shrink cache to get more accurate active_objs and num_objs:
+    echo 1 | sudo tee /sys/kernel/slab/kmalloc-32/shrink
+
+●   After shrinking, number of holes == num_objs - active_objs
+     ○   Shrinking frees empty slabs from partial lists ⇒ Number of holes changes
+     ○   But number is inaccurate anyway, as we reproduce environment
+
+                                                                                        97
+
+Slab shaping for OOB [1/4]
+1.   Allocate enough target objects to get new active slab
+      ○   Result: New active slab partially-filled with target objects
+
+     New active slab:
+
+      Target              Target                                        Target
+
+                                                                                     98
+
+Slab shaping for OOB [2/4]
+1.   Allocate enough target objects to get new active slab
+2.   Allocate one vulnerable object via IOCTL_ALLOC
+      ○   Vulnerable object is allocated in active slab
+
+     New active slab with vulnerable object:
+
+      Target              Target     Vuln                    Target
+
+                                                                          99
+
+Slab shaping for OOB [3/4]
+1.   Allocate enough target objects to get new active slab
+2.   Allocate one vulnerable object via IOCTL_ALLOC
+3.   Allocate enough target objects to fill active slab
+      ○   objperslab - 1 is enough
+      ○   Slab gets full and thus stops being active, but we don't care
+
+     Vulnerable object is now followed by target object:
+
+      Target    Target    Target     Vuln     Target     Target   Target   Target
+
+                                                                                       100
+
+Slab shaping for OOB [4/4]
+1.   Allocate enough target objects to get new active slab
+2.   Allocate one vulnerable object via IOCTL_ALLOC
+3.   Allocate enough target objects to fill active slab
+4.   Trigger out-of-bounds access via IOCTL_OOB
+
+     Out-of-bounds from vulnerable object lands in target object:
+
+      Target    Target    Target     Vuln     Target     Target   Target   Target
+
+                                                   Out-of-bounds access
+                                                                                       101
+
+What if we skip step #1? [1/2]
+1.   Allocate enough target objects to get new active slab
+
+     Original active slab:
+
+     Object A   Object B                    Object C         Object D
+
+                                                                           102
+
+What if we skip step #1? [2/2]
+1.   Allocate enough target objects to get new active slab
+
+●    ⇒ Target object might land before slot taken by unknown object
+      ○   ⇒ Will corrupt important memory instead of target
+
+     Original active slab with vulnerable object:
+
+     Object A   Object B             Vuln    Object C             Object D
+
+                                                    Out-of-bounds access
+                                                                                103
+
+What if we use different objects for step #1? [1/3]
+1.   Allocate enough plug objects to get new active slab
+
+     New active slab:
+
+                          Plug               Plug      Plug
+
+                                                                 104
+
+What if we use different objects for step #1? [2/3]
+1.   Allocate enough plug objects to get new active slab
+
+●    ⇒ Target object might land before plug object
+      ○   ⇒ Will fail to overwrite target
+
+     New active slab with vulnerable object:
+
+                           Plug      Vuln      Plug     Plug
+
+                                                  Out-of-bounds access
+                                                                            105
+
+What if we use different objects for step #1? [3/3]
+1.   Allocate enough plug target objects to get new active slab
+
+●    Using target objects for step #1 solves this problem
+      ○   (Technically, can plug holes via plug objects
+          and then allocate enough target objects to get new slab)
+
+     New active slab with vulnerable object:
+
+                          Target     Vuln      Target     Target
+
+                                                    Out-of-bounds access
+                                                                              106
+
+Things can go wrong #1: Last object
+●   Vulnerable object might be last object in slab
+    ○   ⇒ No target object follows, Slab shaping fails
+
+●   ⇒ Slab shaping is best-effort
+    ○   Unless another slab with target objects follows
+        (requires page_alloc shaping, out-of-scope)
+
+     Target    Target    Target     Target   Target   Target   Target   Vuln
+
+                                                                                  107
+
+Things can go wrong #2: Migration
+●   Migration — process being moved to another CPU
+
+●   If exploit is migrated to another CPU during execution, Slab shaping breaks
+    ○   Objects are allocated from active slab for current CPU
+    ○   After migration, exploits switches to different active slab
+
+                                                                                     108
+
+CPU pinning to deal with migration
+●   Solution: Pin exploit process to one CPU via sched_setaffinity
+    ○   Can be done by unprivileged user, inherited by forked processes
+
+    cpu_set_t my_set;
+    CPU_ZERO(&my_set);
+    CPU_SET(0, &my_set);
+    sched_setaffinity(0, sizeof(my_set), &my_set)
+
+                                                                             109
+
+Things can go wrong #3: Preemption
+●   Preemption — another task or interrupt handler getting scheduled
+    on the same CPU instead of running process
+    ○   CPU pinning does not prevent preemption
+
+●   If exploit is preempted, Slab shaping might fail
+    ○   Another task might allocate or free objects from/to the same cache
+
+                                                                                110
+
+Ideas for dealing with preemption
+●   Minimize time for Slab shaping: e.g., don't sleep/print during shaping
+●   If have choice, use less noisy (less frequently used) cache
+●   Get fresh scheduler time slice via sched_yield before shaping
+●   Check if exploit got preempted via /proc/self/status
+●   Rely on timing side channels (more links at the end)
+
+●   But no perfect solution
+    ○   ⇒ Slab shaping is best-effort
+
+                                                                                111
+
+Shaping Slab memory:
+Out-of-bounds, case #2
+
+                            112
+
+Case #2: Combined allocation and out-of-bounds trigger
+●   Before:
+    ○   IOCTL_ALLOC — Allocates vulnerable object
+    ○   IOCTL_OOB — Writes or reads data out-of-bounds of vulnerable object
+
+●   Now:
+    ○   IOCTL_ALLOC_AND_OOB — Allocates vulnerable object and immediately
+                                writes data out-of-bounds
+
+                                                                                 113
+
+Reminder: Slab shaping for OOB
+1.   Allocate enough target objects to get new active slab
+2.   Allocate one vulnerable object via IOCTL_ALLOC
+                                                              With combined OOB,
+3.   Allocate enough target objects to fill active slab        cannot separate steps 2 and 4
+4.   Trigger out-of-bounds access via IOCTL_OOB
+
+     Out-of-bounds from vulnerable object lands in target object:
+
+      Target    Target    Target     Vuln     Target     Target     Target     Target
+
+                                                   Out-of-bounds access
+                                                                                              114
+
+Allocation-only approach for combined OOB [1/4]
+                                                               Another approach
+1.   Allocate enough target objects to get new active slab     discussed later
+
+     New active slab:
+
+      Target    Target                                Target      Target
+
+                                                                               115
+
+Allocation-only approach for combined OOB [2/4]
+1.   Allocate enough target objects to get new active slab
+2.   Allocate one vulnerable object and trigger OOB via IOCTL_ALLOC_AND_OOB
+
+     New active slab with vulnerable object:
+
+      Target    Target              Vuln              Target            Target
+
+                                                 Out-of-bounds access
+                                                                                    116
+
+Allocation-only approach for combined OOB [3/4]
+1.   Allocate enough target objects to get new active slab
+2.   Allocate one vulnerable object and trigger OOB via IOCTL_ALLOC_AND_OOB
+
+●    Case #1: Out-of-bounds access lands in free slot
+     ○   As long as freelist pointer is not corrupted (OOB size is small),
+         nothing happens ⇒ Can retry shaping and OOB triggering
+                                                    Freelist pointer
+
+      Target    Target              Vuln                 Target              Target
+
+                                                Safe to overwrite
+                                                up to freelist pointer
+                                                                                         117
+
+Allocation-only approach for combined OOB [4/4]
+1.   Allocate enough target objects to get new active slab
+2.   Allocate one vulnerable object and trigger OOB via IOCTL_ALLOC_AND_OOB
+
+●    Case #2: Out-of-bounds access lands in target object
+     ○   Success: target object overwritten
+     ○   But might need multiple retries to achieve this
+
+      Target                        Vuln      Target    Target            Target
+
+                                                   Out-of-bounds access
+                                                                                      118
+
+    SLUB internals:
+Freeing process, part #1
+
+                              119
+
+Case #1: Object belongs to active slab of current CPU [0/1]
+                           t
+                      eelis                            ->fr
+                 ->fr                                         eeli
+                                         active slab              st
+                                    ab
+                                 sl                                       NULL        NULL
+                               ->
+           kmem_cache_cpu
+             for CPU #A                                                   Object being freed
+                                                                          by CPU #A
+  ->cpu_slab
+
+                                         ●   If object belongs to active slab of current CPU
+ kmem_cache
+  ->node
+
+           kmem_cache_node
+
+                                                                                                  120
+
+Case #1: Object belongs to active slab of current CPU [1/1]
+                           t
+                      eelis                            ->fr
+                 ->fr                                         eeli
+                                         active slab              st
+                                    ab
+                                 sl                                       NULL        NULL
+                               ->
+           kmem_cache_cpu
+             for CPU #A                                                   Object was freed
+                                                                          by CPU #A
+  ->cpu_slab
+
+                                         ●   If object belongs to active slab of current CPU,
+ kmem_cache
+                                             put it first onto lockless per-CPU freelist
+  ->node
+
+           kmem_cache_node
+
+                                                                                                   121
+
+Exploitation-relevant outcome
+●   Last freed object is first to be allocated if it belongs to active slab
+
+●   Imagine scenario:      void *ptr1 = kmalloc(128, GFP_KERNEL);
+                           free(ptr1);
+                           void *ptr2 = kmalloc(128, GFP_KERNEL);
+                           free(ptr2);
+                           void *ptr3 = kmalloc(128, GFP_KERNEL);
+
+●   ptr1, ptr2, and ptr3 all point to the same object bouncing back and forth
+    from/to lockless per-CPU freelist of active slab for kmalloc-128
+
+                                                                                   122
+
+Shaping Slab memory:
+Use-after-free, case #1
+
+                             123
+
+Case #1: Use-after-free on active slab
+●   Assume we have use-after-free vulnerability:
+    ○   IOCTL_ALLOC — Allocates vulnerable object
+    ○   IOCTL_FREE — Frees vulnerable object
+    ○   IOCTL_UAF — Writes or reads data of vulnerable object,
+                     can be used after IOCTL_FREE
+
+●   Want to shape slab memory to:
+    ○   Put target object into slot of freed vulnerable object
+    ○   And trigger use-after-free
+
+                                                                    124
+
+Slab shaping for UAF on active slab [1/4]
+1.   Allocate one vulnerable object via IOCTL_ALLOC
+      ○   Object allocated from active slab
+      ○   No need to plug holes for this approach
+
+     Active slab with vulnerable object:
+
+      Object             Object     Vuln              Object
+
+                                                                  125
+
+Slab shaping for UAF on active slab [2/4]
+1.   Allocate one vulnerable object via IOCTL_ALLOC
+2.   Free vulnerable object via IOCTL_FREE, dangling reference remains
+      ○   Slot placed first onto lockless per-CPU freelist of active slab
+
+     Active slab with vulnerable object freed:
+
+      Object              Object                                           Object
+
+                                         Dangling reference
+                                                                                       126
+
+Slab shaping for UAF on active slab [3/4]
+1.   Allocate one vulnerable object via IOCTL_ALLOC
+2.   Free vulnerable object via IOCTL_FREE, dangling reference remains
+3.   Allocate one target object, dangling reference points to it
+      ○   Object allocated from lockless per-CPU freelist ⇒ Takes up the same slot
+
+     Active slab with vulnerable object replaced:
+
+      Object              Object    Target                               Object
+
+                                         Dangling reference
+                                                                                     127
+
+Slab shaping for UAF on active slab [4/4]
+1.   Allocate one vulnerable object via IOCTL_ALLOC
+2.   Free vulnerable object via IOCTL_FREE, dangling reference remains
+3.   Allocate one target object, dangling reference points to it
+4.   Now can trigger use-after-free access via IOCTL_UAF
+
+     Use-after-free access lands in target object:
+
+      Object              Object    Target                               Object
+
+                                         Use-after-free access
+                                                                                     128
+
+    SLUB internals:
+Freeing process, part #2
+
+                              129
+
+Case #2: Object belongs to another non-full slab [0/4]
+                           t
+                      eelis                                ->fr
+                 ->fr                                             eeli
+                                             active slab              st
+                                    ab
+                                 sl                                                NULL
+
+                                                ≠
+                               ->                                  ist
+           kmem_cache_cpu                                     reel
+           for current CPU                                 ->f
+                                             other slab
+                                                                  NULL
+  ->cpu_slab                                                                              Object being freed
+
+ kmem_cache                              ●    If object belongs to non-full slab
+  ->node                                      other than active slab for current CPU
+                                              (active slab of another CPU
+           kmem_cache_node                    or any per-CPU or per-node partial slab)
+
+                                                                                                           130
+
+Case #2: Object belongs to another non-full slab [1/4]
+                           t
+                      eelis                                ->fr
+                 ->fr                                             eeli
+                                             active slab              st
+                                    ab
+                                 sl                                                 NULL
+
+                                                   ≠
+                               ->                                  ist
+           kmem_cache_cpu                                     reel
+           for current CPU                                 ->f
+                                             other slab
+                                                                  NULL
+  ->cpu_slab                                                                               Object was freed
+
+ kmem_cache                              ●    If object belongs to non-full non-current-active slab:
+  ->node                                      1.   Free object into slab freelist
+
+           kmem_cache_node
+
+                                                                                                              131
+
+Case #2: Object belongs to another non-full slab [2/4]
+                           t
+                      eelis                                ->fr
+                 ->fr                                             eeli
+                                             active slab              st
+                                    ab
+                                 sl                                                 NULL
+
+                                                   ≠
+                               ->                                  ist
+           kmem_cache_cpu                                     reel
+           for current CPU                                 ->f
+                                              node slab
+                                             of any CPU                    ...
+  ->cpu_slab                                                                               Object was freed
+
+ kmem_cache                              ●    If object belongs to non-full non-current-active slab:
+  ->node                                      1.   Free object into slab freelist
+                                              2.   If slab is per-node, becomes fully free,
+           kmem_cache_node                         and node has enough per-node slabs,
+                                                   ...
+
+                                                                                                              132
+
+Case #2: Object belongs to another non-full slab [3/4]
+                           t
+                      eelis                                ->fr
+                 ->fr                                             eeli
+                                             active slab              st
+                                    ab
+                                 sl                                                 NULL
+                               ->
+           kmem_cache_cpu
+           for current CPU               Empty per-node slab
+                                                  gets freed
+                                                                           ...
+  ->cpu_slab                                                                               Object was freed
+
+ kmem_cache                              ●    If object belongs to non-full non-current-active slab:
+  ->node                                      1.   Free object into slab freelist
+                                              2.   If slab is per-node, becomes fully free,
+           kmem_cache_node                         and node has enough per-node slabs,
+                                                   remove slab from per-node list and free it
+
+                                                                                                              133
+
+Case #2: Object belongs to another non-full slab [4/4]
+                           t
+                      eelis                                ->fr
+                 ->fr                                             eeli
+                                             active slab              st
+                                    ab
+                                 sl                                                 NULL
+                               ->
+           kmem_cache_cpu
+           for current CPU               Empty per-node slab
+                                                  gets freed
+                                                                           ...
+  ->cpu_slab                                                                               Object was freed
+
+ kmem_cache                              ●    If object belongs to non-full non-current-active slab:
+  ->node                                      1.   Free object into slab freelist
+                                              2.   Possibly free empty per-node slab
+           kmem_cache_node                         (does not apply to per-CPU or active slabs)
+
+                                                                                                              134
+
+Example: Object belongs to active slab of another CPU [0/1]
+                           t
+                      eelis                            ->fr
+                 ->fr                                         eeli
+                                         active slab              st
+                                    ab
+                                 sl                                       NULL        NULL
+                               ->
+           kmem_cache_cpu
+             for CPU #A                                                   Object being freed
+                                                                          by CPU #B (not A)
+  ->cpu_slab
+
+                                         ●   If object belongs to active slab of current CPU,
+ kmem_cache
+                                             put it first onto lockless per-CPU freelist
+  ->node
+
+                                         ●   If object belongs to active slab of another CPU
+           kmem_cache_node
+                                             (object references get passed between tasks)
+
+                                                                                                   135
+
+Example: Object belongs to active slab of another CPU [1/1]
+                           t
+                      eelis                            ->fr
+                 ->fr                                         eeli
+                                         active slab              st
+                                    ab
+                                 sl                                         NULL         NULL
+                               ->
+           kmem_cache_cpu
+             for CPU #A                                                     Object was freed
+                                                                            by CPU #B (not A)
+  ->cpu_slab
+
+                                         ●   If object belongs to active slab of current CPU,
+ kmem_cache
+                                             put it first onto lockless per-CPU freelist
+  ->node
+
+                                         ●   If object belongs to active slab of another CPU
+           kmem_cache_node
+                                             (object references get passed between tasks),
+                                             put it first onto slab freelist of active slab
+                                                                                                   136
+
+Case #3: Object belongs to full slab [0/2]
+
+                                        active slab    ●   If object belongs to full slab
+                                 lab
+                              >s
+           kmem_cache_cpu -
+           for current CPU ->part        cpu slab
+                                  ial
+                                              ->next
+  ->cpu_slab
+                                         cpu slab
+  kmem_cache
+                                            ...
+  ->node
+
+           kmem_cache_node                                                        Object being freed
+
+                                         full slab
+
+                                                                                                   137
+
+Case #3: Object belongs to full slab [1/2]
+
+                                        active slab         ●   If object belongs to full slab:
+                                 lab                             1. Free object into slab freelist
+                              >s
+           kmem_cache_cpu -
+           for current CPU ->part        cpu slab
+                                  ial
+                                              ->next
+  ->cpu_slab
+                                         cpu slab
+  kmem_cache
+                                            ...
+  ->node
+
+           kmem_cache_node                                                           Object was freed
+                                                              list
+                                                       ->free
+                                           slab
+                                                                                     NULL
+                                                                                                        138
+
+Case #3: Object belongs to full slab [2/2]
+
+                                        active slab         ●   If object belongs to full slab:
+                                 lab                             1. Free object into slab freelist
+                              >s
+           kmem_cache_cpu -                                      2. Try to move slab to per-CPU
+           for current CPU ->part        cpu slab                     partial list for current CPU
+                                  ial
+
+  ->cpu_slab
+                                              ->next                  (see next slides)
+                                         cpu slab
+  kmem_cache
+                                            ...
+  ->node
+
+           kmem_cache_node                                                           Object was freed
+                                                              list
+                                                       ->free
+                                           slab
+                                                                                     NULL
+                                                                                                        139
+
+Subcase #1: Per-CPU partial list does not overflow [0/1]
+
+                                        active slab         ●   If per-CPU partial list has space
+                                 lab                            (# of slabs < cpu_partial_slabs)
+                              >s
+           kmem_cache_cpu -
+           for current CPU ->part        cpu slab
+                                  ial
+                                              ->next
+  ->cpu_slab
+                                         cpu slab
+ kmem_cache
+                                            ...
+  ->node
+
+           kmem_cache_node                                                           Object was freed
+                                                              list
+                                                       ->free
+                                           slab
+                                                                                     NULL
+                                                                                                        140
+
+Subcase #1: Per-CPU partial list does not overflow [1/1]
+
+                                        active slab         ●     If per-CPU partial list has space,
+                                 lab
+                              >s
+           kmem_cache_cpu -                                 ee  list
+           for current CPU ->part                      ->fr
+                                  ial      slab
+                                              ->next                                    NULL
+  ->cpu_slab
+                                         cpu slab
+ kmem_cache                                   ->next        ○     Put slab first onto per-CPU partial
+  ->node                                 cpu slab                 list for current CPU
+                                            ...
+           kmem_cache_node                                                              Object was freed
+                                                              lis  t
+                                                       ->free
+                                           slab
+                                                                                        NULL
+                                                                                                           141
+
+Subcase #2: Per-CPU partial list overflows [0/4]
+
+                                        active slab         ●   If per-CPU partial list is full
+                                 lab                            (# of slabs >= cpu_partial_slabs)
+                              >s
+           kmem_cache_cpu -
+           for current CPU ->part        cpu slab
+                                  ial
+                                              ->next
+  ->cpu_slab
+                                         cpu slab
+ kmem_cache
+                                            ...
+  ->node
+
+           kmem_cache_node                                                          Object was freed
+                                                              list
+                                                       ->free
+                                           slab
+                                                                                    NULL
+                                                                                                       142
+
+Subcase #2: Per-CPU partial list overflows [1/4]
+
+                                        active slab    ●   If per-CPU partial list is full,
+                                 lab                       free up per-CPU partial list
+                              >s
+           kmem_cache_cpu -                                (aka unfreeze_partials until 6.8)
+           for current CPU ->part        cpu slab
+                                  ial
+                                              ->next
+  ->cpu_slab
+                                         cpu slab
+ kmem_cache
+                                            ...
+  ->node
+
+           kmem_cache_node
+
+                                                                                                  143
+
+Subcase #2: Per-CPU partial list overflows [2/4]
+
+                                                 active slab       ●   If per-CPU partial list is full,
+                                 l ab                                  free up per-CPU partial list:
+                             ->s
+           kmem_cache_cpu     ->pa                                       ○ Move per-CPU slabs
+           for current CPU           rtia
+                                          l          cpu slab                to end of per-node list
+  ->cpu_slab
+                              NULL                        ->next         ○ Free empty per-CPU slabs
+                                                     cpu slab                to page_alloc
+ kmem_cache                                                                  once number of per-node slabs
+                                                        ...
+  ->node
+                                             nex
+                                                 t                           reaches min_partial
+                                      a l.
+                                a rti                node slab               (used for cross-cache)
+                               p
+                             ->
+           kmem_cache_node
+                                                     node slab
+                                                       ...
+                                                                                                             144
+
+Subcase #2: Per-CPU partial list overflows [3/4]
+
+                                        active slab        ●   Now per-CPU partial list is empty
+                                 lab
+                              >s
+           kmem_cache_cpu -
+           for current CPU ->part       NULL
+                                  ial
+
+  ->cpu_slab
+
+ kmem_cache
+  ->node
+
+           kmem_cache_node                                                         Object was freed
+                                                             list
+                                                      ->free
+                                           slab
+                                                                                   NULL
+                                                                                                      145
+
+Subcase #2: Per-CPU partial list overflows [4/4]
+
+                                        active slab         ●     Now per-CPU partial list is empty
+                                 lab
+                              >s
+           kmem_cache_cpu -                                 ee  list
+           for current CPU ->part                      ->fr
+                                  ial      slab
+                                              ->next                                   NULL
+  ->cpu_slab
+                                           NULL
+ kmem_cache                                                 ○     Put slab first onto per-CPU partial
+  ->node                                                          list for current CPU
+
+           kmem_cache_node                                                             Object was freed
+                                                              lis  t
+                                                       ->free
+                                           slab
+                                                                                       NULL
+                                                                                                          146
+
+Exploitation-relevant outcomes
+1.   Freeing object in per-CPU partial slab puts that object first onto slab freelist
+     ○   Slab might become empty, but it will stay on the list
+         (used for cross-cache, out-of-scope)
+
+2.   Freeing object in full slab puts that slab first onto per-CPU partial list
+
+3.   Overflowing per-CPU partial list frees some empty slabs on that list
+     (used for cross-cache, out-of-scope)
+
+                                                                                          147
+
+Shaping Slab memory:
+Use-after-free, case #2
+
+                             148
+
+Reminder: Slab shaping for UAF on active slab
+1.   Allocate one vulnerable object via IOCTL_ALLOC
+      ○    Object allocated from active slab
+2.   Free vulnerable object via IOCTL_FREE, dangling reference remains
+      ○    Slot placed first onto lockless per-CPU freelist of active slab
+3.   ...
+
+     Active slab with vulnerable object freed:
+
+       Object              Object                                           Object
+
+                                          Dangling reference
+                                                                                        149
+
+What if UAF reference does not point to first in active?
+                           t
+                      eelis
+                 ->fr                                               NULL
+                                              active slab
+                                    ab
+                                 sl                                                   NULL
+                               ->                                         ist
+           kmem_cache_cpu                                         ->freel
+                               ->pa
+                                      rtia
+                                          l
+                                                  cpu slab
+                                                         ->next         NULL
+  ->cpu_slab
+                                                    ...                                Dangling reference
+ kmem_cache
+                                              ●    Might happen, depends on nature of vulnerability
+  ->node
+                                              ●    For example, dangling reference points
+
+           kmem_cache_node
+                                                   to first slot in first per-CPU partial slab
+                                                     ○     Typical case when upgrading OOB to UAF
+                                                           (see next slides)
+                                                                                                            150
+
+Reminder: Slab shaping for simple OOB
+1.   Allocate enough target objects to get new active slab
+2.   Allocate one vulnerable object via IOCTL_ALLOC
+3.   Allocate enough target objects to fill active slab
+4.   Trigger out-of-bounds access via IOCTL_OOB
+
+     Out-of-bounds from vulnerable object lands in target object:
+
+      Target    Target    Target     Vuln     Target     Target   Target   Target
+
+                                                   Out-of-bounds access
+                                                                                       151
+
+Upgrading OOB to UAF
+●   Out-of-bounds write is relatively weak primitive
+    ○   Might want to upgrade to use-after-free
+    ○   By overwriting reference counter, pointer, or something else
+        in target object
+
+                                              Refcount, or pointer, or ...
+
+     Target   Target       Target   Vuln     Target    Target        Target   Target
+
+                                             Overwrite start of Target
+                                             to upgrade to UAF
+                                                                                          152
+
+Example of upgrading OOB to UAF [1/2]
+1.   Overwrite reference counter in target object from 2 to 1 (e.g.)
+     ○   Via previously discussed Slab shaping technique for simple OOB
+     ○   Assume each target object has initial refcount of 2
+     ○   Slab becomes full after shaping
+
+                                                Refcount
+
+      Target    Target    Target    Vuln       Target   Target      Target   Target
+
+                                               Overwrite refcount
+                                               from 2 to 1
+                                                                                         153
+
+Example of upgrading OOB to UAF [2/2]
+1.   Overwrite reference counter in target object from 2 to 1 (e.g.)
+2.   Decrement refcount once for each allocated target object
+     ○   Assume we have userspace reference to each, like file descriptor
+     ○   Object with overwritten refcount gets freed
+     ○   Now have dangling reference to slot
+
+      Target    Target    Target    Vuln               Target    Target   Target
+
+                                                  Dangling reference
+                                                                                      154
+
+How to reclaim UAF slot after upgrading?
+●   Slab was full before last free ⇒ Slab goes to per-CPU partial list
+
+●   How to reclaim freed slot in slab on per-CPU partial list?
+    ○   Slot is not last on lockless per-CPU freelist,
+        cannot just allocate one object
+                                                                 t<-
+                                                         freelis         cpu slab
+
+     Target    Target    Target     Vuln                 Target        Target   Target
+
+                                                  Dangling reference
+                                                                                            155
+
+Solution: Slab spraying
+●   Spraying is Slab shaping technique
+    ○   Allocating many objects with goal that one will be placed in target slot
+
+●   Similar to "allocating many objects to plug holes"
+    ○   I prefer term "spraying" when there is a target slot
+
+●   How many objects to spray?
+    ○   Depends on nature of dangling reference:
+        to which slot of which partial slab it points
+
+                                                                                      156
+
+Reclaiming first slot on first per-CPU partial slab [0/2]
+                           t
+                      eelis
+                 ->fr                                               NULL
+                                              active slab
+                                    ab
+                                 sl                                                   NULL
+                               ->                                         ist
+           kmem_cache_cpu                                         ->freel
+                               ->pa
+                                      rtia
+                                          l
+                                                  cpu slab
+                                                         ->next         NULL
+  ->cpu_slab
+                                                    ...                                 Dangling reference
+  kmem_cache
+                                              ●    Assume want to reclaim first free slot
+  ->node
+                                                   on first per-CPU partial slab (upgrading example)
+
+           kmem_cache_node
+                                              ●    Active slab is used for allocations first
+                                                     ○     Has up to objperslab free slots
+
+                                                                                                             157
+
+Reclaiming first slot on first per-CPU partial slab [1/2]
+                           t
+                      eelis    NULL
+                 ->fr                                                NULL        T   T           T         T
+                                               active slab
+                                    ab
+                                 sl
+                               ->
+                                                                        eelist
+           kmem_cache_cpu      ->pa                                ->fr
+                                      rtia
+                                          l
+                                                   cpu slab
+                                                          ->next        NULL
+  ->cpu_slab
+                                                     ...                                   Dangling reference
+  kmem_cache
+                                              1.    Allocate objperslab target objects to fill active slab
+  ->node
+                                                      ○     One of them might already reclaim UAF slot
+
+           kmem_cache_node
+                                                            if active slab was not fully empty
+                                                      ○     Can use different target object than for OOB,
+                                                            one that is useful for UAF exploitation
+                                                                                                                158
+
+Reclaiming first slot on first per-CPU partial slab [2/2]
+                           t
+                      eelis    ...
+                 ->fr                         ...
+                                    ab
+                                 sl
+                               ->
+           kmem_cache_cpu      ->pa                   Slab becomes active
+                                      rtia    ...            for a moment
+                                                                                 T
+                                          l
+  ->cpu_slab
+                                                                                        Dangling reference
+  kmem_cache
+                                              1.    Allocate objperslab target objects to fill active slab
+  ->node
+                                              2.    Allocate one more target object
+
+           kmem_cache_node
+                                                     ○   Object reclaims UAF slot
+                                                         if original active slab was full empty
+                                                     ○   Now can trigger UAF
+                                                                                                             159
+
+   Shaping Slab memory:
+Out-of-bounds, case #2 again
+
+                                  160
+
+Case #2: Combined allocation and out-of-bounds trigger
+●   Case #1:
+    ○   IOCTL_ALLOC — Allocates vulnerable object
+    ○   IOCTL_OOB — Writes or reads data out-of-bounds of vulnerable object
+
+●   Case #2:
+    ○   IOCTL_ALLOC_AND_OOB — Allocates vulnerable object and immediately
+                                writes data out-of-bounds
+
+                                                                                 161
+
+Reminder: Allocation-only approach for combined OOB
+1.   Allocate enough target objects to get new active slab
+2.   Allocate one vulnerable object and trigger OOB via IOCTL_ALLOC_AND_OOB
+
+●    If out-of-bounds access lands in target object
+     ○   Success: target object overwritten
+     ○   But might need multiple retries to achieve this
+
+      Target                        Vuln      Target    Target            Target
+
+                                                   Out-of-bounds access
+                                                                                      162
+
+Making-holes approach for combined OOB [1/4]
+1.   Allocate enough target objects to get new active slab
+
+      Target                                 Target   Target   Target
+
+                                                                           163
+
+Making-holes approach for combined OOB [2/4]
+1.   Allocate enough target objects to get new active slab
+2.   Allocate objperslab more target objects to fill slab
+     ○   Slab becomes full
+
+      Target    Target   Target    Target    Target   Target   Target   Target
+
+                                                                                    164
+
+Making-holes approach for combined OOB [3/4]
+1.   Allocate enough target objects to get new active slab
+2.   Allocate objperslab more target objects to fill slab
+3.   Free one target object from this slab (make a hole)
+     ○   Assume we have userspace reference to each, like file descriptor
+     ○   Free target object that was allocated objperslab allocations ago
+
+      Target    Target    Target             Target    Target   Target      Target
+
+                                                                                        165
+
+Making-holes approach for combined OOB [4/4]
+1.   Allocate enough target objects to get new active slab
+2.   Allocate objperslab more target objects to fill slab
+3.   Free one target object from this slab (make a hole)
+4.   Reclaim free slot with vulnerable and trigger OOB via IOCTL_ALLOC_AND_OOB?
+     ○   Tricky!
+
+      Target    Target    Target    Vuln?    Target    Target    Target   Target
+
+                                                  Out-of-bounds access
+                                                                                      166
+
+Trickiness with step 4 [1/2]
+●   After step 3, freed slot belongs to per-CPU partial slab
+●   Have to plug holes in new active slab, allocations come from there first
+
+                                                       freelist<-     cpu slab
+
+     Target    Target    Target              Target    Target       Target   Target
+
+                                                                                         167
+
+Trickiness with step 4 [2/2]
+●   Cannot allocate multiple vulnerable objects to plug holes in active slab
+    ○   Might be impossible due to nature of vulnerability
+    ○   Also each vulnerable object allocation triggers OOB:
+        defeats purpose of making-hole approach
+
+●   Solution: Make many holes (see next slides)
+                                                      freelist<-     cpu slab
+
+     Target    Target    Target             Target    Target       Target   Target
+
+                                                                                        168
+
+1: Plug all holes and get new active slab with target objects
+                           t
+                      eelis
+                 ->fr                                          NULL    T             T    T        T
+                                                active slab
+                                     ab
+                                  sl                                                  NULL
+                                ->
+           kmem_cache_cpu      ->pa
+                                       rtia
+                                           l    NULL     ●    Start over: Allocate many target objects
+  ->cpu_slab                                                  to get new active slab partially filled
+                                                              with target objects
+  kmem_cache
+                                                         ●    Number of holes in active slab is unknown
+  ->node
+                                                              and can be up to objperslab
+                               ->partial.n
+                                               ext
+           kmem_cache_node
+
+                                                                                                            169
+
+2: Reserve objperslab + 1 full slabs with target objects
+                         t
+                    eelis
+               ->fr                                        NULL     T       T                   T       T
+                                            active slab
+                                  ab
+                               sl                                      NULL
+                             ->
+         kmem_cache_cpu      ->pa
+                                    rtia
+                                        l   NULL   ●   By allocating
+  ->cpu_slab                                           (objperslab + 1) * objperslab
+                                                       target objects
+ kmem_cache
+                                                   ●   Number of reserved full slabs ==
+                                                       potentially possible number of free slots
+                                                       in active slab + 1
+
+               objperslab + 1               full slab
+                         slabs               full slab                  T       T   T   T   T       T       T    T
+                                              full slab
+
+                                                                                                                     170
+
+3: Make one hole in each reserved full slab
+                           t
+                      eelis
+                 ->fr                                                   NULL        T   T                   T   T
+                                                       active slab
+                                     ab
+                                 sl                                                 NULL
+                               ->                                             ist
+           kmem_cache_cpu                                             ->freel
+                               ->pa
+                                      rtia              cpu slab                    T   T        T      T   T   T   T
+                                              l
+                                                             ->next         NULL
+  ->cpu_slab
+                                                        cpu slab                    T       T    T      T   T   T   T
+ kmem_cache
+                                                           ...                                  NULL
+  ->node                                          ex
+                                                    t                                                       NULL
+                                              n
+                                          al.
+                                      ti                node slab                   T   T   T    T          T   T   T
+                                 p  ar
+                               ->
+           kmem_cache_node                                   ->slab_list.next
+                                                        node slab                   T   T        T      T   T   T   T
+
+                                                          ...                                    NULL
+
+  objperslab + 1 > cpu_partial_slabs for any cache ⇒ Some slabs will end up on per-node list                            171
+
+4: Allocate objperslab plug objects (target objects work too)
+                         t
+                    eelis    NULL                                         Still have at least one partial slab
+               ->fr                                           NULL
+                                             active slab
+                                  ab                                      with a hole:
+                                 l
+                             ->s
+                                                                 eelist
+         kmem_cache_cpu      ->pa                           ->fr
+                                     rtia     cpu slab                    T       T           T       T               T       T       T
+                                         l
+                                                   ->next                                     NULL
+  ->cpu_slab
+                                                 ...
+  kmem_cache
+
+                    Old active slab
+                                             full slab                    T       T           P       P       P       T       T       P
+                          gets full
+
+                   Some partial              full slab                                    P
+
+                   slabs get full             full slab                       T
+                                                                                  P
+
+                                                                                      T           T       T       P       T       T       T
+                                               full slab
+
+                                                                                                                                              172
+
+5: Allocate one vulnerable object and trigger OOB
+                         t
+                    eelis    ...
+               ->fr                         ...
+                                  ab
+                               sl
+                             ->
+         kmem_cache_cpu      ->pa
+                                    rtia    ...            T       T           T       T       V       T       T       T
+                                        l
+  ->cpu_slab
+                                                                                   Out-of-bounds access
+ kmem_cache                                                                        lands in target object
+
+                    Old active slab
+                                             full slab     T       T           P       P       P       T       T       P
+                          gets full
+
+                   Some partial              full slab                     P
+
+                   slabs get full             full slab        T
+                                                                   P
+
+                                                                       T           T       T       P       T       T       T
+                                               full slab
+
+                                                                                                                               173
+
+Making-holes vs allocation-only for combined OOB
+●   Upside of making-holes approach:
+    ○   Works for OOB that could corrupt freelist pointer in free slot
+
+●   Downsides of making-holes approach:
+    ○   Allocating many full slabs takes time
+        ⇒ Higher chance of failures due to preemption
+    ○   Interacts with per-node partial list
+        ⇒ Less reliability as other CPUs interact with this list too
+
+                                                                            174
+
+Double-free
+
+                 175
+
+Exploiting double-frees
+●   Typical approach: convert to use-after-free:
+    1.   Free vulnerable object once
+    2.   Replace freed slot with transient object
+    3.   Free vulnerable object again via double-free
+    4.   Now have UAF reference via transient object
+
+●   Immediate double-free is detected with CONFIG_SLAB_FREELIST_HARDENED=y
+●   Freeing free slot via double-free can be used for cross-cache attacks
+
+                                                                                176
+
+Final notes
+
+                 177
+
+SLUB is complicated
+●   Details shown on these slides is a model
+    ○   Good enough as a start
+    ○   But SLUB has many special cases and optimizations
+
+●   Read SLUB code to learn specifics
+    ○   __slab_alloc_node — Starting point for allocation process
+    ○   do_slab_free — Starting point for freeing process
+
+                                                                       178
+
+Further reading: SLUB and cross-cache
+●   More details about how SLUB works:
+    ○   Linux SLUB Allocator Internals and Debugging [article] [note]
+
+●   About cache merging, accounting, and hardened usercopy:
+    ○   Linux kernel heap feng shui in 2022 [article]
+
+●   Introduction to cross-cache use-after-free attacks:
+    ○   CVE-2022-29582, An io_uring vulnerability [article]
+
+                                                                           179
+
+Further reading: Improving reliability of Slab shaping
+●   Playing for K(H)eaps: Understanding and Improving
+    Linux Kernel Exploit Reliability [paper]
+
+●   PSPRAY: Timing Side-Channel based
+    Linux Kernel Heap Exploitation Technique [paper]
+
+●   SLUBStick: Arbitrary Memory Writes through
+    Practical Software Cross-Cache Attacks within the Linux Kernel [paper]
+
+                                                                                180
+
+💜 Thank you!
+
+                  181

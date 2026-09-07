@@ -1,0 +1,1589 @@
+# Safer memory-mapped structures
+
+Welcome back to the “Making our own executable packer” series, where digressions are our bread and butter.
+
+Last time, we implemented [indirect functions](https://fasterthanli.me/series/making-our-own-executable-packer/part-9) in a no-libc C program. Of course, we got lost on the way and accidentally implemented a couple of useful elk-powered GDB functions - with only the minimal required amount of Python code.
+
+The article got pretty long, and we could use a nice distraction. And I have just the thing! A little while ago, a member of the [Rust compiler team](https://github.com/rust-lang/compiler-team) stumbled upon this series and gave me some feedback.
+
+The first piece of feedback is easily addressed - there were a few “useless use of transmute”, like here for example:
+
+``` rust
+// in `delf/src/lib.rs`
+
+impl Addr {
+    pub unsafe fn as_ptr<T>(&self) -> *const T {
+        std::mem::transmute(self.0 as usize)
+    }
+
+    pub unsafe fn as_mut_ptr<T>(&self) -> *mut T {
+        std::mem::transmute(self.0 as usize)
+    }
+}
+```
+
+While playing around with loading executables, I had gotten used to stuff being wildly unsafe, but it turns out - this is perfectly safe! Raw pointers are basically typed `usize`, so this is perfectly fine:
+
+``` rust
+// in `delf/src/lib.rs`
+
+impl Addr {
+    pub fn as_ptr<T>(&self) -> *const T {
+        self.0 as *const T
+    }
+
+    pub fn as_mut_ptr<T>(&self) -> *mut T {
+        self.0 as *mut T
+    }
+}
+```
+
+Dereferencing those pointers is the unsafe thing to do, so this won’t compile:
+
+``` rust
+// hypothetical code, not committed
+
+impl Addr {
+    pub fn example(&self) {
+        let x = *self.as_ptr::<u64>();
+    }
+}
+```
+
+``` shell
+$ cargo b
+error[E0133]: dereference of raw pointer is unsafe and requires unsafe function or block
+   --> /home/amos/ftl/delf/src/lib.rs:371:17
+    |
+371 |         let x = *self.as_ptr::<u64>();
+    |                 ^^^^^^^^^^^^^^^^^^^^^ dereference of raw pointer
+    |
+    = note: raw pointers may be NULL, dangling or unaligned; they can violate aliasing rules and cause data races: all of these are undefined behavior
+```
+
+Also, in our call to `MemoryMap::new`, we can remove that unsafe block - it’s not actually unsafe!
+
+``` rust
+// in `elk/src/process.rs`
+
+    let map = MemoryMap::new(
+        filesz.into(),
+        &[
+            MapOption::MapReadable,
+            MapOption::MapWritable,
+            MapOption::MapExecutable,
+            MapOption::MapFd(fs_file.as_raw_fd()),
+            MapOption::MapOffset(offset.into()),
+
+            // before:
+            MapOption::MapAddr(unsafe { (base + vaddr).as_ptr() }),
+
+            // after:
+            MapOption::MapAddr((base + vaddr).as_ptr()),
+        ],
+    )?;
+```
+
+Similarly, we don’t need it when printing the contents of `msg` from `libmsg.so` (not sure why we’re still carrying that code around but oh well):
+
+``` rust
+// in `elk/src/process.rs`
+// in `impl Process`, `fn load_object`
+
+        if path.to_str().unwrap().ends_with("libmsg.so") {
+            // before:
+            let msg_addr: *const u8 = unsafe { (base + delf::Addr(0x2000)).as_ptr() };
+
+            // after:
+            let msg_addr: *const u8 = (base + delf::Addr(0x2000)).as_ptr();
+
+            dbg!(msg_addr);
+            let msg_slice = unsafe { std::slice::from_raw_parts(msg_addr, 0x26) };
+            let msg = std::str::from_utf8(msg_slice).unwrap();
+            dbg!(msg);
+        }
+```
+
+Ah. I feel lighter already. Not that `unsafe` has any performance penalty - it just weighs heavy on my shoulders.
+
+So where *do* we need transmute?
+
+We still need it when processing indirect functions:
+
+``` rust
+// in `elk/src/process.rs`
+// in `match reltype`
+
+    RT::IRelative => unsafe {
+        let selector: extern "C" fn() -> delf::Addr = transmute(obj.base + addend);
+        objrel.addr().set(selector());
+    },
+```
+
+As a tiny nitpick, we should probably mark `selector` as unsafe - it is definitely not safe to call:
+
+``` rust
+// in `elk/src/process.rs`
+// in `match reltype`
+
+    RT::IRelative => unsafe {
+        // spread across two lines for readability
+        type Selector = unsafe extern "C" fn() -> delf::Addr;
+        let selector: Selector = transmute(obj.base + addend);
+        objrel.addr().set(selector());
+    },
+```
+
+We also still need `transmute` when jumping to the entry point - and we can improve the function signature here too.
+
+``` rust
+// in `elk/src/main.rs`
+
+unsafe fn jmp(addr: *const u8) {
+    let fn_ptr: fn() = std::mem::transmute(addr);
+    fn_ptr();
+}
+```
+
+Let’s make a quick list. `fn_ptr`:
+
+- is not safe to call
+- is a C function
+- never returns
+
+I had no idea you could annotate Rust functions with “never returns” but it’s actually super easy:
+
+> **Cool Bear's hot tip**
+>
+> What?
+
+``` rust
+// in `elk/src/main.rs`
+
+unsafe fn jmp(addr: *const u8) -> ! {
+    // spread across two lines for readability
+    type EntryPoint = unsafe extern "C" fn() -> !;
+    let entry_point: EntryPoint = std::mem::transmute(addr);
+    entry_point();
+}
+```
+
+And in `cmd_run`, we can remove the final `Ok(())`, because, well, `jmp` never returns:
+
+``` rust
+// in` elk/src/main.rs`
+
+fn cmd_run(args: RunArgs) -> Result<(), AnyError> {
+    let mut proc = process::Process::new();
+    let exec_index = proc.load_object_and_dependencies(args.exec_path)?;
+    proc.apply_relocations()?;
+    proc.adjust_protections()?;
+
+    let exec_obj = &proc.objects[exec_index];
+    let entry_point = exec_obj.file.entry_point + exec_obj.base;
+    unsafe { jmp(entry_point.as_ptr()) };
+
+    // (deleted line was here)
+}
+```
+
+Now! Onto the meat of the article. One of the *naughtiest* things we did back in [Dynamic linker speed and correctness](https://fasterthanli.me/series/making-our-own-executable-packer/part-8) is introduce the `Name` enum:
+
+``` rust
+// in `elk/src/name.rs`
+
+#[derive(Clone)]
+pub enum Name {
+    FromAddr { addr: delf::Addr, len: usize },
+    Owned(Vec<u8>),
+}
+```
+
+So far it has been… *wildly* unsafe.
+
+The constructor for the `FromAddr` variant was unsafe:
+
+``` rust
+    pub unsafe fn from_addr(addr: delf::Addr) -> Self {
+        let len = addr
+            .as_slice::<u8>(2048)
+            .iter()
+            .position(|&c| c == 0)
+            .expect("scanned 2048 bytes without finding null-terminator for name");
+        Self::FromAddr { addr, len }
+    }
+```
+
+It’s not that it’s looking for a null terminator - that’s just how ELF files (and [C in general](https://fasterthanli.me/articles/working-with-strings-in-rust)) work! The problem is that we’re reading memory at an arbitrary address.
+
+If we did the maths right, the `delf::Addr` in question points to a valid memory-mapped region, and if our ELF file is valid, and a bunch of other ifs, then we read a symbol name, and everything is fine.
+
+But… if somehow a `Name` outlives the `MemoryMap`, then the region is unmapped, and we end up with a SIGBUS or SIGSEGV instead - *if we’re lucky*. If we’re not lucky, we end up reading arbitrary data, and that would be very hard to debug.
+
+So the problem here is that `Name` is easy to mis-use and it can result in unsafe memory access. And it’s not just a theoretical problem too. I ran into it the *minute* I introduced `Name` into the codebase.
+
+See, originally, I had `RelocationError` like this:
+
+``` rust
+// in `elk/src/process.rs` (originally)
+
+#[derive(Error, Debug)]
+pub enum RelocationError {
+    // omitted: other cariants
+
+    #[error("undefined symbol: {0}")]
+    UndefinedSymbol(NamedSym),
+}
+```
+
+(Note that `NamedSym` contains `Name`)
+
+And it was used like so:
+
+``` rust
+// in `elk/src/process.rs` (originally)
+// in `fn apply_relocations`
+
+        let found = match rel.sym {
+            0 => ResolvedSym::Undefined,
+            _ => match self.lookup_symbol(&wanted, ignore_self) {
+                undef @ ResolvedSym::Undefined => match wanted.sym.sym.bind {
+                    delf::SymBind::Weak => undef,
+                    // here:
+                    _ => return Err(RelocationError::UndefinedSymbol(wanted.sym.clone())),
+                },
+                x => x,
+            },
+        };
+```
+
+Seems all good, right? Our error type has rich information (a `NamedSym`), which is cloned so we can return it without worrying about ownership. It *should* work fine?
+
+Except `apply_relocations` is called from `cmd_run`, like so:
+
+``` rust
+// in `elk/src/main.rs`
+
+fn cmd_run(args: RunArgs) -> Result<(), Box<dyn Error>> {
+    let mut proc = process::Process::new();
+    let exec_index = proc.load_object_and_dependencies(args.exec_path)?;
+    // right here
+    proc.apply_relocations()?;
+    proc.adjust_protections()?;
+
+    let exec_obj = &proc.objects[exec_index];
+    let entry_point = exec_obj.file.entry_point + exec_obj.base;
+    unsafe { jmp(entry_point.as_ptr()) };
+
+    Ok(())
+}
+```
+
+So, within `cmd_run`, everything is fine - `Process` is in scope, it owns `Object`, which owns `NamedSym` and `Segment`, which in turns owns the `MemoryMap`:
+
+![during-run](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-10/assets/during-run~63aa6a6aaa2d7cce.svg)
+
+But if we return an error… then the `Process`, and everything it owns, is thrown away. And the memory-mapped region is unmapped.
+
+![on-run-error](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-10/assets/on-run-error~20e121e1a328037b.svg)
+
+The `Name`, however, is cloned and returned as part of the error, but it now “points” to — at best — unmapped memory:
+
+![dangling-name](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-10/assets/dangling-name~668ae6172f1d897d.svg)
+
+And that’s… really something that shouldn’t happen in a Rust program.
+
+…but it’s not as simple as using lifetimes either, is it.
+
+See, you can’t really have a struct where one member borrows from the other:
+
+``` rust
+// in `sample.rs`, just to try things out
+
+struct Container<'a> {
+    vec: Vec<u8>,
+    slice_of_vec: &'a [u8],
+}
+```
+
+![container1](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-10/assets/container1~94d1706b76618f9f.svg)
+
+Constructing `Container` like this doesn’t work:
+
+``` rust
+fn test() {
+    let vec = vec![1, 2, 3, 4, 5];
+    let a = Container {
+        vec,
+        slice_of_vec: &vec[2..3],
+    };
+}
+```
+
+``` shell
+$ cargo b
+error[E0382]: borrow of moved value: `vec`
+  --> src/sample.rs:10:24
+   |
+7  |     let vec = vec![1, 2, 3, 4, 5];
+   |         --- move occurs because `vec` has type `std::vec::Vec<u8>`, which does not implement the `Copy` trait
+8  |     let a = Container {
+9  |         vec,
+   |         --- value moved here
+10 |         slice_of_vec: &vec[2..3],
+   |                        ^^^ value borrowed here after move
+```
+
+This doesn’t work either:
+
+``` rust
+fn test() {
+    let vec = vec![1, 2, 3, 4, 5];
+    let a = Container {
+        slice_of_vec: &vec[2..3],
+        vec,
+    };
+}
+```
+
+``` shell
+error[E0505]: cannot move out of `vec` because it is borrowed
+  --> src/sample.rs:10:9
+   |
+9  |         slice_of_vec: &vec[2..3],
+   |                        --- borrow of `vec` occurs here
+10 |         vec,
+   |         ^^^ move out of `vec` occurs here
+```
+
+We can “work around the problem” by first transferring ownership of the `Vec` to `Container`, and *then* setting `slice_of_vec`:
+
+``` rust
+struct Container<'a> {
+    vec: Vec<u8>,
+    slice_of_vec: Option<&'a [u8]>,
+}
+
+fn test() {
+    let vec = vec![1, 2, 3, 4, 5];
+    let mut a = Container {
+        vec,
+        slice_of_vec: None,
+    };
+    a.slice_of_vec = Some(&a.vec[2..3]);
+}
+```
+
+But this isn’t the way. Not only can we now have `Container` with `None` `slice_of_vec`, we also can never return a `Container` with a `Some` `slice_of_vec`:
+
+``` rust
+struct Container<'a> {
+    vec: Vec<u8>,
+    slice_of_vec: Option<&'a [u8]>,
+}
+
+fn test() {
+    let make_container = || {
+        let vec = vec![1, 2, 3, 4, 5];
+        let mut res = Container {
+            vec,
+            slice_of_vec: None,
+        };
+        res.slice_of_vec = Some(&res.vec[2..3]);
+        res
+    };
+
+    let a = make_container();
+}
+```
+
+``` shell
+$ cargo b
+error[E0515]: cannot return value referencing local data `res.vec`
+  --> src/sample.rs:14:9
+   |
+13 |         res.slice_of_vec = Some(&res.vec[2..3]);
+   |                                  ------- `res.vec` is borrowed here
+14 |         res
+   |         ^^^ returns a value referencing data owned by the current function
+
+error[E0505]: cannot move out of `res` because it is borrowed
+  --> src/sample.rs:14:9
+   |
+7  |     let make_container = || {
+   |                           - return type of closure is sample::Container<'1>
+...
+13 |         res.slice_of_vec = Some(&res.vec[2..3]);
+   |                                  ------- borrow of `res.vec` occurs here
+14 |         res
+   |         ^^^
+   |         |
+   |         move out of `res` occurs here
+   |         returning this value requires that `res.vec` is borrowed for `'1`
+```
+
+…because `res.slice_of_vec` borrows `res.slice_of_vec`, and `res` is a local, and returning it would move it. And this is where “moving” a value take on its full meaning. We’re not just “transferring ownership”, we’re actually changing its address. And Rust doesn’t have any run-time magic to make sure the address `res.slice_of_vec` is pointing to also changes. So the checker steps in and disallows that.
+
+What we can do is have `Container` own the `Vec`, and have a `Range` that refers to a range of the `Vec`, like so:
+
+``` rust
+// in `sample.rs`, still messing around
+
+use std::ops::Range;
+
+struct Container {
+    vec: Vec<u8>,
+    range_of_vec: Range<usize>,
+}
+
+impl Container {
+    fn slice_of_vec(&self) -> &[u8] {
+        // Range is *not* Copy for a good reason:
+        // https://github.com/rust-lang/rust/pull/27186
+        &self.vec[self.range_of_vec.clone()]
+    }
+}
+
+fn test() {
+    let make_container = || Container {
+        vec: vec![1, 2, 3, 4, 5],
+        range_of_vec: 2..4,
+    };
+    let a = make_container();
+    println!("  vec = {:?}", a.vec);
+    println!("slice = {:?}", a.slice_of_vec());
+}
+```
+
+``` shell
+$ cargo run --quiet
+  vec = [1, 2, 3, 4, 5]
+slice = [3, 4]
+```
+
+And that’s kind of the situation we have with `Object` (~ `Container`) and `Name` (~ `&[u8]`).
+
+`Object` would own a `Vec` of `NamedSym`, which own `Name` values, which borrow… something `Object` owns (that comes from the `addr::MemoryMap`).
+
+Reduced, the problem looks like this:
+
+``` rust
+// still not touching the actual `delf` or `elk` crates
+
+use std::ops::Range;
+
+struct Object<'a> {
+    map: Vec<u8>,
+    names: Vec<Name<'a>>,
+}
+
+struct Name<'a> {
+    slice: &'a [u8],
+}
+
+fn test() {
+    let load_object = || {
+        let mut obj = Object {
+            map: "foobarbaz".bytes().collect(),
+            names: vec![],
+        };
+        obj.names.push(Name {
+            slice: &obj.map[0..3],
+        });
+        obj
+    };
+    let obj = load_object();
+}
+```
+
+This code looks familiar - and doesn’t compile:
+
+``` shell
+error[E0515]: cannot return value referencing local data `obj.map`
+  --> src/sample.rs:21:9
+   |
+19 |             slice: &obj.map[0..3],
+   |                     ------- `obj.map` is borrowed here
+20 |         });
+21 |         obj
+   |         ^^^ returns a value referencing data owned by the current function
+
+error[E0505]: cannot move out of `obj` because it is borrowed
+  --> src/sample.rs:21:9
+   |
+13 |     let load_object = || {
+   |                        - return type of closure is sample::Object<'1>
+...
+19 |             slice: &obj.map[0..3],
+   |                     ------- borrow of `obj.map` occurs here
+20 |         });
+21 |         obj
+   |         ^^^
+   |         |
+   |         move out of `obj` occurs here
+   |         returning this value requires that `obj.map` is borrowed for `'1`
+```
+
+Again, we can store a `Range` instead:
+
+``` rust
+// still messing around, not touching the series' crates
+
+use std::ops::Range;
+
+struct Object {
+    map: Vec<u8>,
+    names: Vec<Name>,
+}
+
+struct Name {
+    range: Range<usize>,
+}
+
+pub fn test() {
+    let load_object = || {
+        let mut obj = Object {
+            map: "foobarbaz".bytes().collect(),
+            names: vec![],
+        };
+        obj.names.push(Name { range: 0..3 });
+        obj
+    };
+    let obj = load_object();
+}
+```
+
+…but then we have to keep track of which `Object` a `Name` belongs to.
+
+To illustrate this, how would we implement `Name::slice`?
+
+``` rust
+impl Name {
+    fn slice(&self) -> &[u8] {
+        // what is `self.range` indexing into??
+        unimplemented!()
+    }
+}
+```
+
+We’d either need to have `Name::slice` take a reference to `Object`, which is not ideal:
+
+``` rust
+impl Name {
+    fn slice<'a>(&self, obj: &'a Object) -> &'a [u8] {
+        &obj.map[self.range.clone()]
+    }
+}
+
+pub fn test() {
+    let load_object = || {
+        let mut obj = Object {
+            map: "foobarbaz".bytes().collect(),
+            names: vec![],
+        };
+        obj.names.push(Name { range: 0..3 });
+        obj.names.push(Name { range: 3..6 });
+        obj.names.push(Name { range: 6..9 });
+        obj
+    };
+
+    let obj = load_object();
+    use std::str::from_utf8;
+    for name in &obj.names {
+        println!("name = {:?}", from_utf8(name.slice(&obj)));
+    }
+}
+```
+
+``` shell
+$ cargo run --quiet
+name = Ok("foo")
+name = Ok("bar")
+name = Ok("baz")
+```
+
+Why is this not ideal? Because nothing stops you from passing to `slice` a *different* `Object` than the one `Name` was originally associated with.
+
+``` rust
+pub fn test() {
+    let load_object = || {
+        let mut obj = Object {
+            map: "foobarbaz".bytes().collect(),
+            names: vec![],
+        };
+        obj.names.push(Name { range: 0..3 });
+        obj.names.push(Name { range: 3..6 });
+        obj.names.push(Name { range: 6..9 });
+        obj
+    };
+
+    let obj1 = load_object();
+    let obj2 = Object {
+        map: vec![],
+        names: vec![],
+    };
+
+    use std::str::from_utf8;
+    for name in &obj1.names {
+        println!("name = {:?}", from_utf8(name.slice(&obj2 /* woops */)));
+    }
+}
+```
+
+``` shell
+$ cargo run
+thread 'main' panicked at 'index 3 out of range for slice of length 0', src/libcore/slice/mod.rs:2674:5
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace.
+```
+
+Alternatively, we could have `name_slice` method on `Object`, but we’d have exactly the same potential misuse:
+
+``` rust
+impl Object {
+    fn name_slice(&self, name: &Name) -> &[u8] {
+        &self.map[name.range.clone()]
+    }
+}
+
+pub fn test() {
+    let load_object = || {
+        // omitted: same as before
+    };
+
+    let obj1 = load_object();
+    let obj2 = Object {
+        map: vec![],
+        names: vec![],
+    };
+
+    use std::str::from_utf8;
+    for name in &obj1.names {
+        // woops
+        println!("name = {:?}", from_utf8(obj2.name_slice(&name)));
+    }
+}
+```
+
+…so it’s not ideal either.
+
+One way to solve it is with reference counting. Rust has reference-counting smart pointer types like `Rc` and `Arc`.
+
+``` rust
+use std::ops::Range;
+use std::rc::Rc;
+
+struct Object {
+    map: Rc<Vec<u8>>,
+    names: Vec<Name>,
+}
+
+struct Name {
+    map: Rc<Vec<u8>>,
+    range: Range<usize>,
+}
+
+impl Name {
+    fn for_object(obj: &Object, range: Range<usize>) -> Self {
+        Self {
+            map: obj.map.clone(),
+            range,
+        }
+    }
+
+    fn slice(&self) -> &[u8] {
+        &self.map[self.range.clone()]
+    }
+}
+
+pub fn test() {
+    let load_object = || {
+        let mut obj = Object {
+            map: Rc::new("foobarbaz".bytes().collect()),
+            names: vec![],
+        };
+        obj.names.push(Name::for_object(&obj, 0..3));
+        obj.names.push(Name::for_object(&obj, 3..6));
+        obj.names.push(Name::for_object(&obj, 6..9));
+        obj
+    };
+    let obj = load_object();
+
+    use std::str::from_utf8;
+    for name in &obj.names {
+        println!("name = {:?}", from_utf8(name.slice()));
+    }
+}
+```
+
+With this scheme, the `Vec<u8>` stays alive as long as there’s at least one reference to it. By the end of our closure, we have:
+
+![rc1](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-10/assets/rc1~e3475d9aa6bad4ce.svg)
+
+When returning from `load_object`, `Object` and the three `Name` values are moved, but not dropped! So they don’t decrease the reference count of the `Rc<Vec<u8>>`
+
+We can even separate `Name` from the original `Object`, like so:
+
+``` rust
+pub fn test() {
+    let get_some_names = || {
+        let load_object = || {
+            let mut obj = Object {
+                map: Rc::new("foobarbaz".bytes().collect()),
+                names: vec![],
+            };
+            obj.names.push(Name::for_object(&obj, 0..3));
+            obj.names.push(Name::for_object(&obj, 3..6));
+            obj.names.push(Name::for_object(&obj, 6..9));
+            obj
+        };
+
+        let obj = load_object();
+        obj.names
+            .into_iter()
+            .filter(|n| n.slice().iter().next().map(|&b| b == b'b').unwrap_or(false))
+    };
+
+    let names = get_some_names();
+    use std::str::from_utf8;
+    for name in names {
+        println!("name = {:?}", from_utf8(name.slice()));
+    }
+}
+```
+
+After `get_some_names` returns, our `Rc<Vec<u8>>` has lost two references, but still has two:
+
+![rc2](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-10/assets/rc2~2333e42f60574973.svg)
+
+So everything still works fine:
+
+``` shell
+$ cargo run --quiet
+name = Ok("bar")
+name = Ok("baz")
+```
+
+This seems great on paper! One caveat: `Rc` isn’t thread-safe, so this doesn’t work:
+
+``` rust
+pub fn test() {
+    let get_some_names = || {
+        let load_object = || {
+            // same as before
+        };
+
+        let obj = load_object();
+        std::thread::spawn(|| {
+            obj.names
+                .into_iter()
+                .filter(|n| n.slice().iter().next().map(|&b| b == b'b').unwrap_or(false))
+        })
+        .join()
+        .unwrap()
+    };
+
+    let names = get_some_names();
+    use std::str::from_utf8;
+    for name in names {
+        println!("name = {:?}", from_utf8(name.slice()));
+    }
+}
+```
+
+``` shell
+error[E0277]: `std::rc::Rc<std::vec::Vec<u8>>` cannot be sent between threads safely
+   --> src/sample.rs:41:9
+    |
+41  |         std::thread::spawn(|| {
+    |         ^^^^^^^^^^^^^^^^^^ `std::rc::Rc<std::vec::Vec<u8>>` cannot be sent between threads safely
+    |
+    = help: within `sample::Name`, the trait `std::marker::Send` is not implemented for `std::rc::Rc<std::vec::Vec<u8>>`
+    = note: required because it appears within the type `sample::Name`
+    = note: required because of the requirements on the impl of `std::marker::Send` for `std::vec::IntoIter<sample::Name>`
+    = note: required because it appears within the type `std::iter::Filter<std::vec::IntoIter<sample::Name>, [closure@src/sample.rs:44:25: 44:89]>`
+```
+
+Luckily, `std::sync::Arc` is a drop-in, thread-safe replacement for `std::rc::Rc`:
+
+``` rust
+use std::ops::Range;
+// was Rc
+use std::sync::Arc;
+
+struct Object {
+    // was Rc
+    map: Arc<Vec<u8>>,
+    names: Vec<Name>,
+}
+
+struct Name {
+    // was Rc
+    map: Arc<Vec<u8>>,
+    range: Range<usize>,
+}
+
+impl Name {
+    // same as before
+}
+
+pub fn test() {
+    let get_some_names = || {
+        let load_object = || {
+            // same as before
+        };
+
+        let obj = load_object();
+        // same
+        std::thread::spawn(|| {
+            obj.names
+                .into_iter()
+                .filter(|n| n.slice().iter().next().map(|&b| b == b'b').unwrap_or(false))
+        })
+        .join()
+        .unwrap()
+    };
+
+    // same
+    let names = get_some_names();
+    use std::str::from_utf8;
+    for name in names {
+        println!("name = {:?}", from_utf8(name.slice()));
+    }
+}
+```
+
+And now our (unnecessary) use of `thread::spawn` works:
+
+``` shell
+$ cargo run --quiet
+name = Ok("bar")
+name = Ok("baz")
+```
+
+This works nicely because we have `Name` and `Object` both refer to a third thing: a `Vec<u8>`.
+
+But what if we wanted to keep track of which `Object` a `Name` belongs to?
+
+We could have `Name` refer to `Object` instead `Vec<u8>`.
+
+> **Cool Bear's hot tip**
+>
+> We’re pushing it a little, so the code sample gets a bit long, but try to power through it.
+
+The tricky bit here is mostly that we need to construct `Object` *first*, then construct some `Name` values that refer to `Object` (through `Arc<Mutex<T>>`), and add them to the `Object`.
+
+Hold my coffee:
+
+``` rust
+use std::{
+    fmt,
+    ops::Range,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
+
+struct Object {
+    // objects now have a path
+    path: PathBuf,
+    // this is back to a regular Vec<u8>
+    map: Vec<u8>,
+    names: Vec<Name>,
+}
+
+// derive clone for later
+#[derive(Clone)]
+struct Name {
+    // names now refer directly to an object
+    object: Arc<Mutex<Object>>,
+    range: Range<usize>,
+}
+
+impl Name {
+    // now taking an `object` directly
+    fn for_object(object: &Arc<Mutex<Object>>, range: Range<usize>) -> Self {
+        Self {
+            object: object.clone(),
+            range,
+        }
+    }
+
+    fn slice(&self) -> &[u8] {
+        &self.object.lock().unwrap().map[self.range.clone()]
+    }
+}
+
+// for printing below
+impl fmt::Debug for Name {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use std::str::from_utf8;
+        let obj = self.object.lock().unwrap();
+        write!(
+            f,
+            "{:?}/{}",
+            obj.path,
+            from_utf8(self.slice()).unwrap_or("<not a string>")
+        )
+    }
+}
+
+pub fn test() {
+    let get_some_names = || {
+        let load_object = || {
+            // we need to first build the object, move into into an `Arc<Mutex<>>`
+            let obj = Arc::new(Mutex::new(Object {
+                path: PathBuf::from("libtest.so"),
+                map: "foobarbaz".bytes().collect(),
+                names: vec![],
+            }));
+
+
+            let mut names = vec![
+                Name::for_object(&obj, 0..3),
+                Name::for_object(&obj, 3..6),
+                Name::for_object(&obj, 6..9),
+            ];
+            {
+                // and *then* acquire the mutex so we can add the names to the object
+                let mut obj = obj.lock().unwrap();
+                for name in names.drain(..) {
+                    obj.names.push(name);
+                }
+            }
+            obj
+        };
+
+        let obj = load_object();
+        {
+            // again here, we need to acquire the mutex to read the names from the mutex
+            let obj = obj.lock().unwrap();
+            obj.names
+                .iter()
+                .cloned() // that's why we derived Clone
+                .filter(|n| n.slice().iter().next().map(|&b| b == b'b').unwrap_or(false))
+                .collect::<Vec<_>>()
+        }
+    };
+
+    let names = get_some_names();
+    use std::str::from_utf8;
+    for name in names {
+        println!("name = {:?}", name);
+    }
+}
+```
+
+Unfortunately… this doesn’t compile:
+
+``` shell
+error[E0515]: cannot return value referencing temporary value
+  --> src/sample.rs:29:9
+   |
+29 |         &self.object.lock().unwrap().map[self.range.clone()]
+   |         ^---------------------------^^^^^^^^^^^^^^^^^^^^^^^^
+   |         ||
+   |         |temporary value created here
+   |         returns a value referencing data owned by the current function
+```
+
+This is the offending function:
+
+``` rust
+impl Name {
+    fn slice(&self) -> &[u8] {
+        &self.object.lock().unwrap().map[self.range.clone()]
+    }
+}
+```
+
+And, yeah, this is illegal. We acquire the lock within `slice`, but we release it when we return. So we can’t return data borrowed from what’s guarded by the mutex.
+
+What we *can* do though is.. flip it around.
+
+And this is a pretty cool pattern I discovered while writing the actual (`elk`) code for this article. Instead of returning a `&[u8]`, we can just take a closure that takes a `&[u8]`. This way, we can ensure they only use it *while we hold the lock*.
+
+``` rust
+impl Name {
+    fn with_slice<F, T>(&self, mut f: F) -> T
+    where
+        F: FnMut(&[u8]) -> T,
+    {
+        f(&self.object.lock().unwrap().map[self.range.clone()])
+    }
+}
+```
+
+The `Debug` implementation becomes:
+
+``` rust
+impl fmt::Debug for Name {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use std::str::from_utf8;
+
+        write!(f, "{:?}/", self.object.lock().unwrap().path)?;
+        self.with_slice(|s| write!(f, "{:?}", from_utf8(s).unwrap_or("<not a string>")))
+    }
+}
+```
+
+Note that we can do everything within the closure - `with_slice` holds the lock, we’d just deadlock. If we used an [RwLock](https://doc.rust-lang.org/std/sync/struct.RwLock.html) instead, it would work.
+
+The name filtering part of `test` becomes:
+
+``` rust
+pub fn test() {
+    let get_some_names = || {
+        let load_object = || { /* cut */ };
+
+        let obj = load_object();
+        {
+            let obj = obj.lock().unwrap();
+            obj.names
+                .iter()
+                .cloned()
+                // changed code's here:
+                .filter(|n| n.with_slice(|s| s.iter().next().map(|&b| b == b'b').unwrap_or(false)))
+                .collect::<Vec<_>>()
+        }
+    };
+}
+```
+
+Overall, minimal code changes.
+
+Unfortunately, this.. deadlocks.
+
+``` rust
+$ cargo run
+(remains stuck forever)
+```
+
+Because we’re trying to acquire the lock in `test`:
+
+``` rust
+    // first lock
+    let obj = obj.lock().unwrap();
+    obj.names
+        .iter()
+        .cloned()
+        // second lock (inside `with_slice`)
+        .filter(|n| n.with_slice(|s| s.iter().next().map(|&b| b == b'b').unwrap_or(false)))
+        .collect::<Vec<_>>()
+```
+
+Ah, the joys of using (relatively) low-level locking primitives.
+
+We can fix that like so:
+
+``` rust
+    let obj = load_object();
+
+    let names = {
+        // first lock
+        let obj = obj.lock().unwrap();
+        obj.names.iter().cloned().collect::<Vec<_>>()
+        // release first lock
+    };
+    names
+        .into_iter()
+        // second lock
+        .filter(|n| n.with_slice(|s| s.iter().next().map(|&b| b == b'b').unwrap_or(false)))
+        .collect::<Vec<_>>()
+```
+
+Again, an `RwLock` wouldn’t have had these issues - as you can hold several `RwLockReadGuard`s for the same lock.
+
+We also could’ve used `try_lock().unwrap()` instead, which would’ve panicked if we couldn’t acquire the lock immediately.
+
+With that last change, the code finally runs:
+
+``` rust
+$ cargo run --quiet
+name = "libtest.so"/"bar"
+name = "libtest.so"/"baz"
+```
+
+But now we have… another problem. `Object` owns `Name` and `Name` holds a counting reference to `Object`, so we have cycles:
+
+![refcycle](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-10/assets/refcycle~018d27623ea2ca85.svg)
+
+…which means neither are ever going to be freed.
+
+There is, of course, a way to sidestep that. We can have `Name` hold a *weak* reference to `Object` instead.
+
+``` rust
+use std::{
+    fmt,
+    ops::Range,
+    path::PathBuf,
+    // new: Weak
+    sync::{Arc, Mutex, Weak},
+};
+
+#[derive(Clone)]
+struct Name {
+    // was: `Arc`, now `Weak`
+    object: Weak<Mutex<Object>>,
+    range: Range<usize>,
+}
+
+impl Name {
+    fn for_object(object: &Arc<Mutex<Object>>, range: Range<usize>) -> Self {
+        Self {
+            // was: object.clone()
+            object: Arc::downgrade(object),
+            range,
+        }
+    }
+
+    fn with_slice<F, T>(&self, mut f: F) -> T
+    where
+        F: FnMut(&[u8]) -> T,
+    {
+        // I probably wouldn't write code like this in production,
+        // but with IDE assistance it's not that bad.
+        //
+        // Let's follow the type chain:
+        //    Weak<Mutex<Object>> (upgrade - can return None if Arc was freed)
+        // -> Option<Arc<Mutex<Object>>> (unwrap - can panic)
+        // -> Arc<Mutex<Object>> (lock - can fail if we double-lock)
+        // -> Result<MutexGuard<Object>> (unwrap - can panic)
+        // -> MutexGuard<Object>
+        f(&self.object.upgrade().unwrap().lock().unwrap().map[self.range.clone()])
+    }
+}
+
+// the Debug implementation is changed similarly, using `.unwrap()`.
+```
+
+And with these changes… our code crashes:
+
+``` rust
+$ cargo run --quiet
+thread 'main' panicked at 'called `Option::unwrap()` on a `None` value', /rustc/5e1a799842ba6ed4a57e91f7ab9435947482f7d8/src/libcore/macros/mod.rs:15:40
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace.
+```
+
+*Now*, when we clone the `Name` and drop the `Arc<Mutex<Object>>`, all strong references to the `Object` are dropped, and the `Object` itself is dropped, too. So when we call `upgrade()`, it returns `None`, and when we call `unwrap()` on that, it panics.
+
+If we *don’t* want it to panic, we need to keep a strong reference to the object around.
+
+``` rust
+pub fn test() {
+    let get_some_names = || {
+        let load_object = || {
+            // cut
+        };
+
+        let obj = load_object();
+
+        let names = {
+            let obj = obj.lock().unwrap();
+            obj.names.iter().cloned().collect::<Vec<_>>()
+        };
+        let names = names
+            .into_iter()
+            .filter(|n| n.with_slice(|s| s.iter().next().map(|&b| b == b'b').unwrap_or(false)))
+            .collect::<Vec<_>>();
+        // new: return both `Arc<Mutex<Object>>` and `Vec<Name>`
+        (obj, names)
+    };
+
+    let (_obj, names) = get_some_names();
+    use std::str::from_utf8;
+    for name in names {
+        println!("name = {:?}", name);
+    }
+}
+```
+
+And now it runs again.
+
+``` shell
+$ cargo run --quiet
+name = "libtest.so"/"bar"
+name = "libtest.so"/"baz"
+```
+
+But, as you can see… it goes places. We don’t need that complexity in `elk`.
+
+For our use case, a much better alternative would be to split `Object` into two structs.
+
+``` rust
+// in `elk/src/process.rs`
+
+use std::{fmt, ops::Range, path::PathBuf, sync::Arc};
+
+struct Object {
+    // some of the data was split into a new struct
+    data: Arc<ObjectData>,
+    names: Vec<Name>,
+}
+
+// and here's that new struct. It owns the path
+// and the memory contents.
+struct ObjectData {
+    path: PathBuf,
+    map: Vec<u8>,
+}
+
+#[derive(Clone)]
+struct Name {
+    // this doesn't refer to `Object` aymore
+    obj_data: Arc<ObjectData>,
+    range: Range<usize>,
+}
+
+impl Name {
+    fn for_object(object: &Object, range: Range<usize>) -> Self {
+        Self {
+            // note that the lifetime of `Name` isn't tied to the lifetime of
+            // `Object` in any way
+            obj_data: object.data.clone(),
+            range,
+        }
+    }
+
+    fn with_slice<F, T>(&self, mut f: F) -> T
+    where
+        F: FnMut(&[u8]) -> T,
+    {
+        // much simpler!
+        f(&self.obj_data.map[self.range.clone()])
+    }
+}
+
+impl fmt::Debug for Name {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use std::str::from_utf8;
+
+        write!(f, "{:?}/", self.obj_data.path)?;
+        self.with_slice(|s| write!(f, "{:?}", from_utf8(s).unwrap_or("<not a string>")))
+    }
+}
+
+pub fn test() {
+    let get_some_names = || {
+        let load_object = || {
+            // build the `Object` and `ObjectData` in one fell swoop
+            let mut obj = Object {
+                data: Arc::new(ObjectData {
+                    path: PathBuf::from("libtest.so"),
+                    map: "foobarbaz".bytes().collect(),
+                }),
+                names: vec![],
+            };
+
+            // our `Object` is mutable and we fully own it,
+            // no need to acquire a lock to mutate it
+            let mut names = vec![
+                Name::for_object(&obj, 0..3),
+                Name::for_object(&obj, 3..6),
+                Name::for_object(&obj, 6..9),
+            ];
+            for name in names.drain(..) {
+                obj.names.push(name);
+            }
+
+            obj
+        };
+
+        // look mom, no locks!
+        let obj = load_object();
+        obj.names
+            .into_iter()
+            .filter(|n| n.with_slice(|s| s.iter().next().map(|&b| b == b'b').unwrap_or(false)))
+            .collect::<Vec<_>>()
+    };
+
+    // no need to hold a reference to `Object`, because our `Name` values hold
+    // references to `ObjectData` - and that's all they need.
+    let names = get_some_names();
+    use std::str::from_utf8;
+    for name in &names {
+        println!("name = {:?}", name);
+    }
+}
+```
+
+This version works just as well:
+
+``` shell
+$ cargo run --quiet
+name = "libtest.so"/"bar"
+name = "libtest.so"/"baz"
+```
+
+> **What did we learn?**
+>
+> Gather round team, what did we learn?
+>
+> Many of the lifetime (and Rc/Arc) issues encountered when writing Rust are due to the developer being stubborn and absolutely wanting to fit everything in a single struct.
+>
+> But oftentimes it’s advantageous to split things across multiple structs! Separate data from metadata, immutable values from mutable values, etc.
+
+So! Now that we know enough about this, how do we apply it to `Name`?
+
+Well, we’ll have `Name` hold a reference to `MemoryMap`. We don’t really care *where* a `Name` comes from right now. If we did, we’d have to reorganize things a little (because `Object` owns *several* `Segment`s, and they own the `MemoryMap`s).
+
+The next question is: should `Name` hold a strong reference to `MemoryMap`, or a weak one? If we want to use it in one of our error types, it has to be a strong one.
+
+Next question: `Rc` or `Arc`? It doesn’t really matter. We’re not especially concerned with squeezing every bit of performance out of our code, so we can go with `Arc` in case we do some parallel things later.
+
+Let’s get going! The definition of `Name` was:
+
+``` rust
+// in `elk/src/name.rs` (old)
+
+#[derive(Clone)]
+pub enum Name {
+    FromAddr { addr: delf::Addr, len: usize },
+    Owned(Vec<u8>),
+}
+```
+
+And, from now on, we’ll be working with this:
+
+``` rust
+// in `elk/src/name.rs` (new)
+
+use mmap::MemoryMap;
+use std::{ops::Range, sync::Arc};
+
+#[derive(Clone)]
+pub enum Name {
+    Mapped {
+        map: Arc<MemoryMap>,
+        range: Range<usize>,
+    },
+    Owned(Vec<u8>),
+}
+```
+
+For convenience, we’ll add a method to `MemoryMap` - turns out the `mmap` crate is rather low-level and only gives us pointers, but we’d rather work with slices.
+
+``` rust
+// in `elk/src/name.rs`
+
+trait MemoryMapExt {
+    fn as_slice(&self) -> &[u8];
+}
+
+impl MemoryMapExt for MemoryMap {
+    fn as_slice(&self) -> &[u8] {
+        // we're hiding unsafe code in a safe function, so we
+        // better make sure it's correct!
+        // looks correct to me.
+        unsafe { std::slice::from_raw_parts(self.data(), self.len()) }
+    }
+}
+```
+
+Now, we need a new constructor: `from_map`:
+
+``` rust
+// in `elk/src/name.rs`
+
+impl Name {
+    // constructor for mapped variant
+    pub fn mapped(map: &Arc<MemoryMap>, offset: usize) -> Self {
+        let len = map
+            .as_slice()
+            .iter()
+            .skip(offset)
+            .position(|&c| c == 0)
+            .expect("scanned 2048 bytes without finding null-terminator for name");
+        Self::Mapped {
+            map: map.clone(),
+            range: offset..offset + len,
+        }
+    }
+
+    // construct for owned variant (unchanged)
+    pub fn owned<T: Into<Vec<u8>>>(value: T) -> Self {
+        Self::Owned(value.into())
+    }
+}
+```
+
+This looks a lot like the old `from_addr` constructor, you can go back to [Dynamic linker speed and correctness](https://fasterthanli.me/series/making-our-own-executable-packer/part-8) for more details.
+
+The `as_slice` implementation looks similar:
+
+``` rust
+// in `elk/src/name.rs`
+
+impl Name {
+    pub fn as_slice(&self) -> &[u8] {
+        match self {
+            Self::Mapped { map, range } => &map.as_slice()[range.clone()],
+            Self::Owned(vec) => &vec[..],
+        }
+    }
+}
+```
+
+…and that’s all the changes we need! In `name.rs`, that is.
+
+In `process.rs` - where we declare and construct `Object`, we need the following changes:
+
+``` rust
+// in `elk/src/process.rs`
+
+use std::sync::Arc;
+
+#[derive(CustomDebug)]
+pub struct Segment {
+    // now wrapped in `Arc`
+    #[debug(skip)]
+    pub map: Arc<MemoryMap>,
+    // new! will be handy to find out *which* MemoryMap we need
+    pub vaddr_range: Range<delf::Addr>,
+
+    // same as before:
+    pub padding: delf::Addr,
+    pub flags: BitFlags<delf::SegmentFlag>,
+}
+
+// (cut)
+
+// in `impl Process`
+// in `fn load_object`
+// in `load_segments()` iterator chain:
+                Ok(Segment {
+                    // 👇 now an Arc
+                    map: Arc::new(map),
+                    // 👇 new
+                    vaddr_range: vaddr..(ph.vaddr + ph.memsz),
+                    padding,
+                    flags: ph.flags,
+                })
+
+// (cut)
+// later in `fn load_object`
+
+        let syms = file.read_dynsym_entries()?;
+        let syms: Vec<_> = if syms.is_empty() {
+            vec![]
+        } else {
+            // 👇 this is all new
+            let dynstr = file
+                .get_dynamic_entry(delf::DynamicTag::StrTab)
+                .unwrap_or_else(|_| panic!("String table not found in {:?}", path));
+            // we're not just dealing with random `delf::Addr` values now,
+            // we have to find the right `MemoryMap` to refer to.
+            let segment = segments
+                .iter()
+                // and here's where `vaddr_range` comes in handy
+                .find(|seg| seg.vaddr_range.contains(&dynstr))
+                .unwrap_or_else(|| panic!("Segment not found for string table in {:#?}", path));
+
+            syms.into_iter()
+                .map(|sym| {
+                    let name = Name::mapped(
+                        &segment.map,
+                        // a little bit of maths can't hurt
+                        (dynstr + sym.name - segment.vaddr_range.start).into(),
+                    );
+                    NamedSym { sym, name }
+                })
+                .collect()
+        };
+```
+
+And that’s it.
+
+No other changes are needed. `Name`, once built, behaves the exact same way. It still implements `PartialEq`, `Eq`, `Debug`, `Hash` - everything we care about.
+
+All our samples still run:
+
+``` shell
+$ ../target/debug/elk run hello-dl
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elk/samples"
+Loading "/home/amos/ftl/elk/samples/libmsg.so"
+this is way longer than sixteen bytes
+```
+
+``` shell
+$ ../target/debug/elk run hello-nolibc
+Loading "/home/amos/ftl/elk/samples/hello-nolibc"
+Hello from C!
+```
+
+``` shell
+$ ../target/debug/elk run ifunc-nolibc
+Loading "/home/amos/ftl/elk/samples/ifunc-nolibc"
+Hello, regular user!
+```
+
+``` shell
+sudo ../target/debug/elk run ifunc-nolibc
+[sudo] password for coolbear:
+Loading "/home/amos/ftl/elk/samples/ifunc-nolibc"
+Hello, root!
+```
+
+Our loader is functionally the same. But now, `Name` is much harder to mis-use.
+
+Heck, we can use it (and `NamedSym`) in return types now!
+
+``` rust
+// in `elk/src/process.rs`
+
+#[derive(Debug, Clone)]
+// 👇 wasn't previously `pub`
+pub struct NamedSym {
+    sym: delf::Sym,
+    name: Name,
+}
+
+#[derive(Error, Debug)]
+pub enum RelocationError {
+    // 👇 now using NamedSym and debug formatting
+    #[error("undefined symbol: {0:?}")]
+    UndefinedSymbol(NamedSym),
+}
+
+// (cut)
+
+// in `fn apply_relocation`
+
+        let found = match rel.sym {
+            0 => ResolvedSym::Undefined,
+            _ => match self.lookup_symbol(&wanted, ignore_self) {
+                undef @ ResolvedSym::Undefined => match wanted.sym.sym.bind {
+                    delf::SymBind::Weak => undef,
+                    // 👇 now returning the sym itself, was using `format!()`
+                    _ => return Err(RelocationError::UndefinedSymbol(wanted.sym.clone())),
+                },
+                x => x,
+            },
+        };
+```
+
+To test it out, we need to.. artificially clear out the symbol map, to force an undefined symbol error:
+
+``` rust
+// in `elk/src/process.rs`
+// in `fn load_object`
+
+        let mut sym_map = MultiMap::new();
+        for sym in &syms {
+            sym_map.insert(sym.name.clone(), sym.clone())
+        }
+        // FIXME: just testing
+        sym_map.clear();
+```
+
+``` shell
+$ ../target/debug/elk run hello-dl
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elk/samples"
+Loading "/home/amos/ftl/elk/samples/libmsg.so"
+Fatal error: undefined symbol: NamedSym { sym: Sym { name: 000000000000000b, bind: Global,
+type: Object, shndx: 10, value: 0000000000003000, size: 38 }, name: msg }
+                                                              ^^^^^^^^^
+                                                             there it is!
+```
+
+Wonderful! Don’t forget to remove `sym_map.clear()` from your copy if you’re following along :)

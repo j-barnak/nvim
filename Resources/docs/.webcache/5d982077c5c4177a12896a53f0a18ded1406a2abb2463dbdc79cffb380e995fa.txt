@@ -1,0 +1,1140 @@
+# More ELF relocations
+
+In [our last installment](https://fasterthanli.me/series/making-our-own-executable-packer/part-10) of “Making our own executable packer”, we did some code cleanups. We got rid of a bunch of `unsafe` code, and found a way to represent memory-mapped data structures safely.
+
+But that article was merely a break in our otherwise colorful saga of “trying to get as many executables to run with our own dynamic loader”. The last thing we got running was the `ifunc-nolibc` program.
+
+``` shell
+$ ./target/debug/elk run ./samples/ifunc-nolibc
+Loading "/home/amos/ftl/elf-series/samples/ifunc-nolibc"
+Hello, regular user!
+
+$ sudo ./target/debug/elk run ./samples/ifunc-nolibc
+Loading "/home/amos/ftl/elf-series/samples/ifunc-nolibc"
+Hello, root!
+```
+
+It was [an interesting article](https://fasterthanli.me/series/making-our-own-executable-packer/part-9), because even though we discovered `elk`, our dynamic loader, isn’t quite up to the task of loading libc, it *can* load C programs that are compiled with `-nostartfiles -nodefaultlibs`.
+
+In other words, we’re able to use gcc as a fancy assembler - which is great, because I’m much more comfortable writing cursed C code than I am writing nasm. More importantly, most of the programs we’re going to try and run are also written in C, so it’s easier for me to figure out which C constructs correspond to various parts of `readelf -a`’s output.
+
+In the current state of things, if we try to run a dynamically-linked C program, `elk` errors out pretty early:
+
+``` shell
+$ ./target/debug/elk run /usr/bin/ls
+Loading "/usr/bin/ls"
+Loading "/usr/lib/libcap.so.2.45"
+Loading "/usr/lib/libc-2.32.so"
+Fatal error: Could not read symbols from ELF object: Parsing error: String("Unknown SymType 6 (0x6)"):
+input: 16 00 19 00 10 00 00 00 00 00 00 00 04 00 00 00 00 00 00 00
+```
+
+But that’s just the tip of the iceberg. There are many more things missing from `elk` for it to be able to load and run a program that links against glibc.
+
+So, instead of ~~repeatedly banging our heads against a wall~~ repeatedly trying to run real-world executables and seeing what’s missing, let’s try to be proactive and build a sample program, and add features to `delf` and `elk` as we progress.
+
+That way, we can be sure that we understand what is supposed to happen before we figure out a way to actually make it happen.
+
+Our sample program this time will be a little more involved than before, so let’s give it a whole directory:
+
+``` shell
+$ cd samples/
+$ mkdir chimera
+$ cd chimera
+```
+
+Let’s start simple:
+
+``` c
+// in `elk/samples/chimera/chimera.c`
+
+void ftl_exit(int code) {
+    __asm__ (
+            " \
+            mov %[code], %%edi \n\
+            mov $60, %%rax \n\
+            syscall"
+            :
+            : [code] "r" (code)
+    );
+}
+
+void _start(void) {
+    ftl_exit(21);
+}
+```
+
+> **Cool Bear's hot tip**
+>
+> In case you need a refresher: the ~~abomination~~ code above is GCC inline assembly, which we need to make an `exit` syscall, because we’re not linking against libc.
+>
+> We discussed GCC inline assembly to some degree in [part 9](https://fasterthanli.me/series/making-our-own-executable-packer/part-9).
+
+We’re going to be building multiple .c files, so let’s whip up a quick Makefile:
+
+``` makefile
+# in `elk/samples/chimera/Makefile`
+
+CFLAGS  := -fPIC
+LDFLAGS := -nostartfiles -nodefaultlibs -L. -Wl,-rpath='$$ORIGIN'
+
+all: chimera
+
+chimera: chimera.c
+  gcc -c chimera.c ${CFLAGS}
+  gcc chimera.o -o chimera ${LDFLAGS}
+
+clean:
+  rm -f chimera *.o *.so
+```
+
+> **Cool Bear's hot tip**
+>
+> We’re only using GNU make as a history lesson. Back when C was considered a reasonable language to write anything in, make was also considered a reasonable build system.
+>
+> Luckily, since then, [much better tools](http://gittup.org/tup/) have appeared, and GNU make is barely used anymore. It was [weaponized for a while](https://twitter.com/timmartin2/status/23365017839599616) but that proved unwieldy and the whole arrangement quickly died down.
+>
+> So, we’re indulging here, not because it’s a good tool for the job, but because we’re trying to understand what life was like back then — long, long ago — so it’s only fair that we try and use era-appropriate software.
+
+Let’s walk through it piece by piece:
+
+``` makefile
+CFLAGS  := -fPIC
+```
+
+Here we’re defining a “simply expanded” GNU make variable (not an environment variable) containing flags used for compilation. `-fPIC` tells gcc to generate position-independent code, which is needed because we compile and link separately, so it can’t guess in advance whether the code is going to end up in a position-independent object or not.
+
+``` makefile
+LDFLAGS := -nostartfiles -nodefaultlibs -L. -Wl,-rpath='$$ORIGIN'
+```
+
+Same here, but for *linker* flags. The first two flags are familiar, `-L` adds `.` (the current directory) to the library search path, so if we end up linking against `libfoo.so` or `libbar.so` it’ll know where to find them, and finally, `-Wl,XXX` is a way to pass arguments to the *actual* linker, GNU `ld`, and we’ve learned what `-rpath` does in [Part 5](https://fasterthanli.me/series/making-our-own-executable-packer/part-5).
+
+> **Cool Bear's hot tip**
+>
+> Note: the `$` (dollar sign) is doubled so GNU make doesn’t think we’re accessing a GNU make variable. The whole thing is single-quoted so bash doesn’t think we want to expand a bash variable.
+>
+> That’s right. It’s a double freaking escape. That’s what people used to have to deal with, back in the days. Good thing *that’s* over.
+
+``` makefile
+all: chimera
+```
+
+This is our first “target”, and since it’s the first, it’s the one that’s going to get run when we invoke GNU make simply as `make`. It depends on `chimera`, which is the name of the executable we want to build, which means that, if a file named `chimera` doesn’t exist, it’ll run this target:
+
+``` makefile
+chimera: chimera.c
+  gcc -c chimera.c ${CFLAGS}
+  gcc chimera.o -o chimera ${LDFLAGS}
+```
+
+> **Cool Bear's hot tip**
+>
+> It’s very important for commands inside targets to be indented with a single tab.
+>
+> Not two spaces, not four spaces. One tab.
+>
+> If you get it wrong, GNU make will hit you with this wonderful error message until you comply or give up:
+>
+> ``` shell
+> Makefile:9: *** missing separator.  Stop.
+> ```
+
+This target will *also* be run if `chimera.c` is newer than `chimera` (or whatever GNU make uses to determine out-of-dateness these days).
+
+As for the commands, well, `-c` will run the C assembler and generate an ELF object file, `chimera.o`, and the second invocation drives the GNU linker to make a real live, position-independent executable.
+
+``` makefile
+clean:
+  rm -f chimera *.o *.so
+```
+
+Finally, this target removes every object / executable / library file whenever we invoke `make clean`.
+
+Archaic tooling hype! Let’s build it.
+
+``` shell
+$ make
+gcc -c chimera.c -fPIC
+gcc chimera.o -o chimera -nostartfiles -nodefaultlibs -L. -Wl,-rpath='$ORIGIN'
+$
+```
+
+Woo! Did that work?
+
+``` shell
+$ ./chimera; echo $?
+21
+```
+
+Wonderful.
+
+Can we run it through elk?
+
+``` shell
+$ ../../target/debug/elk run ./chimera; echo $?
+Loading "/home/amos/ftl/elk/samples/chimera/chimera"
+Found RPATH entry "/home/amos/ftl/elk/samples/chimera"
+21
+```
+
+Sure we can! Why couldn’t we? There’s nothing particularly interesting about the `chimera` executable. Nothing we don’t support, at least.
+
+So let’s bring a dynamic library into the mix - we’ll call it `libfoo`.
+
+``` c
+// in `elk/samples/chimera/foo.c`
+
+int number = 21;
+```
+
+Now remember, this is C, where the default visibility for symbols is “weeeeeeee”, so we can definitely use it from `chimera.c`
+
+``` c
+// in `elk/samples/chimera/chimera.c`
+
+// omitted: `ftl_exit`
+
+extern int number;
+
+void _start() {
+    ftl_exit(number);
+}
+```
+
+Let’s change up our `Makefile` so it builds and links against libfoo:
+
+``` makefile
+# in `elk/samples/chimera/Makefile`
+
+# omitted: everything else
+
+                 # 👇 now depends on `libfoo.so` target
+chimera: chimera.c libfoo.so
+  gcc -c chimera.c ${CFLAGS}
+                          # 👇 new!
+  gcc chimera.o -o chimera -lfoo ${LDFLAGS}
+
+# 👇 new target
+libfoo.so: foo.c
+  gcc -c foo.c ${CFLAGS}
+  gcc foo.o -shared -o libfoo.so ${LDFLAGS}
+```
+
+``` shell
+$ make
+gcc -c foo.c -fPIC
+gcc foo.o -shared -o libfoo.so -nostartfiles -nodefaultlibs -L. -Wl,-rpath='$ORIGIN'
+gcc -c chimera.c -fPIC
+gcc chimera.o -o chimera -lfoo -nostartfiles -nodefaultlibs -L. -Wl,-rpath='$ORIGIN'
+```
+
+…and voilà!
+
+``` shell
+$ ./chimera; echo $?
+21
+```
+
+But will it blend^W run through elk?
+
+``` shell
+$ ../../target/debug/elk run ./chimera; echo $?
+Loading "/home/amos/ftl/elk/samples/chimera/chimera"
+Found RPATH entry "/home/amos/ftl/elk/samples/chimera"
+Loading "/home/amos/ftl/elk/samples/chimera/libfoo.so"
+Found RPATH entry "/home/amos/ftl/elk/samples/chimera"
+Fatal error: unimplemented relocation: GlobDat
+0
+```
+
+No! It doesn’t. Looks like time has caught up with us, and we need to implement more relocations. Very well then!
+
+First off, what’s the relocation to?
+
+``` shell
+$ readelf -r ./chimera
+
+Relocation section '.rela.dyn' at offset 0x358 contains 1 entry:
+  Offset          Info           Type           Sym. Value    Sym. Name + Addend
+000000003ff8  000100000006 R_X86_64_GLOB_DAT 0000000000000000 number + 0
+```
+
+Right! The only symbol `libfoo.so` exports. No surprise there.
+
+Let’s look at the “Relocation Types” table again, from the System V ABI:
+
+|           |     |           |           |
+|-----------|-----|-----------|-----------|
+| None      | 0   | none      | none      |
+| 64        | 1   | word64    | S + A     |
+| PC32      | 2   | word32    | S + A - P |
+| GOT32     | 3   | word32    | G + A     |
+| PLT32     | 4   | word32    | L + A - P |
+| COPY      | 5   | none      | none      |
+| GLOB_DAT  | 6   | wordclass | S         |
+| JUMP_SLOT | 7   | wordclass | S         |
+| RELATIVE  | 8   | wordclass | B + A     |
+
+Now, I’m ready to bet `GLOB_DAT` stands for “global data”. No big mystery there - `number` lives in the address space for `libfoo.so`, so any references to it must be relocated, because we don’t know where it’ll be loaded in advance.
+
+But wait.. we already had a sample program that uses a variable from another library, the `hello-dl` program from [Dynamic symbol resolution](https://fasterthanli.me/series/making-our-own-executable-packer/part-7). Back then it used a `Copy` relocation, not a `GlobDat` one.
+
+What determines which type of relocation we get: `Copy` or `GlobDat`?
+
+Turns out, in this case, it depends on whether we pass `-fPIC` to GCC.
+
+Let’s compare what we get “without -fPIC” and “with -fPIC” step by step.
+
+![step-by-step](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-11/assets/step-by-step~896ad3f2bafd2a6c.svg)
+
+First off, let’s look at the assembly GCC generates:
+
+![fpic-asm](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-11/assets/fpic-asm~d500ec5d81192b9b.svg)
+
+This step right here pretty much gives away the whole game.
+
+In AT&T syntax, `foo(bar)` is “effective address syntax”, and it effectively means “the operand is the value at memory address `foo+bar`”. Even in the non-fPIC version, GCC defaults to rip-relative addressing.
+
+But - and that’s a *big* but, it assumes that `number` will live in the same ELF object, and thus in the same address space.
+
+But what’s `foo@GOTPCREL`? It’s a **special assembler symbol**, described in the System V ABI for AMD64, along with the rest of the family:
+
+- `name@GOT`: specifies the offset to the GOT entry for the symbol name from the base of the GOT.
+- `name@GOTPLT`: specifies the offset to the GOT entry for the symbol name from the base of the GOT, implying that there is a corresponding PLT entry.
+- `name@GOTOFF`: name@GOTOFF: specifies the offset to the location of the symbol name from the base of the GOT.
+- `name@GOTPCREL`: specifies the offset to the GOT entry for the symbol name from the current code location.
+- `name@PLT`: specifies the offset to the PLT entry of symbol name from the current code location.
+- `name@PLTOFF`: specifies the offset to the PLT entry of symbol name from the base of the GOT.
+- `_GLOBAL_OFFSET_TABLE_`: specifies the offset to the base of the GOT from the current code location.
+
+When dealing with rip-relative addressing, it helps to think of those values as distances rather than addresses. `rip` is the distance from `0x0` to the program counter. `_GLOBAL_OFFSET_TABLE_` is the distance from `rip` to the start of the GOT. `name@GOT` is the distance from the start of the GOT to the start of the entry for `name`.
+
+![gotpcrel](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-11/assets/gotpcrel~f99faebb2b4f5d61.svg)
+
+As we can see, `name@GOTPCREL` is just a shortcut for `_GLOBAL_OFFSET_TABLE_ + name@GOT`. Which is awfully convenient because they’re both constants, and that means the generated assembly can use one less instruction.
+
+There’s another difference in the generated assembly, let’s look at it again:
+
+![fpic-asm](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-11/assets/fpic-asm~d500ec5d81192b9b.svg)
+
+Without `-fPIC`, we move `number` directly into `eax` (and then into `edi`, for argument passing). With `-fPIC`, we move the *address* of `number` into `eax` - and then read the value at that address. You can think of it as dereferencing a pointer.
+
+We’ll see this in action in a hot minute, so let’s keep going for now.
+
+Once assembled, we get an ELF object file:
+
+![fpic-object](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-11/assets/fpic-object~c5387c5382ef8345.svg)
+
+Now, we’re looking at disassembly - the `.o` file is an ELF. It contains binary code, so “special assembler symbols” are gone.
+
+It’s still using “effective addressing” but, for the time being:
+
+- the offset is `0x0`
+- relocations types we haven’t seen yet, like `PC32` or `GOTPCRELX`, have been added so the code gets patched later.
+
+And, sure enough, after linking, those relocations have been processed, and the offsets are now constants - relative to `rip`:
+
+![fpic-exec](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-11/assets/fpic-exec~fa31330a3f7bdef9.svg)
+
+Each variant still has a relocation, but they don’t affect the `.text` segment.
+
+- Without `-fPIC`, the value `libfoo`’s `number` is copied into `chimera`’s own `.data` section
+- With `-fPIC`, the *address* of `libfoo`’s `number` is written into `chimera`’s global offset table
+
+That’s enough theory. Let’s run the `-fPIC` variant under GDB to see how it all unfolds!
+
+Let’s try running it under GDB:
+
+``` shell
+$ gdb chimera
+(cut)
+(gdb) break _start
+Breakpoint 1 at 0x101c
+(gdb) run
+Starting program: /home/amos/ftl/elk/samples/chimera/chimera
+
+Breakpoint 1, 0x000055555555501c in _start ()
+(gdb) x/4i $rip
+=> 0x55555555501c <_start+4>:   mov    rax,QWORD PTR [rip+0x2fd5]        # 0x555555557ff8
+   0x555555555023 <_start+11>:  mov    eax,DWORD PTR [rax]
+   0x555555555025 <_start+13>:  mov    edi,eax
+   0x555555555027 <_start+15>:  call   0x555555555000 <ftl_exit>
+```
+
+> **Cool Bear's hot tip**
+>
+> `x` is still the “examine” command we’ve learned earlier in the series.
+>
+> Here the `i` stands for “instructions”. The output is very similar to the `disas` command, although the latter would show the whole `_start` function.
+
+We recognize that assembly! `0x2fd5` is `number@GOTRELPC`.
+
+GDB is not able to give us any information about that address. As far as it’s concerned, the GOT is an implementation detail:
+
+``` shell
+(gdb) info symbol 0x555555557ff8
+No symbol matches 0x555555557ff8.
+```
+
+But implementation details are our bread and butter, and that’s why we’ve developed a custom `dig` command, in [Part 9](https://fasterthanli.me/series/making-our-own-executable-packer/part-9).
+
+``` shell
+(gdb) dig 0x555555557ff8
+Mapped r--p from File("/home/amos/ftl/elk/samples/chimera/chimera")
+(Map range: 0000555555557000..0000555555558000, 4 KiB total)
+Object virtual address: 0000000000003ff8
+At section ".got" + 0 (0x0)
+At symbol "" + 0 (0x0)
+```
+
+And there it is! It’s pointing right at the first entry of `chimera`’s GOT (Global Offset Table).
+
+We already discussed the purpose of the GOT in that same [Part 9](https://fasterthanli.me/series/making-our-own-executable-packer/part-9): to maximize memory sharing across processes. We kinda glossed over the details back then, but now it’s clear as day.
+
+The purpose of the GOT (and the PLT, which we’ll get to later) is to avoid having to relocate the executable segment of an executable. It “moves” relocations over to the `.got` and `.got.plt` sections instead, so the `.text` section can be mapped **once** for any number of instances of that executable.
+
+We also mentioned earlier that the GOT was made read-only after relocation, thanks to a GNU extension, and.. it is!
+
+``` shell
+(gdb) dig 0x555555557ff8
+Mapped r--p from File("/home/amos/ftl/elk/samples/chimera/chimera")
+       ^^^^
+       read-only!
+```
+
+``` shell
+$ readelf -l chimera
+  GNU_RELRO      0x0000000000002ed8 0x0000000000003ed8 0x0000000000003ed8
+                 0x0000000000000128 0x0000000000000128  R      0x1
+```
+
+![relro](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-11/assets/relro~674c723d431daedb.svg)
+
+I’ve said it before and I’ll say it again: we’ve mostly been concerned with the “loader view” so far. But seeing both together here is illuminating.
+
+The only segment we care about (`LOAD (RW)`) maps *three sections* into memory, as read-write. We never even handle the `GNU_RELRO` segment (we’re not super worried about security right now, it’s all exploratory code).
+
+As far as we were concerned, `Load` segments were just opaque blobs of data. Sure, we had an inkling that if they were `RX` (read+execute) they probably contained code, and if they were `RW` or `R` they probably contained data.
+
+But by looking at sections, we can know a bit more. Here we see that the `.got` section is 8 bytes large - just enough room for one variable: `number`.
+
+Note that `number` is an `int`, which is 4 bytes here, but everything is easier when you align everything to 64-bit!
+
+We also see that right after `.got`, we have a `.got.plt` section, which we haven’t seen in action yet, and which is *not* covered by `GNU_RELRO`, so it remains writable even after relocations are done and the program starts executing for real.
+
+Let’s look over to GDB again to make sure we really understand what’s going on:
+
+``` shell
+(gdb) x/4i $rip
+=> 0x55555555501c <_start+4>:   mov    rax,QWORD PTR [rip+0x2fd5]        # 0x555555557ff8
+   0x555555555023 <_start+11>:  mov    eax,DWORD PTR [rax]
+   0x555555555025 <_start+13>:  mov    edi,eax
+   0x555555555027 <_start+15>:  call   0x555555555000 <ftl_exit>
+(gdb) x/xg 0x555555557ff8
+0x555555557ff8: 0x00007ffff7fca000
+```
+
+So, `0x555555557ff8` is the address of our single `.got` (Global Offset Table) entry, and it contains… another address!
+
+Let’s dig some more:
+
+``` shell
+(gdb) dig 0x00007ffff7fca000
+Mapped rw-p from File("/home/amos/ftl/elk/samples/chimera/libfoo.so")
+(Map range: 00007ffff7fca000..00007ffff7fcb000, 4 KiB total)
+Object virtual address: 0000000000002000
+At section ".data" + 0 (0x0)
+At symbol "" + 0 (0x0)
+At symbol "number" + 0 (0x0)
+```
+
+And there we have it. That’s the address of `number`, in the `.data` section of `libfoo.so`.
+
+Everything is exactly as we expected:
+
+![gotpcrel-practice](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-11/assets/gotpcrel-practice~11608a776307de97.svg)
+
+So, how do we actually implement `GlobDat` relocations? Well, the good news is: by the time we think of loading the executable, all the hard work has been done already.
+
+All we have to do is write the address of the symbol wherever the relocation’s target address is - that’s why the calculation for `GlobDat` relocations is simply `S`, the “value of the symbol whose index resides in the relocation entry.”
+
+|          |     |           |     |
+|----------|-----|-----------|-----|
+| GLOB_DAT | 6   | wordclass | S   |
+
+Which means, all the code we need to implement that relocation is… this:
+
+``` rust
+// in `elk/src/process.rs`
+// in `impl Process`
+// in `fn apply_relocation`
+
+match reltype {
+    // omitted: other arms
+    RT::GlobDat => unsafe {
+        objrel.addr().set(found.value());
+    },
+    _ => return Err(RelocationError::UnimplementedRelocation(reltype)),
+}
+```
+
+And just like that, we can run `chimera`:
+
+``` shell
+$ cd elk/samples/chimera
+$ make clean all
+$ cargo b -q
+$ ../../target/debug/elk run ./chimera
+Loading "/home/amos/ftl/elf-series/samples/chimera/chimera"
+Found RPATH entry "/home/amos/ftl/elf-series/samples/chimera"
+Loading "/home/amos/ftl/elf-series/samples/chimera/libfoo.so"
+Found RPATH entry "/home/amos/ftl/elf-series/samples/chimera"
+$ echo $?
+21
+```
+
+That was easy!
+
+Let’s keep adding stuff to our sample application, see if we can fish out another relocation type. How about adding a function in a *second* library?
+
+``` c
+// in `elk/samples/chimera/bar.c`
+
+// from libfoo
+extern int number;
+
+void change_number(void) {
+    number *= 2;
+}
+```
+
+``` c
+// in `elk/samples/chimera/chimera.c`
+
+// from libfoo
+extern int number;
+
+// from libbar
+extern void change_number(void);
+
+// omitted: `ftl_exit`
+
+void _start(void) {
+    change_number();
+    ftl_exit(number);
+}
+```
+
+Adjust our Makefile appropriately:
+
+``` makefile
+# in `elk/samples/chimera/Makefile`
+
+CFLAGS  := -fPIC
+LDFLAGS := -nostartfiles -nodefaultlibs -L. -Wl,-rpath='$$ORIGIN'
+
+.PHONY: all
+
+all: chimera
+
+                           # 👇
+chimera: chimera.c libfoo.so libbar.so
+  gcc -fPIC -c chimera.c ${CFLAGS}
+                               # 👇
+  gcc chimera.o -o chimera -lfoo -lbar ${LDFLAGS}
+
+libfoo.so: foo.c
+  gcc -c foo.c ${CFLAGS}
+  gcc foo.o -shared -o libfoo.so ${LDFLAGS}
+
+# 👇
+libbar.so: bar.c
+  gcc -c bar.c ${CFLAGS}
+  gcc bar.o -shared -o libbar.so ${LDFLAGS}
+
+clean:
+  rm -f chimera *.o *.so
+```
+
+> **Cool Bear's hot tip**
+>
+> You may notice a lot of repetition in this Makefile.
+>
+> The bad news is: GNU make *definitely* has features that would let us remove that repetition. It has globs, and pattern substitution, and all kinds of colorful stuff.
+>
+> The good news is: we don’t have to care. We really don’t! [Rule of three](https://en.wikipedia.org/wiki/Rule_of_three_(computer_programming)), baby. We only have two libs! So we can stick with repetition.
+>
+> In case you really developed a passion for GNU make and want to go more in-depth, you’re in luck! GNU make is so old and antiquated that O’Reilly released [their reference book for free](https://www.oreilly.com/openbook/make3/book/index.csp).
+>
+> So, you know. Knock yourself out. Nobody’s judging.
+
+Let’s build and run it:
+
+``` shell
+$ make clean all
+$ ./chimera; echo $?
+42
+$
+```
+
+Cool! Let’s run it through elk:
+
+``` shell
+$ ../../target/debug/elk run ./chimera
+Loading "/home/amos/ftl/elk/samples/chimera/chimera"
+Found RPATH entry "/home/amos/ftl/elk/samples/chimera"
+Loading "/home/amos/ftl/elk/samples/chimera/libfoo.so"
+Found RPATH entry "/home/amos/ftl/elk/samples/chimera"
+Loading "/home/amos/ftl/elk/samples/chimera/libbar.so"
+Found RPATH entry "/home/amos/ftl/elk/samples/chimera"
+Fatal error: unimplemented relocation: JumpSlot
+```
+
+AhAH! There we go. Let’s proceed as before, but first - I’d like to know which file the unimplemented relocation was found it. That seems like a nice change.
+
+``` rust
+// in `elk/src/process.rs`
+
+#[derive(Error, Debug)]
+pub enum RelocationError {
+    #[error("{0:?}: unimplemented relocation type {1:?}")]
+    UnimplementedRelocation(PathBuf, delf::RelType),
+
+    // omitted: other variants
+}
+
+// in `impl Process`
+// in `fn apply_relocation`
+
+match reltype {
+    // omitted: other arms
+    RT::GlobDat => unsafe {
+        objrel.addr().set(found.value());
+    },
+    _ => {
+        return Err(RelocationError::UnimplementedRelocation(
+            obj.path.clone(),
+            reltype,
+        ))
+    }
+}
+```
+
+``` shell
+$ cargo b -q && ../../target/debug/elk run ./chimera
+Loading "/home/amos/ftl/elk/samples/chimera/chimera"
+Found RPATH entry "/home/amos/ftl/elk/samples/chimera"
+Loading "/home/amos/ftl/elk/samples/chimera/libfoo.so"
+Found RPATH entry "/home/amos/ftl/elk/samples/chimera"
+Loading "/home/amos/ftl/elk/samples/chimera/libbar.so"
+Found RPATH entry "/home/amos/ftl/elk/samples/chimera"
+Fatal error: "/home/amos/ftl/elk/samples/chimera/chimera": unimplemented relocation type JumpSlot
+```
+
+Cool! Let’s see what the relocation looks like with `readelf -r`:
+
+``` shell
+readelf -r ./chimera
+
+Relocation section '.rela.dyn' at offset 0x380 contains 1 entry:
+  Offset          Info           Type           Sym. Value    Sym. Name + Addend
+000000003ff8  000200000006 R_X86_64_GLOB_DAT 0000000000000000 number + 0
+
+Relocation section '.rela.plt' at offset 0x398 contains 1 entry:
+  Offset          Info           Type           Sym. Value    Sym. Name + Addend
+000000004018  000100000007 R_X86_64_JUMP_SLO 0000000000000000 change_number + 0
+```
+
+As expected, it refers to symbol `change_number`. But, what does a jump slot do? Yes, what does a jump slot do? Hmm, what does a jump slot do? I’m thinking, I’m thinking, I’m thinking, I’m thinking and now I will tell [you](https://www.youtube.com/watch?v=jidzytvfSyQ).
+
+``` shell
+$ gdb chimera
+(cut)
+(gdb) break _start
+Breakpoint 1 at 0x103c
+(gdb) r
+Starting program: /home/amos/ftl/elk/samples/chimera/chimera
+
+Breakpoint 1, 0x000055555555503c in _start ()
+(gdb) x/i $rip
+=> 0x55555555503c <_start+4>:   call   0x555555555010 <change_number@plt>
+```
+
+Hey! That’s not `change_number`! Our C code clearly called `change_number`:
+
+``` c
+void _start(void) {
+    change_number();
+    // etc.
+}
+```
+
+But what we’re calling here is *clearly* not `change_number` - partly because it’s named `change_number@plt`, but mostly because its address is `0x555555555010`: which is *right* next to `_start`, ie., it’s in `chimera`’s address space, *not* one of its libraries.
+
+Let’s confirm with `dig`:
+
+``` shell
+(gdb) dig 0x555555555010
+Mapped r-xp from File("/home/amos/ftl/elk/samples/chimera/chimera")
+(Map range: 0000555555555000..0000555555556000, 4 KiB total)
+Object virtual address: 0000000000001010
+At section ".plt" + 16 (0x10)
+```
+
+Yeah! That’s from `chimera`, not `libbar.so`. And it’s not even in `.text`, it’s in `.plt`.
+
+And we’re calling it. So… it must be executable code?
+
+Let’s try disassembling it:
+
+``` shell
+(gdb) disas change_number@plt
+No symbol table is loaded.  Use the "file" command.
+```
+
+*groan*. Geedeebeeeeeeeeeeeee, we’re trying to learn about ELF internals!
+
+Gotta do everything yourself these days…
+
+``` shell
+(gdb) x/3i 0x555555555010
+```
+
+Wait wait wait, an idea occurs:
+
+``` shell
+(gdb) disas "change_number@plt"
+evaluation of this expression requires the target program to be active
+```
+
+Huh.
+
+> **Cool bear says:**
+>
+> Huh.
+
+``` shell
+(gdb) disas 'change_number@plt'
+Dump of assembler code for function change_number@plt:
+   0x0000000000001010 <+0>:     jmp    QWORD PTR [rip+0x3002]        # 0x4018 <change_number@got.plt>
+   0x0000000000001016 <+6>:     push   0x0
+   0x000000000000101b <+11>:    jmp    0x1000
+End of assembler dump.
+```
+
+Ahhh! That’s more like it.
+
+So, the first thing `change_number@plt` does is jump to… the value that’s at memory address `rip+0x3002`, which is *also* a private symbol named `change_number@got.plt`.
+
+That sorta makes sense! I think! The entry at `change_number@got.plt` will probably contain the address of the *real* `change_number`, the one from `libbar.so`, so that we only have relocations that touch `.got` and `.got.plt`, but *not* `.text`.
+
+In other words, we have something like that:
+
+![gotplt](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-11/assets/gotplt~8c1a34f5c7677a70.svg)
+
+Seems a little convoluted… but okay. Let’s keep stepping through the code.
+
+``` shell
+(gdb) stepi
+0x0000555555555010 in change_number@plt ()
+(gdb) disas
+Dump of assembler code for function change_number@plt:
+=> 0x0000555555555010 <+0>:     jmp    QWORD PTR [rip+0x3002]        # 0x555555558018 <change_number@got.plt>
+   0x0000555555555016 <+6>:     push   0x0
+   0x000055555555501b <+11>:    jmp    0x555555555000
+End of assembler dump.
+```
+
+As expected.
+
+Let’s check what `change_number@got.plt` contains, though:
+
+``` shell
+(gdb) x/xg 0x555555558018
+0x555555558018 <change_number@got.plt>: 0x0000555555555016
+```
+
+Mhh. Mmmmmmmmmhhhhh. That’s uh… that’s the second instruction of `change_number@plt`…
+
+``` shell
+(gdb) stepi
+0x0000555555555016 in change_number@plt ()
+(gdb) disas
+Dump of assembler code for function change_number@plt:
+   0x0000555555555010 <+0>:     jmp    QWORD PTR [rip+0x3002]        # 0x555555558018 <change_number@got.plt>
+=> 0x0000555555555016 <+6>:     push   0x0
+   0x000055555555501b <+11>:    jmp    0x555555555000
+End of assembler dump.
+```
+
+*Not* what we expected, but let’s keep rolling. So, we push `0x0` onto the stack, and then jmp to `0x555555555000`, which is…
+
+``` shell
+(gdb) dig 0x555555555000
+Mapped r-xp from File("/home/amos/ftl/elk/samples/chimera/chimera")
+(Map range: 0000555555555000..0000555555556000, 4 KiB total)
+Object virtual address: 0000000000001000
+At section ".plt" + 0 (0x0)
+At symbol "" + 0 (0x0)
+```
+
+…the start of the `.plt` section? Okay?
+
+``` shell
+(gdb) stepi
+0x000055555555501b in change_number@plt ()
+(gdb) stepi
+0x0000555555555000 in ?? ()
+```
+
+Yeah poor GDB doesn’t know what in the world is happening either.
+
+Let’s disassemble…
+
+``` shell
+(gdb) disas
+No function contains program counter for selected frame.
+```
+
+I said, let’s disassemble:
+
+``` shell
+(gdb) x/3i $rip
+=> 0x555555555000:      push   QWORD PTR [rip+0x3002]        # 0x555555558008
+   0x555555555006:      jmp    QWORD PTR [rip+0x3004]        # 0x555555558010
+   0x55555555500c:      nop    DWORD PTR [rax+0x0]
+```
+
+…okay, pushing another thing on the stack. What thing exactly?
+
+``` shell
+(gdb) dig 0x555555558008
+Mapped rw-p from File("/home/amos/ftl/elk/samples/chimera/chimera")
+(Map range: 0000555555558000..0000555555559000, 4 KiB total)
+Object virtual address: 0000000000004008
+At section ".got.plt" + 8 (0x8)
+
+(gdb) x/xg 0x555555558008
+0x555555558008: 0x00007ffff7ffe120
+
+(gdb) dig 0x00007ffff7ffe120
+Mapped rw-p from Anonymous
+(Map range: 00007ffff7ffe000..00007ffff7fff000, 4 KiB total)
+```
+
+…a pointer to some heap-allocated memory, apparently.
+
+We then jump to the address pointed to by `0x555555558010`:
+
+``` shell
+(gdb) dig 0x555555558010
+Mapped rw-p from File("/home/amos/ftl/elk/samples/chimera/chimera")
+(Map range: 0000555555558000..0000555555559000, 4 KiB total)
+Object virtual address: 0000000000004010
+At section ".got.plt" + 16 (0x10)
+```
+
+…which is another entry of `got.plt`! And its points to…
+
+``` shell
+(gdb) x/xg 0x555555558010
+0x555555558010: 0x00007ffff7fe7d30
+
+(gdb) dig 0x00007ffff7fe7d30
+Mapped r-xp from File("/usr/lib/ld-2.32.so")
+(Map range: 00007ffff7fd2000..00007ffff7ff3000, 132 KiB total)
+Object virtual address: 0000000000017d30
+At section ".text" + 89248 (0x15ca0)
+```
+
+…a function in `ld-2.32.so`. But something awful peculiar happened… `dig` wasn’t able to find a symbol!
+
+``` shell
+$ nm /lib64/ld-linux-x86-64.so.2
+nm: /lib64/ld-linux-x86-64.so.2: no symbols
+```
+
+And `nm` isn’t either.
+
+Okay, so, the explanation is rather simple. You see, for some reason that completely escapes me, the Linux world has been rather awful at debugging.
+
+Either you had a file *with* debug info, or you had a *stripped* file, with no debug info whatsoever. And that was bad, obviously! Because the file with debug info was extra-huge, and what if you didn’t need all that? So most often, it just wasn’t installed on your system.
+
+But then they did something Windows has done for a loooooooong while, which is to just store debug information in a *separate* file. That’s a load-bearing “just”, mind you, it’s not that simple. Support for that in LLVM’s “objcopy” was only merged [in 2018](https://bugs.llvm.org/show_bug.cgi?id=36266)!
+
+We’re still a long way off from “debuginfo servers” being ubiquitous and configured out of the box, so that debug info is only downloaded when it’s actually needed — `debuginfod` was announced [in 2019](https://developers.redhat.com/blog/2019/10/14/introducing-debuginfod-the-elfutils-debuginfo-server/)!
+
+In fact, on ArchLinux, I had to do [a whole-ass dance](https://gist.github.com/fasterthanlime/1632c7452d78e2ebae05506f99caaf60) that involves rebuilding glibc, just to get debug symbols.
+
+Long story short, as of a while ago, most ELF objects carry a “BuildID”, which we can extract with readelf:
+
+``` shell
+$ readelf --notes /lib64/ld-linux-x86-64.so.2 | grep "Build ID"
+    Build ID: 04b6fd252f58f535f90e2d2fc9d4506bdd1f370d
+```
+
+And then we can use this to build a path, and hopefully, if your Linux distribution looks enough like ArchLinux, there’s a file there:
+
+``` shell
+$ file /usr/lib/debug/.build-id/04/b6fd252f58f535f90e2d2fc9d4506bdd1f370d.debug
+/usr/lib/debug/.build-id/04/b6fd252f58f535f90e2d2fc9d4506bdd1f370d.debug: symbolic link to ../../usr/lib/ld-2.32.so.debug
+```
+
+Sorry, there’s a *symlink* there, which I guess we can use directly.
+
+Remember, the output from `dig` included this virtual address:
+
+``` shell
+Object virtual address: 0000000000017d30
+```
+
+And that’s… a function:
+
+``` shell
+$ nm /usr/lib/debug/usr/lib/ld-2.32.so.debug | grep 17d30
+0000000000017d30 t _dl_runtime_resolve_xsavec
+```
+
+So *that’s* what a jump slot does.
+
+Functions provided by shared libraries are *lazily bound*, and only looked up when they’re *actually* used. Which looks something like this:
+
+![gotplt-lookup](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-11/assets/gotplt-lookup~825efbc97300b12f.svg)
+
+> **Cool Bear's hot tip**
+>
+> The `_dl_runtime_resolve_xsavec` “function” is peculiar in a couple of ways.
+>
+> First off, it doesn’t take its arguments via `rdi`, `rsi`, `rdx`, `rcx`, `r8` and `r9` - that would overwrite the arguments to the function it’s supposed to look up (here, `change_number`).
+>
+> Second, it never returns. The diagram above is awfully hard to follow, but you’ll notice there’s only one `call` - the rest is all `jmp`. So we never return from `_dl_runtime_resolve_xsavec`, we return from `change_number`.
+
+Let’s set a breakpoint on `change_number` and continue program execution to confirm our suspicions:
+
+``` shell
+(gdb) break change_number
+Breakpoint 2 at 0x7ffff7fc2004
+(gdb) c
+Continuing.
+
+Breakpoint 2, 0x00007ffff7fc2004 in change_number () from /home/amos/ftl/elf-series/samples/chimera/libbar.so
+(gdb) bt
+#0  0x00007ffff7fc2004 in change_number () from /home/amos/ftl/elf-series/samples/chimera/libbar.so
+#1  0x0000555555555041 in _start ()
+```
+
+Very good! There’s no `_dl_runtime_resolve_xsavec` in the stack - it’s just as if `_start` called `change_number` directly.
+
+Let’s take a look at what `change_number@got.plt` points to now:
+
+``` shell
+(gdb) x/xg 0x555555558018
+0x555555558018 <change_number@got.plt>: 0x00007ffff7fc2000
+(gdb) dig 0x00007ffff7fc2000
+Mapped r-xp from File("/home/amos/ftl/elf-series/samples/chimera/libbar.so")
+(Map range: 00007ffff7fc2000..00007ffff7fc3000, 4 KiB total)
+Object virtual address: 0000000000001000
+At section ".text" + 0 (0x0)
+At symbol "" + 0 (0x0)
+At symbol "change_number" + 0 (0x0)
+```
+
+Yay! It was resolved successfully, and the result is cached in `change_number@got.plt` for further calls - see the earlier diagram.
+
+Feel free to go through this explanation a few more times. There’s a lot of things happening there.
+
+Ok, so let’s answer a couple questions.
+
+First, can we just make sure `_dl_runtime_resolve_xsavec` is called only once?
+
+Sure, we can set a breakpoint somewhere, say, at the start of the `.plt` section!
+
+``` c
+// in `elk/samples/chimera.c`
+
+void _start(void) {
+    change_number();
+    change_number();
+    change_number();
+    ftl_exit(number);
+}
+```
+
+``` shell
+$ make
+$ gdb chimera
+(gdb) break _start
+Breakpoint 1 at 0x103c
+(gdb) r
+Starting program: /home/amos/ftl/elk/samples/chimera/chimera
+
+Breakpoint 1, 0x000055555555503c in _start ()
+(gdb) break *0x555555555000
+Breakpoint 2 at 0x555555555000
+```
+
+> **Cool Bear's hot tip**
+>
+> GDB loads our program at the same base address every time (by default, you can disable this behavior), so we *know* the address of `.plt`.
+
+``` shell
+(gdb) c
+Continuing.
+
+Breakpoint 2, 0x0000555555555000 in ?? ()
+(gdb) bt
+#0  0x0000555555555000 in ?? ()
+#1  0x0000555555555041 in _start ()
+```
+
+Bingo! Right in the PLT. Let’s proceed…
+
+``` shell
+(gdb) c
+Continuing.
+[Inferior 1 (process 37790) exited with code 0250]
+```
+
+Yay! We reached the end of execution without going through `.plt` again, and we know it called `change_number` three times because the exit code is 0250, and 12 multiplied by 2 three times is… 168? Uhhhhhhhh…
+
+> **Cool Bear's hot tip**
+>
+> *As it turns out*, GDB prints exit codes in octal, to make it [more readable](https://unix.stackexchange.com/a/24370) since then signals look like `0202` (octal) rather than `130` (decimal).
+>
+> Oh Unix, never change.
+>
+> (Not that you were gonna, but..)
+
+Second question! I said `_dl_runtime_resolve_xsavec` never returned… but what happens if it can’t resolve the symbol in question?
+
+Let’s try it out:
+
+``` c
+// in `elk/samples/chimera/fakebar.c`
+
+void renamed_change_number(void) {
+    // nothing
+}
+```
+
+``` shell
+$ gcc -shared fakebar.c -o libbar.so
+$ ./chimera
+./chimera: symbol lookup error: ./chimera: undefined symbol: change_number
+```
+
+Ah. Program execution just stops.
+
+We can get more info with `LD_DEBUG=all`:
+
+``` shell
+$ LD_DEBUG=all ./chimera 2>&1 | tail
+     13876:
+     13876:     calling init: /home/amos/ftl/elf-series/samples/chimera/libfoo.so
+     13876:
+     13876:     symbol=change_number;  lookup in file=./chimera [0]
+     13876:     symbol=change_number;  lookup in file=/home/amos/ftl/elf-series/samples/chimera/libfoo.so [0]
+     13876:     symbol=change_number;  lookup in file=/home/amos/ftl/elf-series/samples/chimera/libbar.so [0]
+     13876:     symbol=change_number;  lookup in file=/usr/lib/libc.so.6 [0]
+     13876:     symbol=change_number;  lookup in file=/lib64/ld-linux-x86-64.so.2 [0]
+     13876:     ./chimera: error: symbol lookup error: undefined symbol: change_number (fatal)
+./chimera: symbol lookup error: ./chimera: undefined symbol: change_number
+```
+
+Cool! Let’s make sure we have the *correct* `libbar.so` again:
+
+``` shell
+$ make clean all
+```
+
+Third question! Can we *force* the default dynamic loader (ld-linux), to load these symbols at startup, instead of lazily?
+
+Sure we can!
+
+``` shell
+$ LD_BIND_NOW=1 gdb ./chimera
+(cut)
+(gdb) break _start
+Breakpoint 1 at 0x103c
+(gdb) r
+Starting program: /home/amos/ftl/elk/samples/chimera/chimera
+
+Breakpoint 1, 0x000055555555503c in _start ()
+(gdb) break *0x555555555000
+Breakpoint 2 at 0x555555555000
+(gdb) c
+Continuing.
+[Inferior 1 (process 38424) exited with code 0250]
+(gdb)
+```
+
+There. Never even went through `.plt`.
+
+> **Cool Bear's hot tip**
+>
+> Fun fact! Since glibc 2.1.95, `ld-linux` has a setting to *not* update the GOT and PLT after a lookup - just set `LD_BIND_NOT` to a non-empty string.
+>
+> Used in conjunction with `LD_DEBUG`, it can be used as a makeshift [ltrace](http://man7.org/linux/man-pages/man1/ltrace.1.html).
+
+Fourth question! Is lazy binding *really* required to get a program to run?
+
+It seems like a performance optimization to me, but it relies on a few, uh, opinionated assumptions:
+
+1.  That symbol lookups are expensive - expensive enough to be delayed
+2.  That programs refer to *enough* symbols that delaying some of them will result in a visible improvement in startup time
+3.  That programs use *enough* of the symbols they refer to, *late enough* that it make sense to delay loading them
+4.  That the cost of lazy-loading the symbols that are used almost immediately upon program startup doesn’t negate the startup performance gains
+
+I’m sure those assumptions held true at some point in time, with certain CPUs and memory architectures, for certain large programs (Emacs?), but *nowadays* I’m fairly certain looking up symbols is I/O-bound and lazy binding is a net loss.
+
+At any rate - it’s an optimization, and it’s optional. Now that we fully understand how it works, we’re going to ignore it. The same way we didn’t lazily run function selectors in [Part 9](https://fasterthanli.me/series/making-our-own-executable-packer/part-9).
+
+What we’re going to do, instead, is just look at how `JumpSlot` relocations are calculated, in our handy little table:
+
+|           |     |           |     |
+|-----------|-----|-----------|-----|
+| JUMP_SLOT | 7   | wordclass | S   |
+
+(ooh, same as `GlobDat`)
+
+…and then we’re going to implement it the dumbest way we know how:
+
+``` rust
+// in `elk/src/process.rs`
+// in `impl Process`
+// in `fn apply_relocation`
+
+match reltype {
+    // omitted: other arms
+    RT::GlobDat | RT::JumpSlot => unsafe {
+        objrel.addr().set(found.value());
+    },
+}
+```
+
+And just like that:
+
+``` shell
+$ cargo b -q
+$ ../../target/debug/elk run ./chimera; echo $?
+Loading "/home/amos/ftl/elk/samples/chimera/chimera"
+Found RPATH entry "/home/amos/ftl/elk/samples/chimera"
+Loading "/home/amos/ftl/elk/samples/chimera/libfoo.so"
+Found RPATH entry "/home/amos/ftl/elk/samples/chimera"
+Loading "/home/amos/ftl/elk/samples/chimera/libbar.so"
+Found RPATH entry "/home/amos/ftl/elk/samples/chimera"
+168
+```
+
+…we can call it a day!
+
+> **What did we learn?**
+>
+> The name of the game is to *avoid* relocating the `.text` section, to maximize the amount of memory we can share across processes.
+>
+> For variables exported by other ELF objects, the linker reserves a slot in `.got` (the Global Offset Table), and, at load time, the dynamic loader resolves the symbol and writes its actual address to the GOT.
+>
+> For functions exported by other ELF objects, the linker reserves a slot in `.got.plt`, and generates a stub in `.plt` (the Procedure Linkage Table, which is executable). On first call, the stub ends up jumping back to itself, pushing a number and an address to the stack, and jumping to `_dl_runtime_resolve_xsave`, which resolves the symbol, writes it to the correct `.got.plt` entry, and jumps to it.
+>
+> The second time an external function is invoked, the relevant `.got.plt` entry already has the correct address, and the `.plt` stub jumps to it directly.

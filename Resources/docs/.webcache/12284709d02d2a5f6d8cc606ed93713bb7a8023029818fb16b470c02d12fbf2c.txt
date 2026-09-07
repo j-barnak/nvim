@@ -1,0 +1,1922 @@
+# A no_std Rust binary
+
+In [Part 11](https://fasterthanli.me/articles/more-elf-relocations), we spent some time clarifying mechanisms we had previously glossed over: how variables and functions from other ELF objects were accessed at runtime.
+
+We saw that doing so “proper” required the cooperation of the compiler, the assembler, the linker, *and* the dynamic loader. We also learned that the mechanism for functions was actually quite complicated! And sorta clever!
+
+And finally, we ignored all the cleverness and “made things work” with a three-line change, adding support for both `GlobDat` and `JumpSlot` relocations.
+
+We’re not done with relocations yet, of course - but I think we’ve earned ourselves a little break. There’s plenty of other things we’ve been ignoring so far!
+
+For example… how are command-line arguments passed to an executable?
+
+> **Cool Bear's hot tip**
+>
+> Ooh, ooh, that’s easy!
+>
+> The `main()` function gets an `int argc` argument, and a `char **argv` argument!
+
+Ah, of course cool bear. One little problem though… we have no main.
+
+``` c
+// in `samples/chimera/chimera.c`
+
+void _start(void) {
+    // (cut)
+}
+```
+
+Remember, since we’re staying away from `libc`, we have to come up with our own entry point - named `_start` by convention. It takes no arguments, and returns nothing - in fact, it never returns.
+
+And it was the same thing in assembly:
+
+``` x86asm
+; in `samples/hello-dl.asm`
+
+        global _start
+        extern msg
+
+        section .text
+
+_start:
+        mov rdi, 1      ; stdout fd
+        mov rsi, msg
+        mov rdx, 38     ; 37 chars + newline
+        mov rax, 1      ; write syscall
+        syscall
+
+        xor rdi, rdi    ; return code 0
+        mov rax, 60     ; exit syscall
+        syscall
+```
+
+…how in the world do you get a program’s command-line arguments in assembly?
+
+> **Cool Bear's hot tip**
+>
+> I uhh.. yeah. Good point.
+
+Well, let’s find that out, shall we? We’ve been dealing with ELF long enough to know where to look…
+
+Let’s take `elk` itself as an example. It’s a pretty standard Rust binary.
+
+First let’s find its entry point:
+
+``` shell
+$ readelf -h ./target/debug/elk | grep Entry
+  Entry point address:               0x10080
+```
+
+Easy enough. Is it a named symbol?
+
+``` shell
+$ nm ./target/debug/elk | grep 10080
+0000000000010080 T _start
+```
+
+Yeah! Pretty standard stuff. This is going to be an easy article, I can feel it.
+
+> **Cool Bear's hot tip**
+>
+> *looks at article’s title*
+>
+> If you say so…
+
+Let’s disassemble it:
+
+``` x86asm
+$ objdump --disassemble=_start ./target/debug/elk
+; (cut)
+
+0000000000010080 <_start>:
+   10080:       f3 0f 1e fa             endbr64
+   10084:       31 ed                   xor    ebp,ebp
+   10086:       49 89 d1                mov    r9,rdx
+   10089:       5e                      pop    rsi
+   1008a:       48 89 e2                mov    rdx,rsp
+   1008d:       48 83 e4 f0             and    rsp,0xfffffffffffffff0
+   10091:       50                      push   rax
+   10092:       54                      push   rsp
+   10093:       4c 8d 05 76 5d 0e 00    lea    r8,[rip+0xe5d76]        # f5e10 <__libc_csu_fini>
+   1009a:       48 8d 0d ff 5c 0e 00    lea    rcx,[rip+0xe5cff]        # f5da0 <__libc_csu_init>
+   100a1:       48 8d 3d 88 3f 01 00    lea    rdi,[rip+0x13f88]        # 24030 <main>
+   100a8:       ff 15 1a 7e 12 00       call   QWORD PTR [rip+0x127e1a]        # 137ec8 <__libc_start_main@GLIBC_2.2.5>
+   100ae:       f4                      hlt
+```
+
+Well well well, what do we have here?
+
+We’ve seen `endbr64` before - aaaaaall the way back in [Part 3](https://fasterthanli.me/series/making-our-own-executable-packer/part-3) - it just means “this is a valid jump target”.
+
+So far, so good.
+
+To make sense of the rest, we need to notice that the whole thing ends with a call to `__libc_start_main@GLIBC_2.2.5` - that’s the juicy bit.
+
+> **Cool Bear's hot tip**
+>
+> Note that the very next instruction is `hlt` - [halt and catch fire](https://en.wikipedia.org/wiki/Halt_and_Catch_Fire_(computing)). We *really* don’t expect to return from `_start`.
+
+So, what arguments does `__libc_start_main` take?
+
+The [Linux Standard Base Specification 5.0](https://refspecs.linuxbase.org/LSB_5.0.0/LSB-Core-generic/LSB-Core-generic/baselib---libc-start-main-.html) tells us what it *should* take. I’ve formatted it for readability:
+
+``` c
+int __libc_start_main(int (*main)(int, char**, char**),
+                      int argc,
+                      char** ubp_av,
+                      void (*init)(void),
+                      void (*fini)(void),
+                      void (*rtld_fini)(void),
+                      void(*stack_end));
+```
+
+So, let’s see… if we map those to the calling convention for the System V AMD64 ABI, for “INTEGER” class arguments (works for both `int` arguments and pointers), this is what our registers and stack look like right before calling `__libc_start_main`:
+
+![libc-start-main](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-12/assets/libc-start-main~2d2809e40fd802c8.svg)
+
+> **Cool Bear's hot tip**
+>
+> Throughout this whole article, whenever we write foo `%rax`, we mean “the register named rax”.
+>
+> It’s a bit confusing, because in GDB, you can print registers with the syntax `$rax`, and when looking at disassembly in Intel syntax, registers are just written `rax`.
+>
+> Then again, x86 register names are [just plain confusing to begin with](https://keleshev.com/eax-x86-register-meaning-and-history/).
+>
+> My advice? Just bathe in it. Take it all in. Bask in the glorious mess that is x86 and come out; not only stronger, but wiser too.
+
+Let’s go back to the beginning of `_start` and walk through it, instruction by instruction:
+
+``` x86asm
+    xor    ebp,ebp
+```
+
+`%rbp` is the frame pointer on AMD64. To be quite honest, I’m not sure why it’s being cleared here - in my test runs, it appears to already be zero by that point.
+
+``` x86asm
+    mov    r9,rdx
+```
+
+`%r9` corresponds to the `rtld_fini` argument - it’s a finalizer function from the runtime loader (rtld), which is passed to `_start` through the `%rdx` register.
+
+![start-rtld-fini](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-12/assets/start-rtld-fini~1dee4abe9971cb4f.svg)
+
+``` x86asm
+    pop    rsi
+```
+
+This pops a 64-bit value off the stack and stores it in `%rsi` - so *that’s* where `argc` comes from!
+
+![start-rtld-argc](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-12/assets/start-rtld-argc~95a04f6a3faa4353.svg)
+
+After all, there weren’t that many possibilities: either `argc` and `argv` were passed via registers, or via the stack.
+
+In a way, an ELF executable is “just a function”, with a funny calling convention.
+
+``` x86asm
+    mov    rdx,rsp
+```
+
+This sets the `ubp_av` argument to the current stack pointer.
+
+It’s *more or less* `argv`, more on that later.
+
+``` x86asm
+    and    rsp,0xfffffffffffffff0
+```
+
+~~Simon~~ System V AMD64 ABI says: the stack must be 16-byte-aligned before calling a function. That’s exactly what this instruction does.
+
+``` x86asm
+    push   rax
+```
+
+This one was a riddle… what the hell is in `%rax` at that point (`0x1c`, or so GDB tells me), and why is it pushed on the stack?? Is it some sort of canary?
+
+Turns out - and I’m quoting here - that, nope:
+
+> Push garbage because we push 8 more bytes.
+>
+> [glibc source code](https://github.com/bminor/glibc/blob/10b2cdc3b3a9aab153e07bb7f8e1765dc3cd01fa/sysdeps/x86_64/start.S#L92)
+
+![start-rtld-garbo](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-12/assets/start-rtld-garbo~6d664b023cb876e7.svg)
+
+So this push is just there to maintain 16-byte alignment because another 8 bytes are pushed before calling `__libc_start_main`.
+
+``` x86asm
+    push   rsp
+```
+
+This sets up `stack_end`. I’m assuming glibc uses that to set up some sort of [stack smashing protection](https://www.elttam.com/blog/playing-with-canaries/). An assumption that would be very easy to verify for anyone who, unlike me, is willing to dive back in glibc’s source code at this point in time.
+
+``` x86asm
+    lea    r8,[rip+0xf7b26]        # 106c90 <__libc_csu_fini>
+    lea    rcx,[rip+0xf7aaf]        # 106c20 <__libc_csu_init>
+    lea    rdi,[rip+0x79df8]        # 88f70 <main>
+```
+
+This sets up the remaining arguments: `main`, `init`, `fini`.
+
+![start-rtld-cb](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-12/assets/start-rtld-cb~324b80ebba931c93.svg)
+
+``` x86asm
+    call   QWORD PTR [rip+0x13bae2]        # 14ac60 <__libc_start_main@GLIBC_2.2.5>
+    hlt
+```
+
+With all arguments set up and the stack 16-byte-aligned, it finally calls `__libc_start_main`.
+
+So, the mystery is solved: the way command-line arguments (and environment variables) are passed to executables is: via the stack.
+
+And what a stack it is:
+
+![elf-stack](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-12/assets/elf-stack~700d0bd33d1b8591.svg)
+
+Well, that sounds easy enough! Let’s make a program that prints its arguments *without* using libc at all.
+
+I don’t feel like writing assembly at all, though. And I don’t feel like writing C… ever, really?
+
+So let’s go with rust.
+
+We’ll call this sample `echidna`:
+
+``` shell
+$ cd samples/
+$ cargo new echidna
+```
+
+Now, normally, Rust binaries depend on `libstd`, which provides niceties like, you know, data structures, strings, file APIs, many many things in fact. Including a memory allocator. This’ll be fun.
+
+> **Cool Bear's hot tip**
+>
+> Ohhhhhhhhhh boy here we go.
+
+But where we’re going, we don’t want `libstd` - because it relies on `libc`. We want its minimal counterpart, `libcore`.
+
+For that - and a lot of other crimes we’re about to commit - we’re going to need rust nightly.
+
+Luckily, we can simply add a [toolchain file](https://rust-lang.github.io/rustup/overrides.html#the-toolchain-file) to make sure it’s used to compile echidna. In `samples/echidna/rust-toolchain`, let’s put:
+
+``` toml
+[toolchain]
+channel = "nightly"
+components = [ "rustfmt", "clippy" ]
+targets = [ "x86_64-unknown-linux-gnu" ]
+```
+
+And let’s get started! I’m being told to “opt into `no_std`” (really, opt out of `libstd`), you need the crate-level `no_std` attribute:
+
+``` rust
+// in `samples/echidna/src/main.rs`
+
+#![no_std]
+
+fn main() {
+    println!("Hello, world!");
+}
+```
+
+Nice!
+
+``` shell
+$ cargo b
+
+cargo b
+   Compiling echidna v0.1.0 (/home/amos/ftl/elf-series/samples/echidna)
+error: cannot find macro `println` in this scope
+ --> src/main.rs:4:5
+  |
+4 |     println!("Hello, world!");
+  |     ^^^^^^^
+
+error: `#[panic_handler]` function required, but not found
+
+error: language item required, but not found: `eh_personality`
+
+error: aborting due to 3 previous errors
+
+error: could not compile `echidna`.
+
+To learn more, run the command again with --verbose.
+```
+
+Ah. We don’t have `println`. Okay, we just won’t do anything then!
+
+We also need to add an `eh_personality` and a `panic_handler` - we’ll keep it simple for now.
+
+``` rust
+// in `samples/echidna/src/main.rs`
+
+#![no_std]
+
+fn main() {}
+
+#[lang = "eh_personality"]
+fn eh_personality() {}
+
+#[panic_handler]
+fn panic(_info: &core::panic::PanicInfo) -> ! {
+    loop {}
+}
+```
+
+``` shell
+$ cargo b
+   Compiling echidna v0.1.0 (/home/amos/ftl/elf-series/samples/echidna)
+error[E0658]: language items are subject to change
+ --> src/main.rs:5:1
+  |
+5 | #[lang = "eh_personality"]
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = help: add `#![feature(lang_items)]` to the crate attributes to enable
+```
+
+Ohhh here we go, opting into unstable features. Let’s add it to the top of `main.rs` and try again:
+
+``` rust
+// in `samples/echidna/src/main.rs`
+
+#![feature(lang_items)]
+// omitted: rest of file
+```
+
+``` shell
+$ cargo b
+   Compiling echidna v0.1.0 (/home/amos/ftl/elf-series/samples/echidna)
+error: requires `start` lang_item
+```
+
+Mhh. I think we’ll make our own entry point. With tea, and scones. That’s right, british friends, I gave tea a try. It’s *okay* with milk and lemon.
+
+``` rust
+// in `samples/echidna/src/main.rs`
+
+#![no_main]
+// omitted: rest of file
+```
+
+``` shell
+$ cargo b
+   Compiling echidna v0.1.0 (/home/amos/ftl/elf-series/samples/echidna)
+warning: function is never used: `main`
+ --> src/main.rs:5:4
+  |
+5 | fn main() {}
+  |    ^^^^
+  |
+  = note: `#[warn(dead_code)]` on by default
+
+error: linking with `cc` failed: exit code: 1
+  |
+  = note: "cc" "-Wl,--as-needed" "-Wl,-z,noexecstack" "-m64" "-Wl,--eh-frame-hdr" "-L" "/home/amos/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/lib" "/home/amos/ftl/elf-series/samples/echidna/target/debug/deps/echidna-c61abc523ab4bb6d.4yduu4srhziqnaxv.rcgu.o" "-o" "/home/amos/ftl/elf-series/samples/echidna/target/debug/deps/echidna-c61abc523ab4bb6d" "-Wl,--gc-sections" "-pie" "-Wl,-zrelro" "-Wl,-znow" "-nodefaultlibs" "-L" "/home/amos/ftl/elf-series/samples/echidna/target/debug/deps" "-L" "/home/amos/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/lib" "-Wl,-Bstatic" "/home/amos/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/lib/librustc_std_workspace_core-90996f4879673567.rlib" "/home/amos/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/lib/libcore-9ea09a899c3eda46.rlib" "/home/amos/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/lib/libcompiler_builtins-ea377e9224b11a8a.rlib" "-Wl,-Bdynamic"
+  = note: /usr/sbin/ld: /usr/lib/gcc/x86_64-pc-linux-gnu/10.2.0/../../../../lib/Scrt1.o: in function `_start':
+          /usr/src/debug/glibc-2.32/csu/../sysdeps/x86_64/start.S:101: undefined reference to `__libc_csu_fini'
+          /usr/sbin/ld: /usr/src/debug/glibc-2.32/csu/../sysdeps/x86_64/start.S:102: undefined reference to `__libc_csu_init'
+          /usr/sbin/ld: /usr/src/debug/glibc-2.32/csu/../sysdeps/x86_64/start.S:104: undefined reference to `main'
+          /usr/sbin/ld: /usr/src/debug/glibc-2.32/csu/../sysdeps/x86_64/start.S:120: undefined reference to `__libc_start_main'
+          collect2: error: ld returned 1 exit status
+```
+
+Ha! An error from GNU ld! Long time no see, friend.
+
+Those symbols seem *very* familiar. They’re part of the `_start` prelude we’ve just analyzed. That means Rust *still* attempts to pull in *part* of libc, even in a `no_std` environment.
+
+That won’t do, of course.
+
+There’s four ways to work around this:
+
+The first way is to [wait for this PR to land](https://github.com/rust-lang/cargo/pull/6298), but we don’t have that kind of time.
+
+The second way is to export `RUSTFLAGS`:
+
+``` shell
+$ export RUSTFLAGS="-C link-arg=-nostartfiles"
+```
+
+This is a tad annoying, because it’ll affect *all our dependencies*, even build scripts - which might break other crates. *And* we’d have to remember to set it anytime we want to build `echidna`.
+
+The third way is to create a `.cargo/config` file:
+
+``` toml
+# samples/echidna/.cargo/config
+
+[target.'cfg(target_os = "linux")']
+rustflags = ["-C", "link-arg=-nostartfiles"]
+```
+
+This is equivalent to the second way, except we don’t have to remember to set it. But it’d still break other crates.
+
+The fourth way is to.. add a build script to pass a linker argument.
+
+``` rust
+// in `samples/echidna/build.rs`
+
+fn main() {
+    // don't link with stdlib
+    println!("cargo:rustc-link-arg-bin=echidna=-nostartfiles");
+}
+```
+
+> **Cool Bear's hot tip**
+>
+> This used to be accessible via a `link_args` feature, but it was [removed](https://github.com/rust-lang/rust/pull/83820), see [this discussion](https://github.com/rust-lang/rust/issues/29596).
+>
+> Thanks to [ralismark on GitHub](https://github.com/fasterthanlime/feedback/issues/87) for noting that!
+
+``` shell
+$ cargo b
+   Compiling echidna v0.1.0 (/home/amos/ftl/elf-series/samples/echidna)
+warning: function is never used: `main`
+ --> src/main.rs:5:4
+  |
+5 | fn main() {}
+  |    ^^^^
+  |
+  = note: `#[warn(dead_code)]` on by default
+
+    Finished dev [unoptimized + debuginfo] target(s) in 0.09s
+```
+
+Hey, it built!
+
+Does it run?
+
+``` shell
+$ ./target/debug/echidna
+[1]    78911 segmentation fault (core dumped)  ./target/debug/echidna
+```
+
+Absolutely not. Gotta start somewhere!
+
+On the plus side, it’s positively *tiny* - and that’s a debug build!
+
+``` shell
+$ ls -lhA ./target/debug/echidna
+-rwxr-xr-x 2 amos amos 14K Jan 31 13:19 ./target/debug/echidna
+```
+
+> **Cool Bear's hot tip**
+>
+> In release mode, and after stripping debug symbols, it’s down to 8.8K!
+>
+> It still crashes, but you know. Can’t have everything.
+
+So let’s start at the beginning! What’s the entry point for our freshly-built binary?
+
+``` shell
+$ readelf -h ./target/debug/echidna | grep Entry
+  Entry point address:               0x0
+```
+
+Ah, well, there’s your problem!
+
+We didn’t even see the warning from GNU ld. Sneaky sneaky cargo.
+
+I guess just the usual - rename `main` to `_start`?
+
+``` rust
+// in `samples/echidna/src/main.rs`
+
+#![no_std]
+#![no_main]
+#![feature(lang_items)]
+
+fn _start() {}
+
+// etc.
+```
+
+``` shell
+$ cargo b -q
+$ readelf -h ./target/debug/echidna | grep Entry
+  Entry point address:               0x0
+```
+
+No dice. Make it pub?
+
+``` shell
+$ cargo b -q
+$ readelf -h ./target/debug/echidna | grep Entry
+  Entry point address:               0x0
+```
+
+Still the same.
+
+Mhhhhh.
+
+> **Cool Bear's hot tip**
+>
+> Psst!
+>
+> Much like C++, Rust [mangles symbol names](https://rust-lang.github.io/rfcs/2603-symbol-name-mangling-v2.html) by default.
+
+Ah! That’ll do it.
+
+``` rust
+// in `samples/echidna/src/main.rs`
+
+#![no_std]
+#![no_main]
+#![feature(lang_items)]
+
+#[no_mangle]
+pub fn _start() {}
+```
+
+``` shell
+$ cargo b -q
+$ readelf -h ./target/debug/echidna | grep Entry
+  Entry point address:               0x1000
+```
+
+Wonderful!
+
+Of course, it still crashes. But we do have an entry point now.
+
+You know the drill by now - how do we make syscalls when we don’t have a standard library? With inline assembly!
+
+[RFC 2873](https://github.com/rust-lang/rfcs/pull/2873) finally gave Rust an inline assembly syntax that isn’t just LLVM inline assembly with glasses and a mustache.
+
+We’ll put our syscall wrappers in a support module:
+
+``` rust
+// in `samples/echidna/src/support.rs`
+
+use core::arch::asm;
+
+// reminder: `!` is the `never` type - this indicates
+// that `exit` never returns.
+pub unsafe fn exit(code: i32) -> ! {
+    let syscall_number: u64 = 60;
+    asm!(
+        "syscall",
+        in("rax") syscall_number,
+        in("rdi") code,
+        options(noreturn)
+    )
+}
+```
+
+``` rust
+// in `samples/echidna/src/main.rs`
+
+#![no_std]
+#![no_main]
+#![feature(lang_items)]
+
+mod support;
+use support::*;
+
+#[no_mangle]
+// new: now unsafe!
+pub unsafe fn _start() {
+    exit(0);
+}
+
+// omitted: eh_personality, panic_handler, etc.
+```
+
+``` shell
+$ cargo b -q
+$ ./target/debug/echidna
+$ echo $?
+0
+```
+
+Hurray!
+
+So, what can we do now that we have a `no_std` rust program? What were we trying do to again? Oh right, print our arguments.
+
+Well… they’re on the stack. But how are we going to access them?
+
+The *minute* we declare local variables in `_start`, it’s game over - the function prelude will reserve space for them, and we’ll have lost the initial value of `%rsp` forever.
+
+So what are we to do? Use more inline assembly, of course!
+
+We’ll make *another* function that takes a single argument: the address of the “top of the stack” (which always appears at the bottom of our diagrams, since the stack grows down for us).
+
+Let’s go:
+
+``` rust
+// in `samples/echidna/src/main.rs`
+
+#![feature(naked_functions)]
+
+#[no_mangle]
+#[naked]
+// new: now extern "C"
+pub unsafe extern "C" fn _start() {
+    asm!("mov rdi, rsp", "call main", options(noreturn))
+}
+
+#[no_mangle]
+pub unsafe fn main(stack_top: *const u8) {
+    let argc = *(stack_top as *const u64);
+    exit(argc as _);
+}
+```
+
+As usual, we’re using `exit` as our communication channel with the outside world, since it’s the easiest thing to do.
+
+``` shell
+$ cargo b -q
+$ ./target/debug/echidna; echo $?
+1
+$ ./target/debug/echidna foo; echo $?
+2
+$ ./target/debug/echidna foo bar; echo $?
+3
+$ ./target/debug/echidna foo bar baz; echo $?
+4
+```
+
+But we can do better.
+
+Rust is comfy.
+
+Let’s make ourselves a comfy `no_std` nest and then hibernate in it.
+
+We’re going to need… a wrapper for the `write` syscall, and an `strlen` implementation at the very least:
+
+``` rust
+// in `samples/echidna/src/support.rs`
+
+pub const STDOUT_FILENO: u32 = 1;
+
+pub unsafe fn write(fd: u32, buf: *const u8, count: usize) {
+    let syscall_number: u64 = 1;
+    asm!(
+        "syscall",
+        in("rax") syscall_number,
+        in("rdi") fd,
+        in("rsi") buf,
+        in("rdx") count,
+        // Linux syscalls don't touch the stack at all, so
+        // we don't care about its alignment
+        options(nostack)
+    );
+}
+
+pub unsafe fn strlen(mut s: *const u8) -> usize {
+    let mut count = 0;
+    while *s != b'\0' {
+        count += 1;
+        s = s.add(1);
+    }
+    count
+}
+```
+
+And with those, we can start printing arguments one by one:
+
+``` rust
+// in `samples/echidna/src/main.rs`
+
+#[no_mangle]
+pub unsafe fn main(stack_top: *const u8) {
+    let argc = *(stack_top as *const u64);
+    let argv = stack_top.add(8) as *const *const u8;
+
+    use core::slice::from_raw_parts as mkslice;
+    let args = mkslice(argv, argc as usize);
+
+    for &arg in args {
+        write(STDOUT_FILENO, arg, strlen(arg));
+    }
+
+    exit(argc as _);
+}
+```
+
+``` shell
+$ cargo b -q
+$ ./target/debug/echidna foo bar baz; echo $?
+./target/debug/echidnafoobarbaz4
+```
+
+Well… it does print them.
+
+..but first - this is our first `no_std` program ever, it links to nothing:
+
+``` shell
+$ ldd ./target/debug/echidna
+        statically linked
+```
+
+I’d like to know if it builds and runs in release mode (ie. with optimizations).
+
+``` shell
+$ cargo b --release
+$
+./target/release/echidna[1]    141955 segmentation fault (core dumped)  ./target/rele
+ase/echidna
+```
+
+Mhhh no dice.
+
+The heck is happening?
+
+![echidna-release-segfault](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-12/assets/echidna-release-segfault~88fc7538abe4e0a9.webp)
+
+It’s possible to guess what’s going wrong just by this picture. And I’m going to give you a chance to guess! To avoid spoilers, I’ll let cool bear tell you about *another* bug in `echidna` I wasn’t sure I was even going to mention.
+
+> **Cool Bear's hot tip**
+>
+> Story time!
+>
+> When amos was prototyping `echidna`, everything worked fine… for a while. Then he tried it in release mode, and all hell broke loose. The GDB session above shows one legitimate problem that was relatively easy to fix, but then there was another problem.
+>
+> At that point in the code, there was a struct with two `u64` fields, like so:
+>
+> ``` rust
+> struct S {
+>     a: u64,
+>     b: u64,
+> }
+> ```
+>
+> And it was dereferenced, moved around and the like. It being a 128-bit wide type, LLVM thought it’d be smart and use the `xmm0` register, so it could be moved in one fell swoop.
+>
+> But it was generating the `movdqa` instruction, like so:
+>
+> ``` x86asm
+> movdqa XMMWORD PTR [rsp],xmm0
+> ```
+>
+> …but by that point, `%rsp` wasn’t 16-byte-aligned, only 8-byte-aligned. And the `a` in `movdqa` stands for “aligned”. So it segfaulted. (That’s a segfault you don’t see often!).
+>
+> So amos went fishing with GDB. `%rsp` was 16-byte-aligned at the beginning of `_start` (as expected), it was 16-byte-aligned at the beginning of `main`… but it wasn’t aligned *right before the `movdqa`*.
+>
+> **As it turns out**, amos had misunderstood the System V AMD64 ABI.
+>
+> `_start` was doing that:
+>
+> ``` x86asm
+> _start:
+>     mov rsi, rsp
+>     jmp main
+> ```
+>
+> …which is wrong. You see, `main` expects to be *called*, not just jumped to. And `call` pushes the address to return to onto the stack.
+>
+> So function prologues (generated by LLVM for every Rust function) actually expect `%rsp` to be *unaligned*, and compensate when allocating local storage: they reserve `8+16*n` bytes, which re-aligns `%rsp`.
+>
+> TL;DR - even if our `main` is never supposed to return, we should `call` it.
+
+Did you figure out the problem?
+
+In debug builds, naive code is generated, and the stack is used for *everything*, including all local variables, temporaries, etc:
+
+``` x86asm
+$ objdump --disassemble=main ./target/debug/echidna | head -25
+
+./target/debug/echidna:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+00000000000014a0 <main>:
+    14a0:       48 81 ec 98 00 00 00    sub    rsp,0x98
+    14a7:       48 89 7c 24 58          mov    QWORD PTR [rsp+0x58],rdi
+    14ac:       48 8b 07                mov    rax,QWORD PTR [rdi]
+    14af:       48 89 44 24 60          mov    QWORD PTR [rsp+0x60],rax
+    14b4:       be 08 00 00 00          mov    esi,0x8
+    14b9:       48 89 44 24 38          mov    QWORD PTR [rsp+0x38],rax
+    14be:       e8 6d fc ff ff          call   1130 <_ZN4core3ptr9const_ptr33_$LT$impl$u20$$BP$const$u20$T$GT$3add17h3943ea7b27872d0aE>
+    14c3:       48 89 44 24 30          mov    QWORD PTR [rsp+0x30],rax
+    14c8:       48 8b 44 24 30          mov    rax,QWORD PTR [rsp+0x30]
+    14cd:       48 89 44 24 68          mov    QWORD PTR [rsp+0x68],rax
+    14d2:       48 89 c7                mov    rdi,rax
+    14d5:       48 8b 74 24 38          mov    rsi,QWORD PTR [rsp+0x38]
+    14da:       e8 21 fd ff ff          call   1200 <_ZN4core5slice3raw14from_raw_parts17h9d473387ae456536E>
+    14df:       48 89 44 24 70          mov    QWORD PTR [rsp+0x70],rax
+    14e4:       48 89 54 24 78          mov    QWORD PTR [rsp+0x78],rdx
+    14e9:       48 89 44 24 28          mov    QWORD PTR [rsp+0x28],rax
+    14ee:       48 89 54 24 20          mov    QWORD PTR [rsp+0x20],rdx
+    14f3:       48 8b 7c 24 28          mov    rdi,QWORD PTR [rsp+0x28]
+```
+
+…but in release mode, LLVM tries very hard to use registers instead:
+
+``` x86asm
+$ objdump --disassemble=main ./target/release/echidna | head -25
+
+./target/release/echidna:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+0000000000001010 <main>:
+    1010:       48 83 ec 08             sub    rsp,0x8
+    1014:       4c 8b 07                mov    r8,QWORD PTR [rdi]
+    1017:       4a 8d 04 c5 00 00 00    lea    rax,[r8*8+0x0]
+    101e:       00
+    101f:       48 85 c0                test   rax,rax
+    1022:       74 48                   je     106c <main+0x5c>
+    1024:       48 89 f9                mov    rcx,rdi
+    1027:       4e 8d 0c c7             lea    r9,[rdi+r8*8]
+    102b:       49 83 c1 08             add    r9,0x8
+    102f:       48 83 c1 08             add    rcx,0x8
+    1033:       bf 01 00 00 00          mov    edi,0x1
+    1038:       48 8b 31                mov    rsi,QWORD PTR [rcx]
+    103b:       48 83 c1 08             add    rcx,0x8
+    103f:       80 3e 00                cmp    BYTE PTR [rsi],0x0
+    1042:       0f 85 08 00 00 00       jne    1050 <main+0x40>
+    1048:       31 d2                   xor    edx,edx
+    104a:       e9 11 00 00 00          jmp    1060 <main+0x50>
+    104f:       90                      nop
+```
+
+And we’ve been writing inline assembly code… that uses registers… and we haven’t told LLVM which registers we were using exactly.
+
+``` rust
+pub unsafe fn write(fd: u32, buf: *const u8, count: usize) {
+    let syscall_number: u64 = 1;
+    asm!(
+        "syscall",
+        in("rax") syscall_number,
+        in("rdi") fd,
+        in("rsi") buf,
+        in("rdx") count,
+        options(nostack)
+    );
+}
+```
+
+…I mean, sure, we’ve told it about our inputs: `%rdi`, `%rsi`, and `%rdx`, but we neglected to mention that syscalls return their value in `%rax`, and that they don’t preserve the values of `%rcx` and `%r11`.
+
+We could get away with it in debug mode, but *not* in release “registers are a scarce resource, spill me baby” mode.
+
+In that mode, LLVM uses `%rcx` for a local variable, which gets silently corrupted, and then all hell breaks loose:
+
+``` x86asm
+    ;                                                         👇 woops!
+    1038:       48 8b 31                mov    rsi,QWORD PTR [rcx]
+    103b:       48 83 c1 08             add    rcx,0x8
+    103f:       80 3e 00                cmp    BYTE PTR [rsi],0x0
+    1042:       0f 85 08 00 00 00       jne    1050 <main+0x40>
+```
+
+So, let’s specify our “clobbers” (which registers aren’t preserved), for both our syscall wrappers.
+
+> **Cool Bear's hot tip**
+>
+> Wait… both of them? Doesn’t `exit` never return?
+
+Ah, right! *taps head* Don’t need to specify clobbers if your asm block never returns!
+
+Just for `write` then:
+
+``` rust
+// in `samples/echidna/src/support.rs`
+
+pub unsafe fn write(fd: u32, buf: *const u8, count: usize) {
+    let syscall_number: u64 = 1;
+    asm!(
+        "syscall",
+        // was `in("rax")`
+        inout("rax") syscall_number => _, // we don't check the return value
+        in("rdi") fd,
+        in("rsi") buf,
+        in("rdx") count,
+        // those are both new:
+        lateout("rcx") _, lateout("r11") _,
+        options(nostack)
+    );
+}
+```
+
+..and just like that, it works in release mode:
+
+``` shell
+$ cargo b -q
+$ ./target/release/echidna foo bar baz; echo $?
+./target/release/echidnafoobarbaz4
+```
+
+Back to the task at hand: calling the `write` wrapper by hand isn’t very… handy.
+
+You know what would be cool? Printing u8 slices!
+
+``` rust
+// in `samples/echidna/src/support.rs`
+
+pub fn print(s: &[u8]) {
+    unsafe {
+        write(STDOUT_FILENO, s.as_ptr(), s.len());
+    }
+}
+
+pub fn println(s: &[u8]) {
+    print(s);
+    print(b"\n");
+}
+```
+
+``` rust
+// in `samples/echidna/src/main.rs`
+
+#[no_mangle]
+pub unsafe fn main(stack_top: *const u8) {
+    let argc = *(stack_top as *const u64);
+    let argv = stack_top.add(8) as *const *const u8;
+
+    use core::slice::from_raw_parts as mkslice;
+    let args = mkslice(argv, argc as usize);
+
+    for &arg in args {
+        let arg = mkslice(arg, strlen(arg));
+        println(arg);
+    }
+
+    exit(argc as _);
+}
+```
+
+``` shell
+$ cargo b -q
+$ ./target/debug/echidna foo bar baz; echo $?
+./target/debug/echidna
+foo
+bar
+baz
+4
+```
+
+Better!
+
+Let’s go overkill a little bit - just because we can.
+
+How about printing numbers as well?
+
+Now, before you say anything, I know what you’re thinking; “Amos! Just use `core::fmt` or something!”
+
+Yeah well. That’s not *nearly* as fun.
+
+Onwards:
+
+``` rust
+// in `samples/echidna/src/support.rs`
+
+pub fn print_str(s: &[u8]) {
+    unsafe {
+        write(STDOUT_FILENO, s.as_ptr(), s.len());
+    }
+}
+
+pub fn print_num(n: usize) {
+    if n > 9 {
+        print_num(n / 10);
+    }
+    let c = b'0' + (n % 10) as u8;
+    print_str(&[c]);
+}
+
+pub enum PrintArg<'a> {
+    String(&'a [u8]),
+    Number(usize),
+}
+
+pub fn print(args: &[PrintArg]) {
+    for arg in args {
+        match arg {
+            PrintArg::String(s) => print_str(s),
+            PrintArg::Number(n) => print_num(*n),
+        }
+    }
+}
+```
+
+``` rust
+// in `samples/echidna/src/main.rs`
+
+#[no_mangle]
+pub unsafe fn main(stack_top: *const u8) {
+    let argc = *(stack_top as *const u64);
+    let argv = stack_top.add(8) as *const *const u8;
+
+    use core::slice::from_raw_parts as mkslice;
+    let args = mkslice(argv, argc as usize);
+
+    print(&[
+        PrintArg::String(b"received "),
+        PrintArg::Number(argc as usize),
+        PrintArg::String(b" arguments:\n"),
+    ]);
+
+    for &arg in args {
+        let arg = mkslice(arg, strlen(arg));
+        print(&[
+            PrintArg::String(b" - "),
+            PrintArg::String(arg),
+            PrintArg::String(b"\n"),
+        ])
+    }
+
+    exit(0);
+}
+```
+
+``` shell
+$ cargo b -q
+$ ./target/debug/echidna foo bar baz
+received 4 arguments:
+ - ./target/debug/echidna
+ - foo
+ - bar
+ - baz
+```
+
+Very nice! Very, very nice. We still get to use all the nice Rust things like iterators, `for..in` loops, slices, and enums. It’s all stack-allocated, so there’s no problem!
+
+But our `print` is kinda cumbersome to use.
+
+Maybe implementing `From` will alleviate the problem to some extent?
+
+``` rust
+// in `samples/echidna/src/support.rs`
+
+impl<'a> From<usize> for PrintArg<'a> {
+    fn from(v: usize) -> Self {
+        PrintArg::Number(v)
+    }
+}
+
+impl<'a> From<&'a [u8]> for PrintArg<'a> {
+    fn from(v: &'a [u8]) -> Self {
+        PrintArg::String(v)
+    }
+}
+```
+
+``` rust
+// in `samples/echidna/src/main.rs`
+
+#[no_mangle]
+pub unsafe fn main(stack_top: *const u8) {
+    let argc = *(stack_top as *const u64);
+    let argv = stack_top.add(8) as *const *const u8;
+
+    use core::slice::from_raw_parts as mkslice;
+    let args = mkslice(argv, argc as usize);
+
+    print(&[
+        b"received ".into(),
+        (argc as usize).into(),
+        b" arguments:\n".into(),
+    ]);
+
+    for &arg in args {
+        let arg = mkslice(arg, strlen(arg));
+        print(&[b" - ".into(), arg.into(), b"\n".into()])
+    }
+
+    exit(0);
+}
+```
+
+``` shell
+$  cargo b -q
+error[E0277]: the trait bound `support::PrintArg<'_>: core::convert::From<&[u8; 9]>` is not satisfied
+  --> src/main.rs:29:22
+   |
+29 |         b"received ".into(),
+   |                      ^^^^ the trait `core::convert::From<&[u8; 9]>` is not implemented for `support::PrintArg<'_>`
+   |
+   = help: the following implementations were found:
+             <support::PrintArg<'a> as core::convert::From<&'a [u8]>>
+             <support::PrintArg<'a> as core::convert::From<usize>>
+   = note: required because of the requirements on the impl of `core::convert::Into<support::PrintArg<'_>>` for `&[u8; 9]`
+
+error[E0277]: the trait bound `support::PrintArg<'_>: core::convert::From<&[u8; 12]>` is not satisfied
+  --> src/main.rs:31:26
+   |
+31 |         b" arguments:\n".into(),
+   |                          ^^^^ the trait `core::convert::From<&[u8; 12]>` is not implemented for `support::PrintArg<'_>`
+
+(cut)
+```
+
+Oh. The type of `b"blah"` isn’t `&[u8]`, it’s `[u8; N]` - in other words, it’s not a slice, it’s a fixed-size array.
+
+Well… we’re on nightly… nightly has const generics… I’m sure we can work something out…
+
+``` rust
+// in `samples/echidna/src/support.rs`
+
+impl<'a, const N: usize> From<&'a [u8; N]> for PrintArg<'a> {
+    fn from(v: &'a [u8; N]) -> Self {
+        PrintArg::String(v.as_ref())
+    }
+}
+```
+
+``` rust
+// in `samples/echidna/src/main.rs`
+
+// new:
+#![feature(const_generics)]
+#![allow(incomplete_features)]
+
+// the rest is identical
+```
+
+``` shell
+$ cargo b -q
+$ ./target/debug/echidna foo bar baz
+received 4 arguments:
+ - ./target/debug/echidna
+ - foo
+ - bar
+ - baz
+```
+
+That’s kind of amazing. I had never used const generics before, seems like they do just what it says on the tin.
+
+…but I still don’t love those callsites:
+
+``` rust
+  print(&[
+      b"received ".into(),
+      (argc as usize).into(),
+      b" arguments:\n".into(),
+  ]);
+```
+
+It’s time for… yes? You, in the back, with a mustache? Mackerel? Oh, *macros*? Yes, yes it is.
+
+> **Cool Bear's hot tip**
+>
+> I mean, either. Or both. Both is good.
+>
+> *readjusts mustache*
+
+``` rust
+// in `samples/echidna/src/support.rs`
+
+#[macro_export]
+macro_rules! print {
+    ($($arg:expr),+) => {
+        print(&[
+            $($arg.into()),+
+        ])
+    };
+}
+
+#[macro_export]
+macro_rules! println {
+    ($($arg:expr),+) => {
+        print!($($arg),+,b"\n");
+    };
+}
+```
+
+``` rust
+// in `samples/echidna/src/main.rs`
+
+#[no_mangle]
+pub unsafe fn main(stack_top: *const u8) {
+    let argc = *(stack_top as *const u64);
+    let argv = stack_top.add(8) as *const *const u8;
+
+    use core::slice::from_raw_parts as mkslice;
+    let args = mkslice(argv, argc as usize);
+
+    println!(b"received ", argc as usize, b" arguments:");
+
+    for &arg in args {
+        let arg = mkslice(arg, strlen(arg));
+        println!(b" - ", arg);
+    }
+
+    exit(0);
+}
+```
+
+Now *that* is comfy. I feel right at home.
+
+Sure, our `println!` is a little different but hey - it’s much better than what we had before!
+
+Let’s keep going and print (some) environment variables, along with auxiliary vectors.
+
+Before we go further, we have to pull in *one* dependency. Although we’ve managed to avoid them so far, some methods in `libcore` depend on builtin functions like “memcpy” and “memcmp”.
+
+The `slice::starts_with` method requires those, for example.
+
+We have two options there - either keep avoiding those functions, and roll our own versions, like this for example;
+
+``` rust
+fn starts_with<T>(slice: &[T], prefix: &[T]) -> bool
+where
+    T: PartialEq,
+{
+    if slice.len() < prefix.len() {
+        false
+    } else {
+        // this is not an idiomatic for loop - but the for..in
+        // version using ranges *also* pulls in compiler builtins
+        // we don't currently have.
+        let mut i = 0;
+        while i < prefix.len() {
+            if slice[i] != prefix[i] {
+                return false;
+            }
+            i += 1;
+        }
+        true
+    }
+}
+```
+
+The second option, which we’re going to go with, is to use the [compiler-builtins](https://lib.rs/crates/compiler_builtins) crate.
+
+`memcpy` and friends are optional, so we’ll need to opt into its `mem` feature:
+
+``` shell
+$ cargo add --features mem compiler_builtins
+    Updating 'https://github.com/rust-lang/crates.io-index' index
+      Adding compiler_builtins v0.1.26 to dependencies with features: ["mem"]
+```
+
+And just like that, we’re good!
+
+Next up, I’d like to add a hexadecimal formatting routine - the same way we had decimal formatting:
+
+``` rust
+// in `samples/echidna/src/support.rs`
+
+pub fn print_hex(n: usize) {
+    if n > 15 {
+        print_hex(n / 16);
+    }
+
+    let u = (n % 16) as u8;
+    let c = match u {
+        0..=9 => b'0' + u,
+        _ => b'a' + u - 10,
+    };
+    print_str(&[c]);
+}
+
+pub enum PrintArg<'a> {
+    String(&'a [u8]),
+    Number(usize),
+    // new!
+    Hex(usize),
+}
+
+pub fn print(args: &[PrintArg]) {
+    for arg in args {
+        match arg {
+            PrintArg::String(s) => print_str(s),
+            PrintArg::Number(n) => print_num(*n),
+            // new:
+            PrintArg::Hex(n) => {
+                print_str(b"0x");
+                print_hex(*n);
+            }
+        }
+    }
+}
+```
+
+Finally, I’d like a type to deal with auxiliary vectors.
+
+Nothing too fancy, just a simple struct that:
+
+- knows the name of a few entry types
+- knows how to format a few entry values: as a decimal number, a hexadecimal number, or as a null-terminated string
+
+``` rust
+// in `samples/echidna/src/main.rs`
+
+#[derive(PartialEq)]
+struct Auxv {
+    typ: u64,
+    val: u64,
+}
+
+impl Auxv {
+    fn name(&self) -> &[u8] {
+        match self.typ {
+            2 => b"AT_EXECFD",
+            3 => b"AT_PHDR",
+            4 => b"AT_PHENT",
+            5 => b"AT_PHNUM",
+            6 => b"AT_PAGESZ",
+            7 => b"AT_BASE",
+            8 => b"AT_FLAGS",
+            9 => b"AT_ENTRY",
+            11 => b"AT_UID",
+            12 => b"AT_EUID",
+            13 => b"AT_GID",
+            14 => b"AT_EGID",
+            15 => b"AT_PLATFORM",
+            16 => b"AT_HWCAP",
+            17 => b"AT_CLKTCK",
+            23 => b"AT_SECURE",
+            24 => b"AT_BASE_PLATFORM",
+            25 => b"AT_RANDOM",
+            26 => b"AT_HWCAP2",
+            31 => b"AT_EXECFN",
+            32 => b"AT_SYSINFO",
+            33 => b"AT_SYSINFO_EHDR",
+            _ => b"??",
+        }
+    }
+
+    fn formatted_val(&self) -> PrintArg<'_> {
+        match self.typ {
+            3 | 7 | 9 | 16 | 25 | 26 | 33 => PrintArg::Hex(self.val as usize),
+            31 | 15 => {
+                let s = unsafe {
+                    let ptr = self.val as *const u8;
+                    core::slice::from_raw_parts(ptr, strlen(ptr))
+                };
+                PrintArg::String(s)
+            }
+            _ => PrintArg::Number(self.val as usize),
+        }
+    }
+}
+```
+
+With that out of the way, we can print arguments, a few environment variables, and auxiliary vectors fairly easily:
+
+``` rust
+// in `samples/echidna/src/main.rs`
+
+
+#[no_mangle]
+pub unsafe fn main(stack_top: *const u8) {
+    let argc = *(stack_top as *const u64);
+    let argv = stack_top.add(8) as *const *const u8;
+
+    use core::slice::from_raw_parts as mkslice;
+    let args = mkslice(argv, argc as usize);
+
+    println!(b"received ", argc as usize, b" arguments:");
+    for &arg in args {
+        let arg = mkslice(arg, strlen(arg));
+        println!(b" - ", arg);
+    }
+
+    const ALLOWED_ENV_VARS: &'static [&[u8]] = &[b"USER=", b"SHELL=", b"LANG="];
+    fn is_envvar_allowed(var: &[u8]) -> bool {
+        for prefix in ALLOWED_ENV_VARS {
+            if var.starts_with(prefix) {
+                return true;
+            }
+        }
+        false
+    }
+
+    println!(b"environment variables:");
+    let mut envp = argv.add(argc as usize + 1) as *const *const u8;
+    let mut filtered = 0;
+    while !(*envp).is_null() {
+        let var = *envp;
+        let var = mkslice(var, strlen(var));
+
+        if is_envvar_allowed(var) {
+            println!(b" - ", var);
+        } else {
+            filtered += 1;
+        }
+
+        envp = envp.add(1);
+    }
+    println!(b"(+ ", filtered, b" redacted environment variables)");
+
+    println!(b"auxiliary vectors:");
+    let mut auxv = envp.add(1) as *const Auxv;
+
+    let null_auxv = Auxv { typ: 0, val: 0 };
+
+    while (*auxv) != null_auxv {
+        println!(b" - ", (*auxv).name(), b": ", (*auxv).formatted_val());
+        auxv = auxv.add(1);
+    }
+
+    exit(0);
+}
+```
+
+Let’s take it for a spin:
+
+``` shell
+$ cargo b && ./target/debug/echidna foo bar baz
+received 4 arguments:
+ - ./target/debug/echidna
+ - foo
+ - bar
+ - baz
+environment variables:
+ - LANG=en_US.UTF-8
+ - SHELL=/bin/zsh
+ - USER=amos
+(+ 50 redacted environment variables)
+auxiliary vectors:
+ - AT_SYSINFO_EHDR: 0x7ffcfe3f1000
+ - AT_HWCAP: 0x178bfbff
+ - AT_PAGESZ: 4096
+ - AT_CLKTCK: 100
+ - AT_PHDR: 0x55d1da36c040
+ - AT_PHENT: 56
+ - AT_PHNUM: 11
+ - AT_BASE: 0x7f18ec8c5000
+ - AT_FLAGS: 0
+ - AT_ENTRY: 0x55d1da36ddc0
+ - AT_UID: 1000
+ - AT_EUID: 1000
+ - AT_GID: 1001
+ - AT_EGID: 1001
+ - AT_SECURE: 0
+ - AT_RANDOM: 0x7ffcfe3eca49
+ - AT_HWCAP2: 0x0
+ - AT_EXECFN: ./target/debug/echidna
+ - AT_PLATFORM: x86_64
+```
+
+Wonderful.
+
+So uh.. I guess this is the end of this post and.. oh RIGHT, right, we’re writing an ELF loader. I mean, an ELF packer! Either or, really.
+
+Can we run `echidna` through `elk`?
+
+``` shell
+$ ../../target/debug/elk run ./target/debug/echidna
+Loading "/home/amos/ftl/elf-series/samples/echidna/target/debug/echidna"
+Parsing failed:
+String("Unknown SectionType 1879048193 (0x70000001)") at position 0:
+00000000: 01 00 00 70 02 00 00 00 00 00 00 00 38 32 00 00 00 00 00 00
+Fatal error: ELF object could not be parsed: /home/amos/ftl/elf-series/samples/echidna/target/debug/echidna
+```
+
+Huh, that’s a new one. No, really. I’m as surprised as you are.
+
+This one took a bit of digging, but apparently it’s `SHT_X86_64_UNWIND`, which corresponds to the `.eh_frame` section:
+
+``` shell
+$ readelf -WS target/debug/echidna | grep _UNWIND
+  [10] .eh_frame         X86_64_UNWIND   0000000000005a98 005a98 000c48 00   A  0   0  8
+```
+
+Okay, no big deal, we’re not planning on reading unwind information any time soon, let’s just add it to the `SectionType` enum and forget about it:
+
+``` rust
+// in `delf/src/lib.rs`
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
+#[repr(u32)]
+pub enum SectionType {
+    // omitted: other variants
+    X8664Unwind = 0x70000001,
+}
+```
+
+Let’s try this again:
+
+``` rust
+$ cd elk/
+$ cargo b -q
+$ ./target/debug/elk run ./samples/echidna/target/debug/echidna
+Loading "/home/amos/ftl/elf-series/samples/echidna/target/debug/echidna"
+received 94348905459012 arguments:
+[1]    87167 segmentation fault (core dumped)  ../../target/debug/elk run ./target/debug/echidna
+```
+
+Okay! Okay, we’re getting somewhere.
+
+So this is very expected: we’re not setting up the stack in any way, so `echidna` is reading garbage instead of `argc` and `argv`.
+
+So let’s set up the stack *just right*.
+
+First off - if we want to pass command-line arguments, we need to let `argh` (the crate we use to parse `elk`’s command-line arguments) know that we accept some extra ones for the `run` subcommand:
+
+``` rust
+// in `elk/src/main.rs`
+
+#[derive(FromArgs, PartialEq, Debug)]
+#[argh(subcommand, name = "run")]
+/// Load and run an ELF executable
+struct RunArgs {
+    #[argh(positional)]
+    /// the absolute path of an executable file to load and run
+    exec_path: String,
+
+    #[argh(positional)]
+    /// arguments for the executable file
+    args: Vec<String>,
+}
+```
+
+Next, we’ll do a little spring cleanup - right now, `main.rs` takes care of the whole startup process. How about we move that to `process.rs`?
+
+``` rust
+// in `elk/src/process.rs`
+
+use std::ffi::CString;
+
+// This struct has a lifetime, because it takes a reference to an `Object` - so
+// it's only "valid" for as long as the `Object` itself lives.
+pub struct StartOptions<'a> {
+    pub exec: &'a Object,
+    pub args: Vec<CString>,
+    pub env: Vec<CString>,
+    pub auxv: Vec<Auxv>,
+}
+```
+
+We’ll be passing these options whenever we want to start a process with `elk`.
+
+`CString` is an *owned* string type (it keeps track of / frees the underlying the storage) that makes sure our strings don’t contain NULL bytes and are NULL-terminated - just like C (and Unix, here) wants them.
+
+> **Cool Bear's hot tip**
+>
+> For more (a *lot* more) about strings, check out [Working with strings in Rust](https://fasterthanli.me/articles/working-with-strings-in-rust).
+
+As for auxiliary vectors, well, let’s make our own type. This is going to get a bit lengthy - check the code comments for explanations:
+
+``` rust
+// in `elk/src/process.rs`
+
+// This is really just an `u64` - having it as an `enum` in Rust lets us define
+// variants, get a nice, auto-derived `Debug` implementation, and have
+// associated functions.
+#[derive(Debug, Clone, Copy)]
+#[repr(u64)]
+pub enum AuxType {
+    /// End of vector
+    Null = 0,
+    /// Entry should be ignored
+    Ignore = 1,
+    /// File descriptor of program
+    ExecFd = 2,
+    /// Program headers for program
+    PHdr = 3,
+    /// Size of program header entry
+    PhEnt = 4,
+    /// Number of program headers
+    PhNum = 5,
+    /// System page size
+    PageSz = 6,
+    /// Base address of interpreter
+    Base = 7,
+    /// Flags
+    Flags = 8,
+    /// Entry point of program
+    Entry = 9,
+    /// Program is not ELF
+    NotElf = 10,
+    /// Real uid
+    Uid = 11,
+    /// Effective uid
+    EUid = 12,
+    /// Real gid
+    Gid = 13,
+    /// Effective gid
+    EGid = 14,
+    /// String identifying CPU for optimizations
+    Platform = 15,
+    /// Arch-dependent hints at CPU capabilities
+    HwCap = 16,
+    /// Frequency at which times() increments
+    ClkTck = 17,
+    /// Secure mode boolean
+    Secure = 23,
+    /// String identifying real platform, may differ from Platform
+    BasePlatform = 24,
+    /// Address of 16 random bytes
+    Random = 25,
+    // Extension of HwCap
+    HwCap2 = 26,
+    /// Filename of program
+    ExecFn = 31,
+
+    SysInfo = 32,
+    SysInfoEHdr = 33,
+}
+
+// Here's our "auxiliary vector" struct -
+// just two `u64` in a trench coat.
+pub struct Auxv {
+    typ: AuxType,
+    value: u64,
+}
+
+impl Auxv {
+    // A list of all the auxiliary types we know (and care) about
+    const KNOWN_TYPES: &'static [AuxType] = &[
+        AuxType::ExecFd,
+        AuxType::PHdr,
+        AuxType::PhEnt,
+        AuxType::PhNum,
+        AuxType::PageSz,
+        AuxType::Base,
+        AuxType::Flags,
+        AuxType::Entry,
+        AuxType::NotElf,
+        AuxType::Uid,
+        AuxType::EUid,
+        AuxType::Gid,
+        AuxType::EGid,
+        AuxType::Platform,
+        AuxType::HwCap,
+        AuxType::ClkTck,
+        AuxType::Secure,
+        AuxType::BasePlatform,
+        AuxType::Random,
+        AuxType::HwCap2,
+        AuxType::ExecFn,
+        AuxType::SysInfo,
+        AuxType::SysInfoEHdr,
+    ];
+
+    // this is a quick libc binding thrown together (so we don't
+    // have to pull in the `libc` crate).
+    pub fn get(typ: AuxType) -> Option<Self> {
+        extern "C" {
+            // from libc
+            fn getauxval(typ: u64) -> u64;
+        }
+
+        unsafe {
+            match getauxval(typ as u64) {
+                0 => None,
+                value => Some(Self { typ, value }),
+            }
+        }
+    }
+
+    // returns a list of all aux vectors passed to us
+    // *that we know about*.
+    pub fn get_known() -> Vec<Self> {
+        Self::KNOWN_TYPES
+            .iter()
+            .copied()
+            .filter_map(Self::get)
+            .collect()
+    }
+}
+```
+
+Remember that `elk` is just a regular ELF program. It gets started much the same way `echidna` is - at some point there, the Linux kernel puts auxiliary vectors on the stack, then hands off control to libc.
+
+libc stashes those somewhere, and `getauxval` (*not* a syscall) is the way to get them back, way, way later, when there’s a lot of other stuff on top of the stack.
+
+This way of getting the auxiliary vectors is actually much simpler and what a regular person is likely to do. And I mean regular not as a derogatory term, but as “someone who isn’t actively trying — despite repeated warnings from their friends — to make a dynamic linker”.
+
+``` rust
+// in `elk/src/process.rs`
+
+impl Process {
+    pub fn start(&self, opts: &StartOptions) {
+        let exec = opts.exec;
+        let entry_point = exec.file.entry_point + exec.base;
+        let stack = Self::build_stack(opts);
+
+        unsafe { jmp(entry_point.as_ptr(), stack.as_ptr(), stack.len()) };
+    }
+}
+```
+
+Next up is `build_stack` itself.
+
+We’ve seen the structure earlier, now we just have to follow it.
+
+As a reminder:
+
+![elf-stack](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-12/assets/elf-stack~700d0bd33d1b8591.svg)
+
+``` rust
+// in `elk/src/process.rs`
+
+impl Process {
+    fn build_stack(opts: &StartOptions) -> Vec<u64> {
+        let mut stack = Vec::new();
+
+        let null = 0_u64;
+
+        macro_rules! push {
+            ($x:expr) => {
+                stack.push($x as u64)
+            };
+        }
+
+        // note: everything is pushed in reverse order
+
+        // argc
+        push!(opts.args.len());
+
+        // argv
+        for v in &opts.args {
+            // `CString.as_ptr()` gives us the address of a memory
+            // location containing a null-terminated string.
+            // Note that we borrow `StartOptions`, so as long as it's
+            // still live by the time we jump to the entry point, we
+            // don't have to worry about it being freed too early.
+            push!(v.as_ptr());
+        }
+        push!(null);
+
+        // envp
+        for v in &opts.env {
+            push!(v.as_ptr());
+        }
+        push!(null);
+
+        // auxv
+        for v in &opts.auxv {
+            push!(v.typ);
+            push!(v.value);
+        }
+        push!(AuxType::Null);
+        push!(null);
+
+        // align stack to 16-byte boundary
+        if stack.len() % 2 == 1 {
+            stack.push(0);
+        }
+
+        stack
+    }
+}
+```
+
+> **Cool Bear's hot tip**
+>
+> You may have notice we don’t actually put the “argument strings” and “environment strings” on the stack.
+>
+> They live on *elk’s* stack. And we never bother to free it, so it remains available for the lifetime of whichever program we launch.
+
+Then of course there’s `jmp`.
+
+Up until now, it was as simple as possible:
+
+``` rust
+// in `elk/src/main.rs`
+
+unsafe fn jmp(addr: *const u8) {
+    let fn_ptr: fn() = std::mem::transmute(addr);
+    fn_ptr();
+}
+```
+
+But where we’re going.. we’ll need inline assembly. Let’s enable the feature for `elk` (we already enabled it for `echidna`):
+
+``` rust
+// in `elk/src/main.rs`
+#[feature(asm)]
+```
+
+Since this is our first unstable feature for `elk`, we also need to switch to the nightly channel, so, we’ll need to create a `rust-toolchain` file with the following contents:
+
+```
+[toolchain]
+channel = "nightly"
+components = [ "rustfmt", "clippy" ]
+targets = [ "x86_64-unknown-linux-gnu" ]
+```
+
+> **Cool Bear's hot tip**
+>
+> If you have both `elk` and `delf` in a Cargo workspace, you’ll need to put the `rust-toolchain` file at the very top of the workspace. Otherwise, you can put it directly in `elk`.
+>
+> Point is, `cargo check` should stop complaining that we’re pulling in an unstable feature.
+
+And move it over to `process.rs`. It’s a *tiny bit* involved, compared to the stuff we’ve done so far, so there are inline comments:
+
+``` rust
+// in `elk/src/process.rs`
+
+#[inline(never)]
+unsafe fn jmp(entry_point: *const u8, stack_contents: *const u64, qword_count: usize) {
+    asm!(
+        // allocate (qword_count * 8) bytes
+        "mov {tmp}, {qword_count}",
+        "sal {tmp}, 3",
+        "sub rsp, {tmp}",
+
+        ".l1:",
+        // start at i = (n-1)
+        "sub {qword_count}, 1",
+        // copy qwords to the stack
+        "mov {tmp}, QWORD PTR [{stack_contents}+{qword_count}*8]",
+        "mov QWORD PTR [rsp+{qword_count}*8], {tmp}",
+        // loop if i isn't zero, break otherwise
+        "test {qword_count}, {qword_count}",
+        "jnz .l1",
+
+        "jmp {entry_point}",
+
+        entry_point = in(reg) entry_point,
+        stack_contents = in(reg) stack_contents,
+        qword_count = in(reg) qword_count,
+        tmp = out(reg) _,
+    )
+}
+```
+
+> **Cool Bear's hot tip**
+>
+> The `inline(never)` annotation will let us break on `jmp`.
+
+Finally, let’s use our new process-starting facilities from `main.rs`:
+
+``` rust
+// in `elk/src/main.rs`
+
+fn cmd_run(args: RunArgs) -> Result<(), Box<dyn Error>> {
+    // these are the usual steps
+    let mut proc = process::Process::new();
+    let exec_index = proc.load_object_and_dependencies(&args.exec_path)?;
+    proc.apply_relocations()?;
+    proc.adjust_protections()?;
+
+    // we'll need those to handle C-style strings (null-terminated)
+    use std::ffi::CString;
+
+    let exec = &proc.objects[exec_index];
+    // the first argument is typically the path to the executable itself.
+    // that's not something `argh` gives us, so let's add it ourselves
+    let args = std::iter::once(CString::new(args.exec_path.as_bytes()).unwrap())
+        .chain(
+            args.args
+                .iter()
+                .map(|s| CString::new(s.as_bytes()).unwrap()),
+        )
+        .collect();
+
+    let opts = process::StartOptions {
+        exec,
+        args,
+        // on the stack, environment variables are null-terminated `K=V` strings.
+        // the Rust API gives us key-value pairs, so we need to build those strings
+        // ourselves
+        env: std::env::vars()
+            .map(|(k, v)| CString::new(format!("{}={}", k, v).as_bytes()).unwrap())
+            .collect(),
+        // right now we pass all *our* auxiliary vectors to the underlying process.
+        // note that some of those aren't quite correct - there's a `Base` auxiliary
+        // vector, for example, which is set to `elk`'s base address, not `echidna`'s!
+        auxv: process::Auxv::get_known(),
+    };
+    proc.start(&opts);
+
+    Ok(())
+}
+```
+
+And with that, we’re all set:
+
+``` shell
+$ cd elk/
+$ cargo build --release --quiet
+$ ./target/release/elk run samples/echidna/target/release/echidna foo bar baz
+Loading "/home/amos/ftl/elf-series/samples/echidna/target/release/echidna"
+received 4 arguments:
+ - samples/echidna/target/release/echidna
+ - foo
+ - bar
+ - baz
+environment variables:
+ - SHELL=/usr/bin/zsh
+ - LANG=en_US.UTF-8
+ - USER=amos
+(+ 52 redacted environment variables)
+auxiliary vectors:
+ - AT_PHDR: 0x564fcd623040
+ - AT_PHENT: 56
+ - AT_PHNUM: 12
+ - AT_PAGESZ: 4096
+ - AT_BASE: 0x7f62f04d7000
+ - AT_ENTRY: 0x564fcd62c070
+ - AT_UID: 1000
+ - AT_EUID: 1000
+ - AT_GID: 1000
+ - AT_EGID: 1000
+ - AT_PLATFORM: x86_64
+ - AT_HWCAP: 0x2
+ - AT_CLKTCK: 100
+ - AT_RANDOM: 0x7fffc5473c79
+ - AT_EXECFN: ./target/release/elk
+ - AT_SYSINFO_EHDR: 0x7fffc55bf000
+```
+
+Wonderful!
+
+I’m curious… does it run regular C programs yet?
+
+``` shell
+$ ../../target/release/elk run /bin/ls
+Loading "/usr/bin/ls"
+Loading "/usr/lib/libcap.so.2.33"
+Loading "/usr/lib/libc-2.31.so"
+Fatal error: Could not read symbols from ELF object: Parsing error: String("Unknown SymType 6 (0x6)"):
+input: 16 00 18 00 10 00 00 00 00 00 00 00 04 00 00 00 00 00 00 00
+```
+
+Nope! Worth a try though.
+
+We’re getting *awfully close* though. Pinky promise.

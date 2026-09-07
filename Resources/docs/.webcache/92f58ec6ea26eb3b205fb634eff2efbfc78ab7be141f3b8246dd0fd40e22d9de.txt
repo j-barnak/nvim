@@ -1,0 +1,2907 @@
+# In the bowels of glibc
+
+Good morning, and welcome back to “how many executables can we run with our custom dynamic loader before things get *really* out of control”.
+
+In [Part 13](https://fasterthanli.me/series/making-our-own-executable-packer/part-13), we “implemented” thread-local storage. I’m using scare quotes because, well, we spent most of the article blabbering about Addressing Memory Through The Ages, And Other Fun Tidbits.
+
+But that was then, and this is now, which is, uh, nine months later. Not only am I wiser and more productive, I’m also finally done updating all the previous thirteen parts of this series to fix some inconsistencies, upgrade crate versions, and redo all the diagrams as SVG.
+
+Without further ado, let’s finish this series, shall we?
+
+> **Cool bear says:**
+>
+> Yay!
+
+So far, most of the programs we’ve been able to execute using our “runtime linker/loader” were purpose-built for it. We’ve come up with quite a few sample assembly, C and Rust programs over the course of this series.
+
+And there was a very good reason for that: it allowed us to focus on one specific aspect of loading ELF objects at a time, all the way from “what’s even *in* an ELF executable” to “how come different threads see different data?”, passing through “what even is memory protection” and “so you mean to tell me the linker executes some of your own code *besides* initializers? just to resolve symbols?”
+
+But, just like ideologies, linkers only start being fun when you apply them to the real world.
+
+So let’s try our best to run an actual, honest-to-blorg executable that we didn’t have any hand in making - we didn’t make the source, we didn’t compile it, we didn’t somehow patch it just so it works with our dynamic loader - an executable straight out of a Linux distribution package.
+
+> **Amos says:**
+>
+> In my case, an ArchLinux package, but if there’s *one* thing Linux distributions agree on, it’s ELF, so, never fear.
+
+But, just like planning a saturday night during a pandemic, the key to success is managing expectations.
+
+We’ll start *simple*. Like, with `/bin/ls`.
+
+Let’s look at it from a bunch of angles before we even attempt to load it with elk.
+
+``` shell
+$ readelf -Wl /bin/ls
+
+Elf file type is DYN (Shared object file)
+Entry point 0x5b20
+There are 11 program headers, starting at offset 64
+
+Program Headers:
+  Type           Offset   VirtAddr           PhysAddr           FileSiz  MemSiz   Flg Align
+  PHDR           0x000040 0x0000000000000040 0x0000000000000040 0x000268 0x000268 R   0x8
+  INTERP         0x0002a8 0x00000000000002a8 0x00000000000002a8 0x00001c 0x00001c R   0x1
+      [Requesting program interpreter: /lib64/ld-linux-x86-64.so.2]
+  LOAD           0x000000 0x0000000000000000 0x0000000000000000 0x003510 0x003510 R   0x1000
+  LOAD           0x004000 0x0000000000004000 0x0000000000004000 0x0133d1 0x0133d1 R E 0x1000
+  LOAD           0x018000 0x0000000000018000 0x0000000000018000 0x008cc0 0x008cc0 R   0x1000
+  LOAD           0x020fd0 0x0000000000021fd0 0x0000000000021fd0 0x001298 0x002588 RW  0x1000
+  DYNAMIC        0x021a58 0x0000000000022a58 0x0000000000022a58 0x000200 0x000200 RW  0x8
+  NOTE           0x0002c4 0x00000000000002c4 0x00000000000002c4 0x000044 0x000044 R   0x4
+  GNU_EH_FRAME   0x01d324 0x000000000001d324 0x000000000001d324 0x000954 0x000954 R   0x4
+  GNU_STACK      0x000000 0x0000000000000000 0x0000000000000000 0x000000 0x000000 RW  0x10
+  GNU_RELRO      0x020fd0 0x0000000000021fd0 0x0000000000021fd0 0x001030 0x001030 R   0x1
+
+ Section to Segment mapping:
+  Segment Sections...
+   00
+   01     .interp
+   02     .interp .note.gnu.build-id .note.ABI-tag .gnu.hash .dynsym .dynstr .gnu.version .gnu.version_r .rela.dyn .rela.plt
+   03     .init .plt .text .fini
+   04     .rodata .eh_frame_hdr .eh_frame
+   05     .init_array .fini_array .data.rel.ro .dynamic .got .data .bss
+   06     .dynamic
+   07     .note.gnu.build-id .note.ABI-tag
+   08     .eh_frame_hdr
+   09
+   10     .init_array .fini_array .data.rel.ro .dynamic .got
+```
+
+Let’s review! Just to make sure we haven’t gotten too rusty.
+
+> **Amos says:**
+>
+> `PHDR` is?
+
+> **Cool bear says:**
+>
+> Program headers!
+
+> **Amos says:**
+>
+> `INTERP`?
+
+> **Cool bear says:**
+>
+> The interpreter! ie. the program that the kernel would *normally* rely on to load this program, in this case `/lib64/ld-linux-x86-64.so.2`. But we *are* loading the program so this doesn’t matter.
+
+> **Amos says:**
+>
+> `LOAD`?
+
+> **Cool bear says:**
+>
+> Those are regions of the file actually mapped in memory! Some contain code, some contain data, or thread-local data, or constants, etc.
+
+> **Amos says:**
+>
+> Everything else?
+
+> **Cool bear says:**
+>
+> Largely irrelevant for this series!
+
+> **Amos says:**
+>
+> Attabear. Thanks for the recap bear.
+
+> **Cool bear says:**
+>
+> The pleasure is often mine.
+
+What else can we tell from this output… well, it *has* an interpreter in the first place, so there’s probably relocations:
+
+``` shell
+$ readelf -Wr /bin/ls | head
+
+Relocation section '.rela.dyn' at offset 0x16f8 contains 320 entries:
+    Offset             Info             Type               Symbol's Value  Symbol's Name + Addend
+0000000000021fd0  0000000000000008 R_X86_64_RELATIVE                         5c10
+0000000000021fd8  0000000000000008 R_X86_64_RELATIVE                         5bc0
+0000000000021fe0  0000000000000008 R_X86_64_RELATIVE                         6860
+0000000000021fe8  0000000000000008 R_X86_64_RELATIVE                         6dd0
+0000000000021ff0  0000000000000008 R_X86_64_RELATIVE                         6870
+0000000000021ff8  0000000000000008 R_X86_64_RELATIVE                         6f10
+0000000000022000  0000000000000008 R_X86_64_RELATIVE                         6370
+```
+
+There is! And it’s `dyn` so it probably relies on some dynamic libraries.
+
+``` shell
+$ readelf -Wd /bin/ls
+
+Dynamic section at offset 0x21a58 contains 28 entries:
+  Tag        Type                         Name/Value
+ 0x0000000000000001 (NEEDED)             Shared library: [libcap.so.2]
+ 0x0000000000000001 (NEEDED)             Shared library: [libc.so.6]
+ 0x000000000000000c (INIT)               0x4000
+ 0x000000000000000d (FINI)               0x173c4
+ 0x0000000000000019 (INIT_ARRAY)         0x21fd0
+ 0x000000000000001b (INIT_ARRAYSZ)       8 (bytes)
+ 0x000000000000001a (FINI_ARRAY)         0x21fd8
+ 0x000000000000001c (FINI_ARRAYSZ)       8 (bytes)
+ 0x000000006ffffef5 (GNU_HASH)           0x308
+ 0x0000000000000005 (STRTAB)             0xfb8
+ 0x0000000000000006 (SYMTAB)             0x3b8
+ 0x000000000000000a (STRSZ)              1468 (bytes)
+ 0x000000000000000b (SYMENT)             24 (bytes)
+ 0x0000000000000015 (DEBUG)              0x0
+ 0x0000000000000003 (PLTGOT)             0x22c58
+ 0x0000000000000002 (PLTRELSZ)           24 (bytes)
+ 0x0000000000000014 (PLTREL)             RELA
+ 0x0000000000000017 (JMPREL)             0x34f8
+ 0x0000000000000007 (RELA)               0x16f8
+ 0x0000000000000008 (RELASZ)             7680 (bytes)
+ 0x0000000000000009 (RELAENT)            24 (bytes)
+ 0x0000000000000018 (BIND_NOW)
+ 0x000000006ffffffb (FLAGS_1)            Flags: NOW PIE
+ 0x000000006ffffffe (VERNEED)            0x1678
+ 0x000000006fffffff (VERNEEDNUM)         1
+ 0x000000006ffffff0 (VERSYM)             0x1574
+ 0x000000006ffffff9 (RELACOUNT)          203
+ 0x0000000000000000 (NULL)               0x0
+```
+
+It does! `libcap.so.2` and `libc.so.6`.
+
+> **Cool bear says:**
+>
+> Wait, don’t we usually use `ldd` to find that out?
+
+> **Amos says:**
+>
+> Yeah, if you’re *lazy*.
+
+> **Cool bear says:**
+>
+> But we *are* lazy.
+
+> **Amos says:**
+>
+> True, true.
+
+``` shell
+$ ldd /bin/ls
+        linux-vdso.so.1 (0x00007ffc94718000)
+        libcap.so.2 => /usr/lib/libcap.so.2 (0x00007fc6e2b2a000)
+        libc.so.6 => /usr/lib/libc.so.6 (0x00007fc6e2961000)
+        /lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2 (0x00007fc6e2b77000)
+```
+
+> **Cool bear says:**
+>
+> Oh, this also shows `ld-linux.so`, glibc’s dynamic linker/loader!
+
+> **Amos says:**
+>
+> Yes! I guess it *technically* is a dependency.
+>
+> The “vdso” object is also listed!
+
+> **Cool bear says:**
+>
+> Right, to make syscalls faster.
+
+But let’s go back to relocations - are there any relocations we don’t support yet?
+
+```
+$ readelf -Wr /bin/ls | grep R_X86 | cut -d ' ' -f 4 | uniq -c
+    203 R_X86_64_RELATIVE
+    111 R_X86_64_GLOB_DAT
+      6 R_X86_64_COPY
+      1 R_X86_64_JUMP_SLOT
+```
+
+Mhh, no, that looks good.
+
+> **Cool bear says:**
+>
+> I remember all of these!
+
+Well, there’s only thing left to do then:
+
+``` shell
+$ ./target/debug/elk run /bin/ls
+Loading "/usr/bin/ls"
+Loading "/usr/lib/libcap.so.2.47"
+Loading "/usr/lib/libc-2.32.so"
+Loading "/usr/lib/ld-2.32.so"
+[1]    28471 segmentation fault  ./target/debug/elk run /bin/ls
+```
+
+Of course.
+
+> **Cool bear says:**
+>
+> To be fair, we already tried it at the end of Part 13, and it didn’t work then either. Since we haven’t changed anything since then, it stands to reason that the result would n-
+
+> **Amos says:**
+>
+> A MAN CAN DREAM, BEAR, okay?
+
+> **Cool bear says:**
+>
+> Bear enough. I’m afraid you’ll have to *actually* write your way out of this one though, running it again won’t suddenly start to work.
+
+Fine, fine. Let’s do a quick check-in with our favorite frenemy, GDB.
+
+``` shell
+$ gdb --quiet --args ./target/debug/elk run /bin/ls
+Reading symbols from ./target/debug/elk...
+warning: Missing auto-load script at offset 0 in section .debug_gdb_scripts
+of file /home/amos/ftl/elf-series/target/debug/elk.
+Use `info auto-load python-scripts [REGEXP]' to list them.
+(gdb) r
+Starting program: /home/amos/ftl/elf-series/target/debug/elk run /bin/ls
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/usr/lib/libthread_db.so.1".
+Loading "/usr/bin/ls"
+Loading "/usr/lib/libcap.so.2.47"
+Loading "/usr/lib/libc-2.32.so"
+Loading "/usr/lib/ld-2.32.so"
+
+Program received signal SIGSEGV, Segmentation fault.
+0x0000000000000000 in ?? ()
+(gdb)
+```
+
+Okay, it *also* crashes under the GDB. Which is? Bear?
+
+> **Cool bear says:**
+>
+> Good! It’s good. If it didn’t crash under GDB, our life would be significantly worse.
+
+Correct. Also, it means it occurs even with [ASLR](https://en.wikipedia.org/wiki/Address_space_layout_randomization) disabled.
+
+> **Cool bear says:**
+>
+> With what now?
+
+> **Amos says:**
+>
+> Uhhh we’ll talk about it later.
+
+Anyway, let’s find out exactly where we crashed - by using our custom GDB command, `autosym`.
+
+``` shell
+$ (gdb) autosym
+add symbol table from file "/home/amos/ftl/elf-series/target/debug/elk" at
+        .text_addr = 0x555555565080
+add symbol table from file "/usr/lib/libc-2.32.so" at
+        .text_addr = 0x7ffff77b2650
+add symbol table from file "/usr/lib/ld-2.32.so" at
+        .text_addr = 0x7ffff7c4b090
+add symbol table from file "/usr/bin/ls" at
+        .text_addr = 0x7ffff7d1d040
+add symbol table from file "/usr/lib/libpthread-2.32.so" at
+        .text_addr = 0x7ffff7da9a70
+add symbol table from file "/usr/lib/libgcc_s.so.1" at
+        .text_addr = 0x7ffff7dc7020
+add symbol table from file "/usr/lib/libc-2.32.so" at
+        .text_addr = 0x7ffff7e04650
+add symbol table from file "/usr/lib/libdl-2.32.so" at
+        .text_addr = 0x7ffff7fa8210
+add symbol table from file "/usr/lib/libcap.so.2.47" at
+        .text_addr = 0x7ffff7fc0020
+add symbol table from file "/usr/lib/ld-2.32.so" at
+        .text_addr = 0x7ffff7fd2090
+```
+
+And try to get a sense of our surroundings once again:
+
+``` shell
+$ (gdb) bt
+#0  0x0000000000000000 in ?? ()
+#1  0x00007ffff78c6058 in __GI__dl_addr (address=0x7ffff7815eb0 <ptmalloc_init>, info=0x7fffffffb430, mapp=0x7fffffffb420, symbolp=0x0) at dl-addr.c:131
+#2  0x00007ffff7815e89 in ptmalloc_init () at arena.c:303
+#3  0x00007ffff7817fe5 in ptmalloc_init () at arena.c:291
+#4  malloc_hook_ini (sz=34, caller=<optimized out>) at hooks.c:31
+#5  0x00007ffff77c234f in set_binding_values (domainname=0x7ffff7d329b1 "coreutils", dirnamep=0x7fffffffb4d8, codesetp=0x0) at bindtextdom.c:202
+#6  0x00007ffff77c25f5 in set_binding_values (codesetp=0x0, dirnamep=0x7fffffffb4d8, domainname=<optimized out>) at bindtextdom.c:82
+#7  __bindtextdomain (domainname=<optimized out>, dirname=<optimized out>) at bindtextdom.c:320
+#8  0x00007ffff7d1d0f3 in ?? ()
+#9  0x00007ffff77b4152 in __libc_start_main (main=0x7ffff7d1d0a0, argc=1, argv=0x7fffffffb658, init=<optimized out>, fini=<optimized out>, rtld_fini=<optimized out>, stack_end=0x7fffffffb648) at ../csu/libc-start.c:314
+#10 0x00007ffff7d1eb4e in ?? ()
+```
+
+Interesting. Very, very interesting.
+
+Let’s look at what’s happening here a little closer.
+
+Except, instead of blindly looking at disassembly, we’ll pull up the glibc sources so we can see what’s actually happening.
+
+First off, on frame 9, we have `__libc_start_main`. This is hardly our first rodeo, we’ve seen that one before, and it *goes places*. It stands to reason that eventually, at some point, glibc would want to initializes its own allocator - which is why on line 2, we have `ptmalloc_init`.
+
+Why `ptmalloc`? Well, it stands for “pthreads malloc”, which is derived from “dlmalloc” ([Doug Lea](https://en.wikipedia.org/wiki/Doug_Lea) malloc). That’s right — we can’t escape history no matter how hard we try.
+
+``` c
+// in `glibc/alloc/arena.c`
+
+static void
+ptmalloc_init (void)
+{
+  if (__malloc_initialized >= 0)
+    return;
+
+  __malloc_initialized = 0;
+
+#ifdef SHARED
+  /* In case this libc copy is in a non-default namespace, never use brk.
+     Likewise if dlopened from statically linked program.  */
+  Dl_info di;
+  struct link_map *l;
+
+  if (_dl_open_hook != NULL
+      || (_dl_addr (ptmalloc_init, &di, &l, NULL) != 0
+          && l->l_ns != LM_ID_BASE))
+    __morecore = __failing_morecore;
+#endif
+
+  thread_arena = &main_arena;
+
+  malloc_init_state (&main_arena);
+
+  // (etc.)
+}
+```
+
+How interesting! How very, very interesting.
+
+There’s so much to look at here. First of, there’s a global variable that stores whether or not malloc was already initialized. It’s set to `-1` by default.
+
+``` c
+// in `glibc/alloc/arena.c`
+
+/* Already initialized? */
+int __malloc_initialized = -1;
+```
+
+So, at the very start of `ptmalloc_init`, if that variable is 0 or greater, we have nothing to do. Otherwise, we ourselves set it to zero.
+
+``` c
+  if (__malloc_initialized >= 0)
+    return;
+
+  __malloc_initialized = 0;
+```
+
+> **Cool bear says:**
+>
+> Weird boolean but okay.
+
+> **Amos says:**
+>
+> Well, it’s actually set to `1` when `ptmalloc_init` finishes successfully.
+>
+> It’s.. a bit hard to follow, let’s not go there for now.
+
+And then, only if this code is compiled into a dynamic ELF object (which it is, here, because we’re executing it straight out of `/lib/libc-2.32.so`), we check if that ELF has been opened dynamically, or if it’s in a non-default namespace:
+
+``` c
+  /* In case this libc copy is in a non-default namespace, never use brk.
+     Likewise if dlopened from statically linked program.  */
+  Dl_info di;
+  struct link_map *l;
+
+  if (_dl_open_hook != NULL
+      || (_dl_addr (ptmalloc_init, &di, &l, NULL) != 0
+          && l->l_ns != LM_ID_BASE))
+    __morecore = __failing_morecore;
+```
+
+And depending on that, it decides whether to use `brk` or not.
+
+And that’s exciting!
+
+> **Cool bear says:**
+>
+> It is?
+
+> **Amos says:**
+>
+> Yes! Because we’ve never talked about `brk` before!
+
+> **Cool bear says:**
+>
+> So we’re *not* getting `ls` to run for another page or six, is what you’re getting at?
+
+> **Amos says:**
+>
+> Exactly!
+
+## What’s a `brk` and why should *we* care about it?
+
+Let’s cut to the chase. `brk` is, pretty much, the end of the heap.
+
+And we’ve talked about the heap before!
+
+Typically when you read about the heap in articles like this one, you tend to see diagrams like these:
+
+![stack-heap-vars](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-14/assets/stack-heap-vars~e2ffda70b3eded6a.svg)
+
+Which basically says: variables can live in the stack or the heap, and you can even have stack variables *point* or *refer* to heap variables. And you allocate heap variables with `malloc`, or [`Box::new`](https://doc.rust-lang.org/stable/std/boxed/struct.Box.html#method.new), or something.
+
+Of course it’s a bit nebulous *where* the heap is in that diagram — it’s just a cloud.
+
+And it’s not exactly clear *why* we need the heap anyway. Couldn’t we just put everything on the stack?
+
+Well, no, the article keeps on going, because the stack is small. On my current machine, the stack size for a newly-launched executable is 8MiB:
+
+``` shell
+$ ulimit -s
+8192
+```
+
+And that’s not enough! But of course, you can always ask for more stack, either system-wide or [just for your process](https://stackoverflow.com/a/2279084). You can even use something like [Split Stacks](https://gcc.gnu.org/wiki/SplitStacks).
+
+So that’s not the *real* reason why we need the heap.
+
+The *real* reason we need the heap becomes clearer if we make our diagram a little closer to reality.
+
+Let’s say we have a program like this:
+
+``` c
+int main() {
+    char *str = NULL;
+    str = f(42);
+}
+
+char *f(int i) {
+    char data[4] = "hi!";
+    return data;
+}
+```
+
+At the very beginning of our program, the stack only contains whatever the operating system saw fit to give us - environment variables, arguments, and auxiliary vectors:
+
+![stack-through-call-1](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-14/assets/stack-through-call-1~7988254b0b038f7f.svg)
+
+> **Cool Bear's hot tip**
+>
+> The left area represents code, each outer box is a function, and each inner box is an “instruction”, although it’s shown as C code. `$rip` here is the Instruction Pointer, ie. what we’re currently executing.
+
+Then, the locals for our `main` function are allocated on the stack, and initialized:
+
+![stack-through-call-2](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-14/assets/stack-through-call-2~faf0df8d2a2bc878.svg)
+
+The following line, `str = f(42)` is a bit complicated - showing C sources isn’t ideal here, because several things are happening out of order.
+
+Before thinking about `str`, we must call `f`! Let’s split that line into two blocks on the diagram, in an attempt at making things clearer:
+
+![stack-through-call-3](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-14/assets/stack-through-call-3~97dd4034b86110d5.svg)
+
+So first, we push our argument to the stack.
+
+> **Cool bear says:**
+>
+> Wait, would an argument like that really be passed on the stack?
+
+> **Amos says:**
+>
+> Not in this specific case, under the System V AMD64 ABI, no.
+>
+> These diagrams are also lie, they’re just *slightly* closer to reality. We’re just pretending registers don’t exist for the time being.
+>
+> But if we had lots of arguments, or large arguments, some of them would be pushed to the stack.
+
+So, we push our argument, and then we have to push the *return address* - so that when `f` is done, we know where to resume execution of our program.
+
+![stack-through-call-4](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-14/assets/stack-through-call-4~7e6294a95fe02cba.svg)
+
+And then we reserve enough space for the local variables of `f`, and initialize them as well:
+
+![stack-through-call-5](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-14/assets/stack-through-call-5~ea6108d403084d6f.svg)
+
+And here’s the important bit - when we return, *everything* that’s related to `f` on the stack is “popped off”. It just disappears.
+
+Its locals are “freed”, the arguments are freed as well, and the return address is, well, where we return to.
+
+![stack-through-call-6](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-14/assets/stack-through-call-6~7a2c6949343fc81d.svg)
+
+…but we returned the address of a local of `f()`, which has *just* been freed! That is *actually* why we need the heap. Because sometimes, we need variables to live longer than a function.
+
+> **Cool bear says:**
+>
+> Wait, does that mean…
+>
+> …we have to think about lifetimes *even when we write C*?
+
+> **Amos says:**
+>
+> Especially\* when you write C, because the compiler is not looking out for you, save for a few specific cases (like this one here — returning the address of a local is a pretty obvious giveaway that something is wrong).
+
+The thing is… those bugs are not always easy to find. Here for example, as long as nothing else is allocated on the stack, `str` will point to a region of memory that contains the string “hi!\0”.
+
+Because “freeing memory from the stack” does not actually free it — it just changes the value of the `%rsp` register. Everything is still there, in memory!
+
+Of course, if we were to call *another* function, which also had locals, then everything would become corrupted.
+
+![stack-through-call-7](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-14/assets/stack-through-call-7~bae34ac99fcd4f57.svg)
+
+This is typically the kind of bug that memory-safe languages like Rust would prevent and the reason why should really consid-
+
+> **Cool bear says:**
+>
+> Amos, amos, this is not that kind of article.
+
+> **Amos says:**
+>
+> Oh, right, ELF.
+
+Anyway, if `f()` allocated `data` on the heap instead, it would *still* be valid by the time it returned to `main()`, like so:
+
+![stack-through-call-8](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-14/assets/stack-through-call-8~8678588118e14173.svg)
+
+And then we could forget to free it, which would result in a memory leak, another problem that a language like Rus-
+
+> **Cool bear says:**
+>
+> Amos! Focus!!
+
+> **Amos says:**
+>
+> Right, right.
+
+But *where* is the heap?
+
+Well, this kind of diagram is very common:
+
+![stack-vs-heap-wrong](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-14/assets/stack-vs-heap-wrong~10f636af1f822b82.svg)
+
+And it’s honestly not that bad? There’s a lot worse out there.
+
+The stack *does* grow down on 64-bit Linux, the heap does grow up, it is indeed right after the last “load section” mapped from our main executable file. There’s a lot about this diagram I agree with!
+
+But also, those arrows look awfully close. As if… as if the stack and the heap could somehow collide. And, well, if you’re stuck a few decades in the past *or* programming for very small devices, that’s an actual risk!
+
+But on contemporary 64-bit Linux, that’s, uhhh, not an issue.
+
+Let’s take an actual look at where our heap and stack are for `/bin/ls`:
+
+``` shell
+$ gdb --quiet /bin/ls
+Reading symbols from /bin/ls...
+(No debugging symbols found in /bin/ls)
+(gdb) starti
+Starting program: /usr/bin/ls
+
+Program stopped.
+0x00007ffff7fd2090 in _start () from /lib64/ld-linux-x86-64.so.2
+(gdb) info proc
+process 27153
+cmdline = '/usr/bin/ls'
+cwd = '/home/amos/ftl/elf-series'
+exe = '/usr/bin/ls'
+(gdb) shell cat /proc/27153/maps | grep -E 'stack|heap|bin/ls'
+555555554000-555555558000 r--p 00000000 08:30 28982                      /usr/bin/ls
+555555558000-55555556c000 r-xp 00004000 08:30 28982                      /usr/bin/ls
+55555556c000-555555575000 r--p 00018000 08:30 28982                      /usr/bin/ls
+555555575000-555555578000 rw-p 00020000 08:30 28982                      /usr/bin/ls
+555555578000-555555579000 rw-p 00000000 00:00 0                          [heap]
+7ffffffdd000-7ffffffff000 rw-p 00000000 00:00 0                          [stack]
+```
+
+> **Cool bear says:**
+>
+> Oh ok. They’re *real* far from each other.
+
+> **Amos says:**
+>
+> I know, that’s what I’m getting at!
+
+> **Cool bear says:**
+>
+> Amos, I don’t think you understand just *how far* they are. Let me do a quick calculation here, to get them to collide, you would have to allocate… 47 terabytes!
+
+And there you have it. For systems where memory is scarce, and memory protection does not exist, there is a *real* risk of the heap and the stack overwriting each other. And a real opportunity to free up some heap to allow using more stack, or the other way around.
+
+On a consumer-grade desktop or laptop computer in 2021, running 64-bit Linux though? Nah.
+
+So. We’ve found out that, at least on my system, processes start with an 8MB stack, and looking at this line in `/proc/:pid/maps`:
+
+```
+7ffffffdd000-7ffffffff000 rw-p 00000000 00:00 0                          [stack]
+```
+
+…this is not 8MB. It’s more like 136 kibibytes. An odd number.
+
+So what was that 8MB value? Let’s find out:
+
+``` x86asm
+; in `samples/blowstack.asm`
+
+        global _start
+
+        section .text
+
+_start:
+        push 0
+        jmp _start
+```
+
+``` shell
+$ nasm -f elf64 blowstack.asm
+$ ld blowstack.o -o blowstack
+$ gdb --quiet ./blowstack
+Reading symbols from ./blowstack...
+(No debugging symbols found in ./blowstack)
+(gdb) r
+Starting program: /home/amos/ftl/elf-series/samples/blowstack
+
+Program received signal SIGSEGV, Segmentation fault.
+0x0000000000401000 in _start ()
+(gdb) info proc mappings
+process 3366Mapped address spaces:
+
+          Start Addr           End Addr       Size     Offset objfile
+            0x400000           0x402000     0x2000        0x0 /home/amos/ftl/elf-series/samples/blowstack
+      0x7ffff7ffa000     0x7ffff7ffd000     0x3000        0x0 [vvar]
+      0x7ffff7ffd000     0x7ffff7fff000     0x2000        0x0 [vdso]
+      0x7fffff7ff000     0x7ffffffff000   0x800000        0x0 [stack]
+```
+
+Ah, right. It’s more of a maximum — hence why the command to query the system-wide parameter is called `ulimit`, and the relevant system calls are called `getrlimit` and `setrlimit`.
+
+Anyway, to recap:
+
+- The stack grows down, because that’s how we’ve always done things
+- “Allocating on the stack” is just setting the `%rsp` register
+- There is a maximum amount of stack the kernel will allow, after which you’ll get a segmentation fault.
+- You can ask the kernel for more stack with the `setrlimit` syscall.
+
+…but what about the heap?
+
+Well, it’s *pretty much the same thing*, only instead of using `setrlimit`, you use the `brk` syscall.
+
+When `/bin/ls` just starts up, it has a heap of 4KiB:
+
+``` shell
+$ gdb --quiet /bin/ls
+Reading symbols from /bin/ls...
+(No debugging symbols found in /bin/ls)
+(gdb) starti
+Starting program: /usr/bin/ls
+
+Program stopped.
+0x00007ffff7fd2090 in _start () from /lib64/ld-linux-x86-64.so.2
+(gdb) info proc mappings
+process 4161
+Mapped address spaces:
+
+          Start Addr           End Addr       Size     Offset objfile
+      0x555555554000     0x555555558000     0x4000        0x0 /usr/bin/ls
+      0x555555558000     0x55555556c000    0x14000     0x4000 /usr/bin/ls
+      0x55555556c000     0x555555575000     0x9000    0x18000 /usr/bin/ls
+      0x555555575000     0x555555578000     0x3000    0x20000 /usr/bin/ls
+      0x555555578000     0x555555579000     0x1000        0x0 [heap]
+      0x7ffff7fcb000     0x7ffff7fce000     0x3000        0x0 [vvar]
+      0x7ffff7fce000     0x7ffff7fd0000     0x2000        0x0 [vdso]
+      0x7ffff7fd0000     0x7ffff7fd2000     0x2000        0x0 /usr/lib/ld-2.32.so
+      0x7ffff7fd2000     0x7ffff7ff3000    0x21000     0x2000 /usr/lib/ld-2.32.so
+      0x7ffff7ff3000     0x7ffff7ffc000     0x9000    0x23000 /usr/lib/ld-2.32.so
+      0x7ffff7ffc000     0x7ffff7fff000     0x3000    0x2b000 /usr/lib/ld-2.32.so
+      0x7ffffffdd000     0x7ffffffff000    0x22000        0x0 [stack]
+```
+
+And then, if it calls `brk`, it can get more.
+
+Well.. does it call `brk`?
+
+``` shell
+$ (gdb) catch syscall brk
+Catchpoint 1 (syscall 'brk' [12])
+(gdb) c
+Continuing.
+
+Catchpoint 1 (call to syscall brk), __brk (addr=addr@entry=0x0) at ../sysdeps/unix/sysv/linux/x86_64/brk.c:31
+31        __curbrk = newbrk = (void *) INLINE_SYSCALL (brk, 1, addr);
+(gdb) bt
+#0  __brk (addr=addr@entry=0x0) at ../sysdeps/unix/sysv/linux/x86_64/brk.c:31
+#1  0x00007ffff7feb742 in frob_brk () at ../sysdeps/unix/sysv/linux/dl-sysdep.c:36
+#2  _dl_sysdep_start (start_argptr=start_argptr@entry=0x7fffffffce30, dl_main=dl_main@entry=0x7ffff7fd34a0 <dl_main>) at ../elf/dl-sysdep.c:226
+#3  0x00007ffff7fd2ff1 in _dl_start_final (arg=0x7fffffffce30) at rtld.c:506
+#4  _dl_start (arg=0x7fffffffce30) at rtld.c:599
+#5  0x00007ffff7fd2098 in _start () from /lib64/ld-linux-x86-64.so.2
+#6  0x0000000000000001 in ?? ()
+#7  0x00007fffffffd144 in ?? ()
+#8  0x0000000000000000 in ?? ()
+(gdb)
+```
+
+Yes it does! Let’s look at what its `heap` is just when it’s about to exit.
+
+``` shell
+(gdb) catch syscall exit exit_group
+Catchpoint 1 (syscalls 'exit' [60] 'exit_group' [231])
+(gdb) r
+Starting program: /usr/bin/ls
+autosym.py  blowstack      blowstack.o  bss2      bss2.o  bss3.asm  bss.asm  chimera  echidna        gdb-elk.py     hello      hello-dl      hello-dl.o    hello-nolibc.c       hello.o        ifunc-nolibc    Justfile   msg.asm  nodata.asm  nolibc.c  puts.c
+blob.c      blowstack.asm  bss          bss2.asm  bss3    bss3.o    bss.o    dump     entry_point.c  glibc-symbols  hello.asm  hello-dl.asm  hello-nolibc  hello-nolibc-static  hello-pie.asm  ifunc-nolibc.c  libmsg.so  msg.o    nolibc      puts      twothreads
+
+Catchpoint 1 (call to syscall exit_group), __GI__exit (status=status@entry=0) at ../sysdeps/unix/sysv/linux/_exit.c:30
+30            INLINE_SYSCALL (exit_group, 1, status)
+(gdb) info proc mappings
+process 4953
+Mapped address spaces:
+
+          Start Addr           End Addr       Size     Offset objfile
+      0x555555554000     0x555555558000     0x4000        0x0 /usr/bin/ls
+      0x555555558000     0x55555556c000    0x14000     0x4000 /usr/bin/ls
+      0x55555556c000     0x555555575000     0x9000    0x18000 /usr/bin/ls
+      0x555555575000     0x555555577000     0x2000    0x20000 /usr/bin/ls
+      0x555555577000     0x555555578000     0x1000    0x22000 /usr/bin/ls
+      0x555555578000     0x55555559a000    0x22000        0x0 [heap]
+      0x7ffff7af0000     0x7ffff7dd7000   0x2e7000        0x0 /usr/lib/locale/locale-archive
+      0x7ffff7dd7000     0x7ffff7dda000     0x3000        0x0
+      0x7ffff7dda000     0x7ffff7e00000    0x26000        0x0 /usr/lib/libc-2.32.so
+      0x7ffff7e00000     0x7ffff7f4d000   0x14d000    0x26000 /usr/lib/libc-2.32.so
+      0x7ffff7f4d000     0x7ffff7f99000    0x4c000   0x173000 /usr/lib/libc-2.32.so
+      0x7ffff7f99000     0x7ffff7f9c000     0x3000   0x1be000 /usr/lib/libc-2.32.so
+      0x7ffff7f9c000     0x7ffff7f9f000     0x3000   0x1c1000 /usr/lib/libc-2.32.so
+      0x7ffff7f9f000     0x7ffff7fa3000     0x4000        0x0
+      0x7ffff7fa3000     0x7ffff7fa5000     0x2000        0x0 /usr/lib/libcap.so.2.47
+      0x7ffff7fa5000     0x7ffff7fa9000     0x4000     0x2000 /usr/lib/libcap.so.2.47
+      0x7ffff7fa9000     0x7ffff7fab000     0x2000     0x6000 /usr/lib/libcap.so.2.47
+      0x7ffff7fab000     0x7ffff7fac000     0x1000     0x7000 /usr/lib/libcap.so.2.47
+      0x7ffff7fac000     0x7ffff7fad000     0x1000     0x8000 /usr/lib/libcap.so.2.47
+      0x7ffff7fad000     0x7ffff7faf000     0x2000        0x0
+      0x7ffff7fcb000     0x7ffff7fce000     0x3000        0x0 [vvar]
+      0x7ffff7fce000     0x7ffff7fd0000     0x2000        0x0 [vdso]
+      0x7ffff7fd0000     0x7ffff7fd2000     0x2000        0x0 /usr/lib/ld-2.32.so
+      0x7ffff7fd2000     0x7ffff7ff3000    0x21000     0x2000 /usr/lib/ld-2.32.so
+      0x7ffff7ff3000     0x7ffff7ffc000     0x9000    0x23000 /usr/lib/ld-2.32.so
+      0x7ffff7ffc000     0x7ffff7ffd000     0x1000    0x2b000 /usr/lib/ld-2.32.so
+      0x7ffff7ffd000     0x7ffff7fff000     0x2000    0x2c000 /usr/lib/ld-2.32.so
+      0x7ffffffdd000     0x7ffffffff000    0x22000        0x0 [stack]
+```
+
+The heap has grown from 0x1000 to 0x22000! That’s 136 KiB.
+
+But here’s an important question. A *very* important question.
+
+A dynamically-linked program is typically made up of a bunch of different pieces of code, who all must share the same stack, the same registers, and the same heap.
+
+For the stack and registers, it’s easy. The System V AMD64 ABI says *exactly* what registers must be used when passing arguments to functions, when returning values from functions, etc. It also says where to put what on the stack so that neither the caller nor the callee step on each other’s toes.
+
+But for the heap, well… it’s not that simple.
+
+Because the heap is pretty much a stack as well. “Allocating on the heap”, when using the `brk` syscall, just means “moving the program break”, just like “allocating on the stack” means “changing the value of `%rsp`”.
+
+![stack-vs-heap-brk](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-14/assets/stack-vs-heap-brk~5f9c77f850b863f4.svg)
+
+And so, if some function uses `brk` to allocate some memory, then calls another function that also uses `brk`, and that second function returns a pointer to its newly-allocated memory, there’s a risk that the function could deallocate it accidentally, by restoring the program break to what it was before!
+
+So, how do we get all programs to play nice together?
+
+It’s simple! We don’t *actually* use `brk`.
+
+We let the C library do it.
+
+C programs typically use `malloc` (and friends) rather than `brk` directly.
+
+So when you `malloc` something, the glibc allocator tries to find a place in the heap that’s already reserved. And if there isn’t any, it can use `brk` to reserve more.
+
+![stack-vs-heap-malloc](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-14/assets/stack-vs-heap-malloc~e65ffc62a71f5919.svg)
+
+And when a block of memory is freed, it doesn’t *necessarily* use `brk` to actually free up that memory. It just makes a note that this block is now free, and it can be re-used for future allocations.
+
+So the scenario from before is no issue! `malloc` is in charge of setting the program break (`brk`), and it handles all allocations and deallocations on the heap.
+
+As long as all the bits of codes (shared libraries) used by a program all let glibc’s memory allocator deal with `brk`, there are no conflicts, and everything works great.
+
+Which is *exactly* what `ptmalloc_init` is trying to assess here:
+
+``` c
+  /* In case this libc copy is in a non-default namespace, never use brk.
+     Likewise if dlopened from statically linked program.  */
+  Dl_info di;
+  struct link_map *l;
+
+  if (_dl_open_hook != NULL
+      || (_dl_addr (ptmalloc_init, &di, &l, NULL) != 0
+          && l->l_ns != LM_ID_BASE))
+    __morecore = __failing_morecore;
+```
+
+See, if a program links directly against glibc, it’s fair to assume that `ptmalloc` has full control of the program break: it can use `brk` as it pleases.
+
+But if glibc was somehow loaded dynamically, or something else fishy is going on, it’s entirely possible that `brk` is controlled by *some other piece of code*, and if glibc started messing with it haphazardly, chaos would ensue.
+
+So, if it detects a fishy scenario, it sets `__morecore`, its `brk` helper, to `__failing_morecore`, which pretty much simulates failures of the `brk` system call, making it behave as if we already ran out of heap!
+
+``` c
+#define MORECORE_FAILURE 0
+
+static void *
+__failing_morecore (ptrdiff_t d)
+{
+  return (void *) MORECORE_FAILURE;
+}
+```
+
+Otherwise, it uses `__default_morecore`, which just calls the `brk` syscall:
+
+``` c
+/* Allocate INCREMENT more bytes of data space,
+   and return the start of data space, or NULL on errors.
+   If INCREMENT is negative, shrink data space.  */
+void *
+__default_morecore (ptrdiff_t increment)
+{
+  void *result = (void *) __sbrk (increment);
+  if (result == (void *) -1)
+    return NULL;
+
+  return result;
+}
+libc_hidden_def (__default_morecore)
+```
+
+> **Cool Bear's hot tip**
+>
+> There is only one `brk` system call: it takes the address of the program break you want to set, and returns the new address of the program break.
+>
+> In case of failures, it just returns the old program break. Passing the address `0x0` will always fail, so it can be used to query the current program break.
+>
+> The C library, however (well, the Single Unix Specification - it’s been deprecated in POSIX.1-2001), makes everything more confusing by having *two* functions.
+>
+> The `brk()` function sets the location of the program break, and returns zero on success. The `sbrk()` function takes a *delta*, so that it can increment or decrement the program break, and returns the *previous* program break, or `(void*) -1` in case of failures.
+>
+> This was presumably to make it easier to use `sbrk()` in application code, since the *previous* program break would point to the start of the newly-allocated memory block.
+
+Which brings us to our next question: if `ptmalloc` decides that it cannot use `brk`, then what is it going to use?
+
+Well, `mmap` of course! It’s what we’ve been using in `elk` all along.
+
+`mmap` is a perfectly fine way to ask the kernel for some memory. It just has higher overhead, because instead of just keeping track of the “end of the heap”, the kernel has to keep track of which regions are mapped, whether they correspond to a file descriptor, their permissions, whether they ought to be be merged, etc.
+
+And now, let’s get back to trying to run `/bin/ls` with `elk`.
+
+## Trying to run /bin/ls with elk
+
+Let’s get back to our GDB session:
+
+``` shell
+$ gdb --quiet --args ./target/debug/elk run /bin/ls
+(gdb) r
+...
+(gdb) autosym
+...
+(gdb) bt
+#0  0x0000000000000000 in ?? ()
+#1  0x00007ffff78c6058 in __GI__dl_addr (address=0x7ffff7815eb0 <ptmalloc_init>, info=0x7fffffffbdd0, mapp=0x7fffffffbdc0, symbolp=0x0) at dl-addr.c:131
+#2  0x00007ffff7815e89 in ptmalloc_init () at arena.c:303
+#3  0x00007ffff7817fe5 in ptmalloc_init () at arena.c:291
+#4  malloc_hook_ini (sz=34, caller=<optimized out>) at hooks.c:31
+#5  0x00007ffff77c234f in set_binding_values (domainname=0x7ffff7d329b1 "coreutils", dirnamep=0x7fffffffbe78, codesetp=0x0) at bindtextdom.c:202
+#6  0x00007ffff77c25f5 in set_binding_values (codesetp=0x0, dirnamep=0x7fffffffbe78, domainname=<optimized out>) at bindtextdom.c:82
+#7  __bindtextdomain (domainname=<optimized out>, dirname=<optimized out>) at bindtextdom.c:320
+#8  0x00007ffff7d1d0f3 in ?? ()
+#9  0x00007ffff77b4152 in __libc_start_main (main=0x7ffff7d1d0a0, argc=1, argv=0x7fffffffbff8, init=<optimized out>, fini=<optimized out>, rtld_fini=<optimized out>, stack_end=0x7fffffffbfe8) at ../csu/libc-start.c:314
+#10 0x00007ffff7d1eb4e in ?? ()
+```
+
+We’ve seen that `ptmalloc_init` calls `_dl_addr` to determine how it’s been loaded exactly. But why do we end up jumping to `0x0`?
+
+Let’s see what’s happening in frame 1:
+
+``` shell
+(gdb) frame 1
+#1  0x00007ffff78c6058 in __GI__dl_addr (address=0x7ffff7815eb0 <ptmalloc_init>, info=0x7fffffffbdd0, mapp=0x7fffffffbdc0, symbolp=0x0) at dl-addr.c:131
+131       __rtld_lock_lock_recursive (GL(dl_load_lock));
+(gdb) x/i $rip
+=> 0x7ffff78c6058 <__GI__dl_addr+56>:   mov    rdi,rbx
+```
+
+Wait, that’s a `mov`, not a `call` - I think we need to disassemble the instruction *right before* \$rip:
+
+``` shell
+(gdb) x/-i $rip
+   0x7ffff78c6051 <__GI__dl_addr+49>:   call   QWORD PTR [r13+0xf88]
+```
+
+There. That’s the one. And it corresponds to this line of code:
+
+``` shell
+(gdb) f
+#1  0x00007ffff78c6058 in __GI__dl_addr (address=0x7ffff7815eb0 <ptmalloc_init>, info=0x7fffffffb430, mapp=0x7fffffffb420, symbolp=0x0) at dl-addr.c:131
+131       __rtld_lock_lock_recursive (GL(dl_load_lock));
+```
+
+But wait. Let’s look at the address of this frame: `0x00007ffff78c6058`. Where does it come from?
+
+``` shell
+(gdb) dig 0x00007ffff78c6058
+Mapped r-xp from File("/usr/lib/libc-2.32.so")
+(Map range: 00007ffff77b2000..00007ffff78ff000, 1 MiB total)
+Object virtual address: 000000000013a058
+At section ".text" + 11289
+```
+
+`libc-2.32.so`, okay.
+
+And the address it’s trying to call, what is it?
+
+``` shell
+(gdb) p/x $r13 + 0xf88
+$2 = 0x7ffff7c76f88
+(gdb) dig 0x7ffff7c76f88
+Mapped rw-p from File("/usr/lib/ld-2.32.so")
+(Map range: 00007ffff7c75000..00007ffff7c78000, 12 KiB total)
+Object virtual address: 000000000002df88
+At section ".data" + 3976 (0xf88)
+```
+
+It’s.. in `ld-2.32.so`, okay. And it’s null, right?
+
+``` shell
+(gdb) x/xg $r13 + 0xf88
+0x7ffff7c76f88: 0x0000000000000000
+```
+
+Yeah, it’s null. And what is it supposed to be?
+
+``` shell
+$ objdump -DR /usr/lib/ld-2.32.so | grep 2df88 | head -1
+    34f2:       48 89 05 8f aa 02 00    mov    QWORD PTR [rip+0x2aa8f],rax        # 2df88 <_rtld_global@@GLIBC_PRIVATE+0xf88>
+```
+
+It’s supposed to be… `0xf88` into `_rtld_global@@GLIBC_PRIVATE`:
+
+``` shell
+$ nm -D /usr/lib/ld-2.32.so | grep 2d000
+000000000002d000 D _rtld_global@@GLIBC_PRIVATE
+```
+
+Yup. And it just happens to be zero here.
+
+So what is this `_rtld_global` symbol? Let’s try running `/bin/ls` on its own and stepping through `_dl_addr`
+
+``` shell
+$ gdb --quiet /bin/ls
+Reading symbols from /bin/ls...
+(No debugging symbols found in /bin/ls)
+(gdb) break _dl_addr
+Function "_dl_addr" not defined.
+Make breakpoint pending on future shared library load? (y or [n]) y
+Breakpoint 1 (_dl_addr) pending.
+(gdb) r
+Starting program: /usr/bin/ls
+
+Breakpoint 1, __GI__dl_addr (address=address@entry=0x7ffff7e63eb0 <ptmalloc_init>, info=info@entry=0x7fffffffc920, mapp=mapp@entry=0x7fffffffc910, symbolp=symbolp@entry=0x0) at dl-addr.c:126
+126     {
+(gdb) step
+127       const ElfW(Addr) addr = DL_LOOKUP_ADDRESS (address);
+(gdb) step
+131       __rtld_lock_lock_recursive (GL(dl_load_lock));
+(gdb) x/8i \$rip
+=> 0x7ffff7f1403a <__GI__dl_addr+26>:   sub    rsp,0x28
+   0x7ffff7f1403e <__GI__dl_addr+30>:   mov    r13,QWORD PTR [rip+0x87d7b]        # 0x7ffff7f9bdc0
+   0x7ffff7f14045 <__GI__dl_addr+37>:   mov    QWORD PTR [rsp+0x8],rcx
+   0x7ffff7f1404a <__GI__dl_addr+42>:   lea    rdi,[r13+0x988]
+   0x7ffff7f14051 <__GI__dl_addr+49>:   call   QWORD PTR [r13+0xf88]
+   0x7ffff7f14058 <__GI__dl_addr+56>:   mov    rdi,rbx
+   0x7ffff7f1405b <__GI__dl_addr+59>:   call   0x7ffff7e00530 <_dl_find_dso_for_object@plt>
+   0x7ffff7f14060 <__GI__dl_addr+64>:   test   rax,rax
+```
+
+Let’s set a breakpoint riiiiight before that call:
+
+``` shell
+(gdb) break *0x7ffff7f14051
+Breakpoint 2 at 0x7ffff7f14051: file dl-addr.c, line 131.
+(gdb) c
+Continuing.
+
+Breakpoint 2, 0x00007ffff7f14051 in __GI__dl_addr (address=address@entry=0x7ffff7e63eb0 <ptmalloc_init>, info=info@entry=0x7fffffffc920, mapp=mapp@entry=0x7fffffffc910, symbolp=symbolp@entry=0x0) at dl-addr.c:131
+131       __rtld_lock_lock_recursive (GL(dl_load_lock));
+(gdb) x/i $rip
+=> 0x7ffff7f14051 <__GI__dl_addr+49>:   call   QWORD PTR [r13+0xf88]
+```
+
+Perfect. Now, what address are we calling exactly?
+
+``` shell
+(gdb) p/x $r13+0xf88
+$1 = 0x7ffff7ffdf88
+(gdb) x/xg $r13+0xf88
+0x7ffff7ffdf88 <_rtld_global+3976>:     0x00007ffff7fd20e0
+```
+
+Interesting, interesting. It’s definitely not null this time.
+
+But what is it?
+
+``` shell
+(gdb) info sym 0x00007ffff7fd20e0
+rtld_lock_default_lock_recursive in section .text of /lib64/ld-linux-x86-64.so.2
+```
+
+> **Cool bear says:**
+>
+> Whoa. WHOA! It’s a function provided by `ld-linux-x86-64.so.2`!
+
+> **Amos says:**
+>
+> Yes!
+
+> **Cool bear says:**
+>
+> glibc’s dynamic linker slash loader!
+
+> **Amos says:**
+>
+> Yes!!
+
+Well yeah! It’s freaking `dladdr`, what did you expect?
+
+`ld-linux.so`, the loader, loads the binary, `ls`, which is itself linked against `libc.so`, which ends up calling back into `ld.so`, which is really what `ld-linux.so` (which is a symlink) points to!
+
+Which makes sense! Because `ld-linux.so` is the dynamic loader, so it’s the one in charge of looking up symbols. If we want our programs to be able to look up symbols at runtime, they need to be able to call *back into the loader*.
+
+If we did lazy loading, like we said we wouldn’t in [Part 9](https://fasterthanli.me/series/making-our-own-executable-packer/part-9), we’d set the address of one of `elk`’s function into the GOT (Global Offset Table), so that the first time a function like `printf@plt` is called, control goes back to the loader, we can resolve the function, overwrite the GOT, and call the actual function.
+
+But we *don’t* do lazy loading, we resolve everything ahead of time, for simplicity. Something we cannot really do here for `dladdr`, because we can’t know ahead of time which symbol is going to be looked up with it.
+
+Heck, the name passed to `dladdr` might be a string provided by the user! It might be randomly generated! It might be received over the network! We just cannot tell.
+
+But to be honest, implementing `dladdr` within `elk` doesn’t sound too hard. The problem is: it goes deeper. Way deeper.
+
+We mentioned that `ls` links against `libc.so`, which in turns links against `ld.so`, which is literally the same file as `ld-linux.so`.
+
+So `ld-linux.so` is *already loaded* into the process’s memory space, even though it wasn’t the loader. And `ld-linux.so`, aka `ld.so`, *already provides* an implementation of `dladdr`, whose internal name is `_dl_addr`.
+
+But it relies on some internal state, defined here:
+
+``` c
+/* This is the structure which defines all variables global to ld.so
+   (except those which cannot be added for some reason).  */
+struct rtld_global _rtld_global =
+  {
+    /* Get architecture specific initializer.  */
+#include <dl-procruntime.c>
+    /* Generally the default presumption without further information is an
+     * executable stack but this is not true for all platforms.  */
+    ._dl_stack_flags = DEFAULT_STACK_PERMS,
+#ifdef _LIBC_REENTRANT
+    ._dl_load_lock = _RTLD_LOCK_RECURSIVE_INITIALIZER,
+    ._dl_load_write_lock = _RTLD_LOCK_RECURSIVE_INITIALIZER,
+#endif
+    ._dl_nns = 1,
+    ._dl_ns =
+    {
+#ifdef _LIBC_REENTRANT
+      [LM_ID_BASE] = { ._ns_unique_sym_table
+           = { .lock = _RTLD_LOCK_RECURSIVE_INITIALIZER } }
+#endif
+    }
+  };
+```
+
+…which was never initialized in the first place! Either because our loader is incomplete, or because `ld-linux.so` only initializes it when it’s loaded *by the kernel* as an executable through its entry point, not as a dynamic library.
+
+But say we somehow manage to either fix up our loader or fake that data structure somehow, the disassembly for `__GI__dl_addr` (the *real* internal name of `_dl_addr`, itself an internal name for `dladdr`) has further bad news:
+
+``` shell
+133       struct link_map *l = _dl_find_dso_for_object (addr);
+=> 0x00007ffff78c6058 <+56>:    mov    rdi,rbx
+   0x00007ffff78c605b <+59>:    call   0x7ffff77b2530
+```
+
+uwu, what’s this? `_dl_find_dso_for_object`? This also looks like something that should be provided by the dynamic loader itself.
+
+Where is it exactly?
+
+``` shell
+(gdb) dig 0x7ffff77b2530
+Mapped r-xp from File("/usr/lib/libc-2.32.so")
+(Map range: 00007ffff77b2000..00007ffff78ff000, 1 MiB total)
+Object virtual address: 0000000000026530
+At section ".plt.sec" + 480 (0x1e0)
+```
+
+Oh.. oh no…
+
+``` shell
+(gdb) x/8i 0x7ffff77b2530
+   0x7ffff77b2530:      endbr64
+   0x7ffff77b2534:      bnd jmp QWORD PTR [rip+0x19b76d]        # 0x7ffff794dca8
+   0x7ffff77b253b:      nop    DWORD PTR [rax+rax*1+0x0]
+   0x7ffff77b2540:      endbr64
+   0x7ffff77b2544:      bnd jmp QWORD PTR [rip+0x19b765]        # 0x7ffff794dcb0
+   0x7ffff77b254b:      nop    DWORD PTR [rax+rax*1+0x0]
+   0x7ffff77b2550:      endbr64
+   0x7ffff77b2554:      bnd jmp QWORD PTR [rip+0x19b75d]        # 0x7ffff794dcb8
+```
+
+> **Cool bear says:**
+>
+> Wait a minute… `plt.sec`… there’s a *second* PLT?
+
+> **Amos says:**
+>
+> Apparently so, yes.
+
+So yeah. Turns out, when you want to make an ELF object that’s a dynamic loader, and an executable, and also a library, but can also be linked statically with other code to make mostly-static executables, you have to use a couple tricks.
+
+And this part right there blew my mind, and I hope it blows yours too.
+
+## Not so static PIE
+
+Let’s make a simple C program.
+
+``` c
+// in `samples/what.c`
+
+#include <stdio.h>
+
+int main() {
+  printf("What?\n");
+  return 0;
+}
+```
+
+And build it, and run it:
+
+``` shell
+$ gcc what.c -o what
+$ ./what
+What?
+```
+
+What’s in there?
+
+``` shell
+$ file ./what
+./what: ELF 64-bit LSB pie executable, x86-64, version 1 (SYSV),
+        dynamically linked,
+        interpreter /lib64/ld-linux-x86-64.so.2,
+        BuildID[sha1]=5ffdcb3220766fe206a7842e86874eb6ce545be4,
+        for GNU/Linux 3.2.0, with debug_info, not stripped
+```
+
+(Newlines added for readability).
+
+Okay, it’s dynamically-linked, it relies on `/lib64/ld-linux-x86-64.so.2`, glibc’s dynamic loader (or dynamic linker, I know, words are confusing).
+
+So obviously, it has relocations:
+
+``` shell
+$ readelf -Wr ./what
+
+Relocation section '.rela.dyn' at offset 0x480 contains 8 entries:
+    Offset             Info             Type               Symbol's Value  Symbol's Name + Addend
+0000000000003de8  0000000000000008 R_X86_64_RELATIVE                         1130
+0000000000003df0  0000000000000008 R_X86_64_RELATIVE                         10e0
+0000000000004028  0000000000000008 R_X86_64_RELATIVE                         4028
+0000000000003fd8  0000000100000006 R_X86_64_GLOB_DAT      0000000000000000 _ITM_deregisterTMCloneTable + 0
+0000000000003fe0  0000000300000006 R_X86_64_GLOB_DAT      0000000000000000 __libc_start_main@GLIBC_2.2.5 + 0
+0000000000003fe8  0000000400000006 R_X86_64_GLOB_DAT      0000000000000000 __gmon_start__ + 0
+0000000000003ff0  0000000500000006 R_X86_64_GLOB_DAT      0000000000000000 _ITM_registerTMCloneTable + 0
+0000000000003ff8  0000000600000006 R_X86_64_GLOB_DAT      0000000000000000 __cxa_finalize@GLIBC_2.2.5 + 0
+
+Relocation section '.rela.plt' at offset 0x540 contains 1 entry:
+    Offset             Info             Type               Symbol's Value  Symbol's Name + Addend
+0000000000004018  0000000200000007 R_X86_64_JUMP_SLOT     0000000000000000 puts@GLIBC_2.2.5 + 0
+```
+
+Which is fine! Because `ld-linux.so` loads it, and `ld-linux.so` knows about relocations, so it can apply them before jumping to `what`’s entry point.
+
+Everything makes sense so far.
+
+Now let’s make it into a `static` executable:
+
+``` shell
+$ gcc -static what.c -o what
+$ ./what
+What?
+```
+
+And look at it:
+
+``` shell
+$ file ./what
+./what: ELF 64-bit LSB executable, x86-64, version 1 (GNU/Linux),
+        statically linked,
+        BuildID[sha1]=49d2f27ea57f15fce13125574ff80f1a0f14b22d,
+        for GNU/Linux 3.2.0, with debug_info, not stripped
+```
+
+Okay! This time it does *not* have an interpreter, so that means it cannot have relocations, right?
+
+In fact, if we look at the program headers:
+
+``` shell
+$ readelf -Wl ./what
+
+Elf file type is EXEC (Executable file)
+Entry point 0x401cc0
+There are 8 program headers, starting at offset 64
+
+Program Headers:
+  Type           Offset   VirtAddr           PhysAddr           FileSiz  MemSiz   Flg Align
+  LOAD           0x000000 0x0000000000400000 0x0000000000400000 0x000488 0x000488 R   0x1000
+  LOAD           0x001000 0x0000000000401000 0x0000000000401000 0x080a7d 0x080a7d R E 0x1000
+  LOAD           0x082000 0x0000000000482000 0x0000000000482000 0x0275d0 0x0275d0 R   0x1000
+  LOAD           0x0a9fe0 0x00000000004aafe0 0x00000000004aafe0 0x005330 0x006b60 RW  0x1000
+  NOTE           0x000200 0x0000000000400200 0x0000000000400200 0x000044 0x000044 R   0x4
+  TLS            0x0a9fe0 0x00000000004aafe0 0x00000000004aafe0 0x000020 0x000060 R   0x8
+  GNU_STACK      0x000000 0x0000000000000000 0x0000000000000000 0x000000 0x000000 RW  0x10
+  GNU_RELRO      0x0a9fe0 0x00000000004aafe0 0x00000000004aafe0 0x003020 0x003020 R   0x1
+```
+
+We can see that they start at `0x400000`, which is a perfectly fine base address for an executable.
+
+Now let’s make it a `static-pie`.
+
+``` shell
+$ gcc -static-pie what.c -o what
+$ ./what
+What?
+```
+
+And look at it:
+
+``` shell
+$ file ./what
+./what: ELF 64-bit LSB pie executable, x86-64, version 1 (GNU/Linux),
+        dynamically linked,
+        BuildID[sha1]=66e2e1cf57109fb9f9901076951aed16d7c4cb54,
+        for GNU/Linux 3.2.0, with debug_info, not stripped
+```
+
+Wait, dynamically linked?
+
+``` shell
+$ ldd ./what
+        statically linked
+```
+
+What?
+
+> **Cool bear says:**
+>
+> What?
+
+Wait, so does that mean it has relocations?
+
+``` shell
+$ readelf -Wr ./what | wc -l
+1363
+```
+
+Oh gosh, it does.
+
+What about the fully-static version?
+
+``` shell
+$ gcc -static what.c -o what
+$ readelf -Wr ./what | wc -l
+27
+```
+
+It does too!
+
+…what about `ld-linux.so`?
+
+``` shell
+$ file /lib/ld-2.32.so
+/lib/ld-2.32.so: ELF 64-bit LSB shared object, x86-64, version 1 (SYSV),
+        dynamically linked,
+        BuildID[sha1]=04b6fd252f58f535f90e2d2fc9d4506bdd1f370d, stripped
+$ readelf -Wr /lib/ld-2.32.so | wc -l
+57
+```
+
+It does too! What?
+
+Who processes the relocations for `ld-2.32.so`?
+
+## Who relocates the relocators?
+
+Is it the kernel?
+
+We know that when we launch `/bin/ls`, for example, it’s first loaded by the Linux kernel, which knows about the `INTERP` section, and so it also loads `/lib/ld-linux-x86-64.so.2`, and eventually transfers to control to the entry point of `ld-linux.so`.
+
+So, since the kernel knows about interpreters, maybe it also knows about *some* relocations? The simple ones?
+
+Let’s find out.
+
+If the kernel knew about relocations, and applied some of them, then they would be applied when a “static” build of `what.c` starts executing, right? It would happen *before* transferring control to its entry point.
+
+So, let’s find out.
+
+``` shell
+$ gcc -static what.c -o what
+$ readelf -Wr ./what | head
+
+Relocation section '.rela.plt' at offset 0x248 contains 24 entries:
+    Offset             Info             Type               Symbol's Value  Symbol's Name + Addend
+00000000004ae0d0  0000000000000025 R_X86_64_IRELATIVE                        418190
+00000000004ae0c8  0000000000000025 R_X86_64_IRELATIVE                        4182d0
+00000000004ae0c0  0000000000000025 R_X86_64_IRELATIVE                        473120
+00000000004ae0b8  0000000000000025 R_X86_64_IRELATIVE                        418270
+00000000004ae0b0  0000000000000025 R_X86_64_IRELATIVE                        418ca0
+00000000004ae0a8  0000000000000025 R_X86_64_IRELATIVE                        4734b0
+00000000004ae0a0  0000000000000025 R_X86_64_IRELATIVE                        4181d0
+```
+
+Okay, we got a couple relocations here we can check.
+
+Let’s start up `what` under GDB and break as soon as we can, with `starti`, which means “Start the debugged program stopping at the first instruction”.
+
+``` shell
+$ gdb --quiet ./what
+Reading symbols from ./what...
+(gdb) starti
+Starting program: /home/amos/ftl/elf-series/samples/what
+
+Program stopped.
+_start () at ../sysdeps/x86_64/start.S:58
+58      ENTRY (_start)
+```
+
+Great. Now we need to figure out where the relocations above actually are in the memory space of our process.
+
+This should be simple maths, but it can be error-prone so let’s be super careful.
+
+``` shell
+(gdb) info proc mappings
+process 11480
+Mapped address spaces:
+
+          Start Addr           End Addr       Size     Offset objfile
+            0x400000           0x401000     0x1000        0x0 /home/amos/ftl/elf-series/samples/what
+            0x401000           0x482000    0x81000     0x1000 /home/amos/ftl/elf-series/samples/what
+            0x482000           0x4aa000    0x28000    0x82000 /home/amos/ftl/elf-series/samples/what
+            0x4aa000           0x4b1000     0x7000    0xa9000 /home/amos/ftl/elf-series/samples/what
+            0x4b1000           0x4b2000     0x1000        0x0 [heap]
+      0x7ffff7ffa000     0x7ffff7ffd000     0x3000        0x0 [vvar]
+      0x7ffff7ffd000     0x7ffff7fff000     0x2000        0x0 [vdso]
+      0x7ffffffdd000     0x7ffffffff000    0x22000        0x0 [stack]
+```
+
+Let’s compare with our first relocation:
+
+```
+    Offset             Info             Type               Symbol's Value  Symbol's Name + Addend
+00000000004ae0d0  0000000000000025 R_X86_64_IRELATIVE                        418190
+```
+
+Oh, actually there’s no maths at all, because this is a “fully static” build of “what”, so it has a fixed entry point, so it *cannot* be moved around, so the virtual address of a relocation in the process’s address space is the exact same as the “offset” shown by `readelf`.
+
+Very well then, what’s in that first relocation slot?
+
+``` shell
+(gdb) x/xg 0x00000000004ae0d0
+0x4ae0d0:       0x00000000004010de
+```
+
+Ah. That’s not null at all.
+
+What is it even?
+
+> **Cool Bear's hot tip**
+>
+> For the `dig` command below to work, you’ll need to `cargo install --path ./elk` again, since we only recently added support for TLS symbols, and `what` definitely has some.
+
+``` shell
+(gdb) dig 0x00000000004010de
+Mapped r-xp from File("/home/amos/ftl/elf-series/samples/what")
+(Map range: 0000000000401000..0000000000482000, 516 KiB total)
+Object virtual address: 00000000004010de
+At section ".plt" + 190 (0xbe)
+```
+
+Mhhokay, somewhere in the PLT (Program Linkage Table).
+
+Does it look valid code?
+
+```
+(gdb) x/8i 0x00000000004010de
+   0x4010de:    xchg   ax,ax
+   0x4010e0 <__assert_fail_base.cold>:  mov    rdi,QWORD PTR [rsp+0x10]
+   0x4010e5 <__assert_fail_base.cold+5>:        call   0x416d00 <free>
+   0x4010ea <__assert_fail_base.cold+10>:       call   0x4010f4 <abort>
+   0x4010ef <_nl_load_domain.cold>:     call   0x4010f4 <abort>
+   0x4010f4 <abort>:    endbr64
+   0x4010f8 <abort+4>:  push   rbx
+   0x4010f9 <abort+5>:  mov    rbx,QWORD PTR fs:0x10
+```
+
+Not really?
+
+Okay, not much makes sense right now, but let’s keep looking.
+
+Can we check to see if it’s ever written to? Answer, yes: GDB has the `watch` command for that.
+
+If it *is* being relocated after program startup, it’s definitely going to be written to, so:
+
+```
+(gdb) watch *0x00000000004ae0d0
+Hardware watchpoint 1: *0x00000000004ae0d0
+```
+
+And then we continue program execution:
+
+```
+(gdb) c
+Continuing.
+
+Hardware watchpoint 1: *0x00000000004ae0d0
+
+Old value = 4198622
+New value = 4411504
+0x0000000000402631 in __libc_start_main ()
+```
+
+AhAH! Caught in the act!!!
+
+Let’s see here… the old value is…
+
+```
+(gdb) dig 4198622
+Mapped r-xp from File("/home/amos/ftl/elf-series/samples/what")
+(Map range: 0000000000401000..0000000000482000, 516 KiB total)
+Object virtual address: 00000000004010de
+At section ".plt" + 190 (0xbe)
+```
+
+Yeah, same as before. And the new value is?
+
+``` shell
+(gdb) dig 4411504
+Mapped r-xp from File("/home/amos/ftl/elf-series/samples/what")
+(Map range: 0000000000401000..0000000000482000, 516 KiB total)
+Object virtual address: 0000000000435070
+At section ".text" + 212880 (0x33f90)
+At symbol "__strchr_avx2" + 0 (0x0)
+```
+
+Ohhhhhhhhhhhh!!!! `strchr`!
+
+> **Cool bear says:**
+>
+> Better! The [AVX2](https://en.wikipedia.org/wiki/Advanced_Vector_Extensions#Advanced_Vector_Extensions_2) variant of `strchr`!
+
+Righhhhhhht. Right right right. This is what `IRELATIVE` relocations do. Hey, it’s been a while - no judgement.
+
+Although everything is statically linked, glibc is *still* trying to give us the fastest available variants of some functions.
+
+And an `IRELATIVE` relocation is a perfectly fine mechanism to pick a function variant at runtime! Why reinvent the wheel? Just do it the same as a dynamically linked executable.
+
+So in fact those addresses on the right:
+
+``` shell
+$ readelf -Wr ./what | head
+
+Relocation section '.rela.plt' at offset 0x248 contains 24 entries:
+    Offset             Info             Type               Symbol's Value  Symbol's Name + Addend
+00000000004ae0d0  0000000000000025 R_X86_64_IRELATIVE                        418190 👈
+00000000004ae0c8  0000000000000025 R_X86_64_IRELATIVE                        4182d0 👈
+00000000004ae0c0  0000000000000025 R_X86_64_IRELATIVE                        473120 👈
+00000000004ae0b8  0000000000000025 R_X86_64_IRELATIVE                        418270
+00000000004ae0b0  0000000000000025 R_X86_64_IRELATIVE                        418ca0
+00000000004ae0a8  0000000000000025 R_X86_64_IRELATIVE                        4734b0
+00000000004ae0a0  0000000000000025 R_X86_64_IRELATIVE                        4181d0
+```
+
+Are just selector functions!
+
+``` shell
+(gdb) info sym 0x418190
+strchr_ifunc in section .text of /home/amos/ftl/elf-series/samples/what
+(gdb) info sym 0x4182d0
+strlen_ifunc in section .text of /home/amos/ftl/elf-series/samples/what
+(gdb) info sym 0x473120
+strspn_ifunc in section .text of /home/amos/ftl/elf-series/samples/what
+```
+
+Of course for `IRELATIVE` relocations to work, *someone* has to call those functions, and the kernel sure doesn’t do it (can you imagine? if the kernel called into userland just to load an executable? yeesh).
+
+So what do we do? We just embed a bit of the dynamic loader in our static executable! What’s the harm?
+
+``` shell
+$ gdb --quiet ./what
+Reading symbols from ./what...
+(gdb) break *0x418190
+Breakpoint 1 at 0x418190
+(gdb) r
+Starting program: /home/amos/ftl/elf-series/samples/what
+
+Breakpoint 1, 0x0000000000418190 in strchr_ifunc ()
+(gdb) bt
+#0  0x0000000000418190 in strchr_ifunc ()
+#1  0x000000000040262a in __libc_start_main ()
+#2  0x0000000000401cee in _start () at ../sysdeps/x86_64/start.S:120
+(gdb)
+```
+
+GDB is a little out of its depth here — it’s not able to show us the corresponding sources.
+
+So let’s try it on the actual dynamic loader. After all, it has relocations too!
+
+```
+$ readelf -Wr /lib/ld-linux-x86-64.so.2 | head
+
+Relocation section '.rela.dyn' at offset 0xb98 contains 47 entries:
+    Offset             Info             Type               Symbol's Value  Symbol's Name + Addend
+000000000002c6c0  0000000000000008 R_X86_64_RELATIVE                         120f0
+000000000002c6c8  0000000000000008 R_X86_64_RELATIVE                         136b0
+000000000002c6d0  0000000000000008 R_X86_64_RELATIVE                         c000
+000000000002c6d8  0000000000000008 R_X86_64_RELATIVE                         14ea0
+000000000002c6e0  0000000000000008 R_X86_64_RELATIVE                         17070
+000000000002c6e8  0000000000000008 R_X86_64_RELATIVE                         14670
+000000000002c6f0  0000000000000008 R_X86_64_RELATIVE                         1c0c0
+```
+
+And it doesn’t ask for an interpreter (which.. would be itself, anyway):
+
+```
+$ file /lib/ld-2.32.so
+/lib/ld-2.32.so: ELF 64-bit LSB shared object, x86-64,
+        version 1 (SYSV), dynamically linked,
+        BuildID[sha1]=04b6fd252f58f535f90e2d2fc9d4506bdd1f370d, stripped
+```
+
+So again, *someone* has to process those relocations right?
+
+Well…
+
+``` shell
+$ gdb --quiet --args /lib/ld-linux-x86-64.so.2
+Reading symbols from /lib/ld-linux-x86-64.so.2...
+Reading symbols from /usr/lib/debug/usr/lib/ld-2.32.so.debug...
+(gdb) starti
+Starting program: /usr/lib/ld-linux-x86-64.so.2
+
+Program stopped.
+0x00007ffff7fd2090 in _start ()
+(gdb) info proc mappings
+process 7074
+Mapped address spaces:
+
+          Start Addr           End Addr       Size     Offset objfile
+      0x7ffff7fcb000     0x7ffff7fce000     0x3000        0x0 [vvar]
+      0x7ffff7fce000     0x7ffff7fd0000     0x2000        0x0 [vdso]
+            👇                                             👇             👇
+      0x7ffff7fd0000     0x7ffff7fd2000     0x2000        0x0 /usr/lib/ld-2.32.so
+      0x7ffff7fd2000     0x7ffff7ff3000    0x21000     0x2000 /usr/lib/ld-2.32.so
+      0x7ffff7ff3000     0x7ffff7ffc000     0x9000    0x23000 /usr/lib/ld-2.32.so
+      0x7ffff7ffc000     0x7ffff7fff000     0x3000    0x2b000 /usr/lib/ld-2.32.so
+      0x7ffffffdd000     0x7ffffffff000    0x22000        0x0 [stack]
+```
+
+We can see it was mapped by the kernel at a base address of `0x7ffff7fd0000`, and so if we want to watch for the relocation at offset `0x000000000002c6c0`, that’s what we need to add to it:
+
+```
+(gdb) watch *(0x7ffff7fd0000+0x000000000002c6c0)
+Hardware watchpoint 1: *(0x7ffff7fd0000+0x000000000002c6c0)
+```
+
+And then, well, then…
+
+```
+(gdb) c
+Continuing.
+
+Hardware watchpoint 1: *(0x7ffff7fd0000+0x000000000002c6c0)
+
+Old value = 73968
+New value = -134340368
+elf_dynamic_do_Rela (skip_ifunc=0, lazy=0, nrelative=<optimized out>, relsize=<optimized out>, reladdr=<optimized out>, map=0x7ffff7ffda08 <_rtld_global+2568>) at do-rel.h:111
+111     do-rel.h: No such file or directory.
+(gdb) bt
+#0  elf_dynamic_do_Rela (skip_ifunc=0, lazy=0, nrelative=<optimized out>, relsize=<optimized out>, reladdr=<optimized out>, map=0x7ffff7ffda08 <_rtld_global+2568>) at do-rel.h:111
+#1  _dl_start (arg=0x7fffffffcdf0) at rtld.c:580
+#2  0x00007ffff7fd2098 in _start ()
+```
+
+…then we end up right in the middle of `ld-2.32.so` relocating itself.
+
+Which is a good opportunity to compare our code with the equivalent glibc code, since we *also* implemented relocations. So, this should look very familiar:
+
+``` c
+// in `glibc/elf/do-rel.c`
+
+/* This file may be included twice, to define both
+   `elf_dynamic_do_rel' and `elf_dynamic_do_rela'.  */
+
+#ifdef DO_RELA
+# define elf_dynamic_do_Rel elf_dynamic_do_Rela
+# define Rel    Rela
+# define elf_machine_rel  elf_machine_rela
+# define elf_machine_rel_relative	elf_machine_rela_relative
+#endif
+
+#ifndef DO_ELF_MACHINE_REL_RELATIVE
+# define DO_ELF_MACHINE_REL_RELATIVE(map, l_addr, relative) \
+  elf_machine_rel_relative (l_addr, relative,          \
+          (void *) (l_addr + relative->r_offset))
+#endif
+
+/* Perform the relocations in MAP on the running program image as specified
+   by RELTAG, SZTAG.  If LAZY is nonzero, this is the first pass on PLT
+   relocations; they should be set up to call _dl_runtime_resolve, rather
+   than fully resolved now.  */
+
+auto inline void __attribute__ ((always_inline))
+elf_dynamic_do_Rel (struct link_map *map,
+        ElfW(Addr) reladdr, ElfW(Addr) relsize,
+        __typeof (((ElfW(Dyn) *) 0)->d_un.d_val) nrelative,
+        int lazy, int skip_ifunc)
+{
+  const ElfW(Rel) *r = (const void *) reladdr;
+  const ElfW(Rel) *end = (const void *) (reladdr + relsize);
+  ElfW(Addr) l_addr = map->l_addr;
+# if defined ELF_MACHINE_IRELATIVE && !defined RTLD_BOOTSTRAP
+  const ElfW(Rel) *r2 = NULL;
+  const ElfW(Rel) *end2 = NULL;
+# endif
+
+#if (!defined DO_RELA || !defined ELF_MACHINE_PLT_REL) && !defined RTLD_BOOTSTRAP
+  /* We never bind lazily during ld.so bootstrap.  Unfortunately gcc is
+     not clever enough to see through all the function calls to realize
+     that.  */
+  if (lazy)
+    {
+      /* Doing lazy PLT relocations; they need very little info.  */
+      for (; r < end; ++r)
+# ifdef ELF_MACHINE_IRELATIVE
+  if (ELFW(R_TYPE) (r->r_info) == ELF_MACHINE_IRELATIVE)
+    {
+      if (r2 == NULL)
+        r2 = r;
+      end2 = r;
+    }
+  else
+# endif
+    elf_machine_lazy_rel (map, l_addr, r, skip_ifunc);
+
+# ifdef ELF_MACHINE_IRELATIVE
+      if (r2 != NULL)
+  for (; r2 <= end2; ++r2)
+    if (ELFW(R_TYPE) (r2->r_info) == ELF_MACHINE_IRELATIVE)
+      elf_machine_lazy_rel (map, l_addr, r2, skip_ifunc);
+# endif
+    }
+  else
+#endif
+    {
+      const ElfW(Sym) *const symtab =
+  (const void *) D_PTR (map, l_info[DT_SYMTAB]);
+      const ElfW(Rel) *relative = r;
+      r += nrelative;
+
+#ifndef RTLD_BOOTSTRAP
+      /* This is defined in rtld.c, but nowhere in the static libc.a; make
+   the reference weak so static programs can still link.  This
+   declaration cannot be done when compiling rtld.c (i.e. #ifdef
+   RTLD_BOOTSTRAP) because rtld.c contains the common defn for
+   _dl_rtld_map, which is incompatible with a weak decl in the same
+   file.  */
+# ifndef SHARED
+      weak_extern (GL(dl_rtld_map));
+# endif
+      if (map != &GL(dl_rtld_map)) /* Already done in rtld itself.  */
+# if !defined DO_RELA || defined ELF_MACHINE_REL_RELATIVE
+  /* Rela platforms get the offset from r_addend and this must
+     be copied in the relocation address.  Therefore we can skip
+     the relative relocations only if this is for rel
+     relocations or rela relocations if they are computed as
+     memory_loc += l_addr...  */
+  if (l_addr != 0)
+# else
+  /* ...or we know the object has been prelinked.  */
+  if (l_addr != 0 || ! map->l_info[VALIDX(DT_GNU_PRELINKED)])
+# endif
+#endif
+    for (; relative < r; ++relative)
+      DO_ELF_MACHINE_REL_RELATIVE (map, l_addr, relative);
+
+#ifdef RTLD_BOOTSTRAP
+      /* The dynamic linker always uses versioning.  */
+      assert (map->l_info[VERSYMIDX (DT_VERSYM)] != NULL);
+#else
+      if (map->l_info[VERSYMIDX (DT_VERSYM)])
+#endif
+  {
+    const ElfW(Half) *const version =
+      (const void *) D_PTR (map, l_info[VERSYMIDX (DT_VERSYM)]);
+
+    for (; r < end; ++r)
+      {
+#if defined ELF_MACHINE_IRELATIVE && !defined RTLD_BOOTSTRAP
+        if (ELFW(R_TYPE) (r->r_info) == ELF_MACHINE_IRELATIVE)
+    {
+      if (r2 == NULL)
+        r2 = r;
+      end2 = r;
+      continue;
+    }
+#endif
+
+        ElfW(Half) ndx = version[ELFW(R_SYM) (r->r_info)] & 0x7fff;
+        elf_machine_rel (map, r, &symtab[ELFW(R_SYM) (r->r_info)],
+             &map->l_versions[ndx],
+             (void *) (l_addr + r->r_offset), skip_ifunc);
+      }
+
+#if defined ELF_MACHINE_IRELATIVE && !defined RTLD_BOOTSTRAP
+    if (r2 != NULL)
+      for (; r2 <= end2; ++r2)
+        if (ELFW(R_TYPE) (r2->r_info) == ELF_MACHINE_IRELATIVE)
+    {
+      ElfW(Half) ndx
+        = version[ELFW(R_SYM) (r2->r_info)] & 0x7fff;
+      elf_machine_rel (map, r2,
+           &symtab[ELFW(R_SYM) (r2->r_info)],
+           &map->l_versions[ndx],
+           (void *) (l_addr + r2->r_offset),
+           skip_ifunc);
+    }
+#endif
+  }
+#ifndef RTLD_BOOTSTRAP
+      else
+  {
+    for (; r < end; ++r)
+# ifdef ELF_MACHINE_IRELATIVE
+      if (ELFW(R_TYPE) (r->r_info) == ELF_MACHINE_IRELATIVE)
+        {
+    if (r2 == NULL)
+      r2 = r;
+    end2 = r;
+        }
+      else
+# endif
+        elf_machine_rel (map, r, &symtab[ELFW(R_SYM) (r->r_info)], NULL,
+             (void *) (l_addr + r->r_offset), skip_ifunc);
+
+# ifdef ELF_MACHINE_IRELATIVE
+    if (r2 != NULL)
+      for (; r2 <= end2; ++r2)
+        if (ELFW(R_TYPE) (r2->r_info) == ELF_MACHINE_IRELATIVE)
+    elf_machine_rel (map, r2, &symtab[ELFW(R_SYM) (r2->r_info)],
+         NULL, (void *) (l_addr + r2->r_offset),
+         skip_ifunc);
+# endif
+  }
+#endif
+    }
+}
+
+#undef elf_dynamic_do_Rel
+#undef Rel
+#undef elf_machine_rel
+#undef elf_machine_rel_relative
+#undef DO_ELF_MACHINE_REL_RELATIVE
+#undef DO_RELA
+```
+
+No? It doesn’t look familiar?
+
+> **Cool bear says:**
+>
+> Uhhh….
+
+Well, let’s just be thankful we didn’t pick C for this project. And that our loader doesn’t need to understand versioning, and run in an as many scenarios as the glibc loader.
+
+Anyway, the smoking gun was in `_dl_start` all along:
+
+``` c
+  if (bootstrap_map.l_addr || ! bootstrap_map.l_info[VALIDX(DT_GNU_PRELINKED)])
+    {
+      /* Relocate ourselves so we can do normal function calls and
+   data access using the global offset table.  */
+
+      ELF_DYNAMIC_RELOCATE (&bootstrap_map, 0, 0, 0);
+    }
+  bootstrap_map.l_relocated = 1;
+```
+
+Which is *freaking fascinating*, if you ask me.
+
+Because up until now, we’ve sorta had two mental categories in which executables fell:
+
+- Either they’re *statically linked*, and the kernel can map them into memory and immediately jump to the entry point with no relocations to worry about.
+- Or they’re *dynamically linked*, and they *need* an interpreter, which the kernel *also* needs to map in memory and then jump to the intepreter’s entry point so that it can perform the required relocations.
+
+But that turned out to be a little simplistic didn’t it!
+
+Because it’s not like there’s a binary flag in the ELF format that says “static” or “dynamic”. All of the following things are involved in determining how an executable works:
+
+- Does it have an `INTERP` section?
+- Does its first `LOAD` section start at `0x0`?
+- Does it contain relocations?
+- Does it have `NEEDED` entries in its `DYNAMIC` section?
+
+And some of these are connected, but there’s nothing that really forces all of these to be in a certain combination.
+
+For example, you can have `NEEDED` entries in the `DYNAMIC` section: the kernel is not going to anything with it! Unless you have an interpreter that specifically looks for those sections and does something with them, nothing’s going to happen!
+
+Similarly, if you have an executable whose LOAD sections start at `0x0`, but its code is not relocatable, well, things are going to get complicated.
+
+On some level, it’s intuitive — “of course, we need 0x0 to be NULL!”. But turns out, no we don’t, because *the bit-representation of NULL is implementation-defined*, see [Kate’s excellent thread about NULL in C](https://twitter.com/thingskatedid/status/1293476425454895105).
+
+So our intuition is wrong… well surely `mmap` prevents us from mapping `0x0` then? Because gcc is *definitely* using `0x0` as a bit representation for NULL, at least by default.
+
+Let’s look at `mmap`’s man page:
+
+> ### Notes
+>
+> The portable way to create a mapping is to specify addr as 0 (NULL), and omit MAP_FIXED from flags. In this case, the system chooses the address for the mapping; the address is chosen so as not to conflict with any existing mapping, and will not be 0. If the MAP_FIXED flag is specified, and addr is 0 (NULL), then the mapped address will be 0 (NULL).
+
+On the surface it looks fishy, but no, it says if we try to map 0x0, it’ll return 0x0, which is what it would do if it succeeded.
+
+So… we can map `0x0`?
+
+``` c
+// in `mapzero.c`
+
+#include <stdio.h>
+#include <sys/mman.h>
+
+int main() {
+    unsigned long long *ptr = mmap(
+        0x0, 0x1000,
+        PROT_READ | PROT_WRITE,
+        MAP_FIXED | MAP_ANONYMOUS | MAP_PRIVATE,
+        0, 0);
+    printf("Writing to 0x0...\n");
+    *ptr = 0xfeedface;
+    printf("Reading to 0x0...\n");
+    printf("*ptr = %lx\n", *ptr);
+    return 0;
+}
+```
+
+``` shell
+$ gcc -static mapzero.c -o mapzero
+$ ./mapzero
+Writing to 0x0...
+[1]    31049 segmentation fault  ./mapzero
+```
+
+Mhhh, no we can’t? Let’s check `strace` to be sure:
+
+``` shell
+$ strace -e 'trace=mmap' ./mapzero
+mmap(NULL, 4096, PROT_READ|PROT_WRITE, MAP_PRIVATE|MAP_FIXED|MAP_ANONYMOUS, 0, 0) = -1 EPERM (Operation not permitted)
+Writing to 0x0...
+--- SIGSEGV {si_signo=SIGSEGV, si_code=SEGV_MAPERR, si_addr=0xffffffffffffffff} ---
++++ killed by SIGSEGV +++
+[1]    31538 segmentation fault  strace -e 'trace=mmap' ./mapzero
+```
+
+Oh! Not permitted? So that means…
+
+``` shell
+$ sudo ./mapzero
+Writing to 0x0...
+Reading to 0x0...
+*ptr = feedface
+```
+
+Innnteresting.
+
+So, wait, can we actually have an executable that asks to be mapped at `0x0`?
+
+Because by default, GNU ld gives us a base address of `0x400000`:
+
+``` shell
+$ gcc -static what.c -o what
+$ readelf -Wl what | grep VirtAddr -A 4
+  Type           Offset   VirtAddr           PhysAddr           FileSiz  MemSiz   Flg Align
+                                       👇
+  LOAD           0x000000 0x0000000000400000 0x0000000000400000 0x000488 0x000488 R   0x1000
+  LOAD           0x001000 0x0000000000401000 0x0000000000401000 0x080a8d 0x080a8d R E 0x1000
+  LOAD           0x082000 0x0000000000482000 0x0000000000482000 0x0275d0 0x0275d0 R   0x1000
+  LOAD           0x0a9fe0 0x00000000004aafe0 0x00000000004aafe0 0x005330 0x006b60 RW  0x1000
+```
+
+Because, well, because that’s what’s in its default linker script:
+
+``` shell
+$ ld --verbose | grep 400000
+  PROVIDE (__executable_start = SEGMENT_START("text-segment", 0x400000)); . = SEGMENT_START("text-segment", 0x400000) + SIZEOF_HEADERS;
+```
+
+But could we convince GNU ld to use `0x0` as a base address instead?
+
+``` shell
+$ gcc -static what.c -o what -Wl,-Ttext-segment=0x0
+$ readelf -Wl what | grep VirtAddr -A 4
+  Type           Offset   VirtAddr           PhysAddr           FileSiz  MemSiz   Flg Align
+                                       👇
+  LOAD           0x000000 0x0000000000000000 0x0000000000000000 0x000488 0x000488 R   0x1000
+  LOAD           0x001000 0x0000000000001000 0x0000000000001000 0x080a8d 0x080a8d R E 0x1000
+  LOAD           0x082000 0x0000000000082000 0x0000000000082000 0x0275d0 0x0275d0 R   0x1000
+  LOAD           0x0a9fe0 0x00000000000aafe0 0x00000000000aafe0 0x005330 0x006b60 RW  0x1000
+```
+
+Whoa. Whoa!
+
+Does it run?
+
+``` shell
+$ ./what
+[1]    631 segmentation fault  ./what
+```
+
+Oh, right, permission denied.
+
+``` shell
+$ sudo ./what
+What?
+```
+
+Okay, so, see? Pretty much everything we’ve taken for granted was… not that simple. You *can* map to 0x0, in fact, Linus says it’s required by some programs:
+
+> From: Linus Torvalds [torvalds@linux-foundation.org](https://fasterthanli.me/series/making-our-own-executable-packer/torvalds@linux-foundation.org) Newsgroups: fa.linux.kernel Subject: Re: Security fix for remapping of page 0 Date: Wed, 03 Jun 2009 15:08:52 UTC Message-ID: [fa.KTGzEOLON4iMwM7Le/G/y2O3kF4@ifi.uio.no](https://fasterthanli.me/series/making-our-own-executable-packer/fa.KTGzEOLON4iMwM7Le/G/y2O3kF4@ifi.uio.no)
+>
+> On Wed, 3 Jun 2009, Christoph Lameter wrote:
+>
+> > Ok. So what we need to do is stop this toying around with remapping of page 0. The following patch contains a fix and a test program that demonstrates the issue.
+>
+> No, we *need* to be able to map to address zero.
+>
+> It may not be very common, but things like vm86 require it - vm86 mode always starts at virtual address zero.
+>
+> For similar reasons, some other emulation environments will want it too, simply because they want to emulate another environment that has an address space starting at 0, and don’t want to add a base to all address calculations.
+>
+> There are historically even some crazy optimizing compilers that decided that they need to be able to optimize accesses of a pointer across a NULL pointer check, so that they can turn code like
+>
+> ``` c
+> 	if (!ptr)
+>     return;
+> 	val = ptr->member;
+> ```
+>
+> into doing the load early. In order to support that optimization, they have a runtime that always maps some garbage at virtual address zero.
+>
+> (I don’t remember who did this, but my dim memory wants to say it was some HP-UX compiler. Scheduling loads early can be a big deal on especially in-order machines with nonblocking cache accesses).
+>
+> The point being that we do need to support mmap at zero. Not necessarily universally, but it can’t be some fixed “we don’t allow that”.
+>
+> — Linus
+
+So sometimes you really do need to be able to map `0x0`. But it’s kinda dangerous, so you need to be root or have capability `CAP_SYS_RAWIO`.
+
+From `man 7 capabilities`:
+
+> `CAP_SYS_RAWIO`
+>
+> - Perform I/O port operations (iopl(2) and ioperm(2));
+> - access `/proc/kcore`;
+> - employ the `FIBMAP` ioctl(2) operation;
+> - open devices for accessing x86 model-specific registers (MSRs, see msr(4));
+> - update `/proc/sys/vm/mmap_min_addr`;
+> - **create memory mappings at addresses below the value specified by `/proc/sys/vm/mmap_min_addr`;**
+> - map files in `/proc/bus/pci`;
+> - open `/dev/mem` and `/dev/kmem`;
+> - perform various SCSI device commands;
+> - perform certain operations on hpsa(4) and cciss(4) devices;
+> - perform a range of device-specific operations on other devices.
+
+But most commonly, executables that have their first `LOAD` section at `0x0` don’t actually require privileges to be executed — they just don’t fall neatly into one of our two earlier categories, because:
+
+- They *don’t* have an `INTERP` section
+- They *do* have relocations
+
+ie., they self-relocate.
+
+That’s the case for `/lib64/ld-linux-x86-64.so`.
+
+Starts at `0x0`:
+
+``` shell
+$ readelf -Wl /lib64/ld-linux-x86-64.so.2 | grep VirtAddr -A 1
+  Type           Offset   VirtAddr           PhysAddr           FileSiz  MemSiz   Flg Align
+  LOAD           0x000000 0x0000000000000000 0x0000000000000000 0x001060 0x001060 R   0x1000
+```
+
+No interpreter:
+
+```
+$ readelf -Wl /lib64/ld-linux-x86-64.so.2 | grep INTERP
+```
+
+Has relocations:
+
+```
+$ readelf -Wr /lib64/ld-linux-x86-64.so.2 | wc -l
+57
+```
+
+And that’s why `file` and `ldd` give conflicting output — because they’re looking at different things.
+
+`file` looks at the ELF file type - if it’s `DYN`, it’s dynamically-linked!
+
+Whereas `ldd` looks for `NEEDED` dynamic entries. If there’s none, it’s statically-linked!
+
+Well, the truth is, *there is no such thing as a statically-linked or dynamically-linked executable*.
+
+Or, to be more precise, some executables are.. a little bit of both.
+
+Let’s look at some of the comments from the glibc sources:
+
+``` c
+      /* Relocate ourselves so we can do normal function calls and
+   data access using the global offset table.  */
+```
+
+This is just before the “call” to `ELF_DYNAMIC_RELOCATE` (actually a macro).
+
+Shortly after, we have this comment:
+
+``` c
+  /* Now life is sane; we can call functions and access global data.
+     Set up to use the operating system facilities, and find out from
+     the operating system's program loader where to find the program
+     header table in core.  Put the rest of _dl_start into a separate
+     function, that way the compiler cannot put accesses to the GOT
+     before ELF_DYNAMIC_RELOCATE.  */
+```
+
+And that’s one of the *many* reasons the code for glibc is so hard to read.
+
+It is written *extremely carefully* so that some parts can execute *before it was relocated*. Sure, it has inline assembly as well, but as we’ve seen, functions like `elf_dynamic_do_Rel` (and `elf_dynamic_do_Rela`) are written in C!
+
+They’re just inlined, and they avoid accessing any static data, or calling other functions, etc. They avoid *anything* that would require relocations to be processed.
+
+> **Cool bear says:**
+>
+> Okay, okay, that’s amazing and all, we’ve all learned a lot, blah blah.
+>
+> But how are we actually going to run `/bin/ls`?
+
+> **Amos says:**
+>
+> Oh, that’s easy!
+
+## Actually running `/bin/ls`
+
+Well, we’re going to cheat.
+
+If we can’t run glibc’s `_dl_addr` function, why don’t we provide our own?
+
+It’s not like `/bin/ls` *actually* needs to open libraries at runtime anyway. It’s just a trick glibc uses at startup to determine if it’s being dlopen’d or not.
+
+So, we’re gonna replace `_dl_addr` with a version that always fails!
+
+And since I have *time travelling abilities*, we’re also going to replace `exit`. It is *way deep* into glibc internals as well, and is going to cause problems if we don’t nip it in the bud.
+
+All we need our `_dl_addr` to do is return 0, and in the System V AMD64 ABI, we return things in the %rax register, so, with a little help from our neighborhood assembler:
+
+```
+; in `samples/stubs.asm`
+
+_dl_addr:
+    xor rax, rax
+    ret
+
+exit:
+    xor rdi, rdi
+    mov rax, 60
+    syscall
+```
+
+``` shell
+$ nasm -f elf64 stubs.asm
+$ objdump -d stubs.o
+
+stubs.o:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+0000000000000000 <_dl_addr>:
+   0:   48 31 c0                xor    rax,rax
+   3:   c3                      ret
+
+0000000000000004 <exit>:
+   4:   48 31 ff                xor    rdi,rdi
+   7:   b8 3c 00 00 00          mov    eax,0x3c
+   c:   0f 05                   syscall
+```
+
+Wonderful!
+
+So, what’s the easiest way to replace `_dl_addr` and `exit` in libc? Just straight up *overwrite* them in memory.
+
+That’s right. We’ve got the technology.
+
+``` rust
+// in `elk/src/process.rs`
+
+impl Process<Loading> {
+    pub fn patch_libc(&self) {
+        let mut stub_map = std::collections::HashMap::<&str, Vec<u8>>::new();
+
+        stub_map.insert(
+            "_dl_addr",
+            vec![
+                0x48, 0x31, 0xc0, // xor rax, rax
+                0xc3, // ret
+            ],
+        );
+
+        stub_map.insert(
+            "exit",
+            vec![
+                0x48, 0x31, 0xff, // xor rdi, rdi
+                0xb8, 0x3c, 0x00, 0x00, 0x00, // mov eax, 60
+                0x0f, 0x05, // syscall
+            ],
+        );
+
+        let pattern = "/libc-2.";
+        let libc = match self
+            .state
+            .loader
+            .objects
+            .iter()
+            .find(|&obj| obj.path.to_string_lossy().contains(pattern))
+        {
+            Some(x) => x,
+            None => {
+                println!("Warning: could not find libc to patch!");
+                return;
+            }
+        };
+
+        for (name, instructions) in stub_map {
+            let name = Name::owned(name);
+            let sym = match libc.sym_map.get(&name) {
+                Some(sym) => ObjectSym { obj: libc, sym },
+                None => {
+                    println!("expected to find symbol {:?} in {:?}", name, libc.path);
+                    continue;
+                }
+            };
+            println!("Patching libc function {:?} ({:?})", sym.value(), name);
+            unsafe {
+                sym.value().write(&instructions);
+            }
+        }
+    }
+}
+```
+
+And now we just have to call `patch_libc`! It’s implemented against `Process<Loading>`, so we need to call it at this stage:
+
+``` rust
+// in `elk/src/main.rs`
+
+fn cmd_run(args: RunArgs) -> Result<(), Box<dyn Error>> {
+    let mut proc = process::Process::new();
+    let exec_index = proc.load_object_and_dependencies(&args.exec_path)?;
+
+    // 👇
+    proc.patch_libc();
+    let proc = proc.allocate_tls();
+    let proc = proc.apply_relocations()?;
+    let proc = proc.initialize_tls();
+    let proc = proc.adjust_protections()?;
+
+    // etc.
+}
+```
+
+And just like that:
+
+``` shell
+$ cargo build --quiet
+$ ../target/debug/elk run /bin/ls
+Loading "/usr/bin/ls"
+Loading "/usr/lib/libcap.so.2.47"
+Loading "/usr/lib/libc-2.32.so"
+Loading "/usr/lib/ld-2.32.so"
+[1]    3213 segmentation fault  ../target/debug/elk run /bin/ls
+```
+
+…it still doesn’t work.
+
+## ELF initializers
+
+So we forgot about a few things! To err is human.
+
+For example, we forgot that shared libraries *also* have entry points. Well, they have initializers and finalizers.
+
+We’ll care mostly about the initializers here.
+
+Let’s add a field for them in `Object`:
+
+``` rust
+// in `elk/src/process.rs`
+
+#[derive(custom_debug_derive::Debug)]
+pub struct Object {
+    // (other fields omitted)
+
+    #[debug(skip)]
+    pub rels: Vec<delf::Rela>,
+
+    // 👇 new!
+    #[debug(skip)]
+    pub initializers: Vec<delf::Addr>,
+}
+```
+
+And let’s read them in `Process::<Loading>::load_object`:
+
+``` rust
+// in `elk/src/process.rs`
+
+impl Process<Loading> {
+    pub fn load_object<P: AsRef<Path>>(&mut self, path: P) -> Result<usize, LoadError> {
+        let path = path
+            .as_ref()
+            .canonicalize()
+            .map_err(|e| LoadError::IO(path.as_ref().to_path_buf(), e))?;
+
+        // (cut)
+
+        let mut initializers = Vec::new();
+        if let Some(init) = file.dynamic_entry(delf::DynamicTag::Init) {
+            // We'll store all the initializer addresses "already rebased"
+            let init = init + base;
+            initializers.push(init);
+        }
+
+        // That's right, there's *more* initializers hiding in `DYNAMIC`:
+        if let Some(init_array) = file.dynamic_entry(delf::DynamicTag::InitArray) {
+            if let Some(init_array_sz) = file.dynamic_entry(delf::DynamicTag::InitArraySz) {
+                let init_array = base + init_array;
+                let n = init_array_sz.0 as usize / std::mem::size_of::<delf::Addr>();
+
+                let inits: &[delf::Addr] = unsafe { init_array.as_slice(n) };
+                initializers.extend(inits.iter().map(|&init| init + base))
+            }
+        }
+
+        let object = Object {
+            path: path.clone(),
+            base,
+            segments,
+            mem_range,
+            file,
+            syms,
+            sym_map,
+            rels,
+            // 👇 new!
+            initializers,
+        };
+
+        // (cut)
+    }
+}
+```
+
+Next, we’ll introduce a method to get all initializers in the order in which they should be called:
+
+``` rust
+// in `elk/src/process.rs`
+
+impl<S> Process<S>
+where
+    S: ProcessState,
+{
+    fn initializers(&self) -> Vec<(&Object, delf::Addr)> {
+        let mut res = Vec::new();
+
+        for obj in self.state.loader().objects.iter().rev() {
+            res.extend(obj.initializers.iter().map(|&init| (obj, init)));
+        }
+
+        res
+    }
+}
+```
+
+And now, of course, we’ll need to call them.
+
+Apparently, glibc calls them with `argc, argv, envp`:
+
+``` c
+// in `glibc/csu/elf-init.c`
+
+void
+__libc_csu_init (int argc, char **argv, char **envp)
+{
+  /* For dynamically linked executables the preinit array is executed by
+     the dynamic linker (before initializing any shared object).  */
+
+#ifndef LIBC_NONSHARED
+  /* For static executables, preinit happens right before init.  */
+  {
+    const size_t size = __preinit_array_end - __preinit_array_start;
+    size_t i;
+    for (i = 0; i < size; i++)
+      (*__preinit_array_start [i]) (argc, argv, envp);
+  }
+#endif
+
+#if ELF_INITFINI
+  _init ();
+#endif
+
+  const size_t size = __init_array_end - __init_array_start;
+  for (size_t i = 0; i < size; i++)
+      (*__init_array_start [i]) (argc, argv, envp);
+}
+```
+
+…so that’s what we’ll do too!
+
+``` rust
+impl Process<Protected> {
+    pub fn start(self, opts: &StartOptions) -> ! {
+        let exec = &self.state.loader.objects[opts.exec_index];
+        let entry_point = exec.file.entry_point + exec.base;
+
+        let stack = Self::build_stack(opts);
+        let initializers = self.initializers();
+
+        let argc = opts.args.len() as i32;
+        let mut argv: Vec<_> = opts.args.iter().map(|x| x.as_ptr()).collect();
+        argv.push(std::ptr::null());
+        let mut envp: Vec<_> = opts.env.iter().map(|x| x.as_ptr()).collect();
+        envp.push(std::ptr::null());
+
+        unsafe {
+            // new!
+            set_fs(self.state.tls.tcb_addr.0);
+
+            for (_obj, init) in initializers {
+                call_init(init, argc, argv.as_ptr(), envp.as_ptr());
+            }
+
+            jmp(entry_point.as_ptr(), stack.as_ptr(), stack.len())
+        };
+    }
+}
+```
+
+The `call_init` function is just a small, unsafe helper:
+
+``` rust
+// in `elk/src/process.rs`
+
+#[inline(never)]
+unsafe fn call_init(addr: delf::Addr, argc: i32, argv: *const *const i8, envp: *const *const i8) {
+    let init: extern "C" fn(argc: i32, argv: *const *const i8, envp: *const *const i8) =
+        std::mem::transmute(addr.0);
+    init(argc, argv, envp);
+}
+```
+
+Good! Now, does it work?
+
+``` shell
+$ cargo build --quiet
+$ ../target/debug/elk run /bin/ls
+Loading "/usr/bin/ls"
+Loading "/usr/lib/libcap.so.2.47"
+Loading "/usr/lib/libc-2.32.so"
+Loading "/usr/lib/ld-2.32.so"
+Patching libc function 00007f0be1f97020 (_dl_addr)
+Patching libc function 00007f0be1e9cf40 (exit)
+[1]    7579 segmentation fault  ../target/debug/elk run /bin/ls
+```
+
+Of course not! We’ve still got a bit of work.
+
+## More indirect relocations
+
+Remember [Part 9](https://fasterthanli.me/series/making-our-own-executable-packer/part-9)? That’s where we first learned about indirect relocations.
+
+Back then, we *thought* all indirect relocations were of type `R_X86_64_IRELATIVE`. But we were wrong! We were so wrong.
+
+As it turns out, *any* relocation can be indirect, if it points to a symbol of type `IFUNC`.
+
+We don’t even have to look particularly hard to find some. A *bunch* of glibc’s functions are `IFUNC`s, ie. they provide several variants, one of which is selected at runtime:
+
+``` shell
+$ readelf -Ws /lib/libc-2.32.so | grep -E " (mem|strn?)cmp"
+   190: 000000000008fd40    99 IFUNC   GLOBAL DEFAULT   16 strncmp@@GLIBC_2.2.5
+   958: 0000000000090850   101 IFUNC   GLOBAL DEFAULT   16 memcmp@@GLIBC_2.2.5
+  2253: 000000000008f900    85 IFUNC   GLOBAL DEFAULT   16 strcmp@@GLIBC_2.2.5
+```
+
+And `/bin/ls` uses some of those:
+
+``` shell
+$ readelf -Wr /bin/ls | grep -E "(mem|strn?)cmp"
+0000000000022cc0  0000000a00000006 R_X86_64_GLOB_DAT      0000000000000000 strncmp@GLIBC_2.2.5 + 0
+0000000000022e20  0000003600000006 R_X86_64_GLOB_DAT      0000000000000000 memcmp@GLIBC_2.2.5 + 0
+0000000000022e40  0000003a00000006 R_X86_64_GLOB_DAT      0000000000000000 strcmp@GLIBC_2.2.5 + 0
+```
+
+See that? Those aren’t `IRELATIVE` relocations. They’re `GLOB_DAT`!
+
+So, we have to care the type of a symbol a relocation is pointing to.
+
+In `ObjectSym::value`, we can’t *just* return `base + value`. We have to add a special case for `IFUNC` symbols:
+
+``` rust
+// in `elk/src/process.rs`
+
+impl ObjectSym<'_> {
+    fn value(&self) -> delf::Addr {
+        let addr = self.sym.sym.value + self.obj.base;
+        match self.sym.sym.r#type {
+            delf::SymType::IFunc => unsafe {
+                let src: extern "C" fn() -> delf::Addr = std::mem::transmute(addr);
+                src()
+            },
+            _ => addr,
+        }
+    }
+}
+```
+
+But that’s not enough. `/bin/ls` still segfaults under `elk`, this time while running initializers:
+
+``` rust
+(gdb) bt
+#0  0x00007ffff7fc094a in cap_get_bound ()
+#1  0x00007ffff7fc005f in ?? ()
+#2  0x00005555555883fe in elk::process::call_init (addr=..., argc=1, argv=0x55555571c2f0, envp=0x55555571c7d0) at /home/amos/ftl/elf-series/elk/src/process.rs:948
+#3  0x0000555555587e6a in elk::process::Process<elk::process::Protected>::start (self=..., opts=0x7fffffffc760) at /home/amos/ftl/elf-series/elk/src/process.rs:859
+#4  0x00005555555695b9 in elk::cmd_run (args=...) at /home/amos/ftl/elf-series/elk/src/main.rs:105
+#5  0x0000555555568d14 in elk::do_main () at /home/amos/ftl/elf-series/elk/src/main.rs:71
+#6  0x0000555555568b1c in elk::main () at /home/amos/ftl/elf-series/elk/src/main.rs:63
+```
+
+Hunting down those mistakes took me days, so I’ll cut to the chase.
+
+The problem with `IFUNC` selectors is that… they’re just functions. And they can call other functions. And access static data. They don’t assume anything specific about the environment — anything is fair game.
+
+So, for `IFUNC` selectors to run properly, we need to *first* apply all the **direct** relocations, and then all the **indirect** ones.
+
+For that, we’ll add a getter:
+
+``` rust
+// in `elk/src/process.rs`
+
+impl ResolvedSym<'_> {
+    // (other methods omitted)
+
+    fn is_indirect(&self) -> bool {
+        match self {
+            Self::Undefined => false,
+            Self::Defined(sym) => matches!(sym.sym.sym.r#type, delf::SymType::IFunc),
+        }
+    }
+}
+```
+
+An enum to describe our two “relocation groups”:
+
+``` rust
+// in `elk/src/process.rs`
+
+#[derive(Clone, Copy, Debug)]
+pub enum RelocGroup {
+    Direct,
+    Indirect,
+}
+```
+
+Since we’ll need to process relocations in two passes, we’ll adjust `apply_relocation` slightly.
+
+``` rust
+// in `elk/src/process.rs`
+
+
+impl Process<TLSAllocated> {
+    // 👇 now returns an `Option<ObjectRel>`, and lifetime annotations
+    //    are required since we borrow from both `&self` and `&Object`
+    //    (inside of `ObjectRel`).
+    fn apply_relocation<'a>(
+        &self,
+        objrel: ObjectRel<'a>,
+        group: RelocGroup,
+    ) -> Result<Option<ObjectRel<'a>>, RelocationError> {
+        // (cut)
+
+        // perform symbol lookup early
+        let found = match rel.sym {
+            // (cut)
+        };
+
+        // 👇 new!
+        if let RelocGroup::Direct = group {
+            if reltype == RT::IRelative || found.is_indirect() {
+                return Ok(Some(objrel)); // deferred
+            }
+        }
+
+        match reltype {
+            // (cut)
+        }
+
+        // 👇 new!
+        Ok(None) // processed
+    }
+}
+```
+
+This change also requires changing the callsite — but only minimally!
+
+It’s still fairly short and sweet (if you like iterators):
+
+``` rust
+impl Process<TLSAllocated> {
+    pub fn apply_relocations(self) -> Result<Process<Relocated>, RelocationError> {
+        //  👇 now mutable, since we do it in two passes
+        let mut rels: Vec<_> = self
+            .state
+            .loader
+            .objects
+            .iter()
+            .rev()
+            .map(|obj| obj.rels.iter().map(move |rel| ObjectRel { obj, rel }))
+            .flatten()
+            .collect();
+
+        // 👇 first direct, then indirect
+        for &group in &[RelocGroup::Direct, RelocGroup::Indirect] {
+            println!("Applying {:?} relocations ({} left)", group, rels.len());
+            rels = rels
+                .into_iter()
+                //      passing which group we're relocating 👇
+                .map(|objrel| self.apply_relocation(objrel, group))
+                .collect::<Result<Vec<_>, _>>()?
+                .into_iter()
+                .filter_map(|x| x)
+                .collect();
+        }
+
+        let res = Process {
+            state: Relocated {
+                loader: self.state.loader,
+                tls: self.state.tls,
+            },
+        };
+
+        Ok(res)
+    }
+}
+```
+
+Okay, how about now. Surely now we’re done?
+
+> **Cool bear says:**
+>
+> *looks at article estimated reading time* I sure hope so!
+
+``` shell
+$ ../target/debug/elk run /bin/ls
+Loading "/usr/bin/ls"
+Loading "/usr/lib/libcap.so.2.47"
+Loading "/usr/lib/libc-2.32.so"
+Loading "/usr/lib/ld-2.32.so"
+Patching libc function 00007f6d961b2020 (_dl_addr)
+Patching libc function 00007f6d960b7f40 (exit)
+Applying Direct relocations (1838 left)
+Applying Indirect relocations (58 left)
+[1]    18342 segmentation fault  ../target/debug/elk run /bin/ls
+```
+
+Mhh, not quite.
+
+## One last thing
+
+Ever wondered why, in the output of `readelf`, they list the zeroth symbol?
+
+``` shell
+$ readelf -Ws /lib/ld-2.32.so | head
+
+Symbol table '.dynsym' contains 31 entries:
+   Num:    Value          Size Type    Bind   Vis      Ndx Name
+     0: 0000000000000000     0 NOTYPE  LOCAL  DEFAULT  UND
+     1: 000000000002e0a0    40 OBJECT  GLOBAL DEFAULT   22 _r_debug@@GLIBC_2.2.5
+     2: 00000000000183c0    43 FUNC    GLOBAL DEFAULT   13 _dl_exception_free@@GLIBC_PRIVATE
+     3: 000000000001ce60   227 FUNC    GLOBAL DEFAULT   13 _dl_catch_exception@@GLIBC_PRIVATE
+     4: 0000000000017e10   244 FUNC    GLOBAL DEFAULT   13 _dl_exception_create@@GLIBC_PRIVATE
+     5: 000000000002ce00     4 OBJECT  GLOBAL DEFAULT   18 __libc_enable_secure@@GLIBC_PRIVATE
+     6: 000000000000b030   655 FUNC    GLOBAL DEFAULT   13 _dl_rtld_di_serinfo@@GLIBC_PRIVATE
+```
+
+Well, because, as it turns out, some relocations use that symbol.
+
+That’s right. Shock! Awe! Career changes!
+
+And so, when a relocation asks for the zeroth symbol, it wants the zeroth symbol *of the object file the relocation is in*.
+
+Well, we can do that.
+
+First a handy getter:
+
+``` rust
+// in `elk/src/process.rs`
+
+impl Object {
+    fn symzero(&self) -> ResolvedSym {
+        ResolvedSym::Defined(ObjectSym {
+            obj: &self,
+            sym: &self.syms[0],
+        })
+    }
+}
+```
+
+And then, in `apply_relocation`:
+
+``` rust
+// in `elk/src/process.rs`
+
+impl Process<TLSAllocated> {
+    fn apply_relocation<'a>(
+        &self,
+        objrel: ObjectRel<'a>,
+        group: RelocGroup,
+    ) -> Result<Option<ObjectRel<'a>>, RelocationError> {
+        // (cut)
+
+        // perform symbol lookup early
+        let found = match rel.sym {
+            //        👇 new!
+            0 => obj.symzero(),
+            _ => match self.lookup_symbol(&wanted, ignore_self) {
+                undef @ ResolvedSym::Undefined => match wanted.sym.sym.bind {
+                    // undefined symbols are fine if our local symbol is weak
+                    delf::SymBind::Weak => undef,
+                    // otherwise, error out now
+                    _ => return Err(RelocationError::UndefinedSymbol(wanted.sym.clone())),
+                },
+                // defined symbols are always fine
+                x => x,
+            },
+        };
+
+        // (cut)
+
+        Ok(None) // processed
+    }
+}
+```
+
+> **Cool bear says:**
+>
+> Is that it? Are we done? Can we go home?
+
+Well, let’s find out:
+
+``` shell
+$ cargo build --quiet
+$ ../target/debug/elk run /bin/ls
+Loading "/usr/bin/ls"
+Loading "/usr/lib/libcap.so.2.47"
+Loading "/usr/lib/libc-2.32.so"
+Loading "/usr/lib/ld-2.32.so"
+Patching libc function 00007f1da3ad1020 (_dl_addr)
+Patching libc function 00007f1da39d6f40 (exit)
+Applying Direct relocations (1838 left)
+Applying Indirect relocations (58 left)
+autosym.py     blowstack.o  bss2.o    bss.asm  echidna        hello         hello-dl.o           hello.o         Justfile   mapzero.c   nolibc    retzero.asm  what
+blob.c         bss          bss3      bss.o    entry_point.c  hello.asm     hello-nolibc         hello-pie.asm   libmsg.so  msg.asm     nolibc.c  stubs.asm    what.c
+blowstack      bss2         bss3.asm  chimera  gdb-elk.py     hello-dl      hello-nolibc.c       ifunc-nolibc    link.s     msg.o       puts      stubs.o
+blowstack.asm  bss2.asm     bss3.o    dump     glibc-symbols  hello-dl.asm  hello-nolibc-static  ifunc-nolibc.c  mapzero    nodata.asm  puts.c    twothreads
+```
+
+> **Cool bear says:**
+>
+> …holy crap. Are we running `/bin/ls`?
+
+> **Amos says:**
+>
+> We’re running `/bin/ls`!
+
+All that hard work finally paid off!
+
+Can you believe it?
+
+But of course, now I can’t help but wonder… what else can we run?
+
+Can we run `nano`?
+
+``` shell
+$ ../target/debug/elk run /usr/bin/nano
+Loading "/usr/bin/nano"
+Loading "/usr/lib/libmagic.so.1.0.0"
+Loading "/usr/lib/libncursesw.so.6.2"
+Loading "/usr/lib/libc-2.32.so"
+Loading "/usr/lib/libbz2.so.1.0.8"
+Loading "/usr/lib/libz.so.1.2.11"
+Loading "/usr/lib/libpthread-2.32.so"
+Loading "/usr/lib/ld-2.32.so"
+Patching libc function 00007f1655963020 (_dl_addr)
+Patching libc function 00007f1655868f40 (exit)
+Applying Direct relocations (4498 left)
+Applying Indirect relocations (102 left)
+[1]    23856 segmentation fault  ../target/debug/elk run /usr/bin/nano
+```
+
+No we can’t. Well..
+
+> **Cool bear says:**
+>
+> No. NO! No cliffhangers this time around! I WANT TO RUN NANO.
+
+Okay, okay… let’s look at the stack trace.
+
+``` shell
+(gdb) bt
+#0  _int_free (av=0x7ffff7fa0a00 <main_arena>, p=0x55555579ded0, have_lock=0) at malloc.c:4238
+#1  0x000055555558464e in alloc::alloc::dealloc (ptr=0x55555579dee0, layout=...) at /home/amos/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/alloc.rs:104
+#2  0x00005555555846bf in alloc::alloc::{{impl}}::deallocate (self=0x7fffffffc0d0, ptr=..., layout=...)
+    at /home/amos/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/alloc.rs:239
+#3  0x00005555555976b6 in alloc::raw_vec::{{impl}}::drop<(&elk::process::Object, delf::Addr),alloc::alloc::Global> (self=0x7fffffffc0d0)
+    at /home/amos/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/raw_vec.rs:499
+#4  0x000055555559699e in core::ptr::drop_in_place<alloc::raw_vec::RawVec<(&elk::process::Object, delf::Addr), alloc::alloc::Global>> ()
+    at /home/amos/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:179
+#5  0x000055555559266e in alloc::vec::into_iter::{{impl}}::drop::{{impl}}::drop<(&elk::process::Object, delf::Addr),alloc::alloc::Global> (self=0x7fffffffc138)
+    at /home/amos/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/into_iter.rs:243
+#6  0x000055555559394e in core::ptr::drop_in_place<alloc::vec::into_iter::{{impl}}::drop::DropGuard<(&elk::process::Object, delf::Addr), alloc::alloc::Global>> ()
+    at /home/amos/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:179
+#7  0x00005555555980e4 in alloc::vec::into_iter::{{impl}}::drop<(&elk::process::Object, delf::Addr),alloc::alloc::Global> (self=0x7fffffffc308)
+    at /home/amos/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/vec/into_iter.rs:254
+#8  0x00005555555931be in core::ptr::drop_in_place<alloc::vec::into_iter::IntoIter<(&elk::process::Object, delf::Addr), alloc::alloc::Global>> ()
+    at /home/amos/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/ptr/mod.rs:179
+#9  0x000055555558992b in elk::process::Process<elk::process::Protected>::start (self=..., opts=0x7fffffffd120) at /home/amos/ftl/elf-series/elk/src/process.rs:900
+#10 0x0000555555569aa9 in elk::cmd_run (args=...) at /home/amos/ftl/elf-series/elk/src/main.rs:105
+#11 0x0000555555569204 in elk::do_main () at /home/amos/ftl/elf-series/elk/src/main.rs:71
+#12 0x000055555556900c in elk::main () at /home/amos/ftl/elf-series/elk/src/main.rs:63
+```
+
+Interesting! It crashes right at the end of this loop:
+
+``` rust
+// in `elk/src/process.rs`
+
+impl Process<Protected> {
+    pub fn start(self, opts: &StartOptions) -> ! {
+        // (cut)
+
+        unsafe {
+            // new!
+            set_fs(self.state.tls.tcb_addr.0);
+
+            for (_obj, init) in initializers {
+                call_init(init, argc, argv.as_ptr(), envp.as_ptr());
+            }
+            // 👆 this loop!
+
+            jmp(entry_point.as_ptr(), stack.as_ptr(), stack.len())
+        };
+    }
+}
+```
+
+…when trying to free some memory.
+
+Waaaaaaait a minute. `elk` is just a regular Rust program. It *also* uses libc by default. Including its memory allocator.
+
+And you know what the glibc memory allocator loooooves? Thread locals! So it’s all nice and *fast*.
+
+There’s just one problem. We’ve *just* messed with the value of the `%fs` segment register (as seen in [Part 13](https://fasterthanli.me/series/making-our-own-executable-packer/part-9)).
+
+So, there’s no memory allocating *or* freeing for us after that point.
+
+And a `for elem in coll` loop allocates an iterator. Maybe if we did a release build the iterator would be optimized away?
+
+Or maybe we can just iterate through those initializers a simpler way…
+
+Let’s give it a shot?
+
+``` rust
+        unsafe {
+            // new!
+            set_fs(self.state.tls.tcb_addr.0);
+
+            // why yes, clippy, we *do* need that to be a range loop
+            #[allow(clippy::clippy::needless_range_loop)]
+            for i in 0..initializers.len() {
+                call_init(initializers[i].1, argc, argv.as_ptr(), envp.as_ptr());
+            }
+
+            jmp(entry_point.as_ptr(), stack.as_ptr(), stack.len())
+        };
+```
+
+## What now?
+
+So we made an ELF dynamic loader / runtime linker / whatever you want to call it really.
+
+But is that *really* what this series is about?
+
+> **Cool bear says:**
+>
+> Wait, your series have *topics*?
+
+> **Amos says:**
+>
+> Uhhh occasionally yeah.
+
+It’s not! It’s not what this series is about.
+
+This series is, apart from a great excuse to learn more about ELF files, about building an executable *packer*.
+
+And if there’s one thing that’s become crystal clear, especially in this last part, it’s that trying to compete with glibc’s dynamic loader is a bit silly.
+
+Don’t get me wrong, we got *far*.
+
+But consider what else we’d have to support.
+
+``` shell
+$ nm -D /lib/libdl-2.32.so | grep "T "
+0000000000001dc0 T dladdr@@GLIBC_2.2.5
+0000000000001df0 T dladdr1@@GLIBC_2.3.3
+0000000000001450 T dlclose@@GLIBC_2.2.5
+0000000000001860 T dlerror@@GLIBC_2.2.5
+0000000000001f20 T dlinfo@@GLIBC_2.3.3
+00000000000020b0 T dlmopen@@GLIBC_2.3.4
+0000000000001390 T dlopen@@GLIBC_2.2.5
+00000000000014c0 T dlsym@@GLIBC_2.2.5
+0000000000002170 T __libdl_freeres@@GLIBC_PRIVATE
+```
+
+All of these.
+
+Notice how our loader crashed and burned when we so much as *iterated through a collection* after setting the `%fs` register? Well, we’d have to run a whole lot of code to support `dlopen`, `dlclose`, `dladdr`, `dlsym` etc., at runtime. *After* transferring control to the program’s entry point.
+
+That’s not gonna be easy.
+
+And have you considered: threads? Yes, threads!
+
+What if multiple threads open the same library concurrently? What did you think that `dl_load_lock` was about? 😅
+
+What if the same library is opened N times? And closed only N-1 times?
+
+Oh, I forgot! What if we `dlopen` a library that needs thread-local storage? What if, god forbid, we *run out* of thread-local storage while opening a library?
+
+The GNU C Library’s initial release was 34 years ago.
+
+We can’t catch up. We simply don’t have that kind of time.
+
+> **Cool Bear's hot tip**
+>
+> [Others do, apparently](https://en.wikipedia.org/wiki/Musl), but they’re taking a much simpler approach to things than glibc does. I don’t think the musl ELF loader can load glibc-linked binaries!
+
+So, what are we to do?
+
+Well, we can just use glibc’s dynamic loader!
+
+We don’t *need* to bring our own.
+
+After all, `/lib64/ld-linux-x86-64.so` is already self-relocating… so all our executable packer would need to do is map it at the right address, adjust protections, maybe take care of some other minor details, and then, hey, ho, away we go.
+
+Right?
+
+> **Cool bear says:**
+>
+> 🙃 🙃 🙃

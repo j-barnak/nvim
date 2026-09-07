@@ -1,0 +1,231 @@
+# ftrace Advanced: Histograms, Triggers, and Function Tracing
+
+> Beyond basic tracing: aggregating data in-kernel without overhead
+
+## ftrace recap
+
+The basic ftrace interface lives at `/sys/kernel/tracing/` (also reachable at the older `/sys/kernel/debug/tracing/`). The [ftrace basics page](https://kernel-internals.org/tracing/ftrace/) covers the foundational setup. This page covers advanced features: in-kernel histograms, triggers, synthetic events, and the `function_graph` tracer.
+
+## Event triggers
+
+Triggers execute actions when a tracepoint fires, without copying data to the trace buffer:
+
+    # Trigger format: echo "action[:count]" > events/.../trigger
+    # Actions: traceon, traceoff, snapshot, stacktrace, hist:...
+
+    # Enable tracing when a specific process does a write():
+    echo 'traceon if comm == "myapp"' > \
+        events/syscalls/sys_enter_write/trigger
+
+    # Take a stack trace on every kmalloc > 1MB:
+    echo 'stacktrace if bytes_req > 1048576' > \
+        events/kmem/kmalloc/trigger
+
+    # Disable trigger:
+    echo '!stacktrace if bytes_req > 1048576' > \
+        events/kmem/kmalloc/trigger
+
+## Histogram triggers (hist:)
+
+Histograms aggregate event data **in the kernel**, reducing overhead compared to reading individual events:
+
+### Count by key
+
+    # Count syscalls by PID
+    echo 'hist:keys=pid' > events/raw_syscalls/sys_enter/trigger
+    sleep 5
+    cat events/raw_syscalls/sys_enter/hist
+    # { pid:   1234 } hitcount:   4521
+    # { pid:   5678 } hitcount:    891
+    # Totals: Hits: 5412, Entries: 2
+
+    # Count by syscall number
+    echo 'hist:keys=id' > events/raw_syscalls/sys_enter/trigger
+    cat events/raw_syscalls/sys_enter/hist
+    # { id:        0 } hitcount:  12345  # read
+    # { id:        1 } hitcount:   8901  # write
+
+### Aggregate values
+
+    # Sum bytes written per PID
+    echo 'hist:keys=common_pid:vals=count:sort=count.descending' > \
+        events/syscalls/sys_enter_write/trigger
+
+    # Latency histogram: how long does write() take?
+    echo 'hist:keys=common_pid:vals=lat:sort=lat' > \
+        events/syscalls/sys_exit_write/trigger
+
+    # Track kmalloc sizes: sum bytes per call_site
+    echo 'hist:keys=call_site.sym:vals=bytes_req:sort=bytes_req.descending' > \
+        events/kmem/kmalloc/trigger
+    cat events/kmem/kmalloc/hist
+    # { call_site: ext4_write_begin [ext4] } bytes_req:  1048576
+    # { call_site: tcp_sendmsg              } bytes_req:   524288
+
+### Two-event latency measurement
+
+Measure time between pairs of events using `onmatch`:
+
+    # Measure read() latency: time from sys_enter to sys_exit
+    echo 'hist:keys=common_pid:ts0=common_timestamp.usecs' > \
+        events/syscalls/sys_enter_read/trigger
+
+    echo 'hist:keys=common_pid:
+        vals=lat:
+        lat=common_timestamp.usecs-$ts0:
+        onmatch(syscalls.sys_enter_read).trace(read_lat,$lat)' > \
+        events/syscalls/sys_exit_read/trigger
+
+    # Or directly show the latency histogram:
+    echo 'hist:keys=lat:
+        lat=common_timestamp.usecs-$ts0.usecs:
+        onmatch(syscalls.sys_enter_read).save(comm)' > \
+        events/syscalls/sys_exit_read/trigger
+
+### Synthetic events: derived events from two sources
+
+    # Create a synthetic event that fires with latency data
+    echo 'wakeup_latency u64 lat; pid_t pid; char comm[16]' > \
+        synthetic_events
+
+    # Record start time on wakeup:
+    echo 'hist:keys=pid:wakeup_ts=common_timestamp.usecs' > \
+        events/sched/sched_waking/trigger
+
+    # On schedule-in: compute latency, fire synthetic event
+    echo 'hist:keys=next_pid:
+        wakeup_lat=common_timestamp.usecs-$wakeup_ts:
+        onmatch(sched.sched_waking).wakeup_latency($wakeup_lat,next_pid,next_comm)' > \
+        events/sched/sched_switch/trigger
+
+    # Enable the synthetic event
+    echo 1 > events/synthetic/wakeup_latency/enable
+    cat trace
+    # wakeup_latency: lat=45 pid=1234 comm=myapp
+
+## function_graph tracer
+
+`function_graph` traces both function entry and exit, showing the call tree with duration:
+
+    # Enable function_graph tracer
+    echo function_graph > current_tracer
+
+    # Run a command
+    bash -c 'ls /tmp > /dev/null'
+
+    cat trace | head -30
+    # # tracer: function_graph
+    # #
+    # CPU  DURATION                  FUNCTION CALLS
+    # |    |   |                     |   |   |   |
+    # 0)   1.827 us   |            _raw_spin_lock_irqsave();
+    # 0)   5.380 us   |          } /* _raw_spin_unlock_irqrestore */
+    # 0) + 12.345 us  |        } /* mutex_lock */
+    # 0)              |        vfs_read() {
+    # 0)              |          rw_verify_area() {
+    # 0)   0.384 us   |            security_file_permission();
+    # 0)   2.183 us   |          } /* rw_verify_area */
+    # 0)              |          new_sync_read() {
+    # 0)   0.234 us   |            __vfs_read();
+    # 0) + 45.123 us  |          } /* new_sync_read */
+    # 0) + 52.456 us  |        } /* vfs_read */
+
+`+` = \>10µs, `!` = \>100µs, `#` = \>1ms, `$` = \>10ms
+
+### Filter to specific functions
+
+    # Trace only VFS and ext4 functions
+    echo 'vfs_* ext4_*' > set_ftrace_filter
+
+    # Trace a specific function and its callees
+    echo vfs_read > set_graph_function
+
+    # Exclude internal functions (too noisy):
+    echo '__irq_*' > set_graph_notrace
+
+## function tracer with call graph
+
+The `function` tracer records every function call (very high overhead):
+
+    echo function > current_tracer
+
+    # Limit to specific functions to reduce overhead:
+    echo vfs_read > set_ftrace_filter
+    echo 1 > function_profile_enabled
+
+    # Wait, then show profile:
+    cat trace_stat/function0 | sort -k2 -n -r | head -20
+    # Function                 Hit    Time      Avg
+    # vfs_read              12345  123456us   10.0us
+
+### Dynamic function tracing
+
+    # Trace all calls to a specific module's functions:
+    echo ':mod:ext4' > set_ftrace_filter
+
+    # Trace functions matching a pattern:
+    echo '*alloc*page*' > set_ftrace_filter
+
+    # Show available functions:
+    cat available_filter_functions | grep 'ext4_'
+
+## Under the hood: how ftrace patches functions
+
+The reason function tracing can be switched on and off at runtime with *zero* overhead when off is that ftrace rewrites the kernel's own machine code.
+
+When the kernel is built with function tracing (`CONFIG_FUNCTION_TRACER`), the compiler inserts a call to a special stub — `__fentry__` (or the older `mcount`) — at the entry of nearly every function. Leaving those calls in would be ruinously expensive, so at boot **dynamic ftrace** records the location of every one of them and patches them all into `NOP`s. A function-traceable kernel therefore runs at full speed until you actually ask for tracing.
+
+When you enable a filter, ftrace patches the `NOP` at each selected function back into a call — into a small **trampoline** that saves registers and invokes the registered callbacks; turning tracing off patches them back to `NOP`s. This live modification of running kernel text is done SMP-safely (historically via a breakpoint-based three-step update) so that no other CPU ever executes a half-written instruction.
+
+The registration side is `struct ftrace_ops` (`include/linux/ftrace.h`): a callback plus a filter hash naming which functions it wants. Crucially, many subsystems register their own `ftrace_ops` on the *same* infrastructure — the function and `function_graph` tracers, kprobes placed on function entries, [live patching](https://kernel-internals.org/livepatch/klp/), and BPF `fentry`/`fexit` programs all ride the single `__fentry__` hook. That shared mechanism is why "attach something to the entry of a kernel function" is one cheap, well-worn path rather than a dozen separate hacks.
+
+## Stack tracer: find stack depth offenders
+
+    # Enable stack tracer (built as module or CONFIG_STACK_TRACER)
+    echo 1 > /proc/sys/kernel/stack_tracer_enabled
+
+    # See maximum stack depth seen
+    cat stack_trace
+    # Depth    Size   Location    (42 entries)
+    # -----    ----   --------
+    #     0    6560   interrupt_entry+0x1a/0x20
+    #     1    6536   do_IRQ+0x41/0xd0
+    #     ...
+
+    # Sort by stack depth
+    cat stack_max_size
+    # 6560
+
+## trace-cmd: scripted ftrace
+
+`trace-cmd` is a userspace wrapper that simplifies ftrace usage:
+
+    # Record write() latency for 5 seconds
+    trace-cmd record -e syscalls:sys_enter_write \
+                     -e syscalls:sys_exit_write \
+                     -p function_graph \
+                     -g vfs_write \
+                     sleep 5
+
+    # View the report
+    trace-cmd report | head -50
+
+    # Visualize with KernelShark (GUI)
+    kernelshark trace.dat
+
+## perf with ftrace
+
+    # perf ftrace: uses ftrace under the hood
+    perf ftrace -G vfs_read,vfs_write ls /tmp
+
+    # Function latency profiling
+    perf ftrace latency -T vfs_read -- dd if=/dev/zero of=/dev/null bs=4k count=10000
+
+## Further reading
+
+- [ftrace](https://kernel-internals.org/tracing/ftrace/) — ftrace basics and setup
+- [Kprobes and Tracepoints](https://kernel-internals.org/tracing/kprobes-tracepoints/) — adding tracepoints to kernel code
+- [perf Events](https://kernel-internals.org/tracing/perf-events/) — perf-based profiling
+- [perf Profiling Advanced](https://kernel-internals.org/tracing/perf-profiling/) — flame graphs and off-CPU analysis
+- `Documentation/trace/histogram.rst` — histogram trigger documentation
+- `Documentation/trace/ftrace.rst` — full ftrace documentation

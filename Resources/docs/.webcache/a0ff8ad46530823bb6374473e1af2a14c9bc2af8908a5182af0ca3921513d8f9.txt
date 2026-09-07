@@ -1,0 +1,1979 @@
+# The simplest shared library
+
+In [our last article](https://fasterthanli.me/series/making-our-own-executable-packer/part-4), we managed to load and execute a PIE (position-independent executable) compiled from the following code:
+
+``` x86asm
+; in `samples/hello-pie.asm`
+
+        global _start
+
+        section .text
+
+_start: mov rdi, 1      ; stdout fd
+        lea rsi, [rel msg]
+        mov rdx, 9      ; 8 chars + newline
+        mov rax, 1      ; write syscall
+        syscall
+
+        xor rdi, rdi    ; return code 0
+        mov rax, 60     ; exit syscall
+        syscall
+
+        section .data
+
+msg:    db "hi there", 10
+```
+
+The big improvement in that article was that we started caring about *relocations*.
+
+When we had the following code:
+
+``` x86asm
+_start:
+        mov rdi, 1      ; stdout fd
+        lea rsi, [rel msg]
+```
+
+..it was enough for the code and data segments to be in the right place *relative to each other*, because it used RIP-relative addressing, like so:
+
+``` x86asm
+    1005:       48 8d 35 f4 1f 00 00    lea    rsi,[rip+0x1ff4]        # 3000 <path>
+```
+
+But the `mov` code:
+
+``` x86asm
+_start:
+        mov rdi, 1      ; stdout fd
+        mov rsi, msg
+```
+
+Generated the following machine code, showed with disassembly:
+
+``` x86asm
+    1005:       48 be 00 30 00 00 00    movabs rsi,0x3000
+    100c:       00 00 00
+```
+
+With the following relocation:
+
+```
+Rela {
+    offset: 00001007,
+    type: Relative,
+    sym: 0,
+    addend: 00003000,
+}
+```
+
+We’ve seen that `Relative` relocations mean to replace the 64-bit integer at `offset` with the result of `base + addend`, where `addend` is specified in the relocation entry itself, and `base` is the address we chose to load the executable at.
+
+## All together now
+
+Well, that’s all well and good.
+
+But what if we have *two* `.asm` files?
+
+Say, if `msg` is declared as an extern in `hello-dl.asm`:
+
+``` x86asm
+; in `elk/samples/hello-dl.asm`
+
+        global _start
+        extern msg
+
+        section .text
+
+_start:
+        mov rdi, 1      ; stdout fd
+        mov rsi, msg
+        mov rdx, 9      ; 8 chars + newline
+        mov rax, 1      ; write syscall
+        syscall
+
+        xor rdi, rdi    ; return code 0
+        mov rax, 60     ; exit syscall
+        syscall
+```
+
+And `msg` itself is defined in another file, say, `msg.asm`:
+
+``` x86asm
+; in `elk/samples/msg.asm`
+
+; NASM's syntax for exporting global is a bit funky,
+; but everything has a purpose.
+
+        ; here we declare `msg` as a global, and we say it's of type
+        ; `data` (as opposed to `function`). We also have to specify
+        ; its length, which is `end-start`.
+        global msg:data msg.end-msg
+
+        ; we only have a data section for this file
+        section .data
+
+; `msg` is a label - which makes sense, a label is just a name for
+; a place in memory! we've seen the `db` syntax earlier, same here
+msg: db "hi there", 10
+; this here is a local label - it belongs to `msg` and can be referred
+; using `msg.end`. This is how we compute the length of `msg`!
+ .end:
+```
+
+And let’s say we compile both of these separately:
+
+``` shell
+$ nasm -f elf64 hello-dl.asm
+$ nasm -f elf64 msg.asm
+$ file {hello-dl,msg}.o
+hello-dl.o: ELF 64-bit LSB relocatable, x86-64, version 1 (SYSV), not stripped
+msg.o:      ELF 64-bit LSB relocatable, x86-64, version 1 (SYSV), not stripped
+```
+
+And we link them both together - finally giving a real job to our linker:
+
+``` shell
+$ ld -pie --dynamic-linker /lib/ld-linux-x86-64.so.2 hello-dl.o msg.o -o hello-dl
+$ file hello-dl
+hello-dl: ELF 64-bit LSB shared object, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib/ld-linux-x86-64.so.2, not stripped
+$ ./hello-dl
+hi there
+```
+
+Then we end up with a fine executable! A perfectly cromulent executable.
+
+Note that if we had forgotten either object file, we would’ve run into problems.
+
+Without `hello-dl.o`, we have no entry point:
+
+``` shell
+$ ld -pie --dynamic-linker /lib/ld-linux-x86-64.so.2 msg.o -o hello-dl
+ld: warning: cannot find entry symbol _start; not setting start address
+```
+
+Without `msg.o`, we’ve got an undefined reference to `msg`:
+
+``` shell
+$ ld -pie --dynamic-linker /lib/ld-linux-x86-64.so.2 hello-dl.o -o hello-dl
+ld: hello-dl.o: in function `_start':
+hello-dl.asm:(.text+0x7): undefined reference to `msg'
+```
+
+But if we have both, then our executable runs!
+
+``` shell
+$ ld -pie --dynamic-linker /lib/ld-linux-x86-64.so.2 hello-dl.o msg.o -o hello-dl
+$ ./hello-dl
+```
+
+Does it run through `elk`?
+
+``` shell
+$ # in `elk/`
+$ ./target/debug/elk ./samples/hello-dl
+Analyzing "./samples/hello-dl"...
+File {
+    type: Dyn,
+    machine: X86_64,
+    entry_point: 00001000,
+    program_headers: [
+        file 00000040..00000200 | mem 00000040..00000200 | align 00000008 | R.. PHdr,
+        file 00000200..0000021a | mem 00000200..0000021a | align 00000001 | R.. Interp,
+        file 00000000..00000288 | mem 00000000..00000288 | align 00001000 | R.. Load,
+        file 00001000..00001025 | mem 00001000..00001025 | align 00001000 | R.X Load,
+        file 00002000..00002000 | mem 00002000..00002000 | align 00001000 | R.. Load,
+        file 00002ee0..00003009 | mem 00002ee0..00003009 | align 00001000 | RW. Load,
+        file 00002ee0..00003000 | mem 00002ee0..00003000 | align 00000008 | RW. Dynamic,
+        file 00002ee0..00003000 | mem 00002ee0..00003000 | align 00000001 | R.. GnuRelRo,
+    ],
+}
+Loading with base address @ 0x400000
+Mapping 00000000..00000288 - BitFlags<SegmentFlag>(0b100, Read)
+Mapping 00001000..00001025 - BitFlags<SegmentFlag>(0b101, Execute | Read)
+(Applied 1 relocations)
+Mapping 00002ee0..00003009 - BitFlags<SegmentFlag>(0b110, Write | Read)
+(With 0xee0 bytes of padding at the start)
+Jumping to entry point @ 00001000...
+hi there
+```
+
+It does! Well, looks like we all get to go home early today.
+
+Let’s call `objdump` on it real quick:
+
+``` x86asm
+$ # `-d` disassembles code sections (but not data),
+$ # `-R` shows relocations inline (voluntarily not used last article)
+$ objdump -dR ./hello-dl
+
+./hello-dl:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+0000000000001000 <_start>:
+    1000:       bf 01 00 00 00          mov    edi,0x1
+    1005:       48 be 00 30 00 00 00    movabs rsi,0x3000
+    100c:       00 00 00
+                        1007: R_X86_64_RELATIVE *ABS*+0x3000
+    100f:       ba 09 00 00 00          mov    edx,0x9
+    1014:       b8 01 00 00 00          mov    eax,0x1
+    1019:       0f 05                   syscall
+    101b:       48 31 ff                xor    rdi,rdi
+    101e:       b8 3c 00 00 00          mov    eax,0x3c
+    1023:       0f 05                   syscall
+```
+
+Mh.
+
+That doesn’t look *any* different from the version with only one `.asm` file.
+
+Very well then - what if we make `msg.asm` into a dynamic library?
+
+``` shell
+$ # this `nasm` invocation is gratuitous - `msg.o` is fine as-is
+$ nasm -f elf64 msg.asm
+$ ld -shared msg.o -o libmsg.so
+$ file libmsg.so
+libmsg.so: ELF 64-bit LSB shared object, x86-64, version 1 (SYSV), statically linked, not stripped
+```
+
+And then link `hello-dl.o` against it:
+
+``` shell
+$ ld -pie --dynamic-linker /lib/ld-linux-x86-64.so.2 hello-dl.o libmsg.so -o hello-dl
+$ file ./hello-dl
+./hello-dl: ELF 64-bit LSB shared object, x86-64, version 1 (SYSV), dynamically linked, interpreter /lib/ld-linux-x86-64.so.2, not stripped
+```
+
+Okay, another fine executable. Does it run through `elk`?
+
+``` shell
+$ ../target/debug/elk ./hello-dl
+Analyzing "./hello-dl"...
+File {
+    type: Dyn,
+    machine: X86_64,
+    entry_point: 00001000,
+    program_headers: [
+        file 00000040..00000200 | mem 00000040..00000200 | align 00000008 | R.. PHdr,
+        file 00000200..0000021a | mem 00000200..0000021a | align 00000001 | R.. Interp,
+        file 00000000..000002d0 | mem 00000000..000002d0 | align 00001000 | R.. Load,
+        file 00001000..00001025 | mem 00001000..00001025 | align 00001000 | R.X Load,
+        file 00002000..00002000 | mem 00002000..00002000 | align 00001000 | R.. Load,
+        file 00002ed0..00003000 | mem 00002ed0..00003010 | align 00001000 | RW. Load,
+        file 00002ed0..00003000 | mem 00002ed0..00003000 | align 00000008 | RW. Dynamic,
+        file 00002ed0..00003000 | mem 00002ed0..00003000 | align 00000001 | R.. GnuRelRo,
+    ],
+}
+Loading with base address @ 0x400000
+Mapping 00000000..000002d0 - BitFlags<SegmentFlag>(0b100, Read)
+Mapping 00001000..00001025 - BitFlags<SegmentFlag>(0b101, Execute | Read)
+Mapping 00002ed0..00003010 - BitFlags<SegmentFlag>(0b110, Write | Read)
+(With 0xed0 bytes of padding at the start)
+Jumping to entry point @ 00001000...
+```
+
+…not really, no.
+
+But I’m sure it runs on its own - as usual:
+
+``` shell
+$ ./hello-dl
+./hello-dl: error while loading shared libraries: libmsg.so: cannot open shared object file: No such file or directory
+```
+
+Ah. Not really, no.
+
+I’m kinda bummed about this error message - `libmsg.so` is *right there*.
+
+``` shell
+$ file ./libmsg.so
+./libmsg.so: ELF 64-bit LSB shared object, x86-64, version 1 (SYSV), statically linked, not stripped
+```
+
+Although, to be fair, it didn’t say that `./libmsg.so` was not found. It said `libmsg.so` was not found.
+
+And there’s a similar thing for executables: running `./hello-pie` works fine, because it’s the path to a valid file, relative to the current directory. But running `hello-pie` fails:
+
+``` shell
+$ hello-pie
+zsh: command not found: hello-pie
+```
+
+That is, unless we put the current directory (`.`) in our `$PATH` environment variable:
+
+``` shell
+$ PATH=".:$PATH" hello-pie
+hi there
+```
+
+Likewise, shared libraries are found using a search path. If we examine `./hello-dl` with `ldd`, which “prints shared object dependencies”, according to its man page, we see that it is, indeed, not found:
+
+``` shell
+$ ldd ./hello-dl
+        linux-vdso.so.1 (0x00007fffd2ff4000)
+        libmsg.so => not found
+```
+
+However, if we run `ldd` on `elk` itself, we see that it depends on a few libraries that *are* found:
+
+``` shell
+$ ldd ../target/debug/elk
+        linux-vdso.so.1 (0x00007ffc56199000)
+        libc.so.6 => /usr/lib/libc.so.6 (0x00007f30fda11000)
+        /lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2 (0x00007f30fdca7000)
+        libdl.so.2 => /usr/lib/libdl.so.2 (0x00007f30fda0c000)
+        libpthread.so.0 => /usr/lib/libpthread.so.0 (0x00007f30fd9ea000)
+        libgcc_s.so.1 => /usr/lib/libgcc_s.so.1 (0x00007f30fd9d0000)
+```
+
+So, there’s definitely default search paths.
+
+And we can print these, by setting `$LD_DEBUG=libs` and trying to execute `./hello-dl` again:
+
+``` shell
+$ LD_DEBUG=libs ./hello-dl
+       758:     find library=libmsg.so [0]; searching
+       758:      search cache=/etc/ld.so.cache
+       758:      search path=/usr/lib/tls/x86_64/x86_64:/usr/lib/tls/x86_64:/usr/lib/tls/x86_64:/usr/lib/tls:/usr/lib/x86_64/x86_64:/usr/lib/x86_64:/usr/lib/x86_64:/usr/lib           (system search path)
+       758:       trying file=/usr/lib/tls/x86_64/x86_64/libmsg.so
+       758:       trying file=/usr/lib/tls/x86_64/libmsg.so
+       758:       trying file=/usr/lib/tls/x86_64/libmsg.so
+       758:       trying file=/usr/lib/tls/libmsg.so
+       758:       trying file=/usr/lib/x86_64/x86_64/libmsg.so
+       758:       trying file=/usr/lib/x86_64/libmsg.so
+       758:       trying file=/usr/lib/x86_64/libmsg.so
+       758:       trying file=/usr/lib/libmsg.so
+       758:
+./hello-dl: error while loading shared libraries: libmsg.so: cannot open shared object file: No such file or directory
+```
+
+Wait - `hello-dl` certainly does not care about `LD_DEBUG`. In fact, we haven’t written any code that concerns itself with shared libraries.
+
+We blindly trusted the linker and “the operating system” to do the right thing at link-time and run-time. So *where* is the code that behaves differently when `$LD_DEBUG` is set?
+
+Why, it’s in the interpreter of course! Which we passed to `nasm` as the `--dynamic-linker` argument. It’s the `.so` that is actually an executable, `/lib/ld-linux-x86-64.so.2`.
+
+> **Cool Bear's hot tip**
+>
+> That’s right!
+>
+> We’ve been implementing a dynamic linker and we didn’t even know it!
+
+But wait, hold on, wait. Who interprets the interpreter? Doesn’t `/lib/ld-linux-x86-64.so.2` itself use some shared libraries? And if so, who finds and loads them for it?
+
+``` shell
+$ file
+ldd /lib/ld-linux-x86-64.so.2
+        statically linked
+```
+
+Ah. It does not use any shared libraries. It’s “statically linked”.
+
+Very well then, how do we get the dynamic linker to find `libmsg.so`? Much like `$PATH`, we can set a library search path by exporting `$LD_LIBRARY_PATH`.
+
+``` shell
+$ LD_LIBRARY_PATH="." ./hello-dl
+hi there
+```
+
+Great! Although, that’s not terribly convenient.
+
+I’d prefer it if our executable could be run without setting up some environment variables. And this is where the `RPATH` comes in. That’s right - an executable can *itself* contain a library search path, so the final search path is a combination of:
+
+- The system (“default”) search path
+- The executable’s `RPATH` (and `RUNPATH`, but we won’t cover that one)
+- The environment-set search path, `$LD_LIBRARY_PATH`, if any
+
+Wonderful. So, how does one set the `RPATH` of a binary? Well, the tool that generates our final executable is `ld`, so there’s probably an option for it:
+
+``` shell
+$ man ld
+   -rpath=dir
+           Add a directory to the runtime library search path.  This is used when linking an ELF executable with shared objects.  All -rpath arguments are
+           concatenated and passed to the runtime linker, which uses them to locate shared objects at runtime.
+
+           The -rpath option is also used when locating shared objects which are needed by shared objects explicitly included in the link; see the
+           description of the -rpath-link option.  Searching -rpath in this way is only supported by native linkers and cross linkers which have been
+           configured with the --with-sysroot option.
+```
+
+Very well, let’s give that a shot:
+
+``` shell
+$ # in `elk/samples` - we don't need to regenerate `hello-dl.so`
+$ ld --disable-new-dtags -rpath . -pie --dynamic-linker /lib/ld-linux-x86-64.so.2 hello-dl.o libmsg.so -o hello-dl
+$ ./hello-dl
+hi there
+```
+
+Wonderful!
+
+How do we inspect the RPATH for an executable? Well, `objdump` does it:
+
+``` shell
+$ objdump -p ./hello-dl | grep RPATH
+  RPATH                .
+```
+
+(It’s easy to miss, but there is a dot, `.`, to the right of `RPATH` in the output).
+
+Looks good. Now, our executable can be run from anywhere, for example if we run it from `elk/` instead of `elk/samples`, then it still w-
+
+``` shell
+$ ./samples/hello-dl
+./samples/hello-dl: error while loading shared libraries: libmsg.so: cannot open shared object file: No such file or directory
+```
+
+…nevermind. What’s happening here? Let’s use `LD_DEBUG=libs` to diagnose, like we learned:
+
+``` shell
+LD_DEBUG=libs ./samples/hello-dl
+      1780:     find library=libmsg.so [0]; searching
+      1780:      search path=./tls/x86_64/x86_64:./tls/x86_64:./tls/x86_64:./tls:./x86_64/x86_64:./x86_64:./x86_64:.            (RPATH from file ./samples/hello-dl)
+      1780:       trying file=./tls/x86_64/x86_64/libmsg.so
+      1780:       trying file=./tls/x86_64/libmsg.so
+      1780:       trying file=./tls/x86_64/libmsg.so
+      1780:       trying file=./tls/libmsg.so
+      1780:       trying file=./x86_64/x86_64/libmsg.so
+      1780:       trying file=./x86_64/libmsg.so
+      1780:       trying file=./x86_64/libmsg.so
+      1780:       trying file=./libmsg.so
+      1780:      search cache=/etc/ld.so.cache
+      1780:      search path=/usr/lib/tls/x86_64/x86_64:/usr/lib/tls/x86_64:/usr/lib/tls/x86_64:/usr/lib/tls:/usr/lib/x86_64/x86_64:/usr/lib/x86_64:/usr/lib/x86_64:/usr/lib           (system search path)
+      1780:       trying file=/usr/lib/tls/x86_64/x86_64/libmsg.so
+      1780:       trying file=/usr/lib/tls/x86_64/libmsg.so
+      1780:       trying file=/usr/lib/tls/x86_64/libmsg.so
+      1780:       trying file=/usr/lib/tls/libmsg.so
+      1780:       trying file=/usr/lib/x86_64/x86_64/libmsg.so
+      1780:       trying file=/usr/lib/x86_64/libmsg.so
+      1780:       trying file=/usr/lib/x86_64/libmsg.so
+      1780:       trying file=/usr/lib/libmsg.so
+      1780:
+./samples/hello-dl: error while loading shared libraries: libmsg.so: cannot open shared object file: No such file or directory
+```
+
+Oh, of course. The `.` is now referring to `elk/`, not `elk/samples` - but the library is in `elk/samples/libmsg.so`.
+
+Well, maybe there’s a way to specify a path relative to the executable itself? That way, if we keep the executable and its library next to each other, in the same folder, then they’ll execute fine.
+
+We can do that using the special `$ORIGIN` token in the value we pass `ld`’s `-rpath` flag.
+
+> **Cool Bear's hot tip**
+>
+> `$ORIGIN` in this context is *NOT* an environment variable.
+>
+> In fact, we must be especially careful that the shell does not interpret it as an environment variable. We can do that by wrapping in single quotes.
+>
+> Compare and contrast:
+>
+> ``` shell
+> $ echo $ORIGIN
+>
+> $ echo "$ORIGIN"
+>
+> $ echo '$ORIGIN'
+> $ORIGIN
+> ```
+>
+> Only the single-quote version works properly. We could also escape the dollar sign like so: `\$`
+
+Let’s try it out! It’s a token, which means we could use it in a more complex path, like `$ORIGIN/libs` - but for our purpose, we can go with just `$ORIGIN`, since our library is *right there*.
+
+``` shell
+$ # in `elk/samples`
+$ ld --disable-new-dtags -rpath '$ORIGIN' -pie --dynamic-linker /lib/ld-linux-x86-64.so.2 hello-dl.o libmsg.so -o hello-dl
+$ ./hello-dl
+hi-there
+$ cd ..
+$ # now in `elk/`
+$ ./samples/hello-dl
+hi there
+```
+
+Great! Everything appears to be working now, no matter what the current working directory is.
+
+It’s time to try our new executable through `elk`.
+
+We don’t expect it to run properly, of course. We just learned that `elk` was half of a broken dynamic linker, and it never loads shared libraries the executable depends on. It doesn’t even know about search paths!
+
+But let’s go step by step:
+
+``` shell
+$ ./target/debug/elk samples/hello-dl
+Analyzing "samples/hello-dl"...
+File {
+    type: Dyn,
+    machine: X86_64,
+    entry_point: 00001000,
+    program_headers: [
+        file 00000040..00000200 | mem 00000040..00000200 | align 00000008 | R.. PHdr,
+        file 00000200..0000021a | mem 00000200..0000021a | align 00000001 | R.. Interp,
+        file 00000000..000002d8 | mem 00000000..000002d8 | align 00001000 | R.. Load,
+        file 00001000..00001025 | mem 00001000..00001025 | align 00001000 | R.X Load,
+        file 00002000..00002000 | mem 00002000..00002000 | align 00001000 | R.. Load,
+        file 00002ec0..00003000 | mem 00002ec0..00003010 | align 00001000 | RW. Load,
+        file 00002ec0..00003000 | mem 00002ec0..00003000 | align 00000008 | RW. Dynamic,
+        file 00002ec0..00003000 | mem 00002ec0..00003000 | align 00000001 | R.. GnuRelRo,
+    ],
+}
+Loading with base address @ 0x400000
+Mapping 00000000..000002d8 - BitFlags<SegmentFlag>(0b100, Read)
+Mapping 00001000..00001025 - BitFlags<SegmentFlag>(0b101, Execute | Read)
+Mapping 00002ec0..00003010 - BitFlags<SegmentFlag>(0b110, Write | Read)
+(With 0xec0 bytes of padding at the start)
+Jumping to entry point @ 00001000...
+```
+
+Yeah. As expected, it doesn’t print “hi there”. I’m surprised it doesn’t crash!
+
+Let’s try stepping through it with `ugdb`:
+
+``` shell
+$ ugdb ./target/debug/elk ./samples/hello-dl
+(gdb) break jmp
+(gdb) start
+```
+
+![ugdb-mov-0x0](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-5/assets/ugdb-mov-0x0~53f0d2e7920f53cd.webp)
+
+Ah. We can see our `mov rsi, msg` (where `msg` was an `extern`) turned into a `movabs` again. And, right now, the source operand is the immediate `0x0`.
+
+Maybe we missed a relocation?
+
+Let’s review our code. Here’s our `RelType` enum:
+
+``` rust
+// in `delf/src/lib.rs`
+
+#[derive(Debug, TryFromPrimitive, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum RelType {
+    GlobDat = 6,
+    JumpSlot = 7,
+    Relative = 8,
+}
+
+impl_parse_for_enum!(RelType, le_u32);
+```
+
+And here’s the `delf::File::read_rela_entries` method:
+
+``` rust
+// in `delf/src/lib.rs`
+
+impl File {
+    pub fn read_rela_entries(&self) -> Result<Vec<Rela>, ReadRelaError> {
+        use DynamicTag as DT;
+        use ReadRelaError as E;
+
+        let addr = self.dynamic_entry(DT::Rela).ok_or(E::RelaNotFound)?;
+        let len = self.dynamic_entry(DT::RelaSz).ok_or(E::RelaSzNotFound)?;
+        let seg = self.segment_at(addr).ok_or(E::RelaSegmentNotFound)?;
+
+        let i = &seg.data[(addr - seg.mem_range().start).into()..][..len.into()];
+        use nom::multi::many0;
+        match many0(Rela::parse)(i) {
+            Ok((_, rela_entries)) => Ok(rela_entries),
+            Err(nom::Err::Failure(err)) | Err(nom::Err::Error(err)) => {
+                let e = &err.errors[0];
+                let (_input, error_kind) = e;
+                Err(E::ParsingError(error_kind.clone()))
+            }
+            // we don't use any "streaming" parsers, so.
+            _ => unreachable!(),
+        }
+    }
+}
+```
+
+Mhh. We’re using `many0`.. and we only recognize some relocation types.. which means if we encounter an unknown relocation type… we’ll just silently miss it!
+
+Right now, we should have zero relocations, let’s check by printing them from `elk`:
+
+``` rust
+// in `elk/src/main.rs`
+
+    let rela_entries = file.read_rela_entries().unwrap_or_else(|e| {
+        println!("Could not read relocations: {:?}", e);
+        Default::default()
+    });
+    println!("Found {} rela entries", rela_entries.len());
+    for entry in rela_entries.iter() {
+        println!("{:?}", entry);
+    }
+```
+
+``` shell
+$ cargo b -q
+$ ./target/debug/elk samples/hello-dl
+Analyzing "samples/hello-dl"...
+(cut)
+Found 0 rela entries
+```
+
+Right.
+
+The thing is, there’s a dynamic section entry for the “total size” of the rela table, and there’s a dynamic section entry for the “entry size” of the rela table, so, with a little division, we should be able to compute the number of expected relocations! And then we can use `nom::multi::many_m_n` to parse `Rela` the expected number of times, or error out.
+
+Let’s try this.
+
+``` rust
+// in `delf/src/lib.rs`
+
+#[derive(Error, Debug)]
+pub enum ReadRelaError {
+    // omitted: other variants
+
+    #[error("RelaEnt dynamic entry not found")]
+    RelaEntNotFound,
+    #[error("RelaSeg dynamic entry not found")]
+    RelaSegNotFound,
+}
+
+impl File {
+    pub fn read_rela_entries(&self) -> Result<Vec<Rela>, ReadRelaError> {
+        use DynamicTag as DT;
+        use ReadRelaError as E;
+
+        let addr = self.dynamic_entry(DT::Rela).ok_or(E::RelaNotFound)?;
+        let len = self.dynamic_entry(DT::RelaSz).ok_or(E::RelaSzNotFound)?;
+        let ent = self.dynamic_entry(DT::RelaEnt).ok_or(E::RelaEntNotFound)?;
+        let seg = self.segment_at(addr).ok_or(E::RelaSegNotFound)?;
+
+        let i = &seg.data[(addr - seg.mem_range().start).into()..][..len.into()];
+        let n = (len.0 / ent.0) as usize;
+        use nom::multi::many_m_n;
+
+        match many_m_n(n, n, Rela::parse)(i) {
+            // omitted
+        }
+    }
+}
+```
+
+Good. We haven’t added support for any new relocation types, but at least if we encounter an unknown one, it should error out.
+
+``` shell
+$ cargo b -q
+$ ./target/debug/elk samples/hello-dl
+./target/debug/elk samples/hello-dl
+Analyzing "samples/hello-dl"...
+(cut)
+Could not read relocations: ParsingError(Nom(MapRes))
+Found 0 rela entries
+```
+
+Well. This doesn’t exactly show us which relocations we missed.
+
+In fact, our error reporting code is really lacking, as it only shows *one* `nom::error::VerboseErrorKind`. Since we’re probably encountering a non-existent variant of the `Rela` enum, I’m ready to bet that there’s an `Alt` error kind we’ve just swallowed.
+
+But even if we printed everything, we wouldn’t really see the relocation type printed out nicely. Sure, if we printed a hex dump of the input at the time the parser failed, we would be able to look at hexadecimal bytes and figure out which `u32` value it should be.
+
+Or, *or* we could parse unknown relocation types and decide what to do with those later.
+
+If we just add it to the `RelType` enum declaration, we’re going to run into problems:
+
+``` rust
+#[derive(Debug, TryFromPrimitive, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum RelType {
+    GlobDat = 6,
+    JumpSlot = 7,
+    Relative = 8,
+    // new!
+    Unknown(u32),
+}
+
+impl_parse_for_enum!(RelType, le_u32);
+```
+
+``` shell
+$ cargo b -q
+error[E0658]: custom discriminant values are not allowed in enums with tuple or struct variants
+   --> /home/amos/ftl/delf/src/lib.rs:131:15
+    |
+131 |     GlobDat = 6,
+    |               ^ disallowed custom discriminant
+132 |     JumpSlot = 7,
+    |                ^ disallowed custom discriminant
+133 |     Relative = 8,
+    |                ^ disallowed custom discriminant
+134 |     Unknown(u32),
+    |     ------------ tuple variant defined here
+    |
+    = note: for more information, see https://github.com/rust-lang/rust/issues/60553
+```
+
+..and that’s just the first error.
+
+That makes sense though. `RelType` is `repr(u32)` - there’s no room in there to store tuple variants like `Unknown(u32)`. The following error is related to `DeriveTryFromPrimitive`, which doesn’t know how in the world to try and convert a `u32` to a tuple variant.
+
+We can sidestep this problem with an additional enum. It’ll make our code more verbose, but there won’t be any runtime cost for it, so, let’s go:
+
+``` rust
+#[derive(Debug, TryFromPrimitive, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum KnownRelType {
+    GlobDat = 6,
+    JumpSlot = 7,
+    Relative = 8,
+}
+
+impl_parse_for_enum!(KnownRelType, le_u32);
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RelType {
+    Known(KnownRelType),
+    Unknown(u32),
+}
+```
+
+Good! Now it’s either known, or unknown. We’re handling all the cases. The type checker would be proud of us.
+
+The last little wrinkle, of course, is that only `KnownRelType::parse` exists. The new `RelType` doesn’t have a `parse` method, so, let’s get to it:
+
+``` rust
+impl RelType {
+    pub fn parse(i: parse::Input) -> parse::Result<Self> {
+        use nom::{branch::alt, combinator::map, number::complete::le_u32};
+        // `alt` tries several parsers one by one, until one succeeds
+        alt((
+            map(KnownRelType::parse, Self::Known),
+            map(le_u32, Self::Unknown),
+        ))(i)
+    }
+}
+```
+
+Fantastic!
+
+Now, is `RelType` / `KnownRelType` the best way to model ELF relocation types for our purposes? Probably not.
+
+Is it a great way to learn about `nom::branch::alt`? Yeah!
+
+Let’s try it out:
+
+``` shell
+$ # in `elk/`
+$ cargo b -q
+error[E0599]: no variant or associated item named `Relative` found for type `delf::RelType` in the current scope
+  --> src/main.rs:69:40
+   |
+69 |                         delf::RelType::Relative => {
+   |                                        ^^^^^^^^ variant or associated item not found in `delf::RelType`
+
+error: aborting due to previous error
+
+For more information about this error, try `rustc --explain E0599`.
+error: could not compile `elk`.
+
+To learn more, run the command again with --verbose.
+```
+
+Oh, right, I almost forgot. We match against `RelType` from `elk` directly. Because we end up applying known relocations. It’s nothing a bit of pattern matching can’t solve:
+
+``` rust
+// in `elk/src/main.rs`
+// in `main`
+
+        let mut num_relocs = 0;
+        for reloc in &rela_entries {
+            if mem_range.contains(&reloc.offset) {
+                unsafe {
+                    // omitted
+
+                    match reloc.r#type {
+                        delf::RelType::Known(t) => {
+                            num_relocs += 1;
+                            match t {
+                                delf::KnownRelType::Relative => {
+                                    let reloc_addr: *mut u64 = transmute(reloc_addr);
+                                    let reloc_value = reloc.addend + delf::Addr(base as u64);
+                                    std::ptr::write_unaligned(reloc_addr, reloc_value.0);
+                                }
+                                t => {
+                                    panic!("Unsupported relocation type {:?}", t);
+                                }
+                            }
+                        }
+                        delf::RelType::Unknown(_) => {
+                            // ignore unknown relocation types
+                        }
+                    }
+                }
+            }
+        }
+```
+
+``` shell
+$ cargo b -q
+./target/debug/elk samples/hello-dl
+Analyzing "samples/hello-dl"...
+(omitted)
+Found 2 rela entries
+Rela { offset: 00001007, type: Unknown(1), sym: 1, addend: 00000000 }
+Rela { offset: 00003000, type: Unknown(5), sym: 1, addend: 00000000 }
+```
+
+Nice! Two unknown relocation entry types: `1` and `5`.
+
+According to our table in [the last article](https://fasterthanli.me/series/making-our-own-executable-packer/part-4):
+
+- `1` is for relocation type `64`, with calculation `S + A`
+- `5` is for relocation type `COPY`, with calculation `none`
+
+Very well, let’s add those:
+
+``` rust
+// in `delf/src/lib.rs`
+
+#[derive(Debug, TryFromPrimitive, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum KnownRelType {
+    // new!
+    _64 = 1,
+    // new!
+    Copy = 5,
+    GlobDat = 6,
+    JumpSlot = 7,
+    Relative = 8,
+}
+
+impl_parse_for_enum!(KnownRelType, le_u32);
+```
+
+Note that we had to prefix `64` with an underscore, otherwise it’s not a valid identifier.
+
+``` shell
+$ cargo b -q
+(cut)
+Found 2 rela entries
+Rela { offset: 00001007, type: Known(_64), sym: 1, addend: 00000000 }
+Rela { offset: 00003000, type: Known(Copy), sym: 1, addend: 00000000 }
+Loading with base address @ 0x400000
+Mapping 00000000..000002d8 - BitFlags<SegmentFlag>(0b100, Read)
+Mapping 00001000..00001025 - BitFlags<SegmentFlag>(0b101, Execute | Read)
+thread 'main' panicked at 'Unsupported relocation type _64', src/main.rs:79:37
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace.
+```
+
+Good!
+
+Now there’s the small matter of.. us not yet knowing what `64` and `Copy` relocations do, at all. But we can *sorta guess*.
+
+The `64` relocation is at offset `0x1007`, which definitely sounds like an offset we’ve heard before.
+
+``` shell
+$ objdump -d ./samples/hello-dl
+
+./samples/hello-dl:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+0000000000001000 <_start>:
+    1000:       bf 01 00 00 00          mov    edi,0x1
+    1005:       48 be 00 00 00 00 00    movabs rsi,0x0
+                      ^^^^^^^^^^^^^^
+    100c:       00 00 00
+                ^^^^^^^^
+    (cut)
+$ # note: the '^' symbols were added by hand for emphasis
+```
+
+Ah, yes! That seems like exactly the same thing. This time the addend is `0x0`, though. But the `sym` field is no longer `0` - it’s `1`! Could it possibly refer to the `msg` symbol?
+
+Then there’s the `Copy` relocation. It’s at offset `0x3000`, which.. doesn’t.. exist in the file?
+
+As a reminder, our “Load” program headers are as follow:
+
+```
+file 00000000..000002d8 | mem 00000000..000002d8 | align 00001000 | R.. Load
+file 00001000..00001025 | mem 00001000..00001025 | align 00001000 | R.X Load
+file 00002000..00002000 | mem 00002000..00002000 | align 00001000 | R.. Load
+file 00002ec0..00003000 | mem 00002ec0..00003010 | align 00001000 | RW. Load
+```
+
+Oh hey! That last read+write segment goes to `0x3000` in the file, but it goes to `0x3010` in memory! That means we’ve got an additional 16 bytes in memory. Which is definitely enough to store `msg`.
+
+Let’s test our hypothesis - what would happen if `msg` was longer than 16 bytes?
+
+``` x86asm
+; in `elk/samples/msg.asm`
+
+        global msg:data msg.end-msg
+
+        section .data
+
+msg: db "this is way longer than sixteen bytes", 10
+ .end:
+```
+
+We now have 38 bytes in there. We mustn’t forget to change the `count` argument to the `write` syscall in `hello-dl`, otherwise we won’t get the full output.
+
+``` x86asm
+; in `elk/samples/hello-dl.asm`
+
+        global _start
+        extern msg
+
+        section .text
+
+_start:
+        mov rdi, 1      ; stdout fd
+        mov rsi, msg
+        ; new!
+        mov rdx, 38     ; 37 chars + newline
+        mov rax, 1      ; write syscall
+        syscall
+
+        xor rdi, rdi    ; return code 0
+        mov rax, 60     ; exit syscall
+        syscall
+```
+
+Now we have to recompile and link all of this:
+
+``` shell
+$ nasm -f elf64 msg.asm
+$ ld -shared msg.o -o libmsg.so
+$ nasm -f elf64 hello-dl.asm
+$ ld --disable-new-dtags -rpath '$ORIGIN' -pie --dynamic-linker /lib/ld-linux-x86-64.so.2 hello-dl.o libmsg.so -o hello-dl
+$ ./hello-dl
+this is way longer than sixteen bytes
+```
+
+Alright, still works - so far so good.
+
+What does `elk` say?
+
+``` shell
+$ ./target/debug/elk ./samples/hello-dl
+Analyzing "./samples/hello-dl"...
+File {
+    type: Dyn,
+    machine: X86_64,
+    entry_point: 00001000,
+    program_headers: [
+        file 00000040..00000200 | mem 00000040..00000200 | align 00000008 | R.. PHdr,
+        file 00000200..0000021a | mem 00000200..0000021a | align 00000001 | R.. Interp,
+        file 00000000..000002d8 | mem 00000000..000002d8 | align 00001000 | R.. Load,
+        file 00001000..00001025 | mem 00001000..00001025 | align 00001000 | R.X Load,
+        file 00002000..00002000 | mem 00002000..00002000 | align 00001000 | R.. Load,
+        file 00002ec0..00003000 | mem 00002ec0..00003028 | align 00001000 | RW. Load,
+        file 00002ec0..00003000 | mem 00002ec0..00003000 | align 00000008 | RW. Dynamic,
+        file 00002ec0..00003000 | mem 00002ec0..00003000 | align 00000001 | R.. GnuRelRo,
+    ],
+}
+Found 2 rela entries
+Rela { offset: 00001007, type: Known(_64), sym: 1, addend: 00000000 }
+Rela { offset: 00003000, type: Known(Copy), sym: 1, addend: 00000000 }
+(cut)
+```
+
+AhAH! Now it goes all the way to `0x3028`.
+
+Let’s run `hello-dl` in `ugdb` to make sure we know what *exactly* is being `mov`’d into rsi.
+
+``` shell
+$ ugdb ./samples/hello-dl
+(gdb) break _start
+(gdb) start
+```
+
+![ugdb-mov-from-dylib](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-5/assets/ugdb-mov-from-dylib~34b5f887c775d48c.webp)
+
+Okay, it’s moving `0x555555557000` - but what is currently mapped there?
+
+``` shell
+$ cat /proc/12142/maps
+555555554000-555555556000 r-xp 00000000 08:01 3293905                    /home/amos/ftl/elk/samples/hello-dl
+555555556000-555555557000 r-xp 00002000 08:01 3293905                    /home/amos/ftl/elk/samples/hello-dl
+555555557000-555555558000 rwxp 00000000 00:00 0                          [heap]
+7ffff7fc9000-7ffff7fca000 r-xp 00000000 08:01 3293934                    /home/amos/ftl/elk/samples/libmsg.so
+7ffff7fca000-7ffff7fcb000 r-xp 00001000 08:01 3293934                    /home/amos/ftl/elk/samples/libmsg.so
+7ffff7fcb000-7ffff7fcc000 rwxp 00002000 08:01 3293934                    /home/amos/ftl/elk/samples/libmsg.so
+7ffff7fcc000-7ffff7fce000 rwxp 00000000 00:00 0
+7ffff7fce000-7ffff7fd1000 r--p 00000000 00:00 0                          [vvar]
+7ffff7fd1000-7ffff7fd2000 r-xp 00000000 00:00 0                          [vdso]
+7ffff7fd2000-7ffff7ffb000 r-xp 00000000 08:01 795305                     /usr/lib/ld-2.30.so
+7ffff7ffc000-7ffff7ffe000 rwxp 00029000 08:01 795305                     /usr/lib/ld-2.30.so
+7ffff7ffe000-7ffff7fff000 rwxp 00000000 00:00 0
+7ffffffde000-7ffffffff000 rwxp 00000000 00:00 0                          [stack]
+ffffffffff600000-ffffffffff601000 --xp 00000000 00:00 0                  [vsyscall]
+```
+
+Well, certainly not `libmsg.so`!
+
+The corresponding line seems to be:
+
+```
+555555557000-555555558000 rwxp 00000000 00:00 0                          [heap]
+```
+
+Which is annotated with `[heap]`.
+
+Maybe that’s what the `Copy` relocation is about? Maybe it *copies* data from another shared object into the executable’s memory?
+
+After all, `0x555555557000 - 0x555555554000`, that is, the distance between the beginning of the `[heap]` segment and the beginning of the code segment, is `0x3000`. And that’s the offset we got in the relocation, remember?
+
+```
+Found 2 rela entries
+Rela { offset: 00001007, type: Known(_64), sym: 1, addend: 00000000 }
+Rela { offset: 00003000, type: Known(Copy), sym: 1, addend: 00000000 }
+               ^^^^^^^^
+```
+
+It seems our job is pretty clear. When running `hello-dl`, we must:
+
+- Also load `libmsg.so`
+- Copy `msg` from `libmsg.so`’s memory to `hello-dl`’s memory
+- Apply a relocation at `0x1007`, with the address of `msg` in `hello-dl`’s memory
+
+Mh. Wait. We skipped a few steps.
+
+How do we know to load `libmsg.so` in the first place? How do we know it’s `msg` we should copy? Even if we did know, how do we find it in `libmsg.so`?
+
+Also, don’t we have two `msg` in memory now? Once mapped directly from `libmsg.so`, and the second, copied into one of `hello-dl`’s segments. When copying, how do we know which one is the source, and which one is the destination?
+
+Let’s think.
+
+Loading a shared library sounds like a “dynamic” operation - as in, it’s done at runtime, as the executable itself is being loaded. We have a dynamic section - let’s review the dynamic tags we have available.
+
+``` rust
+// in `elk/src/main.rs`
+// in `main()`
+
+    println!("Found {} rela entries", rela_entries.len());
+    for entry in rela_entries.iter() {
+        println!("{:?}", entry);
+    }
+
+    if let Some(dynseg) = file.segment_of_type(delf::SegmentType::Dynamic) {
+        if let delf::SegmentContents::Dynamic(ref dyntab) = dynseg.contents {
+            println!("Dynamic table entries:");
+            for e in dyntab {
+                println!("{:?}", e);
+            }
+        }
+    }
+```
+
+``` shell
+$ # in `elk/`
+$ cargo b -q
+$ ./target/debug/elk ./samples/hello-dl
+(cut)
+Dynamic table entries:
+DynamicEntry { tag: Needed, addr: 00000001 }
+DynamicEntry { tag: RPath, addr: 0000000f }
+DynamicEntry { tag: Hash, addr: 00000220 }
+DynamicEntry { tag: GnuHash, addr: 00000238 }
+DynamicEntry { tag: StrTab, addr: 00000290 }
+DynamicEntry { tag: SymTab, addr: 00000260 }
+DynamicEntry { tag: StrSz, addr: 00000017 }
+DynamicEntry { tag: SymEnt, addr: 00000018 }
+DynamicEntry { tag: Debug, addr: 00000000 }
+DynamicEntry { tag: Rela, addr: 000002a8 }
+DynamicEntry { tag: RelaSz, addr: 00000030 }
+DynamicEntry { tag: RelaEnt, addr: 00000018 }
+DynamicEntry { tag: TextRel, addr: 00000000 }
+DynamicEntry { tag: Flags1, addr: 08000000 }
+(cut)
+```
+
+Interesting! We’ve got `RPath`, which certainly seems like it’s there because we passed `--rpath` to `ld`, the linker. We’ve also got `Needed`, which we didn’t have before.
+
+They’re both numbers or addresses though. How does one reference strings in the dynamic table where we can only store numbers or addresses? By giving an offset into a string table!
+
+And that’s what `StrTab` is all about. Our ELF-64 reference says it’s the “address of the dynamic string table”. The address given is `0x290`, let’s see what’s in there using `dd` and `xxd`:
+
+``` shell
+$ dd status=none if=./samples/hello-dl skip=$((0x290)) bs=1 count=30 | xxd
+00000000: 006c 6962 6d73 672e 736f 006d 7367 0024  .libmsg.so.msg.$
+00000010: 4f52 4947 494e 0000 0710 0000 0000       ORIGIN........
+```
+
+Well well well. This looks like a bunch of null-terminated strings! The first one, at `0x1` into the string table, is the name of one of the libraries we need. The second one is the name of a symbol, but we haven’t seen a reference to it yet. The third one, at `0xf` into the string table, is our `RPATH`!
+
+It’s time… for more abstraction.
+
+``` rust
+// in `delf/src/lib.rs`
+
+#[derive(thiserror::Error, Debug)]
+pub enum GetStringError {
+    #[error("StrTab dynamic entry not found")]
+    StrTabNotFound,
+    #[error("StrTab segment not found")]
+    StrTabSegmentNotFound,
+    #[error("String not found")]
+    StringNotFound,
+}
+
+impl File {
+    /**
+     * Returns a slice containing the contents of the relevant Load segment
+     * starting at `mem_addr` until the end of that segment, or None if
+     * no suitable segment can be found.
+     */
+    pub fn slice_at(&self, mem_addr: Addr) -> Option<&[u8]> {
+        self.segment_at(mem_addr)
+            .map(|seg| &seg.data[(mem_addr - seg.mem_range().start).into()..])
+    }
+
+    pub fn get_string(&self, offset: Addr) -> Result<String, GetStringError> {
+        use DynamicTag as DT;
+        use GetStringError as E;
+
+        let addr = self.dynamic_entry(DT::StrTab).ok_or(E::StrTabNotFound)?;
+        let slice = self
+            .slice_at(addr + offset)
+            .ok_or(E::StrTabSegmentNotFound)?;
+        // Our strings are null-terminated, so we (lazily) split the slice into
+        // slices separated by '\0' and take the first item
+        let string_slice = slice.split(|&c| c == 0).next().ok_or(E::StringNotFound)?;
+        Ok(String::from_utf8_lossy(string_slice).into())
+    }
+}
+```
+
+Now that I think of it, `slice_at` would come in handy for `read_rela_entries` as well, so, let’s try that! We had:
+
+``` rust
+impl File {
+    pub fn read_rela_entries(&self) -> Result<Vec<Rela>, ReadRelaError> {
+        // (cut)
+
+        // before:
+        let seg = self.segment_at(addr).ok_or(E::RelaSegmentNotFound)?;
+        let i = &seg.data[(addr - seg.mem_range().start).into()..][..len.into()];
+
+        // after:
+        let i = self.slice_at(addr).ok_or(E::RelaSegmentNotFound)?;
+        let i = &i[..len.into()];
+
+        // (this can be written as a one-liner, but it's more readable that way imho)
+
+        // (cut)
+    }
+}
+```
+
+Now, with our newfound powers, we can print strings for `Needed` and `Rpath` entries, from `elk`:
+
+``` rust
+// in `elk/src/main.rs`
+// in `main()`
+
+    if let Some(dynseg) = file.segment_of_type(delf::SegmentType::Dynamic) {
+        if let delf::SegmentContents::Dynamic(ref dyntab) = dynseg.contents {
+            println!("Dynamic table entries:");
+            for e in dyntab {
+                println!("{:?}", e);
+                match e.tag {
+                    delf::DynamicTag::Needed | delf::DynamicTag::RPath => {
+                        println!(" => {:?}", file.get_string(e.addr)?);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+```
+
+``` shell
+$ cargo b -q
+$ ./target/debug/elk ./samples/hello-dl
+Dynamic table entries:
+DynamicEntry { tag: Needed, addr: 00000001 }
+ => "libmsg.so"
+DynamicEntry { tag: RPath, addr: 0000000f }
+ => "$ORIGIN"
+```
+
+So.
+
+We have a lot of work to do. But first… some helpers. It’s kinda annoying to have to pattern match to find dynamic table entries - we’re going to need to do that a lot, so, maybe we should just have a way to get the whole dynamic table, and an iterator of entries with a given dynamic tag.
+
+We already have `dynamic_entry`, like so:
+
+``` rust
+// in `delf/src/lib.rs`
+
+impl File {
+    pub fn dynamic_entry(&self, tag: DynamicTag) -> Option<Addr> {
+        match self.segment_of_type(SegmentType::Dynamic) {
+            Some(ProgramHeader {
+                contents: SegmentContents::Dynamic(entries),
+                ..
+            }) => entries.iter().find(|e| e.tag == tag).map(|e| e.addr),
+            _ => None,
+        }
+    }
+}
+```
+
+So let’s rejiggle it a little:
+
+``` rust
+// in `delf/src/lib.rs`
+
+impl File {
+    // (cut)
+
+    pub fn dynamic_table(&self) -> Option<&[DynamicEntry]> {
+        match self.segment_of_type(SegmentType::Dynamic) {
+            Some(ProgramHeader {
+                contents: SegmentContents::Dynamic(entries),
+                ..
+            }) => Some(entries),
+            _ => None,
+        }
+    }
+
+    pub fn dynamic_entries(&self, tag: DynamicTag) -> impl Iterator<Item = Addr> {
+        self.dynamic_table()
+            .unwrap_or_default()
+            .iter()
+            .filter(|e| e.tag == tag)
+            .map(|e| e.addr)
+    }
+
+    pub fn dynamic_entry(&self, tag: DynamicTag) -> Option<Addr> {
+        self.dynamic_entries(tag).next()
+    }
+}
+```
+
+Now, this code is *very close* to working. We get the following error:
+
+``` shell
+$ cargo b -q
+error: cannot infer an appropriate lifetime
+   --> src/lib.rs:381:14
+    |
+380 |     pub fn dynamic_entries(&self, tag: DynamicTag) -> impl Iterator<Item = Addr> {
+    |                                                       -------------------------- this return type evaluates to the `'static` lifetime...
+381 |         self.dynamic_table()
+    |         ---- ^^^^^^^^^^^^^
+    |         |
+    |         ...but this borrow...
+    |
+note: ...can't outlive the anonymous lifetime #1 defined on the method body at 380:5
+   --> src/lib.rs:380:5
+    |
+380 | /     pub fn dynamic_entries(&self, tag: DynamicTag) -> impl Iterator<Item = Addr> {
+381 | |         self.dynamic_table()
+382 | |             .unwrap_or_default()
+383 | |             .iter()
+384 | |             .filter(|e| e.tag == tag)
+385 | |             .map(|e| e.addr)
+386 | |     }
+    | |_____^
+help: you can add a constraint to the return type to make it last less than `'static` and match the anonymous lifetime #1 defined on the method body at 380:5
+    |
+380 |     pub fn dynamic_entries(&self, tag: DynamicTag) -> impl Iterator<Item = Addr> + '_ {
+    |                                                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+```
+
+This is a problem I’ve discussed before, in the article [Recursive iterators in Rust](https://fasterthanli.me/articles/recursive-iterators-rust).
+
+Even though we’re returning an `Iterator` of `Addr`s, we must hold on to a valid reference to `self.dynamic_table()` (and by extension, `self`) *while we enumerate*.
+
+My fix was going to be this:
+
+``` rust
+    // there's three 'a in our first line of code:
+    // 'a is declared as a lifetime type parameter, &self is bound to it, and so is our return type.
+    pub fn dynamic_entries<'a>(&'a self, tag: DynamicTag) -> impl Iterator<Item = Addr> + 'a {
+        self.dynamic_table()
+            .unwrap_or_default()
+            .iter()
+            .filter(|e| e.tag == tag)
+            .map(|e| e.addr)
+    }
+```
+
+…which I thought was nice, because it clearly shows how we’re giving our return type (the `Iterator`) the same lifetime as the reference to `self`.
+
+But it turns out the compiler’s suggestion works just as well, because `&self` already has an anonymous lifetime, `'_`, which is less than `'static`. You can read more about it in the [Rust 2018 edition guide’s chapter on the anonymous lifetime](https://doc.rust-lang.org/edition-guide/rust-2018/ownership-and-lifetimes/the-anonymous-lifetime.html).
+
+``` rust
+    // 'a is all gone, we just have a single `+ '_`, as suggested
+    pub fn dynamic_entries(&self, tag: DynamicTag) -> impl Iterator<Item = Addr> + '_ {
+        self.dynamic_table()
+            .unwrap_or_default()
+            .iter()
+            .filter(|e| e.tag == tag)
+            .map(|e| e.addr)
+    }
+```
+
+With that fixed, we’ve got another error to fix:
+
+``` shell
+$ cargo b -q
+error[E0373]: closure may outlive the current function, but it borrows `tag`, which is owned by the current function
+   --> src/lib.rs:384:21
+    |
+384 |             .filter(|e| e.tag == tag)
+    |                     ^^^          --- `tag` is borrowed here
+    |                     |
+    |                     may outlive borrowed value `tag`
+    |
+note: closure is returned here
+   --> src/lib.rs:381:9
+    |
+381 | /         self.dynamic_table()
+382 | |             .unwrap_or_default()
+383 | |             .iter()
+384 | |             .filter(|e| e.tag == tag)
+385 | |             .map(|e| e.addr)
+    | |____________________________^
+help: to force the closure to take ownership of `tag` (and any other referenced variables), use the `move` keyword
+    |
+384 |             .filter(move |e| e.tag == tag)
+    |                     ^^^^^^^^
+```
+
+Same problem, different message. `tag`, an argument to `dynamic_entries`, is currently borrowed, because as it turns out, we forgot to derive `Clone` and `Copy` on it. And for non-Copy types, the default behavior for closures is to borrow.
+
+> **Cool Bear's hot tip**
+>
+> Note that you can’t derive `Copy` without `Clone`.
+
+We could derive those traits right now - `DynamicTag` is just a simple `enum`, or we could apply the compiler’s suggestion again, which is spot-on.
+
+``` rust
+    pub fn dynamic_entries(&self, tag: DynamicTag) -> impl Iterator<Item = Addr> + '_ {
+        self.dynamic_table()
+            .unwrap_or_default()
+            .iter()
+            .filter(move |e| e.tag == tag)
+            .map(|e| e.addr)
+    }
+```
+
+That’s it for this exercise. However, I really *do* want `DynamicTag` to be `Clone` + `Copy`, so let’s address that now:
+
+``` rust
+#[derive(Debug, TryFromPrimitive, PartialEq, Eq, Clone, Copy)]
+#[repr(u64)]
+pub enum DynamicTag {
+    Null = 0,
+    Needed = 1,
+    // etc.
+}
+```
+
+And since I know [some](https://rust-lang.github.io/rust-clippy/v0.0.212/index.html#filter_map) are going to ask, yes, yes indeed, we can use `filter_map` here to replace `filter` + `map`, here goes:
+
+``` rust
+    pub fn dynamic_entries(&self, filter_tag: DynamicTag) -> impl Iterator<Item = Addr> + '_ {
+        self.dynamic_table()
+            .unwrap_or_default()
+            .iter()
+            .filter_map(move |e| match e {
+                &DynamicEntry { addr, tag } if tag == filter_tag => Some(addr),
+                _ => None,
+            })
+    }
+```
+
+As you can see, it’s actually *less* readable, and I’m unconvinced there’s any other benefit to it, so now that we’ve established that it existed, let’s go back to the readable version:
+
+``` rust
+    pub fn dynamic_entries(&self, tag: DynamicTag) -> impl Iterator<Item = Addr> + '_ {
+        self.dynamic_table()
+            .unwrap_or_default()
+            .iter()
+            .filter(move |e| e.tag == tag)
+            .map(|e| e.addr)
+    }
+```
+
+For *extra convenience*, let’s add *another helper*, that returns some dynamic entries as strings. This time, `filter_map` is a better fit!
+
+``` rust
+    pub fn dynamic_entry_strings(&self, tag: DynamicTag) -> impl Iterator<Item = String> + '_ {
+        self.dynamic_entries(tag)
+            .filter_map(move |addr| self.get_string(addr).ok())
+        // `Result::ok` transforms a `Result<T, E>` into an `Option<T>`
+        // effectively ignoring the error.
+        // This will silently ignore strings we're not able to retrieve,
+        // but that is a sacrifice I'm willing to make.
+    }
+```
+
+Now then.
+
+The last missing piece, I think, is figuring out how to resolve a symbol.
+
+First of all, what is this `Rela`’s `sym` field referring to?
+
+```
+Rela { offset: 00001007, type: Known(_64), sym: 1, addend: 00000000 }
+```
+
+I remember seeing a `SymTab` dynamic tag earlier on. Our ELF-64 reference says it’s the “address of the dynamic symbol table”. Of course. We know the drill by now.
+
+As a C struct, it looks like this:
+
+``` c
+typedef struct {
+    Elf64_Word st_name; /* Symbol name */
+    unsigned char st_info; /* Type and Binding attributes */
+    unsigned char st_other; /* Reserved */
+    Elf64_Half st_shndx; /* Section table index */
+    Elf64_Addr st_value; /* Symbol value */
+    Elf64_Xword st_size; /* Size of object (e.g., common) */
+} Elf64_Sym;
+```
+
+`st_name` is an offset into the string table (we got that covered). `st_info` contains two 4-bit values: the binding attributes (local, global, weak, etc.) and the symbol type (notype, object, func, section, file, etc.)
+
+`st_shndx` lets us know in which section the symbol is defined, and has special values like `SHN_ABS` (for “numbers”) and `SHN_UNDEF` (for “undefined symbols”). `st_value` is the address of the symbol - for defined symbols, it corresponds to virtual memory, ie. where it’s mapped once the executable is loaded (adjusted for base address).
+
+Finally, `st_size` is the size of the symbol: for variables, it’s the size of the variable - 38 for our `msg` variable. For functions it’s the total size of all its instructions!
+
+This is all pretty standard parsing, except for `st_info`, which we’re going to have to split into two. We’ve already parsed numbers [smaller than bytes](https://fasterthanli.me/series/making-our-own-ping-11) using `nom::bits::bits` and the `ux` crate.
+
+This time, we’ll only use the former.
+
+Since we’re going to have to convert between bit-level errors and byte-level errors, we’ll need to add a few types to `parse.rs`:
+
+``` rust
+// in `delf/src/parse.rs`
+
+// omitted: `impl_parse*` macros
+
+#[derive(Debug, Clone)]
+pub enum ErrorKind {
+    Nom(nom::error::ErrorKind),
+    Context(&'static str),
+}
+
+pub struct Error<I> {
+    pub errors: Vec<(I, ErrorKind)>,
+}
+
+impl<I> nom::error::ParseError<I> for Error<I> {
+    fn from_error_kind(input: I, kind: nom::error::ErrorKind) -> Self {
+        let errors = vec![(input, ErrorKind::Nom(kind))];
+        Self { errors }
+    }
+
+    fn append(input: I, kind: nom::error::ErrorKind, mut other: Self) -> Self {
+        other.errors.push((input, ErrorKind::Nom(kind)));
+        other
+    }
+
+    fn add_context(input: I, ctx: &'static str, mut other: Self) -> Self {
+        other.errors.push((input, ErrorKind::Context(ctx)));
+        other
+    }
+}
+
+pub type Input<'a> = &'a [u8];
+pub type Result<'a, O> = nom::IResult<Input<'a>, O, Error<Input<'a>>>;
+
+pub type BitInput<'a> = (&'a [u8], usize);
+pub type BitResult<'a, O> = nom::IResult<BitInput<'a>, O, Error<BitInput<'a>>>;
+
+use nom::{ErrorConvert, Slice};
+use std::ops::RangeFrom;
+
+impl<I> ErrorConvert<Error<I>> for Error<(I, usize)>
+where
+    I: Slice<RangeFrom<usize>>,
+{
+    fn convert(self) -> Error<I> {
+        let errors = self
+            .errors
+            .into_iter()
+            .map(|((rest, offset), err)| (rest.slice(offset / 8..), err))
+            .collect();
+        Error { errors }
+    }
+}
+```
+
+We also need to fix up our `ReadRelaError` enum, which referred to `nom::error::VerboseKind` by name:
+
+``` rust
+#[derive(Error, Debug)]
+pub enum ReadRelaError {
+    // (omitted: other variants)
+    #[error("Parsing error")]
+    ParsingError(parse::ErrorKind),
+}
+```
+
+Back to our symbols: we’ll start with the two four-bit values, `SymBind` and `SymType`:
+
+``` rust
+// in `delf/src/lib.rs`
+
+#[derive(Debug, TryFromPrimitive, Clone, Copy)]
+#[repr(u8)]
+pub enum SymBind {
+    Local = 0,
+    Global = 1,
+    Weak = 2,
+}
+
+#[derive(Debug, TryFromPrimitive, Clone, Copy)]
+#[repr(u8)]
+pub enum SymType {
+    None = 0,
+    Object = 1,
+    Func = 2,
+    Section = 3,
+}
+```
+
+We’re no doubt going to run into some unknown symbol bindings and types, but what we have there should be enough to get up and running, so the actual fields in the `Sym` struct (yet to be defined) will be `Option<SymBind>` and `Option<SymType>` - and that’s exactly what their parsers will return:
+
+``` rust
+// in `delf/src/lib.rs`
+
+impl SymBind {
+    pub fn parse(i: parse::BitInput) -> parse::BitResult<Option<Self>> {
+        use nom::{bits::complete::take, combinator::map};
+        map(take(4_usize), |i: u8| Self::try_from(i).ok())(i)
+    }
+}
+
+impl SymType {
+    pub fn parse(i: parse::BitInput) -> parse::BitResult<Option<Self>> {
+        use nom::{bits::complete::take, combinator::map};
+        map(take(4_usize), |i: u8| Self::try_from(i).ok())(i)
+    }
+}
+```
+
+They’re so similar, we could be tempted to use macros or something.. but, [two is less than three](https://en.wikipedia.org/wiki/Rule_of_three_(computer_programming)), so we’ll resist the urge.
+
+The next slightly-peculiar field is `shndx`. Sure it’s, a 16-bit unsigned integer (that’s what `Elf64_Half` is), but it also has special values, so maybe we should define a wrapper type.
+
+``` rust
+// `src/delf/lib.rs`
+
+#[derive(Clone, Copy)]
+pub struct SectionIndex(pub u16);
+
+impl SectionIndex {
+    pub fn is_undef(&self) -> bool {
+        self.0 == 0
+    }
+
+    pub fn is_special(&self) -> bool {
+        self.0 >= 0xff00
+    }
+
+    pub fn get(&self) -> Option<usize> {
+        if self.is_undef() || self.is_special() {
+            None
+        } else {
+            Some(self.0 as usize)
+        }
+    }
+}
+
+impl fmt::Debug for SectionIndex {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        if self.is_special() {
+            write!(f, "Special({:04x})", self.0)
+        } else if self.is_undef() {
+            write!(f, "Undef")
+        } else {
+            write!(f, "{}", self.0)
+        }
+    }
+}
+```
+
+Is this overkill? Almost definitely. But it’s also extremely on-brand.
+
+We’re all set up to define `Sym`, along with its parser:
+
+``` rust
+// in `delf/src/lib.rs`
+
+#[derive(Debug)]
+pub struct Sym {
+    pub name: Addr,
+    pub bind: Option<SymBind>,
+    pub r#type: Option<SymType>,
+    pub shndx: SectionIndex,
+    pub value: Addr,
+    pub size: u64,
+}
+
+impl Sym {
+    pub fn parse(i: parse::Input) -> parse::Result<Self> {
+        use nom::{
+            bits::bits,
+            combinator::map,
+            number::complete::{le_u16, le_u32, le_u64, le_u8},
+            sequence::tuple,
+        };
+
+        let (i, (name, (bind, r#type), _reserved, shndx, value, size)) = tuple((
+            map(le_u32, |x| Addr(x as u64)),
+            bits(tuple((SymBind::parse, SymType::parse))),
+            le_u8,
+            map(le_u16, SectionIndex),
+            Addr::parse,
+            le_u64,
+        ))(i)?;
+        let res = Self {
+            name,
+            bind,
+            r#type,
+            shndx,
+            value,
+            size,
+        };
+        Ok((i, res))
+    }
+}
+```
+
+Finally, we need a method on `delf::File`, similar to `read_rela_entries`, but for the symbol table.
+
+There’s one small problem, though. We don’t know how many entries there are in the symbol table.
+
+If we dump all the dynamic tags there are in `samples/hello-dl`:
+
+```
+DynamicEntry { tag: Needed, addr: 00000001 }
+DynamicEntry { tag: RPath, addr: 0000000f }
+DynamicEntry { tag: Hash, addr: 00000220 }
+DynamicEntry { tag: GnuHash, addr: 00000238 }
+DynamicEntry { tag: StrTab, addr: 00000290 }
+DynamicEntry { tag: SymTab, addr: 00000260 }
+                    ^^^^^^
+DynamicEntry { tag: StrSz, addr: 00000017 }
+DynamicEntry { tag: SymEnt, addr: 00000018 }
+                    ^^^^^^
+DynamicEntry { tag: Debug, addr: 00000000 }
+DynamicEntry { tag: Rela, addr: 000002a8 }
+DynamicEntry { tag: RelaSz, addr: 00000030 }
+DynamicEntry { tag: RelaEnt, addr: 00000018 }
+DynamicEntry { tag: TextRel, addr: 00000000 }
+DynamicEntry { tag: Flags1, addr: 08000000 }
+```
+
+We see that we have `SymTab` (where it is) and `SymEnt` (how long an entry is), but no `SymSz` or `SymCount`.
+
+So far we’ve been sticking exclusively with “program headers”, which give us the “execution view” of the ELF file. But now that we’re resolving symbols, we’re.. performing dynamic linking. Here, we need help from the “linking view”, which the “section headers” give us.
+
+My bet is that the offset given us to by the `SymTab` dynamic entry corresponds to one of the sections described by a section header.
+
+This article is getting fairly long, so, let’s be quick:
+
+``` rust
+// in `delf/src/lib.rs`
+
+#[derive(Debug)]
+pub struct SectionHeader {
+    pub name: Addr,
+    pub r#type: u32,
+    pub flags: u64,
+    pub addr: Addr,
+    pub off: Addr,
+    pub size: Addr,
+    pub link: u32,
+    pub info: u32,
+    pub addralign: Addr,
+    pub entsize: Addr,
+}
+
+impl SectionHeader {
+    pub fn parse(i: parse::Input) -> parse::Result<Self> {
+        use nom::{
+            combinator::map,
+            number::complete::{le_u32, le_u64},
+            sequence::tuple,
+        };
+        let (i, (name, r#type, flags, addr, off, size, link, info, addralign, entsize)) =
+            tuple((
+                map(le_u32, |x| Addr(x as u64)),
+                le_u32,
+                le_u64,
+                Addr::parse,
+                Addr::parse,
+                Addr::parse,
+                le_u32,
+                le_u32,
+                Addr::parse,
+                Addr::parse,
+            ))(i)?;
+        let res = Self {
+            name,
+            r#type,
+            flags,
+            addr,
+            off,
+            size,
+            link,
+            info,
+            addralign,
+            entsize,
+        };
+        Ok((i, res))
+    }
+}
+```
+
+Nothing special here. We store `name` as an `Addr` because it’s an offset into `StrTab`, even though it’s stored as an `u32` in the file, presumably for space-saving reasons.
+
+Next up, adding a field to `delf::File`:
+
+``` rust
+// in `delf/src/lib.rs`
+
+#[derive(Debug)]
+pub struct File {
+    pub r#type: Type,
+    pub machine: Machine,
+    pub entry_point: Addr,
+    pub program_headers: Vec<ProgramHeader>,
+    // new!
+    pub section_headers: Vec<SectionHeader>,
+}
+```
+
+And adjusting its parser:
+
+``` rust
+impl File {
+    const MAGIC: &'static [u8] = &[0x7f, 0x45, 0x4c, 0x46];
+
+    #[allow(unused_variables)]
+    pub fn parse(i: parse::Input) -> parse::Result<Self> {
+        let full_input = i;
+
+        // omitted: ELF header parsing
+
+        // same as before
+        let ph_slices = (&full_input[ph_offset.into()..]).chunks(ph_entsize);
+        let mut program_headers = Vec::new();
+        for ph_slice in ph_slices.take(ph_count) {
+            let (_, ph) = ProgramHeader::parse(full_input, ph_slice)?;
+            program_headers.push(ph);
+        }
+
+        // and, similarly, for section headers
+        let sh_slices = (&full_input[sh_offset.into()..]).chunks(sh_entsize);
+        let mut section_headers = Vec::new();
+        for sh_slice in sh_slices.take(sh_count) {
+            let (_, sh) = SectionHeader::parse(sh_slice)?;
+            section_headers.push(sh);
+        }
+
+        let res = Self {
+            machine,
+            r#type,
+            entry_point,
+            program_headers,
+            // new:
+            section_headers,
+        };
+        Ok((i, res))
+    }
+}
+```
+
+Let’s dump our newly-read section headers from `elk`:
+
+``` rust
+// in `elk/src/main.rs`
+// after printing dynamic table entries:
+
+    if let Some(entries) = file.dynamic_table() {
+        for e in entries {
+            println!("{:?}", e);
+        }
+    }
+
+    for sh in &file.section_headers {
+        println!("{:?}", sh);
+    }
+```
+
+``` shell
+$ cargo b -q
+$ ./target/debug/elk ./samples/hello-dl
+(cut)
+DynamicEntry { tag: SymTab, addr: 00000260 }
+                                  ^^^^^^^^
+(cut)
+SectionHeader { name: 0000002d, type: 11, flags: 2, addr: 00000260,
+                                                          ^^^^^^^^
+off: 00000260, size: 00000030, link: 5, info: 1,
+addralign: 00000008, entsize: 00000018 }
+```
+
+Great! There’s a section header that starts at the same offset! And it has a `size` field!
+
+We won’t spend more time modelling `SectionHeader`’s fields - for example, we don’t care about the meaning of `flags`, `link` or `info`. We’re just here for `addr` and `size`.
+
+So, we were saying… oh, right, `delf::File::read_syms`. It turns out to be quite similar to `read_rela_entries`:
+
+``` rust
+// in `delf/src/lib.rs`
+
+#[derive(thiserror::Error, Debug)]
+pub enum ReadSymsError {
+    #[error("SymTab dynamic entry not found")]
+    SymTabNotFound,
+    #[error("SymTab section not found")]
+    SymTabSectionNotFound,
+    #[error("SymTab segment not found")]
+    SymTabSegmentNotFound,
+    #[error("Parsing error")]
+    ParsingError(parse::ErrorKind),
+}
+
+impl File {
+    // Returns the section header that starts at *exactly* this
+    // virtual address, or `None` if we can't find one.
+    pub fn section_starting_at(&self, addr: Addr) -> Option<&SectionHeader> {
+        self.section_headers.iter().find(|sh| sh.addr == addr)
+    }
+
+    pub fn read_syms(&self) -> Result<Vec<Sym>, ReadSymsError> {
+        use DynamicTag as DT;
+        use ReadSymsError as E;
+
+        let addr = self.dynamic_entry(DT::SymTab).ok_or(E::SymTabNotFound)?;
+        let section = self
+            .section_starting_at(addr)
+            .ok_or(E::SymTabSectionNotFound)?;
+
+        let i = self.slice_at(addr).ok_or(E::SymTabSegmentNotFound)?;
+        let n = (section.size.0 / section.entsize.0) as usize;
+        use nom::multi::many_m_n;
+
+        match many_m_n(n, n, Sym::parse)(i) {
+            Ok((_, syms)) => Ok(syms),
+            Err(nom::Err::Failure(err)) | Err(nom::Err::Error(err)) => {
+                let e = &err.errors[0];
+                let (_input, error_kind) = e;
+                Err(E::ParsingError(error_kind.clone()))
+            }
+            // we don't use any "streaming" parsers, so.
+            _ => unreachable!(),
+        }
+    }
+}
+```
+
+Can we dump symbols now?
+
+``` rust
+// in `elk/src/main.rs`
+// just before `let base`
+
+        let syms = file.read_syms().unwrap();
+        println!(
+            "Symbol table @ {:?} contains {} entries",
+            file.dynamic_entry(delf::DynamicTag::SymTab).unwrap(),
+            syms.len()
+        );
+        println!(
+            "  {:6}{:12}{:10}{:16}{:16}{:12}{:12}",
+            "Num", "Value", "Size", "Type", "Bind", "Ndx", "Name"
+        );
+        for (num, s) in syms.iter().enumerate() {
+            println!(
+                "  {:6}{:12}{:10}{:16}{:16}{:12}{:12}",
+                format!("{}", num),
+                format!("{:?}", s.value),
+                format!("{:?}", s.size),
+                format!("{:?}", s.r#type),
+                format!("{:?}", s.bind),
+                format!("{:?}", s.shndx),
+                format!("{}", file.get_string(s.name).unwrap_or_default()),
+            );
+        }
+```
+
+> **Cool Bear's hot tip**
+>
+> The code above is “incredibly wasteful” - well, it would be, if we cared about performance when printing the dynamic symbol table, which we do not.
+>
+> When you don’t care about performance, it’s a perfectly fine, quick and dirty way to print values as a table. Emphasis on dirty. And extra emphasis on quick.
+
+Let’s try it out:
+
+``` shell
+$ cargo b -q
+$ ./target/debug/elk ./samples/hello-dl
+(cut)
+Symbol table @ 00000260 contains 2 entries
+  Num   Value       Size      Type            Bind            Ndx         Name
+  0     00000000    0         Some(None)      Some(Local)     Undef
+  1     00003000    38        Some(Object)    Some(Global)    10          msg
+  ^
+```
+
+Heyyyyy. So there’s the symbol our relocations were referring to:
+
+```
+Rela { offset: 00001007, type: Known(_64), sym: 1, addend: 00000000 }
+                                                ^
+Rela { offset: 00003000, type: Known(Copy), sym: 1, addend: 00000000 }
+                                                 ^
+```
+
+The `0th` entry is all-zeros, which… (*checks ELF-64 reference*) is on purpose!
+
+Woohoo.
+
+It also makes sense for `msg` to be defined in a section of `hello-dl`, because we’re copying it from `libmsg.so` into `hello-dl`’s heap before startup. (NASM made that decision for us).
+
+So, if we run `elk` on `libmsg.so`, then we should.. see `msg` somewhere as well?
+
+``` shell
+$ cargo b -q
+$ ./target/debug/elk ./samples/libmsg.so
+(cut)
+Symbol table @ 00000160 contains 2 entries
+  Num   Value       Size      Type            Bind            Ndx         Name
+  0     00000000    0         Some(None)      Some(Local)     Undef
+  1     00002000    38        Some(Object)    Some(Global)    7           msg
+```
+
+And I suppose it wouldn’t be too hard to retrieve its value either?
+
+``` rust
+// in `src/elk/main.rs`
+// just before `let base`
+
+        let msg = syms
+            .iter()
+            .find(|sym| file.get_string(sym.name).unwrap_or_default() == "msg")
+            .expect("should find msg in symbol table");
+        let msg_slice = file.slice_at(msg.value).expect("should find msg in memory");
+        let msg_slice = &msg_slice[..msg.size as usize];
+        println!("msg contents: {:?}", String::from_utf8_lossy(msg_slice));
+```
+
+``` shell
+$ cargo b -q
+$ ./target/debug/elk ./samples/libmsg.so
+Symbol table @ 00000160 contains 2 entries
+  Num   Value       Size      Type            Bind            Ndx         Name
+  0     00000000    0         Some(None)      Some(Local)     Undef
+  1     00002000    38        Some(Object)    Some(Global)    7           msg
+msg contents: "this is way longer than sixteen bytes\n"
+```
+
+🎉🎉🎉
+
+We’ve got our work cut out for us.

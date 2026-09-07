@@ -1,0 +1,704 @@
+In recent years, with the rise of new kernel mitigations - from [CFI](https://lwn.net/Articles/810077/) to [Google’s SLUB virtual](https://lwn.net/Articles/944647/) to [randomized slab caches](https://lwn.net/Articles/938246/) - there has been a trend shift from slab-level object exploitation to page-level exploitation. All the new attacks have something in common: how the Linux kernel manages pages of memory. In this article, I decided to organize some of my sparse notes about this topic.
+
+## Overview
+
+Behind the scenes, the Linux page allocator utilizes the [buddy memory allocation technique](https://en.wikipedia.org/wiki/Buddy_memory_allocation) to manage blocks of memory in powers of two. The base block (the smallest portion of contiguous memory), consists of a 4KB page, larger blocks are this base unit times powers of two.
+
+The exponent is referred to as the `order`. There are [NR_PAGE_ORDERS](https://elixir.bootlin.com/linux/v6.6.84/source/include/linux/mmzone.h#L37) (11) possible orders, ranging from 0 to [MAX_ORDER](https://elixir.bootlin.com/linux/v6.6.84/source/include/linux/mmzone.h#L29) (10). Consequently, the largest portion of contiguous memory managed by the buddy system corresponds to 4KB \* 2¹⁰, or 4MB, which is equivalent to 1024 4KB pages.
+
+The page order is stored in the `page->private` (see [set_buddy_order()](https://elixir.bootlin.com/linux/v6.6.84/source/mm/page_alloc.c#L608) -\> [set_page_private()](https://elixir.bootlin.com/linux/v6.6.84/source/include/linux/mm_types.h#L517)) of the first page in the block. The entire block is considered itself a page of order N.
+
+When a page of a given order is requested but not available, the kernel will start looking for higher order pages, until one is found. At this point the page is split in half, creating two lower level blocks (two “buddies”). The process is repeated until a page of the requested size is obtained.
+
+The inverse happens when a page is freed and its buddy is also free; the two are coalesced into a higher order block. Even in the coalescing case, the process is repeated until order `MAX_ORDER` is reached or there is not an available buddy that can be merged.
+
+The purpose of the buddy system is to maintain the largest possible portions of continuous memory, so to minimize external fragmentation, the kernel also differentiates between pages based on their [mobility](https://www.kernel.org/doc/html/v6.14-rc7/mm/page_migration.html).
+
+Pages with identical mobility are grouped together. The migration type is determined by the GFP flags used when requesting a new page: for instance, for user-space allocations, the `GFP_HIGHUSER_MOVABLE` flag is set (see [do_cow_fault()](https://elixir.bootlin.com/linux/v6.6.84/source/mm/memory.c#L4644) for example), whereas for some slabs `SLAB_RECLAIM_ACCOUNT` flag is set (see [inode_init()](https://elixir.bootlin.com/linux/v6.6.84/source/fs/inode.c#L2361) etc.), and so on.
+
+Migration types are defined in the [migratetype](https://elixir.bootlin.com/linux/v6.6.84/source/include/linux/mmzone.h#L47) enum:
+
+- **MIGRATE_UNMOVABLE**: Pages of this type cannot be moved. This group comprises slabs, page tables, etc.
+
+> One of the reasons why these pages cannot be moved, can be found using the QEMU monitor, and the `info tlb` command to obtain the virtual address to physical address mapping.
+>
+> For example, here is the area where kmalloc slabs are allocated:
+>
+> ``` txt
+> Virtual address   Physical address
+>
+> ffff888100000000: 0000000100000000 X-PDA---W
+> ffff888100200000: 0000000100200000 X-PDA---W
+> ffff888100400000: 0000000100400000 X-PDA---W
+> ffff888100600000: 0000000100600000 X-PDA---W
+> ffff888100800000: 0000000100800000 X--DA---W
+> ...
+> ```
+>
+> We have a 1:1 linear mapping. The virtual address is calculated as the physical address plus a constant (`page_offset_base` in this case). Therefore, moving data between these physical page frames would also require updating the corresponding virtual address, which would cause invaid memory accesses in all the processes that still refer to the old virtual address.
+>
+> For user-space allocations, this does not happen, as when a page is migrated, the physical address changes, but the virtual address remains the same. Only the corresponding page table entry is modified.
+
+- **MIGRATE_MOVABLE**: These pages can be migrated. This type is mainly used for user-space allocations. These pages are easy to move as they are accessed via page tables, therefore, when the physical address is modified, it is only necessary to update the corresponding PTE.
+- **MIGRATE_RECLAIMABLE**: These pages cannot be moved, but they can be reclaimed under memory pressure. Their contents can be restored from disk later.
+- **MIGRATE_HIGHATOMIC**: Pages with this migration type are reserved for high-order atomic allocations.
+- **MIGRATE_CMA**: This migration type is used by pages managed by the CMA allocator. Only movable pages can be allocated from pageblocks with this type.
+- **MIGRATE_ISOLATE**: Type temporarily used during the migration of movable pages.
+- **MIGRATE_PCPTYPE**: This is a special type used by per-CPU pagesets, we will analyze it more in detail later.
+
+When a page of a given order is requested, the allocator will attempt to allocate the it from pageblocks with the requested migration type. If this is not possible, pages will be “stolen” from other pageblocks with a different migration type, starting from the largest page blocks to avoid memory fragmentation.
+
+> Notice how, from an attacker’s prospective, this also makes page mixing between user-space (movable) pages and slab (unmovable) pages possible. For example, when unmovable pages are exhausted, pages can be stolen from pageblocks with the movable migration type.
+
+Before digging into how pages are organized in freelists, we need to take a step back and focus for a moment on how the RAM is divided into different zones.
+
+## Nodes, Zones and Free Lists
+
+On NUMA machines, the memory layout of each NUMA node is described by the [pglist_data](https://elixir.bootlin.com/linux/v6.6.84/source/include/linux/mmzone.h#L1266) structure:
+
+``` c
+typedef struct pglist_data {
+	/*
+	 * node_zones contains just the zones for THIS node. Not all of the
+	 * zones may be populated, but it is the full list. It is referenced by
+	 * this node's node_zonelists as well as other node's node_zonelists.
+	 */
+	struct zone node_zones[MAX_NR_ZONES];
+	/*
+	 * node_zonelists contains references to all zones in all nodes.
+	 * Generally the first zones will be references to this node's
+	 * node_zones.
+	 */
+	struct zonelist node_zonelists[MAX_ZONELISTS];
+	// ...
+}
+```
+
+The memory of a node is divided into multiple zones, each zone describing a segment of memory:
+
+- **Zone DMA**: Corresponds to the lower 16MB of memory. It primarily exists for backward compatibility with some old ISA-devices.
+- **Zone DMA32**: This zone only exists on 64-bit systems and covers approximately the lower 4GB of RAM. There is a class of hardware that can only DMA in this zone.
+- **Zone Normal**: On 32-bit systems, it corresponds to all RAM from 16MB to 896MB. On 64-bit systems, it corresponds to all RAM from approximately 4GB and above. This zone can be very small for a 64-bit system with 4GB of RAM, and it is disabled if the system has less than 4GB of RAM.
+- **Zone HighMem**: 32-bit only. This zone includes all the RAM above 896MB.
+- **Zone Movable**: Similar to Zone Normal, but most of the pages in this zone are movable.
+- **Zone Device**: Represents memory residing on devices (e.g., GPU). It is only enabled if `CONFIG_ZONE_DEVICE=y`.
+
+Upon page allocations, the kernel specifies a “preferred” zone. If this zone doesn’t have enough free memory, other zones are used.
+
+For example, the Normal zone on a 64-bit machine with 4GB of RAM can fill up very quickly, so subsequent allocations will be performed in the DMA32 zone, even if the preferred zone is Normal.
+
+> With all this in mind, it is possible to analyze the information about the status of memory from the `/proc` interface.
+>
+> Here is the output of `/proc/buddyinfo` for a QEMU VM with 8GB RAM, right after boot. Lower order freelists are empty. Most of the blocks are order 10 pages, indicating minimal memory fragmentation.
+>
+> ``` bash
+> Node 0, zone      DMA      0      0      0      0      0      0      0      0      0      1      3 
+> Node 0, zone    DMA32      2      1      0      0      1      2      3      3      2      2    730 
+> Node 0, zone   Normal      0      0      1      1      0      2      2      1      2      1   1218 
+> ```
+>
+> Just for comparison, here is the `/proc/buddyinfo` output for a 64-bit machine with 32GB RAM after prolonged usage. There are many free pages in lower order, indicating that compaction was not possible. This his a warning indicator as it suggests a very high level of memory fragmentation:
+>
+> ``` bash
+> Node 0, zone      DMA      0      0      0      0      0      0      0      0      1      1      2 
+> Node 0, zone    DMA32   2332   2482   2078   1636   1255    863    480    193     61     17    116 
+> Node 0, zone   Normal  63676  65786  29045   9387   3127   1182    611    482    306     48    162 
+> ```
+>
+> Back to the 8GB VM, a more detailed view can be obtained using `/proc/pagetypeinfo`. In this case, it is also possible to notice how the free pages are distributed across multiple migration types:
+>
+> ``` bash
+> Page block order: 9
+> Pages per block:  512
+>
+> Free pages count per migrate type at order       0      1      2      3      4      5      6      7      8      9     10 
+> Node    0, zone      DMA, type    Unmovable      0      0      0      0      0      0      0      0      0      0      0 
+> Node    0, zone      DMA, type      Movable      0      0      0      0      0      0      0      0      0      1      3 
+> Node    0, zone      DMA, type  Reclaimable      0      0      0      0      0      0      0      0      0      0      0 
+> Node    0, zone      DMA, type   HighAtomic      0      0      0      0      0      0      0      0      0      0      0 
+> Node    0, zone      DMA, type          CMA      0      0      0      0      0      0      0      0      0      0      0 
+> Node    0, zone      DMA, type      Isolate      0      0      0      0      0      0      0      0      0      0      0 
+> Node    0, zone    DMA32, type    Unmovable      1      0      0      0      0      0      1      1      0      1      0 
+> Node    0, zone    DMA32, type      Movable      1      1      0      0      1      2      2      2      2      1    730 
+> Node    0, zone    DMA32, type  Reclaimable      0      0      0      0      0      0      0      0      0      0      0 
+> Node    0, zone    DMA32, type   HighAtomic      0      0      0      0      0      0      0      0      0      0      0 
+> Node    0, zone    DMA32, type          CMA      0      0      0      0      0      0      0      0      0      0      0 
+> Node    0, zone    DMA32, type      Isolate      0      0      0      0      0      0      0      0      0      0      0 
+> Node    0, zone   Normal, type    Unmovable      0      0      1      0      0      1      1      0      0      1      0 
+> Node    0, zone   Normal, type      Movable      0      0      0      0      0      0      1      1      1      0   1218 
+> Node    0, zone   Normal, type  Reclaimable      0      0      0      1      0      1      0      0      1      0      0 
+> Node    0, zone   Normal, type   HighAtomic      0      0      0      0      0      0      0      0      0      0      0 
+> Node    0, zone   Normal, type          CMA      0      0      0      0      0      0      0      0      0      0      0 
+> Node    0, zone   Normal, type      Isolate      0      0      0      0      0      0      0      0      0      0      0 
+>
+> Number of blocks type     Unmovable      Movable  Reclaimable   HighAtomic          CMA      Isolate 
+> Node 0, zone      DMA            1            7            0            0            0            0 
+> Node 0, zone    DMA32            2         1526            0            0            0            0 
+> Node 0, zone   Normal           95         2461            4            0            0            0 
+> ```
+
+Each memory zone, is described by a [zone](https://elixir.bootlin.com/linux/v6.6.84/source/include/linux/mmzone.h#L815) structure.
+
+``` c
+struct zone {
+	// ...
+	struct per_cpu_pages	__percpu *per_cpu_pageset;
+	// ...
+	struct free_area	free_area[NR_PAGE_ORDERS];
+	// ...
+}
+```
+
+Each zone manages free pages in two separate areas:
+
+- **Per-CPU area**: This area is described by the [per_cpu_pages](https://elixir.bootlin.com/linux/v6.6.84/source/include/linux/mmzone.h#L684) structure and initialized by [setup_zone_pageset()](https://elixir.bootlin.com/linux/v6.6.84/source/mm/page_alloc.c#L5404). It is utilized as a sort of page cache for the CPU to quickly satisfy requests of order \<= `PAGE_ALLOC_COSTLY_ORDER (3)`.
+
+- **Buddy free area**: This is the heart of the Buddy allocator. If the per-CPU lists cannot satisfy a page request, or if the requested order is greater than `PAGE_ALLOC_COSTLY_ORDER (3)`, then pages in this area are utilized.
+
+In the `per_cpu_pages` structure, free pages are organized into multiple lists stored in the `lists[]` array:
+
+``` c
+struct per_cpu_pages {
+	spinlock_t lock;	    /* Protects lists field */
+	int count;		    /* number of pages in the list */
+	int high;		    /* high watermark, emptying needed */
+	int batch;		    /* chunk size for buddy add/remove */
+	// ...
+	struct list_head lists[NR_PCP_LISTS];
+}
+```
+
+The array can contain up to [NR_PCP_LISTS](https://elixir.bootlin.com/linux/v6.6.84/source/include/linux/mmzone.h#L677) lists. This variable is defined as follows:
+
+``` c
+#ifdef CONFIG_TRANSPARENT_HUGEPAGE
+#define NR_PCP_THP 2
+#else
+#define NR_PCP_THP 0
+#endif
+#define NR_LOWORDER_PCP_LISTS (MIGRATE_PCPTYPES * (PAGE_ALLOC_COSTLY_ORDER + 1))
+#define NR_PCP_LISTS (NR_LOWORDER_PCP_LISTS + NR_PCP_THP)
+
+// NR_PCP_LISTS = ((MIGRATE_PCPTYPES * (PAGE_ALLOC_COSTLY_ORDER + 1)) + NR_PCP_THP
+// or
+// NR_PCP_LISTS = ((3 * (3 + 1)) + 0) = 12
+```
+
+Therefore, if `CONFIG_TRANSPARENT_HUGEPAGE` is not enabled, we can have 12 freelists in the PCP free area. To derive the index in the array from the specified migration type and order, the [order_to_pindex()](https://elixir.bootlin.com/linux/v6.6.84/source/mm/page_alloc.c#L520) function is used:
+
+``` c
+static inline unsigned int order_to_pindex(int migratetype, int order)
+{
+	// ...
+
+	return (MIGRATE_PCPTYPES * order) + migratetype;
+}
+```
+
+This may initially appear a bit confusing (at least it was for me), but it is really straightforward. Since lists of pages are stored in a single array, they are organized based on both page order *and* migration type, with `MIGRATE_PCPTYPES (3)` migration types per order.
+
+This means, for example, that if a `MIGRATE_UNMOVABLE (0)` order 1 page is requested, `order_to_pindex(/*migratetype*/ 0, /*order*/ 1)` will return `(MIGRATE_PCPTYPES * 1) + MIGRATE_UNMOVABLE` or `(3 * 1) + 0 = 3` and as you can see below, the index corresponds to the requested list of pages.
+
+``` c
+zone->per_cpu_pageset->lists[0] // Order 0, MIGRATE_UNMOVABLE
+zone->per_cpu_pageset->lists[1] // Order 0, MIGRATE_MOVABLE
+zone->per_cpu_pageset->lists[2] // Order 0, MIGRATE_RECLAIMABLE
+
+zone->per_cpu_pageset->lists[3] // Order 1, MIGRATE_UNMOVABLE   <--- idx 3
+zone->per_cpu_pageset->lists[4] // Order 1, MIGRATE_MOVABLE
+zone->per_cpu_pageset->lists[5] // Order 1, MIGRATE_RECLAIMABLE
+...
+```
+
+Moving to the Buddy allocator’s `free_area` array, it can hold [NR_PAGE_ORDERS](https://elixir.bootlin.com/linux/v6.6.84/source/include/linux/mmzone.h#L37) different free areas. Here, the page order is used as an index in the array.
+
+Each free area is described by the [free_area](https://elixir.bootlin.com/linux/v6.6.84/source/include/linux/mmzone.h#L113) structure and contains an array of freelists indexed by migration type:
+
+``` c
+struct free_area {
+	struct list_head	free_list[MIGRATE_TYPES];
+	unsigned long		nr_free;
+};
+```
+
+So, to summarize, the `free_area` array is indexed by order:
+
+``` c
+zone->free_area[0] // Order 0
+zone->free_area[1] // Order 1
+zone->free_area[2] // Order 2
+...
+zone->free_area[NR_PAGE_ORDERS - 1] // Order 10
+```
+
+and for each order, the free lists are indexed by migration type:
+
+``` c
+// Order 0
+zone->free_area[0].free_list[MIGRATE_UNMOVABLE]
+zone->free_area[0].free_list[MIGRATE_MOVABLE]
+zone->free_area[0].free_list[MIGRATE_RECLAIMABLE]
+...
+
+// Order 1
+zone->free_area[1].free_list[MIGRATE_UNMOVABLE]
+zone->free_area[1].free_list[MIGRATE_MOVABLE]
+zone->free_area[1].free_list[MIGRATE_RECLAIMABLE]
+...
+
+// ...
+```
+
+> The reason why this approach with nested arrays is not used by PCP lists remains obscure to me.
+
+All this can be visualized by the following diagram:
+
+![](https://syst3mfailure.io/linux-page-allocator/assets/images/buddy.png)
+
+## Source Code Analysis
+
+> The following analysis is conducted on Linux 6.6.84
+
+I think the best way to approach this quick code analysis is to start with a practical example. Let’s create a scenario where a user (Bob, of course) executes the following command on his server to create a named pipe, open it, and read from it:`mkfifo /tmp/fifo && cat /tmp/fifo`.
+
+In kernel-space, `fifo_open()` is called. This function attempts to allocate a [pipe_inode_info](https://elixir.bootlin.com/linux/v6.6.84/source/include/linux/pipe_fs_i.h#L58) structure via `alloc_pipe_info()`. However, in our scenario, all `kmalloc-cg-192` slabs are full, including CPU-partial slabs. The kernel needs to allocate a new slab.
+
+Each kmalloc cache requires pages of a certain order. This order is specified when a new [kmem_cache](https://elixir.bootlin.com/linux/v6.6.84/source/include/linux/slub_def.h#L98) is created (see [kmem_cache_open()](https://elixir.bootlin.com/linux/v6.6.84/source/mm/slub.c#L4516) -\> [calculate_sizes()](https://elixir.bootlin.com/linux/v6.6.84/source/mm/slub.c#L4379) -\> [oo_make()](https://elixir.bootlin.com/linux/v6.6.84/source/mm/slub.c#L466)).
+
+According to `/proc/slabinfo`, `kmalloc-cg-192` slabs, require one order 0 page, so [\_\_alloc_pages()](https://elixir.bootlin.com/linux/v6.6.84/source/mm/page_alloc.c#L4414) will request a page of this order.
+
+The following diagram illustrates the chain of calls the kernel utilizes to allocate a `kmalloc-cg-192` slab in a situation where all the slabs are full. Let’s go down the rabbit hole:
+
+``` c
+alloc_pipe_info()
+    kzalloc()
+        ... // All slabs full, allocate new one
+        __kmem_cache_alloc_node()
+            ...
+            __slab_alloc() // Request order 0 page for kmalloc-cg-192
+                allocate_slab()
+                    alloc_slab_page()
+                        ...
+                        __alloc_pages() // Prepare the allocation context and attempt to get a page from freelists, else fallback to slowpath (__alloc_pages_slowpath())
+                            get_page_from_freelist() // Try to get a page from the freelists of the preferred zone
+                                rmqueue() // Order <= 3, use per-CPU lists else fallback to buddy
+                                    rmqueue_pcplist() // Get PCP list by order and migration type
+                                        __rmqueue_pcplist() // PCP empty? Fallback to buddy, else return page
+                                            rmqueue_bulk() // Request multiple order 0 pages to populate PCP list
+                                                __rmqueue() // Try to find a page for the designated order and migration type else fallback and steal page from other migration types (steal_suitable_fallback())
+                                                    __rmqueue_smallest() // Iterate over 11 page orders, from 0 to 10 to find a free page
+                                                        get_page_from_free_area() // Order N page found
+                                                        del_page_from_free_list() // Unlink the page from the original freelist
+                                                        expand() // Split into lower order pages if needed until order is 0
+                                                            __add_to_free_list() // Add to new list
+                                                            set_buddy_order() // Update page order
+```
+
+Our analysis begins with `__alloc_pages()`. Prior to this function, all the calls are still within the SLUB allocator’s “domain”. For a deep dive into the SLUB allocator I strongly recommend this recent presentation by Andrey Konovalov: [SLUB Internals for Exploit Developers](https://www.youtube.com/watch?v=2hYzxsWeNcE).
+
+When `__alloc_pages()` is called, it starts by preparing the allocation context, based on the requested order, the preferred node ID and the provided GFP flags. Once the allocation context is ready, the function first attempts to get a free page using `get_page_from_freelist()`. If the call fails, it falls back to the slowpath, calling `__alloc_pages_slowpath()`:
+
+``` c
+struct page *__alloc_pages(gfp_t gfp, unsigned int order, int preferred_nid,
+							nodemask_t *nodemask)
+{
+	struct page *page;
+	unsigned int alloc_flags = ALLOC_WMARK_LOW;
+	gfp_t alloc_gfp; /* The gfp_t that was actually used for allocation */
+	struct alloc_context ac = { };
+
+	if (WARN_ON_ONCE_GFP(order > MAX_PAGE_ORDER, gfp))
+		return NULL;
+
+	gfp &= gfp_allowed_mask;
+	gfp = current_gfp_context(gfp);
+	alloc_gfp = gfp;
+	if (!prepare_alloc_pages(gfp, order, preferred_nid, nodemask, &ac,
+			&alloc_gfp, &alloc_flags))
+		return NULL;
+
+	alloc_flags |= alloc_flags_nofragment(zonelist_zone(ac.preferred_zoneref), gfp);
+
+	page = get_page_from_freelist(alloc_gfp, order, alloc_flags, &ac);
+	if (likely(page))
+		goto out;
+
+	// ...
+
+	page = __alloc_pages_slowpath(alloc_gfp, order, &ac);
+
+	// ...
+
+	return page;
+}
+```
+
+[get_page_from_freelist()](https://elixir.bootlin.com/linux/v6.6.84/source/mm/page_alloc.c#L3070) scans the zonelist and looks for a zone with enough free pages. The allocation context prepared by `__alloc_pages()` here is used to specify the preferred zone (via [ac-\>preferred_zone](https://elixir.bootlin.com/linux/v6.6.84/source/mm/page_alloc.c#L3085)). Once a suitable zone is found, `rmqueue()` is called to actually get the free page for the requested order and migration type:
+
+``` c
+static struct page *
+get_page_from_freelist(gfp_t gfp_mask, unsigned int order, int alloc_flags,
+						const struct alloc_context *ac)
+{
+	struct zoneref *z;
+	struct zone *zone;
+	struct pglist_data *last_pgdat = NULL;
+	bool last_pgdat_dirty_ok = false;
+	bool no_fallback;
+
+retry:
+	/*
+	 * Scan zonelist, looking for a zone with enough free.
+	 * See also cpuset_node_allowed() comment in kernel/cgroup/cpuset.c.
+	 */
+	no_fallback = alloc_flags & ALLOC_NOFRAGMENT;
+	z = ac->preferred_zoneref;
+	for_next_zone_zonelist_nodemask(zone, z, ac->highest_zoneidx,
+					ac->nodemask) {
+		// ... scan the zonelist ...
+
+try_this_zone:
+		page = rmqueue(zonelist_zone(ac->preferred_zoneref), zone, order,
+				gfp_mask, alloc_flags, ac->migratetype);
+		
+		// ...
+	}
+
+	if (no_fallback) {
+		alloc_flags &= ~ALLOC_NOFRAGMENT;
+		goto retry;
+	}
+
+	return NULL;
+}
+```
+
+[rmqueue()](https://elixir.bootlin.com/linux/v6.6.84/source/mm/page_alloc.c#L2788) checks if the requested order is less than or equal to `PAGE_ALLOC_COSTLY_ORDER` (3). If so, it attempts to use the PCP lists. If the order is greater than `PAGE_ALLOC_COSTLY_ORDER`, then PCP lists are bypassed and there is a direct fallback to the Buddy allocator. In our case the requested order is 0, so the kernel attempts to use PCP lists first:
+
+``` c
+__no_sanitize_memory
+static inline
+struct page *rmqueue(struct zone *preferred_zone,
+			struct zone *zone, unsigned int order,
+			gfp_t gfp_flags, unsigned int alloc_flags,
+			int migratetype)
+{
+	struct page *page;
+
+	// If order <= PAGE_ALLOC_COSTLY_ORDER (3)
+	if (likely(pcp_allowed_order(order))) {
+		page = rmqueue_pcplist(preferred_zone, zone, order,
+				       migratetype, alloc_flags);
+		if (likely(page))
+			goto out;
+	}
+
+	page = rmqueue_buddy(preferred_zone, zone, order, alloc_flags,
+							migratetype);
+out:
+	// ...
+	return page;
+}
+```
+
+[rmqueue_pcplist()](https://elixir.bootlin.com/linux/v6.6.84/source/mm/page_alloc.c#L2741), retrieves the appropriate PCP list by utilizing `order_to_pindex(migratetype, order)` to derive the index in the `lists[]` array from the provided migration type and order. The retrieved list is then passed as an argument to `__rmqueue_pcplist()`:
+
+``` c
+static struct page *rmqueue_pcplist(struct zone *preferred_zone,
+			struct zone *zone, unsigned int order,
+			int migratetype, unsigned int alloc_flags)
+{
+	struct per_cpu_pages *pcp;
+	struct list_head *list;
+	struct page *page;
+	unsigned long __maybe_unused UP_flags;
+	pcp_trylock_prepare(UP_flags);
+	pcp = pcp_spin_trylock(zone->per_cpu_pageset);
+	if (!pcp) {
+		pcp_trylock_finish(UP_flags);
+		return NULL;
+	}
+	pcp->free_count >>= 1;
+	list = &pcp->lists[order_to_pindex(migratetype, order)];
+	page = __rmqueue_pcplist(zone, order, migratetype, alloc_flags, pcp, list);
+
+	// ...
+	
+	return page;
+}
+```
+
+[\_\_rmqueue_pcplist()](https://elixir.bootlin.com/linux/v6.6.84/source/mm/page_alloc.c#L2701) is called. It first checks if a page of the desired order is available in the PCP list, if not, it falls back to the Buddy allocator, using `rmqeuue_bulk()` to allocate a batch of N pages, based on the `batch` value stored in the `per_cpu_pages` structure:
+
+``` c
+static inline
+struct page *__rmqueue_pcplist(struct zone *zone, unsigned int order,
+			int migratetype,
+			unsigned int alloc_flags,
+			struct per_cpu_pages *pcp,
+			struct list_head *list)
+{
+	struct page *page;
+
+	do {
+		if (list_empty(list)) {
+			int batch = READ_ONCE(pcp->batch);
+			int alloced;
+			if (batch > 1)
+				batch = max(batch >> order, 2);
+			alloced = rmqueue_bulk(zone, order,
+					batch, list,
+					migratetype, alloc_flags);
+
+			pcp->count += alloced << order;
+			if (unlikely(list_empty(list)))
+				return NULL;
+		}
+
+		page = list_first_entry(list, struct page, pcp_list);
+		list_del(&page->pcp_list);
+		pcp->count -= 1 << order;
+	} while (check_new_pages(page, order));
+
+	return page;
+}
+```
+
+[rmqueue_bulk()](https://elixir.bootlin.com/linux/v6.6.84/source/mm/page_alloc.c#L2141) calls `__rmqueue()` `count` times, based on the pageset `batch` size retrieved in `__rmqueue_pcplist()`. The returned page, is then added to the PCP list.
+
+``` c
+static int rmqueue_bulk(struct zone *zone, unsigned int order,
+			unsigned long count, struct list_head *list,
+			int migratetype, unsigned int alloc_flags)
+{
+	unsigned long flags;
+	int i;
+
+	spin_lock_irqsave(&zone->lock, flags);
+	for (i = 0; i < count; ++i) {
+		struct page *page = __rmqueue(zone, order, migratetype, alloc_flags);
+		if (unlikely(page == NULL))
+			break;
+		list_add_tail(&page->pcp_list, list);
+		// ...
+	}
+	// ...
+	spin_unlock_irqrestore(&zone->lock, flags);
+
+	return i;
+}
+```
+
+[\_\_rmqueue()](https://elixir.bootlin.com/linux/v6.6.84/source/mm/page_alloc.c#L2104) uses `__rmqueue_smallest()` to find a page in the Buddy allocator’s free areas for the given migration type. If this attempt fail, and this is not a CMA allocation request, then it uses `__rmqueue_fallback()` to steal pages from other pageblocks with a different migration type (see `__rmqueue_fallback()` -\> `find_suitable_fallback()`, `get_page_from_free_area()`, `steal_suitable_fallback()`):
+
+``` c
+static __always_inline struct page *
+__rmqueue(struct zone *zone, unsigned int order, int migratetype,
+						unsigned int alloc_flags)
+{
+	struct page *page;
+
+	// ...
+
+	page = __rmqueue_smallest(zone, order, migratetype);
+	if (unlikely(!page)) {
+		if (alloc_flags & ALLOC_CMA)
+			page = __rmqueue_cma_fallback(zone, order);
+
+		if (!page)
+			page = __rmqueue_fallback(zone, order, migratetype,
+						  alloc_flags);
+	}
+	return page;
+}
+```
+
+We finally reached the core part. [\_\_rmqueue_smallest()](https://elixir.bootlin.com/linux/v6.6.84/source/mm/page_alloc.c#L1584) iterates over the `zone->free_area` array, starting from order N (N=0 in our case) to `NR_PAGE_ORDERS - 1` (11 - 1), using the `order` as an index in the array.
+
+If a page for the designated migration type is found in the corresponding freelist, the page is removed from the original list by `del_page_from_free_list()`, processed by `expand()`, and then returned:
+
+``` c
+static __always_inline
+struct page *__rmqueue_smallest(struct zone *zone, unsigned int order,
+						int migratetype)
+{
+	unsigned int current_order;
+	struct free_area *area;
+	struct page *page;
+
+	/* Find a page of the appropriate size in the preferred list */
+	for (current_order = order; current_order < NR_PAGE_ORDERS; ++current_order) {
+		area = &(zone->free_area[current_order]);
+		page = get_page_from_free_area(area, migratetype);
+		if (!page)
+			continue;
+		del_page_from_free_list(page, zone, current_order);
+		expand(zone, page, order, current_order, migratetype);
+		set_pcppage_migratetype(page, migratetype);
+		trace_mm_page_alloc_zone_locked(page, order, migratetype,
+				pcp_allowed_order(order) &&
+				migratetype < MIGRATE_PCPTYPES);
+		return page;
+	}
+
+	return NULL;
+}
+```
+
+If the order of the page found is greater than the requested order, `expand()` will split the page into lower order pages until the order is equal to the requested one.
+
+For example, if an order 0 page has been requested, but only an order 1 page is available for the specified migration type, the order 1 page is split into two order 0 pages (two “buddies”). One of the buddies is then added to the order 0 freelist for the same migration type, the other is returned.
+
+``` c
+static inline void expand(struct zone *zone, struct page *page,
+	int low, int high, int migratetype)
+{
+	unsigned long size = 1 << high;
+
+	while (high > low) {
+		high--;
+		size >>= 1;
+		VM_BUG_ON_PAGE(bad_range(zone, &page[size]), &page[size]);
+		if (set_page_guard(zone, &page[size], high, migratetype))
+			continue;
+
+		add_to_free_list(&page[size], zone, high, migratetype);
+		set_buddy_order(&page[size], high);
+	}
+}
+```
+
+The inverse of this process (coalescing) is performed by [\_\_free_one_page()](https://elixir.bootlin.com/linux/v6.6.84/source/mm/page_alloc.c#L766) when a page of order N is freed and the order is less than `MAX_ORDER`. Before adding the free page to the appropriate freelist, if its buddy is also free, the two pages are combined and moved up by one order. The coalescing process continues until a free buddy is found in the new order and the order is \< `MAX_ORDER`:
+
+``` c
+static inline void __free_one_page(struct page *page,
+		unsigned long pfn,
+		struct zone *zone, unsigned int order,
+		int migratetype, fpi_t fpi_flags)
+{
+	struct capture_control *capc = task_capc(zone);
+	unsigned long buddy_pfn = 0;
+	unsigned long combined_pfn;
+	struct page *buddy;
+	bool to_tail;
+	
+	// ...
+
+	while (order < MAX_ORDER) {
+		if (compaction_capture(capc, page, order, migratetype)) {
+			__mod_zone_freepage_state(zone, -(1 << order),
+								migratetype);
+			return;
+		}
+
+		buddy = find_buddy_page_pfn(page, pfn, order, &buddy_pfn);
+		if (!buddy)
+			goto done_merging;
+
+		if (unlikely(order >= pageblock_order)) {
+			int buddy_mt = get_pfnblock_migratetype(buddy, buddy_pfn);
+
+			if (migratetype != buddy_mt
+					&& (!migratetype_is_mergeable(migratetype) ||
+						!migratetype_is_mergeable(buddy_mt)))
+				goto done_merging;
+		}
+		if (page_is_guard(buddy))
+			clear_page_guard(zone, buddy, order, migratetype);
+		else
+			del_page_from_free_list(buddy, zone, order);
+		combined_pfn = buddy_pfn & pfn;
+		page = page + (combined_pfn - pfn);
+		pfn = combined_pfn;
+		order++;
+	}
+
+done_merging:
+	set_buddy_order(page, order);
+
+	if (fpi_flags & FPI_TO_TAIL)
+		to_tail = true;
+	else if (is_shuffle_order(order))
+		to_tail = shuffle_pick_tail();
+	else
+		to_tail = buddy_merge_likely(pfn, buddy_pfn, page, order);
+
+	if (to_tail)
+		add_to_free_list_tail(page, zone, order, migratetype);
+	else
+		add_to_free_list(page, zone, order, migratetype);
+
+	// ...
+}
+```
+
+> It is worth mentioning that before adding the free page to buddy freelists, if the order is less than or equal to `PAGE_ALLOC_COSTLY_ORDER` there is an attempt to add the page to PCP lists (see, for example, the [\_\_free_pages()](https://elixir.bootlin.com/linux/v6.6.84/source/mm/page_alloc.c#L4530) -\> [free_the_page()](https://elixir.bootlin.com/linux/v6.6.84/source/mm/page_alloc.c#L564) -\> [free_unref_page()](https://elixir.bootlin.com/linux/v6.6.84/source/mm/page_alloc.c#L2422) -\> [free_unref_page_commit()](https://elixir.bootlin.com/linux/v6.6.84/source/mm/page_alloc.c#L2392) path). If too many pages are contained in the PCP lists, then they moved to the appropriate buddy freelists (see the call to [free_pcppages_bulk()](https://elixir.bootlin.com/linux/v6.6.84/source/mm/page_alloc.c#L1202) in `free_unref_page_commit()`). All this, to reduce memory fragmentation.
+
+In both cases - after splitting two buddies or after coalescing them - [set_buddy_order()](https://elixir.bootlin.com/linux/v6.6.84/source/mm/page_alloc.c#L608) is used to update the `page->private` field of the first page in the block with the new order:
+
+``` c
+static inline void set_buddy_order(struct page *page, unsigned int order)
+{
+	set_page_private(page, order);
+	__SetPageBuddy(page);
+}
+
+static inline void set_page_private(struct page *page, unsigned long private)
+{
+	page->private = private; // new page order
+}
+```
+
+## Examples
+
+Let’s return to our original scenario. The kernel needs to allocate a new `kmalloc-cg-192` slab, so an order 0 page is requested. Here are some possible cases that can help visualize what is going on behind the scenes:
+
+**Example 1: The order 0 page is found in the appropriate PCP list**
+
+- Step 1: `rmqueue_pcplist()` finds the PCP pageset in the chosen zone, then it picks appropriate PCP list based on requested order (0) and migration type (`MIGRATE_UNMOVABLE`).
+- Step 2: `__rmqueue_pcplist()` obtains the first available page from the list, then the page is unlinked and returned.
+
+![](https://syst3mfailure.io/linux-page-allocator/assets/images/buddy-example-0.png)
+
+**Example 2: The order 0 page is not found in the PCP list, fallback to the Buddy allocator**
+
+- Step 1: `__rmqueue_smallest()` starts by iterating through the `free_area` of the designated zone, starting from order 0. The order 0 page is found in the the order 0 freelist for the `MIGRATE_UNMOVABLE` migration type.
+- Step 2: The order 0 pages is unlinked from the freelist, `expand()` is called, but there is nothing to do since the requested order and the page order are the same. The page is then returned.
+
+![](https://syst3mfailure.io/linux-page-allocator/assets/images/buddy-example-1.png)
+
+**Example 3: The order 0 page is not found in the PCP list, fallback to the Buddy allocator. Freelists from order 0 to 2 for `MIGRATE_UNMOVABLE` are empty**
+
+- **Step 1**: The function `__rmqueue_smallest()` begins by iterating through the `free_area` of the designated zone, starting from order 0. All freelists for the `MIGRATE_UNMOVABLE` migration type, from order 0 to 2, are empty. The first available page is an order 3 page.
+
+- **Step 2**: The order 3 page is unlinked and passed to the `expand()` function to be split into multiple buddies.
+
+- **Step 3**: The `expand()` function starts splitting the page into multiple buddies:
+
+  - **Step 3.1**: The order 3 page is split into two order 2 pages. One of the buddies is added to the order 2 freelist for the `MIGRATE_UNMOVABLE` migration type.
+  - **Step 3.2**: The remaining order 2 page is split into two order 1 pages. One of the buddies is added to the order 1 freelist for the `MIGRATE_UNMOVABLE` migration type.
+  - **Step 3.3**: Finally, the remaining order 1 page is split into two order 0 pages. Of these, one is added to the order 0 freelist for the `MIGRATE_UNMOVABLE` migration type, while the other is returned.
+
+![](https://syst3mfailure.io/linux-page-allocator/assets/images/buddy-example-2.png)
+
+### TBD
+
+- Zone watermarks
+- Pageblocks + steal fallback (`steal_suitable_fallback()`)
+- Slowpath (`__alloc_pages_slowpath()`)
+- Add example + diagram for (`__free_one_page()`)
+
+## Conclusion
+
+The Linux page allocator is a complex system, and this short analysis is just the tip of the iceberg. In any case, I hope you found it useful! I plan to extend (or maybe I should say `expand()`…) the article by adding more information, new diagrams, and notes as soon as I have time. For every question, correction or clarification, feel free to contact me.
+
+## References
+
+- Physical Memory (<https://docs.kernel.org/mm/physical_memory.html>)
+- Page migration (<https://www.kernel.org/doc/html/v6.14-rc7/mm/page_migration.html>)
+- Memory management, Buddy allocator, Slab allocator (<https://students.mimuw.edu.pl/ZSO/Wyklady/06_memory2/BuddySlabAllocator.pdf>)
+- Physical Memory Management (<https://www.slideshare.net/slideshow/physical-memory-managementpdf/252219128>)
+- Memory Management - The Buddy Allocator (<https://grimoire.carcano.ch/blog/memory-management-the-buddy-allocator/>)
+- Control-flow integrity for the kernel (<https://lwn.net/Articles/810077/>)
+- Prevent cross-cache attacks in the SLUB allocator (<https://lwn.net/Articles/944647/>)
+- Randomized slab caches for kmalloc() (<https://lwn.net/Articles/938246/>)

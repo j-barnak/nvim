@@ -1,0 +1,1961 @@
+# Dynamic linker speed and correctness
+
+In the last article, we managed to load a program (`hello-dl`) that uses a single dynamic library (`libmsg.so`) containing a single exported symbol, `msg`.
+
+Our program, `hello-dl.asm`, looked like this:
+
+``` x86asm
+        global _start
+        extern msg
+
+        section .text
+
+_start:
+        mov rdi, 1      ; stdout fd
+        mov rsi, msg
+        mov rdx, 38     ; 37 chars + newline
+        mov rax, 1      ; write syscall
+        syscall
+
+        xor rdi, rdi    ; return code 0
+        mov rax, 60     ; exit syscall
+        syscall
+```
+
+And our library, `msg.asm`, looked like this:
+
+``` x86asm
+        global msg:data msg.end-msg
+
+        section .data
+
+msg: db "this is way longer than sixteen bytes", 10
+ .end:
+```
+
+To make it all work, we had to implement two types of relocation:
+
+- `Copy`, which copied `msg` over from its `libmsg.so` definition over to its `hello-dl` definition
+- `_64`, which resolved to the absolute address of `hello-dl`’s definition of `msg` in memory
+
+And it did run fine:
+
+``` shell
+$ ./target/debug/elk ./samples/hello-dl
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elk/samples"
+Loading "/home/amos/ftl/elk/samples/libmsg.so"
+Applying relocations for "/home/amos/ftl/elk/samples/libmsg.so"
+Nevermind: RelaNotFound
+Applying relocations for "/home/amos/ftl/elk/samples/hello-dl"
+Found Rela { offset: 00001007, type: Known(_64), sym: 1, addend: 00000000 }
+Found Rela { offset: 00003000, type: Known(Copy), sym: 1, addend: 00000000 }
+this is way longer than sixteen bytes
+```
+
+So… we got *one* application to load. Does it work on other applications?
+
+Say, ones that we haven’t compiled ourselves?
+
+A GNU core utility for example?
+
+``` shell
+$ ./target/debug/elk /bin/ls
+Loading "/usr/bin/ls"
+Loading "/usr/lib/libcap.so.2.45"
+Loading "/usr/lib/libc-2.32.so"
+Loading "/usr/lib/ld-2.32.so"
+Applying relocations for "/usr/lib/ld-2.32.so"
+Found Rela { offset: 0002c6c0, type: Known(Relative), sym: 0, addend: 000120f0 }
+Error: UnimplementedRelocation(Relative)
+```
+
+No, it does not. Very well then, we have some more work to do.
+
+But first, I want to go over some code, criticize it, and then improve it.
+
+Let’s look at our segment loading code, for example. It’s in `elk/src/process.rs`, in the `load_object` function:
+
+``` rust
+        use std::os::unix::io::AsRawFd;
+        let segments = load_segments()
+            .filter_map(|ph| {
+                if ph.memsz.0 > 0 {
+                    let vaddr = delf::Addr(ph.vaddr.0 & !0xFFF);
+                    let padding = ph.vaddr - vaddr;
+                    let offset = ph.offset - padding;
+                    let memsz = ph.memsz + padding;
+                    let map_res = MemoryMap::new(
+                        memsz.into(),
+                        &[
+                            MapOption::MapReadable,
+                            MapOption::MapWritable,
+                            MapOption::MapFd(fs_file.as_raw_fd()),
+                            MapOption::MapOffset(offset.into()),
+                            MapOption::MapAddr(unsafe { (base + vaddr).as_ptr() }),
+                        ],
+                    );
+                    Some(map_res.map(|map| Segment {
+                        map,
+                        padding,
+                        flags: ph.flags,
+                    }))
+                } else {
+                    None
+                }
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+```
+
+We’ve seen earlier that each segment of the executable that’s mapped in memory has a `.filesz` and a `.memsz`.
+
+If we use `readelf -a` on our `hello-dl` executable, we get the following output:
+
+```
+Program Headers:
+  Type           Offset             VirtAddr           PhysAddr
+                 FileSiz            MemSiz              Flags  Align
+
+  LOAD           0x0000000000000000 0x0000000000000000 0x0000000000000000
+                 0x00000000000002d8 0x00000000000002d8  R      0x1000
+                                ^^^                ^^^
+
+  LOAD           0x0000000000001000 0x0000000000001000 0x0000000000001000
+                 0x0000000000000025 0x0000000000000025  R E    0x1000
+                                 ^^                 ^^
+
+  LOAD           0x0000000000002000 0x0000000000002000 0x0000000000002000
+                 0x0000000000000000 0x0000000000000000  R      0x1000
+                                  ^                  ^
+
+  LOAD           0x0000000000002ec0 0x0000000000002ec0 0x0000000000002ec0
+                 0x0000000000000140 0x0000000000000168  RW     0x1000
+                                ^^^                ^^^
+
+(output was slightly cut & reformatted)
+```
+
+Every segment has equal file size and mem size, except for the R+W segment, where the mem size is larger (by 0x28 bytes).
+
+And yet, the mapping we’re creating is for the entire mem size. So what’s in the extra bytes??
+
+![bss](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-8/assets/bss~a8b1853831086a8a.svg)
+
+Let’s make another program to check it out.
+
+We used nasm’s `dX` before, for *initialized* data - we used it to define a string constant, `msg`. nasm has `db` for bytes, `dw` for 2-byte words, `dd` for “double words” (32 bits), and `dq` for “quad words” (64 bits).
+
+Similarly, for *uninitialized* data, nasm has `resX`: `resb`, `resw`, `resd`, `resq`, with the same sizes. I’m going to go ahead and guess that `d` stands for “data” and `res` stands for “reserve”.
+
+So, let’s make a program that reserves sixteen 64-bit values.
+
+``` x86asm
+; in `elk/samples/bss.asm`
+
+        global _start
+
+        section .text
+
+_start: ; load address of `zero`, for debugging purposes
+        lea rax, [rel zero]
+
+        ; then just exit.
+        xor rdi, rdi
+        mov rax, 60
+        syscall
+
+        section .bss
+
+        ; here it is!
+zero:   resq 16
+```
+
+Let’s compile and link it (as a position-independent executable):
+
+``` shell
+$ cd elk/samples
+$ nasm -f elf64 bss.asm
+$ ld -pie --dynamic-linker /lib/ld-linux-x86-64.so.2 bss.o -o bss
+$ ./bss
+$
+```
+
+Okay, so it runs well.
+
+Let’s run it in GDB:
+
+``` shell
+$ gdb ./bss
+(gdb) break _start
+Breakpoint 1 at 0x1000
+(gdb) r
+Starting program: /home/amos/ftl/elk/samples/bss
+
+Breakpoint 1, 0x0000555555555000 in _start ()
+```
+
+Instead of using `ugdb` in this article, we’ll use GDB’s built-in TUI (text user interface).
+
+One way to enter it is to press `Ctrl+X` and then `2`.
+
+![bss-gdb](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-8/assets/bss-gdb~4e61328abff08abd.webp)
+
+As requested, GDB paused program execution right at the beginning of `_start`, *before* the `lea` instruction.
+
+We could use `stepi` to step to the next instruction and then inspect `rax`, but there’s really no need, as GDB shows us the address it’s going to have: whenever rip-relative addressing is used, it shows the address as a “comment”:
+
+```
+│B+>0x555555555000 <_start>         lea    rax,[rip+0x1ff9]        # 0x555555557000
+                                                                      ☝
+                                                           rax is going to
+                                                           have that value!
+```
+
+We know how to inspect memory in gdb now - just use the `examine` command, or, in short, `x`. We can control the output with `/nfu`, where `n` is the number of things to print (here, 16), `f` is the format (here we’ll pick `x` for hexadecimal), and `u` is the size of the things to print (here, `g` for giant words).
+
+``` shell
+(gdb) x/16xg 0x555555557000
+0x555555557000: 0x0000000000000000      0x0000000000000000
+0x555555557010: 0x0000000000000000      0x0000000000000000
+0x555555557020: 0x0000000000000000      0x0000000000000000
+0x555555557030: 0x0000000000000000      0x0000000000000000
+0x555555557040: 0x0000000000000000      0x0000000000000000
+0x555555557050: 0x0000000000000000      0x0000000000000000
+0x555555557060: 0x0000000000000000      0x0000000000000000
+0x555555557070: 0x0000000000000000      0x0000000000000000
+```
+
+Cool! Sixteen 64-bit values, all zero. So uninitialized data is zeroed.
+
+Good.
+
+I uh.. I don’t remember doing that in elk, though.
+
+What do the segments of our `bss` executable look like?
+
+``` shell
+$ readelf -a ./bss
+
+Program Headers:
+  Type           Offset             VirtAddr           PhysAddr
+                 FileSiz            MemSiz              Flags  Align
+
+  LOAD           0x0000000000000000 0x0000000000000000 0x0000000000000000
+                 0x0000000000000269 0x0000000000000269  R      0x1000
+
+  LOAD           0x0000000000001000 0x0000000000001000 0x0000000000001000
+                 0x0000000000000011 0x0000000000000011  R E    0x1000
+
+  LOAD           0x0000000000002f20 0x0000000000002f20 0x0000000000002f20
+                 0x00000000000000e0 0x0000000000000160  RW     0x1000
+                                 ^^                ^^^
+```
+
+Mhh, yeah. Now there’s a *big* difference between file size and mem size.
+
+So what does actually happen when we load `bss` through `elk`?
+
+``` shell
+$ cd elk/samples
+$ gdb --args ../target/debug/elk ./bss
+```
+
+Here, we can’t break on `_start`. Well, we could, but it’d be *elk’s `_start`*, not bss’s `_start`. But we can break on `jmp`, our very-unsafe let’s-jump-to-the-program-entry-point-and-hope-for-the-best function.
+
+``` shell
+(gdb) break jmp
+Breakpoint 1 at 0x33d49: file src/main.rs, line 42.
+(gdb) r
+Starting program: /home/amos/ftl/elk/target/debug/elk ./bss
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/usr/lib/libthread_db.so.1".
+Loading "/home/amos/ftl/elk/samples/bss"
+Applying relocations for "/home/amos/ftl/elk/samples/bss"
+Nevermind: RelaNotFound
+
+Breakpoint 1, elk::jmp (addr=0x7ffff7fc9000 "H\215\005\371\037\000") at src/main.rs:42
+42          let fn_ptr: fn() = std::mem::transmute(addr);
+```
+
+Step through a few instructions and…
+
+``` shell
+(gdb) stepi
+0x0000555555587d4e      42          let fn_ptr: fn() = std::mem::transmute(addr);
+(gdb)
+43          fn_ptr();
+(gdb)
+0x00007ffff7fc5000 in ?? ()
+```
+
+Ah. `??` must be code for “some executable you loaded by hand and that GDB does not know about”. Very well! TUI powers activate:
+
+![elk-bss-gdb](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-8/assets/elk-bss-gdb~60a73fe5b9626692.webp)
+
+Note that GDB is kind enough to disassemble what we’re currently running, even though, to the best of its knowledge, there is no symbol associated with the current instruction pointer (the `rip` register).
+
+The `disas` command refuses to work without a symbol though - probably because it wouldn’t know when to *stop* disassembling. However, `x/4i` would show four instructions for example:
+
+``` shell
+(gdb) x/4i $rip
+=> 0x7ffff7fc5000:      lea    rax,[rip+0x1ff9]        # 0x7ffff7fc7000
+   0x7ffff7fc5007:      xor    rdi,rdi
+   0x7ffff7fc500a:      mov    eax,0x3c
+   0x7ffff7fc500f:      syscall
+```
+
+So, what’s in our `zero` variable?
+
+``` shell
+(gdb) x/16g 0x7ffff7fc7000
+0x7ffff7fc7000: 0       0
+0x7ffff7fc7010: 0       281487861612544
+0x7ffff7fc7020: 512     0
+0x7ffff7fc7030: 562962838323200 544
+0x7ffff7fc7040: 0       844437815033856
+0x7ffff7fc7050: 560     0
+0x7ffff7fc7060: 1125912791744512        592
+0x7ffff7fc7070: 0       1407387768455168
+```
+
+Well… not zeros, that’s for sure.
+
+That’s not even our biggest problem, though. In this case, we lucked out, and the file was large enough so that our memory mapping didn’t run past the end of the file.
+
+But what if we reserve a larger amount of memory? Something disgustingly large, like 64KiB?
+
+Enter `elk/samples/bss2.asm`:
+
+``` x86asm
+        global _start
+
+        section .text
+
+_start: lea rax, [rel zero]
+        mov rax, [rax]
+
+        xor rdi, rdi    ; return code 0
+        mov rax, 60     ; exit syscall
+        syscall
+
+        section .bss
+
+pad:    resq 65536
+zero:   resq 16
+```
+
+``` shell
+$ cd elk/samples
+$ nasm -f elf64 bss2.asm
+$ ld -pie --dynamic-linker /lib/ld-linux-x86-64.so.2 bss2.o -o bss2
+$ ./bss2
+$
+```
+
+Sure, it runs well with the system’s dynamic linker. But ours?
+
+``` shell
+$ ../target/debug/elk ./bss2
+Loading "/home/amos/ftl/elk/samples/bss2"
+Applying relocations for "/home/amos/ftl/elk/samples/bss2"
+Nevermind: RelaNotFound
+[1]    5480 bus error (core dumped)  ../target/debug/elk ./bss2
+```
+
+Woops.
+
+Running this under GDB and trying to examine the address of `zero` just shows this:
+
+``` shell
+(gdb) x/xg 0x7ffff7d84000
+0x7ffff7d84000: Cannot access memory at address 0x7ffff7d84000
+```
+
+I’m not sure if GDB catches SIGBUS, or if they check the process map ahead of time to prevent it - at any rate, it knows what’s up.
+
+So, let’s fix this. The plan is, for each segment:
+
+``` text
+* To only map the `0..filesz` range
+* To zero out the `filesz..memsz` range
+```
+
+To make our lives easier, I want to change up `Addr` a little.
+
+First off, I’m not happy with its Debug implementation - we used `:08x` as its format string, but the number we specify here is the number of nibbles (half-bytes), not the number of bytes, and we’re dealing with 64-bit addresses, so it really should be `:016x` instead.
+
+``` rust
+// in `delf/src/lib.rs`
+
+impl fmt::Debug for Addr {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:016x}", self.0)
+    }
+}
+```
+
+Second, right now we have methods to interpret a `delf::Addr` as a pointer, or a mut pointer, but I think we could use a few more:
+
+``` rust
+// in `delf/src/lib.rs`
+
+impl Addr {
+    // pre-existing
+    pub unsafe fn as_ptr<T>(&self) -> *const T {
+        std::mem::transmute(self.0 as usize)
+    }
+
+    // pre-existing
+    pub unsafe fn as_mut_ptr<T>(&self) -> *mut T {
+        std::mem::transmute(self.0 as usize)
+    }
+
+    // new!
+    pub unsafe fn as_slice<T>(&mut self, len: usize) -> &[T] {
+        std::slice::from_raw_parts(self.as_ptr(), len)
+    }
+
+    // new!
+    pub unsafe fn as_mut_slice<T>(&self, len: usize) -> &mut [T] {
+        std::slice::from_raw_parts_mut(self.as_mut_ptr(), len)
+    }
+
+    // new!
+    pub unsafe fn write(&self, src: &[u8]) {
+        std::ptr::copy_nonoverlapping(src.as_ptr(), self.as_mut_ptr(), src.len());
+    }
+
+    // new!
+    pub unsafe fn set<T>(&self, src: T) {
+        *self.as_mut_ptr() = src;
+    }
+}
+```
+
+Now we’re ready to zero out our uninitialized data.
+
+And while we’re at it, we’ll change the code structure a bit. We’re returning something funky, an `Option<Result<T, E>>`, so we had to use `.map` on the result of `MemoryMap::new`.
+
+This makes the flow of the code kinda hard to read, so let’s go with something different:
+
+``` rust
+// in `elk/src/process.rs`
+
+        use std::os::unix::io::AsRawFd;
+        let segments = load_segments()
+            // first filter-out zero-sized segments
+            .filter(|ph| ph.memsz.0 > 0)
+            // then map the remaining ones!
+            .map(|ph| -> Result<_, LoadError> {
+                let vaddr = delf::Addr(ph.vaddr.0 & !0xFFF);
+                let padding = ph.vaddr - vaddr;
+                let offset = ph.offset - padding;
+                let filesz = ph.filesz + padding;
+                let map = MemoryMap::new(
+                    // the mapping only goes up to filesz...
+                    filesz.into(),
+                    &[
+                        MapOption::MapReadable,
+                        MapOption::MapWritable,
+                        MapOption::MapFd(fs_file.as_raw_fd()),
+                        MapOption::MapOffset(offset.into()),
+                        MapOption::MapAddr(unsafe { (base + vaddr).as_ptr() }),
+                    ],
+                )?;
+
+                // but if there's some bytes left over...
+                if ph.memsz > ph.filesz {
+                    // ...then we zero them!
+                    // note: this works because we already reserved the *convex hull*
+                    // of all segments in memory in our initial `MemoryMap::new` call,
+                    // so that memory is there.
+                    let mut zero_start = base + ph.mem_range().start + ph.filesz;
+                    let zero_len = ph.memsz - ph.filesz;
+                    unsafe {
+                        // this will probably get optimized to something good.
+                        for i in zero_start.as_mut_slice(zero_len.into()) {
+                            *i = 0;
+                        }
+                    }
+                }
+
+                Ok(Segment {
+                    map,
+                    padding,
+                    flags: ph.flags,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+```
+
+And now, everything works fine:
+
+``` shell
+$ ../target/debug/elk ./bss2
+Loading "/home/amos/ftl/elk/samples/bss2"
+[1]    10331 segmentation fault (core dumped)  ../target/debug/elk ./bss2
+```
+
+Ah. It does not.
+
+Okay so this memory should *definitely* be mapped because, as I said in the comments above, we reserve the convex hull of all segments in memory in our initial `MemoryMap::new` call, here:
+
+``` rust
+// in `elk/src/process.rs`
+
+        let mem_size: usize = (mem_range.end - mem_range.start).into();
+        let mem_map = std::mem::ManuallyDrop::new(MemoryMap::new(mem_size, &[])?);
+        let base = delf::Addr(mem_map.data() as _) - mem_range.start;
+```
+
+Mh. We never bothered to set any permissions for this mapping though, let’s try making it readable and writable:
+
+``` rust
+        let mem_size: usize = (mem_range.end - mem_range.start).into();
+        let mem_map = std::mem::ManuallyDrop::new(MemoryMap::new(
+            mem_size,
+            &[MapOption::MapReadable, MapOption::MapWritable],
+        )?);
+```
+
+``` shell
+$ ../target/debug/elk ./bss2
+Loading "/home/amos/ftl/elk/samples/bss2"
+[1]    10566 segmentation fault (core dumped)  ../target/debug/elk ./bss2
+```
+
+Still no dice.
+
+What does GDB say?
+
+``` shell
+$  gdb --args ../target/debug/elk ./bss2
+(cut: GDB startup banner)
+(gdb) r
+Starting program: /home/amos/ftl/elk/target/debug/elk ./bss2
+[Thread debugging using libthread_db enabled]
+Using host libthread_db library "/usr/lib/libthread_db.so.1".
+Loading "/home/amos/ftl/elk/samples/bss2"
+
+Program received signal SIGSEGV, Segmentation fault.
+0x0000555555565706 in elk::process::Process::load_object::{{closure}} (ph=0x555555638608) at src/process.rs:203
+203                                 *i = 0;
+(gdb)
+```
+
+Mhokay, so it is crashing when we zero memory, that’s what we expected.
+
+And `i` is:
+
+``` shell
+(gdb) p i
+$4 = (*mut i32) 0x7ffff7d87000
+```
+
+Wait a minute. `i` is a `*mut i32`??? Why `i32`? We’re zeroing *bytes* here, not `i32`s!! That means we’re zeroing four times as much data as we should be, no wonder we end up segfaulting.
+
+It’s because of that sneaky bit of code:
+
+``` rust
+                    unsafe {
+                        for i in zero_start.as_mut_slice(zero_len.into()) {
+                            *i = 0;
+                        }
+                    }
+```
+
+When we wrote this, we were *thinking* about bytes. But the compiler was thinking that this:
+
+``` rust
+    pub unsafe fn as_mut_slice<T>(&self, len: usize) -> &mut [T] {
+        std::slice::from_raw_parts_mut(self.as_mut_ptr(), len)
+    }
+```
+
+…can have any `T`, and it must infer what `T` is. And there’s only one place `i` is used, when we do this:
+
+``` rust
+                            *i = 0;
+```
+
+And that’s not a type, it’s a value. It’s an `{integer}`. And what does an `{integer}` become, when there are no other constraints on it?
+
+Let’s do a test program:
+
+``` rust
+// throwaway file
+
+fn main() {
+    println!("{:?}", type_name_of(0));
+}
+
+fn type_name_of<T>(_t: T) -> &'static str {
+    std::any::type_name::<T>()
+}
+```
+
+That program prints.. `i32`. So everything makes sense.
+
+We could solve it with turbofish syntax:
+
+``` rust
+                    unsafe {
+                        for i in zero_start.as_mut_slice::<u8>(zero_len.into()) {
+                            *i = 0;
+                        }
+                    }
+```
+
+Or we could solve it by explicitly saying our `0` is an `u8` literal, not just any integer:
+
+``` rust
+                    unsafe {
+                        for i in zero_start.as_mut_slice(zero_len.into()) {
+                            *i = 0u8;
+                        }
+                    }
+```
+
+With those changes, `bss2` runs fine. But phew, `.as_mut_slice` sure is dangerous. Good thing we marked it as `unsafe`!
+
+Let’s just check in GDB to make sure:
+
+``` shell
+Breakpoint 1, elk::jmp (addr=0x7ffff7d25000) at elk/src/main.rs:55
+55          let fn_ptr: fn() = std::mem::transmute(addr);
+(gdb) stepi
+0x000055555557cdee      55          let fn_ptr: fn() = std::mem::transmute(addr);
+(...more stepi commands)
+(gdb)
+56          fn_ptr();
+(gdb)
+0x00007ffff7d25000 in ?? ()
+(gdb) x/4i $rip
+=> 0x7ffff7d25000:      lea    rax,[rip+0x81ff9]        # 0x7ffff7da7000
+   0x7ffff7d25007:      xor    rdi,rdi
+   0x7ffff7d2500a:      mov    eax,0x3c
+   0x7ffff7d2500f:      syscall
+(gdb) x/16xg 0x7ffff7da7000
+0x7ffff7da7000: 0x0000000000000000      0x0000000000000000
+0x7ffff7da7010: 0x0000000000000000      0x0000000000000000
+0x7ffff7da7020: 0x0000000000000000      0x0000000000000000
+0x7ffff7da7030: 0x0000000000000000      0x0000000000000000
+0x7ffff7da7040: 0x0000000000000000      0x0000000000000000
+0x7ffff7da7050: 0x0000000000000000      0x0000000000000000
+0x7ffff7da7060: 0x0000000000000000      0x0000000000000000
+0x7ffff7da7070: 0x0000000000000000      0x0000000000000000
+```
+
+Seems good!
+
+So, we just fixed an issue we didn’t even know we had, that’s good!
+
+> **What did we learn?**
+>
+> When an ELF program header asks for a memory region that’s larger than the corresponding file region, it’s filled with zeros.
+
+## A new relocation type
+
+If we make a third test program, `bss3`, and adjust it a bit:
+
+``` x86asm
+        global _start
+
+        section .text
+
+_start:
+        ; this used to be a `lea rax, [rel zero]` plus a `lea rax, [rax]`
+        mov rax, zero
+
+        xor rdi, rdi    ; return code 0
+        mov rax, 60     ; exit syscall
+        syscall
+
+        section .bss
+
+pad:    resq 65536
+zero:   resq 16
+```
+
+…then we encounter a relocation type we haven’t seen yet!
+
+``` shell
+$ cd elk/samples
+$ nasm -f elf64 bss3.asm
+$ ld -pie --dynamic-linker /lib/ld-linux-x86-64.so.2 bss3.o -o bss3
+$ ../target/debug/elk bss3
+Loading "/home/amos/ftl/elk/samples/bss3"
+Applying relocations for "/home/amos/ftl/elk/samples/bss3"
+Found Rela { offset: 0000000000001002, type: Known(Relative), sym: 0, addend: 0000000000083000 }
+Error: UnimplementedRelocation(Relative)
+```
+
+I’m ready to bet this isn’t the last relocation we’ll have to implement.
+
+Right now, our relocation code is kinda convoluted.
+
+We do the following:
+
+- For each ELF object, in *reverse load order*…
+- Read relocation entries…
+- If there were relocation entries…
+- For each relocation entry read…
+- Match relocation type…
+- If it’s a known type, match known type…
+- If it’s a `_64` relocation, lookup the symbol…
+- etc.
+
+We even have this quirky debug output when there *are* no relocations:
+
+``` shell
+$ ../target/debug/elk ./bss
+Loading "/home/amos/ftl/elk/samples/bss"
+Applying relocations for "/home/amos/ftl/elk/samples/bss"
+Nevermind: RelaNotFound
+```
+
+Isn’t this adorable?
+
+Kind of. But we’re going to need a better code structure if we want to get much further.
+
+First, I want to take a look at `read_rela_entries`, in delf:
+
+``` rust
+// in `delf/src/lib.rs`
+
+impl File {
+    pub fn read_rela_entries(&self) -> Result<Vec<Rela>, ReadRelaError> {
+        use DynamicTag as DT;
+        use ReadRelaError as E;
+
+        let addr = self.dynamic_entry(DT::Rela).ok_or(E::RelaNotFound)?;
+        let len = self.dynamic_entry(DT::RelaSz).ok_or(E::RelaSzNotFound)?;
+        let ent = self.dynamic_entry(DT::RelaEnt).ok_or(E::RelaEntNotFound)?;
+
+        let i = self.slice_at(addr).ok_or(E::RelaSegmentNotFound)?;
+        let i = &i[..len.into()];
+
+        let n = (len.0 / ent.0) as usize;
+        use nom::multi::many_m_n;
+
+        match many_m_n(n, n, Rela::parse)(i) {
+            Ok((_, rela_entries)) => Ok(rela_entries),
+            Err(nom::Err::Failure(err)) | Err(nom::Err::Error(err)) => {
+                let e = &err.errors[0];
+                let (_input, error_kind) = e;
+                Err(E::ParsingError(error_kind.clone()))
+            }
+            // we don't use any "streaming" parsers, so.
+            _ => unreachable!(),
+        }
+    }
+}
+```
+
+First off, “not being able to find a dynamic entry” is a pretty common error. It seems silly to have 3 variants in `ReadRelaError` just for this:
+
+``` rust
+#[derive(Error, Debug)]
+pub enum ReadRelaError {
+    #[error("Rela dynamic entry not found")]
+    RelaNotFound,
+    #[error("RelaSz dynamic entry not found")]
+    RelaSzNotFound,
+    #[error("RelaEnt dynamic entry not found")]
+    RelaEntNotFound,
+    #[error("Rela segment not found")]
+    RelaSegmentNotFound,
+    #[error("Parsing error")]
+    ParsingError(parse::ErrorKind),
+}
+```
+
+Tell you what, why don’t we make up a new method, `get_dynamic_entry`, that returns a `Result` itself, mh?
+
+``` rust
+// in `delf/src/lib.rs`
+
+#[derive(thiserror::Error, Debug)]
+pub enum GetDynamicEntryError {
+    #[error("Dynamic entry {0} not found")]
+    NotFound(DynamicTag),
+}
+
+impl File {
+    pub fn get_dynamic_entry(&self, tag: DynamicTag) -> Result<Addr, GetDynamicEntryError> {
+        self.dynamic_entry(tag)
+            .ok_or(GetDynamicEntryError::NotFound(tag))
+    }
+}
+```
+
+Woops, this doesn’t compile:
+
+``` shell
+error[E0599]: no method named `as_display` found for type `&DynamicTag` in the current scope
+   --> /home/amos/ftl/delf/src/lib.rs:584:13
+    |
+584 |     #[error("Dynamic entry {0} not found")]
+    |             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ method not found in `&DynamicTag`
+    |
+    = note: the method `as_display` exists but the following trait bounds were not satisfied:
+            `&DynamicTag : thiserror::display::DisplayAsDisplay`
+    = help: items from traits can only be used if the trait is implemented and in scope
+    = note: the following traits define an item `as_display`, perhaps you need to implement one of them:
+            candidate #1: `thiserror::display::DisplayAsDisplay`
+            candidate #2: `thiserror::display::PathAsDisplay`
+```
+
+Ah right! We need to tell `thiserror` to use the `Debug` trait to format the inner `DynamicTag`:
+
+``` rust
+#[derive(thiserror::Error, Debug)]
+pub enum GetDynamicEntryError {
+    #[error("Dynamic entry {0:?} not found")]
+    NotFound(DynamicTag),
+}
+```
+
+> **Cool bear says:**
+>
+> So that’s how that syntax works!
+
+All better.
+
+Now we can simplify `ReadRelaError`:
+
+``` rust
+#[derive(thiserror::Error, Debug)]
+pub enum ReadRelaError {
+    #[error("{0}")]
+    DynamicEntryNotFound(#[from] GetDynamicEntryError),
+    #[error("Rela segment not found")]
+    RelaSegmentNotFound,
+    #[error("Parsing error")]
+    ParsingError(parse::ErrorKind),
+}
+```
+
+And `read_rela_entries` itself. But let’s also think about what the lack of a `RELA` dynamic entry means. It’s not really an error - it just means there’s no relocations at all! So we could just return an empty vec instead.
+
+And also: do we *really* need to look up `RELA_ENT` ? Rela entries are always 24 bytes. If that changed, I’m pretty sure a lot of software would freak out.
+
+Let’s address *all of this*.
+
+First, a constant for rela size:
+
+``` rust
+impl Rela {
+    const SIZE: usize = 24;
+}
+```
+
+Then the reading itself:
+
+``` rust
+impl File {
+    pub fn read_rela_entries(&self) -> Result<Vec<Rela>, ReadRelaError> {
+        use DynamicTag as DT;
+        use ReadRelaError as E;
+
+        match self.dynamic_entry(DT::Rela) {
+            None => Ok(vec![]),
+            Some(addr) => {
+                let len = self.get_dynamic_entry(DT::RelaSz)?;
+
+                let i = self.slice_at(addr).ok_or(E::RelaSegmentNotFound)?;
+                let i = &i[..len.into()];
+
+                let n: usize = len.0 as usize / Rela::SIZE;
+                match nom::multi::many_m_n(n, n, Rela::parse)(i) {
+                    Ok((_, rela_entries)) => Ok(rela_entries),
+                    Err(nom::Err::Failure(err)) | Err(nom::Err::Error(err)) => {
+                        let e = &err.errors[0];
+                        let (_input, error_kind) = e;
+                        Err(E::ParsingError(error_kind.clone()))
+                    }
+                    _ => unreachable!(),
+                }
+            }
+        }
+    }
+}
+```
+
+Speaking of complexity, the whole `RelType` / `KnownRelType` duality is kind of a bummer. Chances are, if we encounter an unknown relocation type, we won’t be able to run the executable at all.
+
+We want to handle all relocations or fail early on, so let’s go back to a single `RelType` type.
+
+``` rust
+// in `delf/src/lib.rs`
+
+#[derive(Debug, TryFromPrimitive, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum RelType {
+    _64 = 1,
+    Copy = 5,
+    GlobDat = 6,
+    JumpSlot = 7,
+    Relative = 8,
+}
+
+impl_parse_for_enum!(RelType, le_u32);
+```
+
+Of course then I won’t be happy with `impl_parse_for_enum`, because, as-is, it only returns nom’s `ErrorKind::Alt`:
+
+``` rust
+// in `delf/src/parse.rs`
+
+#[macro_export]
+macro_rules! impl_parse_for_enum {
+    ($type: ident, $number_parser: ident) => {
+        impl $type {
+            pub fn parse(i: parse::Input) -> parse::Result<Self> {
+                use nom::{
+                    combinator::map_res,
+                    error::{context, ErrorKind},
+                    number::complete::$number_parser,
+                };
+                let parser = map_res($number_parser, |x| {
+                    Self::try_from(x).map_err(|_| ErrorKind::Alt)
+                });
+                context(stringify!($type), parser)(i)
+            }
+        }
+    };
+}
+```
+
+So let’s try to make this friendlier.
+
+I’m okay with our *own* `ErrorKind` having a `String` variant - it might be wasteful, but it only happens if something goes wrong, so we should be fine.
+
+``` rust
+// in `delf/src/parse.rs`
+
+#[derive(Debug, Clone)]
+pub enum ErrorKind {
+    Nom(nom::error::ErrorKind),
+    Context(&'static str),
+    String(String),
+}
+```
+
+While we’re at it, let’s also add a `Debug` implementation for our `parse::Error` type, and a `from_string` helper:
+
+``` rust
+// in `delf/src/parse.rs`
+
+use std::fmt;
+impl fmt::Debug for Error<&[u8]> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for (input, err) in &self.errors {
+            writeln!(f, "{:?}:", err)?;
+            writeln!(f, "input: {:?}", crate::HexDump(input))?;
+        }
+        Ok(())
+    }
+}
+
+impl<I> Error<I> {
+    pub fn from_string<S: Into<String>>(input: I, s: S) -> Self {
+        let errors = vec![(input, ErrorKind::String(s.into()))];
+        Self { errors }
+    }
+}
+```
+
+And finally we can make `impl_parse_for_enum` have a slightly friendlier error:
+
+``` rust
+#[macro_export]
+macro_rules! impl_parse_for_enum {
+    ($type: ident, $number_parser: ident) => {
+        impl $type {
+            pub fn parse(full_input: parse::Input) -> parse::Result<Self> {
+                use nom::number::complete::$number_parser;
+                let (i, val) = $number_parser(full_input)?;
+                match Self::try_from(val) {
+                    Ok(val) => Ok((i, val)),
+                    Err(_) => Err(nom::Err::Failure(parse::Error::from_string(
+                        full_input,
+                        format!("Unknown {} {} (0x{:x})", stringify!($type), val, val),
+                    ))),
+                }
+            }
+        }
+    };
+}
+```
+
+Now that *this* is done, we can adjust `read_rela_entries` to return a formatted error from `delf`, instead of just a nom `ErrorKind`:
+
+``` rust
+// in `elk/src/lib.rs`
+
+#[derive(Error, Debug)]
+pub enum ReadRelaError {
+    #[error("{0}")]
+    DynamicEntryNotFound(#[from] GetDynamicEntryError),
+    #[error("Rela segment not found")]
+    RelaSegmentNotFound,
+    #[error("Parsing error: {0}")]
+    ParsingError(String), // this used to be `ErrorKind`
+}
+```
+
+``` rust
+// in `read_rela_entries`
+
+    match nom::multi::many_m_n(n, n, Rela::parse)(i) {
+        Ok((_, rela_entries)) => Ok(rela_entries),
+        Err(nom::Err::Failure(err)) | Err(nom::Err::Error(err)) => {
+            // 👇 much simpler! and nicer.
+            Err(E::ParsingError(format!("{:?}", err)))
+        }
+        _ => unreachable!(),
+    }
+```
+
+Similarly, we can make up a macro for `SymBind` and `SymType`, which are both 4-bit values in the file:
+
+``` rust
+// in `elk/src/parse.rs`
+
+#[macro_export]
+macro_rules! impl_parse_for_bitenum {
+    ($type: ident, $bits: expr) => {
+        impl $type {
+            pub fn parse(full_input: parse::BitInput) -> parse::BitResult<Self> {
+                use nom::bits::complete::take;
+
+                let (i, val): (_, u8) = take($bits)(full_input)?;
+                match Self::try_from(val) {
+                    Ok(val) => Ok((i, val)),
+                    Err(_) => Err(nom::Err::Failure(parse::Error::from_string(
+                        full_input,
+                        format!("Unknown {} {} (0x{:x})", stringify!($type), val, val),
+                    ))),
+                }
+            }
+        }
+    };
+}
+```
+
+``` rust
+// in `elk/src/lib.rs`
+
+#[derive(Debug, TryFromPrimitive, Clone, Copy)]
+#[repr(u8)]
+pub enum SymBind {
+    Local = 0,
+    Global = 1,
+    Weak = 2,
+}
+
+impl_parse_for_bitenum!(SymBind, 4_usize);
+
+#[derive(Debug, TryFromPrimitive, Clone, Copy)]
+#[repr(u8)]
+pub enum SymType {
+    None = 0,
+    Object = 1,
+    Func = 2,
+    Section = 3,
+}
+
+impl_parse_for_bitenum!(SymType, 4_usize);
+
+// note: the previous `parse` implementations for `SymBind` and `SymType`
+// were removed
+```
+
+And now we don’t have to deal with `Option<SymBind>` and `Option<SymType>` in the `Sym` type! Again - we probably *always* want to know what a symbol’s type and bind is.
+
+``` rust
+// in `elk/src/lib.rs`
+
+#[derive(Debug)]
+pub struct Sym {
+    // was Option
+    pub bind: SymBind,
+    // was Option
+    pub r#type: SymType,
+
+    pub name: Addr,
+    pub shndx: SectionIndex,
+    pub value: Addr,
+    pub size: u64,
+}
+```
+
+Now that we’ve done all that, we have a few things to adjust in elk, for the new interface:
+
+``` rust
+#[derive(Error, Debug)]
+pub enum RelocationError {
+    // note: UnknownRelocation is gone!
+    #[error("unimplemented relocation: {0:?}")]
+    UnimplementedRelocation(delf::RelType),
+    #[error("unknown symbol number: {0}")]
+    UnknownSymbolNumber(u32),
+    #[error("undefined symbol: {0}")]
+    UndefinedSymbol(String),
+}
+```
+
+``` rust
+// in `Process::apply_relocations`
+// for rel in rels
+
+    println!("Found {:?}", rel);
+    // 👇 new local
+    let reltype = rel.r#type;
+    use delf::RelType as RT;
+
+    match reltype {
+        RT::_64 => {
+            // handle _64 relocation
+        }
+        RT::Copy => {
+            // handle Copy relocation
+        }
+        //                                                        👇 new name!
+        _ => return Err(RelocationError::UnimplementedRelocation(reltype)),
+    }
+```
+
+Does everything still work?
+
+``` shell
+$ ../target/debug/elk hello-dl
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elk/samples"
+Loading "/home/amos/ftl/elk/samples/libmsg.so"
+Applying relocations for "/home/amos/ftl/elk/samples/libmsg.so"
+Applying relocations for "/home/amos/ftl/elk/samples/hello-dl"
+Found Rela { offset: 0000000000001007, type: _64, sym: 1, addend: 0000000000000000 }
+Found Rela { offset: 0000000000003000, type: Copy, sym: 1, addend: 0000000000000000 }
+this is way longer than sixteen bytes
+$ ../target/debug/elk bss
+Loading "/home/amos/ftl/elk/samples/bss"
+Applying relocations for "/home/amos/ftl/elk/samples/bss"
+$ ../target/debug/elk bss2
+Loading "/home/amos/ftl/elk/samples/bss2"
+Applying relocations for "/home/amos/ftl/elk/samples/bss2"
+$ ../target/debug/elk bss3
+Loading "/home/amos/ftl/elk/samples/bss3"
+Applying relocations for "/home/amos/ftl/elk/samples/bss3"
+Found Rela { offset: 0000000000001002, type: Relative, sym: 0, addend: 0000000000083000 }
+Error: UnimplementedRelocation(Relative)
+```
+
+Looks like it!
+
+How does it fare with unimplemented stuff though?
+
+``` shell
+$ ../target/debug/elk /bin/ls
+Loading "/usr/bin/ls"
+Loading "/usr/lib/libcap.so.2.30"
+Loading "/usr/lib/libc-2.30.so"
+Error: ReadSymsError(ParsingError(String("Unknown SymType 10 (0xa)")))
+```
+
+That’s not a lot of context… but that’s also not the error type we adjusted earlier - we fixed up `read_rela_entries` but not `read_syms`
+
+``` rust
+// in `delf/src/lib.rs`
+
+#[derive(Error, Debug)]
+pub enum ReadSymsError {
+    // 👇 use get_dynamic_entry
+    #[error("{0:?}")]
+    DynamicEntryNotFound(#[from] GetDynamicEntryError),
+
+    #[error("SymTab section not found")]
+    SymTabSectionNotFound,
+
+    #[error("SymTab segment not found")]
+    SymTabSegmentNotFound,
+
+    // 👇 store formatted error instead of just ErrorKind
+    #[error("Parsing error: {0}")]
+    ParsingError(String),
+}
+
+impl File {
+    pub fn read_syms(&self) -> Result<Vec<Sym>, ReadSymsError> {
+        use DynamicTag as DT;
+        use ReadSymsError as E;
+
+        // 👇 use get_dynamic_entry
+        let addr = self.get_dynamic_entry(DT::SymTab)?;
+        let section = self
+            .section_starting_at(addr)
+            .ok_or(E::SymTabSectionNotFound)?;
+
+        let i = self.slice_at(addr).ok_or(E::SymTabSegmentNotFound)?;
+        let n = (section.size.0 / section.entsize.0) as usize;
+        use nom::multi::many_m_n;
+
+        match many_m_n(n, n, Sym::parse)(i) {
+            Ok((_, syms)) => Ok(syms),
+            Err(nom::Err::Failure(err)) | Err(nom::Err::Error(err)) => {
+                // 👇 format error here (because we stop borrowing input later)
+                Err(E::ParsingError(format!("{:?}", err)))
+            }
+            _ => unreachable!(),
+        }
+    }
+}
+```
+
+Better?
+
+``` shell
+$ ../target/debug/elk /bin/ls
+Loading "/usr/bin/ls"
+Loading "/usr/lib/libcap.so.2.30"
+Loading "/usr/lib/libc-2.30.so"
+Error: ReadSymsError(ParsingError("String(\"Unknown SymType 10 (0xa)\"):\ninput: 1a 00 10 00 a0 bf 0b 00 00 00 00 00 c1 00 00 00 00 00 00 00 \n"))
+```
+
+Mh, yes and no.
+
+It looks like the error is bubbling all the way up to elk’s `main` function, which has this signature:
+
+``` rust
+// in `elk/src/main.rs`
+
+fn main() -> Result<(), Box<dyn Error>> {
+    // (cut)
+}
+```
+
+And it looks like it’s formatting whatever error is returned with the `Debug` trait, so we see the full composition of the error, instead of the pretty `Display` strings we’ve been specifying.
+
+Let’s fix that.
+
+``` rust
+// in `elk/src/main.rs`
+
+fn main() {
+    if let Err(e) = do_main() {
+        eprintln!("Fatal error: {}", e);
+    }
+}
+
+fn do_main() -> Result<(), Box<dyn Error>> {
+    // (cut)
+}
+```
+
+``` shell
+$ ../target/debug/elk /bin/ls
+Loading "/usr/bin/ls"
+Loading "/usr/lib/libcap.so.2.30"
+Loading "/usr/lib/libc-2.30.so"
+Fatal error: Could not read symbols from ELF object: Parsing error: String("Unknown SymType 10 (0xa)"):
+input: 1a 00 10 00 a0 bf 0b 00 00 00 00 00 c1 00 00 00 00 00 00 00
+```
+
+Okay! Now we actually get the error formatting we’ve worked on. We’ll worry about symbol type 10 later.
+
+I’m liking those cleanups! I don’t want to stop!
+
+## Introducing a `Name` type
+
+Here’s another thing that bothers me: `Process::lookup_symbol()`
+
+``` rust
+impl Process {
+    pub fn lookup_symbol(
+        &self,
+        name: &str,
+        ignore: Option<&Object>,
+    ) -> Result<Option<(&Object, &delf::Sym)>, RelocationError> {
+        for obj in &self.objects {
+            if let Some(ignored) = ignore {
+                if std::ptr::eq(ignored, obj) {
+                    continue;
+                }
+            }
+
+            for (i, sym) in obj.syms.iter().enumerate() {
+                if obj.sym_name(i as u32)? == name {
+                    return Ok(Some((obj, sym)));
+                }
+            }
+        }
+        Ok(None)
+    }
+}
+```
+
+For every symbol look up, we go through all loaded objects (that part we can’t really help) and check *each individual symbol* of those objects.
+
+Sure, in our small assembly programs we’ve got a handful of symbols. But even the most basic dynamically-linked C application has dependencies that have thousands of symbols.
+
+It gets worse - to compare names, we call `delf::File::get_string`
+
+``` rust
+impl Object {
+    pub fn sym_name(&self, index: u32) -> Result<String, RelocationError> {
+        self.file
+            .get_string(self.syms[index as usize].name)
+            .map_err(|_| RelocationError::UnknownSymbolNumber(index))
+    }
+}
+```
+
+…which does a *lot* of work:
+
+``` rust
+    pub fn get_string(&self, offset: Addr) -> Result<String, GetStringError> {
+        use DynamicTag as DT;
+        use GetStringError as E;
+
+        let addr = self.dynamic_entry(DT::StrTab).ok_or(E::StrTabNotFound)?;
+        let slice = self
+            .slice_at(addr + offset)
+            .ok_or(E::StrTabSegmentNotFound)?;
+        let string_slice = slice.split(|&c| c == 0).next().ok_or(E::StringNotFound)?;
+        Ok(String::from_utf8_lossy(string_slice).into())
+    }
+```
+
+It does a linear scan in dynamic entries to find the string table, and then decodes the symbol name as utf-8 (in a lossy manner, so we don’t crash if it’s invalid utf-8).
+
+We’ve got to be able to do better than that.
+
+Firstly, we don’t *need* to convert symbol names to `&str` just to compare them. We could use `Vec<u8>` instead, those implement `PartialEq` and `Eq`!
+
+We could *only* convert them to strings when we need to print them out, for debugging purposes.
+
+Secondly, we don’t even need to *own* the data for names. There’s no need to copy it out, because we’ve mapped the whole string table to memory before!
+
+Thirdly, it’s tempting to think of a `HashMap` to look up symbols more quickly. But the “symbol table” is a table for a reason: the same names can be listed multiple times.
+
+In fact, just in `/usr/lib/libc.so.6`, there are multiple duplicates, and even [quadruplicates](https://en.wiktionary.org/wiki/quadruplicate):
+
+```
+nm -D /usr/lib/libc.so.6 | cut -d ' ' -f 3 | uniq -c | grep -v 1
+      2
+      2 fmemopen
+      2 glob
+      2 glob64
+      2
+      2 memcpy
+      2 nftw
+      2 nftw64
+      2 posix_spawn
+      2 posix_spawnp
+      2 pthread_cond_broadcast
+      2 pthread_cond_destroy
+      2 pthread_cond_init
+      2 pthread_cond_signal
+      2 pthread_cond_timedwait
+      2 pthread_cond_wait
+      2 quick_exit
+      2 realpath
+      2 regexec
+      2
+      2 sched_getaffinity
+      2 sched_setaffinity
+      4 _sys_errlist
+      4 sys_errlist
+      4 _sys_nerr
+      4 sys_nerr
+      2 sys_sigabbrev
+      2 _sys_siglist
+      2 sys_siglist
+```
+
+So `HashMap` is out of the question. We could have a `HashMap<Name, Vec<Sym>>`… but, and I insist we say this all together now: *there is [a crate](https://lib.rs/crates/multimap) for that*.
+
+So, let’s first make a new `Name` type. I’m in an expansive mood, so let’s make a module just for it:
+
+``` rust
+// in `elk/src/main.rs`
+
+mod name;
+```
+
+``` rust
+// in `elk/src/process.rs`
+
+use crate::name::Name;
+```
+
+``` rust
+// in `elk/src/name.rs`
+
+#[derive(Clone)]
+pub enum Name {
+    FromAddr { addr: delf::Addr, len: usize },
+    Owned(Vec<u8>),
+}
+```
+
+Okay, good start! We have two variants: one for names that come straight from an ELF file we just mapped into memory, and one for names we own, like, maybe we want to look up a specific symbol in the future, from a Rust string literal, and then it’ll come in handy.
+
+Each entry in an ELF file’s string table is null-terminated - that’s why `File::get_string` has this nugget:
+
+``` rust
+        let string_slice = slice.split(|&c| c == 0).next().ok_or(E::StringNotFound)?;
+```
+
+We’ll give `Name` a constructor that does pretty much that, given a random `Addr`. This is *pretty unsafe*, it’ll read any memory you tell it to:
+
+``` rust
+// in `elk/src/name.rs`
+
+impl Name {
+    /// # Safety
+    ///
+    /// `addr` must point to a null-terminated string, otherwise it's an UB party.
+    pub unsafe fn from_addr(addr: delf::Addr) -> Self {
+        let len = addr
+            .as_slice::<u8>(2048)
+            .iter()
+            .position(|&c| c == 0)
+            .expect("scanned 2048 bytes without finding null-terminator for name");
+        Self::FromAddr { addr, len }
+    }
+}
+```
+
+For “safety” (to avoid segfaults), we limit name size to 2048. Hopefully the *actual* limit for ELF symbol size is way lower, so we won’t ever run into that.
+
+By comparison, the constructor for `Name::Owned` is much simpler (and safe):
+
+``` rust
+impl Name {
+    pub fn owned<T: Into<Vec<u8>>>(value: T) -> Self {
+        Self::Owned(value.into())
+    }
+}
+```
+
+From there, we can implement `as_slice` - this is almost all a `Name` is:
+
+``` rust
+impl Name {
+    pub fn as_slice(&self) -> &[u8] {
+        match self {
+            // I knew this `as_slice` helper would come in handy!
+            // no need to worry about type inference going wrong here,
+            // we've explicitly declared the return type to be `&[u8]`
+            Self::FromAddr { addr, len } => unsafe { addr.as_slice(*len) },
+            Self::Owned(vec) => &vec[..],
+        }
+    }
+}
+```
+
+As promised, we can make a `Debug` implementation that shows the symbol as a string if possible, and as a slice if not:
+
+``` rust
+use std::fmt;
+impl fmt::Debug for Name {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> Result<(), fmt::Error> {
+        if let Ok(s) = std::str::from_utf8(self.as_slice()) {
+            // this only succeeds if the name is valid utf-8
+            fmt::Display::fmt(s, f)
+        } else {
+            fmt::Debug::fmt(self.as_slice(), f)
+        }
+    }
+}
+```
+
+And finally, since we’ll want to use `Name` as a key in a hash map (well, a multimap), we’ll need it to implement `PartialEq`, `Eq`, and `Hash`.
+
+We *cannot* just derive those, because we want to test the *contents*. A `Name::FromAddr` could be equal to a `Name::Owned`.
+
+So we simply defer to the `std::slice` implementations:
+
+``` rust
+impl PartialEq for Name {
+    fn eq(&self, other: &Self) -> bool {
+        PartialEq::eq(self.as_slice(), other.as_slice())
+    }
+}
+impl Eq for Name {}
+
+use std::hash::{Hash, Hasher};
+impl Hash for Name {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        Hash::hash(self.as_slice(), state)
+    }
+}
+```
+
+Sounds good! As long as we *only ever pass valid addresses* to `Name::from_addr`, and that those addresses remain valid for the lifetime of the `Name`, we’re in the clear.
+
+But really, we just `unsafe`’d our way out of any of the guarantees the borrow checker provided us. Which… I mean, just recently we accidentally unmapped part of a *running executable*, I think we’re well into “never safe again” territory - and it’s only getting worse from here.
+
+Okay, so, let’s see where we read symbols right now - it’s in `Process::load_object`
+
+``` rust
+// in `src/`
+
+let syms = file.read_syms()?;
+```
+
+Okay, this gives us a `Vec<delf::Sym>`.
+
+You know what would be even cooler?
+
+If we had a struct that somehow combined the symbol’s *information* (like its type, bind, value, size) and its *name*.
+
+Maybe something like that:
+
+``` rust
+// in `src/elk/process.rs`
+
+#[derive(Debug, Clone)]
+struct NamedSym {
+    sym: delf::Sym,
+    name: Name,
+}
+```
+
+(Note: for this to work, we also need to derive `Clone` for `delf::Sym`. It is left as an exercise to the reader)
+
+And then an `Object` would have *two* copies of all the symbols.
+
+One `Vec` for index lookups, and one `MultiMap` for name lookups.
+
+> **Cool Bear's hot tip**
+>
+> Remember that relocations refer to local symbols by their number, and the name of that local symbol is used to look up a *defined* symbol in other objects.
+>
+> So we need both kinds of lookup.
+
+Well, let’s get going, shall we:
+
+``` shell
+$ cd elk/
+$ cargo add multimap@0.8
+      Adding multimap v0.8.2 to dependencies
+```
+
+``` rust
+// in `src/elk/process.rs`
+
+use multimap::MultiMap;
+
+#[derive(CustomDebug)]
+pub struct Object {
+    // (other fields omitted)
+
+    #[debug(skip)]
+    syms: Vec<NamedSym>,
+
+    #[debug(skip)]
+    sym_map: MultiMap<Name, NamedSym>,
+}
+```
+
+Now, we can map our `Vec<Sym>` to a `Vec<NamedSym>`:
+
+``` rust
+        let syms = file.read_syms()?;
+        let strtab = file
+            .get_dynamic_entry(delf::DynamicTag::StrTab)
+            .unwrap_or_else(|_| panic!("String table not found in {:?}", path));
+        let syms: Vec<_> = syms
+            .into_iter()
+            .map(|sym| unsafe {
+                let name = Name::from_addr(base + strtab + sym.name);
+                NamedSym { sym, name }
+            })
+            .collect();
+```
+
+If you’ll excuse the liberties taken with error handling (but really, do you want to live in a world where an ELF object has symbols but no string table??? No thank you), we can move on to `sym_map`:
+
+``` rust
+        let mut sym_map = MultiMap::new();
+        for sym in &syms {
+            sym_map.insert(sym.name.clone(), sym.clone())
+        }
+
+        let object = Object {
+            // (other fields omitted)
+            syms,
+            sym_map,
+        };
+```
+
+That was easy! Lots of cloning, but `Sym` is relatively small, and the expected improvement in lookup time means it probably pays for itself. Or not.
+
+> **Cool Bear's hot tip**
+>
+> One really ought to make measurements before making claims like that.
+>
+> And then not make the claims anyway, because measurements lie all the time.
+
+Ok, what’s next.. oh, `Object::sym_name` can go. Delete!
+
+I’m thinking about the `lookup_symbol` method, whose signature is currently:
+
+``` rust
+    pub fn lookup_symbol(
+        &self,
+        name: &str,
+        ignore: Option<&Object>,
+    ) -> Result<Option<(&Object, &delf::Sym)>, RelocationError> { }
+```
+
+I really dislike that it returns a `(&Object, &delf::Sym)` - seems inconvenient.
+
+What if we had a struct that tied together a `Sym` and the `Object` it’s bound to?
+
+Something like this:
+
+``` rust
+#[derive(Debug, Clone)]
+struct ObjectSym<'a> {
+    obj: &'a Object,
+    sym: &'a NamedSym,
+}
+```
+
+It could even have a nice convenience method, `value`, that returns the re-based address:
+
+``` rust
+impl ObjectSym<'_> {
+    fn value(&self) -> delf::Addr {
+        self.obj.base + self.sym.sym.value
+    }
+}
+```
+
+Then our `lookup_symbol` signature could just be this:
+
+``` rust
+    pub fn lookup_symbol(
+        &self,
+        wanted: &ObjectSym,
+        ignore_self: bool,
+    ) -> Option<ObjectSym> { }
+```
+
+In fact… let’s think bigger. Sometimes, a symbol is unresolved, but that’s okay - because it was a *weak* symbol, and so, if it’s undefined, we simply use `0x0` as its address instead of whatever it would’ve been if it *was* defined by one of the other ELF objects.
+
+libc has several of those:
+
+``` shell
+$ nm -D /usr/lib/libc.so.6 | grep " w "
+                 w _dl_starting_up
+                 w __libdl_freeres
+                 w __libpthread_freeres
+```
+
+If only we could have a type that lets us know the result of a lookup, and that is usable even if it was undefined, just in case the local symbol we’re resolving was weak… something like that:
+
+``` rust
+#[derive(Debug)]
+enum ResolvedSym<'a> {
+    Defined(ObjectSym<'a>),
+    Undefined,
+}
+```
+
+And this one could also have convenience methods:
+
+``` rust
+impl ResolvedSym<'_> {
+    fn value(&self) -> delf::Addr {
+        match self {
+            Self::Defined(sym) => sym.value(),
+            Self::Undefined => delf::Addr(0x0),
+        }
+    }
+
+    fn size(&self) -> usize {
+        match self {
+            // weeeeeee
+            Self::Defined(sym) => sym.sym.sym.size as usize,
+            Self::Undefined => 0,
+        }
+    }
+}
+```
+
+And then `lookup_symbol` could simply be:
+
+``` rust
+    fn lookup_symbol(&self, wanted: &ObjectSym, ignore_self: bool) -> ResolvedSym {
+        for obj in &self.objects {
+            if ignore_self && std::ptr::eq(wanted.obj, obj) {
+                continue;
+            }
+
+            if let Some(syms) = obj.sym_map.get_vec(&wanted.sym.name) {
+                if let Some(sym) = syms.iter().find(|sym| !sym.sym.shndx.is_undef()) {
+                    return ResolvedSym::Defined(ObjectSym { obj, sym });
+                }
+            }
+        }
+        ResolvedSym::Undefined
+    }
+```
+
+Pretty nice, right? `get_vec` is from `MultiMap`, it returns *all the values corresponding to a key*, or None if.. there aren’t any.
+
+Speaking of relocations. Why not read them ahead of time?
+
+``` rust
+#[derive(CustomDebug)]
+pub struct Object {
+    // (other fields omitted)
+
+    #[debug(skip)]
+    pub rels: Vec<delf::Rela>,
+}
+```
+
+``` rust
+// in Process::load_object
+
+        let rels = file.read_rela_entries()?;
+
+        let object = Object {
+            // other fields omitted
+            rels,
+        };
+```
+
+Of course, for that we need a new variant for `LoadError`:
+
+``` rust
+#[derive(Error, Debug)]
+pub enum LoadError {
+    // (other variants omitted)
+
+    #[error("Could not read relocations from ELF object: {0}")]
+    ReadRelaError(#[from] delf::ReadRelaError),
+}
+```
+
+Okay! Lots of compile errors right now, but that’s what refactoring is all about (that and the end result, but, we’ll see).
+
+I like this idea of grouping “a symbol and its name”, “a named symbol and its object”. How about grouping relocations with their objects?
+
+``` rust
+#[derive(Debug)]
+struct ObjectRel<'a> {
+    obj: &'a Object,
+    rel: &'a delf::Rela,
+}
+```
+
+This way we could get the address of a relocation, already adjusted for the base address of the object!
+
+``` rust
+impl ObjectRel<'_> {
+    fn addr(&self) -> delf::Addr {
+        self.obj.base + self.rel.offset
+    }
+}
+```
+
+Note that during the entire relocation process, all the objects, symbols, and relocations, are purely read-only, so we can afford to pass a lot of references around without the borrow checker going berserk.
+
+So, let’s approach `apply_relocations` with a clean perspective:
+
+``` rust
+impl Process {
+    pub fn apply_relocations(&self) -> Result<(), RelocationError> {
+        let rels: Vec<_> = self
+            .objects
+            .iter()
+            .rev()
+            .map(|obj| obj.rels.iter().map(move |rel| ObjectRel { obj, rel }))
+            .flatten()
+            .collect();
+
+        for rel in rels {
+            self.apply_relocation(rel)?;
+        }
+        Ok(())
+    }
+}
+```
+
+Seems okay! We’ll still be applying them in reverse load order, we’re just… mapping them to a single `Vec<ObjectRel>` in advance.
+
+Now for `apply_relocation` - the singular one.
+
+``` rust
+impl Process {
+    fn apply_relocation(&self, objrel: ObjectRel) -> Result<(), RelocationError> {
+        use delf::RelType as RT;
+
+        // destructure a bit, for convenience
+        let ObjectRel { obj, rel } = objrel;
+        let reltype = rel.r#type;
+        let addend = rel.addend;
+
+        // this is the symbol we're looking for.
+        // note that it may be symbol 0, which has an empty name - that's fine.
+        let wanted = ObjectSym {
+            obj,
+            sym: &obj.syms[rel.sym as usize],
+        };
+
+        // when doing a lookup, only ignore the relocation's object if
+        // we're performing a Copy relocation.
+        let ignore_self = matches!(reltype, RT::Copy);
+
+        // perform symbol lookup early
+        let found = match rel.sym {
+            // the relocation isn't bound to any symbol, go with undef
+            0 => ResolvedSym::Undefined,
+            _ => match self.lookup_symbol(&wanted, ignore_self) {
+                undef @ ResolvedSym::Undefined => match wanted.sym.sym.bind {
+                    // undefined symbols are fine if our local symbol is weak
+                    delf::SymBind::Weak => undef,
+                    // otherwise, error out now
+                    _ => return Err(RelocationError::UndefinedSymbol(format!("{:?}", wanted))),
+                },
+                // defined symbols are always fine
+                x => x,
+            },
+        };
+
+
+        match reltype {
+            RT::_64 => unsafe {
+                // beautiful
+                // we're using `set<T>()` and passing a `delf::Addr` - which is
+                // just a newtype over `u64`, so everything works out!
+                objrel.addr().set(found.value() + addend);
+            },
+            RT::Copy => unsafe {
+                // beaaaaaaaaaaautiful!
+                // write() takes a &[u8], so `as_slice`'s type is inferred correctly.
+                objrel.addr().write(found.value().as_slice(found.size()));
+            },
+            _ => return Err(RelocationError::UnimplementedRelocation(reltype)),
+        }
+        Ok(())
+    }
+}
+```
+
+Well, the *actual* relocation code is a lot more readable now! And since that’s the one we’re more likely to mess up, this seems really important right now.
+
+But.. does it still work?
+
+``` shell
+$ ../target/debug/elk ./hello-dl
+Loading "/home/amos/ftl/elk/samples/hello-dl"
+Found RPATH entry "/home/amos/ftl/elk/samples"
+Loading "/home/amos/ftl/elk/samples/libmsg.so"
+this is way longer than sixteen bytes
+```
+
+Appears so. `bss2` is still fine, too - I checked!
+
+What about `bss3`?
+
+``` shell
+$ ../target/debug/elk ./bss3
+Loading "/home/amos/ftl/elk/samples/bss3"
+Fatal error: unimplemented relocation: Relative
+```
+
+Ah, that’s unfortunate.
+
+Well, you know, this article is already pretty long and… oh alright, how are `Relative` relocations calculated again?
+
+![reloc-types](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-8/assets/reloc-types~0cc097157bc3e8bb.webp)
+
+Mhh, `B + A`. A is for addend, B is for… base?
+
+``` rust
+        match reltype {
+            RT::_64 => unsafe {
+                objrel.addr().set(found.value() + addend);
+            },
+            // new!
+            RT::Relative => unsafe {
+                objrel.addr().set(obj.base + addend);
+            },
+            RT::Copy => unsafe {
+                objrel.addr().write(found.value().as_slice(found.size()));
+            },
+            _ => return Err(RelocationError::UnimplementedRelocation(reltype)),
+        }
+```
+
+``` shell
+$ ../target/debug/elk ./bss3
+Loading "/home/amos/ftl/elk/samples/bss3"
+$
+```
+
+Huh. Did that work? Kinda hard to tell - even if we go into GDB and examine memory, we could be looking at *another* bunch of 16 64-bit zero values.
+
+Hey, didn’t `hello-pie.asm` have Relative relocations?
+
+``` x86asm
+        global _start
+
+        section .text
+
+_start: mov rdi, 1      ; stdout fd
+        ; lea rsi, [rel msg]
+        mov rsi, msg
+        mov rdx, 9      ; 8 chars + newline
+        mov rax, 1      ; write syscall
+        syscall
+
+        xor rdi, rdi    ; return code 0
+        mov rax, 60     ; exit syscall
+        syscall
+
+        section .data
+
+msg:    db "hi there", 10
+```
+
+``` x86asm
+$ objdump -drR ./hello-pie
+
+./hello-pie:     file format elf64-x86-64
+
+
+Disassembly of section .text:
+
+0000000000001000 <_start>:
+    1000:       bf 01 00 00 00          mov    edi,0x1
+    1005:       48 be 00 30 00 00 00    movabs rsi,0x3000
+    100c:       00 00 00
+                        1007: R_X86_64_RELATIVE *ABS*+0x3000
+    100f:       ba 09 00 00 00          mov    edx,0x9
+    1014:       b8 01 00 00 00          mov    eax,0x1
+    1019:       0f 05                   syscall
+    101b:       48 31 ff                xor    rdi,rdi
+    101e:       b8 3c 00 00 00          mov    eax,0x3c
+    1023:       0f 05                   syscall
+```
+
+It did! Let’s give it a shot:
+
+``` shell
+$ ../target/debug/elk ./hello-pie
+Loading "/home/amos/ftl/elk/samples/hello-pie"
+hi there
+```
+
+Success! 🎉
+
+I feel a lot better about this relocation code already. I feel more confident that we can tackle whatever surprises ELF still has in store for us. We’ll see about that!

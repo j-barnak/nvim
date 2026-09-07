@@ -1,0 +1,1778 @@
+# Everything but ELF
+
+And we’re back!
+
+In [the last article](https://fasterthanli.me/series/making-our-own-executable-packer/part-15), we thanked our old code and bade it adieu, for it did not spark joy. And then we made a new, solid foundation, on which we planned to actually make an executable packer.
+
+As part of this endeavor, we’ve made a crate called `encore`, which only depends on `libcore`, and provides some of the things `libstd` would give us, but which we cannot have, because we do not want to rely on a libc.
+
+And we made a short program with it, that simply opened a file, mapped it in memory, and read part of it.
+
+> **Cool bear says:**
+>
+> So we’re halfway there, right? Now we just need to `jmp` to it?
+
+Ah, well — there is still a part of `libcore` that’s crucially missing. Ideally, we would use `minipak` like this:
+
+``` shell
+$ minipak /usr/bin/vim --output /tmp/vim.pak
+```
+
+…which would then produce a smaller version of vim at `/tmp/vim.pak`.
+
+But we have a slight problem. Normally we’d use a crate to parse arguments, that would in turn use something like [`std::env::args`](https://doc.rust-lang.org/stable/std/env/fn.args.html), which is provided by `libstd`, which we don’t have.
+
+We know where command-line arguments are hiding though! Much like regular function arguments, they’re hiding… on the stack. Well… beneath the stack. Or above it, since it grows down. It’s all about perspective.
+
+We’ve done this before with `echidna`, it’s time to do it again, but better.
+
+First, since both CLI (command-line interface) arguments and environment variables are null-terminated strings, and we only want to deal with `&str`, which are nice, fast, and safe slices, we’re going to want some sort of conversion routine.
+
+The conversion itself is not that safe: our input is a random memory address which we directly start reading from. We can’t tell what we’re reading, we just stop at the first null byte. We might even be reading past mapped memory, and could cause a segmentation fault.
+
+This is just one of those case where we’ll have to, as they say, “just wing it”.
+
+``` rust
+// in `crates/encore/src/utils.rs`
+
+pub trait NullTerminated
+where
+    Self: Sized,
+{
+    /// Turns a pointer into a byte slice, assuming it finds a
+    /// null terminator.
+    ///
+    /// # Safety
+    /// Dereferences an arbitrary pointer.
+    unsafe fn null_terminated(self) -> &'static [u8];
+
+    /// Turns self into a string.
+    ///
+    /// # Safety
+    /// Dereferences an arbitrary pointer.
+    unsafe fn cstr(self) -> &'static str {
+        core::str::from_utf8(self.null_terminated()).unwrap()
+    }
+}
+
+impl NullTerminated for *const u8 {
+    unsafe fn null_terminated(self) -> &'static [u8] {
+        let mut j = 0;
+        while *self.add(j) != 0 {
+            j += 1;
+        }
+        core::slice::from_raw_parts(self, j)
+    }
+}
+```
+
+``` rust
+// in `crates/encore/src/prelude.rs`
+
+pub use crate::utils::NullTerminated;
+```
+
+Now, we can move on to actually reading the environment:
+
+``` rust
+// in `crates/encore/src/lib.rs`
+
+pub mod env;
+```
+
+``` rust
+// in `crates/encore/src/prelude.rs`
+
+pub use crate::env::*;
+```
+
+``` rust
+// in `crates/encore/src/env.rs`
+
+use crate::utils::NullTerminated;
+use alloc::vec::Vec;
+use core::fmt;
+
+/// An auxiliary vector
+#[repr(C)]
+pub struct Auxv {
+    pub typ: AuxvType,
+    pub value: u64,
+}
+
+impl fmt::Debug for Auxv {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "AT_{:?} = 0x{:x}", self.typ, self.value)
+    }
+}
+
+/// A type of auxiliary vector
+#[derive(Clone, Copy, PartialEq, Eq)]
+#[repr(transparent)]
+pub struct AuxvType(u64);
+
+impl AuxvType {
+    // Marks end of auxiliary vector list
+    pub const NULL: Self = Self(0);
+    // Address of the first program header in memory
+    pub const PHDR: Self = Self(3);
+    // Number of program headers
+    pub const PHNUM: Self = Self(5);
+    // Address where the interpreter (dynamic loader) is mapped
+    pub const BASE: Self = Self(7);
+    // Entry point of program
+    pub const ENTRY: Self = Self(9);
+}
+
+impl fmt::Debug for AuxvType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(match *self {
+            Self::PHDR => "PHDR",
+            Self::PHNUM => "PHNUM",
+            Self::BASE => "BASE",
+            Self::ENTRY => "ENTRY",
+            _ => "(UNKNOWN)",
+        })
+    }
+}
+
+#[derive(Default)]
+pub struct Env {
+    /// Auxiliary vectors
+    pub vectors: Vec<&'static mut Auxv>,
+    /// Command-line arguments
+    pub args: Vec<&'static str>,
+    /// Environment variables
+    pub vars: Vec<&'static str>,
+}
+
+impl Env {
+    /// # Safety
+    /// Walks the stack, not the safest thing.
+    pub unsafe fn read(stack_top: *mut u8) -> Self {
+        let mut ptr: *mut u64 = stack_top as _;
+
+        let mut env = Self::default();
+
+        // Read arguments
+        ptr = ptr.add(1);
+        while *ptr != 0 {
+            let arg = (*ptr as *const u8).cstr();
+            env.args.push(arg);
+            ptr = ptr.add(1);
+        }
+
+        // Read variables
+        ptr = ptr.add(1);
+        while *ptr != 0 {
+            let var = (*ptr as *const u8).cstr();
+            env.vars.push(var);
+            ptr = ptr.add(1);
+        }
+
+        // Read auxiliary vectors
+        ptr = ptr.add(1);
+        let mut ptr: *mut Auxv = ptr as _;
+        while (*ptr).typ != AuxvType::NULL {
+            env.vectors.push(ptr.as_mut().unwrap());
+            ptr = ptr.add(1);
+        }
+
+        env
+    }
+
+    /// Finds an auxiliary vector by type.
+    /// Panics if the auxiliary vector cannot be found.
+    pub fn find_vector(&mut self, typ: AuxvType) -> &mut Auxv {
+        self.vectors
+            .iter_mut()
+            .find(|v| v.typ == typ)
+            .unwrap_or_else(|| panic!("aux vector {:?} not found", typ))
+    }
+}
+```
+
+I know, I know. We normally go about these things iteratively. But there’s not much mystery left to this part. We’ve done the fancy diagram before:
+
+![elf-stack](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-12/assets/elf-stack~700d0bd33d1b8591.svg)
+
+And we just had to expose that to our little family of `no_std` programs.
+
+And now it’s done!
+
+So, let’s print some of these:
+
+``` rust
+// in `crates/minipak/src/main.rs`
+
+// beneath `unsafe extern "C" _start()`
+
+use encore::prelude::*;
+
+#[no_mangle]
+unsafe fn pre_main(stack_top: *mut u8) {
+    init_allocator();
+    main(Env::read(stack_top)).unwrap();
+    syscall::exit(0);
+}
+
+#[allow(clippy::unnecessary_wraps)]
+fn main(mut env: Env) -> Result<(), EncoreError> {
+    println!("args = {:?}", env.args);
+    println!("{:?}", env.vars.iter().find(|s| s.starts_with("SHELL=")));
+    println!("{:?}", env.find_vector(AuxvType::PHDR));
+
+    Ok(())
+}
+```
+
+And try it out:
+
+``` shell
+$ cargo run --bin minipak -- foo bar baz
+   Compiling minipak v0.1.0 (/home/amos/ftl/minipak/crates/minipak)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.81s
+     Running `target/debug/minipak foo bar baz`
+args = ["target/debug/minipak", "foo", "bar", "baz"]
+Some("SHELL=/usr/bin/zsh")
+AT_PHDR = 0x400040
+```
+
+> **Cool Bear's hot tip**
+>
+> Most command-line applications that are also runners accept a double-dash (`--`) to separate “host arguments” from “guest arguments”. Here, everything before the double-dash is for cargo, and everything after it is for minipak.
+
+Wonderful! Those are indeed the arguments we’ve passed, I am indeed using zsh, and…
+
+``` shell
+$ readelf -Whl ./target/debug/minipak | grep -E "(Start of program|LOAD)"
+  Start of program headers:          64 (bytes into file)
+  LOAD           0x000000 0x0000000000400000 0x0000000000400000 0x000224 0x000224 R   0x1000
+  LOAD           0x001000 0x0000000000401000 0x0000000000401000 0x00f016 0x00f016 R E 0x1000
+  LOAD           0x011000 0x0000000000411000 0x0000000000411000 0x003300 0x003300 R   0x1000
+  LOAD           0x014c28 0x0000000000415c28 0x0000000000415c28 0x0013d8 0x001408 RW  0x1000
+$ printf "%x\n" $((64 + 0x400000))
+400040
+```
+
+…that’s indeed where the program headers are!
+
+Well, I think we’ve made good progress, thanks for tuning in this week, I’ll see yo-
+
+> **Cool bear says:**
+>
+> Ohhh no no no. I say when we stop.
+
+Oh!
+
+…okay.
+
+## A simple argument parser
+
+So, we’ve got a list of arguments, but we haven’t got something nice like [argh](https://lib.rs/crates/argh), or [clap](https://lib.rs/crates/clap), or whatever [the flavor of the month](https://crates.io/keywords/argument) is this week, because, again, they’d use `libstd`.
+
+So, we’ll just cook up something by hand.
+
+It’ll take a reference to the environment, and the result will implement the `Debug` trait:
+
+``` rust
+// in `crates/minipak/src/main.rs`
+
+mod cli;
+
+#[allow(clippy::unnecessary_wraps)]
+fn main(env: Env) -> Result<(), EncoreError> {
+    let args = cli::Args::parse(&env);
+    println!("args = {:#?}", args);
+
+    Ok(())
+}
+```
+
+Many things could possibly go wrong while parsing command-line arguments: we might be missing the input, or the output, have several of either, or encounter a flag we just don’t know.
+
+We’ll want an error type:
+
+``` rust
+// in `crates/minipak/src/cli.rs`
+
+use core::fmt::Display;
+use encore::prelude::*;
+
+extern crate alloc;
+use alloc::borrow::Cow;
+
+/// An error encountered while parsing CLI arguments
+#[derive(Clone)]
+pub struct Error {
+    /// The name of the program as it was invoked, something like
+    /// `./target/release/minipak`
+    program_name: &'static str,
+    /// The error message, which could be a static string (`&'static str`)
+    message: Cow<'static, str>,
+}
+
+impl Display for Error {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        writeln!(f, "Error: {}", self.message)?;
+        writeln!(f, "Usage: {} input -o output", self.program_name)?;
+        Ok(())
+    }
+}
+```
+
+And, well, some sort of struct that holds all our arguments in a structured manner. Since all those strings live on the stack, and are valid for the whole duration the program executes, their lifetime is… `'static`!
+
+``` rust
+// in `crates/minipak/src/cli.rs`
+
+/// Command-line arguments for minipak
+#[derive(Debug)]
+pub struct Args {
+    /// The executable to compress
+    pub input: &'static str,
+    /// Where to write the compressed executable on disk
+    pub output: &'static str,
+}
+```
+
+But that’s not all we need. While we’re in the process of parsing command-line arguments, we don’t have all the arguments yet, so we can’t just have an instance of `Args` that we progressively fill out. Whenever we build an `Args`, we must already have all the fields available.
+
+So we’ll make an intermediate struct where all the fields are optional:
+
+``` rust
+// in `crates/minipak/src/cli.rs`
+
+/// Struct used while parsing
+#[derive(Default)]
+struct ArgsRaw {
+    input: Option<&'static str>,
+    output: Option<&'static str>,
+}
+```
+
+And finally, we can get parsing. Our main interface is `Args::parse`, which cannot fail — or rather, it can, but errors are not recoverable:
+
+``` rust
+// in `crates/minipak/src/cli.rs`
+
+impl Args {
+    /// Parse command-line arguments.
+    /// Prints a help message and exit with a non-zero code if the arguments are
+    /// not quite right.
+    pub fn parse(env: &Env) -> Self {
+        match Self::parse_inner(env) {
+            Err(e) => {
+                println!("{}", e);
+                syscall::exit(1);
+            }
+            Ok(x) => x,
+        }
+    }
+}
+```
+
+Next up, the crux of the logic: we just go through each argument and try to figure out what it means:
+
+``` rust
+// in `crates/minipak/src/cli.rs`
+
+impl Args {
+    fn parse_inner(env: &Env) -> Result<Self, Error> {
+        let mut args = env.args.iter().copied();
+        // By convention, the first argument is the program's name
+        let program_name = args.next().unwrap();
+
+        // All the fields of `ArgsRaw` are optional, we mutate it a bunch
+        // while we're parsing the incoming CLI arguments.
+        let mut raw: ArgsRaw = Default::default();
+
+        // This helps us construct errors with less code
+        let err = |message| Error {
+            program_name,
+            message,
+        };
+
+        // Iterate through the arguments, in a way that lets us get two or
+        // more, if we find a flag like `--output` for example.
+        while let Some(arg) = args.next() {
+            if arg.starts_with('-') {
+                // We found a flag! Do we know what it is?
+                Self::parse_flag(arg, &mut args, &mut raw, &err)?;
+                continue;
+            }
+
+            // All positional arguments are just inputs. We
+            // only accept one input.
+            if raw.input.is_some() {
+                return Err(err("Multiple input files specified".into()));
+            } else {
+                raw.input = Some(arg)
+            }
+        }
+
+        Ok(Args {
+            input: raw.input.ok_or_else(|| err("Missing input".into()))?,
+            output: raw.output.ok_or_else(|| err("Missing output".into()))?,
+        })
+    }
+}
+```
+
+To keep each piece of code bite-sized, I’ve split out flag parsing into a separate associated function.
+
+> **Cool Bear's hot tip**
+>
+> A function `SomeTrait::some_func` is in an `impl SomeTrait` block, but it has no receiver: it doesn’t take `&self`, not `&mut self`, nor `Arc<Self>`, etc.
+>
+> Such a function could definitely live as a freestanding function, outside the item, but for code organization, it’s convenient to “associate” it to the item by putting it in the same `impl` block.
+
+``` rust
+// in `crates/minipak/src/cli.rs`
+
+impl Args {
+    fn parse_flag(
+        flag: &'static str,
+        args: &mut dyn Iterator<Item = &'static str>,
+        raw: &mut ArgsRaw,
+        err: &dyn Fn(Cow<'static, str>) -> Error,
+    ) -> Result<(), Error> {
+        match flag {
+            // We know that one!
+            "-o" | "--output" => {
+                let output = args
+                    .next()
+                    .ok_or_else(|| err("Missing output filename after -o / --output".into()))?;
+
+                // Only accept one output
+                if raw.output.is_some() {
+                    return Err(err("Multiple output files specified".into()));
+                } else {
+                    raw.output = Some(output)
+                }
+                Ok(())
+            }
+            // Anything else, we don't know.
+            x => Err(err(format!("Unknown flag {}", x).into())),
+        }
+    }
+}
+```
+
+It takes quite a few arguments, but it all still works! All the arguments and errors are `'static`, and the other arguments (`args` and `raw`) are borrowed from `Args::parse_inner` for the duration of the call to `Args::parse_flag`.
+
+Alright! Writing it all by hand like that really underlines how convenient crates like `argh` and `clap` are, but I think we *should* be good to go.
+
+``` shell
+$ cargo run --quiet --bin minipak --
+Error: Missing input
+Usage: target/debug/minipak input -o output
+
+$ cargo run --quiet --bin minipak -- /usr/bin/vim
+Error: Missing output
+Usage: target/debug/minipak input -o output
+
+$ cargo run --quiet --bin minipak -- /usr/bin/vim /usr/bin/nano
+Error: Multiple input files specified
+Usage: target/debug/minipak input -o output
+
+$ cargo run --quiet --bin minipak -- /usr/bin/vim -o
+Error: Missing output filename after -o / --output
+Usage: target/debug/minipak input -o output
+
+$ cargo run --quiet --bin minipak -- /usr/bin/vim --output
+Error: Missing output filename after -o / --output
+Usage: target/debug/minipak input -o output
+
+$ cargo run --quiet --bin minipak -- /usr/bin/vim --output /tmp/vim.pak
+args = Args {
+    input: "/usr/bin/vim",
+    output: "/tmp/vim.pak",
+}
+
+$ cargo run --quiet --bin minipak -- /usr/bin/vim --output /tmp/vim.pak --output /tmp/vim.pak2
+Error: Multiple output files specified
+Usage: target/debug/minipak input -o output
+```
+
+Great!
+
+Well, we’ve made a bunch of progress, it feels like a good place t-
+
+> **Cool bear says:**
+>
+> Nuh-huh. We keep going.
+
+Ah. I see.
+
+## Compressing executables
+
+One thing we’ve never *actually* done in this series so far is… compressing executables.
+
+Like, with some compression method, like DEFLATE, or bzip2, or maybe something more modern. Implementing such a compression method is beyond the scope of this series, but surely we can find something on \<crates.io\> that’ll fit our needs?
+
+We’ll want something that’s `no_std` friendly and maybe a little more modern than what I just brought up.
+
+Any ideas cool bear?
+
+> **Cool bear says:**
+>
+> [lz4_flex](https://lib.rs/crates/lz4_flex) looks good. It says here it’s the “fastest LZ4 implementation in Rust, with no unsafe by default”.
+>
+> The features list mentions “very good logo”: it’s a picture of two muscular men flexing their biceps in the readme.
+
+Jackpot.
+
+Let’s bring it in:
+
+``` toml
+# in `crates/minipak/Cargo.toml`
+
+lz4_flex = { version = "0.7.5", default-features = false, features = ["safe-encode", "safe-decode"] }
+```
+
+And use it!
+
+``` rust
+// in `crates/minipak/src/main.rs`
+
+#[allow(clippy::unnecessary_wraps)]
+fn main(env: Env) -> Result<(), EncoreError> {
+    let args = cli::Args::parse(&env);
+
+    let input = File::open(&args.input)?;
+    let input = input.map()?;
+    let input = input.as_ref();
+
+    let compressed = lz4_flex::compress_prepend_size(input);
+    let mut output = File::create(&args.output, 0o755)?;
+    output.write_all(&compressed[..])?;
+
+    println!(
+        "Wrote {} ({:.2}% of input)",
+        args.output,
+        compressed.len() as f64 / input.len() as f64 * 100.0,
+    );
+
+    Ok(())
+}
+```
+
+``` shell
+$ cargo run --release --quiet --bin minipak -- /usr/bin/vim -o /tmp/vim.pak
+Wrote /tmp/vim.pak (66.31% of input)
+```
+
+Cool! We brought `/usr/bin/vim` down from 3.6MB to 2.4MB.
+
+Of course, it doesn’t run:
+
+``` shell
+$ /tmp/vim.pak
+zsh: exec format error: /tmp/vim.pak
+```
+
+…because it’s not an executable. It’s just an LZ4-compressed version of the original `/usr/bin/vim`.
+
+But still, I think we can pretty proud of what we achieved here today, and we should probably keep the rest for the next art-
+
+> **Cool bear says:**
+>
+> Nnnnnnnnnnnnnope. We keep going.
+
+Bear, please, it’s Sunday. Let me have fun!
+
+> **Cool bear says:**
+>
+> We’re having fun right now! Why would we stop?
+
+…yes bear.
+
+## Enter `stage1`
+
+So! In order for our packed executable to, well, execute, it needs to be an executable.
+
+> **Cool bear says:**
+>
+> Who died and made you Technology Connections?
+
+I was thinking of Clint from LGR, but I’ll accept both.
+
+Anyway, `/tmp/vim.pak` is not an executable. We’ve gone over the plan in Part 15, it’s time to put it into action.
+
+Let’s make a new Rust binary in our workspace, named `stage1`:
+
+``` shell
+$ (cd crates && cargo new --bin stage1)
+warning: compiling this new package may not work due to invalid workspace configuration
+```
+
+Alright y’all, you know the drill — this ain’t our first workspace.
+
+``` toml
+# in `Cargo.toml`
+
+[workspace]
+members = [
+    "crates/encore",
+    "crates/minipak",
+    "crates/stage1",
+]
+
+# omitted: profile.dev, profile.release
+```
+
+Since this is also a `no_std` binary, we’re going to use `encore` to be able to do… things! Like print stuff to `stdout`.
+
+``` toml
+# in `crates/stage1/Cargo.toml`
+
+[dependencies]
+encore = { path = "../encore" }
+```
+
+``` rust
+// in `crates/stage1/src/main.rs`
+
+// Opt out of libstd
+#![no_std]
+// Let us worry about the entry point.
+#![no_main]
+// Use the default allocation error handler
+#![feature(default_alloc_error_handler)]
+// Let us make functions without any prologue - assembly only!
+#![feature(naked_functions)]
+// Let us use inline assembly!
+#![feature(asm)]
+// Let us pass arguments to the linker directly
+#![feature(link_args)]
+
+/// Don't link any glibc stuff, also, make this executable static.
+#[allow(unused_attributes)]
+#[link_args = "-nostartfiles -nodefaultlibs -static"]
+extern "C" {}
+
+/// Our entry point.
+#[naked]
+#[no_mangle]
+unsafe extern "C" fn _start() {
+    asm!("mov rdi, rsp", "call pre_main", options(noreturn))
+}
+
+use encore::prelude::*;
+
+#[no_mangle]
+unsafe fn pre_main(stack_top: *mut u8) {
+    init_allocator();
+    main(Env::read(stack_top)).unwrap();
+    syscall::exit(0);
+}
+
+#[allow(clippy::unnecessary_wraps)]
+fn main(_env: Env) -> Result<(), EncoreError> {
+    println!("Hello from stage1!");
+
+    Ok(())
+}
+```
+
+Before we commit any further crimes, let’s make sure it runs:
+
+``` shell
+$ cargo run --bin stage1
+   Compiling stage1 v0.1.0 (/home/amos/ftl/minipak/crates/stage1)
+    Finished dev [unoptimized + debuginfo] target(s) in 0.29s
+     Running `target/debug/stage1`
+Hello from stage1!
+```
+
+All good!
+
+Now, just as we planned, whenever we make a compressed executable, we want to first write `stage1` and *then* follow up with the compressed “guest program” payload.
+
+> **Cool Bear's hot tip**
+>
+> We did a bit of nomenclature in the last article: the “guest” is the program we’re compressing — in this case `vim`.
+
+``` rust
+// in `crates/minipak/src/main.rs`
+
+#[allow(clippy::unnecessary_wraps)]
+fn main(env: Env) -> Result<(), EncoreError> {
+    let args = cli::Args::parse(&env);
+
+    let mut output = File::create(&args.output, 0o755)?;
+    let guest_len;
+
+    {
+        let stage1 = File::open("./target/release/stage1")?;
+        let stage1 = stage1.map()?;
+        let stage1 = stage1.as_ref();
+        output.write_all(stage1)?;
+    }
+
+    {
+        let guest = File::open(&args.input)?;
+        let guest = guest.map()?;
+        let guest = guest.as_ref();
+        guest_len = guest.len();
+
+        let guest_compressed = lz4_flex::compress_prepend_size(guest);
+        output.write_all(&guest_compressed[..])?;
+    }
+
+    println!(
+        "Wrote {} ({:.2}% of input)",
+        args.output,
+        output.len()? as f64 / guest_len as f64 * 100.0,
+    );
+
+    Ok(())
+}
+```
+
+Since this code refers to the release build of `stage1`, first we’ll need to build it.
+
+``` shell
+$ (cd crates/stage1 && cargo build --release)
+   Compiling stage1 v0.1.0 (/home/amos/ftl/minipak/crates/stage1)
+    Finished release [optimized + debuginfo] target(s) in 0.67s
+```
+
+And *then* we can run `minipak`:
+
+``` shell
+$ cargo run --release --quiet --bin minipak -- /usr/bin/vim -o /tmp/vim.pak
+Wrote /tmp/vim.pak (74.96% of input)
+```
+
+We’ve lost some of the “compression ratio” because `stage1` is not infinitely thin, but let’s worry about that later.
+
+The important part is, the output of `minipak` is now runnable!
+
+``` shell
+$ /tmp/vim.pak
+Hello from stage1!
+```
+
+Of course, it doesn’t run vim. But it runs! Which is good.
+
+Now that we have that, we’ll…
+
+> **Cool bear says:**
+>
+> Don’t even think about it!
+
+…we’ll KEEP GOING.
+
+But first — I hate the idea of having to remember to do a release build of `stage1` whenever we want to build `minipak`.
+
+There’s too much opportunity for failure here. We could be fixing something in `stage1`, running `minipak` again and things would appear unfixed, when really they are!
+
+I also don’t like that `minipak` opens an external file. I think it should bundle everything it needs.
+
+We can fix both of these fairly easily!
+
+First off, we’ll add a build script to `minipak`, so that `stage1` is always up-to-date.
+
+``` rust
+// in `crates/minipak/build.rs`
+
+use std::process::Command;
+
+fn main() {
+    cargo_build("../stage1");
+}
+
+fn cargo_build(path: &str) {
+    println!("cargo:rerun-if-changed={}", path);
+
+    let output = Command::new("cargo")
+        .arg("build")
+        .arg("--release")
+        .current_dir(path)
+        .spawn()
+        .unwrap()
+        .wait_with_output()
+        .unwrap();
+    if !output.status.success() {
+        panic!(
+            "Building {} failed.\nStdout: {}\nStderr: {}",
+            path,
+            String::from_utf8_lossy(&output.stdout[..]),
+            String::from_utf8_lossy(&output.stderr[..]),
+        );
+    }
+}
+```
+
+> **Cool Bear's hot tip**
+>
+> Printing the special `rerun-if-changed` directive to stdout will instruct cargo to re-run our build script if something has changed.
+>
+> And yes, [it accepts folders](https://doc.rust-lang.org/cargo/reference/build-scripts.html#rerun-if-changed).
+
+There, that should do the trick. Now we just need to run it, and…
+
+``` shell
+$ cargo run --release --bin minipak -- /usr/bin/vim -o /tmp/vim.pak
+   Compiling minipak v0.1.0 (/home/amos/ftl/minipak/crates/minipak)
+    Building [=======================>   ] 23/25: minipak(build)
+```
+
+…and nothing happens. It’s not using up a lot of CPU either.
+
+It’s just.. that nothing is happening. And yet both cargo processes are running: the one for `minipak`, and the one for `stage1`:
+
+``` shell
+$ ps aux | grep 'carg[o]'
+amos     29131  0.2  0.1 159352 15976 pts/9    Sl+  19:52   0:00 /home/amos/.rustup/toolchains/nightly-2021-02-14-x86_64-unknown-linux-gnu/bin/cargo run --release --bin minipak -- /usr/bin/vim -o /tmp/vim.pak
+amos     29135  0.2  0.1  24124 15588 pts/9    S+   19:52   0:00 /home/amos/.rustup/toolchains/nightly-2021-02-14-x86_64-unknown-linux-gnu/bin/cargo build --release
+```
+
+> **Cool Bear's hot tip**
+>
+> The `[o]` in the `grep` invocation is a neat little trick. If you just do it the naive way, with `grep cargo`, then the grep invocation itself will show up in the output.
+>
+> But if you use `[o]` which is a character class that only accepts the letter “o”, then it will match actual instances of `cargo`, but not the `grep` invocation itself.
+>
+> There’s other ways to do it, like piping into `grep -v grep`, but the character class trick is shorter!
+
+So, it’s hanging. The solution is rather simple, although I had to do a webs search to figure it out.
+
+Both `minipak` and `stage1` are in the same Cargo workspace. You know how if you try to build a project while VSCode is checking it (via the rust-analyzer extension) it’s stuck “waiting for directory lock”?
+
+Yeah, that.
+
+There’s a way around it though! We just need to use a different target folder.
+
+``` rust
+// in `crates/minipak/build.rs`
+
+fn cargo_build(path: &str) {
+    println!("cargo:rerun-if-changed={}", path);
+
+    let target_dir = format!("{}/embeds", std::env::var("OUT_DIR").unwrap());
+
+    let output = Command::new("cargo")
+        .arg("build")
+        .arg("--target-dir")
+        .arg(target_dir)
+        .arg("--release")
+        .current_dir(path)
+        .spawn()
+        .unwrap()
+        .wait_with_output()
+        .unwrap();
+    if !output.status.success() {
+        panic!(
+            "Building {} failed.\nStdout: {}\nStderr: {}",
+            path,
+            String::from_utf8_lossy(&output.stdout[..]),
+            String::from_utf8_lossy(&output.stderr[..]),
+        );
+    }
+}
+```
+
+And then of course, the library will end up in a different directory — we’ll need to use the `OUT_DIR` environment variable from `minipak` as well. And instead of opening it at runtime, we’ll want to include it into the binary directly with `include_bytes`;
+
+``` rust
+// in `crates/minipak/src/main.rs`
+// in `fn main`
+
+    {
+        let stage1 = include_bytes!(concat!(env!("OUT_DIR"), "/embeds/release/stage1"));
+        output.write_all(stage1)?;
+    }
+```
+
+If, like me, you’re using the rust-analyzer VS Code extension, it may complain along the lines of: “OUT_DIR not set, enable ‘load out dirs from check’ to fix”, and if, like me, you’ve already enabled that option and are confused, well, that makes two of us.
+
+Anyway, things should now work! I’ve added an error to the `stage1` crate just to make sure it actually gets compiled:
+
+``` shell
+$ cargo run --release --bin minipak -- /usr/bin/vim -o /tmp/vim.pak
+   Compiling minipak v0.1.0 (/home/amos/ftl/minipak/crates/minipak)
+error: failed to run custom build command for `minipak v0.1.0 (/home/amos/ftl/minipak/crates/minipak)`
+
+Caused by:
+  process didn't exit successfully: `/home/amos/ftl/minipak/target/release/build/minipak-8404427f26cf6fe0/build-script-build` (exit code: 101)
+  --- stderr
+     Compiling proc-macro2 v1.0.24
+     Compiling unicode-xid v0.2.1
+     Compiling syn v1.0.60
+     Compiling scopeguard v1.1.0                                                                                                                             ─────────────────────
+     Compiling compiler_builtins v0.1.39
+     Compiling bitflags v1.2.1
+     Compiling rlibc v1.0.0
+     Compiling lock_api v0.3.4
+     Compiling spinning_top v0.1.1
+     Compiling linked_list_allocator v0.8.11
+     Compiling quote v1.0.9
+     Compiling displaydoc v0.1.7
+     Compiling encore v0.1.0 (/home/amos/ftl/minipak/crates/encore)
+     Compiling stage1 v0.1.0 (/home/amos/ftl/minipak/crates/stage1)
+  error: invalid suffix `ug` for number literal
+    --> crates/stage1/src/main.rs:39:13
+     |                                                                                                                                                       2-28  21:03  comet
+  39 |     let x = 32098ug;
+     |             ^^^^^^^ invalid suffix `ug`
+     |
+     = help: the suffix must be one of the numeric types (`u32`, `isize`, `f32`, etc.)
+
+  error: aborting due to previous error
+
+  error: could not compile `stage1`
+
+  To learn more, run the command again with --verbose.
+  thread 'main' panicked at 'Building ../stage1 failed.
+  Stdout:
+  Stderr: ', crates/minipak/build.rs:21:9
+  note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+```
+
+Wonderful. Let’s fix the error and proceed.
+
+``` shell
+$ cargo run --release --bin minipak -- /usr/bin/vim -o /tmp/vim.pak
+   Compiling minipak v0.1.0 (/home/amos/ftl/minipak/crates/minipak)
+    Finished release [optimized + debuginfo] target(s) in 1.33s
+     Running `target/release/minipak /usr/bin/vim -o /tmp/vim.pak`
+Wrote /tmp/vim.pak (74.97% of input)
+```
+
+Good!
+
+Let’s check that it didn’t actually read `stage1` from disk while running:
+
+``` shell
+$ strace -e 'trace=open' -- ./target/release/minipak /usr/bin/vim -o /tmp/vim.pak
+open("/tmp/vim.pak", O_RDWR|O_CREAT|O_TRUNC, 0755) = 3
+open("/usr/bin/vim", O_RDONLY)          = 4
+Wrote /tmp/vim.pak (74.97% of input)
++++ exited with 0 +++
+```
+
+All good. And let’s check that the result is still executable:
+
+``` shell
+$ /tmp/vim.pak
+Hello from stage1!
+```
+
+Awesome.
+
+But now we..
+
+> **Cool bear says:**
+>
+> DON’T YOU DARE
+
+..I was about to say: but now we have a problem.
+
+## Finding the guest from within stage1
+
+So, now we have an executable that’s made up of `stage1` as-is, and then a *compressed* version of the guest executable.
+
+The problem? When we’re running as stage1, how do we find the compressed payload?
+
+For starters, it’s not even mapped in memory:
+
+``` shell
+$ gdb --quiet --args /tmp/vim.pak
+Reading symbols from /tmp/vim.pak...
+(gdb) starti
+Starting program: /tmp/vim.pak
+
+Program stopped.
+stage1::_start () at /home/amos/ftl/minipak/crates/stage1/src/main.rs:23
+23          asm!("mov rdi, rsp", "call pre_main", options(noreturn))
+(gdb) info proc mappings
+process 722
+Mapped address spaces:
+
+          Start Addr           End Addr       Size     Offset objfile
+            0x400000           0x401000     0x1000        0x0 /tmp/vim.pak
+            0x401000           0x406000     0x5000     0x1000 /tmp/vim.pak
+            0x406000           0x408000     0x2000     0x6000 /tmp/vim.pak
+            0x409000           0x40b000     0x2000     0x8000 /tmp/vim.pak
+      0x7ffff7ffa000     0x7ffff7ffd000     0x3000        0x0 [vvar]
+      0x7ffff7ffd000     0x7ffff7fff000     0x2000        0x0 [vdso]
+      0x7ffffffdd000     0x7ffffffff000    0x22000        0x0 [stack]
+(gdb) shell ls -l /tmp/vim.pak
+-rwxr-xr-x 1 amos amos 2777434 Feb 28 21:16 /tmp/vim.pak
+(gdb) p/x 2777434
+$1 = 0x2a615a
+(gdb)
+```
+
+The end of `vim.pak` is at `0x2a615a` — far beyond the end of mapped memory, which only represents `0xb000` bytes of the file.
+
+We can’t really tack anything to the *beginning* of `vim.pak`, because, well, that’s where the ELF header lives. There’s a reason we’ve been *appending* the compressed payload to stage1.
+
+But we also need to know where the compressed payload starts…
+
+Well, I have an idea. When we’re generating `vim.pak`, from `minipak`, we know the offset of the compressed payload, right? Because we’re generating the file! We can just keep track of the offsets.
+
+And we can also write whatever else in the file! Whatever we want.
+
+So, we’re just going to write some record at the end of the file that lets us know where the compressed payload begins. And we’re going to throw in a magic number, free of charge, just to ensure to some very weak extent, that we’re not reading garbage.
+
+> **Cool bear says:**
+>
+> Ooh, ooh, parsing! Are we going to use something like `nom`?
+
+We are not! For two reasons. One, I’m lazy. Two, we not only need to parse (or “deserialize”) records, but also write them. There’s options in the nom cinematic universe for that (namely [cookie-factory](https://lib.rs/crates/cookie-factory)), but see point one.
+
+And three, I found out about this really cool crate I *need* to tell you about.
+
+Enter [deku](https://lib.rs/crates/deku). It’s a `no_std` compatible, (de)serialization crate that presents itself as a family of traits and a procedural macro. It even has some [bitvec](https://lib.rs/crates/bitvec) inside, so you know it’s good!
+
+Since we’re going to need to share some code between `minipak` and `stage1`, namely the struct definitions we’re going to be serializing and deserializing, and that code doesn’t really fit into `encore`, which is just a general-purpose layer on top of `libcore`, we’re going to make yet *another* crate, dedicated to doing ELF-adjacent things, much like we had `delf` before.
+
+Since this one is going to be `no_std` compatible, and thus smaller, let’s call it `pixie`:
+
+``` shell
+$ cargo new --lib crates/pixie
+warning: compiling this new package may not work due to invalid workspace configuration
+
+(cut: the rest of the warning)
+```
+
+``` toml
+# in `Cargo.toml`
+
+[workspace]
+members = [
+    "crates/encore",
+    "crates/pixie",
+    "crates/minipak",
+    "crates/stage1",
+]
+
+# omitted: profile.dev, profile.release
+```
+
+`pixie` itself is going to need `encore`, but unlike our binaries, it won’t need a memory allocator, because it’ll be used from programs that already have a memory allocator.
+
+It’s also going to need some error types, so let’s add a dependency on `displaydoc` from the get-go:
+
+``` toml
+# in `crates/pixie/Cargo.toml`
+
+[dependencies]
+deku = { version = "0.11.0", default-features = false, features = ["alloc"] }
+encore = { path = "../encore" }
+displaydoc = { version = "0.1.7", default-features = false }
+```
+
+Now then!
+
+As we mentioned, our strategy is going to be: start from the end of the file, and work our way back. Here’s how our final layout is going to look like:
+
+![pixie-manifest](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-16/assets/pixie-manifest~e1d1a662f25e59d9.svg)
+
+First, we’ll need to find the `EndMarker`. We know its size — it’s always 16 bytes. 8 bytes for the magic number, and 8 bytes for the offset of the `Manifest` in the file.
+
+Then we’ll read the `Manifest`. We don’t really care about the length of the `Manifest`. In the diagram it has two `Resource` entries: one for `stage2`, and one for the `guest`, but in the code we’re about to write, it’s only going to have one entry.
+
+Point is, its size is going to change, but we don’t need to care about that, all we need to care about is where it starts, and then we can let the deku-generated deserialization code worry about all this.
+
+So, how does `deku` work? Well, after all the trouble we’ve gone through, I gotta say it feels a little bit magical.
+
+But first, some basic error type that wraps both `deku` and `encore` errors:
+
+``` rust
+#![no_std]
+
+extern crate alloc;
+
+// Re-export deku for downstream crates
+pub use deku;
+use deku::prelude::*;
+use encore::prelude::*;
+
+mod manifest;
+pub use manifest::*;
+
+#[derive(displaydoc::Display, Debug)]
+/// A pixie error
+pub enum PixieError {
+    /// `{0}`
+    Deku(DekuError),
+    /// `{0}
+    Encore(EncoreError),
+}
+
+impl From<DekuError> for PixieError {
+    fn from(e: DekuError) -> Self {
+        Self::Deku(e)
+    }
+}
+
+impl From<EncoreError> for PixieError {
+    fn from(e: EncoreError) -> Self {
+        Self::Encore(e)
+    }
+}
+```
+
+> **Cool bear says:**
+>
+> Oh no, `EncoreError` does not implement `Display`!
+
+Oh! Let’s just use `displaydoc` there too.
+
+``` rust
+// in `crates/encore/src/error.rs`
+
+use alloc::string::String;
+
+//          👇
+#[derive(displaydoc::Display, Debug)]
+pub enum EncoreError {
+    /// Could not open file `0`
+    Open(String),
+    /// Could not write to file `0`
+    Write(String),
+    /// Could not statfile `0`
+    Stat(String),
+
+    /// mmap fixed address provided was not aligned to 0x1000: {0}
+    MmapMemUnaligned(u64),
+    /// mmap file offset provided was not aligned to 0x1000: {0}
+    MmapFileUnaligned(u64),
+    /// mmap syscall failed
+    MmapFailed,
+}
+```
+
+> **Cool bear says:**
+>
+> [displaydoc](https://lib.rs/crates/displaydoc) really feels familiar! Almost like [thiserror](https://lib.rs/crates/thiserror), but using doc comments instead.
+
+Now we can move on to our actual manifest format.
+
+``` rust
+// in `crates/pixie/src/manifest.rs`
+
+use crate::PixieError;
+use alloc::{format, vec::Vec};
+use core::ops::Range;
+use deku::prelude::*;
+
+#[derive(Debug, DekuRead, DekuWrite)]
+#[deku(magic = b"pixiendm")]
+pub struct EndMarker {
+    #[deku(bytes = 8)]
+    pub manifest_offset: usize,
+}
+```
+
+This is all we need to be able to read and write an `EndMarker`. The `magic` in the `deku` attribute (see [deku::attributes](https://docs.rs/deku/0.11.0/deku/attributes/index.html)) writes the magic on serialization, and verifies that the magic is right on deserialization, (or else it returns a `DekuError`), and we specify the size of `manifest_offset` explicitly, even though we have no intention of running any on this on 32-bit platforms, just to be super duper confident that the whole struct will be serialized to 16 bytes.
+
+Next up, we have our `Resource` struct, with an `as_range` helper, which will come in handy later:
+
+``` rust
+// in `crates/pixie/src/manifest.rs`
+
+#[derive(Debug, DekuRead, DekuWrite)]
+pub struct Resource {
+    #[deku(bytes = 8)]
+    pub offset: usize,
+    #[deku(bytes = 8)]
+    pub len: usize,
+}
+
+impl Resource {
+    pub fn as_range(&self) -> Range<usize> {
+        self.offset..self.offset + self.len
+    }
+}
+```
+
+And finally, `Manifest`, with a `read` method:
+
+``` rust
+// in `crates/pixie/src/manifest.rs`
+
+#[derive(Debug, DekuRead, DekuWrite)]
+#[deku(magic = b"piximani")]
+pub struct Manifest {
+    // TODO: add `stage2` resource
+    pub guest: Resource,
+}
+
+impl Manifest {
+    pub fn read_from_full_slice(slice: &[u8]) -> Result<Self, PixieError> {
+        let (_, endmarker) = EndMarker::from_bytes((&slice[slice.len() - 16..], 0)).unwrap();
+
+        let (_, manifest) = Manifest::from_bytes((&slice[endmarker.manifest_offset..], 0)).unwrap();
+        Ok(manifest)
+    }
+}
+```
+
+The method has an intentionally long name, because it must be called on a slice of *the whole input file*. We don’t know how large `Manifest` is, all we know is that if we start from the end of the file, we can work our way back to it.
+
+Besides, mapping the entirety of a file and only using a handful of bytes near the end shouldn’t be any more expensive than mapping *just the end of the file*.
+
+We’re almost ready to use this in `minipak`, but before we do, let’s make another helper type.
+
+The `DekuWrite` exposes a `to_bytes` method, with returns a `Vec<u8>`, but wouldn’t it be cool if we had some sort of `Writer` that we could write *any deku-serializable type* to?
+
+It would be twice as cool if said type could keep track of our current offset in the file — then we wouldn’t have to do any bookkeeping from `minipak` itself.
+
+And finally: because we’re writing things /after/ an executable file, which is typically made up of segments, and segments are typically 4K-aligned, we may want to add some padding here and there, and we can have utility methods for that too — that also keep track of the current offset.
+
+Let’s go!
+
+``` rust
+// in `crates/pixie/src/lib.rs`
+
+mod writer;
+pub use writer::*;
+```
+
+``` rust
+// in `crates/pixie/src/writer.rs`
+
+use crate::PixieError;
+use core::cmp::min;
+use deku::DekuContainerWrite;
+use encore::prelude::*;
+
+const PAD_BUF: [u8; 1024] = [0u8; 1024];
+
+/// Writes to a file, maintaining a current offset
+pub struct Writer {
+    pub file: File,
+    pub offset: u64,
+}
+
+impl Writer {
+    pub fn new(path: &str, mode: u64) -> Result<Self, PixieError> {
+        let file = File::create(path, mode)?;
+        Ok(Self { file, offset: 0 })
+    }
+
+    /// Writes an entire buffer
+    pub fn write_all(&mut self, buf: &[u8]) -> Result<(), PixieError> {
+        self.file.write_all(buf)?;
+        self.offset += buf.len() as u64;
+        Ok(())
+    }
+
+    /// Writes `n` bytes of padding
+    pub fn pad(&mut self, mut n: u64) -> Result<(), PixieError> {
+        while n > 0 {
+            let m = min(n, 1024);
+            n -= m;
+            self.write_all(&PAD_BUF[..m as _])?;
+        }
+        Ok(())
+    }
+
+    /// Aligns to `n` bytes
+    pub fn align(&mut self, n: u64) -> Result<(), PixieError> {
+        let next_offset = ceil(self.offset, n);
+        self.pad((next_offset - self.offset) as _)
+    }
+
+    /// Writes a Deku container
+    pub fn write_deku<T>(&mut self, t: &T) -> Result<(), PixieError>
+    where
+        T: DekuContainerWrite,
+    {
+        self.write_all(&t.to_bytes()?)
+    }
+
+    /// Returns the current write offset
+    pub fn offset(&self) -> u64 {
+        self.offset
+    }
+}
+
+fn ceil(i: u64, n: u64) -> u64 {
+    if i % n == 0 {
+        i
+    } else {
+        (i + n) & !(n - 1)
+    }
+}
+```
+
+A few things to note here: when writing padding, we use a pre-initialized array full of zeros, to avoid making too many syscalls. Whether or not `PAD_BUF` is sized correctly is up for debate.
+
+Also, we only need to care about maintaining `offset` in `Writer::write_all` — every other method ends up calling it, so they don’t need to have knowledge of the offset.
+
+Finally, note that `write_deku` is generic, but it only takes a reference. That’s one thing I particularly like about Rust APIs — you can tell that a method *only reads* from something just by looking at its signature.
+
+Without further ado, let’s write all of that into our `packed` file from `minipak`:
+
+``` toml
+# in `crates/minipak/Cargo.toml`
+
+[dependencies]
+pixie = { path = "../pixie" }
+```
+
+``` rust
+// in `crates/minipak/src/main.rs`
+
+use pixie::{EndMarker, Manifest, PixieError, Resource, Writer};
+
+// Typical size of pages (and thus, segment alignment)
+const PAGE_SIZE: u64 = 4 * 1024;
+
+#[allow(clippy::unnecessary_wraps)]
+fn main(env: Env) -> Result<(), PixieError> {
+    let args = cli::Args::parse(&env);
+
+    let mut output = Writer::new(&args.output, 0o755)?;
+
+    {
+        let stage1 = include_bytes!(concat!(env!("OUT_DIR"), "/embeds/release/stage1"));
+        output.write_all(stage1)?;
+    }
+
+    let guest_offset = output.offset();
+    let guest_compressed_len;
+    let guest_len;
+
+    {
+        let guest = File::open(&args.input)?;
+        let guest = guest.map()?;
+        let guest = guest.as_ref();
+        guest_len = guest.len();
+
+        let guest_compressed = lz4_flex::compress_prepend_size(guest);
+        guest_compressed_len = guest_compressed.len();
+        output.write_all(&guest_compressed[..])?;
+    }
+
+    output.align(PAGE_SIZE)?;
+    let manifest_offset = output.offset();
+
+    {
+        let manifest = Manifest {
+            guest: Resource {
+                offset: guest_offset as _,
+                len: guest_compressed_len as _,
+            },
+        };
+        output.write_deku(&manifest)?;
+    }
+
+    {
+        let marker = EndMarker {
+            manifest_offset: manifest_offset as _,
+        };
+        output.write_deku(&marker)?;
+    }
+
+    println!(
+        "Wrote {} ({:.2}% of input)",
+        args.output,
+        output.offset() as f64 / guest_len as f64 * 100.0,
+    );
+
+    Ok(())
+}
+```
+
+Time to give it a try:
+
+``` shell
+$ cargo run --bin minipak -- /usr/bin/vim -o /tmp/vim.pak
+(cut)
+error: linking with `cc` failed: exit code: 1
+(cut: a very long GNU ld invocation)
+ = note: /usr/sbin/ld: /home/amos/ftl/minipak/target/debug/deps/libcompiler_builtins-0f8b7be387e5100e.rlib(compiler_builtins-0f8b7be387e5100e.compiler_builtins.3awpy7zy-cgu.11.rcgu.o): in function `__divti3':
+          /home/amos/.cargo/registry/src/github.com-1ecc6299db9ec823/compiler_builtins-0.1.39/src/macros.rs:269: multiple definition of `__divti3'; /home/amos/.rustup/toolchains/nightly-2021-02-14-x86_64-unknown-linux-gnu/lib/rustlib/x86_64-unknown-linux-gnu/lib/libcompiler_builtins-ea377e9224b11a8a.rlib(compiler_builtins-ea377e9224b11a8a.compiler_builtins.4mx3zpr8-cgu.56.rcgu.o):/cargo/registry/src/github.com-1ecc6299db9ec823/compiler_builtins-0.1.39/src/macros.rs:269: first defined here
+(cut: many similar errors)
+```
+
+Oh no! For some reason, this specific problem never showed up in my research.
+
+It appears that the compiler is *also* pulling in a copy of `compiler_builtins`, who would’ve thought! Since we already have one in our manifest, and they both export some symbols, they end up clashing.
+
+At that point, we should probably review whether we even need our own copy of `compiler_builtins` (we only use it for `bcmp`, which we could probably roll out ourselves), but in the meantime, here’s a quick fix:
+
+``` toml
+# in `crates/encore/Cargo.toml`
+
+//                                                         👇
+compiler_builtins = { version = "0.1.39", features = ["mangled-names"] }
+```
+
+There! That way, the compiler’s version of `compiler_builtins` will have non-mangled names, and our version will have mangled names, and they shouldn’t conflict.
+
+Fingers crossed…
+
+``` shell
+$ cargo run --release --bin minipak -- /usr/bin/vim -o /tmp/vim.pak
+    Finished release [optimized + debuginfo] target(s) in 0.01s
+     Running `target/release/minipak /usr/bin/vim -o /tmp/vim.pak`
+Wrote /tmp/vim.pak (75.07% of input)
+```
+
+Fantastic!
+
+Let’s see if it runs:
+
+``` shell
+$ /tmp/vim.pak
+Hello from stage1!
+```
+
+Oh right, `stage1` doesn’t even know there’s a compressed guest in there somewhere.
+
+## Loading a compressed executable
+
+You know, I think we’ve made all of this much harder than it needs to be.
+
+Now that we have both some of our code (`stage1`), and the compressed guest executable, we can just decompress it to disk and run it, right?
+
+Something like that:
+
+``` toml
+# in `crates/stage1/Cargo.toml`
+
+[dependencies]
+pixie = { path = "../pixie" }
+lz4_flex = { version = "0.7.5", default-features = false, features = ["safe-encode", "safe-decode"] }
+```
+
+``` rust
+// in `crates/stage1/src/main.rs`
+
+use pixie::{Manifest, PixieError};
+
+#[allow(clippy::unnecessary_wraps)]
+fn main(env: Env) -> Result<(), PixieError> {
+    println!("Hello from stage1!");
+
+    let host = File::open("/proc/self/exe")?;
+    let host = host.map()?;
+    let host = host.as_ref();
+    let manifest = Manifest::read_from_full_slice(host)?;
+
+    let guest_range = manifest.guest.as_range();
+    println!("The guest is at {:x?}", guest_range);
+
+    let guest_slice = &host[guest_range];
+    let uncompressed_guest =
+        lz4_flex::decompress_size_prepended(guest_slice).expect("invalid lz4 payload");
+
+    let tmp_path = "/tmp/minipak-guest";
+    {
+        let mut guest = File::create(tmp_path, 0o755)?;
+        guest.write_all(&uncompressed_guest[..])?;
+    }
+
+    {
+        extern crate alloc;
+        // Make sure the path to execute is null-terminated
+        let tmp_path_nullter = format!("{}\0", tmp_path);
+        // Forward arguments and environment.
+        let argv: Vec<*const u8> = env
+            .args
+            .iter()
+            .copied()
+            .map(str::as_ptr)
+            .chain(core::iter::once(core::ptr::null()))
+            .collect();
+        let envp: Vec<*const u8> = env
+            .vars
+            .iter()
+            .copied()
+            .map(str::as_ptr)
+            .chain(core::iter::once(core::ptr::null()))
+            .collect();
+
+        unsafe {
+            asm!(
+                "syscall",
+                in("rax") 59, // `execve` syscall
+                in("rdi") tmp_path_nullter.as_ptr(), // `filename`
+                in("rsi") argv.as_ptr(), // `argv`
+                in("rdx") envp.as_ptr(), // `envp`
+                options(noreturn),
+            )
+        }
+    }
+
+    // If we comment that out, we get an error. If we don't, we get a warning.
+    // Let's just allow the warning.
+    #[allow(unreachable_code)]
+    Ok(())
+}
+```
+
+> **Cool Bear's hot tip**
+>
+> You may be wondering: sure, `filename` is null-terminated, but how about `argv` and `envp`’s entries?
+>
+> Well, we got them from below the stack, where they were *already* null-terminated. All we did was find the null terminator, turn them into a slice of `u8`, and make sure that slice was valid unicode.
+>
+> But the `&str` slices that `encore` gives us, still point to the same memory location, and thus, are null-terminated. All is well.
+
+And then we’re done!
+
+We finally have… an executable packer.
+
+``` shell
+$ cargo run --release --bin minipak -- /usr/bin/gcc -o /tmp/gcc.pak
+    Finished release [optimized + debuginfo] target(s) in 0.01s
+     Running `target/release/minipak /usr/bin/gcc -o /tmp/gcc.pak`
+Wrote /tmp/gcc.pak (186.33% of input)
+```
+
+> **Cool bear says:**
+>
+> Uhhh…
+
+Shush bear, look, it works. It *actually* works!
+
+``` shell
+$ /tmp/gcc.pak --version
+Hello from stage1!
+The guest is at 18c998..226971
+gcc.pak (GCC) 10.2.0
+Copyright (C) 2020 Free Software Foundation, Inc.
+This is free software; see the source for copying conditions.  There is NO
+warranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+```
+
+🎉🎉🎉
+
+## Here comes the but
+
+But there’s a but. Two buts in fact.
+
+The first is: “but it’s larger than the original file!”.
+
+Yeah well! GCC is pretty small to begin with:
+
+``` shell
+$ ls -lhA /usr/bin/gcc
+-rwxr-xr-x 3 root root 1.2M Feb  4 14:37 /usr/bin/gcc
+```
+
+…but only because it has so many dynamic dependencies:
+
+``` shell
+$ ldd /usr/bin/gcc
+        linux-vdso.so.1 (0x00007ffde5f78000)
+        libm.so.6 => /usr/lib/libm.so.6 (0x00007f7442b02000)
+        libc.so.6 => /usr/lib/libc.so.6 (0x00007f7442935000)
+        /lib64/ld-linux-x86-64.so.2 => /usr/lib64/ld-linux-x86-64.so.2 (0x00007f7442c5f000)
+```
+
+Uh… that can’t be right.
+
+``` shell
+$ strace -f -e 'trace=openat' /usr/bin/gcc /tmp/test.c -o /tmp/test.exe 2>&1 | grep -E '[.]so' | grep -v ENOENT | sed 's/.*"\(.*\)".*/\1/' | sort -n | uniq -c
+      5 /etc/ld.so.cache
+      4 /usr/lib/gcc/x86_64-pc-linux-gnu/10.2.0/../../../../lib/libc.so
+      8 /usr/lib/gcc/x86_64-pc-linux-gnu/10.2.0/../../../../lib/libgcc_s.so
+      4 /usr/lib/gcc/x86_64-pc-linux-gnu/10.2.0/../../../../lib/libgcc_s.so.1
+      1 /usr/lib/gcc/x86_64-pc-linux-gnu/10.2.0/liblto_plugin.so
+      3 /usr/lib/ld-linux-x86-64.so.2
+      7 /usr/lib/libc.so.6
+      3 /usr/lib/libdl.so.2
+      1 /usr/lib/libgmp.so.10
+      1 /usr/lib/libmpc.so.3
+      1 /usr/lib/libmpfr.so.6
+      3 /usr/lib/libm.so.6
+      3 /usr/lib/libz.so.1
+      1 /usr/lib/libzstd.so.1
+```
+
+Ahhhhh, there they are! Tasty, tasty dependencies.
+
+> **Cool Bear's hot tip**
+>
+> Let’s go through everything in that command line one by one. `strace` traces system calls. Here, we’re only interested in the `openat` system call, which is like `open`, but also different.
+>
+> The `-f` flag follows forks, just in case `gcc` actually calls other processes (it does! it’s a compiler driver). We then redirect stderr into stdout with `2>&1`, because strace output goes to stderr.
+>
+> We grep for the string `.so`, using extended regex syntax (`-E`), but we’re careful to wrap `.` into a character class, because it’s also a special character that means “any character”. We could also just do `-F '.so'` instead, but where’s the fun in that?
+>
+> Many `openat` calls actually fail (because search paths…), so we filter those out. Finally, we’re only interested in the paths that are being opened, so we extract them with `sed`, then sort them, and count each unique path.
+>
+> We can see that `libgcc_s.so` is opened a whopping eight times!
+
+Put all together, their sizes start to add up:
+
+``` shell
+$ strace -f -e 'trace=openat' /usr/bin/gcc /tmp/test.c -o /tmp/test.exe 2>&1 | grep -E '[.]so' | grep -v ENOENT | sed 's/.*"\(.*\)".*/\1/' | sort -n | uniq | xargs readlink -f | xargs ls -lhA
+-rw-r--r-- 1 root root  85K Feb 28 12:01 /etc/ld.so.cache
+-rwxr-xr-x 1 root root  96K Feb  4 14:37 /usr/lib/gcc/x86_64-pc-linux-gnu/10.2.0/liblto_plugin.so.0.0.0
+-rwxr-xr-x 1 root root 221K Feb 13 22:39 /usr/lib/ld-2.33.so
+-rwxr-xr-x 1 root root 2.1M Feb 13 22:39 /usr/lib/libc-2.33.so
+-rw-r--r-- 1 root root  255 Feb 13 22:39 /usr/lib/libc.so
+-rwxr-xr-x 1 root root  23K Feb 13 22:39 /usr/lib/libdl-2.33.so
+-rw-r--r-- 1 root root  132 Feb  4 14:37 /usr/lib/libgcc_s.so
+-rw-r--r-- 1 root root 581K Feb  4 14:37 /usr/lib/libgcc_s.so.1
+-rwxr-xr-x 1 root root 635K Dec 24 03:28 /usr/lib/libgmp.so.10.4.1
+-rwxr-xr-x 1 root root 1.3M Feb 13 22:39 /usr/lib/libm-2.33.so
+-rwxr-xr-x 1 root root 114K Dec 24 03:39 /usr/lib/libmpc.so.3.2.1
+-rwxr-xr-x 1 root root 2.7M Aug  9  2020 /usr/lib/libmpfr.so.6.1.0
+-rwxr-xr-x 1 root root  98K Nov 13  2019 /usr/lib/libz.so.1.2.11
+-rwxr-xr-x 1 root root 870K Jan  8 04:20 /usr/lib/libzstd.so.1.4.8
+```
+
+> **Cool Bear's hot tip**
+>
+> This command is much like the other one, except now for each file we: resolve whatever they point to, if they’re symlinks (with `readlink -f`), and then print their sizes and some more information about them with `ls -lhA`.
+
+So, here, `minipak` is not really effective, mostly because GCC is already small.
+
+If we were to use it on something that’s bigger to begin with, like [hugo](https://gohugo.io/), the static website generator, we would see better results:
+
+``` rust
+$ cargo run --release --bin minipak -- ~/go/bin/hugo -o /tmp/hugo.pak
+    Finished release [optimized + debuginfo] target(s) in 0.01s
+     Running `target/release/minipak /home/amos/go/bin/hugo -o /tmp/hugo.pak`
+Wrote /tmp/hugo.pak (53.45% of input)
+
+$ /tmp/hugo.pak
+Hello from stage1!
+The guest is at 18c998..205181d
+Total in 0 ms
+Error: Unable to locate config file or config directory. Perhaps you need to create a new site.
+       Run `hugo help new` for details.
+```
+
+Furthermore, the `stage1` we’re shipping is actually quite chunky itself:
+
+``` shell
+$ ls -lhA ./target/release/build/minipak-51b667ed4cbdb6ec/out/embeds/release/stage1
+-rwxr-xr-x 2 amos amos 1.6M Mar  1 10:55 ./target/release/build/minipak-51b667ed4cbdb6ec/out/embeds/release/stage1
+```
+
+We can make it much leaner by just stripping debug information out of there:
+
+``` shell
+$ objcopy --strip-all ./target/release/build/minipak-51b667ed4cbdb6ec/out/embeds/release/stage1 /tmp/stage1
+$ ls -lhA /tmp/stage1
+-rwxr-xr-x 1 amos amos 81K Mar  1 11:24 /tmp/stage1
+```
+
+Which we could do as part of our build script:
+
+``` rust
+// in `crates/minipak/build.rs`
+
+use std::{
+    path::{Path, PathBuf},
+    process::Command,
+};
+
+fn main() {
+    cargo_build(&PathBuf::from("../stage1"));
+}
+
+fn cargo_build(path: &Path) {
+    println!("cargo:rerun-if-changed={}", path.display());
+
+    let out_dir = std::env::var("OUT_DIR").unwrap();
+    let target_dir = format!("{}/embeds", out_dir);
+
+    let output = Command::new("cargo")
+        .arg("build")
+        .arg("--target-dir")
+        .arg(&target_dir)
+        .arg("--release")
+        .current_dir(path)
+        .spawn()
+        .unwrap()
+        .wait_with_output()
+        .unwrap();
+    if !output.status.success() {
+        panic!(
+            "Building {} failed.\nStdout: {}\nStderr: {}",
+            path.display(),
+            String::from_utf8_lossy(&output.stdout[..]),
+            String::from_utf8_lossy(&output.stderr[..]),
+        );
+    }
+
+    // Let's just assume the binary has the same name as the crate
+    let binary_name = path.file_name().unwrap().to_str().unwrap();
+    let output = Command::new("objcopy")
+        .arg("--strip-all")
+        .arg(&format!("release/{}", binary_name))
+        .arg(binary_name)
+        .current_dir(&target_dir)
+        .spawn()
+        .unwrap()
+        .wait_with_output()
+        .unwrap();
+    if !output.status.success() {
+        panic!(
+            "Stripping failed.\nStdout: {}\nStderr: {}",
+            String::from_utf8_lossy(&output.stdout[..]),
+            String::from_utf8_lossy(&output.stderr[..]),
+        );
+    }
+}
+```
+
+And let’s not forget to use the stripped version instead:
+
+``` rust
+// in `crates/minipak/src/main.rs`
+
+// in `fn main`
+
+    {
+        let stage1 = include_bytes!(concat!(env!("OUT_DIR"), "/embeds/stage1"));
+        output.write_all(stage1)?;
+    }
+```
+
+``` shell
+$ cargo run --release --bin minipak -- /usr/bin/gcc -o /tmp/gcc.pak
+   Compiling minipak v0.1.0 (/home/amos/ftl/minipak/crates/minipak)
+    Finished release [optimized + debuginfo] target(s) in 1.52s
+     Running `target/release/minipak /usr/bin/gcc -o /tmp/gcc.pak`
+Wrote /tmp/gcc.pak (59.18% of input)
+
+$ /tmp/gcc.pak
+Hello from stage1!
+The guest is at 14380..ae359
+gcc.pak: fatal error: no input files
+compilation terminated.
+```
+
+There! Much more reasonable.
+
+> **Cool bear says:**
+>
+> There! Finally we have an executable packer. Good job amos, I had to push you for a minute there, but I’m glad we’ve finally reached the end of this ser-
+
+..but we’re not quite done.
+
+> **Cool bear says:**
+>
+> We’re not?
+
+No we’re not! One of the rules I set out for this series, which I don’t remember if I’ve ever written down, so now seems like a good time, is: we cannot use the disk as scratch space.
+
+Memory? All we want. Initialize two different allocators with 128 MiB heaps gratuitously mmapped? Sure! Go wild.
+
+But touching the disk? Nuh-huh. Not allowed.
+
+So although we’ve done a lot of progress today, in the overall structure of the packer, and in the compression itself, we *still* need to care about how ELF files are loaded, and we’re *still* due for a good number of computer crimes.
+
+> **Cool bear says:**
+>
+> Oh noooooo
+
+Oh yes 😎
+
+See you next article y’all!

@@ -1,0 +1,2095 @@
+# Running a self-relocatable ELF from memory
+
+Welcome back!
+
+In [the last article](https://fasterthanli.me/series/making-our-own-executable-packer/part-16), we did foundational work on `minipak`, our ELF packer.
+
+It is now able to receive command-line arguments, environment variables, and auxiliary vectors. It can parse those command-line arguments into a set of options. It can make an ELF file smaller using the [LZ4 compression algorithm](https://en.wikipedia.org/wiki/LZ4_(compression_algorithm)), and pack it together with `stage1`, our launcher.
+
+And finally, the resulting file contains an `EndMarker` and a `Manifest` that let us locate different parts of the `.pak`, so that we can load the compressed guest executable.
+
+But, we’ve been cheating a little! In `stage1`, we’ve been simply decompressing the guest and writing it to disk, so that we can use `execve` on it. Effectively, in the last article we’ve done all the parts we *haven’t* been doing so far.
+
+All that’s missing is the actual loader part, so in theory, we “simply” have to put everything we’ve learned into `minipak`, and we should be good to go!
+
+> **Cool bear says:**
+>
+> Yes, “simply”. What could possibly go wrong.
+
+You know what bear, I don’t think much will actually go wrong. We’ve been doing this for a while. It is part *seventeen*. That’s a lot of parts.
+
+> **Cool bear says:**
+>
+> Sure, sure, if you say so.
+
+And I think you may have started to get a bit of an attitude problem lately. One minute you’re hounding me to continue writing, and the next you’re skeptical that we’ll achieve anything at all. Are you okay?
+
+> **Cool bear says:**
+>
+> Yes, yes, it’s just… it’s been *so long*, I’m starting to lose faith.
+
+But we’ve done such great progress! And we’re so close!
+
+> **Cool bear says:**
+>
+> I’ve heard that before..
+
+Here, let me show you.
+
+## Parsing ELF (again)
+
+So, since we don’t actually want to rely on the `execve` syscall, and we want to load the guest executable ourselves, we’ll need to parse its ELF headers so we know where to map each segment.
+
+If this is unfamiliar to you, well, *points at entire series* feel free to go back and read from the start, but, basically, segments contain what really matters about an ELF object when we run it.
+
+And in ELF, segments are defined in “program headers”, ie. the “loader view” of the file (whereas sections are defined in section headers, ie. the “linker view” of the file)
+
+The `readelf` tool is as handy as ever, to list both segments and sections:
+
+``` shell
+$ readelf -Wl ./target/release/minipak
+
+Elf file type is EXEC (Executable file)
+Entry point 0x40e150
+There are 8 program headers, starting at offset 64
+
+Program Headers:
+  Type           Offset   VirtAddr           PhysAddr           FileSiz  MemSiz   Flg Align
+  LOAD           0x000000 0x0000000000400000 0x0000000000400000 0x000224 0x000224 R   0x1000
+  LOAD           0x001000 0x0000000000401000 0x0000000000401000 0x01026e 0x01026e R E 0x1000
+  LOAD           0x012000 0x0000000000412000 0x0000000000412000 0x0183ec 0x0183ec R   0x1000
+  LOAD           0x02adc8 0x000000000042bdc8 0x000000000042bdc8 0x001240 0x001270 RW  0x1000
+  NOTE           0x000200 0x0000000000400200 0x0000000000400200 0x000024 0x000024 R   0x4
+  GNU_EH_FRAME   0x028acc 0x0000000000428acc 0x0000000000428acc 0x0003a4 0x0003a4 R   0x4
+  GNU_STACK      0x000000 0x0000000000000000 0x0000000000000000 0x000000 0x000000 RW  0x10
+  GNU_RELRO      0x02adc8 0x000000000042bdc8 0x000000000042bdc8 0x001238 0x001238 R   0x1
+
+ Section to Segment mapping:
+  Segment Sections...
+   00     .note.gnu.build-id
+   01     .text
+   02     .rodata .eh_frame_hdr .eh_frame .gcc_except_table
+   03     .data.rel.ro .got .data .bss
+   04     .note.gnu.build-id
+   05     .eh_frame_hdr
+   06
+   07     .data.rel.ro .got
+```
+
+If you look at the “Flg” (flags) column, you’ll see that only one of these is “E” (executable) and the code is probably in the second segment, at offset `0x1000` within the file.
+
+If you look at the `VirtAddr` column, you’ll see that it all starts at `0x400000`. That’s where the executable expects to be mapped in memory.
+
+And indeed, if we start it:
+
+``` shell
+$ gdb --quiet --args ./target/release/minipak
+Reading symbols from ./target/release/minipak...
+(gdb) starti
+Starting program: /home/amos/ftl/minipak/target/release/minipak
+
+Program stopped.
+minipak::_start () at /home/amos/ftl/minipak/crates/minipak/src/main.rs:23
+23          asm!("mov rdi, rsp", "call pre_main", options(noreturn))
+(gdb) p/x $rip
+$1 = 0x40e150
+(gdb) info proc mappings
+process 1589
+Mapped address spaces:
+
+          Start Addr           End Addr       Size     Offset objfile
+            0x400000           0x401000     0x1000        0x0 /home/amos/ftl/minipak/target/release/minipak
+            0x401000           0x412000    0x11000     0x1000 /home/amos/ftl/minipak/target/release/minipak
+            0x412000           0x42b000    0x19000    0x12000 /home/amos/ftl/minipak/target/release/minipak
+            0x42b000           0x42e000     0x3000    0x2a000 /home/amos/ftl/minipak/target/release/minipak
+      0x7ffff7ffa000     0x7ffff7ffd000     0x3000        0x0 [vvar]
+      0x7ffff7ffd000     0x7ffff7fff000     0x2000        0x0 [vdso]
+      0x7ffffffdd000     0x7ffffffff000    0x22000        0x0 [stack]
+(gdb)
+```
+
+…we can see that `$rip` (the instruction pointer) is somewhere between `0x401000` and `0x412000`, which is where it ought to be.
+
+Not all ELF objects expect to be mapped at a fixed address, though. If we look at the program headers for `/lib/ld-linux-x86-64.so.2` for example, we’ll see that `VirtAddr` starts at `0x0`.
+
+``` shell
+$ readelf -Wl /lib/ld-linux-x86-64.so.2
+
+Elf file type is DYN (Shared object file)
+Entry point 0x1090
+There are 11 program headers, starting at offset 64
+
+Program Headers:
+  Type           Offset   VirtAddr           PhysAddr           FileSiz  MemSiz   Flg Align
+  LOAD           0x000000 0x0000000000000000 0x0000000000000000 0x000cf8 0x000cf8 R   0x1000
+  LOAD           0x001000 0x0000000000001000 0x0000000000001000 0x023206 0x023206 R E 0x1000
+  LOAD           0x025000 0x0000000000025000 0x0000000000025000 0x008c24 0x008c24 R   0x1000
+  LOAD           0x02ec20 0x000000000002fc20 0x000000000002fc20 0x002418 0x0025b8 RW  0x1000
+  DYNAMIC        0x02fe30 0x0000000000030e30 0x0000000000030e30 0x000190 0x000190 RW  0x8
+  NOTE           0x0002a8 0x00000000000002a8 0x00000000000002a8 0x000040 0x000040 R   0x8
+  NOTE           0x0002e8 0x00000000000002e8 0x00000000000002e8 0x000024 0x000024 R   0x4
+  GNU_PROPERTY   0x0002a8 0x00000000000002a8 0x00000000000002a8 0x000040 0x000040 R   0x8
+  GNU_EH_FRAME   0x02a59c 0x000000000002a59c 0x000000000002a59c 0x00082c 0x00082c R   0x4
+  GNU_STACK      0x000000 0x0000000000000000 0x0000000000000000 0x000000 0x000000 RW  0x10
+  GNU_RELRO      0x02ec20 0x000000000002fc20 0x000000000002fc20 0x0013e0 0x0013e0 R   0x1
+
+(etc.)
+```
+
+As we’ve seen before, it doesn’t mean that it’s going to be mapped at `0x0`. Although the Linux kernel technically allows us to do that (assuming we have the appropriate capabilities), this is not what “rtld” (the short name for `/lib/ld-linux-x86-64.so.2`) expects.
+
+Instead, it expects to be mapped… anywhere at all:
+
+``` shell
+$ gdb --quiet --args /lib/ld-linux-x86-64.so.2
+Reading symbols from /lib/ld-linux-x86-64.so.2...
+(No debugging symbols found in /lib/ld-linux-x86-64.so.2)
+(gdb) starti
+Starting program: /usr/lib/ld-linux-x86-64.so.2
+
+Program stopped.
+0x00007ffff7fcd090 in _start ()
+(gdb) p/x $rip
+$1 = 0x7ffff7fcd090
+(gdb) info proc mappings
+process 1987
+Mapped address spaces:
+
+          Start Addr           End Addr       Size     Offset objfile
+      0x7ffff7fc7000     0x7ffff7fca000     0x3000        0x0 [vvar]
+      0x7ffff7fca000     0x7ffff7fcc000     0x2000        0x0 [vdso]
+      0x7ffff7fcc000     0x7ffff7fcd000     0x1000        0x0 /usr/lib/ld-2.33.so
+      0x7ffff7fcd000     0x7ffff7ff1000    0x24000     0x1000 /usr/lib/ld-2.33.so
+      0x7ffff7ff1000     0x7ffff7ffa000     0x9000    0x25000 /usr/lib/ld-2.33.so
+      0x7ffff7ffb000     0x7ffff7fff000     0x4000    0x2e000 /usr/lib/ld-2.33.so
+      0x7ffffffdd000     0x7ffffffff000    0x22000        0x0 [stack]
+```
+
+And if we run that `gdb` invocation again and again we’ll notice that “anywhere” happens to always be at `0x7ffff7fcc000`. But that’s just GDB trying to be helpful by disabling [Address Space Layout Randomization (ASLR)](https://en.wikipedia.org/wiki/Address_space_layout_randomization).
+
+We can always tell GDB to not be helpful though:
+
+``` shell
+$  gdb --quiet -ex "set disable-randomization off" -ex "set confirm off" -ex "starti" -ex "p/x \$rip" -ex "quit" --args /lib/ld-linux-x86-64.so.2 | grep -F "\$1"
+$1 = 0x7ff89f1af090
+
+$ gdb --quiet -ex "set disable-randomization off" -ex "set confirm off" -ex "starti" -ex "p/x \$rip" -ex "quit" --args /lib/ld-linux-x86-64.so.2 | grep -F "\$1"
+$1 = 0x7fa1ee491090
+
+$ gdb --quiet -ex "set disable-randomization off" -ex "set confirm off" -ex "starti" -ex "p/x \$rip" -ex "quit" --args /lib/ld-linux-x86-64.so.2 | grep -F "\$1"
+$1 = 0x7f2f2484e090
+
+$ gdb --quiet -ex "set disable-randomization off" -ex "set confirm off" -ex "starti" -ex "p/x \$rip" -ex "quit" --args /lib/ld-linux-x86-64.so.2 | grep -F "\$1"
+$1 = 0x7f39c9cfe090
+
+$ gdb --quiet -ex "set disable-randomization off" -ex "set confirm off" -ex "starti" -ex "p/x \$rip" -ex "quit" --args /lib/ld-linux-x86-64.so.2 | grep -F "\$1"
+$1 = 0x7f4903290090
+```
+
+> **Cool Bear's hot tip**
+>
+> What’s going on here? Well, `--quiet` tells GDB to not display a wall of text when it starts up. All the `-ex` commands effectively execute GDB commands directly, without needing to type them in.
+>
+> `set disable-randomization off` re-enables ASLR. `set confirm off` disable confirmation prompts so that `quit` later works. As for `p/x $rip`, it prints the contents of the `%rip` register as hexadecimal.
+>
+> We need to escape the dollars sign (`$`) though, because it’s in a double-quoted string, and if we don’t, our shell will try to replace it with the value of the `rip` environment variable, which almost certainly doesn’t exist, so we’d end up with the empty string!
+
+Here we can see that the code is mapped at a different address every time.
+
+Long story short, if we’re going to be mapping segments ourselves, we’re going to need to read them, starting with the ELF header.
+
+Since [deku](https://lib.rs/crates/deku) has served us so well so far, we’ll use it to parse ELF headers as well, why not?
+
+And since we’re going to be reading so many different things from ELF files, we’ll introduce a new module named `format` in pixie’s codebase.
+
+``` rust
+// in `crates/pixie/src/lib.rs`
+
+mod format;
+pub use format::*;
+```
+
+We’ll even make an internal prelude for it, because we’re going to end up importing a lot of the same symbols in a lot of different modules.
+
+``` rust
+// in `crates/pixie/src/format/prelude.rs`
+
+pub(crate) use alloc::{format, vec::Vec};
+pub(crate) use deku::prelude::*;
+pub(crate) use deku::{DekuContainerRead, DekuRead};
+```
+
+All the different bits of pieces of the ELF format will end up in their own Rust module, which will be re-exported by `pixie::format`, starting with the header:
+
+``` rust
+// in `crates/pixie/src/format/mod.rs`
+
+mod prelude;
+
+mod header;
+
+pub use header::*;
+```
+
+``` rust
+// in `crates/pixie/src/format/header.rs`
+
+use super::prelude::*;
+
+/// An ELF object header
+#[derive(Debug, Clone, PartialEq, DekuRead, DekuWrite)]
+#[deku(magic = b"\x7FELF")]
+pub struct ObjectHeader {
+    pub class: ElfClass,
+    pub endianness: Endianness,
+    /// Always 1
+    pub version: u8,
+    #[deku(pad_bytes_after = "8")]
+    pub os_abi: OsAbi,
+    pub typ: ElfType,
+    pub machine: ElfMachine,
+    /// Always 1
+    pub version_bis: u32,
+    pub entry_point: u64,
+
+    pub ph_offset: u64,
+    pub sh_offset: u64,
+
+    pub flags: u32,
+    pub hdr_size: u16,
+
+    pub ph_entsize: u16,
+    pub ph_count: u16,
+
+    pub sh_entsize: u16,
+    pub sh_count: u16,
+    pub sh_nidx: u16,
+}
+```
+
+There, that looks about right. Here’s the diagram we made aaaall the way back in [Part 1](https://fasterthanli.me/series/making-our-own-executable-packer/part-1) for reference:
+
+![elf64-file-header](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-1/assets/elf64-file-header~28ccf6823a16e33e.svg)
+
+There’s some very nice things happening here with `deku`. First off, the magic is just an attribute on the whole struct:
+
+``` rust
+#[deku(magic = b"\x7FELF")]
+pub struct ObjectHeader {}
+```
+
+Again, `deku` makes sure the magic is present and correct when reading, and it writes it when, well, writing. This means if we ever need to generate an ELF file, well, we’ll just have to serialize an `ObjectHeader` and that’ll be that.
+
+> **Cool bear says:**
+>
+> “just”, yes.
+
+Then there’s padding. After `os_abi`, there’s 8 bytes of padding, so we say so:
+
+``` rust
+    #[deku(pad_bytes_after = "8")]
+    pub os_abi: OsAbi,
+```
+
+Which brings us to some of the type that we haven’t defined yet: `ElfClass`, `Endianness`, `OsAbi`, `ElfType`, and `ElfMachine`.
+
+For all intents and purposes, those fields are enums. According to our diagram, `ElfClass` can be 1 or 2. But *on disk*, in the file itself, those can be anything. It’s just a byte, there’s 255 possible values!
+
+So, unless we want the parsing to fail if we encounter an unknown value, we must account for the fact that the value we find may be neither 1 nor 2.
+
+And we can model that in Rust, because enum variants can have associated data:
+
+``` rust
+pub enum ElfClass {
+    Elf32,
+    Elf64,
+    Other(u8),
+}
+```
+
+With such an enum, we should be able to map 1 to `ElfClass::Elf32`, 2 to `ElfClass::Elf64`, and everything else to `ElfClass::Other(_)`.
+
+But how does that work with `deku`? Well, we need to specify two things:
+
+- How large is `ElfClass` when serialized? Is it one byte? Two? Four?
+- How do we identify each variant?
+
+And `deku` lets us do all of that quite nicely, using patterns:
+
+``` rust
+// in `crates/pixie/src/format/header.rs`
+
+#[derive(Clone, Copy, DekuRead, DekuWrite, Debug, PartialEq)]
+#[deku(type = "u8")]
+pub enum ElfClass {
+    #[deku(id = "1")]
+    Elf32,
+    #[deku(id = "2")]
+    Elf64,
+    #[deku(id_pat = "_")]
+    Other(u8),
+}
+```
+
+This is all explained in detail in [the deku docs](https://docs.rs/deku/0.11.0/deku/attributes/index.html).
+
+But it’s very neat! This means that parsing will not fail, we’ll just capture unexpected values, and then we can deal with them later if we want.
+
+Let’s fill in the rest of the enums:
+
+``` rust
+// in `crates/pixie/src/format/header.rs`
+
+#[derive(Clone, Copy, DekuRead, DekuWrite, Debug, PartialEq)]
+#[deku(type = "u16")]
+pub enum ElfType {
+    #[deku(id = "0x2")]
+    Exec,
+    #[deku(id = "0x3")]
+    Dyn,
+    #[deku(id_pat = "_")]
+    Other(u16),
+}
+
+#[derive(Clone, Copy, DekuRead, DekuWrite, Debug, PartialEq)]
+#[deku(type = "u8")]
+pub enum Endianness {
+    #[deku(id = "0x1")]
+    Little,
+    #[deku(id = "0x2")]
+    Big,
+    #[deku(id_pat = "_")]
+    Other(u8),
+}
+
+#[derive(Clone, Copy, DekuRead, DekuWrite, Debug, PartialEq)]
+#[deku(type = "u16")]
+pub enum ElfMachine {
+    #[deku(id = "0x03")]
+    X86,
+    #[deku(id = "0x3e")]
+    X86_64,
+    #[deku(id_pat = "_")]
+    Other(u16),
+}
+
+#[derive(Clone, Copy, DekuRead, DekuWrite, Debug, PartialEq)]
+#[deku(type = "u8")]
+pub enum OsAbi {
+    #[deku(id = "0x0")]
+    SysV,
+    #[deku(id_pat = "_")]
+    Other(u8),
+}
+```
+
+And for convenience, let’s add a constant to `ObjectHeader` that corresponds to its complete, serialized size:
+
+``` rust
+// in `crates/pixie/src/format/header.rs`
+
+impl ObjectHeader {
+    pub const SIZE: u16 = 64;
+}
+```
+
+Now then! All this code compiles, but we’re not really using it yet.
+
+But before we do, let’s think of how we want to use it. Ideally, we’d like `pixie` to expose some sort of higher-level interface, so that we don’t have to deal with the intricacies of serialization and deserialization too much in `minipak` or `stage1`.
+
+Something like this:
+
+``` rust
+// in `crates/pixie/src/lib.rs`
+
+pub struct Object<'a> {
+    header: ObjectHeader,
+    slice: &'a [u8],
+}
+
+impl<'a> Object<'a> {
+    /// Read an ELF object from a given slice
+    pub fn new(slice: &'a [u8]) -> Result<Self, PixieError> {
+        let input = (slice, 0);
+        let (_, header) = ObjectHeader::from_bytes(input)?;
+
+        Ok(Self { slice, header })
+    }
+
+    /// Returns the ELF object header
+    pub fn header(&self) -> &ObjectHeader {
+        &self.header
+    }
+
+    /// Returns the full slice
+    pub fn slice(&self) -> &[u8] {
+        &self.slice
+    }
+}
+```
+
+And now, we can read the ELF object from `stage1`!
+
+``` rust
+// in `crates/stage1/src/main.rs`
+
+#[allow(clippy::unnecessary_wraps)]
+fn main(_env: Env) -> Result<(), PixieError> {
+    println!("Hello from stage1!");
+
+    let host = File::open("/proc/self/exe")?;
+    let host = host.map()?;
+    let host = host.as_ref();
+    let manifest = Manifest::read_from_full_slice(host)?;
+
+    let guest_range = manifest.guest.as_range();
+    println!("The guest is at {:x?}", guest_range);
+
+    let guest_slice = &host[guest_range];
+    let uncompressed_guest =
+        lz4_flex::decompress_size_prepended(guest_slice).expect("invalid lz4 payload");
+
+    let guest_obj = Object::new(&uncompressed_guest[..])?;
+    println!("Parsed {:#?}", guest_obj.header());
+
+    Ok(())
+}
+```
+
+``` shell
+$ cargo run --release --bin minipak -- /usr/bin/gcc -o /tmp/gcc.pak
+   Compiling minipak v0.1.0 (/home/amos/ftl/minipak/crates/minipak)
+   Compiling pixie v0.1.0 (/home/amos/ftl/minipak/crates/pixie)
+    Finished release [optimized + debuginfo] target(s) in 3.58s
+     Running `target/release/minipak /usr/bin/gcc -o /tmp/gcc.pak`
+Wrote /tmp/gcc.pak (59.86% of input)
+
+$ /tmp/gcc.pak
+Hello from stage1!
+The guest is at 16380..b0359
+Parsed ObjectHeader {
+    class: Elf64,
+    endianness: Little,
+    version: 1,
+    os_abi: SysV,
+    typ: Exec,
+    machine: X86_64,
+    version_bis: 1,
+    entry_point: 4221408,
+    ph_offset: 64,
+    sh_offset: 1209088,
+    flags: 0,
+    hdr_size: 64,
+    ph_entsize: 56,
+    ph_count: 14,
+    sh_entsize: 64,
+    sh_count: 34,
+    sh_nidx: 33,
+}
+```
+
+> **Cool bear says:**
+>
+> Neat!
+
+It would be even neater if we could print some of those fields as hexadecimal, but even though I think [custom_debug](https://lib.rs/crates/custom_debug) is meant to support `no_std`, its current version still pulls in `libstd`.
+
+No worries though, we can use something else! [derivative](https://lib.rs/crates/derivative) will do the trick.
+
+``` toml
+# in `crates/pixie/Cargo.toml`
+
+derivative = { version = "2.2.0", features = ["use_core"] }
+```
+
+``` rust
+// in `crates/pixie/src/format/prelude.rs`
+
+pub(crate) use derivative::*;
+
+/// Format a field as lowercase hexadecimal, with the `0x` prefix.
+pub fn hex_fmt<T>(t: &T, f: &mut core::fmt::Formatter) -> core::fmt::Result
+where
+    T: core::fmt::LowerHex,
+{
+    write!(f, "0x{:x}", t)
+}
+```
+
+We’ll pick out some fields from `ObjectHeader` to format as hex — mostly offsets, and sizes, with a few exceptions. It’s really a matter of taste at this point, they’re all just numbers:
+
+``` rust
+/// An ELF object header
+#[derive(Derivative, Clone, PartialEq, DekuRead, DekuWrite)]
+#[derivative(Debug)]
+#[deku(magic = b"\x7FELF")]
+pub struct ObjectHeader {
+    #[derivative(Debug = "ignore")]
+    pub class: ElfClass,
+    pub endianness: Endianness,
+    /// Always 1
+    pub version: u8,
+    #[deku(pad_bytes_after = "8")]
+    pub os_abi: OsAbi,
+    pub typ: ElfType,
+    pub machine: ElfMachine,
+    /// Always 1
+    pub version_bis: u32,
+    #[derivative(Debug(format_with = "hex_fmt"))]
+    pub entry_point: u64,
+
+    #[derivative(Debug(format_with = "hex_fmt"))]
+    pub ph_offset: u64,
+    #[derivative(Debug(format_with = "hex_fmt"))]
+    pub sh_offset: u64,
+
+    #[derivative(Debug(format_with = "hex_fmt"))]
+    pub flags: u32,
+    pub hdr_size: u16,
+
+    pub ph_entsize: u16,
+    pub ph_count: u16,
+
+    pub sh_entsize: u16,
+    pub sh_count: u16,
+    pub sh_nidx: u16,
+}
+```
+
+Now, we got something wrong in the last article, when we made our build script.
+
+``` rust
+fn cargo_build(path: &Path) {
+    println!("cargo:rerun-if-changed={}", path.display());
+    // etc.
+}
+```
+
+Since we call `cargo_build()` with `"../stage1"`, this will rebuild if anything inside of `stage1` changes. But here, we’ve changed `pixie` without changing `stage1`, and thus, the build script won’t get re-run, and `stage1` won’t get recompiled.
+
+> **Cool bear says:**
+>
+> Is that what you were just now swearing about?
+
+> **Amos says:**
+>
+> Me?? I swear I have no idea what you’re talking about my good bear.
+
+Let’s fix it up real quick, but rerunning if *anything in the `crates/` folder* changed.
+
+``` rust
+fn cargo_build(path: &Path) {
+    println!("cargo:rerun-if-changed=..");
+    // etc.
+}
+```
+
+> **Cool bear says:**
+>
+> Won’t that re-run it much too often? What if we change `minipak`, which is not a dependency of `stage1`?
+
+> **Amos says:**
+>
+> cargo has its own dependency tracking, so running `cargo build` on `stage1` if there aren’t any changes should be rather cheap.
+
+Let’s try again:
+
+``` shell
+$ cargo run --release --bin minipak -- /usr/bin/gcc -o /tmp/gcc.pak && /tmp/gcc.pak
+   Compiling minipak v0.1.0 (/home/amos/ftl/minipak/crates/minipak)
+   Compiling pixie v0.1.0 (/home/amos/ftl/minipak/crates/pixie)
+    Finished release [optimized + debuginfo] target(s) in 3.50s
+     Running `target/release/minipak /usr/bin/gcc -o /tmp/gcc.pak`
+Wrote /tmp/gcc.pak (59.86% of input)
+Hello from stage1!
+The guest is at 16380..b0359
+Parsed ObjectHeader {
+    endianness: Little,
+    version: 1,
+    os_abi: SysV,
+    typ: Exec,
+    machine: X86_64,
+    version_bis: 1,
+    entry_point: 0x4069e0,
+    ph_offset: 0x40,
+    sh_offset: 0x127300,
+    flags: 0x0,
+    hdr_size: 64,
+    ph_entsize: 56,
+    ph_count: 14,
+    sh_entsize: 64,
+    sh_count: 34,
+    sh_nidx: 33,
+}
+```
+
+And compare with `readelf`’s output:
+
+``` shell
+$ readelf -Wh /usr/bin/gcc
+ELF Header:
+  Magic:   7f 45 4c 46 02 01 01 00 00 00 00 00 00 00 00 00
+  Class:                             ELF64
+  Data:                              2's complement, little endian
+  Version:                           1 (current)
+  OS/ABI:                            UNIX - System V
+  ABI Version:                       0
+  Type:                              EXEC (Executable file)
+  Machine:                           Advanced Micro Devices X86-64
+  Version:                           0x1
+  Entry point address:               0x4069e0
+  Start of program headers:          64 (bytes into file)
+  Start of section headers:          1209088 (bytes into file)
+  Flags:                             0x0
+  Size of this header:               64 (bytes)
+  Size of program headers:           56 (bytes)
+  Number of program headers:         14
+  Size of section headers:           64 (bytes)
+  Number of section headers:         34
+  Section header string table index: 33
+```
+
+Well, the `readelf` authors made different choices, but all the values seem to match up!
+
+Next up, we’ll need to parse the program headers. Again, we’ve got a diagram for that:
+
+![elf64-program-header](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-2/assets/elf64-program-header~7d3659bfab3bfe84.svg)
+
+``` rust
+// in `crates/pixie/src/format/mod.rs`
+
+mod program_header;
+pub use program_header::*;
+```
+
+And deku makes it relatively easy:
+
+``` rust
+// `in crates/pixie/src/format/program_header.rs`
+
+use super::prelude::*;
+
+/// A program header (loader view, segment mapped into memory)
+#[derive(Derivative, DekuRead, DekuWrite, Clone)]
+#[derivative(Debug)]
+pub struct ProgramHeader {
+    pub typ: SegmentType,
+
+    #[derivative(Debug(format_with = "hex_fmt"))]
+    pub flags: u32,
+
+    #[derivative(Debug(format_with = "hex_fmt"))]
+    pub offset: u64,
+
+    #[derivative(Debug(format_with = "hex_fmt"))]
+    pub vaddr: u64,
+
+    #[derivative(Debug(format_with = "hex_fmt"))]
+    pub paddr: u64,
+
+    #[derivative(Debug(format_with = "hex_fmt"))]
+    pub filesz: u64,
+
+    #[derivative(Debug(format_with = "hex_fmt"))]
+    pub memsz: u64,
+
+    #[derivative(Debug(format_with = "hex_fmt"))]
+    pub align: u64,
+}
+```
+
+As before, we can use an enum with a “catch-all” variant, for the segment type:
+
+``` rust
+// `in crates/pixie/src/format/program_header.rs`
+
+#[derive(Debug, DekuRead, DekuWrite, Clone, Copy, PartialEq)]
+#[deku(type = "u32")]
+pub enum SegmentType {
+    #[deku(id = "0x0")]
+    Null,
+    #[deku(id = "0x1")]
+    Load,
+    #[deku(id = "0x2")]
+    Dynamic,
+    #[deku(id = "0x3")]
+    Interp,
+    #[deku(id = "0x7")]
+    Tls,
+    #[deku(id = "0x6474e551")]
+    GnuStack,
+    #[deku(id_pat = "_")]
+    Other(u32),
+}
+```
+
+And we can also add a few convenience methods, because well, `vaddr`/`memsz` and `offset`/`filesz` go together, so if we put them in a `Range`, it’s harder to mess up!
+
+``` rust
+// `in crates/pixie/src/format/program_header.rs`
+
+impl ProgramHeader {
+    pub const SIZE: u16 = 56;
+
+    pub const EXECUTE: u32 = 1;
+    pub const WRITE: u32 = 2;
+    pub const READ: u32 = 4;
+
+    /// Returns a range that spans from offset to offset+filesz
+    pub fn file_range(&self) -> core::ops::Range<usize> {
+        let start = self.offset as usize;
+        let len = self.filesz as usize;
+        let end = start + len;
+        start..end
+    }
+
+    /// Returns a range that spans from vaddr to vaddr+memsz
+    pub fn mem_range(&self) -> core::ops::Range<u64> {
+        let start = self.vaddr;
+        let len = self.memsz;
+        let end = start + len;
+        start..end
+    }
+}
+```
+
+Which brings us to the next question: how (and when?) do we parse all the program headers?
+
+Well, we already have an `Object` struct in pixie, that has access to the whole contents of whichever ELF file we happen to be parsing, and program headers are something really useful, so let’s parse them directly in `Object::new`, shall we?
+
+But before we do… I’m sure we can think of a slightly higher-level interface to program headers. See, program headers are just that: headers. They’re a bunch of numbers, pretty much. What if we had a struct that represents segments? Just like we had `ObjectHeader` and `Object`, where `Object` is the higher-level one, that also keeps track of the corresponding data slices?
+
+Something like this:
+
+``` rust
+// in `crates/pixie/src/lib.rs`
+
+/// A segment as read from an ELF file
+pub struct Segment<'a> {
+    /// The program header for this segment
+    header: ProgramHeader,
+
+    /// The slice for this segment (not the full ELF file)
+    slice: &'a [u8],
+}
+```
+
+We could have a convenience method to build it from a `ProgramHeader`, and then some getter!
+
+``` rust
+// in `crates/pixie/src/lib.rs`
+
+impl<'a> Segment<'a> {
+    /// Instantiate a segment
+    fn new(header: ProgramHeader, full_slice: &'a [u8]) -> Self {
+        let start = header.offset as usize;
+        let len = header.filesz as usize;
+        Segment {
+            header,
+            slice: &full_slice[start..][..len],
+        }
+    }
+
+    /// Returns the segment's type
+    pub fn typ(&self) -> SegmentType {
+        self.header.typ
+    }
+
+    /// Returns the segment's slice
+    pub fn slice(&self) -> &[u8] {
+        &self.slice
+    }
+
+    /// Returns the [`ProgramHeader`] for this segment
+    pub fn header(&self) -> &ProgramHeader {
+        &self.header
+    }
+}
+```
+
+But let’s think bigger! Typically when dealing with segments, we’ll want to operate on one specific segment type. Or on “all the segments of a particular type”.
+
+Another thing we find ourselves doing a bunch is to build the convex hull of all the “Load” segments, effectively the smallest range that contains all the memory ranges of all the “Load” segments.
+
+Let’s do all of these upfront:
+
+``` rust
+// in `crates/pixie/src/lib.rs`
+
+use core::ops::Range;
+use core::cmp::{min, max};
+
+#[derive(displaydoc::Display, Debug)]
+/// A pixie error
+pub enum PixieError {
+    /// `{0}`
+    Deku(DekuError),
+    /// `{0}
+    Encore(EncoreError),
+
+    // 👇 new
+
+    /// no segments found
+    NoSegmentsFound,
+    /// could not find segment of type `{0:?}`
+    SegmentNotFound(SegmentType),
+}
+
+/// A collection of segments, easy to filter.
+#[derive(Default)]
+pub struct Segments<'a> {
+    items: Vec<Segment<'a>>,
+}
+
+impl<'a> Segments<'a> {
+    /// Returns all segments
+    pub fn all(&self) -> &[Segment] {
+        &self.items
+    }
+
+    /// Returns all segments of a certain type
+    pub fn of_type(&self, typ: SegmentType) -> impl Iterator<Item = &Segment<'a>> + '_ {
+        self.items.iter().filter(move |s| s.typ() == typ)
+    }
+
+    /// Returns the first segment of a given type or none if none matched
+    pub fn find(&self, typ: SegmentType) -> Result<&Segment, PixieError> {
+        self.of_type(typ)
+            .next()
+            .ok_or(PixieError::SegmentNotFound(typ))
+    }
+
+    /// Returns a 4K-aligned convex hull of all the load segments
+    pub fn load_convex_hull(&self) -> Result<Range<u64>, PixieError> {
+        let hull = self
+            .of_type(SegmentType::Load)
+            .map(|s| s.header().mem_range())
+            .reduce(|a, b| min(a.start, b.start)..max(a.end, b.end))
+            .ok_or(PixieError::NoSegmentsFound)?;
+        Ok(hull)
+    }
+}
+```
+
+And now that we have all the data structures we could possibly dream of, let’s make sure they’re available directly from the top-level `Object` struct:
+
+``` rust
+// in `crates/pixie/src/lib.rs`
+
+pub struct Object<'a> {
+    header: ObjectHeader,
+    slice: &'a [u8],
+    // 👇 new
+    segments: Segments<'a>,
+}
+
+impl<'a> Object<'a> {
+    // 👇 our `new` function now parses segments
+
+    /// Read an ELF object from a given slice
+    pub fn new(slice: &'a [u8]) -> Result<Self, PixieError> {
+        let input = (slice, 0);
+        let (_, header) = ObjectHeader::from_bytes(input)?;
+
+        // Read segments
+        let segments = {
+            let mut segments = Segments::default();
+            let mut input = (&slice[header.ph_offset as usize..], 0);
+            for _ in 0..header.ph_count {
+                let (rest, ph) = ProgramHeader::from_bytes(input)?;
+                segments.items.push(Segment::new(ph, slice));
+                input = rest;
+            }
+            segments
+        };
+
+        Ok(Self {
+            slice,
+            segments,
+            header,
+        })
+    }
+
+    // 👇 there's now a getter for segments
+
+    /// Returns all the program's segments
+    pub fn segments(&self) -> &Segments {
+        &self.segments
+    }
+}
+```
+
+And with that, we are able, in `stage1`, to print each header, and the load convex hull for our guest executable:
+
+``` rust
+// in `crates/stage1/src/main.rs`
+
+#[allow(clippy::unnecessary_wraps)]
+fn main(_env: Env) -> Result<(), PixieError> {
+    println!("Hello from stage1!");
+
+    let host = File::open("/proc/self/exe")?;
+    let host = host.map()?;
+    let host = host.as_ref();
+    let manifest = Manifest::read_from_full_slice(host)?;
+
+    let guest_range = manifest.guest.as_range();
+    println!("The guest is at {:x?}", guest_range);
+
+    let guest_slice = &host[guest_range];
+    let uncompressed_guest =
+        lz4_flex::decompress_size_prepended(guest_slice).expect("invalid lz4 payload");
+
+    let guest_obj = Object::new(&uncompressed_guest[..])?;
+    println!("Parsed {:#?}", guest_obj.header());
+
+    // 👇 new!
+    for seg in guest_obj.segments().all() {
+        println!("{:?}", seg.header());
+    }
+
+    println!(
+        "Load convex hull: {:0x?}",
+        guest_obj.segments().load_convex_hull()
+    );
+
+    Ok(())
+}
+```
+
+And we get:
+
+``` shell
+$ cargo run --release --bin minipak -- /usr/bin/gcc -o /tmp/gcc.pak && /tmp/gcc.pak
+    Finished release [optimized + debuginfo] target(s) in 0.01s
+     Running `target/release/minipak /usr/bin/gcc -o /tmp/gcc.pak`
+Wrote /tmp/gcc.pak (60.87% of input)
+Hello from stage1!
+The guest is at 19380..b3359
+Parsed ObjectHeader {
+    // (cut)
+}
+ProgramHeader { typ: Other(6), flags: 0x4, offset: 0x40, vaddr: 0x400040, paddr: 0x400040, filesz: 0x310, memsz: 0x310, align: 0x8 }
+ProgramHeader { typ: Interp, flags: 0x4, offset: 0x350, vaddr: 0x400350, paddr: 0x400350, filesz: 0x1c, memsz: 0x1c, align: 0x1 }
+ProgramHeader { typ: Load, flags: 0x4, offset: 0x0, vaddr: 0x400000, paddr: 0x400000, filesz: 0x2ab8, memsz: 0x2ab8, align: 0x1000 }
+ProgramHeader { typ: Load, flags: 0x5, offset: 0x3000, vaddr: 0x403000, paddr: 0x403000, filesz: 0x90fe1, memsz: 0x90fe1, align: 0x1000 }
+ProgramHeader { typ: Load, flags: 0x4, offset: 0x94000, vaddr: 0x494000, paddr: 0x494000, filesz: 0x8ef64, memsz: 0x8ef64, align: 0x1000 }
+ProgramHeader { typ: Load, flags: 0x6, offset: 0x123468, vaddr: 0x524468, paddr: 0x524468, filesz: 0x3c08, memsz: 0x8198, align: 0x1000 }
+ProgramHeader { typ: Dynamic, flags: 0x6, offset: 0x125d38, vaddr: 0x526d38, paddr: 0x526d38, filesz: 0x1f0, memsz: 0x1f0, align: 0x8 }
+ProgramHeader { typ: Other(4), flags: 0x4, offset: 0x370, vaddr: 0x400370, paddr: 0x400370, filesz: 0x40, memsz: 0x40, align: 0x8 }
+ProgramHeader { typ: Other(4), flags: 0x4, offset: 0x3b0, vaddr: 0x4003b0, paddr: 0x4003b0, filesz: 0x44, memsz: 0x44, align: 0x4 }
+ProgramHeader { typ: Tls, flags: 0x4, offset: 0x123468, vaddr: 0x524468, paddr: 0x524468, filesz: 0x0, memsz: 0x10, align: 0x8 }
+ProgramHeader { typ: Other(1685382483), flags: 0x4, offset: 0x370, vaddr: 0x400370, paddr: 0x400370, filesz: 0x40, memsz: 0x40, align: 0x8 }
+ProgramHeader { typ: Other(1685382480), flags: 0x4, offset: 0x10b644, vaddr: 0x50b644, paddr: 0x50b644, filesz: 0x316c, memsz: 0x316c, align: 0x4 }
+ProgramHeader { typ: GnuStack, flags: 0x6, offset: 0x0, vaddr: 0x0, paddr: 0x0, filesz: 0x0, memsz: 0x0, align: 0x10 }
+ProgramHeader { typ: Other(1685382482), flags: 0x4, offset: 0x123468, vaddr: 0x524468, paddr: 0x524468, filesz: 0x2b98, memsz: 0x2b98, align: 0x1 }
+Load convex hull: Ok(400000..52c600)
+```
+
+> **Cool bear says:**
+>
+> How fun! But uh, I see one problem.
+
+> **Amos says:**
+>
+> A problem?
+
+> **Cool bear says:**
+>
+> Yeah! I mean, it’s cool that we can parse the program headers from `/usr/bin/gcc`, but I don’t think we’re going to be able to run it from `stage1`.
+
+> **Amos says:**
+>
+> Oh?
+
+> **Cool bear says:**
+>
+> Well… what’s the convex hull for `stage1`?
+
+> **Amos says:**
+>
+> I don’t know, let me see…
+
+``` shell
+$ readelf -Wl /tmp/gcc.pak
+
+Elf file type is EXEC (Executable file)
+Entry point 0x410b40
+There are 8 program headers, starting at offset 64
+
+Program Headers:
+  Type           Offset   VirtAddr           PhysAddr           FileSiz  MemSiz   Flg Align
+  LOAD           0x000000 0x0000000000400000 0x0000000000400000 0x000224 0x000224 R   0x1000
+  LOAD           0x001000 0x0000000000401000 0x0000000000401000 0x01195e 0x01195e R E 0x1000
+  LOAD           0x013000 0x0000000000413000 0x0000000000413000 0x004280 0x004280 R   0x1000
+  LOAD           0x017b30 0x0000000000418b30 0x0000000000418b30 0x0014d8 0x001508 RW  0x1000
+  NOTE           0x000200 0x0000000000400200 0x0000000000400200 0x000024 0x000024 R   0x4
+  GNU_EH_FRAME   0x014f90 0x0000000000414f90 0x0000000000414f90 0x000564 0x000564 R   0x4
+  GNU_STACK      0x000000 0x0000000000000000 0x0000000000000000 0x000000 0x000000 RW  0x10
+  GNU_RELRO      0x017b30 0x0000000000418b30 0x0000000000418b30 0x0014d0 0x0014d0 R   0x1
+```
+
+``` shell
+$ gdb -quiet -ex "p/x 0x0000000000418b30+0x001508" -ex "q"
+$1 = 0x41a038
+```
+
+> **Amos says:**
+>
+> It’s uhh… `0x400000..0x41a038`.
+
+> **Cool bear says:**
+>
+> And what’s the load convex hull for gcc?
+
+> **Amos says:**
+>
+> *scrolls up* it’s `0x400000..0x52c600` ohhhhhh.
+
+> **Cool bear says:**
+>
+> Yeah. Can’t really load something at the exact place we already are, right?
+
+> **Amos says:**
+>
+> Right! That would be “chopping the branch we’re sitting on”!
+
+> **Cool bear says:**
+>
+> …I don’t think that aphorism exists in English.
+
+So, we can’t really load GCC right now. But maybe we can load something else?
+
+What about a nice relocatable executable?
+
+> **Cool bear says:**
+>
+> Sure.
+
+Let’s make one:
+
+``` c
+// in `samples/hello-pie.c`
+
+#include <stdio.h>
+
+int main() {
+    printf("Hello! I am a C program.\n");
+
+    return 0;
+}
+```
+
+```
+# in `samples/Justfile`
+
+hello-pie:
+    gcc -static-pie hello-pie.c -o hello-pie
+    file hello-pie
+```
+
+```
+# in `samples/.gitignore`
+*
+!.gitignore
+!*.c
+!Justfile
+```
+
+> **Cool Bear's hot tip**
+>
+> [just](https://github.com/casey/just) is just a command runner. It doesn’t have a lot of the implicit rules and complications that GNU make has, it doesn’t do automatic dependency tracking like [tup](http://gittup.org/tup/) does.
+>
+> It really is *just* a command runner. We’ll be using it to remember how our sample executables should be built.
+
+``` shell
+$ # from the top-level minipak/ folder
+$ just samples/hello-pie
+gcc -static-pie hello-pie.c -o hello-pie
+file hello-pie
+hello-pie: ELF 64-bit LSB pie executable, x86-64, version 1 (GNU/Linux), dynamically linked, BuildID[sha1]=29be2c132bdb5d266cbfbd0519e890cae86d5b19, for GNU/Linux 4.4.0, not stripped
+```
+
+> **Cool Bear's hot tip**
+>
+> Here, `just` picks up `samples/Justfile` and runs the `hello-pie` target.
+
+So, let’s compress this executable and see what happens:
+
+``` shell
+$ cargo run --release --bin minipak -- samples/hello-pie -o /tmp/hello-pie.pak && /tmp/hello-pie.pak
+    Finished release [optimized + debuginfo] target(s) in 0.01s
+     Running `target/release/minipak samples/hello-pie -o /tmp/hello-pie.pak`
+Wrote /tmp/hello-pie.pak (67.42% of input)
+Hello from stage1!
+The guest is at 19380..89afb
+Parsed ObjectHeader {
+    endianness: Little,
+    version: 1,
+    os_abi: Other(
+        3,
+    ),
+    typ: Dyn,
+    machine: X86_64,
+    version_bis: 1,
+    entry_point: 0x8840,
+    ph_offset: 0x40,
+    sh_offset: 0xcc198,
+    flags: 0x0,
+    hdr_size: 64,
+    ph_entsize: 56,
+    ph_count: 12,
+    sh_entsize: 64,
+    sh_count: 39,
+    sh_nidx: 38,
+}
+ProgramHeader { typ: Load, flags: 0x4, offset: 0x0, vaddr: 0x0, paddr: 0x0, filesz: 0x7f20, memsz: 0x7f20, align: 0x1000 }
+ProgramHeader { typ: Load, flags: 0x5, offset: 0x8000, vaddr: 0x8000, paddr: 0x8000, filesz: 0x81f7d, memsz: 0x81f7d, align: 0x1000 }
+ProgramHeader { typ: Load, flags: 0x4, offset: 0x8a000, vaddr: 0x8a000, paddr: 0x8a000, filesz: 0x28bc8, memsz: 0x28bc8, align: 0x1000 }
+ProgramHeader { typ: Load, flags: 0x6, offset: 0xb3768, vaddr: 0xb4768, paddr: 0xb4768, filesz: 0x5ba8, memsz: 0x7438, align: 0x1000 }
+ProgramHeader { typ: Dynamic, flags: 0x6, offset: 0xb6d58, vaddr: 0xb7d58, paddr: 0xb7d58, filesz: 0x1a0, memsz: 0x1a0, align: 0x8 }
+ProgramHeader { typ: Other(4), flags: 0x4, offset: 0x2e0, vaddr: 0x2e0, paddr: 0x2e0, filesz: 0x40, memsz: 0x40, align: 0x8 }
+ProgramHeader { typ: Other(4), flags: 0x4, offset: 0x320, vaddr: 0x320, paddr: 0x320, filesz: 0x44, memsz: 0x44, align: 0x4 }
+ProgramHeader { typ: Tls, flags: 0x4, offset: 0xb3768, vaddr: 0xb4768, paddr: 0xb4768, filesz: 0x20, memsz: 0x60, align: 0x8 }
+ProgramHeader { typ: Other(1685382483), flags: 0x4, offset: 0x2e0, vaddr: 0x2e0, paddr: 0x2e0, filesz: 0x40, memsz: 0x40, align: 0x8 }
+ProgramHeader { typ: Other(1685382480), flags: 0x4, offset: 0xa6390, vaddr: 0xa6390, paddr: 0xa6390, filesz: 0x1db4, memsz: 0x1db4, align: 0x4 }
+ProgramHeader { typ: GnuStack, flags: 0x6, offset: 0x0, vaddr: 0x0, paddr: 0x0, filesz: 0x0, memsz: 0x0, align: 0x10 }
+ProgramHeader { typ: Other(1685382482), flags: 0x4, offset: 0xb3768, vaddr: 0xb4768, paddr: 0xb4768, filesz: 0x3898, memsz: 0x3898, align: 0x1 }
+Load convex hull: Ok(0..bbba0)
+```
+
+Great!
+
+The load convex hull starts at `0x0`, which in this case really means we can map it anywhere. And as we’ve seen in [Part 14](https://fasterthanli.me/series/making-our-own-executable-packer/part-14), executables like that are actually self-relocating.
+
+They statically link a part of `rtld` within themselves, and when they start up, they go through their own relocations and apply them.
+
+So, we should just be able to map this object *anywhere* and jump to its entry point, and everything should work out!
+
+But we’re not going to just do that.
+
+Oh no.
+
+That would be too simple.
+
+No, we know ahead of time that we’re going to need to do that a bunch of times in a bunch of difference scenarios, so we’re going to throw [YAGNI](https://en.wikipedia.org/wiki/You_aren%27t_gonna_need_it) to the wind, and come up with an abstraction for that:
+
+``` rust
+// in `crates/src/pixie/lib.rs`
+
+/// An ELF object mapped into memory
+pub struct MappedObject<'a> {
+    /// The object we mapped
+    object: &'a Object<'a>,
+
+    /// Load convex hull
+    hull: Range<u64>,
+
+    /// Difference between the start of the load convex hull
+    /// and where it's actually mapped. For relocatable objects,
+    /// it's the base we picked. For non-relocatable objects,
+    /// it's zero.
+    base_offset: u64,
+
+    /// Memory allocated for the object in question
+    mem: &'a mut [u8],
+}
+```
+
+There! Just like we had an `Object` struct that kept track of the parsed data (the various headers) and the mapped memory, we now have a `MappedObject` struct that keeps track of the “input” `Object`, and the anonymous memory mappings we’re going to copy segments into and run off of.
+
+We’ll then add a constructor to it, which takes a single argument: an address to map the object at. This only applies to relocatable objects, so, in case we’re asked to map a non-relocatable object to a fixed address, we just error out, because there is no happiness down that path.
+
+``` rust
+// in `crates/src/pixie/lib.rs`
+
+#[derive(displaydoc::Display, Debug)]
+/// A pixie error
+pub enum PixieError {
+    // 👇 new!
+
+    /// cannot map non-relocatable object at fixed position
+    CannotMapNonRelocatableObjectAtFixedPosition,
+}
+
+impl<'a> MappedObject<'a> {
+    /// If `at` is Some, map at a specific address. This only works
+    /// with relocatable objects.
+    pub fn new(object: &'a Object, mut at: Option<u64>) -> Result<Self, PixieError> {
+        let hull = object.segments().load_convex_hull()?;
+        let is_relocatable = hull.start == 0;
+
+        if !is_relocatable {
+            // non-relocatable object, we need to map it at its fixed position
+            if at.is_some() {
+                return Err(PixieError::CannotMapNonRelocatableObjectAtFixedPosition);
+            }
+            at = Some(hull.start)
+        }
+        let mem_len = hull.end - hull.start;
+
+        let mut map_opts = MmapOptions::new(hull.end - hull.start);
+        map_opts.prot(MmapProt::READ | MmapProt::WRITE | MmapProt::EXEC);
+        if let Some(at) = at {
+            map_opts.at(at);
+        }
+
+        let res = map_opts.map()?;
+        let base_offset = if is_relocatable { res } else { 0 };
+        let mem = unsafe { core::slice::from_raw_parts_mut(res as _, mem_len as _) };
+
+        let mut mapped = Self {
+            hull,
+            object,
+            mem,
+            base_offset,
+        };
+        mapped.copy_load_segments();
+        Ok(mapped)
+    }
+}
+```
+
+> **Cool bear says:**
+>
+> Wait, everything is read+write+exec?
+
+> **Amos says:**
+>
+> Well…. that’s one shortcut we *can* take.
+
+> **Cool bear says:**
+>
+> Isn’t that just lazy?
+
+> **Amos says:**
+>
+> No, in the industry we call that “an exercise left to the reader”.
+>
+> We got it right in elk/delf, here we just want results. You’re the one who’s been impatient these last couple articles!
+
+> **Cool bear says:**
+>
+> Fair, fair. So, results!
+
+Well, to see results we’ll need to actually implement `copy_load_segments`.
+
+And here the nice things, because we “cheated” by making everything RWX (read/write/execute), *and* by only mapping one big memory region (the “load convex hull”) we’re effectively just doing operations on Rust slices.
+
+It is quite lengthy though, so prepare yourselves:
+
+``` rust
+// in `crates/pixie/src/lib.rs`
+
+impl<'a> MappedObject<'a> {
+    /// Copies load segments from the file into the memory we mapped
+    fn copy_load_segments(&mut self) {
+        for seg in self.object.segments().of_type(SegmentType::Load) {
+            let mem_start = self.vaddr_to_mem_offset(seg.header().vaddr);
+            let dst = &mut self.mem[mem_start..][..seg.slice().len()];
+            dst.copy_from_slice(seg.slice());
+        }
+    }
+}
+```
+
+There!
+
+> **Cool bear says:**
+>
+> …but that wasn’t lengthy at all!
+
+> **Amos says:**
+>
+> Yes! I lied! But we only got to write such a small amount of code because we prepared everything so nicely.
+
+> **Cool bear says:**
+>
+> Yeah well it’s easy to do that when you get to *first* golf down the final code and *then* write about it.
+
+> **Amos says:**
+>
+> Shhh that’s behind the scenes material.
+
+I think we’re missing some more utility methods though, starting with `MappedObject::vaddr_to_mem_offset`, which we use in `MappedObject::copy_load_segments`. And then a couple more:
+
+``` rust
+// in `crates/pixie/src/lib.rs`
+
+impl<'a> MappedObject<'a> {
+    /// Convert a vaddr to a memory offset
+    pub fn vaddr_to_mem_offset(&self, vaddr: u64) -> usize {
+        (vaddr - self.hull.start) as _
+    }
+
+    /// Returns a view of (potentially relocated) `mem` for a given range
+    pub fn vaddr_slice(&self, range: Range<u64>) -> &[u8] {
+        &self.mem[self.vaddr_to_mem_offset(range.start)..self.vaddr_to_mem_offset(range.end)]
+    }
+
+    /// Returns true if the object's base offset is zero, which we assume
+    /// means it can be mapped anywhere.
+    pub fn is_relocatable(&self) -> bool {
+        self.base_offset == 0
+    }
+
+    /// Returns the offset between the object's base and where we loaded it
+    pub fn base_offset(&self) -> u64 {
+        self.base_offset
+    }
+
+    /// Returns the base address for this executable
+    pub fn base(&self) -> u64 {
+        self.mem.as_ptr() as _
+    }
+}
+```
+
+Good! Glad we could get these out of the way early.
+
+Now that we have all that, we should be able to just map “hello-pie” and jump to its entry point!
+
+In order to help us debug what’s going on, let’s define an `info!` macro that just forward to `println!` with a prefix:
+
+``` rust
+// in `crates/stage1/src/main.rs`
+
+extern crate alloc;
+
+macro_rules! info {
+    ($($tokens: tt)*) => {
+        println!("[stage1] {}", alloc::format!($($tokens)*));
+    }
+}
+```
+
+And then we can try the simplest thing that could possibly work:
+
+``` rust
+// in `crates/stage1/src/main.rs`
+
+#[allow(clippy::unnecessary_wraps)]
+fn main(_env: Env) -> Result<(), PixieError> {
+    // 👇 we've seen this before...
+
+    let host = File::open("/proc/self/exe")?;
+    let host = host.map()?;
+    let host = host.as_ref();
+    let manifest = Manifest::read_from_full_slice(host)?;
+
+    let guest_range = manifest.guest.as_range();
+    println!("The guest is at {:x?}", guest_range);
+
+    let guest_slice = &host[guest_range];
+    let uncompressed_guest =
+        lz4_flex::decompress_size_prepended(guest_slice).expect("invalid lz4 payload");
+
+    // 👇 and this is new!
+
+    let guest_obj = Object::new(&uncompressed_guest[..])?;
+
+    let guest_mapped = MappedObject::new(&guest_obj, None)?;
+    info!("Mapped guest at 0x{:x}", guest_mapped.base());
+
+    let entry_point = guest_mapped.base() + guest_obj.header().entry_point;
+    info!("Jumping to guest's entry point 0x{:x}", entry_point);
+    unsafe {
+        pixie::launch(entry_point);
+    }
+}
+```
+
+Our `launch` function is going to have all the assembly we need to actually jump to our guest executable.
+
+``` rust
+// in `crates/pixie/src/lib.rs`
+
+// Let us use inline assembly!
+#![feature(asm)]
+
+mod launch;
+pub use launch::*;
+```
+
+``` rust
+// in `crates/pixie/src/launch.rs`
+
+use crate::syscall;
+
+/// # Safety
+/// Nothing about this function is safe.
+#[inline(never)]
+pub unsafe fn launch(entry_point: u64) -> ! {
+    // handy for breakpoints
+    syscall::dup(0);
+
+    asm!(
+        /////////////////////////////////
+        // Jump to the entry point
+        /////////////////////////////////
+
+        "jmp r13",
+
+        in("r13") entry_point,
+        options(noreturn)
+    )
+}
+```
+
+Since we expect a lot of things to go wrong, it may be useful to break *just before* our assembly “launch pad”. But it’s not that easy to break on a symbol, because by the time it’s actually run, it’s part of the “compressed executable”, which right now looks pretty standard, but that won’t last long.
+
+So, for easy debugging, we simply try to duplicate file descriptor `0`. We never perform that syscall anywhere else in minipak, so it should be fairly easy to catch it from GDB.
+
+Since we didn’t add a definition for `syscall::dup` before, let’s do it now:
+
+``` rust
+// in `crates/encore/src/syscall.rs`
+
+/// # Safety
+/// Calls into the kernel.
+#[inline(always)]
+pub unsafe fn dup(fd: u64) {
+    let syscall_number = 32;
+
+    asm!(
+        "syscall",
+        in("rax") syscall_number,
+        in("rdi") fd,
+        lateout("rcx") _, lateout("r11") _,
+        options(nostack),
+    );
+}
+```
+
+And with that… we should have everything we need!
+
+Let’s go!
+
+``` shell
+$ cargo run --release --bin minipak -- samples/hello-pie -o /tmp/hello-pie.pak && /tmp/hello-pie.pak
+   Compiling minipak v0.1.0 (/home/amos/ftl/minipak/crates/minipak)
+   Compiling encore v0.1.0 (/home/amos/ftl/minipak/crates/encore)
+   Compiling pixie v0.1.0 (/home/amos/ftl/minipak/crates/pixie)
+    Finished release [optimized + debuginfo] target(s) in 4.00s
+     Running `target/release/minipak samples/hello-pie -o /tmp/hello-pie.pak`
+Wrote /tmp/hello-pie.pak (66.93% of input)
+The guest is at 18380..88afb
+[stage2] Mapped guest at 0x7fbdc662f000
+[stage2] Jumping to guest's entry point 0x7fbdc6637840
+[1]    10706 segmentation fault  /tmp/hello-pie.pak
+```
+
+Awwwww. No first time success.
+
+Well… let’s try to rebuild `hello-pie` with debug information:
+
+```
+# in `samples/Justfile`
+
+hello-pie:
+    #   👇 now asking for debug info
+    gcc -g -static-pie hello-pie.c -o hello-pie
+    file hello-pie
+```
+
+``` shell
+$ just samples/hello-pie
+gcc -g -static-pie hello-pie.c -o hello-pie
+file hello-pie
+hello-pie: ELF 64-bit LSB pie executable, x86-64, version 1 (GNU/Linux), dynamically linked, BuildID[sha1]=0887df3e3be755d11f82cfcd306b32ebd16962ea, for GNU/Linux 4.4.0, with debug_info, not stripped
+```
+
+And now, we can use that debug info. Even though we don’t map the “debug info” part of the `hello-pie` executable into memory, we can tell GDB to use it, if we only tell it where we loaded `hello-pie` — just like we did in [Part 9](https://fasterthanli.me/series/making-our-own-executable-packer/part-9).
+
+We just need to do some maths!
+
+```
+(gdb) help add-symbol-file
+Load symbols from FILE, assuming FILE has been dynamically loaded.
+Usage: add-symbol-file FILE [-readnow | -readnever] [-o OFF] [ADDR] [-s SECT-NAME SECT-ADDR]...
+ADDR is the starting address of the file's text.
+```
+
+So, where does the `.text` section start in `hello-pie`?
+
+``` shell
+$ readelf -WS ./samples/hello-pie | grep -E "[.]text|Address"
+  [Nr] Name              Type            Address          Off    Size   ES Flg Lk Inf Al
+  [12] .text             PROGBITS        0000000000008250 008250 081250 00  AX  0   0 16
+```
+
+Alright! So, if we pack it once again:
+
+``` shell
+$ cargo run --release --bin minipak -- samples/hello-pie -o /tmp/hello-pie.pak
+    Finished release [optimized + debuginfo] target(s) in 0.01s
+     Running `target/release/minipak samples/hello-pie -o /tmp/hello-pie.pak`
+Wrote /tmp/hello-pie.pak (66.86% of input)
+```
+
+And debug it, catching the `dup` syscall:
+
+``` shell
+$ gdb --quiet --args /tmp/hello-pie.pak
+Reading symbols from /tmp/hello-pie.pak...
+(No debugging symbols found in /tmp/hello-pie.pak)
+(gdb) catch syscall dup
+Catchpoint 1 (syscall 'dup' [32])
+(gdb) r
+Starting program: /tmp/hello-pie.pak
+The guest is at 18380..88cf6
+[stage2] Mapped guest at 0x7fffefeb4000
+[stage2] Jumping to guest's entry point 0x7fffefebc840
+
+Catchpoint 1 (call to syscall dup), 0x000000000040d54e in ?? ()
+(gdb)
+```
+
+So, if the guest was mapped at `0x7fffefeb4000`, and its text section is supposed to be at `0x8250` (with a zero base), then the *actual* address of the text section is…
+
+``` shell
+(gdb) p/x 0x7fffefeb4000 + 0x8250
+$1 = 0x7fffefebc250
+```
+
+And so we should be able to get GDB to load the debug information if we simply do this:
+
+``` shell
+(gdb) add-symbol-file ./samples/hello-pie 0x7fffefebc250
+add symbol table from file "./samples/hello-pie" at
+        .text_addr = 0x7fffefebc250
+(y or n) y
+Reading symbols from ./samples/hello-pie...
+```
+
+> **Cool bear says:**
+>
+> Well? Did it work?
+
+> **Amos says:**
+>
+> It’s often hard to say — if you input the wrong address, then it might still show a partial stack trace and you might end up chasing the wrong thing altogether!
+
+> **Cool bear says:**
+>
+> Ohhh is that why you were cursing so much a few weeks back?
+
+> **Amos says:**
+>
+> What? Haha bear, I never curse, there must have been a mix-up.
+
+So anyway - asking for a backtrace *right now* isn’t very illuminating:
+
+``` shell
+(gdb) backtrace
+#0  0x000000000040d54e in ?? ()
+#1  0x0000000000410f14 in ?? ()
+#2  0x000000000040ffd1 in ?? ()
+#3  0x000000000040ff98 in ?? ()
+#4  0x0000000000000001 in ?? ()
+#5  0x00007fffffffdf92 in ?? ()
+#6  0x0000000000000000 in ?? ()
+```
+
+…but that’s only because we haven’t actually jumped to the entry point yet.
+
+And if we do (by using `stepi` repeatedly), and we enable TUI mode (with `Ctrl-x 2`), we can see the familiar prologue:
+
+![gdb1](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-17/assets/gdb1~4071f34e12e84938.webp)
+
+And if we keep going, we can eventually see the segfault in action:
+
+![gdb2](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-17/assets/gdb2~faaf676e7316e4f7.webp)
+
+In this instance, it looks like it’s trying to access memory that isn’t mapped!
+
+And indeed, if we look closely, we can see that `$rdi` points nowhere near mapped memory:
+
+``` shell
+(gdb) p/x $rdi
+$16 = 0x7fff7f5e1c38
+(gdb) info proc mappings
+process 13380
+Mapped address spaces:
+
+          Start Addr           End Addr       Size     Offset objfile
+            0x400000           0x401000     0x1000        0x0 /tmp/hello-pie.pak
+            0x401000           0x412000    0x11000     0x1000 /tmp/hello-pie.pak
+            0x412000           0x416000     0x4000    0x12000 /tmp/hello-pie.pak
+            0x417000           0x41a000     0x3000    0x16000 /tmp/hello-pie.pak
+      0x7fffefeb4000     0x7fffeff70000    0xbc000        0x0
+      0x7fffeff70000     0x7fffefffa000    0x8a000        0x0 /tmp/hello-pie.pak
+      0x7fffefffa000     0x7ffff7ffa000  0x8000000        0x0
+      0x7ffff7ffa000     0x7ffff7ffd000     0x3000        0x0 [vvar]
+      0x7ffff7ffd000     0x7ffff7fff000     0x2000        0x0 [vdso]
+      0x7ffffffdd000     0x7ffffffff000    0x22000        0x0 [stack]
+```
+
+Mhhhh. Maybe we’ve taken one too many shortcuts.
+
+> **Cool bear says:**
+>
+> Aww. Can we at least get *something* working?
+
+> **Amos says:**
+>
+> I don’t know bear, can we? Who knows what we forgot! We could be debugging this for another day or two and not get anywhere!
+
+> **Cool bear says:**
+>
+> Well, let’s start with the fundamentals… what’s the first thing `hello-pie` does?
+
+> **Amos says:**
+>
+> I don’t know… probably just the same thing we do: read command-line arguments?
+
+> **Cool bear says:**
+>
+> Right! And where would it read those from?
+
+> **Amos says:**
+>
+> Uhhh the stack?
+
+> **Cool bear says:**
+>
+> And what’s the stack pointer pointing to by the time we jump to the entry point?
+
+> **Amos says:**
+>
+> Ohhh. Oh!
+
+Yeah we definitely forgot one part. We do need to set the `%rsp` register before handing off control to the entry point.
+
+Well, that’s rather easy to fix!
+
+``` rust
+// in `crates/stage1/src/main.rs`
+
+#[no_mangle]
+unsafe fn pre_main(stack_top: *mut u8) {
+    init_allocator();
+    // 👇 we now pass `stack_top` as well as `Env`
+    main(stack_top, Env::read(stack_top)).unwrap();
+    syscall::exit(0);
+}
+
+#[allow(clippy::unnecessary_wraps)]
+//       👇
+fn main(stack_top: *mut u8, _env: Env) -> Result<(), PixieError> {
+    // (bunch of code omitted)
+
+    let entry_point = guest_mapped.base() + guest_obj.header().entry_point;
+    info!("Jumping to guest's entry point 0x{:x}", entry_point);
+    unsafe {
+        //              👇
+        pixie::launch(stack_top, entry_point);
+    }
+}
+```
+
+And then we change `pixie::launch` to set `%rsp` before jumping to the entry point:
+
+``` rust
+// in `crates/pixie/src/launch.rs`
+
+/// # Safety
+/// Nothing about this function is safe.
+#[inline(never)]
+pub unsafe fn launch(stack_top: *mut u8, entry_point: u64) -> ! {
+    // handy for breakpoints
+    syscall::dup(0);
+
+    asm!(
+        /////////////////////////////////
+        // Set up stack pointer
+        /////////////////////////////////
+
+        "mov rsp, r12",
+
+        /////////////////////////////////
+        // Jump to the entry point
+        /////////////////////////////////
+
+        "jmp r13",
+
+        in("r12") stack_top,
+        in("r13") entry_point,
+        options(noreturn)
+    )
+}
+```
+
+Alright! I feel better about this already.
+
+Let’s pack it again:
+
+``` shell
+$ cargo run --release --bin minipak -- samples/hello-pie -o /tmp/hello-pie.pak
+   Compiling minipak v0.1.0 (/home/amos/ftl/minipak/crates/minipak)
+   Compiling encore v0.1.0 (/home/amos/ftl/minipak/crates/encore)
+   Compiling pixie v0.1.0 (/home/amos/ftl/minipak/crates/pixie)
+    Finished release [optimized + debuginfo] target(s) in 3.83s
+     Running `target/release/minipak samples/hello-pie -o /tmp/hello-pie.pak`
+panicked at 'called `Result::unwrap()` on an `Err` value: Encore(Open("/tmp/hello-pie.pak"))', crates/minipak/src/main.rs:34:32
+[1]    15155 illegal hardware instruction  cargo run --release --bin minipak -- samples/hello-pie -o /tmp/hello-pie.pak
+```
+
+Oh, uh, *what*?
+
+> **Cool bear says:**
+>
+> Don’t we have a GDB session running with `/tmp/hello-pie.pak`?
+
+Oh right, that’ll lock the file. Let’s exit the GDB session and try again:
+
+``` shell
+$ cargo run --release --bin minipak -- samples/hello-pie -o /tmp/hello-pie.pak
+    Finished release [optimized + debuginfo] target(s) in 0.01s
+     Running `target/release/minipak samples/hello-pie -o /tmp/hello-pie.pak`
+Wrote /tmp/hello-pie.pak (66.86% of input)
+```
+
+Alright. Now will it run?
+
+``` shell
+$ /tmp/hello-pie.pak
+The guest is at 18380..88cf6
+[stage2] Mapped guest at 0x7f85dd924000
+[stage2] Jumping to guest's entry point 0x7f85dd92c840
+[1]    15763 segmentation fault  /tmp/hello-pie.pak
+```
+
+Nope!
+
+Well, let’s see where it crashes this time…
+
+``` shell
+$ gdb --quiet --args /tmp/hello-pie.pak
+Reading symbols from /tmp/hello-pie.pak...
+(No debugging symbols found in /tmp/hello-pie.pak)
+(gdb) catch syscall dup
+Catchpoint 1 (syscall 'dup' [32])
+(gdb) r
+Starting program: /tmp/hello-pie.pak
+The guest is at 18380..88cf6
+[stage2] Mapped guest at 0x7fffefeb4000
+[stage2] Jumping to guest's entry point 0x7fffefebc840
+
+Catchpoint 1 (call to syscall dup), 0x000000000040d554 in ?? ()
+(gdb) p/x 0x7fffefeb4000 + 0x8250
+$1 = 0x7fffefebc250
+(gdb) add-symbol-file ./samples/hello-pie 0x7fffefebc250
+add symbol table from file "./samples/hello-pie" at
+        .text_addr = 0x7fffefebc250
+(y or n) y
+Reading symbols from ./samples/hello-pie...
+```
+
+![gdb-a-1](https://cdn.fasterthanli.me/content/series/making-our-own-executable-packer/part-17/assets/gdb-a-1~0d1d536b436e7a70.webp)
+
+Huh. Right in the middle of messing with… some thread-local data.
+
+Fun.
+
+Let’s see, what else could we have forgotten?
+
+> **Cool bear says:**
+>
+> Well… we’ve thought about command-line arguments, but there’s something else below the stack isn’t there?
+
+> **Amos says:**
+>
+> Auxiliary vectors?
+
+> **Cool bear says:**
+>
+> Yeah.
+
+> **Amos says:**
+>
+> What about them?
+
+> **Cool bear says:**
+>
+> Well, when we’re running `hello-pie.pak`, we’re not really running `hello-pie`, are we? We’re running `stage1`. Does it have the same auxiliary vectors?
+
+> **Amos says:**
+>
+> Uhh…
+
+``` shell
+$ gdb --quiet -ex "set confirm off" -ex "starti" -ex "info auxv" -ex "quit" --args /tmp/hello-pie.pak
+Reading symbols from /tmp/hello-pie.pak...
+(No debugging symbols found in /tmp/hello-pie.pak)
+Starting program: /tmp/hello-pie.pak
+
+Program stopped.
+0x00000000004100a0 in ?? ()
+33   AT_SYSINFO_EHDR      System-supplied DSO's ELF header 0x7ffff7ffd000
+16   AT_HWCAP             Machine-dependent CPU capability hints 0x1f8bfbff
+6    AT_PAGESZ            System page size               4096
+17   AT_CLKTCK            Frequency of times()           100
+3    AT_PHDR              Program headers for program    0x400040
+4    AT_PHENT             Size of program header entry   56
+5    AT_PHNUM             Number of program headers      8
+7    AT_BASE              Base address of interpreter    0x0
+8    AT_FLAGS             Flags                          0x0
+9    AT_ENTRY             Entry point of program         0x4100a0
+11   AT_UID               Real user ID                   1000
+12   AT_EUID              Effective user ID              1000
+13   AT_GID               Real group ID                  1000
+14   AT_EGID              Effective group ID             1000
+23   AT_SECURE            Boolean, was exec setuid-like? 0
+25   AT_RANDOM            Address of 16 random bytes     0x7fffffffdf79
+26   AT_HWCAP2            Extension of AT_HWCAP          0x0
+31   AT_EXECFN            File name of executable        0x7fffffffefe5 "/tmp/hello-pie.pak"
+15   AT_PLATFORM          String identifying platform    0x7fffffffdf89 "x86_64"
+0    AT_NULL              End of vector                  0x0
+```
+
+``` shell
+$ gdb --quiet -ex "set confirm off" -ex "starti" -ex "info auxv" -ex "quit" --args ./samples/hello-pie
+Reading symbols from ./samples/hello-pie...
+Starting program: /home/amos/ftl/minipak/samples/hello-pie
+
+Program stopped.
+0x00007ffff7f4b840 in _start ()
+33   AT_SYSINFO_EHDR      System-supplied DSO's ELF header 0x7ffff7f41000
+16   AT_HWCAP             Machine-dependent CPU capability hints 0x1f8bfbff
+6    AT_PAGESZ            System page size               4096
+17   AT_CLKTCK            Frequency of times()           100
+3    AT_PHDR              Program headers for program    0x7ffff7f43040
+4    AT_PHENT             Size of program header entry   56
+5    AT_PHNUM             Number of program headers      12
+7    AT_BASE              Base address of interpreter    0x0
+8    AT_FLAGS             Flags                          0x0
+9    AT_ENTRY             Entry point of program         0x7ffff7f4b840
+11   AT_UID               Real user ID                   1000
+12   AT_EUID              Effective user ID              1000
+13   AT_GID               Real group ID                  1000
+14   AT_EGID              Effective group ID             1000
+23   AT_SECURE            Boolean, was exec setuid-like? 0
+25   AT_RANDOM            Address of 16 random bytes     0x7fffffffdf39
+26   AT_HWCAP2            Extension of AT_HWCAP          0x0
+31   AT_EXECFN            File name of executable        0x7fffffffefcf "/home/amos/ftl/minipak/samples/hello-pie"
+15   AT_PLATFORM          String identifying platform    0x7fffffffdf49 "x86_64"
+0    AT_NULL              End of vector                  0x0
+```
+
+> **Amos says:**
+>
+> …no.
+
+I think Cool Bear is onto something. Not only is the number of program headers different (8 for packed, 12 for the original), the address of those program headers also *must* be different, because even if they were at the same file offset, we’re mapping the guest somewhere completely different: not around `0x400000`, but around `0x7ffff7000000`.
+
+And the program headers is definitely something a self-relocating executable would be looking at.
+
+Luckily, the `Env` struct we made earlier will come in handy here.
+
+There’s three auxiliary vectors we need to worry about:
+
+- `PHDR`, the program headers offset
+- `PHNUM`, the number of program headers
+- `ENTRY`, the program’s entry point
+
+That last one may not matter as much in this particular scenario, since we’re jumping directly to it, but it might come in handy in the future…
+
+> **Cool bear says:**
+>
+> Ah there he goes, doing time travel again.
+
+``` rust
+#[allow(clippy::unnecessary_wraps)]
+// no longer unused, and mut: 👇
+fn main(stack_top: *mut u8, mut env: Env) -> Result<(), PixieError> {
+    // (code omitted up until this point)
+    info!("Mapped guest at 0x{:x}", guest_mapped.base());
+
+    // Set phdr auxiliary vector
+    let at_phdr = env.find_vector(AuxvType::PHDR);
+    at_phdr.value = guest_mapped.base() + guest_obj.header().ph_offset;
+
+    // Set phnum auxiliary vector
+    let at_phnum = env.find_vector(AuxvType::PHNUM);
+    at_phnum.value = guest_obj.header().ph_count as _;
+
+    // Set entry auxiliary vector
+    let at_entry = env.find_vector(AuxvType::ENTRY);
+    at_entry.value = guest_mapped.base_offset() + guest_obj.header().entry_point;
+
+    let entry_point = guest_mapped.base() + guest_obj.header().entry_point;
+    info!("Jumping to guest's entry point 0x{:x}", entry_point);
+    unsafe {
+        pixie::launch(stack_top, entry_point);
+    }
+}
+```
+
+Aaand… voilà!
+
+``` shell
+$ cargo run --release --bin minipak -- samples/hello-pie -o /tmp/hello-pie.pak && /tmp/hello-pie.pak
+    Finished release [optimized + debuginfo] target(s) in 0.01s
+     Running `target/release/minipak samples/hello-pie -o /tmp/hello-pie.pak`
+Wrote /tmp/hello-pie.pak (66.86% of input)
+The guest is at 18380..88cf6
+[stage2] Mapped guest at 0x7f6c35075000
+[stage2] Jumping to guest's entry point 0x7f6c3507d840
+Hello! I am a C program.
+[1]    18827 segmentation fault  /tmp/hello-pie.pak
+```
+
+Yes! No! It runs! But it segfaults at exit!
+
+> **Cool bear says:**
+>
+> Well, nothing we haven’t seen before… when we were working on delf/elk, we had to patch `exit` so that it didn’t crash.
+
+> **Amos says:**
+>
+> Yeah, but back then we were also pretending to be glibc! And we were patching `dladdr` as well! We should not have to do that here!
+
+So the investigation there was actually quite a fun one, and I have to credit my friend [@GranPC](https://twitter.com/GranPC) for finding the relevant Linux kernel and glibc code.
+
+I couldn’t find a standard that says so in written form, but, well, on Linux, by convention, most of the registers (except `%rsp`) are generally zeroed when program execution starts.
+
+And in our case, they definitely aren’t. We’re running a bunch of code *before* jumping to the entry point, that uses registers left and right.
+
+Because a specific register is *not* zeroed, glibc thinks we’re registering some dummy address as a destructor, and so it jumps to that address on exit.
+
+That address?
+
+``` shell
+$ gdb --quiet --args /tmp/hello-pie.pak
+Reading symbols from /tmp/hello-pie.pak...
+(No debugging symbols found in /tmp/hello-pie.pak)
+(gdb) r
+Starting program: /tmp/hello-pie.pak
+The guest is at 18380..88cf6
+[stage2] Mapped guest at 0x7fffefeb4000
+[stage2] Jumping to guest's entry point 0x7fffefebc840
+Hello! I am a C program.
+
+Program received signal SIGSEGV, Segmentation fault.
+0x0000000000000001 in ?? ()
+```
+
+`0x1`.
+
+So, yeah. We’re going to clear registers. *Except* for `r13`, which contains our actual entry point.
+
+And we’re even going to go above and beyond. When a process start, it gets a fresh stack right? Below it are command-line arguments, environment variables, and auxiliary vectors. But above `%rsp`? Should be all zeros.
+
+Well, let’s do both these things:
+
+``` rust
+// in `crates/pixie/src/launch.rs`
+
+/// # Safety
+/// Nothing about this function is safe.
+#[inline(never)]
+pub unsafe fn launch(stack_top: *mut u8, entry_point: u64) -> ! {
+    // handy for breakpoints
+    syscall::dup(0);
+    asm!(
+        /////////////////////////////////
+        // Clear some of the stack
+        /////////////////////////////////
+
+        // Use rsi as counter
+        "mov rsi, r12",
+        "sub rsi, 0x1000",
+        // Loop label
+        "$clear_stack:",
+            "cmp rsi, r12",
+            // If we reach rdi, we're done
+            "je $clear_stack_done",
+            // Otherwise, clear 8 bytes at once
+            "mov qword ptr [rsi], 0",
+            // Then add 8 bytes to counter
+            "add rsi, 0x8",
+            // Otherwise, loop
+            "jmp $clear_stack",
+
+        "$clear_stack_done:",
+
+        /////////////////////////////////
+        // Set up stack pointer
+        /////////////////////////////////
+
+        "mov rsp, r12",
+
+        /////////////////////////////////
+        // Jump to the entry point
+        /////////////////////////////////
+
+        // Clear everything that isn't r13, like the kernel does
+        // https://elixir.bootlin.com/linux/latest/source/arch/x86/include/asm/elf.h#L170
+        "xor bx, bx",
+        "xor cx, cx",
+        "xor dx, dx",
+        "xor si, si",
+        "xor di, di",
+        "xor r8, r8",
+        "xor r9, r9",
+        "xor r10, r10",
+        "xor r11, r11",
+        "xor r12, r12",
+        // skip r13, we have the entry point in there
+        "xor r14, r14",
+        "xor r15, r15",
+
+        // Now we can actually jump to the entry point
+        "jmp r13",
+
+        in("r12") stack_top,
+        in("r13") entry_point,
+        options(noreturn)
+    )
+}
+```
+
+And just like that:
+
+``` shell
+$ cargo run --release --bin minipak -- samples/hello-pie -o /tmp/hello-pie.pak && /tmp/hello-pie.pak
+   Compiling minipak v0.1.0 (/home/amos/ftl/minipak/crates/minipak)
+   Compiling pixie v0.1.0 (/home/amos/ftl/minipak/crates/pixie)
+    Finished release [optimized + debuginfo] target(s) in 3.60s
+     Running `target/release/minipak samples/hello-pie -o /tmp/hello-pie.pak`
+Wrote /tmp/hello-pie.pak (66.86% of input)
+The guest is at 18380..88cf6
+[stage2] Mapped guest at 0x7f80bfde8000
+[stage2] Jumping to guest's entry point 0x7f80bfdf0840
+Hello! I am a C program.
+```
+
+We’re golden 😎
+
+We really, truly have made an executable packer from start to finish.
+
+> **Cool bear says:**
+>
+> Woo!
+
+Albeit, with a severe limitation. It can *only* pack and run self-relocating executables, aka “static PIE” executables.
+
+If we try a static executable that’s *not* relocatable, well…
+
+``` shell
+$ cargo run --release --bin minipak -- ~/go/bin/hugo -o /tmp/hugo.pak && /tmp/hugo.pak
+    Finished release [optimized + debuginfo] target(s) in 0.01s
+     Running `target/release/minipak /home/amos/go/bin/hugo -o /tmp/hugo.pak`
+Wrote /tmp/hugo.pak (51.05% of input)
+The guest is at 18380..1edd205
+[1]    20716 segmentation fault  /tmp/hugo.pak
+```
+
+…stage1 ends up overwriting itself, and everything comes crashing down.
+
+> **Cool bear says:**
+>
+> So we’re not done yet?
+
+Not quite. But almost!
