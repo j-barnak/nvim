@@ -1023,6 +1023,16 @@ if mode == "content":
         for img in el.select('img[src^="data:"]'):
             img.decompose()
 
+    if opt("philopp"):
+        # os.phil-opp.com "Writing an OS in Rust": the post body is inside <main>,
+        # but so are the right-hand table-of-contents aside, the support/sponsor
+        # footer, the prev/next PageNavigation, and the giscus comments section.
+        # Drop the chrome; the code listings are <pre class="giallo"> which
+        # clean() reduces to bare fences.
+        for t in el.select("aside.page-aside-right, div.post-footer-support, "
+                           "div.PageNavigation, div.giscus, section"):
+            t.decompose()
+
     if opt("lyah"):
         # Learn You a Haskell (learnyouahaskell.github.io): the chapter body is
         # #content, framed top and bottom by a div.footdiv nav bar (Previous /
