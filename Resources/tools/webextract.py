@@ -59,6 +59,23 @@ and differ only in <mode> <selector> <opts>. --preserve-tabs is not optional
                      flattens every listing to the left margin and loses the
                      line-number gutter its captions refer to, while a whole-page
                      -layout interleaves the two columns.
+    kernel-exploitation (the dojo) is 77 chapters from many different sites, so
+                     the selector/opts vary per chapter; only the ones that
+                     needed a repair beyond a plain "content <sel> <url> abs"
+                     are recorded here (the rest are ordinary content extracts):
+                     content article.post-article <url> ec,starlight,abs
+                                                 (r1ru.github.io: ch 1,17/64,21,
+                                                  23,26,29,31 - Expressive Code)
+                     content div.post-body <url> shiki,abs   (kylebot: ch 52)
+                     content div.post-body <url> vscode,abs  (willsroot: ch
+                                                  18/32, one shared cache)
+                     content div.entry-content <url> abs   clean opts: nbsp
+                                                 (exodusintel: ch 7, ch 58)
+                     content div.content <url> chroma,lazyimg,abs (itaybel: ch24)
+                     content div.bpp-post-content <url> lazyimg,abs (ctfiot: ch77)
+                     ch 8 (0xten.gitbook.io) is a React SPA curl cannot render;
+                     its cache is GitBook markdown, fixed in place by the gitbook
+                     clean opt ({% embed %} -> bare autolink).
 
 The <opts> are a comma-separated set. Each one exists because a real source in
 this library needs it; each is named after the generator that emits the markup,
@@ -87,6 +104,17 @@ and every one is documented at the point it runs:
                (its custom pandoc template has no article wrapper)
     logl       learnopengl.com's hidden <h1 id="content-url"> URL-path heading
     reveng     revers.engineering's author box, Digiprove seal and license table
+    ec         Astro Expressive Code's <div class="ec-line"> per-line code, and
+               its "Terminal window" / file-name code-frame <figcaption>
+    shiki      Shiki / hexo <span class="line"> per-line code (welded by <br>)
+    starlight  Astro Starlight's bare admonition label (<p class="aside-title">)
+    vscode     VS Code "Copy With Syntax Highlighting" pasted into a bare <p>
+               of hljs / white-space:pre spans, with no <pre> (willsroot)
+    lazyimg    promote an <img>'s data-src/data-srcset over a lazy-load
+               placeholder (a spinner SVG, a shared 1x1), dropping the leftover
+    nbsp       (clean opt) normalise U+00A0 in PROSE too, for a WordPress page
+               that sprinkles it as an extraction artifact (exodusintel)
+    gitbook    (clean opt) unwrap GitBook's {% embed url="<U>" %} to bare <U>
 
 Some rules are unconditional because the markup they repair is never anything
 but damage: Cloudflare's data-cfemail obfuscation (which eats real text such as
@@ -601,6 +629,22 @@ if mode == "clean":
             if out and not out[-1].strip():
                 out.pop()  # it sits in its own paragraph: drop one of the two
             continue       # blank lines with it, and leave the lists one apart
+        elif "nbsp" in opts:
+            # Some WordPress sites (exodusintel) sprinkle U+00A0 through PROSE,
+            # not typography but an extraction artifact left around links and
+            # inline code (342 on 78 lines in one post), which breaks a word
+            # search over the cache. In-fence NBSP is already normalised above;
+            # this opt extends that to the prose of a page known to carry it, so
+            # it is never on by default (a deliberate NBSP elsewhere is kept).
+            line = line.replace("\u00a0", " ")
+        if "gitbook" in opts:
+            # GitBook's liquid {% embed url="<U>" %} shortcode survives to the
+            # markdown as literal text that GFM does not interpret, burying a
+            # clickable link. Unwrap it to the bare autolink the URL already is
+            # (angle brackets added if the shortcode lacked them). Runs on fence
+            # and prose lines alike; the shortcode never appears inside code.
+            line = re.sub(r'\{%\s*embed\s+url="<?([^"<>]+)>?"\s*%\}',
+                          r"<\1>", line)
         out.append(line)
     sys.stdout.write("\n".join(out))
     sys.exit(0)
@@ -832,6 +876,99 @@ if mode == "content":
             # The frozen library labels C as lowercase "c" (never "C"); Ghost
             # and Hugo both leak the source's "language-C".
             pre.attrs = {"class": [lang.lower()]}
+
+    if opt("ec"):
+        # Astro Expressive Code renders every source line as a BLOCK-level
+        # <div class="ec-line"><div class="code">...styled spans...</div></div>
+        # inside <pre data-language="X"><code>, with NO newline anywhere between
+        # the lines, so get_text() welds the whole listing onto one physical
+        # line (a "//" comment then silently swallows the next statement). The
+        # language is on the <pre>; the whole block sits in a
+        # <figure class="frame ..."> whose <figcaption> is a code-frame header
+        # ("Terminal window", or a file-name tab) - UI chrome, not code. Rebuild
+        # each block from its ec-line divs, one newline per line, taking the
+        # inner .code text (never the .gutter line numbers), and replace the
+        # frame (dropping its caption) so nothing leaks.
+        for pre in el.find_all("pre"):
+            lines = pre.select("div.ec-line")
+            if not lines:
+                continue
+            lang = (pre.get("data-language") or "").strip()
+            body = "\n".join(((ln.select_one("div.code") or ln).get_text())
+                             for ln in lines)
+            target = (pre.find_parent("div", class_="expressive-code")
+                      or pre.find_parent("figure") or pre)
+            target.replace_with(code_block(body.rstrip("\n") + "\n", lang, s))
+
+    if opt("shiki"):
+        # Shiki / hexo highlight: each source line is a <span class="line">,
+        # and the lines are separated ONLY by <br> (which get_text drops) or by
+        # nothing at all, so get_text() welds the whole function onto one line.
+        # hexo also puts a line-number gutter in a sibling <td class="gutter">
+        # (or a first <pre> of <span class="line">N</span> integers) and the
+        # language on <figure class="highlight LANG"> ("plaintext" = none).
+        # Rebuild each block from the code cell's line spans, one newline each.
+        for fig in el.select("figure.highlight, div.highlight, pre.astro-code"):
+            cls = [c for c in (fig.get("class") or []) if c != "highlight"]
+            lang = cls[0] if cls else ""
+            codecell = fig.select_one("td.code") or fig
+            pre_in = codecell.select_one("pre") or fig.select_one("pre")
+            if pre_in is None or not pre_in.select("span.line"):
+                continue
+            body = "\n".join(ln.get_text() for ln in pre_in.select("span.line"))
+            fig.replace_with(code_block(body.rstrip("\n") + "\n", lang, s))
+
+    if opt("starlight"):
+        # Astro Starlight renders an admonition as <aside class="aside ...">
+        # opening with <p class="aside-title" aria-hidden="true">note</p> - a
+        # label the theme draws next to an icon, hidden from the browser but read
+        # by pandoc, so every note/tip/caution block otherwise opens with a bare
+        # "note" word on its own line. Drop the label; the aside body stays.
+        for t in el.select("p.aside-title[aria-hidden=true]"):
+            t.decompose()
+
+    if opt("lazyimg"):
+        # Lazy-loading themes put a placeholder in src (a spinner SVG, a 1x1
+        # gif) and the real asset in data-src / data-srcset, so the frozen cache
+        # would keep only the placeholder. Promote the real source before
+        # absolutise resolves it. A placeholder with no data-* to replace it
+        # (a shared 1x1 the theme swaps in by other means) carries no figure, so
+        # drop it rather than freeze a spinner.
+        _PLACEHOLDER = ("loading.min.svg", "/images/t.png", "lazy.png",
+                        "spinner.gif", "blank.gif")
+        for img in el.find_all("img"):
+            for a, b in (("data-src", "src"), ("data-srcset", "srcset"),
+                         ("data-original", "src")):
+                if img.get(a):
+                    img[b] = img[a]
+                    del img[a]
+            src = img.get("src") or ""
+            if any(p in src for p in _PLACEHOLDER):
+                img.decompose()
+
+    if opt("vscode"):
+        # Some Blogger posts (willsroot) paste code straight out of VS Code's
+        # "Copy With Syntax Highlighting": a run of <span class="hljs-..."> and
+        # <span style="...white-space:pre;">, wrapped in a bare <p> with NO
+        # <pre> around it. lxml keeps the per-line "\n" text nodes, but with no
+        # block element pandoc reads the whole listing as PROSE and
+        # backslash-escapes it onto ONE line (\#include \<linux/kernel.h\> ...),
+        # destroying every code block on the page. A leaf <p> that carries a
+        # preformatted (white-space:pre) or hljs span and spans more than one
+        # physical line is such a listing: fence it, keeping the newlines the
+        # spans already hold. The multi-line test keeps inline code in prose
+        # (single line, no "\n") out of it, and only leaf <p> qualify so the
+        # post-body container that wraps everything is never swallowed whole.
+        for p in el.find_all("p"):
+            if p.find(["p", "div", "ul", "ol", "pre", "table", "blockquote"]):
+                continue
+            code_span = any(
+                "white-space: pre" in (sp.get("style") or "")
+                or any(c.startswith("hljs") for c in (sp.get("class") or []))
+                for sp in p.find_all("span"))
+            text = p.get_text()
+            if code_span and "\n" in text:
+                p.replace_with(code_block(text.rstrip("\n") + "\n", "", s))
 
     if opt("latexml"):
         # arXiv's LaTeXML writes a \lstlisting as a stack of
