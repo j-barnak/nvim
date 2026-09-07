@@ -3046,6 +3046,7 @@ local BOOKS = {
 		{ title = "C++ Initialization Story", fmt = "epub", file = "C__ Initialization Story - Bartłomiej Filipek.epub" },
 		{ title = "C++ Templates: The Complete Guide (2e)", fmt = "pdf", file = "CppTemplates-CompleteGuide-2e.pdf" },
 		{ title = "Effective Modern C++", fmt = "epub", file = "Effective-Modern-C-.epub" },
+		{ title = "Elements of Programming", fmt = "pdf", slug = "elements-of-programming", file = "eop.pdf" },
 	} },
 	{ module = "Rust", key = "books-rust", items = {
 		{ title = "Command-Line Rust", fmt = "epub", file = "Command-line Rust _ a project-based primer for writing Rust -- Ken Youens-Clark -- 2024 Updated Edition, 2024 -- O'Reilly Media, Incorporated; -- 9781098109400 -- 462825f45d6c0c1f3254f43a9f8062ee -- Anna’s Archive.epub" },
