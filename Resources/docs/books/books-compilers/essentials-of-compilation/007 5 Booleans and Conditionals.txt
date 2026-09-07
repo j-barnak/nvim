@@ -1,0 +1,1153 @@
+         Booleans and Conditionals
+5
+
+The LVar language has only a single kind of value, the integers. In this chapter we
+add a second kind of value, the Booleans, to create the LIf language. In Python,
+the Boolean values true and false are written True and False, respectively. The
+LIf language includes several operations that involve Booleans (and, or, not, ==,
+<, etc.) and the if conditional expression and statement. With the addition of
+if, programs can have nontrivial control flow, which impacts liveness analysis and
+motivates a new pass named explicate_control. Also, because we now have two
+kinds of values, we need to handle programs that apply an operation to the wrong
+kind of value, such as not 1.
+   There are two language design options for such situations. One option is to signal
+an error and the other is to provide a wider interpretation of the operation. Python
+uses a mixture of these two options, depending on the operation and the kind of
+value. For example, the result of not 1 is False because Python treats nonzero
+integers as if they were True. On the other hand, 1[0] results in a runtime error
+in Python because an “int object is not subscriptable.”
+   The MyPy type checker makes similar design choices as Python, except that
+much of the error detection happens at compile time instead of runtime (Lehtosalo
+2021). MyPy accepts not 1. But in the case of 1[0], MyPy reports a compile-time
+error stating that a “value of type int is not indexable.”
+   The LIf language performs type checking during compilation just as MyPy. In
+chapter 10 we study the alternative choice, that is, a dynamically typed language
+like Python. The LIf language is a subset of MyPy; for some operations we are
+more restrictive, for example, rejecting not 1. We keep the type checker for LIf
+fairly simple because the focus of this book is on compilation and not type systems,
+about which there are already several excellent books (Pierce 2002, 2004; Harper
+2016; Pierce et al. 2018).
+   This chapter is organized as follows. We begin by defining the syntax and inter-
+preter for the LIf language (section 5.1). We then introduce the idea of type checking
+(aka semantic analysis) and define a type checker for LIf (section 5.2). The remain-
+ing sections of this chapter discuss how Booleans and conditional control flow
+require changes to the existing compiler passes and the addition of new ones. We
+introduce the shrink pass to translate some operators into others, thereby reducing
+the number of operators that need to be handled in later passes. The main event
+of this chapter is the explicate_control pass that is responsible for translating
+
+            exp  ::= int | input_int() | - exp | exp + exp | exp - exp | (exp)
+           stmt  ::= print(exp) | exp
+            exp  ::= var
+           stmt  ::= var = exp
+           cmp   ::= == | != | < | <= | > | >=
+            exp  ::= True | False | exp and exp | exp or exp | not exp
+                   | exp cmp exp | exp if exp else exp
+           stmt ::= if exp: stmt+ else: stmt+
+           LIf ::= stmt∗
+
+Figure 5.1
+The concrete syntax of LIf , extending LVar (figure 2.1) with Booleans and conditionals.
+
+ifs into conditional gotos (section 5.7). Regarding register allocation, there is the
+interesting question of how to handle conditional gotos during liveness analysis.
+
+5.1   The LIf Language
+
+Definitions of the concrete syntax and abstract syntax of the LIf language are shown
+in figures 5.1 and 5.2, respectively. The LIf language includes all of LVar (shown in
+gray), the Boolean literals True and False, the if expression, and the if statement.
+We expand the set of operators to include
+
+1. the logical operators and, or, and not,
+2. the == and != operations for comparing integers or Booleans for equality, and
+3. the <, <=, >, and >= operations for comparing integers.
+   Figure 5.3 shows the definition of the interpreter for LIf , which inherits from
+the interpreter for LVar (figure 2.4). The constants True and False evaluate to the
+corresponding Boolean values, behavior that is inherited from the interpreter for
+LInt (figure 2.3). The conditional expression e2 if e1 else e3 evaluates expression
+e1 and then either evaluates e2 or e3 , depending on whether e1 produced True or
+False. The logical operations and, or, and not behave according to propositional
+logic. In addition, the and and or operations perform short-circuit evaluation. That
+is, given the expression e1 and e2 , the expression e2 is not evaluated if e1 evaluates
+to False. Similarly, given e1 or e2 , the expression e2 is not evaluated if e1 evaluates
+to True.
+
+5.2   Type Checking LIf Programs
+
+It is helpful to think about type checking in two complementary ways. A type
+checker predicts the type of value that will be produced by each expression in the
+
+           exp ::= Constant(int) | Call(Name('input_int'),[])
+                 | UnaryOp(USub(),exp) | BinOp(exp,Add(),exp)
+                 | BinOp(exp,Sub(),exp)
+          stmt ::= Expr(Call(Name('print'),[exp])) | Expr(exp)
+           exp ::= Name(var)
+          stmt ::= Assign([Name(var)], exp)
+          boolop ::= And() | Or()
+          cmp     ::= Eq() | NotEq() | Lt() | LtE() | Gt() | GtE()
+          bool    ::= True | False
+          exp     ::= Constant(bool) | BoolOp(boolop,[exp,exp])
+                    | UnaryOp(Not(),exp) | Compare(exp,[cmp],[exp])
+                    | IfExp(exp,exp,exp)
+          stmt    ::= If(exp, stmt+ , stmt+ )
+          LIf ::= Module(stmt∗ )
+
+Figure 5.2
+The abstract syntax of LIf .
+
+program. For LIf , we have just two types, int and bool. So, a type checker should
+predict that
+   10 + -(12 + 20)
+
+produces a value of type int, whereas
+   (not False) and True
+
+produces a value of type bool.
+  A second way to think about type checking is that it enforces a set of rules about
+which operators can be applied to which kinds of values. For example, our type
+checker for LIf signals an error for the following expression:
+   not (10 + -(12 + 20))
+
+The subexpression (10 + -(12 + 20)) has type int, but the type checker enforces
+the rule that the argument of not must be an expression of type bool.
+   We implement type checking using classes and methods because they provide
+the open recursion needed to reuse code as we extend the type checker in subse-
+quent chapters, analogous to the use of classes and methods for the interpreters
+(section 2.1.1).
+   We separate the type checker for the LVar subset into its own class, shown in
+figure 5.5. The type checker for LIf is shown in figure 5.6, and it inherits from the
+type checker for LVar . These type checkers are in the files type_check_Lvar.py
+and type_check_Lif.py of the support code. Each type checker is a structurally
+recursive function over the AST. Given an input expression e, the type checker
+either signals an error or returns its type.
+
+     class InterpLif(InterpLvar):
+       def interp_exp(self, e, env):
+         match e:
+           case IfExp(test, body, orelse):
+             if self.interp_exp(test, env):
+               return self.interp_exp(body, env)
+             else:
+               return self.interp_exp(orelse, env)
+           case UnaryOp(Not(), v):
+             return not self.interp_exp(v, env)
+           case BoolOp(And(), values):
+             if self.interp_exp(values[0], env):
+               return self.interp_exp(values[1], env)
+             else:
+               return False
+           case BoolOp(Or(), values):
+             if self.interp_exp(values[0], env):
+               return True
+             else:
+               return self.interp_exp(values[1], env)
+           case Compare(left, [cmp], [right]):
+             l = self.interp_exp(left, env)
+             r = self.interp_exp(right, env)
+             return self.interp_cmp(cmp)(l, r)
+           case _:
+             return super().interp_exp(e, env)
+
+      def interp_stmt(self, s, env, cont):
+        match s:
+          case If(test, body, orelse):
+            match self.interp_exp(test, env):
+              case True:
+                return self.interp_stmts(body + cont, env)
+              case False:
+                return self.interp_stmts(orelse + cont, env)
+          case _:
+            return super().interp_stmt(s, env, cont)
+      ...
+
+Figure 5.3
+Interpreter for the LIf language. (See figure 5.4 for interp_cmp.)
+
+   Next we discuss the type_check_exp function of LVar shown in figure 5.5. The
+type of an integer constant is int. To handle variables, the type checker uses the
+environment env to map variables to types. Consider the case for assignment.
+We type check the initializing expression to obtain its type t. If the variable id is
+already in the environment because there was a prior assignment, we check that
+this initializer has the same type as the prior one. If this is the first assignment to
+
+    class InterpLif(InterpLvar):
+      ...
+      def interp_cmp(self, cmp):
+        match cmp:
+          case Lt():
+            return lambda x, y: x < y
+          case LtE():
+            return lambda x, y: x <= y
+          case Gt():
+            return lambda x, y: x > y
+          case GtE():
+            return lambda x, y: x >= y
+          case Eq():
+            return lambda x, y: x == y
+          case NotEq():
+            return lambda x, y: x != y
+
+Figure 5.4
+Interpreter for the comparison operators in the LIf language.
+
+the variable, we associate type t with the variable id in the environment. Thus,
+when the type checker encounters a use of variable x, it can find its type in the
+environment. Regarding addition, subtraction, and negation, we recursively analyze
+the arguments, check that they have type int, and return int.
+   The auxiliary method check_type_equal triggers an error if the two types are
+not equal.
+   The definition of the type checker for LIf is shown in figure 5.6. The type of a
+Boolean constant is bool. The logical not operator requires its argument to be a
+bool and produces a bool. Similarly for the logical and and logical or operators.
+The equality operator requires the two arguments to have the same type, and
+therefore we handle it separately from the other operators. The other comparisons
+(less-than, etc.) require their arguments to be of type int, and they produce a bool.
+The condition of an if must be of bool type, and the two branches must have the
+same type.
+
+Exercise 5.1  Create ten new test programs in LIf . Half the programs should have a
+type error. The other half of the test programs should not have type errors. Run
+the test script to check that these test programs type check as expected.
+
+     class TypeCheckLvar:
+       def check_type_equal(self, t1, t2, e):
+         if t1 != t2:
+           msg = 'error: ' + repr(t1) + ' != ' + repr(t2) + ' in ' + repr(e)
+           raise Exception(msg)
+
+      def type_check_exp(self, e, env):
+        match e:
+          case BinOp(left, (Add() | Sub()), right):
+            l = self.type_check_exp(left, env)
+            check_type_equal(l, int, left)
+            r = self.type_check_exp(right, env)
+            check_type_equal(r, int, right)
+            return int
+          case UnaryOp(USub(), v):
+            t = self.type_check_exp(v, env)
+            check_type_equal(t, int, v)
+            return int
+          case Name(id):
+            return env[id]
+          case Constant(value) if isinstance(value, int):
+            return int
+          case Call(Name('input_int'), []):
+            return int
+
+      def type_check_stmts(self, ss, env):
+        if len(ss) == 0:
+          return
+        match ss[0]:
+          case Assign([Name(id)], value):
+            t = self.type_check_exp(value, env)
+            if id in env:
+              check_type_equal(env[id], t, value)
+            else:
+              env[id] = t
+            return self.type_check_stmts(ss[1:], env)
+          case Expr(Call(Name('print'), [arg])):
+            t = self.type_check_exp(arg, env)
+            check_type_equal(t, int, arg)
+            return self.type_check_stmts(ss[1:], env)
+          case Expr(value):
+            self.type_check_exp(value, env)
+            return self.type_check_stmts(ss[1:], env)
+
+      def type_check_P(self, p):
+        match p:
+          case Module(body):
+            self.type_check_stmts(body, {})
+
+Figure 5.5
+Type checker for the LVar language.
+
+    class TypeCheckLif(TypeCheckLvar):
+      def type_check_exp(self, e, env):
+        match e:
+          case Constant(value) if isinstance(value, bool):
+            return bool
+          case BinOp(left, Sub(), right):
+            l = self.type_check_exp(left, env); check_type_equal(l, int, left)
+            r = self.type_check_exp(right, env); check_type_equal(r, int, right)
+            return int
+          case UnaryOp(Not(), v):
+            t = self.type_check_exp(v, env); check_type_equal(t, bool, v)
+            return bool
+          case BoolOp(op, values):
+            left = values[0] ; right = values[1]
+            l = self.type_check_exp(left, env); check_type_equal(l, bool, left)
+            r = self.type_check_exp(right, env); check_type_equal(r, bool, right)
+            return bool
+          case Compare(left, [cmp], [right]) if isinstance(cmp, Eq) \
+                                             or isinstance(cmp, NotEq):
+            l = self.type_check_exp(left, env)
+            r = self.type_check_exp(right, env)
+            check_type_equal(l, r, e)
+            return bool
+          case Compare(left, [cmp], [right]):
+            l = self.type_check_exp(left, env); check_type_equal(l, int, left)
+            r = self.type_check_exp(right, env); check_type_equal(r, int, right)
+            return bool
+          case IfExp(test, body, orelse):
+            t = self.type_check_exp(test, env); check_type_equal(bool, t, test)
+            b = self.type_check_exp(body, env)
+            o = self.type_check_exp(orelse, env)
+            check_type_equal(b, o, e)
+            return b
+          case _:
+            return super().type_check_exp(e, env)
+
+      def type_check_stmts(self, ss, env):
+        if len(ss) == 0:
+          return
+        match ss[0]:
+          case If(test, body, orelse):
+            t = self.type_check_exp(test, env); check_type_equal(bool, t, test)
+            b = self.type_check_stmts(body, env)
+            o = self.type_check_stmts(orelse, env)
+            check_type_equal(b, o, ss[0])
+            return self.type_check_stmts(ss[1:], env)
+          case _:
+            return super().type_check_stmts(ss, env)
+
+Figure 5.6
+Type checker for the LIf language.
+
+         atm      ::= int | var | bool
+         exp      ::= atm | input_int() | - atm | atm + atm | atm - atm | atm cmp atm
+         stmt     ::= print(atm) | exp | var = exp
+         tail     ::= return exp | goto label
+                    | if atm cmp atm: goto label else: goto label
+         CIf    ::= (label: stmt∗ tail) …
+
+Figure 5.7
+The concrete syntax of the CIf intermediate language.
+
+       atm   ::= Constant(int) | Name(var) | Constant(bool)
+       exp   ::= atm | Call(Name('input_int'),[]) | UnaryOp(USub(),atm)
+               | BinOp(atm,Sub(),atm) | BinOp(atm,Add(),atm)
+               | Compare(atm,[cmp],[atm])
+       stmt ::= Expr(Call(Name('print'),[atm])) | Expr(exp)
+               | Assign([Name(var)], exp)
+       tail ::= Return(exp) | Goto(label)
+               | If(Compare(atm,[cmp],[atm]), [Goto(label)], [Goto(label)])
+       CIf ::= CProgram({label: [stmt, … , tail], … })
+
+Figure 5.8
+The abstract syntax of CIf .
+
+5.3   The CIf Intermediate Language
+
+The output of explicate_control is a language similar to the C lan-
+guage (Kernighan and Ritchie 1988) in that it has labels and goto statements,
+so we name it CIf . The CIf language supports most of the operators in LIf , but the
+arguments of operators are restricted to atomic expressions. The CIf language does
+not include if expressions, but it does include a restricted form of if statement.
+The condition must be a comparison, and the two branches may contain only goto
+statements. These restrictions make it easier to translate if statements to x86.
+The CIf language also adds a return statement to finish the program with a speci-
+fied value. The CProgram construct contains a dictionary mapping labels to lists of
+statements that end with a tail statement, which is either a return statement, a
+goto, or an if statement. A goto transfers control to the sequence of statements
+associated with its label. Figure 5.7 shows the concrete syntax for CIf , and figure 5.8
+shows its abstract syntax.
+
+5.4   The x86If Language
+
+To implement Booleans, the new logical operations, the comparison operations, and
+the if expression and statement, we delve further into the x86 language. Figures 5.9
+
+         reg ::= rsp | rbp | rax | rbx | rcx | rdx | rsi | rdi |
+                   r8 | r9 | r10 | r11 | r12 | r13 | r14 | r15
+        arg ::= $int | %reg | int(%reg)
+       instr ::= addq arg,arg | subq arg,arg | negq arg | movq arg,arg |
+                   pushq arg | popq arg | callq label | retq | jmp label |
+                   label: instr
+       bytereg ::= ah | al | bh | bl | ch | cl | dh | dl
+       arg      ::= %bytereg
+       cc       ::= e | ne | l | le | g | ge
+       instr    ::= xorq arg, arg | cmpq arg, arg | setcc arg | movzbq arg, arg
+                  | jcc label
+       x86If ::= .globl main
+                   main: instr …
+
+Figure 5.9
+The concrete syntax of x86If (extends x86Int of figure 2.5).
+
+and 5.10 present the definitions of the concrete and abstract syntax for the x86If
+subset of x86, which includes instructions for logical operations, comparisons, and
+jumps. The abstract syntax for an x86If program contains a dictionary mapping
+labels to sequences of instructions, each of which we refer to as a basic block.
+   As x86 does not provide direct support for Booleans, we take the usual approach
+of encoding Booleans as integers, with True as 1 and False as 0.
+   Furthermore, x86 does not provide an instruction that directly implements logical
+negation (not in LIf and CIf ). However, the xorq instruction can be used to encode
+not. The xorq instruction takes two arguments, performs a pairwise exclusive-or
+(XOR) operation on each bit of its arguments, and writes the results into its second
+argument. Recall the following truth table for exclusive-or:
+                                                  0   1
+                                             0    0   1
+                                             1    1   0
+For example, applying XOR to each bit of the binary numbers 0011 and 0101 yields
+0110. Notice that in the row of the table for the bit 1, the result is the opposite of
+the second bit. Thus, the not operation can be implemented by xorq with 1 as the
+first argument, as follows, where arg is the translation of atm to x86:
+                                                          movq arg,var
+                         var = not atm           ⇒
+                                                          xorq $1,var
+  Next we consider the x86 instructions that are relevant for compiling the com-
+parison operations. The cmpq instruction compares its two arguments to determine
+whether one argument is less than, equal to, or greater than the other argument.
+The cmpq instruction is unusual regarding the order of its arguments and where
+
+       reg     ::=  rsp | rbp | rax | rbx | rcx | rdx | rsi | rdi |
+                    r8 | r9 | r10 | r11 | r12 | r13 | r14 | r15
+       arg    ::= Immediate(int) | Reg(reg) | Deref(reg,int)
+       instr ::= Instr('addq',[arg,arg]) | Instr('subq',[arg,arg])
+                | Instr('negq',[arg]) | Instr('movq',[arg,arg])
+                | Instr('pushq',[arg]) | Instr('popq',[arg])
+                | Callq(label,int) | Retq() | Jump(label)
+       block ::= instr+
+       bytereg ::= 'ah' | 'al' | 'bh' | 'bl' | 'ch' | 'cl' | 'dh' | 'dl'
+       arg       ::= Immediate(int) | Reg(reg) | Deref(reg,int) | ByteReg(bytereg)
+       cc        ::= 'e' | 'ne' | 'l' | 'le' | 'g' | 'ge'
+       instr     ::= Jump(label)
+                   | Instr('xorq',[arg,arg]) | Instr('cmpq',[arg,arg])
+                   | Instr('set'+cc,[arg]) | Instr('movzbq',[arg,arg])
+                   | JumpIf(cc,label)
+       x86If ::= X86Program({label : block, … })
+
+Figure 5.10
+The abstract syntax of x86If (extends x86Int shown in figure 2.9).
+
+the result is placed. The argument order is backward: if you want to test whether
+x < y, then write cmpq y, x. The result of cmpq is placed in the special EFLAGS
+register. This register cannot be accessed directly, but it can be queried by a num-
+ber of instructions, including the set instruction. The instruction setcc d puts a
+1 or 0 into the destination d, depending on whether the contents of the EFLAGS
+register matches the condition code cc: e for equal, l for less, le for less-or-equal,
+g for greater, ge for greater-or-equal. The set instruction has a quirk in that its
+destination argument must be a single-byte register, such as al (l for lower bits)
+or ah (h for higher bits), which are part of the rax register. Thankfully, the movzbq
+instruction can be used to move from a single-byte register to a normal 64-bit reg-
+ister. The abstract syntax for the set instruction differs from the concrete syntax
+in that it separates the instruction name from the condition code.
+   The x86 instructions for jumping are relevant to the compilation of if expres-
+sions. The instruction jmp label updates the program counter to the address of the
+instruction after the specified label. The instruction jcc label updates the program
+counter to point to the instruction after label, depending on whether the result in
+the EFLAGS register matches the condition code cc; otherwise, the jump instruc-
+tion falls through to the next instruction. Like the abstract syntax for set, the
+abstract syntax for conditional jump separates the instruction name from the con-
+dition code. For example, JumpIf('le' , 'foo' ) corresponds to jle foo. Because
+the conditional jump instruction relies on the EFLAGS register, it is common for
+it to be immediately preceded by a cmpq instruction to set the EFLAGS register.
+
+5.5   Shrink the LIf Language
+
+The shrink pass translates some of the language features into other features,
+thereby reducing the kinds of expressions in the language. For example, the short-
+circuiting nature of the and and or logical operators can be expressed using if as
+follows.
+                            e1 and e2   ⇒    e2 if e1 else False
+
+                             e1 or e2   ⇒    True if e1 else e2
+By performing these translations in the front end of the compiler, subsequent passes
+of the compiler can be shorter.
+   On the other hand, translations sometimes reduce the efficiency of the generated
+code by increasing the number of instructions. For example, expressing subtraction
+in terms of addition and negation
+                                   e1 - e2   ⇒   e1 + - e2
+produces code with two x86 instructions (negq and addq) instead of just one (subq).
+Thus, we do not recommend translating subtraction into addition and negation.
+
+Exercise 5.2  Implement the pass shrink to remove and and or from the language
+by translating them to if expressions in LIf . Create four test programs that involve
+these operators. Run the script to test your compiler on all the test programs.
+
+5.6   Remove Complex Operands
+
+The output language of remove_complex_operands is Lmon        if   (figure 5.11), the
+monadic normal form of LIf . A Boolean constant is an atomic expression, but the
+if expression is not. All three subexpressions of an if are allowed to be complex
+expressions, but the operands of the not operator and comparison operators must
+be atomic. We add a new language form, the Begin expression, to aid in the trans-
+lation of if expressions. When we recursively process the two branches of the if,
+we generate temporary variables and their initializing expressions. However, these
+expressions may contain side effects and should be executed only when the condi-
+tion of the if is true (for the “then” branch) or false (for the “else” branch). The
+Begin expression provides a way to initialize the temporary variables within the
+two branches of the if expression. In general, the Begin(ss, e) form executes the
+statements ss and then returns the result of expression e.
+   Add cases to the rco_exp and rco_atom functions for the new features in LIf . In
+recursively processing subexpressions, recall that you should invoke rco_atom when
+the output needs to be an atm (as specified in the grammar for Lmon   if ) and invoke
+rco_exp when the output should be exp. Regarding if, it is particularly important
+not to replace its condition with a temporary variable, because that would interfere
+with the generation of high-quality output in the upcoming explicate_control
+pass.
+
+            atm ::= Constant(int) | Name(var)
+             exp ::= atm | Call(Name('input_int'),[])
+                   | UnaryOp(USub(),atm) | BinOp(atm,Add(),atm)
+                   | BinOp(atm,Sub(),atm)
+            stmt ::= Expr(Call(Name('print'),[atm])) | Expr(exp)
+                   | Assign([Name(var)], exp)
+            atm ::= Constant(bool)
+             exp ::= UnaryOp(Not(),exp) | Compare(atm,[cmp],[atm])
+                   | IfExp(exp,exp,exp) | Begin(stmt∗ , exp)
+            stmt ::= If(exp, stmt∗ , stmt∗ )
+            Lmon
+              if  ::= Module(stmt∗ )
+
+Figure 5.11
+Lmon
+ if
+     is LIf in monadic normal form (extends Lmon
+                                             Var
+                                                 in figure 2.11).
+
+Exercise 5.3 Add cases for Boolean constants and if to the rco_atom and rco_exp
+functions. Create three new LIf programs that exercise the interesting code in this
+pass.
+
+5.7    Explicate Control
+
+The explicate_control pass translates from LIf to CIf . The main challenge to
+overcome is that the condition of an if can be an arbitrary expression in LIf ,
+whereas in CIf the condition must be a comparison.
+  As a motivating example, consider the following program that has an if
+expression nested in the condition of another if:1
+
+     x = input_int()
+     y = input_int()
+     print(y + 2 if (x == 0 if x < 1 else x == 2) else y + 10)
+
+The naive way to compile if and the comparison operations would be to handle
+each of them in isolation, regardless of their context. Each comparison would be
+translated into a cmpq instruction followed by several instructions to move the result
+from the EFLAGS register into a general purpose register or stack location. Each
+if would be translated into a cmpq instruction followed by a conditional jump. The
+generated code for the inner if in this example would be as follows:
+
+1. Programmers rarely write nested if expressions, but they do write nested expressions involving
+logical and, which, as we have seen, translates to if.
+
+  cmpq $1, x
+  setl %al
+  movzbq %al, tmp
+  cmpq $1, tmp
+  je then_branch_1
+  jmp else_branch_1
+
+Notice that the three instructions starting with setl are redundant; the conditional
+jump could come immediately after the first cmpq.
+   Our goal is to compile if expressions so that the relevant comparison instruction
+appears directly before the conditional jump. For example, we want to generate the
+following code for the inner if:
+
+  cmpq $1, x
+  jl then_branch_1
+  jmp else_branch_1
+
+One way to achieve this goal is to reorganize the code at the level of LIf , pushing
+the outer if inside the inner one, yielding the following code:
+
+  x = input_int()
+  y = input_int()
+  print(((y + 2) if x == 0 else (y + 10)) \
+       if (x < 1) \
+       else ((y + 2) if (x == 2) else (y + 10)))
+
+Unfortunately, this approach duplicates the two branches from the outer if, and a
+compiler must never duplicate code! After all, the two branches could be very large
+expressions.
+   How can we apply this transformation without duplicating code? In other words,
+how can two different parts of a program refer to one piece of code? The answer is
+that we must move away from abstract syntax trees and instead use graphs. At the
+level of x86 assembly, this is straightforward because we can label the code for each
+branch and insert jumps in all the places that need to execute the branch. In this
+way, jump instructions are edges in the graph and the basic blocks are the nodes.
+Likewise, our language CIf provides the ability to label a sequence of statements and
+to jump to a label via goto.
+   As a preview of what explicate_control will do, figure 5.12 shows the output
+of explicate_control on this example. Note how the condition of every if is a
+comparison operation and that we have not duplicated any code but instead have
+used labels and goto to enable sharing of code.
+   We recommend implementing explicate_control using the following four
+auxiliary functions.
+explicate_effect generates code for expressions as statements, so their result is
+  ignored and only their side effects matter.
+
+                                                     start:
+                                                         x = input_int()
+                                                         y = input_int()
+                                                         if x < 1:
+                                                           goto block_6
+                                                         else:
+                                                           goto block_7
+                                                     block_6:
+                                                         if x == 0:
+                                                           goto block_4
+     x = input_int()
+                                                         else:
+     y = input_int()
+                                                           goto block_5
+     print(y + 2           \
+                                                     block_7:
+          if (x == 0       \               ⇒
+                                                         if x == 2:
+              if x < 1     \
+                                                           goto block_4
+              else x == 2) \
+                                                         else:
+          else y + 10)
+                                                           goto block_5
+                                                     block_4:
+                                                         tmp.82 = (y + 2)
+                                                         goto block_3
+                                                     block_5:
+                                                         tmp.82 = (y + 10)
+                                                         goto block_3
+                                                     block_3:
+                                                         print(tmp.82)
+                                                         return 0
+
+Figure 5.12
+Translation from LIf to CIf via the explicate_control.
+
+explicate_assign generates code for expressions on the right-hand side of an
+  assignment.
+explicate_pred generates code for an if expression or statement by analyzing
+  the condition expression.
+explicate_stmt generates code for statements.
+These four functions should build the dictionary of basic blocks. The following
+auxiliary function create_block is used to create a new basic block from a list of
+statements. If the list just contains a goto, then create_block returns the list.
+Otherwise create_block creates a new basic block and returns a goto to its label.
+
+   def create_block(stmts, basic_blocks):
+     match stmts:
+       case [Goto(l)]:
+         return stmts
+       case _:
+         label = label_name(generate_name('block'))
+         basic_blocks[label] = stmts
+         return [Goto(label)]
+
+Figure 5.13 provides a skeleton for the explicate_control pass.
+   The explicate_effect function has three parameters: (1) the expression to be
+compiled; (2) the already-compiled code for this expression’s continuation, that is,
+the list of statements that should execute after this expression; and (3) the dictio-
+nary of generated basic blocks. The explicate_effect function returns a list of CIf
+statements and it may add to the dictionary of basic blocks. Let’s consider a few of
+the cases for the expression to be compiled. If the expression to be compiled is a con-
+stant, then it can be discarded because it has no side effects. If it’s a input_int(),
+then it has a side effect and should be preserved. So the expression should be trans-
+lated into a statement using the Expr AST class. If the expression to be compiled is
+an if expression, we translate the two branches using explicate_effect and then
+translate the condition expression using explicate_pred, which generates code for
+the entire if.
+   The explicate_assign function has four parameters: (1) the right-hand side of
+the assignment, (2) the left-hand side of the assignment (the variable), (3) the con-
+tinuation, and (4) the dictionary of basic blocks. The explicate_assign function
+returns a list of CIf statements, and it may add to the dictionary of basic blocks.
+   When the right-hand side is an if expression, there is some work to do. In
+particular, the two branches should be translated using explicate_assign, and
+the condition expression should be translated using explicate_pred. Otherwise we
+can simply generate an assignment statement, with the given left- and right-hand
+sides, concatenated with its continuation.
+   The explicate_pred function has four parameters: (1) the condition expression,
+(2) the generated statements for the then branch, (3) the generated statements
+for the else branch, and (4) the dictionary of basic blocks. The explicate_pred
+function returns a list of statements, and it adds to the dictionary of basic blocks.
+   Consider the case for comparison operators. We translate the comparison to an if
+statement whose branches are goto statements created by applying create_block
+to the thn and els parameters. Let us illustrate this translation by returning
+to the program with an if expression in tail position, shown next. We invoke
+explicate_pred on its condition x == 0.
+   x = input_int()
+   42 if x == 0 else 777
+
+The two branches 42 and 777 were already compiled to return statements, from
+which we now create the following blocks:
+
+     def explicate_effect(e, cont, basic_blocks):
+       match e:
+         case IfExp(test, body, orelse):
+           ...
+         case Call(func, args):
+           ...
+         case Begin(body, result):
+           ...
+         case _:
+           ...
+     def explicate_assign(rhs, lhs, cont, basic_blocks):
+       match rhs:
+         case IfExp(test, body, orelse):
+           ...
+         case Begin(body, result):
+           ...
+         case _:
+           return [Assign([lhs], rhs)] + cont
+     def explicate_pred(cnd, thn, els, basic_blocks):
+       match cnd:
+         case Compare(left, [op], [right]):
+           goto_thn = create_block(thn, basic_blocks)
+           goto_els = create_block(els, basic_blocks)
+           return [If(cnd, goto_thn, goto_els)]
+         case Constant(True):
+           return thn;
+         case Constant(False):
+           return els;
+         case UnaryOp(Not(), operand):
+           ...
+         case IfExp(test, body, orelse):
+           ...
+         case Begin(body, result):
+           ...
+         case _:
+           return [If(Compare(cnd, [Eq()], [Constant(False)]),
+                     create_block(els, basic_blocks),
+                     create_block(thn, basic_blocks))]
+     def explicate_stmt(s, cont, basic_blocks):
+       match s:
+         case Assign([lhs], rhs):
+           return explicate_assign(rhs, lhs, cont, basic_blocks)
+         case Expr(value):
+           return explicate_effect(value, cont, basic_blocks)
+         case If(test, body, orelse):
+           ...
+     def explicate_control(p):
+       match p:
+         case Module(body):
+           new_body = [Return(Constant(0))]
+           basic_blocks = {}
+           for s in reversed(body):
+             new_body = explicate_stmt(s, new_body, basic_blocks)
+           basic_blocks[label_name('start')] = new_body
+           return CProgram(basic_blocks)
+
+Figure 5.13
+Skeleton for the explicate_control pass.
+
+   block_1:
+     return 42;
+   block_2:
+     return 777;
+
+After that, explicate_pred compiles the comparison x == 0 to the following if
+statement:
+
+   if x == 0:
+     goto block_1;
+   else
+     goto block_2;
+
+  Next consider the case for Boolean constants. We perform a kind of partial eval-
+uation and output either the thn or els parameter, depending on whether the
+constant is True or False. Let us illustrate this with the following program:
+   42 if True else 777
+
+Again, the two branches 42 and 777 were compiled to return statements, so
+explicate_pred compiles the constant True to the code for the then branch.
+   return 42;
+
+This case demonstrates that we sometimes discard the thn or els blocks that are
+input to explicate_pred.
+   The case for if expressions in explicate_pred is particularly illuminating
+because it deals with the challenges discussed previously regarding nested if expres-
+sions (figure 5.12). The body and orelse branches of the if inherit their context
+from the current one, that is, predicate context. So, you should recursively apply
+explicate_pred to the body and orelse branches. For both of those recursive
+calls, pass thn and els as the extra parameters. Thus, thn and els may be used
+twice, once inside each recursive call. As discussed previously, to avoid duplicating
+code, we need to add them to the dictionary of basic blocks so that we can instead
+refer to them by name and execute them with a goto.
+   The last of the auxiliary functions is explicate_stmt. It has three parame-
+ters: (1) the statement to be compiled, (2) the code for its continuation, and (3)
+the dictionary of basic blocks. The explicate_stmt returns a list of statements,
+and it may add to the dictionary of basic blocks. The cases for assignment and
+an expression-statement are given in full in the skeleton code: they simply dis-
+patch to explicate_assign and explicate_effect, respectively. The case for if
+statements is not given; it is similar to the case for if expressions.
+   The explicate_control function itself is given in figure 5.13. It applies
+explicate_stmt to each statement in the program, from back to front. Thus, the
+result so far, stored in new_body, can be used as the continuation parameter in the
+next call to explicate_stmt. The new_body is initialized to a Return statement.
+Once complete, we add the new_body to the dictionary of basic blocks, labeling it
+the “start” block.
+
+   Figure 5.12 shows the output of the remove_complex_operands pass and
+then the explicate_control pass on the example program. We walk through
+the output program. Following the order of evaluation in the output of
+remove_complex_operands, we first have two calls to input_int() and then
+the comparison x < 1 in the predicate of the inner if. In the output of
+explicate_control, in the block labeled start, two assignment statements are
+followed by an if statement that branches to block_6 or block_7. The blocks
+associated with those labels contain the translations of the code x == 0 and x ==
+2, respectively. In particular, we start block_6 with the comparison x == 0 and
+then branch to block_4 or block_5, which correspond to the two branches of the
+outer if, that is, y + 2 and y + 10. The story for block_7 is similar to that of
+block_6. The block_3 is the translation of the print statement.
+
+Exercise 5.4 Implement explicate_control pass with its four auxiliary functions.
+Create test cases that exercise all the new cases in the code for this pass.
+
+5.8   Select Instructions
+
+The select_instructions pass translates CIf to x86Var
+                                                  If . We begin with the Boolean
+constants. As previously discussed, we encode them as integers.
+                         True     ⇒    1           False     ⇒     0
+
+  For translating statements, we discuss some of the cases. The not operation can
+be implemented in terms of xorq, as we discussed at the beginning of this section.
+Given an assignment, if the left-hand-side variable is the same as the argument of
+not, then just the xorq instruction suffices.
+                             var = not var    ⇒    xorq $1, var
+
+Otherwise, a movq is needed to adapt to the update-in-place semantics of x86. In
+the following translation, let arg be the result of translating atm to x86.
+                                                   movq arg, var
+                            var = not atm    ⇒
+                                                   xorq $1, var
+  Next consider the cases for equality comparisons. Translating this operation to
+x86 is slightly involved due to the unusual nature of the cmpq instruction that
+we discussed in section 5.4. We recommend translating an assignment with an
+equality on the right-hand side into a sequence of three instructions. Let arg1 be
+the translation of atm1 to x86 and likewise for arg2 .
+                                               cmpq arg2 , arg1
+ var = (atm1 == atm2 )                      ⇒ sete %al
+                                               movzbq %al, var
+The translations for the other comparison operators are similar to this but use
+different condition codes for the set instruction.
+
+  A goto statement becomes a jump instruction.
+                                goto ℓ   ⇒    jmp ℓ
+
+An if statement becomes a compare instruction followed by a conditional jump (for
+the then branch), and the fall-through is to a regular jump (for the else branch).
+Again, arg1 and arg2 are the translations of atm1 and atm2 , respectively.
+ if atm1 == atm2 :
+                                         cmpq arg2 , arg1
+     goto ℓ1
+                                     ⇒ je ℓ1
+ else:
+                                         jmp ℓ2
+     goto ℓ2
+Again, the translations for the other comparison operators are similar to this but
+use different condition codes for the conditional jump instruction.
+  Regarding the return statement, we recommend treating it as an assignment to
+the rax register followed by a jump to the conclusion of the main function. (See
+section 5.11 for more about the conclusion of main.)
+
+Exercise 5.5 Expand your select_instructions pass to handle the new features
+of the CIf language. Run the script to test your compiler on all the test programs.
+
+5.9     Register Allocation
+
+The changes required for compiling LIf affect liveness analysis, building the inter-
+ference graph, and assigning homes, but the graph coloring algorithm itself does
+not change.
+
+5.9.1    Liveness Analysis
+Recall that for LVar we implemented liveness analysis for a single basic block
+(section 4.2). With the addition of if expressions to LIf , explicate_control
+produces many basic blocks.
+   The first question is, in what order should we process the basic blocks? Recall
+that to perform liveness analysis on a basic block we need to know the live-after
+set for the last instruction in the block. If a basic block has no successors (i.e.,
+contains no jumps to other blocks), then it has an empty live-after set and we
+can immediately apply liveness analysis to it. If a basic block has some successors,
+then we need to complete liveness analysis on those blocks first. These ordering
+constraints are the reverse of a topological order on a graph representation of the
+program. In particular, the control flow graph (CFG) (Allen 1970) of a program has
+a node for each basic block and an edge for each jump from one block to another.
+It is straightforward to generate a CFG from the dictionary of basic blocks. One
+then transposes the CFG and applies the topological sort algorithm. We provide
+implementations of topological_sort and transpose in the file graph.py of the
+support code. As an aside, a topological ordering is only guaranteed to exist if the
+graph does not contain any cycles. This is the case for the control-flow graphs that
+we generate from LIf programs. However, in chapter 6 we add loops to create LWhile
+and learn how to handle cycles in the control-flow graph.
+
+   The next question is how to analyze jump instructions. The locations that are
+live before a jmp should be the locations in Lbefore at the target of the jump. So we
+recommend maintaining a dictionary named live_before_block that maps each
+label to the Lbefore for the first instruction in its block. After performing liveness
+analysis on each block, we take the live-before set of its first instruction and associate
+that with the block’s label in the live_before_block dictionary.
+   In x86Var
+          If  we also have the conditional jump JumpIf(cc,label) to deal with.
+Liveness analysis for this instruction is particularly interesting because during com-
+pilation, we do not know which way a conditional jump will go. Thus we do not
+know whether to use the live-before set for the block associated with the label or
+the live-before set for the following instruction. So we use both, by taking the union
+of the live-before sets from the following instruction and from the mapping for label
+in live_before_block.
+   The auxiliary functions for computing the variables in an instruction’s argument
+and for computing the variables read-from (R) or written-to (W) by an instruction
+need to be updated to handle the new kinds of arguments and instructions in x86Var     If .
+
+Exercise 5.6 Update the uncover_live function to perform liveness analysis, in
+reverse topological order, on all the basic blocks in the program.
+
+5.9.2   Build the Interference Graph
+Many of the new instructions in x86Var If  can be handled in the same way as the
+instructions in x86Var . Some instructions, such as the movzbq instruction, require
+special care, similar to the movq instruction. Refer to rule number 1 in section 4.3.
+
+Exercise 5.7 Update the build_interference pass for x86Var
+                                                       If .
+
+5.10    Patch Instructions
+
+The new instructions cmpq and movzbq have some special restrictions that need to
+be handled in the patch_instructions pass. The second argument of the cmpq
+instruction must not be an immediate value (such as an integer). So, if you are
+comparing two immediates, we recommend inserting a movq instruction to put
+the second argument in rax. On the other hand, if you implemented the partial
+evaluator (section 2.9), you could update it for LIf and then this situation would
+not arise. As usual, cmpq may have at most one memory reference. The second
+argument of the movzbq must be a register.
+
+Exercise 5.8 Update patch_instructions pass for x86Var
+                                                   If .
+
+5.11    Generate Prelude and Conclusion
+
+The generation of the main function with its prelude and conclusion must change
+to accommodate how the program now consists of one or more basic blocks. After
+the prelude in main, jump to the start block. Place the conclusion in a basic block
+labeled with conclusion.
+
+  Figure 5.14 shows a simple example program in LIf translated to x86, showing the
+results of explicate_control, select_instructions, and the final x86 assembly.
+  Figure 5.15 lists all the passes needed for the compilation of LIf .
+
+5.12     Challenge: Optimize Blocks and Remove Jumps
+
+We discuss two challenges that involve optimizing the control-flow of the program.
+
+5.12.1    Optimize Blocks
+The algorithm for explicate_control that we discussed in section 5.7 sometimes
+generates too many blocks. It creates a block whenever a continuation might get
+used more than once (for example, whenever the cont parameter is passed into two
+or more recursive calls). However, some continuation arguments may not be used
+at all. Consider the case for the constant True in explicate_pred, in which we
+discard the els continuation. The following example program falls into this case,
+and it creates the unused block_9.
+
+                                                start:
+                                                    print(0)
+ if True:
+                                                    goto block_8
+   print(0)
+                                                block_9:
+ else:                              ⇒
+                                                    print(x)
+   x = 1 if False else 2
+                                                    goto block_8
+   print(x)
+                                                block_8:
+                                                    return 0
+
+   The question is, how can we decide whether to create a basic block? Lazy evalua-
+tion (Friedman and Wise 1976) can solve this conundrum by delaying the creation
+of a basic block until the point in time at which we know that it will be used.
+Although Python does not provide direct support for lazy evaluation, it is easy to
+mimic. We delay the evaluation of a computation by wrapping it inside a func-
+tion with no parameters. We force its evaluation by calling the function. However,
+we might need to force multiple times, so we store the result of calling the func-
+tion instead of recomputing it each time. The following Promise class handles this
+memoization process.
+       @dataclass
+       class Promise:
+         fun : typing.Any
+         cache : list[stmt] = None
+         def force(self):
+           if self.cache is None:
+             self.cache = self.fun(); return self.cache
+           else:
+             return self.cache
+However, in some cases of explicate_pred, we return a list of statements, and in
+other cases we return a function that computes a list of statements. To uniformly
+deal with both regular data and promises, we define the following force function
+
+     print(42 if input_int() == 1 else 0)
+
+     ⇓
+
+     start:
+            tmp_0 = input_int()
+            if tmp_0 == 1:
+                                                         .globl main
+              goto block_3
+                                                main:
+            else:
+                                                         pushq %rbp
+              goto block_4
+                                                         movq %rsp, %rbp
+     block_3:
+                                                         subq $0, %rsp
+            tmp_1 = 42
+                                                         jmp start
+            goto block_2
+                                                start:
+     block_4:
+                                                       callq read_int
+            tmp_1 = 0
+                                                       movq %rax, %rcx
+            goto block_2
+                                                       cmpq $1, %rcx
+     block_2:
+                                                       je block_3
+            print(tmp_1)
+                                                       jmp block_4
+            return 0
+                                                block_3:
+     ⇓                                  ⇒              movq $42, %rcx
+                                                       jmp block_2
+                                                block_4:
+                                                       movq $0, %rcx
+     start:                                            jmp block_2
+            callq read_int                      block_2:
+            movq %rax, tmp_0                           movq %rcx, %rdi
+            cmpq 1, tmp_0                              callq print_int
+            je block_3                                 movq $0, %rax
+            jmp block_4                                jmp conclusion
+     block_3:                                   conclusion:
+            movq 42, tmp_1                             addq $0, %rsp
+            jmp block_2                                popq %rbp
+     block_4:                                          retq
+            movq 0, tmp_1
+            jmp block_2
+     block_2:
+            movq tmp_1, %rdi
+            callq print_int
+            movq 0, %rax
+            jmp conclusion
+
+Figure 5.14
+Example compilation of an if expression to x86, showing the results of explicate_control,
+select_instructions, and the final x86 assembly code.
+
+                    shrink           remove_complex_operands
+
+       LIf                         LIf                          Lmon
+                                                                 if
+
+                                         explicate_control
+       CIf
+         select_instructions
+                                          patch_instructions
+
+     x86Var
+        If                       x86Var
+                                    If                          x86If                  x86If
+                assign_homes                                       prelude_and_conclusion
+
+Figure 5.15
+Diagram of the passes for LIf , a language with conditionals.
+
+that checks whether its input is delayed (i.e., whether it is a Promise) and then
+either (1) forces the promise or (2) returns the input.
+   def force(promise):
+     if isinstance(promise, Promise):
+       return promise.force()
+     else:
+       return promise
+
+   We use promises for the input and output of the functions explicate_pred,
+explicate_assign, explicate_effect, and explicate_stmt. So, instead of tak-
+ing and returning lists of statements, they take and return promises. Furthermore,
+when we come to a situation in which a continuation might be used more than
+once, as in the case for if in explicate_pred, we create a delayed computation
+that creates a basic block for each continuation (if there is not already one) and
+then returns a goto statement to that basic block. When we come to a situation in
+which we have a promise but need an actual piece of code, for example, to create a
+larger piece of code with a constructor such as Seq, then insert a call to force.
+   Here is the new version of the create_block auxiliary function that delays the
+creation of the new basic block.
+   def create_block(promise, basic_blocks):
+     def delay():
+       stmts = force(promise)
+       match stmts:
+         case [Goto(l)]:
+            return [Goto(l)]
+         case _:
+           label = label_name(generate_name('block'))
+           basic_blocks[label] = stmts
+           return [Goto(label)]
+     return Promise(delay)
+
+                                               start:
+       if True:
+                                                   print(0)
+         print(0)
+                                                   goto block_4
+       else:                              ⇒
+         x = 1 if False else 2
+                                               block_4:
+         print(x)
+                                                   return 0
+
+Figure 5.16
+Translation from LIf to CIf via the improved explicate_control.
+
+  Figure 5.16 shows the output of improved explicate_control on this example.
+As you can see, the number of basic blocks has been reduced from three blocks to
+two blocks.
+
+Exercise 5.9 Implement the improvements to the explicate_control pass. Check
+that it removes trivial blocks in a few example programs. Then check that your
+compiler still passes all your tests.
+
+5.12.2    Remove Jumps
+There is an opportunity for removing jumps that is apparent in the example of
+figure 5.14. The start block ends with a jump to block_4, and there are no other
+jumps to block_4 in the rest of the program. In this situation we can avoid the run-
+time overhead of this jump by merging block_4 into the preceding block, which in
+this case is the start block. Figure 5.17 shows the output of allocate_registers
+on the left and the result of this optimization on the right.
+
+Exercise 5.10 Implement a pass named remove_jumps that merges basic blocks
+into their preceding basic block, when there is only one preceding block. The pass
+should translate from x86Var       Var
+                          If to x86If . Run the script to test your compiler. Check
+that remove_jumps accomplishes the goal of merging basic blocks on several test
+programs.
+
+5.13     Further Reading
+
+The algorithm for explicate_control is based on the expose-basic-blocks pass
+in the course notes of Dybvig and Keep (2010). It has similarities to the algorithms
+of Danvy (2003) and Appel and Palsberg (2003), and is related to translations into
+continuation passing style (van Wijngaarden 1966; Fischer 1972; Reynolds 1972;
+Plotkin 1975; Friedman, Wand, and Haynes 2001). The treatment of conditionals in
+the explicate_control pass is similar to short-cut Boolean evaluation (Logothetis
+and Mishra 1981; Aho et al. 2006; Clarke 1989; Danvy 2003) and the case-of-case
+transformation (Peyton Jones and Santos 1998).
+
+     start:
+            callq read_int                            start:
+            movq %rax, tmp_0                                 callq read_int
+            cmpq 1, tmp_0                                    movq %rax, tmp_0
+            je block_3                                       cmpq 1, tmp_0
+            jmp block_4                                      je block_3
+     block_3:                                                movq 0, tmp_1
+            movq 42, tmp_1                                   jmp block_2
+            jmp block_2                          ⇒    block_3:
+     block_4:                                                movq 42, tmp_1
+            movq 0, tmp_1                                    jmp block_2
+            jmp block_2                               block_2:
+     block_2:                                                movq tmp_1, %rdi
+            movq tmp_1, %rdi                                 callq print_int
+            callq print_int                                  movq 0, %rax
+            movq 0, %rax                                     jmp conclusion
+            jmp conclusion
+
+Figure 5.17
+Merging basic blocks by removing unnecessary jumps.

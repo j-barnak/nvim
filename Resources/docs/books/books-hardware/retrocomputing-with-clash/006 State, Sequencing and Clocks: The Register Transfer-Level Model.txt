@@ -1,0 +1,899 @@
+                State, Sequencing and Clocks:
+             The Register Transfer-Level Model                4
+Since a combinational circuit can be modeled as a pure function applied to an input
+signal, it follows that whenever the input signals have the same value, the output
+signals will also have the same value. But there are lots of useful circuits where this
+doesn’t hold, for example:
+
+   • Blinking LEDs (this and next chapter): who doesn’t like blinking LEDs?! In
+     its simplest form, a blinking circuit has no inputs, yet its output is sometimes
+     on, sometimes off.
+
+   • Turning an LED on and off with a pushbutton switch (this chapter). This is
+     different from the example that used a toggle switch because now when the
+     button is released, its result depends on what happened before:
+
+                        Timestep     Button held?    LED on?
+                        1.           False           False
+                        2.           False           False
+                                     ...             ...
+                        10.          True            True
+                        11.          False           True
+                        12.          False           True
+                                     ...             ...
+                        20.          True            False
+
+   • Edge detection. This is used for synchronous communication protocols
+     (e.g. the PS/2 protocol described in chapter 16) where there is an explicit
+     clock signal between the communicating parties, and the data channel should
+     be sampled on edges of the clock. Clock edge here means the instant when the
+     clock signal goes from high to low (or vice versa depending on the protocol).
+     But this requires knowing what the earlier value of the clock signal was: a low
+     value means a “clock tick” only if the value was high up until that point.
+
+         • Keeping time. So-called asynchronous serial protocols (chapter 10) have no
+           shared clock signal: each communicating party is responsible for keeping its
+           own time to know when new data is available (or, in the case of the sender,
+           should be made available) on the bus. A constant input of high values might
+           represent one, two, or more bits of data depending on how long the value has
+           been there.
+
+4.1   Clocks and registers
+      In Haskell we can model stateful computations over some input as a function
+      f :: a -> s -> (b, s), that is, a pure function that takes as extra argument its
+      current state and returns not just its result, but also its new state. In the setting of
+      circuits, there are more details to work out:
+
+         1. How often is the state updated? In other words, if the input a doesn’t change,
+            what is the time period for which the output is held at the b value calculated
+            from the current s value, before the calculation is re-done for the new s value?
+         2. Where do we store the s value calculated in the previous step, so that it can
+            be fed back as the new state?
+
+          One possible way to answer these is to “just wire everything together”, i.e. to feed
+      the output s directly into the input. In that case, the update frequency is determined
+      by the propagation delay of f: every lookup table, every transistor, even the lengths
+      of the wires involved all contribute to some non-zero time delay it takes for voltage
+      changes to propagate through the circuit. s is not explicitly stored anywhere: the
+      circuit itself “stores” the state.
+          This “solution” has so many problems that it is not supported by Clash at all.
+      The propagation delay of f is necessarily intensional: different implementations of
+      the same function, yielding different circuits, will have different propagation delays.
+      And since different FPGA models will have parts with different characteristics,
+      calculating the delay of a given Clash function would require seeing all the way
+      through the Clash compiler and the FPGA toolchain.
+          Basic composition becomes impossible: consider the simple example of a branch:
+
+      -- This is defined in the Clash Prelude as an easy way to use
+      -- if/then/else over applicative functors
+      mux :: (Applicative f) => f Bool -> f a -> f a -> f a
+      mux = liftA3 $ \cond thn els -> if cond then thn else els
+
+      myCircuit :: Signal dom Bool -> Signal dom Bit -> Signal dom Bit
+      myCircuit sw x = mux sw (complement <$> x) x
+
+         Here, myCircuit can be implemented as a circuit that splits the input wire into
+      two, and feeds both wires into a multiplexer: one as-is, and the other via a NOT gate.
+
+                                                  NOT
+                               x                                 mux
+
+                                                                  sw
+
+          However, because the NOT gate has its own delay, the two inputs to the multiplexer
+      will not be ready at the same time. But the multiplexer’s selector input (sw in
+      myCircuit’s case) would need to have the right delay so that regardless of which
+      branch is taken, the new signal level is already at the multiplexer right when the
+      selector changes. So now its delay would need to depend on the branch taken,
+      otherwise the signal is unstable.
+
+4.1.1 Synchronicity
+      A different approach to answering the details of stateful circuits is to use a syn-
+      chronous model. Here, the state is updated whenever some external, regular clock
+      ticks. This avoids all the problems with propagation delay as long as the clock
+      period is long enough that everything settles in time before the next tick. Since
+      all circuits use the same clock, they can be freely composed: no matter how signal
+      changes propagate mid-period, new values are only considered at the end of the
+      period. In our previous example with the multiplexer, it doesn’t matter that the
+      two branches have different propagation delays, because if myCircuit is used in the
+      definition of a stateful computation, the state is only updated with the stabilized
+      value after enough time has passed.
+          While this approach neatly solves all the problems we had with stability, it
+      introduces two new problems:
+
+            • The clock rate must be selected correctly. If there are any signal paths through
+              the circuit that have a propagation delay longer than the clock period, we
+              are back to square one. However, the whole design can be written with the
+              assumption that the clock period is correct, and then the maximal delay can be
+              computed and checked for the circuit at the end (and FPGA toolchains do this
+              as part of the synthesis process). So even if it is discovered that the targeted
+              clock rate is too fast, we can either just decrease it (if the problem allows for it)
+
+           or start optimizing the critical parts of the circuit, without having to rewrite
+           everything to account for changed propagation delays.
+
+         • State needs to be stored somewhere during clock periods. Since the whole
+           point of the synchronous model is to avoid intra-period instabilities to lead to
+           oscillation, the newly computed state cannot be fed back directly as the input
+           state. Instead, at every tick of the clock, the state output of the circuit is latched
+           into a register, and it is the register’s value that is fed back.
+
+      The two basic building blocks of this design are, thus, the clock and the registers.
+          The clock is an external entity that sets everything else in motion. Usually, in
+      an electronic circuit there is a physical clock, with a set clock rate, based on an
+      oscillating quartz crystal, and other components that can generate variable-rate
+      clocks from that single shared base clock. The output of the clock is a one-bit square
+      wave; the “tick” and the “tock” of the clock are the rising and falling edges of this
+      signal. In this book, we will take the clock as given (i.e. as an input signal) in our
+      Clash circuits; and for designs where it matters, we will configure it outside Clash
+      to be at the right frequency.
+          A register holds a set number of bits at the last given value, until that value is
+      overwritten at the next clock tick. A register, thus, has two inputs and one output at
+      minimum: the clock and the write value are its inputs, and the currently held read
+      value is its output. Clash adds two more inputs to each register: a reset input that
+      loads the initial value of the register, regardless of the write value, and an enable
+      input which controls whether the whole component is live or not.
+
+4.2   The RTL model: register and delayed feedback
+      Armed with clocks and registers, we can implement synchronous stateful circuits
+      using feedback, delayed via a register:
+
+                            x
+
+                                        fun                             y
+
+                                                     reg
+
+                                                    clk
+
+         Now we can describe the whole circuit as a register whose read output and write
+      input are connected to a combinational circuit. Similar to the combinational circuit
+
+      model, this model is also closed under composition, by just composing the pure
+      functions and storing the product of all states in a single register.
+          This model is widely used to describe digital circuits and is known as the Register-
+      Transfer level model, or RTL for short, since it describes the design in terms of the
+      combinational circuits through which signals are transferred between registers. RTL
+      is the basis of not just Clash, but also Verilog/SystemVerilog and VHDL, the two
+      mainstream hardware description languages. FPGA synthesis toolchains all work
+      by consuming RTL descriptions; it is fair to say that the RTL model is the bread and
+      butter of FPGA design, and this is no different in Clash.
+          The Clash primitive to create a register is called, unsurprisingly, register. Be-
+      cause writing code that connects the same clock, reset and enable signals to all
+      registers would be very tedious, Clash provides a typeclass-based shorthand for
+      all register-based operations. In this book, we are going to use these convenience
+      functions; in fact, if we import Clash.Prelude, these are the versions brought in
+      scope. But for this section only, we are first going to use Clash.Explicit.Prelude
+      to make it more obvious how the code maps to the above RTL diagram.
+          The type of this explicitly-clocked version of register is:
+
+      Clash.Explicit.Prelude.register
+          :: (KnownDomain dom, NFDataX a)
+          => Clock dom -> Reset dom -> Enable dom
+          -> a -> Signal dom a -> Signal dom a
+
+          The typeclass constraint KnownDomain dom prescribes that dom is a valid type-level
+      tag for a clock domain. NFDataX a is the Clash simulator’s requirement on a for
+      simulating uninitialized or invalid values; we are not going to concern us with them
+      in this book, other than using GHC’s generics to derive the NFDataX instance for all
+      our datatypes to satisfy register.
+          The first argument, of type Clock dom, is the clock signal driving the writing
+      into the register value. The second argument, of type Reset dom, is the reset signal
+      that, when asserted, replaces the register value with the initial one. The Enable dom
+      argument gates the register transfer; it is basically a glorified Signal dom Bool, and
+      setting it to False causes the register to ignore any incoming new value.
+          The fourth argument is the initial value of the register: this value is what is read
+      from the register before the first write, and also the value loaded back on reset. The
+      fifth argument is what is written into the register on each tick of the clock.
+
+4.2.1 Flipping a Bool once
+      Let’s make a circuit that takes the control signals (clock, reset and enable) as inputs,
+      and creates possibly the most boring stateful circuit: one that outputs a True signal
+
+     in the first cycle, and False afterwards. This is not quite using the RTL model to its
+     fullest, since there is no feedback yet.
+
+     import Clash.Explicit.Prelude
+
+     helloRegister
+         :: Clock System -> Reset System -> Enable System
+         -> Signal System Bool
+     helloRegister clk rst en = register clk rst en True (pure False)
+
+         We didn’t bother with port name annotations here because we are only going
+     to play around with this code in the simulator. If we load it into ghci and try to
+     use it with sampleN, the first hurdle is coming up with clk, rst and en inputs. In a
+     real circuit, the clock would come from components such as the clock manager that
+     turns the raw quartz crystal’s oscillation into the right clock rate. Similarly, rst is
+     often connected to a physical button, or there is a reset circuit which provides a reset
+     pulse as the board is brought up. As for en, in the simplest case we want to keep our
+     circuit ticking away unconditionally. In fact, for simplicity’s sake, we are not going
+     to use the Enable lines at all in this book. Instead, we will use simple Bool-valued
+     signals in conjunction with mux whenever we need conditional updates.
+         Since we wouldn’t otherwise have access to the clock and reset button periph-
+     erals inside the simulator, Clash provides the functions clockGen and resetGen.
+     A third function, enableGen, is provided to create an always-enabled line. Note
+     that clockGen is not synthesizable (we can’t make a clock signal from thin air), so
+     we can’t use it in a real circuit we intend to run on a real FPGA, only for simula-
+     tion. resetGen and enableGen, on the other hand, are usable even in a real circuit –
+     resetGen simply generates a never-asserted reset line, and enableGen always enables
+     every component.
+        In the simulator, then, we can do the following:
+
+     > sampleN 5 $ helloRegister clockGen resetGen enableGen
+     [True,True,False,False,False]
+
+         This is. . . quite unexpected, isn’t it? Why is the output True for two cycles instead
+     of just one? The reason is that the first simulated timestep is before the first clock
+     cycle; then in the first cycle, the value coming from the register into the output is
+     True, and False is written back to the register for the next cycle.
+        When designing integrated circuits instead of targeting an FPGA, register values
+     might be undefined before being reset. The simulated behavior before the first clock
+     cycle is configurable in the clock domain, but IC design is beyond the scope of this
+     book. Luckily, the System domain’s configuration matches the behavior of FPGAs.
+
+4.2.2 Flipping a Bool, repeatedly
+
+      To write a more interesting circuit that doesn’t just get stuck in one state after
+      the initial clock cycle, let’s create a proper RTL circuit that uses register-delayed
+      feedback to keep flipping between True and False:
+
+      flippy
+          :: Clock System -> Reset System -> Enable System
+          -> Signal System Bool
+      flippy clk rst en = r
+        where
+          r = register clk rst en True (not <$> r)
+
+         The money shot is in the definition of r, which is recursive but its recursion is
+      guarded under a call to register. To get an idea of what is happening, let’s return
+      both r and not <$> r, and look at it per timestep:
+
+      flippy
+          :: Clock System -> Reset System -> Enable System
+          -> Signal System (Bool, Bool)
+      flippy clk rst en = bundle (r, r')
+        where
+          r = register clk rst en True r'
+          r' = not <$> r
+
+            In the simulator, we see:
+
+      > mapM_ print $ L.zip [0..] $ sampleN 8 $ flippy clockGen resetGen
+          enableGen
+      (0,(True,False))
+      (1,(True,False))
+      (2,(False,True))
+      (3,(True,False))
+      (4,(False,True))
+      (5,(True,False))
+      (6,(False,True))
+      (7,(True,False))
+
+         In the first cycle, r is True (its initial value), while r' is False, as computed by
+      the combinational circuit fmap not from r. By the second cycle, this value of r' is
+      written into r, so now its value is False, which of course also means that r' is now
+      changed to True.
+
+        We can instantiate our previous diagram for flippy as such:
+
+                                                             r'
+
+                                    not                      r
+                                               reg
+
+                                              clk
+
+     Exercise:
+        • Write a “slow flippy” that goes True, True, False, False, True, True, . . . Hint:
+          use register twice.
+
+4.3 Finally blinkenlights!
+     We now have everything to finally do what every book on electronics for hobbyists
+     must do in one of its first chapters: make some LEDs blink.
+         We could say that the flippy circuit already does that, but that one is too fast:
+     if clock is running at 100 MHz, the LED will turn on and off 50 million times a
+     second, which is not going to be perceptible. The idea here is to slow this down
+     by counting to a sufficiently large number, and taking its most significant bit as the
+     LED output. Because Unsigned’s Num instance implements overflow semantics, once
+     it gets to the largest possible Unsigned n value, adding one more to it will simply
+     reset it by wrapping around to 0.
+         We’ll choose n such that 2𝑛 clock periods takes roughly 1 second:
+
+     type SecondPeriods dom = 1_000_000_000_000 `Div` DomainPeriod dom
+
+     blinkingSecond
+         :: forall dom. (KnownDomain dom)
+         => (1 <= DomainPeriod dom, KnownNat (DomainPeriod dom))
+         => (1 <= 1_000_000_000_000 `Div` (DomainPeriod dom))
+         => Clock dom -> Reset dom -> Enable dom
+         -> Signal dom Bit
+     blinkingSecond clk rst en = msb <$> r
+       where
+         r :: Signal dom (Unsigned (CLog 2 (SecondPeriods dom)))
+         r = register clk rst en 0 (r + 1)
+
+        Here, we use the type-level function DomainPeriod to extract the clock period
+     from the clock domain. The extended typeclass constraints on DomainPeriod are
+
+        needed to be able to do the type-level computation to convert the period (in picosec-
+        onds) to periods per second (i.e. Hz). CLog 2 periods then computes the ceiling
+        of the 2-base logarithm of periods, i.e. the number of bits needed to represent that
+        number. For a 100 MHz clock, this will result in r :: Signal dom (Unsigned 27).
+            The main circuit then is using blinkingSecond to drive the LED output:
+
+        topEntity
+            :: "CLK" ::: Clock System
+            -> "LED" ::: Signal System Bit
+        topEntity clk = blinkingSecond clk resetGen enableGen
+
+           If we synthesize that and load it onto a real FPGA board, we will find that while
+        the LED does blink, it is not doing it at quite the required frequency. There are two
+        reasons for that.
+
+4.3.1   A more accurate timing counter
+        The first reason is that the power-of-2 approximation of 1 second can be quite
+        inaccurate: for example, with a 100 MHz clock, counting to 227 takes 1.34 seconds.
+        We can improve that by using that same 27-bit counter to only count up to 100
+        million. Let’s also use this opportunity to factor out the conversion of frequency (in
+        Hertz) to clock period length (in picoseconds), i.e. a type-level version of the Clash
+        prelude’s hzToPeriod function:
+
+        type HzToPeriod (freq :: Nat) = 1_000_000_000_000 `Div` freq
+
+        type ClockDivider dom ps = ps `Div` DomainPeriod dom
+
+        blinkingSecond
+            :: forall dom. (KnownDomain dom)
+            => (1 <= DomainPeriod dom, KnownNat (DomainPeriod dom))
+            => (1 <= HzToPeriod 1 `Div` DomainPeriod dom)
+            => Clock dom -> Reset dom -> Enable dom
+            -> Signal dom Bit
+        blinkingSecond clk rst en = msb <$> r
+          where
+            r :: Signal dom (Unsigned (CLog 2 (ClockDivider dom (HzToPeriod 1))))
+            r = register clk rst en 0 $ mux (r .<. limit) (r + 1) 0
+
+              limit = snatToNum (SNat @(ClockDivider dom (HzToPeriod 1)))
+
+          This is better in that the total LED blinking period is indeed going to be 1 second.
+        However, our 27-bit counter’s most significant bit will be unset for 671 ms (as it
+
+     counts up to 226 − 1) and set for 329 ms (as it counts from 226 to 100,000,000), so the
+     LED will be off for roughly two-third of the period and on for one-third. Of course,
+     if all we want to do is blink an LED “per second”, that problem is underspecified
+     enough that this could be good enough. But in general, we would like more control
+     over the duty cycle. So let’s aim for restoring the 50% duty cycle: we want our LED
+     to be off for half a second and on for half a second.
+         A neat way of doing that is to have a counter that counts up to exactly half a
+     second’s worth of periods, and then changes state. In the half-and-half scenario, we
+     could get away with the state being a Bool, but we’ll use a sum type of two counters
+     to show how this would generalize for arbitrary duty cycles.
+         Instead of an Unsigned 27 to count up to 50,000,000, we are going to use a type
+     that has exactly 50,000,000 values: this is the Index 50_000_000 type from Clash’s
+     prelude. It is similar to an Unsigned type (and its BitSize is the same as a just-large-
+     enough Unsigned), but its Num and Bounded instances implement the right behavior
+     for the given cardinality. Also note how addition doesn’t wrap over:
+
+     > [minBound .. maxBound] :: [Index 14]
+     [0,1,2,3,4,5,6,7,8,9,10,11,12,13]
+     > (10 :: Index 14) + 3
+     13
+     > (10 :: Index 14) + 4
+     *** Exception: X: Clash.Sized.Index: result 14 is out of bounds: [0..13]
+     > succ (13 :: Index 14)
+     *** Exception: X: Clash.Sized.Index: result 14 is out of bounds: [0..13]
+
+        We can implement succ- and pred-like functions that handle Index types without
+     exceptions; these functions are going to be useful in a lot of later chapters.
+
+     succIdx :: (Eq a, Enum a, Bounded a) => a -> Maybe a
+     succIdx x | x == maxBound = Nothing
+               | otherwise = Just $ succ x
+
+     predIdx :: (Eq a, Enum a, Bounded a) => a -> Maybe a
+     predIdx x | x == minBound = Nothing
+               | otherwise = Just $ pred x
+
+        With these, we can rewrite blinkingSecond to have 0.5 seconds (500 ms, or
+     500,000,000,000 ps) off, 0.5 seconds on. Our state will now be one of two Index
+     counters: either counting how long the LED should be On, or counting how long it
+     should be Off:
+
+data OnOff on off
+    = On (Index on)
+    | Off (Index off)
+    deriving (Generic, NFDataX)
+
+isOn :: OnOff on off -> Bool
+isOn On{} = True
+isOn Off{} = False
+
+   In every clock cycle, we increment the current counter if possible; if not, we start
+the other counter at 0 instead.
+
+countOnOff :: (KnownNat on, KnownNat off) => OnOff on off -> OnOff on off
+countOnOff (On x) = maybe (Off 0) On $ succIdx x
+countOnOff (Off y) = maybe (On 0) Off $ succIdx y
+
+    We also move to streamlined typeclass constraints using PartialTypeSignatures,
+to avoid the tedium of listing out all the combinations of 1 <= and KnownNat that
+GHC happens to require:
+
+blinkingSecond
+    :: forall dom. (KnownDomain dom, _)
+    => Clock dom -> Reset dom -> Enable dom
+    -> Signal dom Bit
+blinkingSecond clk rst en = boolToBit . isOn <$> r
+  where
+    r :: Signal dom
+         (OnOff
+             (ClockDivider dom (500_000_000_000))
+             (ClockDivider dom (500_000_000_000)))
+    r = register clk rst en (Off 0) $ countOnOff <$> r
+
+    Did we get the number of zeroes right in 500_000_000_000? To avoid having to
+calculate with billions of picoseconds, we can add some larger units: a Second is a
+thousand Milliseconds, a Millisecond is a thousand Microseconds and so on.
+
+type Seconds      (s :: Nat) = Milliseconds (1_000 * s)
+type Milliseconds (ms :: Nat) = Microseconds (1_000 * ms)
+type Microseconds (us :: Nat) = Nanoseconds (1_000 * us)
+type Nanoseconds (ns :: Nat) = Picoseconds (1_000 * ns)
+type Picoseconds (ps :: Nat) = ps
+
+      This allows rewriting blinkingSeconds as:
+
+      blinkingSecond clk rst en = boolToBit . isOn <$> r
+        where
+          r :: Signal dom
+               (OnOff
+                   (ClockDivider dom (Milliseconds 500))
+                   (ClockDivider dom (Milliseconds 500)))
+          r = register clk rst en (Off 0) $ countOnOff <$> r
+
+4.3.2 Customizing the clock
+      Uploading the final version of blinkingSecond, depending on the FPGA board, we
+      will either see it work as expected (blinking at 1 Hz), or running slower or faster.
+         As we promised, there are two reasons for not getting the right blinking speed.
+      The second one is using the System clock in Clash, when that might not have the right
+      configuration for the actual clock on our dev board. The System clock is defined to
+      run at 100 MHz, so all period calculations will use that as reference. If the real clock
+      connected to the CLK input is running at, let’s say, 32 MHz, then all calculations will
+      be off by a factor of three, so our LED will blink at one-third of the designed speed.
+         This bridge can be crossed from either direction. The more straightforward
+      one is to tell Clash what clock to use. Since the clock domains are defined at the
+      type level, this would involve some mucking around with typeclass instances and
+      singletons; it is much easier to just use the createDomain Template Haskell function,
+      provided by the Clash standard library:
+
+      createDomain vSystem{vName="Dom32", vPeriod = hzToPeriod 32_000_000}
+
+      topEntity
+          :: "CLK" ::: Clock Dom32
+          -> "LED" ::: Signal Dom32 Bit
+      topEntity clk = blinkingSecond clk resetGen enableGen
+
+          Since blinkingSecond’s definition is polymorphic in the clock domain, this ver-
+      sion of topEntity will do all type-level calculations with a 32 MHz clock, resulting
+      in a 25-bit counter instead of the 27-bit one for System.
+          The second way to ensure Clash calculates all clock rate computations correctly
+      is to change our clock to really run at 100 MHz. Most FPGAs have components to
+      manage clock speed: these are components that take the raw clock as input, and
+      using divisions and multiplications, produce the desired clock rate. The division
+      part is straightforward counting just like we did in our blinkingSeconds function;
+      the multiplication is more involved and requires some specialized physical parts
+
+    and careful feedback loops to keep the multiplied clock regular. Luckily, all this is
+    abstracted away behind the clock manager, and it is enough to configure it with just
+    the input clock rate and the desired output clock rate.
+
+       In this book, some of the circuits will need to adhere to external timing constraints
+    prescribed by various protocols. For example, asynchronous serial communication
+    (chapter 10) at a set rate, let’s say 9600 bits per second, requires both parties to have
+    the same idea of how long 9.6 kHz is. The actual internal clock rate of the two
+    parties doesn’t matter, and 9.6 kHz is very slow compared to the tens or hundreds
+    of MHz speeds that FPGA clocks use by default, so the same kind of counting we
+    did in blinkingSeconds can be used instead with good enough accuracy, as long as
+    Clash is configured for the right clock speed.
+
+        However, once we get to generating video output in chapter 7, we will have to
+    start feeding Clash a clock at just the right speed, using an external clock manager.
+    To see why, consider trying to generate a 640 × 480 VGA signal at 60 frames per
+    second. As we will see in the chapter on VGA modes, this requires pumping out
+    pixel data at 25.125 MHz. If, let’s say, we start from a 32 MHz raw clock, there is
+    no way to update the output at the desired rate of 25.125 MHz, since the closest we
+    can get would be either 32 MHz (using no division) or 16 MHz (counting to 2). Of
+    course, both 32 and 16 MHz rates are far far far beyond the timing tolerances of VGA
+    devices. And so when we’ll get to building computers with video output, we will
+    always prescribe the exact clock speed, and use the targeted FPGA’s clock manager
+    to produce the right clock. For this reason, we will go into the practical details of
+    using a clock manager in chapter 7.
+
+4.4 Passing around Clock, Reset and Enable lines implicitly
+
+    Our blinking LED example is small enough that it is not too bothersome to pass
+    around the clk, rst and en arguments. However, in a larger circuit, since every
+    register call needs these three arguments, this can add up to quite a lot of noise.
+    Moreover, there is not much we can do with these signals other than passing them
+    around.
+
+        To mitigate this, Clash provides two version of register, and all other functions
+    that use register internally: Clash.Explicit.Prelude exports them as straight func-
+    tions from clk, rst and en; whereas Clash.Prelude exports them with the typeclass
+    constraint HiddenClockResetEnable dom taking the place of explicit arguments.
+
+     Compare the two type signatures of register:
+
+     Clash.Explicit.Prelude.register
+         :: (KnownDomain dom, NFDataX a)
+         => Clock dom -> Reset dom -> Enable dom
+         -> a -> Signal dom a -> Signal dom a
+
+     Clash.Prelude.register
+         :: (HiddenClockResetEnable dom, NFDataX a)
+         => a -> Signal dom a -> Signal dom a
+
+        The typeclass constraint HiddenClockResetEnable dom represents a clock domain
+     that has an associated clock, reset and enable lines. We can go back and forth
+     between the explicit and the implicit passing:
+
+     hideClockResetEnable
+         :: (HiddenClockResetEnable dom)
+         => (KnownDomain dom => Clock dom -> Reset dom -> Enable dom -> r)
+         -> r
+
+     withClockResetEnable
+         :: KnownDomain dom
+         => Clock dom -> Reset dom -> Enable dom
+         -> (HiddenClockResetEnable dom => r) -> r
+
+        Of course, this implicit typeclass-based clock passing still doesn’t allow us to
+     make something from nothing, so the top-level topEntity still has to get a clock
+     signal (and, optionally, a reset signal) from somewhere outside.
+        In the rest of this book, we will take on the following conventions:
+
+        • Clock, reset, and enable lines will be passed implicitly, i.e. using
+          HiddenClockResetEnable  and    using   Clash.Prelude    instead   of
+          Clash.Explicit.Prelude.
+
+        • Since we are not going to use Enable signals, we will use enableGen in every
+          topEntity to enable all components at all times, and leave it to the individual
+          circuits to implement conditional register updates using plain Bool-valued
+          signals.
+
+        • We are only going to use an external Reset signal in designs that use a clock
+          manager, since they usually have an output signal to mark that the clock is
+          locked at the desired frequency and is ready to use. For circuits that use the
+          raw clock, we’ll just use resetGen to start the circuit immediately as soon as
+          the FPGA is powered up.
+
+      • All functions will be domain-polymorphic, with sufficient constraints as
+        needed. Of course, topEntity can’t be domain-polymorphic since that is
+        where the clock domain is specified; so all through this book, topEntity will
+        be defined as withClockResetEnable clk resetGen enableGen board, i.e. as a
+        domain-polymorphic, implicitly-clocked function with input signals applied.
+
+    Following is the full code listing of the LED blinker rewritten in the same
+style that we will use for the rest of this book. Note that this imports the defini-
+tion of succIdx from RetroClash.Utils, and ClockDivider and Milliseconds from
+RetroClash.Clock: we will be implicitly collecting a library of reusable functions
+throughout the book.
+
+{-# LANGUAGE NumericUnderscores, PartialTypeSignatures #-}
+{-# OPTIONS_GHC -Wno-partial-type-signatures #-}
+module Blink where
+
+import Clash.Prelude
+import RetroClash.Utils (succIdx)
+import RetroClash.Clock (ClockDivider, Milliseconds)
+import Data.Either
+import Data.Maybe
+
+-- Change this to the raw clock rate of the FPGA board you are targeting
+createDomain vSystem{vName="Dom100", vPeriod = hzToPeriod 100_000_000}
+
+data OnOff on off
+    = On (Index on)
+    | Off (Index off)
+    deriving (Generic, NFDataX)
+
+isOn :: OnOff on off -> Bool
+isOn On{} = True
+isOn Off{} = False
+
+countOnOff :: (KnownNat on, KnownNat off) => OnOff on off -> OnOff on off
+countOnOff (On x) = maybe (Off 0) On $ succIdx x
+countOnOff (Off y) = maybe (On 0) Off $ succIdx y
+
+topEntity
+    :: :CLK100MHZ" ::: Clock Dom100
+    -> "LED"       ::: Signal Dom100 Bit
+topEntity clk =
+    withClockResetEnable clk resetGen enableGen blinkingSecond
+
+      blinkingSecond
+          :: forall dom. (HiddenClockResetEnable dom, _)
+          => Signal dom Bit
+      blinkingSecond = boolToBit . isOn <$> r
+        where
+          r :: Signal dom
+               (OnOff
+                   (ClockDivider dom (Milliseconds 500))
+                   (ClockDivider dom (Milliseconds 500)))
+          r = register (Off 0) $ countOnOff <$> r
+
+         In fact, let’s factor out this pattern so we can write topEntity point-free:
+
+      withResetEnableGen
+          :: (KnownDomain dom)
+          => (HiddenClockResetEnable dom => r)
+          -> Clock dom -> r
+      withResetEnableGen board clk =
+          withClockResetEnable clk resetGen enableGen board
+
+      topEntity
+          :: Clock Dom100
+          -> Signal Dom100 Bit
+      topEntity = withResetEnableGen blinkingSecond
+
+      Exercises:
+         • Blink only a set number of times
+         • Blink multiple LEDs at different speeds
+         • Synchronized LED blinking. Write fun patterns like a left-to-right then right-
+           to-left sweep, or a sweep from both sides to the center and then outwards
+           again.
+         • Sequence multiple LED blinking patterns, each one shown for a couple of
+           seconds before switching to the next one.
+
+4.5   Multiple clocks
+      The problems associated with interfacing components with different clocks is be-
+      yond the scope of this book. We will design circuits where everything runs at the
+      same clock, using counter-based clock rate division where needed. For circuits that
+      generate video output, the base clock rate will be chosen to match the pixel clock
+      rate.
+
+          In the second half of the book, we will implement computers based on pre-
+      existing designs from the late 1970s. The original machines we will replicate had
+      a multi-clock design by necessity: the video subsystem was required to be simple
+      enough so that it can run at the speed needed to produce a valid video signal, but
+      the CPU was too complex to run at that rate. On a modern FPGA, these simple CPUs
+      can be easily run at the speed prescribed by the video system. By using a single
+      clock domain for the whole computer, we will avoid all the headache associated
+      with domain crossing; but this comes at the price of our computer not behaving
+      exactly the same as the original ones: we will discuss the user-visible implications
+      of this separately for each machine.
+
+4.6   Pushbutton-toggled LED
+      While blinking is fun, its one drawback is that it doesn’t have any inputs. So let’s
+      turn back to one of the motivating problems at the start of this chapter: toggling an
+      LED on and off with a pushbutton switch. We can describe this easily using the RTL
+      model: as a register containing the LED state, that at every cycle will either stays its
+      current value or its complement. The trigger to flipping the register is the click of
+      the switch, i.e. if the button is held in the given cycle but wasn’t in the previous one.
+
+      topEntity
+          :: "CLK" ::: Clock System
+          -> "BTN" ::: Signal System (Active High)
+          -> "LED" ::: Signal System (Active High)
+      topEntity = withResetEnableGen board
+        where
+          board btn = toActive <$> led
+            where
+              btn' = fromActive <$> btn
+              click = btn' .&&. (not <$> register False btn')
+              led = register False $ mux click (not <$> led) led
+
+         There are two patterns here that are generally useful and will occur in a lot of our
+      other designs; both of these are provided by the Clash Prelude as library functions:
+
+            • In the definition of led, the pattern of “update a register only if a condition
+              holds” is called regEn (for “register with a separate update enable line), allow-
+              ing us to write instead:
+              led = regEn False click (not <$> led)
+
+            • In the definition of click, this is an instance of (rising) edge detection: click’s
+              value is True iff the underlying btn' signal’s value is rising, i.e. it is larger than
+
+              its previous value. For Bool, we have True > False, and so a transition from
+              False to True counts as a rising edge. The first argument, False, is what initial
+              value to use; its only relevance is for the very first cycle. In this case, its initial
+              value doesn’t matter at all: we are processing human input, so no one will
+              notice what happens with button clicks in the very first tens of nanoseconds
+              after turning on the board.
+
+              click = isRising False btn'
+
+        We can also abstract a third pattern and add it as a library function: oscillating a
+        Bool value on an external signal.
+
+        oscillateWhen
+            :: (HiddenClockResetEnable dom)
+            => Bool -> Signal dom Bool -> Signal dom Bool
+        oscillateWhen init trigger = r
+          where
+            r = regEn init trigger (not <$> r)
+
+           Together, these allow us to rewrite our topEntity into the following form:
+
+        topEntity
+            :: "CLK" ::: Clock System
+            -> "BTN" ::: Signal System (Active High)
+            -> "LED" ::: Signal System (Active High)
+        topEntity = withResetEnableGen board
+          where
+            board btn = toActive <$> led
+              where
+                click = isRising False (fromActive <$> btn)
+                led = oscillateWhen False click
+
+4.6.1   Debouncing
+        When trying it out on real hardware, pay close attention to the LED changing as
+        you press the button. Do you notice that sometimes a click doesn’t seem to register?
+           When a real, physical switch is pressed, its output doesn’t just go straight from
+        one level to the other. Instead, once it is pushed, it will keep jumping between
+        “open” and “close” for a while before becoming fully closed. This is called bouncing
+        and its effect can occur both when pressing and when releasing, but is usually more
+        pronounced when pressing.
+
+   The details of how a given switch bounces depends on its physical characteristics,
+but in general it is going to be a short burst of high-frequency noise starting as the
+switch is pressed. Since this signal looks very different from the user’s intention (a
+single transition from open to closed), and it is not at all apparent when operating
+a pushbutton switch that this is happening, devices should take care to remove this
+effect. In our case, we want the “user-intended” button event to toggle the LED, not
+these “artificial” events.
+    Since the bounce noise is very different from the intended signal, we should
+be able to remove it and get a nice, clean signal instead, with a single sharp edge
+around presses and releases. There are hardware- and software-based solutions for
+this. Here, we are going to create a software debouncer in Clash: it will take the
+Signal dom Bit as it comes out of the physical pushbutton, and produce an output
+Signal dom Bit without these high-frequency jumps.
+   It is not at all impossible that your development board already has hardware
+debouncing between the pushbutton switches and the FPGA (see the vendor’s
+documentation), and in general, that is a good, useful thing to have. However, it
+robs us of this opportunity to show a debouncer’s effect in the most easily observable
+way. Debouncing is idempotent1 so adding the below software debouncer to a circuit
+running on a board with hardware-debounced buttons will still work correctly.
+    The idea behind software debouncing is quite simple: we keep track of the input
+history for a set number of cycles, and let changes through only once the value has
+stabilized for all of them. Of course, in the real implementation, we don’t need
+to keep around 𝑛 previous values to compare them with the current input, it is
+sufficient to keep a single “last seen” value and a counter up to 𝑛 of cycles since the
+change.
+
+   1 Modulo lag. At the timescales involved in humans pressing buttons and looking at LEDs, microsec-
+
+onds of lag is not going to be observable.
+
+         Because this is the most complicated RTL code we’ve seen so far, let’s go through
+     it in detail. First of all, we will need a way to keep incrementing the “stability
+     counter” capped at maxBound, i.e. we want to compute the saturating successor. We can
+     do that easily using succIdx, by mapping the Nothing returned by succIdx maxBound
+     back to maxBound. We’ll write the corresponding saturating predecessor as well:
+
+     moreIdx :: (Eq a, Enum a, Bounded a) => a -> a
+     moreIdx = fromMaybe maxBound . succIdx
+
+     lessIdx :: (Eq a, Enum a, Bounded a) => a -> a
+     lessIdx = fromMaybe minBound . predIdx
+
+        Now for the main event, starting with the intended type of our debouncing
+     function:
+
+     debounce
+         :: forall ps a dom. (Eq a)
+         => SNat ps -> a -> Signal dom a -> Signal dom a
+
+         As we will see, this is a bit optimistic: the implementation will impose more type-
+     class constraints; but only things like NFDataX a or KnownNat (ClockDivider dom ps)
+     which are going to be satisfied in any reasonable use case anyway.
+         The result of debounce ps start this should be the last stable value we’ve seen
+     of this, i.e. the last value that hasn’t changed for ps picoseconds:
+
+     debounce _ start this = lastStableValue
+       where -- Continued below
+
+         We will store lastStableValue in a register that is only updated whenever the
+     input has stabilized. We will say that a signal is stable if it hasn’t changed for the
+     last n cycles; in other words, if it has been true for n cycles that the current value
+     in this is equal to the previous one. If the current and the previous values are not
+     equal, we start looking for a new run of n equal values by resetting the counter to 0:
+
+         prev = register x0 this
+         counter = register (0 :: Index (ClockDivider dom ps)) $
+             mux (this .==. prev) (moreIdx <$> counter) 0
+         stable = counter .== maxBound
+
+         Here, the operator (.==.) is simply an Applicative-lifted version of (==), i.e. it
+     is defined as liftA2 (==) in the Clash prelude. We will also use (==.) and (.==)
+     where the argument on the left- or the right-hand side is a pure value, respectively.
+
+    Now we have everything to define lastStableValue. It is clear that it should be
+of the form regEn start stable _, but there is one subtlety remaining: when the
+signal is stable, should we update lastStableValue from this, or from prev?
+    As we have seen in RTL schematics before, the value feeding into combinational
+circuits from a register is the value that is being read, i.e. the value that was written
+at the end of the previous clock cycle. Since stable is defined in terms of counter,
+which is a register, this means when a sudden change occurs in the input after a
+long enough run of stable values, stable will still be True, since it is seeing counter
+not at value 0 yet, but at maxBound. Clearly, this means updating lastStableValue
+from this at that point would be incorrect, and we should be using the previous
+value, i.e. the input that was used to compute the value of counter, and thus, stable:
+
+       lastStableValue = regEn x0 stable prev
+
+    Alternatively, we can shave off this extra cycle of lag by using this in the defi-
+nition of lastStableValue, if we use the just-now-computed next value of counter,
+bypassing the register:
+
+debounce _ start this = regEn start stable this
+  where
+    counter = register (0 :: Index (ClockDivider dom ps)) counterNext
+    counterNext = mux (this .==. register start this)
+        (moreIdx <$> counter)
+        0
+    stable = counterNext .== maxBound
+
+      Let’s factor out the “has this signal’s value changed” bit into a utility function:
+
+changed
+    :: (HiddenClockResetEnable dom, Eq a, NFDataX a)
+    => a -> Signal dom a -> Signal dom Bool
+changed x0 x = x ./=. register x0 x
+
+    Putting it all together, this gives us the following final versions of debounce and
+our button-toggling circuit, including the full type of debounce with all the extra
+constraints imposed by the use of register and ClockDivider. The debouncing
+period of 5 ms was chosen mostly unscientifically, as something in the right order of
+magnitude for pushbutton switches, but still fast enough to not be a problem with
+interactive applications such as a video game running at 60 fps, requiring frame-
+perfect input. Of course, readers should feel free to experiment with different values
+for a given pushbutton.
+
+     debounce
+         :: forall ps a dom. (Eq a, NFDataX a)
+         => (HiddenClockResetEnable dom, KnownNat (ClockDivider dom ps))
+         => SNat ps
+         -> a -> Signal dom a -> Signal dom a
+     debounce _ start this = regEn start stable this
+       where
+         counter = register (0 :: Index (ClockDivider dom ps)) counterNext
+         counterNext = mux (changed start this) 0 (moreIdx <$> counter)
+         stable = counterNext .== maxBound
+
+     topEntity
+         :: Clock System
+         -> Signal System (Active High)
+         -> Signal System (Active High)
+     topEntity = withResetEnableGen board
+       where
+         board btn = toActive <$> led
+           where
+             btn' = debounce (SNat @(Milliseconds 5)) False $
+                 fromActive <$> btn
+             click = isRising False btn'
+             led = regEn False click (not <$> led)
+
+4.7 Summary
+        • A shared clock provides synchronicity, which in turn allows abstracting away
+          the propagation delay
+
+        • The RTL model describes stateful circuits as registers, combinational circuits
+          between them, and synchronous feedback through the registers’ write inputs
+
+        • Clash’s register primitive enables RTL circuit design, with feedback modeled
+          as register-guarded recursion
+
+        • The HiddenClockResetEnable typeclass clears up the clutter of getting the
+          clock, reset, and enable lines to every register
+
+        • Once timekeeping enters the picture, we need to make sure Clash is config-
+          ured to use the right clock settings for period calculations
+
+        • Clash provides a datatype Index n with exactly n values, which is useful for
+          counting or indexing. n doesn’t need to be a power of 2.
+
+      • Just because inputs are digital, doesn’t mean they can’t have noise: debounc-
+        ing can remove high-frequency components from a signal that we expect to
+        only have low-frequency changes

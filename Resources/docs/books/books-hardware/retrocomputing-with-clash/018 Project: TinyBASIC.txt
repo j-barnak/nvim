@@ -1,0 +1,1182 @@
+                                                            16
+                                                             Project: TinyBASIC
+
+     Compared to the Brainfuck computer and the CHIP-8 machine, the end result of
+     the Intel 8080 chapter is less satisfying: we have built a processor, but without a full
+     computer around it, there is no way to just jump in and start playing around with
+     it. In this chapter, we design and build a very simple machine that boots straight
+     into a BASIC interpreter, just like early home computers. The goal is not just the
+     gratification of turning on a self-built computer and programming it. Instead, this
+     chapter is also a stepping stone on our way to the two other, Intel 8080-based
+     computers in the last chapters of this book: the Space Invaders arcade machine and
+     the Compucolor 2 home computer.
+
+16.1 What is Tiny BASIC?
+     Tiny BASIC originally started in 1975 as a community project to create a BASIC
+     interpreter for the Altair 8800 kit computer, organized and released in a way that
+     we would recognize today as an open source project. It quickly spread to other
+     platforms, covering the big three home computer CPUs of Intel 8080, Motorola 6800
+     and MOS 6502. As its name suggests, one common thread among Tiny BASIC
+     versions was its aim to be small and efficient enough to run on these early home
+     computers with 8-bit CPUs running at single-digit MHz clock speed and very
+     limited RAM size.
+         Because of its licensing, community development, and distribution primarily
+     via printed newsletters, it is difficult to pinpoint the Tiny BASIC. Here, we will use
+     the so-called Palo Alto Tiny BASIC 2.0 by Li-Chen Wang1 . This Intel 8080 version
+     fits into 2 kB and is configured to be used with a total of 6 kB of RAM. In the name
+     of simplicity, and because the Altair 8800 kit didn’t come with keyboard input or
+     video output as standard, all I/O is done via a serial console, accessed by the CPU
+     through port operations. The actual UART functionality is implemented by the
+     Motorola 6850 Asynchronous Communications Interface Adapter.
+
+        1 Available online from https://www.autometer.de/unix4fun/z80pack/ftp/altair/tinybasic-2.0.prn
+
+          In this chapter, we will create two 8080-based computers that boot into
+      Tiny BASIC. The first one only uses parts we have already developed, and provides
+      a user experience similar to the Altair 8800 of the mid-seventies: the computer
+      exposes a serial port, and a serial terminal is required to interact with it. The second
+      version reimagines Tiny BASIC as a late-seventies home computer: a keyboard and
+      a screen can be connected directly to the board. This will require us to write a PS/2
+      keyboard interface implementation and a video driver that displays text.
+
+16.2 Asynchronous Communications Interface Adapter
+      Tiny BASIC itself is written with the assumption that an ACIA chip is connected to
+      the CPU via ports 0x10 and 0x11. This chip, controlled via IN and OUT instructions
+      in the program, is basically a UART implementation with a CPU-friendly interface
+      consisting of two register addresses.
+          The real Motorola 6850 used in the Altair 8800 provides more functionality
+      and configurability than what is used by Tiny BASIC. In particular, we will not
+      implement error detection and interrupting, and hard-code the communication
+      protocol of 9600 bits per second with 8 data bits and 1 stop bit. This leaves us with
+      very little to worry about:
+
+         • Register 0 is the control/status register. Since the control register is used
+           for configurability, we will simply ignore writes. Reading from this register
+           returns a byte with bit 0 containing output state (high if ready to output, low
+           if busy) and bit 1 containing input state (whether the next byte is ready for
+           reading). We will not implement the functionality of the other bits and keep
+           them at 0.
+
+         • Register 1 is the data register. Writing to it when the transmitter is not busy
+           starts a new transmission; reading returns the last byte received, and clears
+           the read-ready flag.
+
+          As we can see, reading from register 1 has a side-effect. This is an important dif-
+      ference between peripherals and memory, and we will represent port reads/writes
+      with a custom PortCommand data type:
+
+      data PortCommand port a
+          = ReadPort port
+          | WritePort port a
+          deriving (Generic, NFDataX, Show)
+
+    This way, a value of type Maybe (PortCommand port a) packs together both the
+selection of the given peripheral (in its Just-ness) and, when selected, the port
+command.
+    Since we already have a standalone UART implementation, and because
+we want to provide the same ACIA-compatible interface even in the second
+version of our Tiny BASIC computer that uses a keyboard and video output
+directly, no serial communication involved, we implement the ACIA without
+the actual serialization/deserialization built in. In other words, beside the
+Maybe (PortCommand (Unsigned 1) (Unsigned 8) input from the CPU and the
+Maybe (Unsigned 8) data output, the communication with the outside world is
+also in terms of a parallel Unsigned 8 type.
+
+acia
+    :: (HiddenClockResetEnable dom)
+    => Signal dom (Maybe (Unsigned 8))
+    -> Signal dom Bool
+    -> Signal dom (Maybe (PortCommand (Unsigned 1) (Unsigned 8)))
+    -> ( Signal dom (Unsigned 8)
+       , Signal dom (Maybe (Unsigned 8))
+       )
+
+    Internally, the only state is the last-read value, stored when the input byte is
+Just a new value and cleared when the data register is read.     The status register
+is computed from the receiving buffer and the transmitter’s readiness signal; for
+this simplified implementation, all other flags are reported as False. The output is
+emitted when the data register is written; we use a WriterT (First (Unsigned 8))
+effect to do this “on the side” while computing the port read value.
+
+acia inByte outReady cmd =
+    mealyStateB step Nothing (inByte, outReady, cmd)
+  where
+    step (inByte, outReady, cmd) =
+        fmap (second getFirst) . runWriterT $ do
+            traverse (put . Just) inByte
+            fmap fromJustX $ for cmd $ \case
+                -- Data register
+                ReadPort 0x1 -> do
+                    queued <- get <* put Nothing
+                    return $ fromMaybe 0x00 queued
+                WritePort 0x1 x -> do
+                    tell $ pure x
+                    return 0x00
+
+                       -- Control register
+                       ReadPort 0x0 -> do
+                           inReady <- isJust <$> get
+                           return $ bitCoerce $
+                               False :>
+                               False :>
+                               False :>
+                               False :>
+                               False :>
+                               False :>
+                               outReady :>
+                               inReady :>
+                               Nil
+                       WritePort 0x0 x -> do
+                           return 0x00
+
+16.3 The core logic board
+      We can share the logic board design between both versions of our Tiny BASIC
+      computer. It consists of the 8080 core, 2 kB of ROM containing the Tiny BASIC
+      software, 6 kB of RAM, and an ACIA peripheral controller. The only signal going
+      in and coming out is via the ACIA.
+
+       ROM 2 kB
+                                                                           inByte
+
+       RAM 2 kB                     8080
+                                                        ACIA
+                                                                           outByte
+       RAM 4 kB                                                            outReady
+
+      logicBoard
+          :: (HiddenClockResetEnable dom)
+          => Signal dom (Maybe (Unsigned 8))
+          -> Signal dom Bool
+          -> Signal dom (Maybe (Unsigned 8))
+
+         The details of the memory layout come from assumptions made by the
+      Tiny BASIC version we use:
+
+         • The two registers of the ACIA are accessed through port numbers 0x10 and
+           0x11.
+
+   • Since a real hardware Intel 8080 always starts execution at address 0x0000, we
+     have to put ROM there. Since Palo Alto Tiny BASIC v2.0 is 1900 bytes, we
+     round it up to 2 kB, giving us ROM from 0x0000 to 0x07ff.
+
+   • Starting at 0x0800, various states of the BASIC interpreter are stored before
+     the actual program text. We need RAM starting at this address.
+
+   • Initialization code sets the stack pointer to 0x2000. Recalling that the stack
+     grows towards 0x0000, that means we need RAM at least up to that address.
+
+    Putting it all together, we need 6 kB of RAM from 0x0800 to 0x1fff. We split it
+into two parts for easier address decoding: 2 kB from 0x0800 to 0x0fff, and 4 kB
+from 0x1000 to 0x1fff.
+    To decode the Either Port Address coming from the CPU, we need to extend
+the memoryMap facility with a pair of new address matchers:
+
+matchLeft
+    :: Addressing addr1 a
+    -> Addressing (Either addr1 addr2) a
+matchLeft = matchAddr [| either Just (const Nothing) |]
+
+matchRight
+    :: Addressing addr2 a
+    -> Addressing (Either addr1 addr2) a
+matchRight = matchAddr [| either (const Nothing) Just |]
+
+   The other extension is for attaching peripheral endpoints. The two key differ-
+ences between memory and an I/O port are that port reads can have side-effects,
+and that a port may have backpane signals going to the rest of the circuit (or to the
+outside world):
+
+type Port dom addr dat a =
+    Signal dom (Maybe (PortCommand addr dat)) ->
+    (Signal dom (Maybe dat), a)
+
+port
+    :: forall addr' a addr. ()
+    => ExpQ {- Port dom addr dat a -}
+    -> Addressing addr (Handle addr', Result)
+
+   The implementation of port differs from ram0 etc. only in that we don’t assume
+peripherals to be synchronous, and so we do our own delaying. This gives a
+unified interface for the CPU: port access is exposed with the same semantics as
+
+      synchronous memory, with read results appearing on the data bus at the next clock
+      cycle.
+
+      port mkPort = readWrite $ \addr wr ->
+        [| let cmd = cmdFromAddr <$> $addr <*> $wr
+               (read, x) = $mkPort cmdk
+           in (register undefined read, x) |]
+
+      cmdFromAddr :: Maybe addr -> Maybe a -> Maybe (PortCommand addr a)
+      cmdFromAddr (Just addr) Nothing = Just $ ReadPort addr
+      cmdFromAddr (Just addr) (Just w) = Just $ WritePort addr w
+      cmdFromAddr _ _ = Nothing
+
+          We are now ready to describe the full logic board in a very straightforward way:
+      all connections to the CPU are handled by the memoryMap and there are no sources
+      of interrupts.
+
+      logicBoard inByte outReady = outByte
+        where
+          CPUOut{..} = intel8080 CPUIn{..}
+
+          interruptRequest = pure False
+
+          dataIn = Just 0 |>. dataIn'
+          (dataIn', outByte) =
+            $(memoryMap [|Right 0 .|> _addrOut|] [|_dataOut|] $ do
+              rom <- romFromFile (SNat @0x0800) [|"tinybasic.bin"|]
+              ram <- ram0 (SNat @0x1800)
+              (acia, outByte) <- port @(Unsigned 1) [|acia inByte outReady|]
+
+               matchLeft @(Unsigned 8) $ do
+                   from 0x10 $ connect acia
+               matchRight @(Unsigned 16) $ do
+                   from 0x0000 $ connect rom
+                   from 0x0800 $ connect ram
+
+               return outByte)
+
+         In this simple computer, there are no shared resources where memory access
+      contention could occur. Although our Intel 8080 core is written in such a way
+      that memory access requests are explicitly signaled and peripherals can stall the
+      CPU (which is just a fancy way of saying the _addrOut and dataIn field’s types are
+      wrapped in Maybe), here we don’t use any of these features and write our memory
+      map in terms of non-Maybe addresses and read-out values.
+
+16.3.1 Testing
+
+       Since logicBoard contains the full Tiny BASIC computer apart from the details
+       of connecting its input and output to the outside world, it is just the right unit
+       to build an end-to-end testbench around it. We return to the Terminal package
+       from chapter 6 to sample keypresses at every simulated clock cycle, feed that as
+       input to logicBoard, and print its output by interpreting bytes as (printable) ASCII
+       characters.
+           Unfortunately, Terminal doesn’t provide a direct way to check for available events
+       without waiting for any to occur, but we can use STM’s MonadPlus instance to achieve
+       it via the awaitWith interface, creating a non-blocking version of awaitEvent:
+
+       sampleEvent
+           :: (MonadInput m)
+           => m (Maybe (Either Interrupt Event))
+       sampleEvent = awaitWith $ \int ev -> msum
+           [ Just . Left <$> int
+           , Just . Right <$> ev
+           , return Nothing
+           ]
+
+          Here, the third branch doesn’t block on either int or ev and immediately returns
+       Nothing if neither of the preceding two is ready to return with an interrupt or an
+       input event.
+          We turn sampleEvent’s output into a byte to feed into logicBoard by taking the
+       ASCII value of characters, using the carriage return '\r' for the Enter key, and
+       ignoring everything else:
+
+       sampleKey :: (MonadInput m) => m (Maybe (Unsigned 8))
+       sampleKey = fromEvent <$> sampleEvent
+         where
+           fromEvent (Just (Right (KeyEvent key mods)))
+               | CharKey c <- key, mods == mempty =
+                   Just . fromIntegral . ord $ c
+               | EnterKey <- key, mods == mempty =
+                   Just . fromIntegral . ord $ '\r'
+           fromEvent _ = Nothing
+
+          Printing a byte is a much simpler affair: '\r' is interpreted as a newline, printable
+       characters are printed, and everything else is (again) ignored:
+
+      printByte :: (MonadPrinter m) => Unsigned 8 -> m ()
+      printByte val = case chr . fromIntegral $ val of
+          '\r' -> putStringLn ""
+          c | isPrint c -> putChar c
+          _ -> return ()
+
+         Now that we have sampleKey to provide input, and printByte to consume output,
+      we can hook these up to logicBoard using the Clash simulator. Since printByte
+      works synchronously, printing then and there, we can keep the outReady input of
+      logicBoard at True.
+
+      main :: IO ()
+      main = do
+          sim <- simulateIO_ @System (uncurry logicBoard . unbundle)
+              (Nothing, True)
+
+          withTerminal $ runTerminalT $ forever $ sim $ \outByte -> do
+              traverse_ printByte outByte
+              inByte <- sampleKey
+              return (inByte, True)
+
+          Running this testbench not only gives us assurance that our Tiny BASIC com-
+      puter works, but also gives us our first user-programmable computer! Unlike the
+      Brainfuck machine and CHIP-8, which required their program to be burnt into the
+      FPGA configuration in the form of memory initializers, we can just type in programs
+      in a simplified dialect of BASIC.
+          Note that Tiny BASIC only accepts keywords in uppercase, so e.g. print "Hello"
+      is not syntactically valid, only PRINT "Hello". Here’s a sample interaction session:
+      TINY BASIC
+
+      OK
+      >10 FOR I=1 TO 10
+      >20 FOR J=1 TO I
+      >30 PRINT " ",
+      >40 NEXT J
+      >50 print "Hello from Clash"
+      >60 NEXT I
+      >LIST
+        10 FOR I=1 TO 10
+        20 FOR J=1 TO I
+        30 PRINT " ",
+        40 NEXT J
+        50 print "Hello from Clash"
+        60 NEXT I
+
+OK
+>run
+WHAT?
+
+OK
+>RUN
+WHAT?
+  50 print "Hello from Clash"
+
+OK
+>50 PRINT "Hello from Clash"
+>RUN
+ Hello from Clash
+  Hello from Clash
+   Hello from Clash
+    Hello from Clash
+     Hello from Clash
+      Hello from Clash
+       Hello from Clash
+        Hello from Clash
+         Hello from Clash
+          Hello from Clash
+
+OK
+
+Exercises
+     • One very annoying property of running Tiny BASIC via our test bench is that
+       there is no way to exit the simulator, other than killing the process externally.
+       Improve sampleKey so that an interrupt exits the simulation.
+
+     • Interrupts in Terminal correspond to Ctrl + C events from the user. How-
+       ever, Tiny BASIC is capable of handling Ctrl + C on its own, by breaking
+       the execution of the current BASIC program and putting us back at the prompt,
+       with the program intact in memory. Change sampleKey so that Terminal inter-
+       rupts are turned into byte 0x03 (ASCII end of text marker), and use Ctrl + D
+       (which is a CharKey event with ctrlKey set in the mods) to exit the simulation
+       instead.
+
+     • Increase test coverage by simulating outReady as sometimes False. Similar to
+       memory contention, we can use any (potentially randomly generated) scheme.
+       A realistic one would be one that e.g. sets outReady to False for a certain
+       number of cycles after a printByte.
+
+16.4 Version 1: serial I/O
+       Connecting the logicBoard to the outside world via a serial UART is just three lines
+       of code: one to instantiate the logicBoard, one to connect the serial receiver’s output,
+       and one to connect the serial transmitter’s input. The rest is just the naming of the
+       pins.
+
+       topEntity
+           :: "CLK"   ::: Clock System
+           -> "RESET" ::: Reset System
+           -> "RX"    ::: Signal System Bit
+           -> "TX"    ::: Signal System Bit
+       topEntity = withEnableGen board
+         where
+           board rx = tx
+             where
+               outByte = logicBoard inByte outReady
+               inByte = fmap unpack <$> serialRx (SNat @9600) rx
+               (tx, outReady) = serialTx (SNat @9600) (fmap pack <$> outByte)
+
+          Recall that Clash uses a 100 MHz clock domain as the default System one; hence,
+       the type of topEntity needs to be adapted on FPGA boards with a different built-in
+       clock.
+
+16.5   PS/2 keyboard interface
+       In the remainder of this chapter, we build a second version of our Tiny BASIC
+       computer that interfaces directly with a keyboard and a screen, instead of requiring
+       a serial terminal. First, we take care of keyboard input via the so-called PS/2
+       keyboard interface.
+           The name PS/2 comes from IBM’s Personal System/2, a personal computer first
+       released in 1987. It used a 6-pin connector for mouse and keyboard that became the
+       standard de facto connector for these devices until USB took over. At first glance, it
+       seems like a weird choice to pick PS/2 for interfacing with keyboards in this book: it
+       is more modern than the actual computers we are building, but not modern enough
+       to be around anymore: contemporary keyboards only have a USB connector.
+           However, for keyboard and mice, the PS/2 interface sits in the same sweet spot as
+       VGA for video: it is simple enough to implement in our own hardware, and there is
+       a huge stock of PS/2 and combo USB-PS/2 keyboards out there. Even better, some
+       FPGA development boards contain a chip that translates USB to PS/2: the physical
+       connector on the board is a USB socket accepting any modern USB keyboard, but
+       the FPGA pins are connected to a PS/2 reinterpretation of the incoming data.
+
+16.5.1   Synchronous serial communication
+         The PS/2 keyboard and mouse interface is a synchronous serial protocol. Syn-
+         chronous here means that unlike in a UART, there is a separate, explicit clock line; all
+         data line values are to be sampled on the falling edge of the clock line.
+
+          Data
+
+          Clock
+
+                       Start   𝑑0    𝑑1     𝑑2   𝑑3    𝑑4     𝑑5    𝑑6     𝑑7 Parity Stop
+
+            The full PS/2 protocol is bidirectional: the computer can send commands to the
+         peripheral, setting the state of LEDs found on Num Lock and similar keys. Here, we
+         only look at communication from the keyboard or mouse to the computer. In this
+         case, the clock and the data lines are both driven by the peripheral. At the lowest
+         level, sampling a PS/2 port simply means looking at the data line at the appropriate
+         time:
+         data PS2 dom = PS2
+             { ps2Clk :: "CLK" ::: Signal dom Bit
+             , ps2Data :: "DATA" ::: Signal dom Bit
+             }
+
+         samplePS2
+             :: (HiddenClockResetEnable dom)
+             => PS2 dom
+             -> Signal dom (Maybe Bit)
+         samplePS2 PS2{..} = enable (isFalling low ps2Clk) ps2Data
+
+             On some development boards, this author has had problems with noise without
+         some debouncing applied. Since the clock is specified to run between 10 KHz and
+         16.7 KHz, we can safely debounce at 1 𝜇s, effectively creating a low-pass filter:
+         samplePS2
+             :: forall dom. (HiddenClockResetEnable dom)
+             => (KnownNat (ClockDivider dom (Microseconds 1)))
+             => PS2 dom -> Signal dom (Maybe Bit)
+         samplePS2 PS2{..} =
+             enable (isFalling low (lowpass ps2Clk)) (lowpass ps2Data)
+           where
+
+           lowpass :: Signal dom Bit -> Signal dom Bit
+           lowpass = debounce (SNat @(Microseconds 1)) low
+
+          The rest of it comes down to making sense of this stream of sampled bits. In this
+       chapter, we only look at keyboards; mice use the same serial protocol with different
+       higher-level meaning of packets.
+
+16.5.2 Bytes from bits
+       The next level of PS/2 is decoding the stream of bits into bytes. The situation here
+       is very similar to a UART: pulling low indicates the start of a new byte, which is
+       transmitted as 8 data bits, followed by a parity bit and a high stop bit. The parity
+       bit is a so-called odd parity, meaning it is low if the data bits have high parity, and
+       vice versa.
+           Note how much simpler the code is compared to the UART, since the explicit clock
+       line allows us to fully decouple the sampling from the decoder state transitions. The
+       decoder runs in a WriterT that produces a one-byte output at the end of a successful
+       transmission.
+
+       data PS2State
+           = Idle
+           | Bit (BitVector 8) (Index 8)
+           | Parity (BitVector 8)
+           | Stop (Maybe (Unsigned 8))
+           deriving (Show, Eq, Generic, NFDataX)
+
+       decoder :: Bit -> WriterT (Last (Unsigned 8)) (State PS2State) ()
+       decoder x = get >>= \case
+           Idle -> do
+               when (x == low) $ put $ Bit 0 0
+           Bit xs i -> do
+               let (xs', _) = bvShiftR x xs
+               put $ maybe (Parity xs') (Bit xs') $ succIdx i
+           Parity xs -> do
+               put $ Stop $ unpack xs <$ guard (parity xs /= x)
+           Stop b -> do
+               when (x == high) $ tell . Last $ b
+               put Idle
+
+          We compute parity efficiently by a binary tree of xor gates built by folding over
+       the representation bit Vector:
+
+         parity :: forall a n. (BitPack a, BitSize a ~ (n + 1)) => a -> Bit
+         parity = fold xor . bitCoerce @_ @(Vec (BitSize a) Bit)
+
+            And finally, as usual, we turn the decoder into a circuit using mealyState, con-
+         suming the Maybe Bits coming out of the sampler:
+
+         decodePS2
+             :: (HiddenClockResetEnable dom)
+             => Signal dom (Maybe Bit)
+             -> Signal dom (Maybe (Unsigned 8))
+         decodePS2 = mealyState sampleDecoder Idle
+           where
+             sampleDecoder = fmap getLast . execWriterT . traverse_ decoder
+
+16.5.3   Packets from bytes
+         A standard keyboard has 104 keys2 , which can be crammed into 7 bits, leaving the
+         topmost bit to distinguish between press and release events, right?
+             While a tempting idea, this is not at all how PS/2 works. The actual keyboard
+         events, as transmitted from the keyboard to the computer, are represented as packets
+         (called scan codes) containing one or more bytes. These bytes together encode the
+         event type (pressed or released) and the key code of the key. The simplest case is
+         the press of a so-called non-extended key: these are one byte only, containing the key
+         code itself. Key releases are represented by prepending a 0xf0 byte to the key code.
+         To support more than 255 different keys (0xf0 being taken up for key releases), there
+         are also extended key codes that use the marker 0xe0 as the first byte.
+              So putting it all together, the first byte of a PS/2 scan code can either signal an
+         extended key code, a key release, or it can be the key code of a key press itself. If
+         it is an extended code, the next byte might still not be the key code itself, since it
+         itself can be a key release marker. Annoyingly, the release of a key with an extended
+         scan code is represented as 0xe0 followed by 0xf0 followed by the rest of the code,
+         instead of the much friendlier 0xf0 followed by 0xe0; this means we can’t just look
+         at the first byte to distinguish between presses and releases.
+            Here, we represent extended or non-extended key codes in a unified way as a
+         9-bit number. Decoded PS/2 bytes are parsed into a scan code by starting in the
+         Init state, and using a separate Extended state to remember if we should set the
+         topmost bit of the key code once the full scan code is ready to be assembled.
+
+            2 105 for some language layouts
+
+      data KeyEvent = KeyPress | KeyRelease
+          deriving (Generic, Eq, Show, NFDataX)
+
+      type KeyCode = Unsigned 9
+
+      data ScanCode = ScanCode KeyEvent KeyCode
+          deriving (Generic, Eq, Show, NFDataX)
+
+      data ScanState
+          = Init
+          | Extended
+          | Code KeyEvent Bit
+          deriving (Show, Generic, NFDataX)
+
+      parser :: Unsigned 8 -> WriterT (Last ScanCode) (State ScanState) ()
+      parser raw = get >>= \case
+          Init
+              | raw == 0xe0 -> put $ Extended
+              | raw == 0xf0 -> put $ Code KeyRelease 0
+              | otherwise   -> finish KeyPress 0
+          Extended
+              | raw == 0xf0 -> put $ Code KeyRelease 1
+              | otherwise   -> finish KeyPress 1
+          Code ev ext        -> finish ev ext
+        where
+          finish ev ext = do
+              tell $ pure $ ScanCode ev $ bitCoerce (ext, raw)
+              put Init
+
+      parseScanCode
+          :: (HiddenClockResetEnable dom)
+          => Signal dom (Maybe (Unsigned 8))
+          -> Signal dom (Maybe ScanCode)
+      parseScanCode = mealyState byteParser Init
+        where
+          byteParser = fmap getLast . execWriterT . traverse_ parser
+
+         In simpler cases, we only care about key press events as they come in:
+
+      keyPress :: ScanCode -> Maybe KeyCode
+      keyPress (ScanCode KeyPress kc) = Just kc
+      keyPress _ = Nothing
+
+16.5.4   Key codes
+         Interpreting the 9-bit key codes in a ScanCode is not a straightforward manner.
+         Computers are expected to apply their own keymap to these codes: the same key
+         code might mean Z with a QWERTY layout, or Q with Dvorak. For the Tiny BASIC,
+         we will use a hardcoded key map that corresponds to QWERTY: each “normal”
+         (non-modifier) key is mapped to its lowercase ASCII code. This way, we can feed
+         the keyboard driver’s output directly into the logicBoard.
+
+         charMap :: KeyCode -> Maybe Char
+         charMap 0x05a = Just '\r'
+         charMap 0x029 = Just ' '
+         charMap 0x04c = Just ';'
+         charMap 0x052 = Just '\''
+         charMap 0x054 = Just '['
+         charMap 0x05b = Just ']'
+         charMap 0x05d = Just '\\'
+         charMap 0x04a = Just '/'
+         charMap 0x041 = Just ','
+         charMap 0x049 = Just '.'
+         charMap 0x04e = Just '-'
+         charMap 0x055 = Just '='
+         charMap 0x045 = Just '0'
+         charMap 0x016 = Just '1'
+         charMap 0x01e = Just '2'
+         charMap 0x026 = Just '3'
+         charMap 0x025 = Just '4'
+         charMap 0x02e = Just '5'
+         charMap 0x036 = Just '6'
+         charMap 0x03d = Just '7'
+         charMap 0x03e = Just '8'
+         charMap 0x046 = Just '9'
+         charMap 0x01c = Just 'a'
+         charMap 0x032 = Just 'b'
+         charMap 0x021 = Just 'c'
+         charMap 0x023 = Just 'd'
+         charMap 0x024 = Just 'e'
+         charMap 0x02b = Just 'f'
+         charMap 0x034 = Just 'g'
+         charMap 0x033 = Just 'h'
+         charMap 0x043 = Just 'i'
+         charMap 0x03b = Just 'j'
+         charMap 0x042 = Just 'k'
+         charMap 0x04b = Just 'l'
+
+       charMap 0x03a = Just 'm'
+       charMap 0x031 = Just 'n'
+       charMap 0x044 = Just 'o'
+       charMap 0x04d = Just 'p'
+       charMap 0x015 = Just 'q'
+       charMap 0x02d = Just 'r'
+       charMap 0x01b = Just 's'
+       charMap 0x02c = Just 't'
+       charMap 0x03c = Just 'u'
+       charMap 0x02a = Just 'v'
+       charMap 0x01d = Just 'w'
+       charMap 0x022 = Just 'x'
+       charMap 0x035 = Just 'y'
+       charMap 0x01a = Just 'z'
+       charMap _ = Nothing
+
+       asciiMap :: KeyCode -> Maybe (Unsigned 7)
+       asciiMap = fmap (fromIntegral . ord) . charMap
+
+            This mapping is not complete, but should be enough for our purposes. Another
+       important class of keys are the modifiers, such as Shift or Alt . The PS/2 protocol
+       signals these keys as pressed or released individually, and it is up to the host to
+       maintain their state and to assign any meaning to them. In our case, we want to
+       care about Shift (for obvious reasons) and Ctrl , to detect Ctrl + C and pass
+       it to the rest of the circuit as an ASCII EOT. For these cases, it is useful to keep the
+       state of a given key:
+
+       keyState
+           :: (HiddenClockResetEnable dom)
+           => KeyCode
+           -> Signal dom (Maybe ScanCode)
+           -> Signal dom Bool
+       keyState target = regMaybe False . fmap fromScanCode
+         where
+           fromScanCode sc = do
+               ScanCode ev kc <- sc
+               guard $ kc == target
+               return $ ev == KeyPress
+
+16.5.5 The complete keyboard driver
+       The keyboard driver for our Tiny BASIC computer consumes the raw PS/2 bit
+       stream, and produces ASCII codes extended to full bytes, ready to be connected
+
+     to the ACIA. The Ctrl modifier is detected by watching for key codes 0x014 and
+     0x114; there are two of them because the PS/2 protocol assigns a different key code
+     to modifiers on the left and the right side of the keyboard. Similarly, left Shift has
+     key code 0x012 while the right one is 0x059.
+
+     keyboard
+         :: (HiddenClockResetEnable dom,
+             KnownNat (ClockDivider dom (Microseconds 1)))
+         => PS2 dom
+         -> Signal dom (Maybe (Unsigned 8))
+     keyboard ps2 = fmap extend <$> (toChar <$> shift <*> ctrl <*> sc)
+       where
+         sc = parseScanCode . decodePS2 . samplePS2 $ ps2
+
+            shift = keyState 0x012 sc .||. keyState 0x059 sc
+            ctrl = keyState 0x014 sc .||. keyState 0x114 sc
+
+            toChar shift ctrl sc = case asciiMap =<< keyPress =<< sc of
+                Just 0x63 | ctrl -> Just 0x03 -- Ctrl-C
+                Just c | not ctrl -> Just $ shiftASCII shift c
+                _ -> Nothing
+
+        Since Tiny BASIC only accepts keywords in uppercase, we write shiftASCII to
+     emulate the behavior of the Caps Lock key: for characters above 0x40, unshifted
+     input produces uppercase, and shifted input produces lowercase. The meaning of
+     “uppercase” and “lowercase” is also simplified to a single bit flip. This causes, for
+     example, the double quote " to be mapped to Shift + 2 instead of the more
+     conventional Shift + ' . Supporting the standard US keyboard layout would
+     require an unwieldy lookup table instead of the simple bit-twirling logic below.
+
+     shiftASCII :: Bool -> Unsigned 7 -> Unsigned 7
+     shiftASCII shift c
+       | c > 0x40 = if shift then c `setBit` 5 else c `clearBit` 5
+       | c > 0x20 = if shift then c `clearBit` 4 else c
+       | otherwise = c
+
+16.6 Textual video
+     Showing text in video involves picking the right glyphs from some font and ren-
+     dering them in the correct positions. These days, computers have no problem with
+     complicated text layouts composited with other, non-textual images; but the home
+     computers of the late seventies and eighties had a much simpler notion of textual
+
+      video. In these systems, text was rendered in some monospaced font at a fixed
+      regular grid. For example, the first version of the Commodore PET, released in
+      1977, used a text resolution of 40 × 25 characters with a single built-in font.
+          We can think of these regular grid-based text modes as a special case of tiled
+      graphics. Instead of containing pixel data directly, each cell in the video RAM stores
+      the character at the given position, and a separate font memory is consulted to find
+      the glyph of that character. The font memory can be ROM or RAM depending on
+      whether user-configurable fonts are supported.
+          The steps to calculate the value of a pixel at (𝑥, 𝑦) can thus be described in the
+      following way, handwaving away the details for now:
+
+         1. The screen coordinate (𝑥, 𝑦) is converted to a character coordinate and a glyph
+            coordinate.
+
+         2. The character coordinate is used as an address to load the character from video
+            RAM.
+
+         3. The character and the glyph coordinate together is used as an address to load
+            the right pixel of the glyph from the font.
+
+         4. The pixel data is turned into an RGB color. The details of this step depend
+            on the specifics of the video system; in this chapter, we will use fixed-color
+            monochrome video. In chapter 18, we will build a computer where each
+            character cell has an individually configurable background and foreground
+            color.
+
+         Note the data dependency between the first memory access (from video RAM)
+      and the second memory addressing (to the font memory). Tracking the signal
+      delay in the type system, as we have done in chapter 13, is going to be even more
+      important here; otherwise, we get weird, hard-to-debug rendering artifacts of the
+      “why is every fifth column off by 2 pixels” kind.
+         Since our Tiny BASIC computer has no way to readback from the text shown
+      on screen, our video controller in this chapter will provide a write-only interface to
+      video RAM:
+
+      video
+          :: (HiddenClockResetEnable Dom25)
+          => Signal Dom25 (Maybe (TextAddr, Unsigned 8))
+          -> VGAOut Dom25 8 8 8
+      video (fromSignal -> w) = delayVGA vgaSync rgb
+        where
+          VGADriver{..} = vgaDriver vga640x480at60
+          -- Continued below
+
+          A separate component will take care of turning the stream of output characters
+       coming from the ACIA into video RAM writes.
+
+16.6.1 Character addressing
+       Turning the raw (𝑥, 𝑦) video coordinate into a character coordinate is a straightfor-
+       ward matter of scaling; for example, if the font size is 8 × 8 pixels, we can use scale
+       on both coordinates to convert (𝑥, 𝑦) into (⌊ 𝑥/8⌋, ⌊ 𝑦/8⌋).
+
+         (charX, glyphX) = scale @TextWidth (SNat @FontWidth) . center $ vgaX
+         (charY, glyphY) = scale @TextHeight (SNat @FontHeight) . center $ vgaY
+
+           However, we then need to transform that character position (charX, charY) to
+       a linear address into the video memory.
+          The easy way out is to make either the horizontal or the vertical textual resolution
+       a power of 2. For example, suppose we decide on a resolution of 50 × 32 characters.
+       We can then turn any text coordinate (of type (Index 50, Index 32)) into a linear
+       address (of type Unsigned 11) by putting the five bits of the vertical address into the
+       lower bits:
+
+       addr :: (Index 50, Index 32) -> Unsigned 11
+       addr = bitCoerce
+
+          Similarly, if the horizontal resolution is a power of 2, we can just flip the repre-
+       sentation:
+
+       addr :: (Index 64, Index 40) -> Unsigned 12
+       addr (x, y) = bitCoerce (y, x)
+
+           This second variant has the added benefit that consecutive characters are stored
+       at consecutive addresses. So if the rest of the computer wants to display a string,
+       only the starting address needs any coordinate computation; the rest of it is a simple
+       manner of iterative incrementing.
+          However, if we want to create computers based on existing designs, the text
+       resolution is not a free variable. A Commodore PET needs exactly 40 × 25 characters
+       on the screen; moreover, those 1000 characters are stored in a single, contiguous,
+       1000-byte area of RAM. To address this problem head-on, we will deliberately make
+       things awkward in this chapter, and use a text resolution of 72 × 50 with a linear
+       address space of 72 · 50 = 3600 bytes:
+
+      type TextWidth = 72
+      type TextHeight = 50
+      type TextSize = TextWidth * TextHeight
+      type TextAddr = Index TextSize
+
+          In this setup, computing the address of the character that is at the currently
+      drawn raster dot can be by keeping a line address (the base address of the current
+      line) and a column offset. The line address is incremented whenever the character Y
+      coordinate changes, and the column offset is incremented every time the character
+      X coordinate changes. The character address is simply the sum of the two.
+
+          (newLine, lineAddr) = addressBy (snatToNum (SNat @TextWidth)) charY
+          (newChar, charOffset) = addressBy 1 charX
+
+          charAddr = lineAddr + charOffset
+
+          The reason to keep two counters instead of just one, is because the line address
+      stays the same for multiple raster lines, as many as the height of the font. For
+      example, if the font is 8 pixels tall, the column offset needs to sweep the full interval
+      of 0, 1, . . . , 71 a total of eight times without the line address changing. We can
+      see the implementation of addressBy takes care to reset the address component
+      whenever the underlying coordinate is zero; this is precisely to avoid the character
+      offset “spilling over” into the next line by taking on a value larger than TextWidth.
+
+      addressBy
+          :: (NFDataX coord, NFDataX addr, Num coord, Eq coord, Num addr)
+          => (HiddenClockResetEnable dom)
+          => addr
+          -> Signal dom (Maybe coord)
+          -> (DSignal dom 0 Bool, DSignal dom 1 addr)
+      addressBy stride coord = (new, addr)
+        where
+          start = fromSignal $ coord .== Just 0
+          new = fromSignal $ changed Nothing coord
+          addr = delayedRegister 0 $ \addr ->
+              mux (delayI False start) 0 $
+              mux new (addr + pure stride) $
+              addr
+
+         Given the character address, we can then use that to load the currently displayed
+      character from the video RAM. Because the CPU has no read access to the video
+      RAM, there is no room for access contention: even though we will only use the
+
+       loaded value when newChar holds, we might as well read from charAddr in every
+       cycle.
+
+              charLoad = delayedRam (blockRam1 NoClearOnReset (SNat @TextSize) 0)
+                  charAddr (delayI Nothing w)
+
+16.6.2 Glyph addressing
+      The character loaded from video RAM is an index into the font memory; in our case,
+      the font ROM. The font ROM contains a glyph of each character. Each glyph is a
+      monochrome mask of a set size; for example, using Marcel Sondaar’s Public Domain
+      8 × 8 font from https://github.com/dhepper/font8x8, this is what the lowercase letter
+      “g” looks like:
+
+                                   7654 3210               7 6 5 4 3 2 1 0
+                      0   0x00   0b0000_0000
+                      1   0x00   0b0000_0000
+                      2   0x76   0b0111_0110
+                      3   0x99   0b1100_1100
+                      4   0x99   0b1100_1100
+                      5   0x7c   0b0111_1100
+                      6   0x0c   0b0000_1100
+                      7   0xf8   0b1111_1000
+
+          On any given raster line, we will need to render a single row of this image
+       before switching over to the same row of the next character’s glyph. Therefore, it
+       makes sense to make the row be the unit of storage for the glyph data. In other
+       words, the font ROM will contain eight bytes for each glyph; for example, the bytes
+       0x00 0x00 0x76 0x99 0x99 0x7c 0x0c 0xf8 for the character “g”. To get the 𝑛-th
+       row of the glyph for character 𝑐, we just look up the byte at address 8𝑐 + 𝑛 in a piece
+       of ROM. The ROM is loaded with the contents of a font file in the above format:
+       eight bytes per glyph, row by row.
+
+       type FontWidth = 8
+       type FontHeight = 8
+
+       fontRom
+           :: (HiddenClockResetEnable dom)
+           => DSignal dom n (Unsigned 8)
+           -> DSignal dom n (Index FontHeight)
+           -> DSignal dom (n + 1) (Unsigned FontWidth)
+       fontRom char row = delayedRom (fmap unpack . romFilePow2 "font.bin") $
+           bitCoerce <$> D.bundle (char, row)
+
+         The current glyph row is loaded from the above fontRom for each newChar by
+      taking the glyph Y coordinate from the vertical coordinate scaler. We then shift out
+      the current row into the current pixel; this is similar to the CHIP-8 video controller
+      from chapter 13. The only reason to start with the highest bit is so that the glyphs
+      visually match their bit pattern; this is also how fonts were stored in binary format
+      on most home computers. Of course, if the font data is flipped, we also need to flip
+      the shift direction.
+
+          glyphLoad = fontRom charLoad (delayI Nothing (fromSignal glyphY) .<|
+          0)
+          glyphRow = delayedRegister 0x00 $ \glyphRow ->
+            mux (delayI False newChar) glyphLoad $
+            (`shiftL` 1) <$> glyphRow
+
+          visible = fromSignal $ isJust <$> charX .&&. isJust <$> charY
+          pixel = enable (delayI False visible) $ msb <$> glyphRow
+
+         While the above works for native resolutions, what happens if we want to scale
+      up, for example, the PET’s 40 × 25 text screen with an 8 × 8 font to the standard
+      VGA resolution of 640 × 480? Each glyph pixel now corresponds to a 2 × 2 rectangle
+      of physical pixels; and that means we should only shift glyphRow whenever the
+      logical X coordinate (i.e. glyphX) changes. This is exactly the same situation we have
+      encountered with the CHIP-8 machine, which scaled its 64×32 internal frame buffer
+      by 10.
+
+          newCol = fromSignal $ changed Nothing glyphX
+          glyphRow = delayedRegister 0x00 $ \glyphRow ->
+            mux (delayI False newChar) glyphLoad $
+            mux (delayI False newCol) ((`shiftL` 1) <$> glyphRow) $
+            glyphRow
+
+         We lift this pattern of “left-shifter with reload” for reuse in further chapters.
+      For versatility, we change it to avoid the extra one-cycle delay via the usual trick of
+      returning the next value of the register instead of the register itself:
+
+      shifterL
+          :: (BitPack a, HiddenClockResetEnable dom)
+          => Signal dom (Maybe a)
+          -> Signal dom Bool
+          -> Signal dom Bit
+      shifterL load tick = msb <$> next
+        where
+          r = register 0 next
+
+              next = muxA
+                  [ fmap pack <$> load
+                  , enable tick $ (`shiftL` 1) <$> r
+                  ] .|>.
+                  r
+
+           We can rewrite the definition of pixel using shifterL by making sure glyphLoad
+       is only enabled when a new glyph row should be loaded:
+
+              glyphLoad = enable (delayI False newChar) $
+                  fontRom charLoad (delayI Nothing (fromSignal glyphY) .<| 0)
+              newCol = delayI False $ fromSignal $ changed Nothing glyphX
+              pixel = enable (delayI False visible) $
+                  liftD2 shifterL glyphLoad newCol
+
+          Here, liftD2 is a binary verison of liftD written in exactly the same way, just
+       with two arguments:
+
+       liftD2
+           :: (HiddenClockResetEnable dom)
+           => (forall dom'. (HiddenClockResetEnable dom') => Signal dom' a ->
+           Signal dom' b -> Signal dom' c)
+           -> DSignal dom d a -> DSignal dom d b -> DSignal dom d c
+       liftD2 f x y = unsafeFromSignal $ f (toSignal x) (toSignal y)
+
+          Finally, it is easy to see that this same approach would work for user-editable
+       fonts as well. In the most versatile setup, both the character RAM and the font
+       RAM can be parts of a single main RAM accessible to other parts of the computer
+       (most notably, the CPU) as well. Character and glyph addresses are resolved by
+       adding the base addresses of the two memory areas to the addresses computed
+       from the raster position. The only constraint is that the font must not be wider
+       than one memory cell. If, for example, we have FontWidth ~ 10 and main memory
+       containing Unsigned 8 values (i.e. bytes), then loading glyph rows becomes more
+       complicated than presented here.
+
+16.6.3 Rendering into colors
+       Nothing new here: we use the same palette-based logic as in the similarly
+       monochrome CHIP-8. For variety’s sake, we will use a green foreground color,
+       reminiscent of old phosphorous screens:
+
+          rgb = maybe frame palette <$> pixel
+
+          frame = (0x30, 0x30, 0x30)
+          palette 0 = (0x00, 0x00, 0x00)
+          palette 1 = (0x33, 0xff, 0x33)
+
+16.7 Screen editing
+      Our video controller is capable of rendering a full screen’s worth of text, based
+      on previous writes of characters to screen positions represented by video RAM
+      addresses. In a “normal” computer, this is usually sufficient, since any software
+      running on the CPU can do its own internal housekeeping to calculate the correct
+      coordinates when wanting to print text. This software can either be part of the
+      user’s program, or provided via operating system routines.
+         Our Tiny BASIC computer, however, has no program running on it other than
+      the Tiny BASIC interpreter itself. And since said interpreter was originally written
+      to do serial I/O via the ACIA chip, it has no functionality to maintain a cursor
+      position so that subsequent characters can be printed left to right, top to bottom.
+          In this section, we develop a hardware solution to this problem: a screen editor
+      circuit that consumes the output serially, and converts it to a sequence of video
+      RAM writes.
+        At its simplest, we can exploit that video RAM addresses are linear, and use a
+      mere counter:
+
+      screenEditor
+          :: (HiddenClockResetEnable dom)
+          => Signal dom (Maybe (Unsigned 8))
+          -> Signal dom (Maybe (TextAddr, Unsigned 8))
+      screenEditor chr = packWrite <$> addr <*> chr
+        where
+          addr = regEn 0 (isJust <$> chr) $ nextIdx <$> addr
+
+          However, this has serious limitations when it comes to handling multiple lines
+      of output. First, let’s add support for consuming newline characters. When the chr
+      is a newline (ASCII \n 0x0a), the subsequent character should be printed to the first
+      column of the next row of text. We can use a trick similar to the video controller
+      to achieve this, by storing the current line’s base address and the current column’s
+      address offset separately:
+
+screenEditor = mealyState putChar (0, 0)
+  where
+    base `offsetBy` x = base + fromIntegral x
+
+       stride = snatToNum (SNat @TextWidth)
+       nextLine = satAdd SatWrap stride
+
+       putChar chr = do
+           (base, x) <- get
+           case chr of
+               Nothing -> do
+                   return Nothing
+               Just 0x0a -> do
+                   put (nextLine base, 0)
+                   return Nothing
+               Just chr -> do
+                   put (base, nextIdx x)
+                   return $ Just (base `offsetBy` x, chr)
+
+   At this point we are also set up to implement line-wrapping: whenever x would
+overflow, we increment the base address to point to the next line instead:
+
+Just chr -> do
+    put $ maybe (nextLine base, 0) (base,) $ succIdx x
+    return $ Just (base `offsetBy` x, chr)
+
+    The other big missing feature of our screen editor is handling running out of
+vertical real estate. After 50 lines of output, where should the next line be put? With
+our implementation of nextLine, the current position jumps from the last line back
+to the first one. This isn’t too bad on its own (we will see an alternative suggestion
+as an exercise), but if the newly printed lines are shorter than the previous ones,
+the rest of the old first line will remain as garbage to the right of the fifty-first
+line. For example, if the first line printed was Clash is awesome, the fiftieth was
+Look at the crap that most, a reasonable fifty-first line is HDLs are, but it would
+lead to the very misleading HDLs are awesome line being shown at the top of the
+screen.
+    We are going to improve this by clearing the next line when going to a new line.
+To clear a line, we want to emit a full line’s worth of space (ASCII 0x20) characters.
+Of course, this is going to take some time – 72 cycles, to be exact; during which the
+screen editor is unable to process character-printing requests. Luckily, because our
+Tiny BASIC computer was designed around serial communication, which is even
+slower (a lot slower), we already have a way of doing flow control: the ACIA has
+the “output ready” pin for exactly this reason.
+
+         We extend the type of screenEditor to expose a readiness signal in the same
+      format as our UART: a second output signal of type Bool.
+
+      screenEditor
+          :: (HiddenClockResetEnable dom)
+          => Signal dom (Maybe (Unsigned 8))
+          -> (Signal dom (Maybe (TextAddr, Unsigned 8)), Signal dom Bool)
+
+         Our screen editor can now be in one of two states: either accepting requests and
+      printing them to the next position of the current line, or busy clearing the next line.
+
+      data EditorState
+          = Ready TextAddr (Index TextWidth)
+          | Clear TextAddr (Index TextWidth)
+          deriving (Generic, NFDataX)
+
+          Not much changes in screenEditor’s implementation beside the state type. The
+      Clear state just iterates through all values of x before returning to the Ready state;
+      because we use Clear to prepare the next line for the output that is coming, when
+      done, we simply set the next output position back to the beginning of the just-cleared
+      line.
+
+      screenEditor = mealyStateB step (Ready 0 0)
+        where
+          base `offsetBy` x = base + fromIntegral x
+
+          stride = snatToNum (SNat @TextWidth)
+          nextLine = satAdd SatWrap stride
+
+          step chr = do
+              write <- putChar chr
+              ready <- gets $ \case
+                  Ready _ _ -> True
+                  Clear _ _ -> False
+              return (write, ready)
+
+          putChar chr = get >>= \case
+              Clear base x -> do
+                  put $ maybe (Ready base 0) (Clear base) $ succIdx x
+                  return $ Just (base `offsetBy` x, 0x20)
+              Ready base x -> case chr of
+                  Nothing -> do
+                      return Nothing
+
+                  Just 0x0a -> do
+                      put $ Clear (nextLine base) 0
+                      return Nothing
+                  Just chr -> do
+                      put $ maybe (Clear (nextLine base) 0) (Ready base) $
+                          succIdx x
+                      return $ Just (base `offsetBy` x, chr)
+
+16.8 Version 2: Keyboard and video
+     The keyboard driver, the video driver and the screenEditor, while doing quite a lot
+     internally, expose the same one-character-at-a-time interface than a UART.
+         Let’s look at the two versions side by side. First, we have the serial one from
+     before, repeated here for easy comparison:
+     topEntity
+         :: "CLK"   ::: Clock System
+         -> "RESET" ::: Reset System
+         -> "RX"    ::: Signal System Bit
+         -> "TX"    ::: Signal System Bit
+     topEntity = withEnableGen board
+       where
+         board rx = tx
+           where
+             outByte = logicBoard inByte outReady
+             inByte = fmap unpack <$> serialRx (SNat @9600) rx
+             (tx, outReady) = serialTx (SNat @9600) (fmap pack <$> outByte)
+        And then the new version, where inByte is fed from the result of decoding the
+     PS/2 keyboard input, and outByte and outReady are handled by our screenEditor:
+     topEntity
+         :: "CLK_25MHZ" ::: Clock Dom25
+         -> "RESET"      ::: Reset Dom25
+         -> "PS2"        ::: PS2 Dom25
+         -> "VGA"        ::: VGAOut Dom25 8 8 8
+     topEntity = withEnableGen board
+       where
+         board ps2 = vga
+           where
+             outByte = logicBoard inByte outReady
+             inByte = keyboard ps2
+             (vidWrite, outReady) = screenEditor outByte
+             vga = video vidWrite
+
+          And here we have, in just a handful of lines of code, an interactive home computer
+      of our own design, running a BASIC interpreter just like the real machines of the
+      late seventies and early eighties.
+
+      Exercises
+         • Extend the ACIA implementation to provide the full functionality of the Mo-
+           torola 6850; full datasheets for the chip can be found online. The main fea-
+           tures to add are configurable bit rates and more extensive error reporting. At
+           startup, Tiny BASIC writes 0x15 into the control register of the ACIA, which
+           corresponds to 8 data bits, no parity bit, and one stop bit, with the serial clock
+           computed from the master clock by dividing by 16. For our Clash implemen-
+           tation, it makes more practical sense to instead have three hardcoded common
+           bit rates (e.g. 2400, 9600, and 115,200), so that the main clock period can be
+           changed independently.
+
+         • Hook up the PS/2 keyboard driver to the designs from previous chapters. It
+           can be used with the CHIP-8 by using some 4 × 4 area of keys; it can be used
+           with the Brainfuck computer by listening for hexadecimal digits. Similarly, the
+           calculator extends naturally to allowing keyboard input. As an extra exercise,
+           instead of replacing the existing keypad or serial input, add the PS/2 input as
+           an alternative, handling inputs from all peripherals at the same time.
+
+         • Implement a cursor to show the position of the next character. This requires
+           extending the interface of the video controller, to allow other parts of the
+           circuit to provide a cursor position signal. The screen editor is in a perfect place
+           to provide that signal. For extra credit, make the cursor blink.
+
+         • Instead of wrap-around, implement vertical screen scrolling when the cursor
+           gets to the last line of the screen. One way of implementing this, that is easy to
+           do in hardware, is to add a vertical offset input signal to the video controller,
+           and use that when computing the address of the currently drawn character.
+           Then, the screen editor can maintain the vertical offset so that it starts at zero,
+           and remains zero until the last line is used up. When we get to the last line,
+           the vertical offset increases by one, causing everything on the screen to shift
+           up by one line, putting the previously first line as the new last one.
+
+16.9 Summary
+         • Tiny BASIC was originally designed to run on very small and simple comput-
+           ers, requiring only a single peripheral chip beside the CPU. Our first version
+           recreated exactly this minimal setup.
+
+   • By decoupling the serialization/deserialization from flow control, we were
+     able to reuse the same ACIA implementation with other input/output modal-
+     ities; in this case, we replaced serial input with a keyboard and serial output
+     with video.
+
+   • PS/2 is a synchronous serial protocol which is very easy to implement in
+     hardware, and gives access to a wide range of off-the-shelf keyboards.
+
+   • To implement textual video, we do two levels of indirection: the video memory
+     contains the characters in each cell, and the font memory contains the shape
+     of each character; the former is an index into the latter. Other data can also
+     be stored per cell; for example we could have two bytes for each text position,
+     one containing the character and the other containing the foreground and
+     background color.

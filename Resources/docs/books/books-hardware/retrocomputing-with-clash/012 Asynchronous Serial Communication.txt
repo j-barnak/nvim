@@ -1,0 +1,724 @@
+            Asynchronous Serial Communication
+                                                     10
+     Serial communication is when a one-bit channel is used to transmit data bit by
+     bit. It can be thought of as a kind of temporal 𝑛-to-1 multiplexing where 𝑛 is the
+     number of bits transmitted. In serial communication however, the 𝑛 is usually not
+     fixed upfront; instead, transmission happens either continuously, or whenever new
+     data is ready to be sent. Its main advantage compared to parallel communication is
+     the lower number of wires needed. In this book, we are going to implement serial
+     communication to interface with other devices that already use some kind of serial
+     protocol, so we don’t really have much say in the matter: if we want to talk to those
+     devices, we have to talk serial.
+
+10.1 Synchronicity
+     To make serial communication work, the transmitter and the receiver has to have
+     some kind of shared notion of time. To see why, imagine a serial protocol that just
+     says “keep changing the one-bit channel to the next bit of the message”. If the
+     receiver side observes the channel’s value being high for 1 second and low for 1
+     second, is that meant to correspond to the bit stream 0b10, or 0b1100 or 0b111000,
+     or 0b11111100 because the transmitter decided to take things a bit slower after the
+     first six bits?
+         The two solutions to this problem is either for the sender and the receiver to agree
+     on a transmission speed (so-called asynchronous serial communication), or to add
+     a second clock line that signals when the data line has a new value (synchronous
+     serial communication). Depending on the details of the protocol, the clock signal
+     may be generated either by the transmitter or the receiver side.
+         Let’s see how our example of a 1 second high level followed by 1 second low
+     level would be disambiguated into a stream of bits using either an asynchronous
+     or a synchronous protocol. In the first case, let’s say the protocol prescribes a
+     transmission period of 250 ms per bit. Then the receiver would know that the full 1
+     second of a high level would mean 4 high bits:
+
+                               1       1       1   1        0   0       0   0
+
+                          0s                       1s                       2s
+
+          In the second case, suppose the protocol says to use a falling-edge clock, i.e. the
+      data line is sampled by the receiver at every time the clock line goes from high to low.
+      Then, the following constellation of clock and data signals would correspond to the
+      bit sequence 0b11100. Note that in this example, the clock signal isn’t completely
+      regular; the data line is sampled according to the clock line, not according to the
+      real passage of time.
+
+                                   1       1            1           0        0
+
+                   Data
+
+                   Clock
+
+          In this chapter, we will implement the so-called Universal Asynchronous Serial
+      Communication protocol, which we will use to communicate with “normal” comput-
+      ers outside the FPGA. Later, in chapter 16, we will implement the synchronous PS/2
+      protocol to interface with keyboards.
+
+10.2 Universal Asynchronous Serial Communication
+      As the “universal” part of its name implies, this is a whole family of serial communi-
+      cation protocols. Our interest in this family is because it provides a straightforward
+      way to communicate with other computers; in particular, the personal computer
+      we’re using to develop and compile our Clash code. Even though PCs moved away
+      from the classical RS-232 serial port two decades ago, FPGA development boards
+      usually provide a USB-over-serial interface. This means plugging in the FPGA dev
+      board via USB creates a virtual serial port on the PC side, which can then be used
+      by data transfer programs or interactive serial terminal applications. To put this in
+      concrete terms, the net result of all this is that we will be able to type in a terminal
+      program on our PC and get meaningful replies from our circuit running on the
+      FPGA, printed in the same window.
+
+           We are going to do this by implementing a device called a universal asynchronous
+       receiver-transmitter (UART) which takes care of interfacing between parallel data of
+       some set width and the one-bit serial stream. By using two pins of the FPGA, one for
+       transmission and one for reception, we can implement two-directional full-duplex
+       communication.
+
+10.2.1 Serial data format
+       Before we can describe the format of the serial data used in UART communication,
+       we first need to enumerate the free parameters that we’ll need to refer to in the
+       description. The parameters describing the UART’s behavior are:
+
+          • The data rate (in bits per second). In practice, there are some standard rates
+            (e.g. powers-of-2 multiples of 300 or 600 bps) due to historical reasons. Below
+            where we refer to “one bit’s length” it is meant according to this rate.
+
+          • The order of the data bits, i.e. least- or most-significant bit first.
+
+          • The number of data bits 𝑑, between 5 and 9.
+
+          • The scheme used for the parity bit, if any.
+
+          • The number of stop bits 𝑠 (at least one).
+
+             Of course, both communicating parties need to be configured for the same
+       parameters for successful data transfer.
+             With these parameters set, the serial format for transmitting the data bits
+       𝑥 1 , 𝑥 2 , . . . , 𝑥 𝑑 is as follows:
+
+         1. At idle, the line is kept at the high level.
+
+         2. When transmission starts, first a start bit must be sent. This is done by setting
+            the line to low, and keeping it such for one full bit length.
+
+         3. Then, the 𝑑 data bits are sent, by keeping the line low or high for one bit length
+            for each bit.
+
+         4. If parity checking is used, the parity bit is sent next. Depending on the parity
+            scheme used, the parity bit ensures that the total number of high data and
+            parity bits is even or odd. This is not enough for error correction, but at least
+            makes one-bit error detection possible: for example, if the 8 data bits and the
+            odd parity bit received are 0b111010101, we know there was an error (caused
+            by e.g. line noise) since an even number of bits are high.
+
+         5. The 𝑠 stop bits are sent at high value.
+
+       The following figure illustrates the 𝑑 = 7, 𝑝 = 1, 𝑠 = 1 configuration:
+
+                 Start    𝑑0     𝑑1     𝑑2      𝑑3     𝑑4     𝑑5     𝑑6    Parity Stop
+
+           For simplicity’s sake, we will hardcode some of the UART parameters: in partic-
+       ular, we will transmit the least significant bit first, have no parity bits, and use one
+       stop bit. These choices will put us in good company, since these are the defaults
+       used by most PC applications. It also matches what we will need in chapter 18
+       to implement the virtual floppy drive. Fully universal generalization of the UART
+       implementation could still be useful for other applications, of course, but we leave
+       it as an exercise for the reader.
+
+10.3   Serial Transmitter
+       Human communication shows us that shouting into the void is easier than listening.
+       In this theme, we will start with implementing the transmitter half of a receiver-
+       transmitter.
+           For a first version, let’s write a serial transmitter that transmits at its driving
+       clock’s rate. At any given cycle, the transmitted bit is determined by where we are
+       in the process (e.g. it is low for the start bit) and also, of course, by the bit-vector we
+       are transmitting. So the transmitter’s internal state will need to know which part
+       of the protocol we are transmitting; and once transmission starts, will need to store
+       the bits to be shifted out:
+
+       data TxState
+           = TxIdle
+           | StartBit (BitVector n)
+           | DataBit (BitVector n) (Index n)
+           | StopBit
+           deriving (Show, Eq, Generic, NFDataX)
+
+         We can approach this with a Moore machine mindset, since we know exactly
+       what the output bit should be in each state:
+
+output :: TxState -> Bit
+output TxIdle = high
+output (StartBit _) = low
+output (DataBit xs i) = xs ! i
+output StopBit = high
+
+    This will do the right thing (i.e. least-significant bit first) for DataBit if i is
+decreasing, since xs ! (n-1) is the least significant bit of xs, x ! (n-2) is the
+second-least significant bit, and so on. So in our step function, we just need to keep
+decreasing i until it gets to the end. Also, we only need to look at the input in the
+TxIdle state: once we get running, the TxState stores the data. This makes for a
+much easier-to-use interface than requiring client code to keep the input constant
+for the whole duration of the transmission.
+nextState
+    :: (KnownNat n) => TxState n -> Maybe (BitVector n) -> TxState n
+nextState TxIdle input = maybe TxIdle StartBit input
+nextState (StartBit xs) _ = DataBit xs maxBound
+nextState (DataBit xs i) _ = maybe StopBit (DataBit xs) $ predIdx i
+nextState StopBit _ = TxIdle
+
+   This would work, but the vector indexing in the DataBit xs i branch of output
+can be rewritten to be much lighter on FPGA parts usage. If we keep shifting xs to
+the right at every nextStep, then its least significant bit will go through all bits of
+the input as we process the n states of DataBit, and now we don’t need indexing.
+Also, we can get rid of the ugly counting-down in the index, and keep counting up,
+since its value doesn’t matter anymore, just that we stay in StartBit for n bits.
+
+   Bits stored in state:    𝑑𝑛    ...    𝑑2    𝑑1    𝑑0            Least significant bit: 𝑑0
+
+                                              Shift to the right
+
+   Bits stored in state:    0    𝑑𝑛     ...    𝑑2    𝑑1            Least significant bit: 𝑑1
+
+                                        . . . Shift to the right 𝑛 − 1 times total
+
+   Bits stored in state:     0   0      ...   0     𝑑𝑛             Least significant bit: 𝑑𝑛
+
+            The changes required to output and nextState are tiny. bvShiftR shifts to the
+         right by adding the given bit to the left, and returns the just-shifted-out bit along
+         with the new bits.
+         bvShiftR :: (KnownNat n) => Bit -> BitVector n -> (BitVector n, Bit)
+         bvShiftR x xs = bitCoerce (x, xs)
+
+         output (DataBit xs i) = lsb xs
+
+         nextState (StartBit xs) _ = DataBit x 0
+         nextState (DataBit xs i) _ =
+             let (xs', _) = bvShiftR 0 xs
+             in maybe StopBit (DataBit xs') $ succIdx i
+
+             If we put nextState and output together using the moore combinator, we get the
+         following serial transmitter (a UAT, maybe?):
+
+         minimalTx
+             :: (KnownNat n, HiddenClockResetEnable dom)
+             => Signal dom (Maybe (BitVector n)) -> Signal dom Bit
+         minimalTx = moore nextState output TxIdle
+
+            But this is simplified to uselessness, so we have to address at least its two main
+         shortcomings first, before building anything around it: we need to slow it down to
+         the transmission rates that are actually going to be supported by anything on the
+         other side, and we need a way to signal the consumption of incoming data.
+
+10.3.1   Taking it slow
+         One approach to slowing down any Moore machine could be to simply hook up an
+         extra Bool signal, and only update the state whenever its value is True:
+
+         mooreSlow
+             :: (HiddenClockResetEnable dom, NFDataX s)
+             => (s -> i -> s)
+             -> (s -> o)
+             -> s
+             -> Signal dom Bool
+             -> Signal dom i
+             -> Signal dom o
+         mooreSlow step output tick input =
+             moore step' output $ bundle (tick, input)
+           where
+             step' s (tick, input) = if tick then step s input else s
+
+    But this is not quite flexible enough for a UART, since we want to leave the TxIdle
+state as soon as an input is available, and start the clock only then. So instead, we
+need to keep a separate counter for all the slow states, which we can start at the
+TxIdle to StartBit transition; and then at every tick, we maintain this counter to
+see if we should really go to the next state.
+   We can make the number of cycles to maintain each output bit fully freely
+configurable by making it an extra input (alongside the BitVector n to shift out).
+For most applications, we will set it to a fixed number (calculated from the clock rate
+and a given target rate), but for others, it makes sense to leave it configurable. For
+example, if we’re building a generic serial terminal (with a screen and a keyboard
+hooked up as peripherals), we would want to enable the user to change the serial
+communication settings to whatever is used by the computer on the other end.
+
+data TxState n
+    = TxIdle
+    | TxBit Word32 (TxBit n)
+    deriving (Show, Eq, Generic, NFDataX)
+
+data TxBit n
+    = StartBit (BitVector n)
+    | DataBit (BitVector n) (Index n)
+    | StopBit
+    deriving (Show, Eq, Generic, NFDataX)
+
+nextState
+    :: (KnownNat n)
+    => TxState n -> Word32 -> Maybe (BitVector n) -> TxState n
+nextState TxIdle _ input = maybe TxIdle (TxBit 1 . StartBit) input
+nextState (TxBit cnt s) dur _
+  | cnt < dur = TxBit (cnt + 1) s
+  | otherwise = case s of
+      StartBit xs -> TxBit 1 $ DataBit xs 0
+      DataBit xs i -> TxBit 1 $
+          let (xs', _) = bvShiftR 0 xs
+          in maybe StopBit (DataBit xs') $ succIdx i
+      StopBit -> TxIdle
+
+(output doesn’t need changing from the previous version, modulo pattern matching
+on TxBit _ s instead of s for slow states.)
+    Then, implementing the slowed-down equivalent of minimalTx is a simple matter
+of shuffling around parameters by judicious use of bundling and currying:
+
+       slowTx
+           :: (KnownNat n, HiddenClockResetEnable dom)
+           => Signal dom (Maybe (BitVector n)) -> Signal dom Bit
+       slowTx = curry $ moore (uncurry . nextState) output TxIdle . bundle
+
+10.3.2 Upstream control
+       To see why we need to do some kind of upstream control, imagine a very simple
+       circuit that keeps sending a predetermined message, byte by byte. If the full message
+       is just one byte x, this is easy to do even with minimalTx: we can put Just x as the
+       input, which will be repeatedly picked up in the TXState of TxIdle. But if we want
+       to send out a sequence made up of x followed by y, we need to change the input
+       from Just x to Just y at the right time (i.e. any time between minimalTx entering
+       StartBit and leaving StopBit). However, our minimalTx function doesn’t expose
+       this information. So let’s change that!
+           The basic idea is to change the transmitter’s interface so that it has two outputs:
+       the Bit representing the serial line’s value, to be connected to the outside world;
+       and also a Bool signaling that the transmitter is ready to send the next message.
+
+       slowTx
+           :: (KnownNat n, HiddenClockResetEnable dom)
+           => Signal dom Word32
+           -> Signal dom (Maybe (BitVector n))
+           -> (Signal dom Bit, Signal dom Bool)
+       slowTx = curry $ moore (uncurry . nextState) output' TxIdle . bundle
+         where
+           output' s = (output s, s == TxIdle)
+
+10.3.3 Modeling state as State
+       One problem with splitting a stateful circuit’s description into nextState and output
+       is that it makes it very awkward, if not impossible, to compute the circuit’s output
+       based on the state transition. For example, suppose we want to have another Bool
+       output from slowTx that signals the consumption of its input, i.e. a transition from
+       TxIdle to StartBit 0.
+           The relevance of this problem is that if we compute the output together with the
+       new state, the type of the state transition becomes the following:
+
+       step :: i -> s -> (s, o)
+
+Recall the definition of the State monad:
+
+newtype State s a = State{ runState :: s -> (a, s) }
+
+    That’s right: the type of step is isomorphic to a function from i to State s o! In
+other words, we can provide a State monad based interface to stateful circuits.
+    This shouldn’t come as a big surprise, since we are describing a stateful compu-
+tation, so State should be the obvious representation, right? However, in chapter 4,
+when we introduced the whole RTL model, we said that State isn’t enough to accu-
+rately model a circuit with registers, because it would correspond to a non-clocked
+circuit, with all the problems that entails.
+    The resolution to this seeming contradiction is that here, we are using State
+to model the intra-cycle behavior of our RTL circuit. Under the hood, we will
+use Clash’s mealy combinator, which is to Mealy machines what moore is to Moore
+machines: lifting a stateful computation into a Signal transformer. The difference
+is exactly what we want: in a Mealy machine, the output is computed as a state
+transition occurs, i.e. from the previous state and the input, together with the new
+state:
+
+                       in
+
+                                 state         step       out
+
+mealy
+    :: (HiddenClockResetEnable dom, NFDataX s)
+    => (s -> i -> (s, o))
+    -> s
+    -> Signal dom i
+    -> Signal dom o
+
+    mealy internally creates a synchronous RTL circuit with a register-guarded
+recursion to propagate the state from one clock cycle to the next, just like any other
+RTL circuits we’ve built so far. But the behavior of the circuit during a single cycle
+can be modeled by State, by taking its entirety and connecting it between the output
+and the input of the state register. This means no outside Signal can interact with
+intermediate steps of the State circuit, and thus synchronicity is maintained.
+    This explanation can be captured in code by simply writing the following com-
+binator. It doesn’t do anything deep, just gets rid of the State newtype wrapper
+and shuffles some pairs because the step argument to mealy has the input and the
+old state, and the output and the new state, in reverse order compared to runState:
+
+      mealyState
+         :: (HiddenClockResetEnable dom, NFDataX s)
+         => (i -> State s o) -> s -> (Signal dom i -> Signal dom o)
+      mealyState f = mealy step
+        where
+          step s x = let (y, s') = runState (f x) s in (s', y)
+
+         Or, for cases where we want to use bundling to support multiple inputs
+      and outputs (i.e. if we want something like (Signal dom a, Signal dom b) ->
+      (Signal dom c, Signal dom d)):
+
+      mealyStateB
+          :: (HiddenClockResetEnable dom, NFDataX s, Bundle i, Bundle o)
+          => (i -> State s o)
+          -> s
+          -> Unbundled dom i
+          -> Unbundled dom o
+      mealyStateB f s0 = unbundle . mealyState f s0 . bundle
+
+          This finally allows us to write a nicely readable version of our serial transmitter
+      in Mealy style, using the familiar State monad. We have a stateful computation of
+      the next Bit to be emitted; and we put it in a wrapper to run it slowly, by overriding
+      the state change (but keeping the output result) while counting down from one bit’s
+      duration. Also, we can use a WriterT internally to signal readiness in the TxIdle
+      state.
+
+      txStep :: forall n. (KnownNat n)
+          => Word32 -> Maybe (BitVector n) -> State (TxState n) (Bit, Bool)
+      txStep dur input = fmap (fmap getAny) . runWriterT $ get >>= \case
+          TxIdle -> do
+              tell $ Any True
+              traverse_ (goto . StartBit) input
+              return high
+          TxBit cnt tx -> slowly cnt tx $ case tx of
+              StartBit xs -> do
+                  goto $ DataBit xs 0
+                  return low
+              DataBit xs i -> do
+                  let (xs', _) = bvShiftR 0 xs
+                  goto $ maybe StopBit (DataBit xs') $ succIdx i
+                  return $ lsb xs
+              StopBit -> do
+                  put TxIdle
+                  return high
+
+       where
+         goto = put . TxBit dur
+
+            slowly cnt tx body
+                | cnt > 1 = body <* put (TxBit (cnt - 1) tx)
+                | otherwise = body
+
+        For easier usability, we expose two versions of the serial transmitter: one for
+     dynamic bit durations, and one where the statically known bitrate is converted to
+     the necessary duration based on the main clock rate.
+
+     serialTxDyn
+         :: (KnownNat n, HiddenClockResetEnable dom)
+         => Signal dom Word32
+         -> Signal dom (Maybe (BitVector n))
+         -> (Signal dom Bit, Signal dom Bool)
+     serialTxDyn dur input = mealyStateB (uncurry txStep) TxIdle (dur, input)
+
+     serialTx
+         :: forall n rate dom. (HiddenClockResetEnable dom,
+             KnownNat n, KnownNat (ClockDivider dom (HzToPeriod rate)))
+         => SNat rate
+         -> Signal dom (Maybe (BitVector n))
+         -> (Signal dom Bit, Signal dom Bool)
+     serialTx rate = serialTxDyn $ pure dur
+       where
+         dur = fromIntegral . natVal $
+              SNat @(ClockDivider dom (HzToPeriod rate))
+
+10.4 Serial Receiver
+     With all the machinery we’ve built up for the transmitter, implementing the receiver
+     part is going to be a much more direct affair. The transmitter kept the serial line at
+     the right signal level for the whole bit duration, but the receiver has to decide when
+     to sample it. In our implementation, we are going to keep it simple and do a single-
+     cycle sampling at the exact middle of the period. We’re going to do this by basically
+     splitting each RxBit state into two: before the sampling, and after. This way, by
+     using a counter equal to half a bit duration, we can transition from non-sampled to
+     sampled, and then to the next bit if we do have a sampled bit for this state.
+         To compute half of bit dur, we have to be a bit careful. First of all, we want to
+     use a bit-shift to do the actual division, to get a very simple circuit:
+
+      half :: (Bits a) => a -> a
+      half x = x `shiftR` 1
+
+         Second, we have to make sure that the two halves together add up to a complete
+      duration. To this end, instead of using half dur for both halves of the waiting, we
+      will use half dur and dur - half dur:
+
+      data RxState n
+          = RxIdle
+          | RxBit Word32 (Maybe Bit) (RxBit n)
+          deriving (Generic, Eq, Show, NFDataX)
+
+      data RxBit n
+          = StartBit
+          | DataBit (BitVector n) (Index n)
+          | StopBit (BitVector n)
+          deriving (Generic, Eq, Show, NFDataX)
+
+      rxStep
+          :: (KnownNat n)
+          => Word32 -> Bit -> State (RxState n) (Maybe (BitVector n))
+      rxStep dur input = fmap getLast . execWriterT $ get >>= \case
+          RxIdle -> do
+              when (input == low) $ waitFor StartBit
+          RxBit cnt sample b | cnt > 1 -> do
+              put $ RxBit (cnt - 1) sample b
+          RxBit _ Nothing b -> do
+              consume input b
+          RxBit _ (Just sample) rx -> case rx of
+              StartBit -> do
+                  if sample == low then waitFor (DataBit 0 0) else put RxIdle
+              DataBit xs i -> do
+                  let (xs', _) = bvShiftR sample xs
+                  waitFor $ maybe (StopBit xs') (DataBit xs') $ succIdx i
+              StopBit xs -> do
+                  when (sample == high) $ tell $ pure xs
+                  put RxIdle
+        where
+          dur1 = half dur
+          dur2 = dur - dur1
+
+          waitFor = put . RxBit dur1 Nothing
+          consume input = put . RxBit dur2 (Just input)
+
+    However, there is a subtle off-by-one error in this implementation. To see why,
+imagine a transmitter that is sending as fast as it can, leaving no gap between the
+stop and the start bit. In this case, our implementation would spend one cycle in
+RxIdle, then, detecting the low input, would wait dur1 cycles to sample the start bit,
+then spend dur2 cycles afterwards waiting for the start bit to end; this gives a total
+of 1 + 𝑏𝑑1 + 𝑏𝑑2 = 1 + 𝑏𝑑 ≠ 𝑏𝑑 cycles. Since the communication is asynchronous,
+this drift will only accumulate until the sender is a whole bit ahead of the receiver,
+resulting in faulty transmission.
+
+   We fix this by simply waiting for dur1 - 1 cycles (instead of dur1) when entering
+the first half of the StartBit state:
+
+       RxIdle -> do
+           when (input == low) $
+             put $ RxBit (dur1 - 1) Nothing StartBit
+
+   Now that we have rxStep, we can define serialRxDyn and serialRx exactly as
+we did for the transmitter:
+
+serialRxDyn
+    :: (KnownNat n, HiddenClockResetEnable dom)
+    => Signal dom Word32
+    -> Signal dom Bit
+    -> Signal dom (Maybe (BitVector n))
+serialRxDyn dur input = mealyStateB (uncurry rxStep) RxIdle (dur, input)
+
+serialRx
+    :: forall n rate dom. (HiddenClockResetEnable dom,
+        KnownNat n, KnownNat (ClockDivider dom (HzToPeriod rate)))
+    => SNat rate
+    -> Signal dom Bit
+    -> Signal dom (Maybe (BitVector n))
+serialRx rate = serialRxDyn $ pure dur
+  where
+    dur = fromIntegral . natVal $
+      SNat @(ClockDivider dom (HzToPeriod rate))
+
+   This finishes our complete UART implementation.
+
+10.5     Applications
+10.5.1   Serial Echo
+         Now that we have a receiver and a transmitter, a natural idea is to connect the two
+         to form an echo circuit: received bytes are transmitted back as-is. This is a nice way
+         to ensure everything we’ve written so far works: by uploading this design to our
+         FPGA dev board, we can run a serial terminal program on the computer we use to
+         synthesize the circuit, and start typing away. Most serial terminal programs have
+         the option to show local echo, i.e. to print every character as it is sent. Don’t forget
+         to turn that off for this circuit: the whole point is that we want to get the echo back
+         from the remote (FPGA) side, instead of generating it locally.
+             Whenever we successfully receive an 8-bit value over the serial line from the
+         UART, we want to queue it for sending. We can do this by putting a buffer between
+         the two that is set from the receiver and cleared by the “ready to send” signal from
+         the transmitter. It is a one-element FIFO that silently drops overflowing input (since
+         we prioritize r’s current value over the new input):
+
+         fifo
+             :: forall a dom. (NFDataX a, HiddenClockResetEnable dom)
+             => Signal dom (Maybe a) -> Signal dom Bool -> Signal dom (Maybe a)
+         fifo input outReady = r
+           where
+             r = register Nothing $ mux outReady input (mplus <$> r <*> input)
+
+            Our Echo circuit can now be defined simply by putting this fifo between the
+         de-serialized input and the transmitter:
+
+         topEntity
+             :: "CLK" ::: Clock System
+             -> "RX" ::: Signal System Bit
+             -> "TX" ::: Signal System Bit
+         topEntity = withResetEnableGen board
+           where
+             board rx = tx
+               where
+                 input = serialRx @8 (SNat @9600) rx
+                 buf = fifo input txReady
+                 (tx, txReady) = serialTx @8 (SNat @9600) buf
+
+            Note that the UART timings depend on the System clock domain, which Clash
+         defaults to 100 MHz. If the native clock frequency of the FPGA board used is
+         not 100 MHz, the clock division inside serialRx and serialTx will give the wrong
+         results. As discussed in chapter 4, the createDomain Template Haskell function can
+
+         be used to define a clock domain with the correct frequency. For example, if our
+         FPGA board uses a 16 MHz clock, we can create a 16 MHz domain and use that in
+         the type of topEntity:
+
+         createDomain vSystem{vName="Dom16", vPeriod = hzToPeriod 16_000_000}
+
+         topEntity
+             :: "CLK" ::: Clock Dom16
+             -> "RX" ::: Signal Dom16 Bit
+             -> "TX" ::: Signal Dom16 Bit
+
+            Because the clock divider calculation in the UART is all type-directed, no term-
+         level changes are necessary.
+
+10.5.2   Serial Calculator
+         We can extend our Calculator from chapter 6 to support serial I/O, while still
+         keeping the existing keypad and seven-segment display support. For input, we can
+         parse incoming bytes into a Maybe Cmd very straightforwardly, because each byte
+         arriving through the serial port will correspond directly to zero or one commands.
+         We could use 8-bit numeric values for the various commands, but the code can be
+         made much more readable if instead we do a detour to the Char type.
+
+         pattern ByteChar c <- (chr . fromIntegral -> c) where
+           ByteChar = fromIntegral . ord
+
+         byteToCmd :: Unsigned 8 -> Maybe Cmd
+         byteToCmd b@(ByteChar c) | '0' <= c && c <= '9' = Just . Digit $
+             fromIntegral $ b - ByteChar '0'
+         byteToCmd (ByteChar '+') = Just $ Op Add
+         byteToCmd (ByteChar '-') = Just $ Op Subtract
+         byteToCmd (ByteChar '=') = Just Equals
+         byteToCmd (ByteChar '\r') = Just Equals
+         byteToCmd (ByteChar '\DEL') = Just Clear
+         byteToCmd (ByteChar '\b') = Just Backspace
+         byteToCmd _ = Nothing
+
+            Serial output is a bit more involved, because the 𝑛 decimal digits have to be sent
+         over a long time, waiting for the first digit to be shifted out, then putting the second
+         one on the transmitter, and so on. Also, if we were to only send out the digits, the
+         output would look something like this (for 𝑛 = 4), if the user types in 123:
+
+            0    1   12 123 123 123
+
+          To properly replicate the software implementation’s UI, we need to clear the
+      screen before each update, instead of accumulating the digits shown so far. Luckily,
+      most serial terminal emulator applications support the escape codes of the ancient
+      VT-100 terminal, which means certain sequences of bytes starting with 0x1b are
+      interpreted as commands instead of displayed to the user as-is. Two of these
+      commands are [2J to clear the screen and [H to move the cursor to the home
+      position (i.e. to the upper-left corner). If we prepend these two commands (7 bytes
+      in total) to each update, we will get a nicely updated single-line output.
+          In serialDisplay, we transform the 𝑛 decimal digits in our input into a vector
+      of 7 + 𝑛 bytes, and keep a Maybe (Index (7 + n)) that tells us which byte is getting
+      sent right now. Whenever the UART acknowledges a byte, we move on to the next
+      one.
+      serialDisplay
+          :: forall n dom. (KnownNat n, HiddenClockResetEnable dom)
+          => Signal dom Bool
+          -> Signal dom (Vec n (Maybe Digit))
+          -> Signal dom (Maybe (Unsigned 8))
+      serialDisplay ack digits =
+          mealyStateB step (Nothing @(Index (7 + n)), repeat 0) (ack, digits)
+        where
+          step (next, digits) = do
+              (i, bs) <- get
+              case i of
+                  Nothing -> do
+                      put (Just 0, clear ++ map fromDigit digits)
+                      return Nothing
+                  Just i -> do
+                      when next $ put (succIdx i, rotateLeftS bs (SNat @1))
+                      return . Just $ head bs
+
+          fromDigit :: Maybe Digit -> Unsigned 8
+          fromDigit = maybe (ByteChar ' ') $ \n ->
+              ByteChar '0' + fromIntegral n
+
+          clear :: Vec 7 (Unsigned 8)
+          clear =
+              -- clear screen
+              0x1b :> ByteChar '[' :> ByteChar '2' :> ByteChar 'J' :>
+              -- cursor to home position
+              0x1b :> ByteChar '[' :> ByteChar 'H' :>
+              Nil
+
+         If we try this out, depending on the terminal emulator, we might see, at idle,
+
+horrible flicker on the serial output. This is because as soon as the last byte (the 𝑛’th
+digit) is sent out, the clear screen command is immediately sent out next, followed
+by a re-send of the visible digits. One way to avoid this flicker is to only start shifting
+out (i.e. to only go from the index being Nothing to Just 0) if the displayed digits
+have actually changed. Since we continuously rotate the buffer of bytes bs, after 𝑛
+rotations it will be back to its original value, ready to be compared to the new one:
+           case i of
+               Nothing -> do
+                   let bs' = clear ++ map fromDigit digits
+                   when (bs /= bs') $ put (Just 0, bs')
+                   return Nothing
+
+   In the top-level board definition, we can combine the keypad-originating
+Maybe Cmd with the serial-originating one. Which one gets prioritized doesn’t really
+matter, since in any realistic use case, one calculator is not going to be hammered
+both from the keypad and also over serial at the same time fast enough that there
+is even any chance for a same-cycle conflict. For the serial output, it is even simpler:
+we just fan out the digits to be displayed to serialDisplay, and connect that to a
+serial transmitter.
+
+       board rx rows = (tx, display, cols)
+         where
+           display = driveSS (\x -> (encodeHexSS . bitCoerce $ x, False))
+       digits
+           input = inputKeypad keymap
+           digits = logic cmd
+
+           (cols, key) = input rows
+           cmdKey = (keyToCmd =<<) <$> key
+
+           -- New part starts here
+           (tx, ack) = serialTx (SNat @9600) $
+               fmap pack <$> serialDisplay ack digits
+           cmdSerial = (byteToCmd . unpack =<<) <$>
+               serialRx (SNat @9600) rx
+           cmd = mplus <$> cmdKey <*> cmdSerial
+
+Exercises:
+
+   • Starting from the Echo example, write a ROT-13 circuit that accepts ASCII
+     characters over serial, and sends back only the printable ones (0x20 to 0x7e,
+     inclusive), but with letters of the alphabet rotated by 13 places. In other words,
+
+            'A' gets replaced by 'N' and vice versa, 'B' with 'O', and so on. Note that
+            this mapping is self-inverse, so typing in the output again should give back
+            the original input.
+
+          • In the Calculator example, serialDisplay uses 7 extra 8-bit bytes worth of
+            registers to store the screen-clearing escape sequence while it is getting shifted
+            out, even though this sequence is constant. Get rid of these 56 registers by
+            changing the internal state of the Mealy machine.
+
+          • In the Calculator example, instead of comparing the newly displayed number
+            to the old one, arrange for an extra signal (originating from the logic board)
+            that tells serialDisplay when to start sending out a new sequence of bytes.
+            For example, logic could return the displayed digits wrapped in a Maybe, and
+            only set it to Just when they change.
+
+          • Apply the same technique to Pong, allowing paddle control over a serial
+            receiver.
+
+10.6   Summary
+          • In asynchronous serial communication, there is no shared clock between the
+            two parties, so both sides do their own timekeeping. In the UART format, the
+            start bit signals to the receiver to start its timer, synchronizing the clocks at
+            the start of each byte.
+
+          • When the serial receiver has received enough bits to make up a full byte, its
+            Maybe (BitVector n) output becomes a Just value. We need a similar mecha-
+            nism of signaling the consumption of the next byte to send in the transmitter;
+            otherwise, the source has no way of pacing itself. This pattern of upstream
+            control will come up again in later designs.
+
+          • Stateful circuits can be modeled as a Mealy machine: a state register coupled
+            with a combinational circuit that computes the next state and the output
+            signal from the old state and the input. This allows turning any State s a
+            computation into a circuit.
+
+          • With how we structured our calculator, we can easily add serial communica-
+            tion as a new UI modality.

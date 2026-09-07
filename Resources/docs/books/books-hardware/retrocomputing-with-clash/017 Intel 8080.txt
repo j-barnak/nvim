@@ -1,0 +1,2880 @@
+                                                    15                Intel 8080
+
+     In this chapter, we build a CPU that is machine code compatible with the Intel 8080
+     microprocessor. In the next two chapters, we will use it to build replicas of two very
+     different machines that were both originally using the real Intel 8080: the Space
+     Invaders arcade video game machine, and the Compucolor II home computer.
+
+15.1 History
+     The 8080 debuted in 1974, as the second eight-bit microprocessor product of Intel.
+     For a brief time, it was one of the focal points of the personal computer revolution,
+     with the Altair 8800 kit computer spawning multiple lines of computers based on
+     its S-100 bus, running the CP/M operating system. However, in 1976 the Zilog Z80
+     arrived: created by a group mostly spun off from Intel, it was binary backwards-
+     compatible with the 8080, with more registers, more instructions, easier-to-interface
+     interrupt system and power requirements, and just plain faster. It didn’t take long
+     for the Z80 (and the MOS 6502, coming from a different lineage) to overtake the
+     8080 in the home microcomputer market.
+         So why build an Intel 8080 instead of a Zilog Z80? While the Z80 ultimately won
+     out over the 8080, there are still important retrocomputers based on it. And since a
+     reductive view of the Z80 is that it is two copies of the 8080 register set, with some
+     new instructions and new interrupt logic, we can do more depth and less breadth
+     in this chapter, and leave the expansion into a full Z80 as an exercise for the reader.
+
+15.2 Veracity
+     When working on the CHIP-8, we started with an overview of the logical parts
+     of the machine; however, since the original only existed virtually, these parts were
+     mostly demarcated by our need to decompose the problem of describing a complete
+     machine into more manageable parts.
+         Not so with the Intel 8080. The original was a physical standalone piece of
+     hardware in a 40-pin DIP package. Designing and building a real computer using
+
+      the 8080 means creating a circuit that has 40 connectors in the right layout com-
+      municating with the CPU. It is important to be upfront about our intentions here:
+      the aim in this chapter is not to produce a drop-in replacement that could then be
+      synthesized onto an FPGA with 40 GPIO ports and then hooked into an existing
+      physical computer.
+          Instead, we will build a CPU that is binary compatible with the 8080 machine
+      code instruction set, and that has comparable I/O capabilities that we will be able
+      to take 8080-based machines and replicate them to be firmware- and software-
+      compatible with the originals. Crucially, we want to build not just the CPU, but the
+      whole machines in Clash; and so for input and output types, we will use whatever
+      is convenient in Clash, and not necessarily in hardware.
+          Another question is timing accuracy. Even with a pin-compatible drop-in re-
+      placement, it is not necessarily a given that everything will happen with the same
+      timings as a real Intel 8080. On the other hand, it is possible, and makes sense for
+      certain applications, to build a non-drop-in-compatible implementation that still
+      adheres to the original timings.
+          Timing accuracy can also mean different things in different contexts. At the
+      lowest level, remembering that the clock is just an abstraction, we have parameters
+      like how many nanoseconds the outputs lag behind the clock edges. In a fully
+      synchronous circuit, like everything we build in Clash, we will not care about this
+      level at all.
+          One level up, we have clock cycle-tied timings: the externally observable be-
+      havior of the CPU at every rising and falling clock edge. For example, fetching
+      and executing a given instruction might take 6 clock cycles, with the address bus
+      showing the program counter by the falling edge of the first cycle and keeping it
+      like that for the next 2 cycles, reading the data bus contents at the rising edge of
+      the second cycle, then changing the address bus and the data bus, and asserting the
+      write-enable output, by the third falling edge. If we simplify the handling of rising
+      and falling clock edges to just “inputs at start of a clock cycle” and “outputs at end
+      of a clock cycle”, this is the level of accuracy that is within reach from Clash.
+          Then one level further up, we have instruction execution length, as measured in
+      cycles. This means the same program will run for the same time on our replica as
+      it does on a real CPU. This level of accuracy is commonly achieved by even naïve
+      software emulator implementations.
+          So what level of timing accuracy is desirable?
+          On one hand, the more the better: a more accurate replica implementation
+      not only means we can connect more original peripherals, but also that software
+      written for the original machine, that was written to exploit the low-level details of
+      the hardware, will run correctly. At the extreme end, we have software produced by
+      the demo scene: programs that are written with the explicit purpose of squeezing
+
+     the last possible drops of performance from a given limited hardware platform, by
+     using in-depth knowledge of the target computer often surpassing even the original
+     designers.
+         On the other hand, the more timing leeway we leave for ourselves, the easier our
+     task becomes. As we will see in chapter 17, the Space Invaders arcade box runs fixed
+     software that is written to use interrupts to do all time-dependent computations
+     such as animations and updating the game state. For such a computer, it makes no
+     observable difference even if the CPU takes longer or shorter to execute instructions,
+     as long as it is “fast enough” to finish one interrupt-triggered procedure by the
+     time the next interrupt comes. To use an analogy, the Pong game from chapter 9
+     runs the same if the clock speed is changed from 25 MHz to 40 MHz to produce
+     800 × 600 video instead of 640 × 480, because the game is updated 60 times per
+     second in both cases. On the other hand, as we will see, the Compucolor II’s disk
+     drive is carefully tuned to the CPU speed, using cycle-counted busy loops in the
+     disk accessing functions.
+         In this chapter, we will not care about timing accuracy at all. Our instructions,
+     by and large, will run in fewer cycles than the original, so we could improve that by
+     padding the microcode. Cycle accuracy should also be achievable by reorganizing
+     the microcode slightly. However, there is still the elephant in the room: to avoid
+     dealing with multiple clock domains, we run everything, including the CPU, at
+     the pixel clock’s rate. So while the real Intel 8080 could only run at about 2 MHz
+     (depending on the model), in the Space Invaders machine we will run our core at
+     25 MHz to produce video at 640 × 480 resolution at 60 frames per second. We will
+     return to this question in the Compucolor II chapter.
+
+15.3 Interface
+     The real Intel 8080 has 40 pins. Four of them provide the chip with power, and two
+     are clock signals, leaving 34 pins to our interest:
+
+        • RESET (active low) changes the program counter’s value to 0x0000 and starts a
+          new fetch, but otherwise keeps internal register values.
+
+        • Memory I/O consists of 16 ADDRESS and 8 DATA lines with an active-low WR to
+          indicate memory writes. There is also a DBIN pin to signal memory reads.
+
+        • A pair of input HOLD and output HLDA pins for memory bus control. If HOLD is
+          high, the CPU disconnects from the address and data buses to allow peripher-
+          als to do direct memory access. HLDA is the acknowledgment signal from the
+          CPU that it has done so.
+
+         • A pair of input READY and output WAIT pins for memory access preemption:
+           as long as READY is held low, the processor stalls on memory access, and this
+           stalling is indicated by WAIT going high.
+
+         • The INT input triggers an interrupt. Since interrupts are the big new feature of
+           the Intel 8080 compared to previous chapters, we will go into more detail on
+           it below. The INTE output pin is high if the CPU has interrupts enabled, i.e. if
+           it is accepting interrupts.
+
+         • The remaining single SYNC pin is used to expose a so-called status word on the
+           data bus. When SYNC is high, the output on the DATA bus is not a byte to be
+           written to memory; instead, each of its output bits takes on a meaning of its
+           own.
+          To understand some of these status word bits, we need to do a bit of a detour into
+      the concept of the confusingly named “machine cycles” as used by the Intel 8080
+      documentation. A “machine cycle” is not a single clock cycle; rather, it is multiple
+      clock cycles that correspond to a certain phase of executing a given instruction. For
+      example, the WO bit is low if the “current machine cycle” is writing to memory;
+      but since the status word shares pins with the data bus, the data bus cannot also
+      contain the byte to be written on the same clock cycle. The actual write (together
+      with setting WR) will happen in a later clock cycle that still belongs to the current
+      “machine cycle”.
+          Keeping this in mind, the meaning of the various bits of the status word are as
+      follows:
+
+         • INP and OUT: Instead of memory, an I/O peripheral should be used for the read
+           (on DBIN) or write (on WR) in the current machine cycle. The 8080 can address
+           256 I/O ports by putting the port number instead of a memory address on
+           both the low and the high 8 bits of the address bus. We will look into I/O
+           ports in more detail below.
+
+         • WO: The current machine cycle is writing to memory to an I/O port.
+
+         • MEMR: The current machine cycle is reading from memory.
+
+         • INTA: Acknowledgement of the INT interrupt request. As we will see, this is
+           used for much more than a simple notification.
+
+         • HLTA: The CPU has executed a HALT instruction and is now in the halt state.
+
+         • STACK: The address bus contains the stack pointer’s value.
+
+         • M1: The current machine cycle is the fetching of the first byte of the next
+           instruction.
+
+   For the interface of our Clash implementation, we make several simplifications:
+
+   • Clash has no notion of bidirectional signals: we will represent the data bus as a
+     separate input and output signal, just like in previous chapters. In our model,
+     the concept of detaching from the address and data buses doesn’t make sense,
+     so we omit the HOLD and HLDA signals completely. Direct memory access by
+     peripherals such as video signal generators will simply preempt the CPU’s
+     memory access.
+
+   • We omit pins for observing the internal state, i.e. the STACK, M1, WO, WAIT and
+     INTE pins. Adding these can be done as an exercise, but none of the peripherals
+     we implement will need them. We do keep the HLTA output, so we can write
+     tests that run the CPU until it halts.
+
+   • For the first version, we ignore READY. Later in this chapter, we will use a
+     Maybe Value for the type of the data-in bus, using Nothing to denote preemp-
+     tion as in the CHIP-8. We also omit MEMR, instead deciding to always interpret
+     the address output as a read request.
+
+   • Instead of having the data output do double duty on memory/port writes
+     and the status word, we have a dedicated output signal for INTA, and merge
+     the functionality of INP and OUT into a port-select bit of the address bus.
+
+   In summary, our simplified and consolidated interface is described by the fol-
+lowing Clash data types:
+
+type Value = Unsigned 8
+type Port = Unsigned 8
+type Addr = Unsigned 16
+
+declareBareB [d|
+  data CPUIn = CPUIn
+    { dataIn :: Value
+    , interruptRequest :: Bool
+    } |]
+
+declareBareB [d|
+  data CPUOut = CPUOut
+      { _addrOut :: Either Port Addr
+      , _dataOut :: Maybe Value
+      , _interruptAck :: Bool
+      , _halted :: Bool
+      } |]
+makeLenses ''CPUOut
+
+15.3.1 Interrupts
+       On the processors we have implemented so far — the Brainfuck CPU and the
+       CHIP-8 — the only way of reacting to the outside world was to run a program that
+       actively keeps looking for some input signal, for example by executing a LD Vx, K
+       instruction on the CHIP-8. In contrast, interrupts allow peripherals to initiate a
+       response from the CPU. Their name comes from the fact that they interrupt normal
+       execution: the CPU is executing some program that is, for example, doing some
+       arithmetic computation, and then suddenly, in response to an interrupt request, the
+       program counter gets replaced by the address of the interrupt handler. It is then
+       the interrupt handler’s responsibility to handle the event that caused the interrupt,
+       and then resume normal operation. The latter is made possible by the processor
+       pushing the original program counter value to the stack before running the interrupt
+       handler, thereby allowing a RET instruction to resume the original program.
+           If there is only one interrupt input pin, how does the handler know what event
+       to react to? On the 8080, the answer is. . . quite complicated. When reading the
+       abstract description of interrupts above, we might think that the interrupt handler
+       has some fixed known address, maybe via an extra pointer indirection, and there’s
+       some logic inside the CPU to push the PC and jump to that handler. Not so on the
+       Intel 8080!
+           If the CPU is in a state accepting interrupts (enabled by the EI and disabled by
+       the DI instruction), and an interrupt request is received, then the current instruction
+       finishes execution, and afterwards, as SYNC is set high, further interrupts are disabled,
+       and the INTA bit of the status word is set to high. Afterwards, execution proceeds
+       normally, except the program counter is not incremented.
+           Wait, what? How does that correspond to handling the interrupt request at all?!
+       Well, it turns out circuitry outside the processor is supposed to detect when INTA
+       is set, and sneakily replace the next byte input to the CPU with the opcode of an
+       instruction to run the handler. This way, the CPU will fetch and execute that byte
+       instead of the next normal instruction’s first byte. Since the program counter is not
+       incremented on an interrupt, after executing that single extra one-byte instruction,
+       execution will proceed normally.
+           That is, if the byte squeezed in by the interrupt circuitry really is a full one-
+       byte instruction! For example, a CALL instruction does pretty much what we’d
+       want to start handling an interrupt request: it pushes the PC on the stack, before
+       jumping to a subroutine. However, a CALL takes three bytes: the first byte is 0xcd,
+       the machine code for CALL, and the next two bytes make up the 16-bit subroutine
+       address. Clearly, it doesn’t work to put the byte value 0xcd on the data bus on INTA:
+       the actual subroutine address would be taken from the next two bytes of the original
+       program where it got interrupted: a completely random address.
+           The Intel 8080 solves this problem of its own making by having eight dedicated,
+
+one-byte RST instructions. The instruction RST i behaves the same as CALL (8 * i)
+(and, in contrast to its name, doesn’t reset any internal state of the CPU at all), thus
+allowing eight different 8-byte interrupt handlers to be installed at addresses 0x0000,
+0x0008, . . . 0x0040. Of course, interrupt handler code can also be longer than 8
+bytes, simply by JMPing to more code before RETurning to the normal operation.
+    To the surprise of no one, the Zilog Z80, designed to be “a better 8080”, was
+released with a much more sensible interrupt protocol. While keeping the option
+to use 8080 mode for backwards compatibility, it also has a much simpler mode
+requiring no peripheral support at all (with a fixed interrupt handler address at
+0x38), and a much more versatile mode where the byte read on INTA is taken as
+the lower 8 bits of an address containing a pointer to the interrupt handler, and a
+Z80-specific internal register provides the higher 8 bits.
+    In our implementation, we will stick to the 8080 protocol, requiring peripheral
+circuitry to provide the one-byte interrupt instruction. In our computers, we will
+use the following interrupt generator to turn events into interrupts:
+
+type Interrupt = Unsigned 3
+
+rst :: Interrupt -> Value
+rst i = bitCoerce (0b11 :: Unsigned 2, i, 0b111 :: Unsigned 3)
+
+interruptor
+    :: (HiddenClockResetEnable dom)
+    => Signal dom (Maybe Interrupt)
+    -> Signal dom Bool
+    -> (Signal dom Bool, Signal dom (Maybe Value))
+interruptor irq ack = mealyStateB irqManager Nothing (irq, ack)
+  where
+    irqManager (irq, ack) = case irq of
+        _ | ack -> do
+            req <- gets $ fromMaybe 0
+            put Nothing
+            return (False, Just $ rst req)
+        Just req -> do
+            put $ Just req
+            return (True, Nothing)
+        Nothing -> do
+            return (False, Nothing)
+
+    The interruptor takes 3-bit interrupt requests, and maintains a stack of size one.
+If a new interrupt comes in, the first output signal fires; this should be connected to
+the CPU’s interruptRequest pin. When an ack is received from the CPU, the latest
+interrupt number is put on the output in the form of a RST instruction.
+
+15.3.2 I/O ports
+       Besides addressing 65536 bytes of RAM, the Intel 8080 can also address 256 I/O
+       ports. As we have seen, the CPU can let the outside world know via the status
+       word that the next read or write is addressing an I/O port; in our version of the
+       interface, we make this distinction explicit by making the type of the addrOut field
+       Either Port Addr.
+           Although the interpretation of the port vs. address distinction is up to the com-
+       ponents connected to the address pins, the intended meaning of these ports is to
+       be connected to peripherals. This way, we can use 256 single-byte lanes to control
+       peripherals without using up address space for memory mapping. In terms of
+       programming, there is a dedicated pair of instructions IN and OUT to read from and
+       write to a given I/O port.
+           An important consideration is that peripherals can react to being addressed,
+       even when reading from them. We will see an example of this in chapter 18: the
+       Compucolor II uses the TMS 5501 I/O controller. Reading from port #2 of this chip
+       returns the highest-priority pending peripheral event. However, a side effect of this
+       read is clearing said event, so the next read will return the next-highest-priority
+       pending event, and so on.
+
+15.4 Instruction set architecture
+       Similar to the CHIP-8, we start our study of the 8080’s instruction set by looking at
+       the registers available to the programmer. Afterwards, we will look at the machine
+       instructions, skimming through ones that bring nothing new to the table compared
+       to the CHIP-8, and only detailing the fundamentally new ones.
+
+15.4.1 Registers
+       The Intel 8080 works with 8-bit data registers and 16-bit addressing. There are seven
+       general-purpose registers named A, B, C, D, E, H and L. A is the accumulator: binary
+       arithmetic operations such as addition always use A both as the first operand and
+       also to store the result. The other six registers are grouped into three pairs BC, DE
+       and HL; these pairs are used by certain pointer arithmetic instructions.
+           Although BC and DE can be used for some indirect memory operations, they are
+       more useful for temporary operands during 16-bit address calculation: most of the
+       memory access has to go through HL. For example, there are instructions to load
+       and store the value of A from/to the address stored in BC or DE; but if we want to
+       target any other register, the address has to come from HL.
+           The results of certain operations can be used in conditional jump instructions.
+       For example, we can add a register’s value to A, and then jump to a given address
+
+only if this addition overflows, i.e. if the result doesn’t fit into the 8 result bits.
+This can be done via the five available status flags, which are updated by certain
+instructions:
+
+   • The Zero (Z) flag indicates if the latest arithmetic result was 0.
+
+   • The Sign (S) flag indicates if the latest arithmetic result has a high most signif-
+     icant bit.
+
+   • The Parity (P) flag is the complement of the number of high bits in the latest
+     result. In other words, it is set if there is an even number of high bits in the
+     result, and cleared otherwise.
+
+   • The Carry (C) flag indicates a carry (on addition) or a borrow (on subtraction).
+
+   • The Auxillary Carry (AC) flag indicates a carry (or borrow) from the low four
+     bits to the high four bits.
+
+    The first four flags can be used for conditional jumps, calls and returns. The
+only use of the AC flag, on the other hand, is to convert hexadecimal values to BCD
+using the Decimal Adjust Accumulator (DAA, 0x27) instruction: when DAA is used after
+an addition, it rearranges the value of the A register to fall within the 0x00. . . 0x99
+range, as a binary-coded decimal value.
+    The five flags together can also be thought of as an eighth 8-bit register, paired
+with the A register into a pair called AF. The reason for this is that the PUSH and POP
+instructions have four variations each: three of them push/pop a register pair (BC,
+DE or HL) on the stack, and the fourth one pushes A and the status flags. Since the
+contents of the stack can be accessed using normal memory operations, this also
+makes it possible to observe the layout of these five flags. Indeed, they are mapped
+to 8 bits in the following way:
+
+                            7   6     5   4    3   2   1   0
+                            S   Z     0   AC   0   P   1   C
+
+   Here, 0 and 1 stand for unused bits with the given value. There is no storage
+backing these bits: when the flag register is read or written wholesale (with the
+PUSH AF and POP AF instructions, respectively), the value of these bits always remain
+the fixed value.
+   To make instruction decoding easier, we use 3-bit numbers to represent registers,
+using the same encoding as the machine code of the instructions. Similarly, each
+flag is represented as its bit index into the flags register.
+
+       type Reg = Index 8
+
+       pattern RA, RFlags, RB, RC, RD, RE, RH, RL :: Reg
+       pattern RA = 7
+       pattern RFlags = 6
+       pattern RB = 0
+       pattern RC = 1
+       pattern RD = 2
+       pattern RE = 3
+       pattern RH = 4
+       pattern RL = 5
+
+       type Flag = Index (BitSize Value)
+
+       pattern FS, FZ, FAC, FP, FC :: Flag
+       pattern FS = 7
+       pattern FZ = 6
+       pattern FAC = 4
+       pattern FP = 2
+       pattern FC = 0
+
+           Although the primary mechanism by which the status flags are changes are the
+       various arithmetic instructions, there is a pair of special instructions to change the
+       C flag directly: STC sets it, and CMC flips it. So while there is no single instruction to
+       clear C, a sequence of STC; CMC will do the trick.
+
+15.4.2 Control flow
+       The internal 16-bit program counter is initialized to address 0x0000 at reset. Nor-
+       mally, it is incremented each time the next byte of an instruction is fetched. We can
+       change its value with the JMP family of instructions: these all take a 16-bit direct
+       argument for the intended jump target. There is one unconditional variant (ma-
+       chine code 0xc3) and eight conditional ones, two for each of the Z, S, P and C flags.
+       The original Intel 8080 documentation has a separate mnemonic for each of these
+       instructions (for example, JNZ for jump if non-zero, i.e. jump if the Z flag is cleared);
+       we will use a more uniform decoded representation of JMPIf Cond:
+
+       data Cond = Cond Flag Bool
+           deriving (Eq, Ord, Show, Generic, NFDataX)
+
+          This is slightly more generic than the real Intel 8080, since this allows branching
+       on the AC flag’s state; this means the instruction decoding will not be surjective,
+       and also slightly wasteful on decoded instruction size. Since our aim here is not
+
+        to implement the smallest 8080 core, we will make this and similar concessions to
+        readability and regularity.
+            Before we move on, there are two instructions that affect control flow in two
+        degenerate ways: NOP, which is the no-operation instruction, and thus doesn’t
+        change anything at all; and HLT, which halts all execution until a reset or interrupt
+        arrives from the outside.
+
+15.4.3 Stack
+        Unlike the CHIP-8, there is no internal stack in the Intel 8080. Instead, the 16-bit
+        stack pointer (register SP) can be used to access any area of the main memory via
+        the stack operations.
+            Similar to the CHIP-8’s CALL and RET instructions, the Intel 8080 also has stack-
+        based control flow operations. Just like direct jumps, these also come in nine
+        variations: one unconditional and eight conditional ones, which again we will
+        uniformly name CALLIf and RETIf. The CALL family puts the program counter’s
+        value at SP - 1 and SP - 2 and decrements SP by two; correspondingly, RET restores
+        the program counter from SP and SP + 1 before incrementing it by two. In other
+        words, the stack grows downwards and points at the next address to pop from.
+            We have already encountered the eight RST instructions: RST i behaves exactly
+        like CALL (8 * i), but only takes up one byte instead of three.
+            We can store and retrieve more from the stack than just the program counter, by
+        using the PUSH and POP family of instructions. These are the only instructions that
+        allow the AF register pair as an operand. The relevance of this is that this makes
+        the representation of the flags register observable: after, e.g., a sequence of PUSH AF
+        followed by POP BC, the C register now contains the eight bits of the flags register.
+
+15.4.4 Inter-register traffic
+        This group of instructions moves data from one register (or pair of registers) to
+        another. The most straightforward of these is the MOV r1, r2 instruction, which
+        simply changes the value of the 𝑟1 register to the current value of the 𝑟2 register.
+            XCHG swaps (exchanges) the values of the register pair HL and DE, i.e. H and D swap
+        values, and so do L and E. There is no other register pair configuration for this
+        instruction (e.g. to swap BC with HL).
+            For calculated or indirect jumps, we can use the PCHL instruction, which replaces
+        the program counter with the HL register pair’s value, using, unsurprisingly, the H
+        register’s value as the high byte and L as the low byte. Similarly, SPHL changes the
+        stack pointer to the value of HL.
+
+15.4.5   Immediate loads and memory access
+         The instruction MVI r, imm loads the 8-bit immediate value 𝑖𝑚𝑚 into the register 𝑟.
+         Its two-byte sibling is LXI rr, imm2 which loads the two-byte 𝑖𝑚𝑚2 value into the
+         register pair 𝑟𝑟, which can also be SP.
+             There are versions of MOV and MVI where either the source or the target is (HL)
+         instead of a register. These instructions load from, or write to, the single byte of
+         memory addressed by the HL register pair. If we want to use BC or DE instead, we
+         can use LDAX BC / LDAX DE, which is a version of MOV specialized to use the A register
+         as the target. Similarly, STAX BC / STAX DE is a specialized version of MOV with the A
+         register as the source.
+             In our representation, we unify all these not-fully-orthogonal instructions into a
+         single MOV instruction where the left-hand side can be either a register, or the address
+         stored in a register pair, and the right-hand side can be an immediate value (to be
+         fetched from the next byte of the program), or a left-hand side:
+
+         data RegPair
+             = Regs Reg Reg
+             | SP
+             deriving (Eq, Ord, Show, Generic, NFDataX)
+
+         pattern RAF, RBC, RDE, RHL :: RegPair
+         pattern RAF = Regs RA RFlags
+         pattern RBC = Regs RB RC
+         pattern RDE = Regs RD RE
+         pattern RHL = Regs RH RL
+
+         data LHS
+             = Reg Reg
+             | Addr RegPair
+             deriving (Eq, Ord, Show, Generic, NFDataX)
+
+         data RHS
+             = Imm
+             | LHS LHS
+             deriving (Eq, Ord, Show, Generic, NFDataX)
+
+             As explained earlier, beside 16-bit-addressable memory, there are also 256 bidi-
+         rectional I/O ports available. The two instructions to access these are IN port and
+         OUT port, both containing the port number as an immediate argument. Note that
+         there is no register argument: IN always reads into A, and OUT always writes from A.
+             The immediate version of LDAX is LDA addr, which takes the 16-bit immediate
+         argument as an address, and loads the value of A from the one byte there. Similarly,
+
+       STA addr stores A at the given constant address. LHLD addr and SHLD addr similarly
+       loads and stores HL at the given address, with H at the given address, and L at
+       addr + 1.
+          In this category of instructions, the odd one out is XTHL, which exchanges HL
+       with the top of the stack: L is swapped with the byte at (SP), and H is swapped with
+       (SP + 1).
+
+15.4.6 Arithmetic
+       The 8-bit arithmetic instructions ADD/ADC, SUB/SBB, AND, ORA, and XOR behave exactly
+       as one would expect them: their first argument and their target is always A, whereas
+       the second argument can be any left-hand side (i.e. another register, or the memory
+       cell addressed by HL). These instructions also update all five status flags based on
+       their result. The difference between ADD and ADC (ADd with Carry-in) is that the latter
+       uses the C flag as an additional input for the initial carry. Similarly, SBB uses C as the
+       initial borrow. This way, ADC and SBB can be used to implement multi-byte addition
+       or subtraction by first clearing the C flag, then going from lowest to highest bytes.
+           The DAA instruction can also be modeled as an arithmetic instruction: just like
+       the others in this group, it uses the A register’s value and modifies all the status
+       flags.
+           We will use the following datatype to represent these arithmetic functions, uni-
+       fying ADD with ADC, and SUB with SBB, by storing a separate “use initial value of C”
+       flag:
+
+       data ALU = ADD Bool | SUB Bool | AND | OR | XOR | BCD
+           deriving (Eq, Ord, Show, Generic, NFDataX)
+
+           CMP is a special version of SUB that doesn’t actually change A. The point of this
+       instruction is that the flags are still updated, allowing for comparison with the other
+       argument via the Z (for equality), C (for unsigned comparision) and S (for signed
+       comparison) flags.
+           The CMA instruction replaces A with its bitwise complement, without updating
+       any of the status flags.
+           The bit-rotating instructions RLC and RRC, and the bit-shifting instructions RAL
+       and RAR operate in-place on the A register, and can only shift/rotate by one bit at a
+       time. We will represent these as a choice of direction (Left or Right), and then a
+       choice of Shift or Rotate:
+
+       data ShiftRotate = Shift | Rotate
+           deriving (Eq, Ord, Show, Generic, NFDataX)
+
+           The one-byte increment and decrement instructions INR and DCR change their
+       single LHS target in-place, updating all flags except C. Their two-byte counterpart
+       is INX / DCX, operating on a register pair or SP.
+          There is also a special two-byte arithmetic instruction DAD, which adds a register
+       pair (or SP) to HL, updating the C flag in the process.
+
+15.4.7 Interrupt masking
+
+       The only remaining instructions are DI (for Disable Interrupts) and EI (for Enable
+       Interrupts). Using DI, we can temporarily disable the servicing of interrupts. There
+       is no queuing of interrupt requests in the CPU: requests received after DI are simply
+       dropped.
+           As part of the interruption process, the CPU disables interrupts before the
+       interrupt handler starts running. This is useful because it avoids the interrupt
+       trashing that would happen if there was a new interrupt interrupting the interrupt
+       handler (try saying that out loud!). It is the interrupt handler’s responsibility to
+       re-allow interrupts with EI at the right point.
+
+15.5   Instruction decoding
+       Each 8080 instruction is encoded in 1 to 3 bytes. For example, MOV B, D is one byte
+       (0x42); OUT 0x64 is two bytes (0xd3 0x64), and JMP 0x6543 is three bytes (0xc3, 0x65,
+       0x43). This means we need to do some decoding on the first byte to figure out
+       how many more bytes we need to fetch for further decoding. We will make our
+       life considerably simpler by writing a decoder that only looks at the first byte, and
+       then letting the actual execution of the instruction handle any further fetching, if
+       applicable.
+           We have made some considerable unification of the instruction set, at the cost
+       of some “impossible” instructions like MOV (Addr RBC) (RHS (Addr RDE), which
+       would be a memory-to-memory transfer. The decoder will simply never emit such
+       instructions in its output; however, as we will later see, we can easily make the ex-
+       ecution unit generic enough that such impossible instructions are handled without
+       hiccup. This is not to say that these non-orthogonality restrictions don’t make sense
+       in the context of the original Intel 8080 – our resource constraints are simply so far
+       beyond the design considerations of the seventies that we can afford to be graceful
+       instead of stingy.
+
+data Instr
+    = MOV LHS RHS
+    | LXI RegPair
+    | LDA
+    | STA
+    | LHLD
+    | SHLD
+    | XCHG
+    | ALU ALU RHS
+    | CMP RHS
+    | SHROT (Either ShiftRotate ShiftRotate)
+    | INR LHS
+    | DCR LHS
+    | INX RegPair
+    | DCX RegPair
+    | DAD RegPair
+    | CMA
+    | CMC
+    | STC
+    | JMP
+    | JMPIf Cond
+    | CALL
+    | CALLIf Cond
+    | RET
+    | RETIf Cond
+    | RST (Unsigned 3)
+    | PCHL
+    | PUSH RegPair
+    | POP RegPair
+    | XTHL
+    | SPHL
+    | IN
+    | OUT
+    | INT Bool
+    | HLT
+    | NOP
+    deriving (Eq, Ord, Show, Generic, NFDataX)
+
+    We recover the specialized original instructions as pattern synonyms. The use
+of these specialized versions is to match the instruction mnemonics used in the
+original Intel 8080 documentation. This way, we can read our instruction decoder
+side-by-side with the reference documentation.
+
+      pattern MVI lhs = MOV lhs Imm
+
+      pattern ADD rhs = ALU (Add False) rhs
+      pattern ADC rhs = ALU (Add True) rhs
+      pattern SUB rhs = ALU (Sub False) rhs
+      pattern SBC rhs = ALU (Sub True) rhs
+      pattern AND rhs = ALU And rhs
+      pattern ORA rhs = ALU Or rhs
+      pattern XOR rhs = ALU XOr rhs
+      pattern DAA = ALU BCD (LHS (Reg RA))
+
+      pattern LDAX rr = MOV (Reg RA) (LHS (Addr rr))
+      pattern STAX rr = MOV (Addr rr) (LHS (Reg RA))
+
+      pattern RLC = SHROT (Left Rotate)
+      pattern RRC = SHROT (Right Rotate)
+      pattern RAL = SHROT (Left Shift)
+      pattern RAR = SHROT (Right Shift)
+
+      pattern DI = INT False
+      pattern EI = INT True
+
+         At this point, we could implement the instruction decoder as a simple 256-way
+      branch, and call it a day:
+
+      decodeInstr :: Value -> Instr
+      decodeInstr 0x00 = NOP
+      decodeInstr 0x01 = LXI RBC
+      decodeInstr 0x02 = STAX RBC
+      ...
+
+          Instead, we will write the decoder in a fourth of the size by exploiting the
+      structure of the opcodes, along the same way we did in the CHIP-8 CPU when we
+      split the two bytes into four nybbles. For this, we will need some of the branches
+      to match on some bits only; for example, the bit pattern 11...010 corresponds to
+      conditional jumps, with the “wildcards bits” from 5th down to 3rd encoding the
+      condition itself (which status flag, and if the jump should be taken if the flag is
+      set, or if it is cleared). Clash provides the Template Haskell macro bitPattern to
+      write such matches on some subset of bits; this macro generates bit comparison
+      operations that are efficient both for synthesis and simulation.
+
+decodeInstr :: Value -> Instr
+decodeInstr b = case b of
+    $(bitPattern "01110110") -> HLT
+    $(bitPattern "01......") -> MOV dest src
+    $(bitPattern "00...110") -> MVI dest
+    $(bitPattern "00..0001") -> LXI rr
+
+       $(bitPattern "00111010") -> LDA
+       $(bitPattern "00110010") -> STA
+       $(bitPattern "00101010") -> LHLD
+       $(bitPattern "00100010") -> SHLD
+       $(bitPattern "00..1010") -> LDAX rr
+       $(bitPattern "00..0010") -> STAX rr
+       $(bitPattern "11101011") -> XCHG
+       $(bitPattern "10000...") -> ADD src
+       $(bitPattern "11000110") -> ADD Imm
+       $(bitPattern "10001...") -> ADC src
+       $(bitPattern "11001110") -> ADC Imm
+
+       $(bitPattern "10010...") -> SUB src
+       $(bitPattern "11010110") -> SUB Imm
+       $(bitPattern "10011...") -> SBC src
+       $(bitPattern "11011110") -> SBC Imm
+
+       $(bitPattern "10100...") -> AND src
+       $(bitPattern "11100110") -> AND Imm
+
+       $(bitPattern "10101...") -> XOR src
+       $(bitPattern "11101110") -> XOR Imm
+
+       $(bitPattern "10110...") -> ORA src
+       $(bitPattern "11110110") -> ORA Imm
+
+       $(bitPattern "10111...") -> CMP src
+       $(bitPattern "11111110") -> CMP Imm
+
+       $(bitPattern "00...100") -> INR dest
+       $(bitPattern "00...101") -> DCR dest
+       $(bitPattern "00..0011") -> INX rr
+       $(bitPattern "00..1011") -> DCX rr
+
+       $(bitPattern "00..1001") -> DAD rr
+       $(bitPattern "00100111") -> DAA
+
+             $(bitPattern "00000111") -> RLC
+             $(bitPattern "00001111") -> RRC
+             $(bitPattern "00010111") -> RAL
+             $(bitPattern "00011111") -> RAR
+
+             $(bitPattern "00101111") -> CMA
+             $(bitPattern "00111111") -> CMC
+             $(bitPattern "00110111") -> STC
+
+             $(bitPattern "11000011") -> JMP
+             $(bitPattern "11...010") -> JMPIf cond
+             $(bitPattern "11001101") -> CALL
+             $(bitPattern "11...100") -> CALLIf cond
+             $(bitPattern "11001001") -> RET
+             $(bitPattern "11...000") -> RETIf cond
+
+             $(bitPattern "11011011") -> IN
+             $(bitPattern "11010011") -> OUT
+
+             $(bitPattern "11101001") -> PCHL
+             $(bitPattern "11..0101") -> PUSH rr'
+             $(bitPattern "11..0001") -> POP rr'
+             $(bitPattern "11100011") -> XTHL
+             $(bitPattern "11111001") -> SPHL
+
+          $(bitPattern "11111011") -> EI
+          $(bitPattern "11110011") -> DI
+          $(bitPattern "11...111") -> RST (bitCoerce op1)
+          $(bitPattern "00000000") -> NOP
+          _ -> NOP
+        where
+          op1 = slice (SNat @5) (SNat @3) b
+          op2 = slice (SNat @2) (SNat @0) b
+
+             dest = decodeLHS op1
+             src = LHS $ decodeLHS op2
+
+             rr = decodeRR $ slice (SNat @5) (SNat @4) b
+             rr' = pushPopRR rr
+             cond = decodeCond op1
+
+          Note that the bit pattern for HLT, 01_110_110, overlaps with the bit patterns of
+      MOV.  Since 0b110 is the encoding of (HL), i.e. memory addressing via the pointer
+      in HL, the corresponding MOV would be the memory-to-memory transfer instruction
+
+       MOV (HL), (HL) which as we mentioned, is not a valid 8080 instruction.
+           In decodeInstr we use Clash’s slice function to retrieve a BitVector from a
+       wider value, by specifying the most and least significant bit’s positions. We use this
+       to extract the three-bit operands op1 and op2 and the two-bit register pair rr.The
+       helper functions decodeLHS, decodeRR and decodeCond implement the decoding of
+       these BitVectors. In decodeLHS, our internal register numbering scheme pays divi-
+       dends, because we can just bitCoerce the three-bit encoding:
+
+       decodeLHS :: BitVector 3 -> LHS
+       decodeLHS 0b110 = Addr RHL
+       decodeLHS reg   = Reg (bitCoerce reg)
+
+       decodeRR :: BitVector 2 -> RegPair
+       decodeRR 0b00 = RBC
+       decodeRR 0b01 = RDE
+       decodeRR 0b10 = RHL
+       decodeRR 0b11 = SP
+
+       decodeCond :: BitVector 3 -> Cond
+       decodeCond cond = Cond flag b
+         where
+           (flag0, b) = bitCoerce cond :: (BitVector 2, Bool)
+           flag = case flag0 of
+               0b00 -> FZ
+               0b01 -> FC
+               0b10 -> FP
+               0b11 -> FS
+
+           We also need an alternate version of the register pair rr for the PUSH and POP
+       instructions: other instructions operating on register pairs can use either BC, DE, HL
+       or SP, but these two use AF instead of SP.
+
+       pushPopRR :: RegPair -> RegPair
+       pushPopRR SP = RAF
+       pushPopRR rr = rr
+
+15.6   Microcoded implementation
+       The largest difference between the CHIP-8 and the Intel 8080 is that the latter has
+       much more varied control requirements. On the CHIP-8, all instructions were
+       represented on two bytes, so we could implement a single unified way of fetching
+       before execution. Except for a handful of exceptions, most instructions could also
+
+      be executed in a single clock cycle. On the 8080, after the first byte of an instruction
+      is fetched and decoded, we might find that we need to fetch more bytes. And
+      the execution itself might be a trivial matter of changing internal state (like EI), or
+      it could be as complex as SHLD addr, which involves a total of four roundtrips to
+      memory, not counting the initial opcode fetch: two more fetches to get the target
+      address, and then two writes to (addr) and (addr + 1).
+          We will manage this complexity by opting for a microcoded implementation in-
+      stead of hardwired control. We will write microcode in terms of micro-instructions
+      that are simple enough that a micro-CPU can execute them in one clock cycle. We’re
+      really putting the micro in microprocessor here! Moreover, the mapping of each real
+      8080 instruction into a sequence of micro-instructions exposes more of the regularity
+      and redundancy between instructions.
+          It should be stressed that on most microprocessors, the microcode is an imple-
+      mentation detail that is hidden from the programmer. The most famous retrocom-
+      puting exception is the Xerox Alto, where programmers could define new instruc-
+      tions and remap opcodes by writing custom microcode. In the rest of this chapter,
+      the microcode we write for our 8080 has nothing to do whatsoever with the internals
+      of the real physical hardware implementation from Intel. Both the design of the indi-
+      vidual micro-instructions and the mappings from instructions to micro-operations
+      that we present here are custom, and are optimized for readability instead of more
+      real-world concerns like component count or circuit depth.
+          So what should our microcode look like? We start by looking at all the instruc-
+      tions and searching for patterns. First of all, we see that all instructions are either 1,
+      2 or 3 bytes long; moreover, in all 3-byte instructions, the extra two bytes are inter-
+      preted as a single 16-bit word: mostly as an address (in e.g. LDA), but sometimes as
+      a value to be written into a register pair.
+          To keep things simple, we will use two separate micro-architectural registers:
+      an 8-bit buffer and a 16-bit one. All transfer from and to memory goes through
+      the 8-bit buffer; for example, we implement the instruction MVI A, imm in two steps:
+      first fetching the immediate value into the buffer, then moving from the buffer into
+      register A. Arithmetic calculations also operate on the buffer; for binary functions
+      like ADD, we will take the other operand from the A register.
+          The primary use of the 16-bit buffer is for memory addressing. Looking at
+      the entirety of the instruction set, we can see that we have four types of memory
+      addressing:
+
+         • From the program counter PC (for every instruction just to fetch it; but also for
+           the immediate operand, if any)
+         • From the stack pointer SP
+         • From an immediate address argument
+         • From an immediate port argument
+
+   • Via a register pair
+
+    Similarly to using the single value buffer as the hub of memory transfer, we will
+use the 16-bit buffer as the addressing hub. To implement something like LDAX (BC),
+we first move the value of the register pair BC into the address buffer, then load the
+value buffer from the address in the address buffer, before finally overwriting the A
+register’s value from the value buffer.
+    By making PC and SP-based addressing first class, we can make the incrementing
+of the program counter, and the incrementing (on pop) / decrementing (on push)
+of the stack pointer part of the addressing:
+
+data InAddr
+    = FromPtr
+    | FromPort
+    | IncrPC
+    | IncrSP
+    deriving (Enum, Bounded, Eq, Show)
+
+data OutAddr
+    = ToPtr
+    | ToPort
+    | DecrSP
+    deriving (Enum, Bounded, Eq, Show)
+
+    One question we have side-stepped so far is how we are going to get data into
+and out of the address buffer, if only the 8-bit value buffer is connected to the data-
+in and data-out buses. Our solution to this is based on the observation that for all
+instructions, if one byte of the address buffer is read or updated, then the other byte
+will also follow shortly, during the execution of the same instruction. So for the
+address → value transfer, it is enough to come up with a pair of functions 𝑓 , 𝑔 that
+decomposes a 16-bit input into an 8-bit extract and a new 16-bit value, such that
+the extracts give the two bytes of the input: 256 ∗ 𝑓 (𝑥) + 𝑓 (𝑔(𝑥))) = 𝑥, and 𝑔 is an
+involution: 𝑔(𝑔(𝑥)) = 𝑥. Together, these two conditions ensure that we can extract
+the two bytes of 𝑥 one by one, in two steps without any extra state, by writing 𝑔(𝑥)
+back into 𝑥. We will use an 8-bit rotation as a function with this property, and name
+it twisting:
+
+twist :: Addr -> (Value, Addr)
+twist x = (hi, lohi)
+  where
+    (hi, lo) = bitCoerce x :: (Value, Value)
+    lohi = bitCoerce (lo, hi)
+
+         We can use it not only to extract values byte-by-byte:
+
+      twistFrom :: (MonadState s m) => Lens' s Addr -> m Value
+      twistFrom l = do
+          (v, addr') <- twist <$> use l
+          l .= addr'
+          return v
+
+         But also to move bytes in the other direction:
+
+      twistTo :: (MonadState s m) => Lens' s Addr -> Value -> m ()
+      twistTo l x = do
+          (y, _) <- twist <$> use l
+          l .= bitCoerce (x, y)
+
+         Before we dive into further details, let’s illustrate the ideas so far by giving the
+      microcode for SHLD, a complex instruction, in an informal, but step-by-step manner:
+
+      SHLD:
+          1. Load data buffer from: address stored in PC, increasing it
+             Twist data buffer into address buffer
+             Write data buffer to: nowhere
+
+          2. Load data buffer from: address stored in PC, increasing it
+             Twist data buffer into address buffer
+             Write data buffer to: nowhere
+
+          3. Load data buffer from: nowhere
+             Overwrite data buffer from L
+             Write data buffer to: address stored in address buffer
+
+          4. Load data buffer from: nowhere
+             Increment address buffer, not updating C flag
+             Write data buffer to: nowhere
+
+          5. Load data buffer from: nowhere
+             Overwrite data buffer from H
+             Write data buffer to: address stored in address buffer
+
+          As the above pseudo-code shows, the microcode is very regular compared to
+      the instruction set. Each micro-step is specified in three parts: data in, internal state
+      transition, and data out.
+
+15.6.1 Representing microcode
+      If each micro-step of the microcode consists of a read, a micro-instruction, and a
+      write, can’t we just represent it as a list of 3-tuples?
+
+      type Microcode inAddr instr outAddr =
+          [(Maybe inAddr, instr, Maybe outAddr)]
+
+          As the old joke goes, it only takes three steps to put an elephant in the fridge
+      (1. open the fridge, 2. put in the elephant, 3. close the fridge), but it takes four to
+      put in a giraffe (we have to take out the elephant first). We have a similar potential
+      problem with this microcode representation.
+          We haven’t enumerated all possible micro-instructions yet, but for this example,
+      we only need two, to overwrite the value buffer from a register, and vice versa. Let’s
+      look at two micro-steps in isolation. The first one pushes the value of the register A
+      onto the stack:
+
+      step1 = (Nothing, Get RA, Just DecrSP)
+
+         The second one fetches a byte from the program, and writes its value into the B
+      register:
+
+      step2 = (Just IncrPC, Set RB, Nothing)
+
+         Now what happens if we try to do step and step2 straight after each other?
+
+      steps = [step1, step2]
+
+         When executing steps, according to step1, after overwriting the value buffer
+      with register A’s value, we should set the address bus to the value of SP (decrement-
+      ing it in the process), and the data-out bus to Just the value of the value buffer.
+      According to step2, on the other hand, before overwriting the value of register B
+      from the value buffer, the latter should be loaded from memory, using the program
+      counter (incrementing it in the process). But if we are using synchronous RAM, that
+      means the value of PC needs to be put on the address bus in the previous cycle. So
+      the question is, what should be on the address bus and the data-out bus after the first cycle?
+      The elephant wants to eat its write-to-SP cake, but the giraffe is intent on having its
+      read-from-PC one.
+         It looks like the addressing conflict is so severe, it has even led to a total confusion
+      of metaphors!
+         We could get out of this conundrum by taking a more operational view instead.
+      When we start executing microcode, we might need to do a read before the first step;
+
+      and then in each step, we execute the instruction and set the address bus based on
+      either the current instruction’s write address, or the next instruction’s read address:
+
+      type Microcode inAddr instr outAddr =
+          (Maybe inAddr, [(instr, Wedge outAddr inAddr)])
+
+         Here we use the wedge sum of outAddr and inAddr, which is isomorphic to
+      Maybe (Either outAddr inAddr), with the idea being that if we have Here outAddr
+      it means the current step wants to write, and a There inAddr comes from the next
+      step.
+         However, this representation makes it harder to make microcode out of smaller
+      parts, even though conceptually we still want to think of each step as a triple of
+      read-before, do-during and write-after. We will use this representation as a normal
+      form during execution, but we want to keep a concatenable representation for the
+      description.
+          We solve this by using a nonempty list datatype that is indexed by the addressing
+      at its two ends. If we have a microcode fragment frag1 :: Steps True False, its
+      type tells us that on the front end, the first step has a read requirement (the True index
+      value), and on the back end, the last step has no write requirement (the False index
+      value). So if we have another fragment frag2 :: Steps False True, we should be
+      able to create their concatenation frag2 >++> frag1 :: Steps False False, but the
+      type checker should reject frag1 >++> frag2 since that would lead to a conflict in
+      the middle.
+         To achieve this, we first of all need to track statically if the read and write
+      addresses are set or not. We create an indexed version of the Maybe datatype, where
+      the boolean index tells the isJust-ness of the value:
+
+      data IMaybe (isJust :: Bool) a where
+          INothing :: IMaybe False a
+          IJust :: a -> IMaybe True a
+      deriving instance (Show a) => Show (IMaybe isJust a)
+
+      fromIMaybe :: IMaybe free a -> Maybe a
+      fromIMaybe INothing = Nothing
+      fromIMaybe (IJust x) = Just x
+
+         So given the isJust-ness of a step’s postamble and the isJust-ness of the next
+      step’s preamble, when are they compatible? Always, unless both are True. We
+      provide a custom TypeError for this case, to improve the error message on conflict.
+
+class Impossible where
+    impossible :: a
+
+type family Compat post1 pre2 where
+    Compat True True =
+        ( TypeError (Text "Conflict between postamble and next preamble")
+        , Impossible
+        )
+    Compat post1 pre2 = ()
+
+   One Step is still a triple of values, but it presents the isJust-ness of its addressing
+coordinates as indices:
+
+data Step pre a post hasPre hasPost where
+    Step
+        :: IMaybe hasPre pre
+        -> a
+        -> IMaybe hasPost post
+        -> Step pre a post hasPre hasPost
+
+   Multiple Steps are non-empty cons-lists where the head Step is Compatible with
+the tail Steps. Also, since we will need to store the microcode in hardware, and
+index it with a micro-program-counter in the CPU state, we will eventually need to
+convert it into a vector, not a list, of (instr, Wedge outAddr inAddr) pairs. For this
+reason, we also track the length of Steps in the n index.
+
+data Steps pre a post (n :: Nat) hasPre hasPost where
+    One
+        :: Step pre a post hasPre hasPost
+        -> Steps pre a post 1 hasPre hasPost
+    More
+        :: (Compat hasPost1 hasPre2)
+        => Step pre a post hasPre1 hasPost1
+        -> Steps pre a post n hasPre2 hasPost2
+        -> Steps pre a post (1 + n) hasPre1 hasPost2
+
+    This representation allows easy concatenation if the two ends are Compatible; in
+fact, this concatenation operation is the reason we are using this representation. We
+also provide a function so that users can create singleton Steps without the hassle
+of the Step constructor:
+
+       infixr 5 >++>
+       (>++>)
+           :: (Compat hasPost1 hasPre2)
+           => Steps pre a post n hasPre1 hasPost1
+           -> Steps pre a post k hasPre2 hasPost2
+           -> Steps pre a post (n + k) hasPre1 hasPost2
+       One x >++> ys = More x ys
+       More x xs >++> ys = More x $ xs >++> ys
+
+       step
+           :: IMaybe hasPre pre
+           -> a
+           -> IMaybe hasPost post
+           -> Steps pre a post 1 hasPre hasPost
+       step hasPre x hasPost = One $ Step hasPre x hasPost
+
+           All that remains is normalizing into individual steps with at most a single
+       addressing directive between each pair. Note how go rules out the case where both
+       the current postamble and the next preamble is an IJust value: in that case, hasPost1
+       and hasPre2 are both True, and the typeclass application Compat True True in the
+       type of the More constructor reduces to Impossible.
+
+       stepsOf
+           :: Steps pre a post n hasPre hasPost
+           -> (Maybe pre, Vec n (a, Wedge post pre))
+       stepsOf xs = case go xs of (hasPre, ys) -> (fromIMaybe hasPre, ys)
+         where
+           go :: Steps pre a post n hasPre hasPost
+               -> (IMaybe hasPre pre, Vec n (a, Wedge post pre))
+           go (One (Step pre x post)) =
+                (pre, singleton (x, wedgeLeft $ fromIMaybe post))
+           go (More (Step pre x post) xs) =
+                let (pre', ys) = go xs
+                    combined = case (post, pre') of
+                        (INothing, pre) -> wedgeRight $ fromIMaybe pre
+                        (post, INothing) -> wedgeLeft $ fromIMaybe post
+                        (IJust _, IJust _) -> impossible
+                in (pre, (x, combined) :> ys)
+
+15.6.2 Microcode interpreter
+       Now that we have a plan for writing down the microcode for each instruction, we
+       should also think about how we are going to execute said microcode. The eventual
+
+     goal, of course, is to create a CPU that is similar to our previous Brainfuck and CHIP-
+     8 processors, using the microcode as its machine code. However, this means we have
+     several, intertwined tasks ahead of us: creating the CPU, designing the details of the
+     microcode, and using said microcode to implement each 8080 instruction. We can
+     simplify this considerably by regarding the microcode as a programming language,
+     and writing a direct software interpreter alongside designing the microcode, instead
+     of jumping straight into hardware design.
+         Even better, if we write this interpreter polymorphically, we can reuse it in the
+     eventual hardware CPU implementation. We instantiate it with a simple software
+     base monad for rapid microcode development, and then use it as a building block
+     in the hardware implementation which contains extra logic to drive the execution,
+     clock cycle by clock cycle.
+         Even though we don’t yet know what the micro-instructions are going to be, we
+     can start writing the interface of our microcode interpreter. The main operations
+     needed are executing a single micro-instruction, and computing (with potential
+     register-changing side-effects, to implement e.g. IncrPC) the address bus value for
+     an input or an output address. We use the _ context in the type signatures to denote
+     that we don’t know yet what exactly the constraint on m is going to be:
+
+     uexec :: _ => MicroInstr -> m ()
+     inAddr :: _ => InAddr -> m (Either Port Addr)
+     outAddr :: _ => OutAddr -> m (Either Port Addr)
+
+15.7 Micro-architecture & micro-instructions
+     We have already described the basis of the micro-architecture as one 8-bit value
+     buffer and one 16-bit address buffer. Along the program counter, the stack pointer,
+     and the eight 8080 registers, we also include a flag for interrupt masking. This is
+     purely to implement the EI and DI instructions: since the whole point of interrupts
+     is to be triggered outside the normal execution of (micro-) instructions, interrupt
+     handling is otherwise not going to be part of the microcode interpreter.
+
+     data MicroState = MicroState
+         { _pc, _sp :: Addr
+         , _registers :: Vec 8 Value
+         , _allowInterrupts :: Bool
+         , _valueBuf :: Value
+         , _addrBuf :: Addr
+         }
+         deriving (Show, Generic, NFDataX)
+     makeLenses ''MicroState
+
+      mkMicroState :: Addr -> MicroState
+      mkMicroState pc0 = MicroState{..}
+        where
+          _pc = pc0
+          _sp = 0
+          _allowInterrupts = False
+          _registers = repeat 0x00
+          _valueBuf = 0
+          _addrBuf = 0
+
+         Armed with this definition, we can make a function giving us a Lens from
+      MicroState to a given Register. We special-case loads from RFlags to set the three
+      dummy bits to their correct values:
+
+      reg :: Reg -> Lens' MicroState Value
+      reg r = registers . lens (fixup . (!! r)) (\s v -> replace r v s)
+        where
+          fixup = case r of
+              RFlags -> (`clearBit` 5) . (`clearBit` 3) . (`setBit` 1)
+              _ -> id
+
+         We also have enough now to implement the two addressing functions inAddr
+      and outAddr:
+
+      inAddr :: (MonadState MicroState m) => InAddr -> m (Either Port Addr)
+      inAddr FromPtr = Right <$> use addrBuf
+      inAddr FromPort = do
+          (port, _) <- twist <$> use addrBuf
+          return $ Left port
+      inAddr IncrPC = Right <$> (use pc <* (pc += 1))
+      inAddr IncrSP = Right <$> (use sp <* (sp += 1))
+
+      outAddr :: (MonadState MicroState m) => OutAddr -> m (Either Port Addr)
+      outAddr ToPtr = Right <$> use addrBuf
+      outAddr ToPort = do
+          (port, _) <- twist <$> use addrBuf
+          return $ Left port
+      outAddr DecrSP = Right <$> ((sp -= 1) *> use sp)
+
+          Note that in FromPort and ToPort we complicate our life by using the low byte
+      of the address buffer instead of the value buffer, which is already eight bits wide.
+      This is because we want to use the value buffer for the value read from / written to
+      the port; it also nicely matches the behavior of FromPtr / ToPtr regarding the role
+      of the microarchitectural registers.
+
+15.7.1 Hello Micro-World!
+       Since we have already spelled out the steps of SHLD in prose in the previous
+       section, let’s start our design of the MicroInstr datatype by writing out the mi-
+       crocode for SHLD in Clash. Since our design takes five steps, we will put it in a
+       MicroSteps 5 pre post, where MicroSteps is Steps instantiated to our needs, and
+       we will figure out pre and post as we go.
+
+       type MicroSteps = Steps InAddr MicroInstr OutAddr
+
+       shld :: MicroSteps 5 _ _
+       shld =
+           _fetchToAddr   >++>
+           _fetchToAddr   >++>
+           _writeToPtr RL >++>
+           _incrementAddr >++>
+           _writeToPtr RH
+
+           We next decompose each of these five steps into a read/do/write tuple. This
+       also specifies the two ends of shdl as True and True, since the first step reads from
+       memory, and the last step writes to it:
+
+       shld :: MicroSteps 5 True True
+       shdl =
+           step (IJust IncrPC) ToAddrBuf       INothing      >++>
+           step (IJust IncrPC) ToAddrBuf       INothing      >++>
+           step INothing       (ToReg RL)      (IJust ToPtr) >++>
+           step INothing       (Compute2 Inc2) INothing      >++>
+           step INothing       (ToReg RH)      (IJust ToPtr)
+
+          Since all memory-accessing operations go through the value buffer, here we see
+       our first two micro-instructions: ToAddrBuf copies (or, more precisely, twists) the
+       value buffer’s contents into the address buffer, and ToReg which does the same to a
+       general-purpose register.
+
+       data MicroInstr
+           = ToAddrBuf
+           | ToReg Reg
+
+       uexec ToAddrBuf = twistTo addrBuf =<< use valueBuf
+       uexec (ToReg r) = reg r <~ use valueBuf
+
+          To represent the incrementing of the address buffer in step four, it pays to think
+       ahead a bit. There are four instructions involving 16-bit increment/decrement: INX
+
+       and DCX operates on register pairs, and LHLD and SHLD writes to two neighboring
+       addresses. We can implement all these instructions by loading the right value into
+       the address buffer, using a 16-bit ALU on that value, and writing the result back. We
+       call the corresponding micro-instruction Compute2 to denote that it works on a 2-byte
+       value (in contrast to Compute and ComputeSR which do arithmetic and shift/rotate
+       operations on single bytes, and Compute0 for one-bit (flag) operations). We only have
+       two 16-bit arithmetic functions: increment (for INX, LHLD and SHLD), and decrement
+       (for DCX).
+
+       data ALU2 = Inc | Dec
+
+       data MicroInstr
+           = Compute2 ALU2
+           | ...
+
+       uexec (Compute2 fun) = do
+           addrBuf %= case fun of
+               Inc -> (+ 1)
+               Dec -> subtract 1
+
+          Keen readers might remember the DAD instruction, which also needs 16-bit arith-
+       metic. However, because DAD behaves more like ADD in terms of handling the carry
+       flag, we will avoid adding a third Add case to ALU2 and instead implement it using
+       the 8-bit ALU, in two rounds.
+
+15.7.2 Handling different MicroSteps types
+       Using only the micro-instructions added so far, we can already implement several
+       instructions. LHLD is just SHDL with memory traffic going the other way:
+
+       lhld :: MicroSteps 5 True False
+       lhld =
+           step (IJust IncrPC) ToAddrBuf       INothing >++>
+           step (IJust IncrPC) ToAddrBuf       INothing >++>
+           step (IJust FromPtr) (ToReg RL)     INothing >++>
+           step INothing        (Compute2 Inc) INothing >++>
+           step (IJust FromPtr) (ToReg RH)     INothing
+
+          The first two micro-steps of shld and lhld are the same; together, these steps
+       implement fetching a 2-byte immediate argument from the program into the address
+       buffer. We will use this pattern for all instructions with this format, so let’s factor it
+       out:
+
+imm2 :: MicroSteps 2 True False
+imm2 =
+    step (IJust IncrPC) ToAddrBuf INothing >++>
+    step (IJust IncrPC) ToAddrBuf INothing
+
+shld :: MicroSteps 5 True True
+shdl =
+    imm2                                        >++>
+    step INothing (ToReg RL)      (IJust ToPtr) >++>
+    step INothing (Compute2 Inc2) INothing      >++>
+    step INothing (ToReg RH)      (IJust ToPtr)
+
+lhld :: MicroSteps 5 True False
+lhld =
+    imm2                                          >++>
+    step (IJust FromPtr) (ToReg RL)      INothing >++>
+    step INothing        (Compute2 Inc2) INothing >++>
+    step (IJust FromPtr) (ToReg RH)      INothing
+
+   In the same vein, LDA is similar to LHLD, targeting RA only:
+
+lda :: MicroSteps 3 True False
+lda =
+    imm2 >++>
+    step (IJust FromPtr) (ToReg RA) INothing
+
+    Note however that the types of shld, lhld and lda are all different from each
+other: only the first writes to memory in its last step, and the microcode for lda
+is shorter than the others. If our ultimate goal is to write a complete mapping
+from 8080 instructions to micro-programs, what type are we going to give to that
+mapping function?
+    One solution to this problem comes from the fact that unlike imm2, the code
+of shld and lhld doesn’t need to be composed with other code fragments; they
+are complete. This means we can convert them to the normalized representation
+micro-program by micro-program, where these type differences have dissolved. To
+get around the size problem, we also pad them with a micro-NOP up to a fixed size.
+We just pick 10 for this size for now, hoping that it will be enough for all instructions;
+once we’re done with writing all microcode, we can of course revisit this choice.
+
+type MicroLen = 10
+type MicroOp = (MicroInstr, Wedge OutAddr InAddr)
+type Microcode = (Maybe InAddr, Vec MicroLen MicroOp)
+
+       padded
+           :: (KnownNat k, KnownNat n, ((n + k) ~ MicroLen))
+           => MicroSteps n pre post
+           -> Microcode
+       padded ops = (first, uops ++ uNOPs)
+         where
+           (first, uops) = stepsOf ops
+           uNOPs = repeat (uNOP, Nowhere)
+
+       microcode :: Instr -> Microcode
+       microcode SHLD = padded shld
+       microcode LHLD = padded lhld
+       microcode LDA = padded lda
+
+           As for uNOP, the microcode instruction that doesn’t do anything, we could add
+       a bespoke micro-instruction; however, we can use any instruction that has no ef-
+       fect outside the microarchitectural registers. ToReg wouldn’t be a good choice,
+       since it changes a “real” (i.e. non-microarchitectural) register. Instead, we can pick
+       ToAddrBuf: instruction microcode can’t make any assumptions about the value of
+       the address buffer before the first micro-instruction, so changing its value at the end
+       of microcode doesn’t matter.
+
+       uNOP :: MicroInstr
+       uNOP = ToAddrBuf
+
+          This also gives us an implementation of NOP: there’s no way to create an empty
+       Steps for it, but we can use a single uNOP step:
+
+       microcode NOP = padded $ step INothing uNOP INothing
+
+15.7.3 Memory and register transfers
+       We have already seen how to implement LDA by setting the address lines from the
+       address buffer, and transferring the value buffer’s value to the A register. To go in
+       the other direction for STA, we just need the opposite of ToReg:
+
+       data MicroInstr
+           = FromReg Reg
+           | ...
+
+       uexec (FromReg r) = valueBuf <~ use (reg r)
+
+microcode STA = padded $
+    imm2 >++>
+    step INothing (FromReg RA) (IJust ToPtr)
+
+   We can also implement IN and OUT similar to LDA and STA; the only difference is
+that the port number is stored in a single byte.
+
+microcode IN = padded $
+    step (IJust IncrPC)   ToAddrBuf    INothing >++>
+    step (IJust FromPort) (ToReg RA)   INothing
+microcode OUT = padded $
+    step (IJust IncrPC)   ToAddrBuf    INothing >++>
+    step INothing         (FromReg RA) (IJust ToPort)
+
+   Note that we only twist into the address buffer once; however, this matches the
+FromPort and ToPort cases of inAddr and outAddr which take the 8-bit port number
+from the correct half of the address buffer.
+   Beside LDA and STA, the other generic-purpose memory-transfer instructions are
+the variants of MOV that use memory (via HL) as either the source or the destination
+argument, i.e. the ones that are aliased to LDAX and STAX. Since these take the
+memory address from a register pair, we need a 2-byte version of FromReg targeting
+the address buffer; otherwise, their implementation is straightforward.
+
+data MicroInstr
+    = FromReg2 RegPair
+    | ...
+
+microcode (LDAX rr) = padded $
+    step INothing        (FromReg2 rr) INothing >++>
+    step (IJust FromPtr) (ToReg RA)    INothing
+microcode (STAX rr) = padded $
+    step INothing (FromReg RA) INothing       >++>
+    step INothing (FromReg2 rr) (IJust ToPtr)
+
+   We want to implement FromReg2 similar to FromReg, by using a lens over
+MicroState. We have to be a bit careful here; lenses in general are not closed over
+products1 . In our case, however, any time a register pair occurs in the result of
+the instruction decoder, the two components of the pair are always different. This
+together with the definition of reg ensures the orthogonality property required to
+make unsafePairL well-behaved.
+
+   1 See e.g. https://stackoverflow.com/a/36521209/477476 for discussion containing counterexamples.
+
+      unsafePairL :: Lens' s a -> Lens' s b -> Lens' s (a, b)
+      unsafePairL l1 l2 = lens
+          (view l1 &&& view l2)
+          (\s (x,y) -> set l1 x . set l2 y $ s)
+
+      regPair :: RegPair -> Lens' MicroState Addr
+      regPair (Regs r1 r2) =
+          unsafePairL (reg r1) (reg r2) . iso bitCoerce bitCoerce
+      regPair SP = sp
+
+      uexec (FromReg2 rr) = addrBuf <~ use (regPair rr)
+
+          Of course, just to get the value of a regPair, we don’t really need the full generality
+      of a lens; also, it is always a safe operation. We create a lens instead because other
+      instructions will need a way to transfer from the address buffer to register pairs as
+      well.
+          A special case of memory access is loading from program code, i.e. immediate
+      loads. Let’s implement MVI: we read from IncrPC and either put the result directly
+      into a register, or write it to ToPtr after loading the address buffer from the given
+      register pair:
+
+      microcode (MVI (Reg r)) = padded $
+          step (IJust IncrPC) (ToReg r) INothing
+      microcode (MVI (Addr rr)) = padded $
+          step (IJust IncrPC) (FromReg2 rr) (IJust ToPtr)
+
+          The third kind of instruction belonging to this group is register-to-register trans-
+      fers, like MOV A, B. The implementation, again, is straightforward:
+
+      microcode (MOV (Reg r1) (LHS (Reg r2))) = padded $
+          step INothing (FromReg r2) INothing >++>
+          step INothing (ToReg r1) INothing
+
+         At this point, we should note that we have made MOV generic enough to subsume
+      LDAX, STAX and MVI, but here we have seemingly given up on this generality by
+      writing their microcode separately. Instead, let’s write a version of MOV’s microcode
+      that covers all combinations of destination and source arguments:
+
+      microcode (MOV (Reg r) src) = case src of
+          Imm -> padded $
+              step (IJust IncrPC) (ToReg r) INothing
+          LHS (Reg r') -> padded $
+              step INothing (FromReg r') INothing >++>
+              step INothing (ToReg r)    INothing
+
+       LHS (Addr rr) -> padded $
+           step INothing         (FromReg2 rr) INothing >++>
+           step (IJust FromPtr) (ToReg r)      INothing
+
+microcode (MOV (Addr rr) src) = case src of
+    Imm -> padded $
+        step (IJust IncrPC) (FromReg2 rr) (IJust ToPtr)
+    LHS (Reg r) -> padded $
+        step INothing (FromReg r)   INothing      >++>
+        step INothing (FromReg2 rr) (IJust ToPtr)
+    LHS (Addr rr') -> padded $
+        step INothing        (FromReg2 rr') INothing     >++>
+        step (IJust FromPtr) (FromReg2 rr) (IJust ToPtr)
+
+   Some of the immediate load and register transfer instructions target register
+pairs instead of single registers: these are LXI (the register pair version of MVI),PCHL,
+SPHL, and XCHG. In fact, we can regard JMP as an immediate load into PC.
+   We can use the 16-bit address buffer for these operations by adding the ToReg2
+pair of FromReg2, and Jump for the special case
+
+data MicroInstr
+    = ToReg2 RegPair
+    | Jump
+    | ...
+
+uexec (ToReg2 rr) = regPair rr <~ use addrBuf
+uexec Jump = pc <~ use addrBuf
+
+   With these additions, the microcode for the register pair instructions is straight-
+forward:
+
+microcode (LXI rr) = padded $
+    imm2 >++>
+    step INothing (ToReg2 rr)    INothing
+microcode JMP =
+    imm2 >++>
+    step INothing Jump INothing
+microcode PCHL = padded $
+    step INothing (FromReg2 RHL) INothing >++>
+    step INothing Jump           INothing
+microcode SPHL = padded $
+    step INothing (FromReg2 RHL) INothing >++>
+    step INothing (ToReg2 SP)    INothing
+
+           However, we get into a pickle once we get to XCHG. Recall that XCHG is supposed
+       to swap the values of HL and DE, but we don’t want to have any direct connection
+       between these four registers: everything should go via the single address buffer.
+       We solve this by using a swapping version of FromReg2 / ToReg2:
+
+       data MicroInstr
+           = SwapReg2 RegPair
+           | ...
+
+       uexec (SwapReg2 rr) = swap addrBuf (regPair rr)
+
+       swap :: (MonadState s m) => Lens' s a -> Lens' s a -> m ()
+       swap lx ly = do
+           x <- use lx
+           y <- use ly
+           lx .= y
+           ly .= x
+
+       microcode XCHG = padded $
+           step INothing (FromReg2 RHL) INothing >++>
+           step INothing (SwapReg2 RDE) INothing >++>
+           step INothing (SwapReg2 RHL) INothing
+
+          In fact, we don’t even need ToReg2 if we have SwapReg2: the only difference be-
+       tween the two micro-instructions is the value of the address buffer after execution,
+       and the microcode of different instructions isn’t allowed to make any assumptions
+       about the values of the micro-architectural registers, so there is no possible interfer-
+       ence. For this reason, we remove ToReg2 from MicroInstr and simply replace its
+       occurrences with SwapReg2 in LXI, PCHL and SPHL.
+
+15.7.4 Arithmetic
+       Because we have already added Compute2 for LHLD and SHLD, the 16-bit arithmetic
+       instructions INX and DCX are a breeze to implement: they both just load the given
+       register pair into the address buffer, apply the given two-byte function, and swap
+       back the result:
+
+       microcode (DCX rr) = padded $
+           step INothing (FromReg2 rr) INothing >++>
+           step INothing (Compute2 Dec) INothing >++>
+           step INothing (SwapReg2 rr) INothing
+
+microcode (INX rr) = padded $
+    step INothing (FromReg2 rr) INothing >++>
+    step INothing (Compute2 Inc) INothing >++>
+    step INothing (SwapReg2 rr) INothing
+
+    The corresponding 8-bit arithmetic operations are INR and DCR. We could imple-
+ment these with a Compute2-like dedicated instruction for 8-bit incrementing/decre-
+menting; instead, we fold them into the general 8-bit ALU that powers ADD and XOR
+and all the others. This makes sense not just because it is more economical on the
+number of kinds of micro-instructions, but also because all the general arithmetic
+instructions, and INR and DCR as well, change the various status flags in the same
+way. This means that the only difference between ADD B and INR B is that the former
+uses the A register as the first operand, while the latter uses the constant 1. We can
+always use the value buffer as the second operand, by loading the right register
+value beforehand.
+   Actually, if we re-read the description of INR and compare it to ADD, it turns out
+there is another difference: INR doesn’t update the C flag, but ADD does. Similarly,
+we can think of CMA as subtraction from the constant 255, without updating any of
+the flags. We could add five parameters to Compute to set which status flags should
+be updated; however, looking through all the valid instructions, we can see that Z,
+S and P are always either all updated or neither of them are.
+
+data MicroInstr
+    = Compute ALUArg ALU UpdateZSP UpdateAC UpdateC
+    | ...
+
+data ALUArg
+    = RegA
+    | Const01
+    | ConstFF
+
+data UpdateZSP = SetZSP | KeepZSP deriving (Eq)
+data UpdateAC = SetAC | KeepAC deriving (Eq)
+data UpdateC = SetC | KeepC deriving (Eq)
+
+    Before implementing this new micro-instruction, let’s add the microcode for all
+the arithmetic instructions that we can now write with Compute. The main ones,
+of course, are ALU and CMP, which have the same structure: get the right-hand side
+argument into the value buffer, apply Compute, then use the result by optionally
+writing it back into register A:
+
+      alu
+          :: ALU
+          -> RHS
+          -> MicroInstr
+          -> Microcode
+      alu fun rhs writeback = case rhs of
+          Imm -> padded $
+              step (IJust IncrPC) (Compute RegA fun SetZSP SetAC SetC)
+                                                              INothing >++>
+              step INothing       writeback                   INothing
+          LHS (Reg r) -> padded $
+              step INothing (FromReg r)                       INothing >++>
+              step INothing (Compute RegA fun SetZSP SetAC SetC)
+                                                              INothing >++>
+              step INothing writeback                         INothing
+          LHS (Addr rr) -> padded $
+              step INothing         (FromReg2 rr)             INothing >++>
+              step (IJust FromPtr) (Compute RegA fun SetZSP SetAC SetC)
+                                                              INothing >++>
+              step INothing         writeback                 INothing
+
+            We can think of CMP as a special version of SUB with a no-op writeback:
+
+      microcode (ALU fun src) = alu fun src (ToReg RA)
+      microcode (CMP src) = alu (Sub False) src uNOP
+
+         The other arithmetic functions can be written in a more ad-hoc way, but still
+      centered on Compute to implement the actual arithmetics:
+
+      microcode (INR (Addr rr)) = padded $
+          step INothing        (FromReg2 rr)                  INothing >++>
+          step (IJust FromPtr) (Compute Const01 (Add False) SetZSP SetAC KeepC)
+                                                              (IJust ToPtr)
+      microcode (INR (Reg r)) = padded $
+          step INothing (FromReg r)                           INothing >++>
+          step INothing (Compute Const01 (Add False) SetZSP SetAC KeepC)
+                                                              INothing >++>
+          step INothing (ToReg r)                             INothing
+
+      microcode (DCR (Addr rr)) = padded $
+          step INothing        (FromReg2 rr)                  INothing >++>
+          step (IJust FromPtr) (Compute ConstFF (Add False) SetZSP SetAC KeepC)
+                                                              (IJust ToPtr)
+
+microcode (DCR (Reg r)) = padded $
+    step INothing (FromReg r)                           INothing >++>
+    step INothing (Compute ConstFF (Add False) SetZSP SetAC KeepC)
+                                                        INothing >++>
+    step INothing (ToReg r)                             INothing
+
+microcode CMA = padded $
+    step INothing (FromReg RA)                          INothing >++>
+    step INothing (Compute ConstFF (Sub False) KeepZSP KeepAC KeepC)
+                                                        INothing >++>
+    step INothing (ToReg RA)                            INothing
+
+   Quite good mileage from just one new micro-instructions, especially if we con-
+sider that with our generalizations, the single ALU opcode stands for all of ADD, ADC,
+SUB, SBC, AND, ORA, XOR, and DAA!
+   Its handler in uexec is quite straightforward: taking a page from the CHIP-8 CPU,
+we leave all the heavy lifting of Compute to the pure function binALU. This leaves
+Compute with only the task of providing the right first argument, and updating the
+flags.
+
+uexec (Compute arg fun updateAC updateC) = do
+    x <- case arg of
+        RegA -> use (reg RA)
+        Const01 -> pure 0x01
+        ConstFF -> pure 0xff
+    ac <- use (flag FAC)
+    c <- use (flag FC)
+    y <- use valueBuf
+    let (ac', c', y') = binALU fun x (ac, c, y)
+    when (updateZSP == SetZSP) $ do
+       flag FZ .= (y' == 0)
+       flag FS .= y' `testBit` 7
+       flag FP .= even (popCount y')
+    when (updateAC == SetAC) $ flag FAC .= ac'
+    when (updateC == SetC) $ flag FC .= c'
+    valueBuf .= y'
+
+    We promised an implementation of DAD using the 8-bit ALU; it is also an example
+of using Compute without SetZSP.
+    Recall that DAD adds the given register pair’s value (as a 16-bit unsigned integer)
+to HL. So far, we can only add A and the constant values 1 and 255 to the value buffer,
+so let’s extend ALUArg with a new constructor that takes the low byte of the address
+buffer as the other operand:
+
+      data ALUArg
+          = AddrLo
+          | ...
+
+      uexec (Compute arg fun updateZSP updateAC updateC) = do
+          x <- case arg of
+              RegA -> use (reg RA)
+              AddrLo -> truncateB <$> use addrBuf
+              Const01 -> pure 0x01
+              ConstFF -> pure 0xff
+          -- Rest unchaged
+
+          We can then do 16-bit addition simply as two 8-bit additions, with the carry
+      propagated via the C flag. Since the specification of DAD says that C should be
+      updated, it is not a problem to overwrite its value during the first addition, since the
+      second addition will set it to its correct value anyway. The ToAddrBuf instructions
+      after each addition twist the current byte (first the low one, then the high one) back
+      into the address buffer.
+
+      microcode (DAD rr) = padded $
+          step INothing (FromReg2 rr)                     INothing >++>
+          step INothing (FromReg RL)                      INothing >++>
+          step INothing (Compute AddrLo (Add False) KeepZSP KeepAC SetC)
+                                                          INothing >++>
+          step INothing ToAddrBuf                         INothing >++>
+          step INothing (FromReg RH)                      INothing >++>
+          step INothing (Compute AddrLo (Add True) KeepZSP KeepAC SetC)
+                                                          INothing >++>
+          step INothing ToAddrBuf                         INothing >++>
+          step INothing (SwapReg2 RHL)                    INothing
+
+          For shifts and rotations, we follow the same pattern: the ComputeSR micro-
+      instruction is implemented in terms of a pure shiftRotateALU function.
+
+      data MicroInstr
+          = ComputeSR (Either ShiftRotate ShiftRotate)
+          | ...
+
+      microcode (SHROT sr) = padded $
+          step INothing (FromReg RA)   INothing >++>
+          step INothing (ComputeSR sr) INothing >++>
+          step INothing (ToReg RA)     INothing
+
+uexec (ComputeSR sr) = do
+    c <- use (flag FC)
+    x <- use $ reg RA
+    let (c', x') = shiftRotateALU sr (c, x)
+    flag FC .= c'
+    valueBuf .= x'
+
+   The actual implementation of binALU and shiftRotateALU is straightforward; for
+Add and Sub, computing the AC flag requires going 4 bits at a time. Similarly, ensur-
+ing a correct (two-digit) binary-coded decimal value requires fixing both nybbles
+separately.
+
+binALU :: ALU -> Value -> (Bool, Bool, Value) -> (Bool, Bool, Value)
+binALU fun x (a, c, y) = case fun of
+    Add c0 -> addC (c0 && c)
+    Sub c0 -> subC (c0 && c)
+    And    -> (testBit (x .|. y) 4, False, x .&. y)
+    Or     -> (False, False, x .|. y)
+    XOr    -> (False, False, x `xor` y)
+    BCD    -> bcd
+  where
+    (xh, xl) = nybbles x
+    (yh, yl) = nybbles y
+
+       addC c = (a', c', byte (zh, zl))
+         where
+           (a', zl) = bitCoerce $ (xl `add` yl) + if c then 1 else 0
+           (c', zh) = bitCoerce $ (xh `add` yh) + if a' then 1 else 0
+
+       subC c = (a', c', byte (zh, zl))
+         where
+           (a', zl) = bitCoerce $ (xl `sub` yl) - if c then 1 else 0
+           (c', zh) = bitCoerce $ (xh `sub` yh) - if a' then 1 else 0
+
+       bcd = (a', c', z)
+         where
+           (a', w) = bitCoerce $ add y $
+               if yl > 9 || a then (0x06 :: Value) else 0
+           (wh, _) = nybbles w
+           (c', z) = bitCoerce $ add w $
+               if wh > 9 || c then (0x60 :: Value) else 0
+
+         nybbles :: Value -> (Unsigned 4, Unsigned 4)
+         nybbles = bitCoerce
+
+         byte :: (Unsigned 4, Unsigned 4) -> Value
+         byte = bitCoerce
+
+         shiftRotateALU
+             :: Either ShiftRotate ShiftRotate
+             -> (Bool, Value)
+             -> (Bool, Value)
+         shiftRotateALU fun (c, x) = case fun of
+             Left sr ->
+                 (b7, bitCoerce (mid, b0, case sr of Shift -> c; Rotate -> b7))
+             Right sr ->
+                 (b0, bitCoerce (case sr of Shift -> c; Rotate -> b0, b7, mid))
+           where
+             (b7, mid, b0) = bitCoerce x :: (Bool, Unsigned 6, Bool)
+
+15.7.5   Conditional execution
+         The conditional instructions JMPIf, CALLIf and RETIf need part of the microcode to
+         only be executed if certain status flags have certain values. Recall the microcode for
+         an unconditional JMP:
+
+         microcode JMP = padded $
+             imm2 >++>
+             step INothing Jump INothing
+
+            To change it to a conditional jump, we add a check after the imm2 fetch but before
+         the Jump. And what do we need to be able to check for? We need to support all
+         conditions of type Cond, which is what we have in JMPIf, CALLIf and RETIf:
+
+         data MicroInstr
+             = When Cond | ...
+
+         evalCond :: (MonadState MicroState m) => Cond -> m Bool
+         evalCond (Cond flg target) = uses (flag flg) (== target)
+
+            We create the lens for a given flag from the RFlags register, by taking its flg-th
+         Bit, and converting it from/to Bool
+
+         bitL :: (BitPack a, Enum i) => i -> Lens' a Bit
+         bitL i = lens (!i) (flip $ replaceBit i)
+
+       flag :: Flag -> Lens' MicroState Bool
+       flag flg = reg RFlags . bitL flg . iso bitToBool boolToBit
+
+          The microcode for JMPIf, then, loads the target program counter into the address
+       buffer, and then bails out if the condition doesn’t hold:
+
+       microcode (JMPIf cond) = padded $
+           imm2 >++>
+           step INothing (When cond) INothing >++>
+           step INothing Jump        INothing
+
+           We will handle When micro-instructions by wrapping our underlying monad m
+       in ExceptT FlowControl. The name ExceptT is unfortunate, but its exception-like
+       semantics are a good match for our use case: if, during microcode execution, the
+       interpreter encounters a request to go to the next instruction or the halt state, it will
+       need to terminate the current instruction.
+
+       data FlowControl = GotoNext | GotoHalt
+
+       uexec (When cond) = do
+           passed <- evalCond cond
+           unless passed $ throwError GotoNext
+
+          Similarly, for HALT, we just need a micro-instruction that throws GotoHalt:
+
+       data MicroInstr
+           = Halt | ...
+
+       uexec Halt = throwError GotoHalt
+
+       microcode HLT = padded $ step INothing Halt INothing
+
+15.7.6 Stack operations
+       For CALL and RET, we need a way of pushing and popping the program counter. We
+       can pop any two-byte value by reading from IncrSP into the value buffer twice and
+       twisting it into the address buffer, just like how imm2 reads from IncrPC:
+
+       pop2 :: MicroSteps 2 True False
+       pop2 =
+           step (IJust IncrSP) ToAddrBuf INothing >++>
+           step (IJust IncrSP) ToAddrBuf INothing
+
+          This gives us a straightforward implementation of RET and RETIf:
+
+      popPC = pop2 >++> step INothing Jump INothing
+
+      microcode RET = padded $
+          popPC
+      microcode (RETIf cond) = padded $
+          step INothing (When cond) INothing >++>
+          popPC
+
+          Can we do the same for pushPC, by first moving the value of the program counter
+      into the address buffer by push2, and then twisting it into the value buffer as we
+      write to DecrSP? The problem with this approach becomes apparent when we write
+      out the full the microcode for CALL:
+
+      push2 =
+          step INothing FromAddrBuf (IJust DecrSP) >++>
+          step INothing FromAddrBuf (IJust DecrSP)
+
+      pushPC = step INothing FromPCToAddrBuf INothing >++> push2
+
+      microcode CALL = padded $
+          imm2   >++>
+          pushPC >++>
+          step INothing Jump INothing
+      microcode (CALLIf cond) = padded $
+          imm2                               >++>
+          step INothing (When cond) INothing >++>
+          pushPC                             >++>
+          step INothing Jump               INothing
+
+          Here, imm2 fetches the two-byte call target address into the address buffer, which
+      we use at the end when Jump copies it into the program counter. We can’t swap the
+      order of imm2 and pushPC, because the program counter value to push needs to point
+      to the start of the next instruction, i.e. after the two-byte immediate argument has
+      been fetched. So pushPC cannot be allowed to overwrite the address buffer. Instead,
+      we add a FromPC micro-instruction which uses the value buffer directly, thereby
+      keeping the address buffer unchanged:
+
+      data MicroInstr
+          = FromPC | ...
+
+      uexec FromPC = valueBuf <~ twistFrom pc
+
+       pushPC :: MicroSteps 2 False True
+       pushPC =
+           step INothing FromPC (IJust DecrSP) >++>
+           step INothing FromPC (IJust DecrSP)
+
+           RST is just half a CALL: instead of fetching the call target from the program, the
+       target address is encoded in the instruction itself. The Rst micro-instruction decodes
+       the reset index into a full 16-bit address via a left-shift.
+
+       data MicroInstr
+           = Rst (Unsigned 3) | ...
+
+       uexec (Rst rst) = pc .= extend rst `shiftL` 3
+
+       microcode (RST irq) = padded $
+           pushPC >++>
+           step INothing (Rst irq) INothing
+
+          Accessing the stack as data isn’t different from accessing it for control: the
+       only difference between PUSH and CALL, and RET and POP, is where the value comes
+       from/goes to:
+
+       microcode (PUSH rr) = padded $
+           step INothing (FromReg2 rr) INothing >++>
+           push2
+       microcode (POP rr) = padded $
+           pop2 >++>
+           step INothing (SwapReg2 rr) INothing
+
+          And then we have XTHL, which swaps the top of the stack with the HL register
+       pair. Because we already have SwapReg2, we can write its microcode to match this
+       explanation exactly: pop, swap, and push back.
+
+       microcode XTHL = padded $
+           pop2                                  >++>
+           step INothing (SwapReg2 RHL) INothing >++>
+           push2
+
+15.7.7 Internal settings
+       This final catch-all category covers CMC, STC, and EI/DI: all these are instructions
+       with no connection to the outside world, just changing various status bits. Our life
+       here would be much simpler if the interrupt masking bit was part of the flag register,
+
+      but alas, it isn’t. So we need two bespoke micro-instructions to transform individual
+      flags and the interrupt enable bit.
+
+      data MicroInstr
+          = Compute0 Flag ALU0
+          | SetInt Bool
+          | ...
+
+      data ALU0
+          = Complement
+          | ConstTrue
+
+      microcode CMC = padded $ step INothing (Compute0 FC Complement) INothing
+      microcode STC = padded $ step INothing (Compute0 FC ConstTrue) INothing
+      microcode (INT b) = padded $ step INothing (SetInt b) INothing
+
+      uexec (Compute0 flg fun) = flag flg %= case fun of
+          ConstTrue -> const True
+          Complement -> complement
+      uexec (SetInt b) = allowInterrupts .= b
+
+         As this concludes the microcode for all instructions, we can also retroactively
+      change MicroLen to just 8, the length of the longest microcode from DAD.
+
+15.8 A direct software implementation
+      Now that we have a complete mapping of Intel 8080 instructions to microcode, and
+      a complete implementation of all micro-instructions in terms of some underlying
+      monad m, we turn our attention to providing such an m for a software implementa-
+      tion.
+         First, recall the full type of uexec, including the constraint imposed on m:
+
+      uexec
+          :: (MonadState MicroState m)
+          => MicroInstr
+          -> ExceptT FlowControl m ()
+
+         The natural choice of m would be State MicroState, but that leaves no room to
+      implement memory and port access; instead, we create a record type to describe the
+      model of the outside world, and carry that around.
+
+data World m = World
+    { readMem :: Addr -> m Value
+    , writeMem :: Addr -> Value -> m ()
+    , inPort :: Port -> m Value
+    , outPort :: Port -> Value -> m Value
+    }
+
+newtype SoftCPU m a = SoftCPU
+    { unSoftCPU :: ReaderT (World m) (StateT MicroState m) a }
+    deriving newtype
+      (Functor, Applicative, Monad,
+       MonadReader (World m), MonadState MicroState)
+
+instance MonadTrans SoftCPU where
+    lift = SoftCPU . lift . lift
+
+    The big simplification compared to the eventual hardware implementation is
+that access to the outside world (via ports and memory addresses) is executed
+directly, inline with the execution of the microcode. We write a function nextInstr
+that runs the full microcode for the next instruction, and runSoftCPU which runs all
+the way until the CPU encounters a HLT instruction:
+
+nextInstr :: (Monad m) => SoftCPU m Bool
+nextInstr = do
+    instr <- decodeInstr <$> fetchByte
+    exec instr
+
+runSoftCPU :: (Monad m) => World m -> MicroState -> m ()
+runSoftCPU w s0 =
+    (evalStateT `flip` s0) . (runReaderT `flip` w) .
+    unSoftCPU $
+    whileM nextInstr
+
+   We can fetch the next instruction via the readMem operation provided by the
+World:
+
+fetchByte :: (Monad m) => SoftCPU m Value
+fetchByte = do
+    addr <- use pc <* (pc += 1)
+    peekByte addr
+
+      peekByte :: (Monad m) => Addr -> SoftCPU m Value
+      peekByte addr = do
+          readMem <- asks readMem
+          lift $ readMem addr
+
+          Of course, peekByte is useful for more than just fetching instructions: we will
+      also use it to implement the addressing request of each micro-step, if it is a memory
+      read. In other cases, we proceed similarly, just using different fields of World.
+
+      addressing :: (Monad m) => Wedge OutAddr InAddr -> SoftCPU m ()
+      addressing = bitraverse_ (doWrite <=< outAddr) (doRead <=< inAddr)
+
+      doWrite :: (Monad m) => Either Port Addr -> SoftCPU m ()
+      doWrite target = either writePort poke target =<< use valueBuf
+        where
+          writePort port value = do
+              write <- asks outPort
+              lift $ void $ write port value
+
+          poke addr value = do
+              writeMem <- asks writeMem
+              lift $ writeMem addr value
+
+      doRead :: (Monad m) => Either Port Addr -> SoftCPU m ()
+      doRead target = valueBuf <~ either readPort peekByte target
+        where
+          readPort port = do
+              read <- asks inPort
+              lift $ read port
+
+          Finally we have everything to write the instruction executor. Given a decoded
+      instruction, we look up its microcode, execute its first addressing operation (which
+      is always a read, so we lift it to a read-or-write via wedgeRight), then run each micro-
+      step in turn. The Bool returned by exec is whether the CPU should keep running, or
+      it executed a halt instruction; this latter signals to runSoftCPU to finish its execution
+      loop.
+
+      exec :: (Monad m) => Instr -> SoftCPU m Bool
+      exec instr = do
+          let (setup, usteps) = microcode instr
+          addressing $ wedgeRight setup
+          ex <- runExceptT $ mapM_ ustep usteps
+          return $ ex /= Left GotoHalt
+
+       ustep :: (Monad m) => MicroOp -> ExceptT FlowControl (SoftCPU m) ()
+       ustep (effect, post) = do
+           uexec effect
+           lift $ addressing post
+
+15.8.1 Zero-cost padding
+       Our naïve implementation of padding means that no matter how many useful steps
+       it takes to implement a given instruction, we always take the full MicroLen cycles.
+       The only exception to this is the When micro-instruction, which can cause an early
+       exit via GotoNext. But isn’t an early exit what we want at the end of the useful part
+       of the microcode as well?
+           If we mark each MicroOp with a flag telling if we should continue afterwards, we
+       can use that to exit exec without going through all the remaining uNOP steps:
+
+       type MicroOp = ((MicroInstr, Wedge OutAddr InAddr), Bool)
+
+       padded
+           :: (KnownNat k, KnownNat n, ((n + 1) + k) ~ MicroLen)
+           => MicroSteps (n + 1) pre post
+           -> Microcode
+       padded ops = (first, withCont uops ++ uNOPs)
+         where
+           (first, uops) = stepsOf ops
+           uNOPs = repeat ((nop, Nowhere), False)
+
+       withCont :: (KnownNat n) => Vec (n + 1) a -> Vec (n + 1) (a, Bool)
+       withCont xs = zip xs $ repeat True :< False
+
+          The change in padded’s type reflects that we can’t mark the end of an empty
+       MicroSteps; however, recall that we already have no way of constructing a value
+       of type MicroSteps 0 pre post, since the smallest constructor corresponds to a
+       singleton vector. The new type of padded (coming from the type of withCont) simply
+       expresses that this property of MicroSteps is exploited here.
+           The inspiration for this improvement came from the handling of a When where
+       the condition doesn’t hold; it only makes sense that we can handle the last micro-
+       instruction in ustep by signaling the same GotoNext exception:
+
+       ustep :: (Monad m) => MicroOp -> ExceptT FlowControl (SoftCPU m) ()
+       ustep ((effect, post), cont) = do
+           uexec effect
+           lift $ addressing post
+           unless cont $ throwError GotoNext
+
+15.8.2 Interrupts
+       Putting together the instruction decoder decodeInstr, the microcode table
+       microcode, the addressing interpreters inAddr and outAddr, the microcode
+       interpreter uexec, and SoftCPU as the main controller, we have everything for
+       straight-line execution of Intel 8080 programs: at the start of runSoftCPU, the first
+       instruction is fetched from the initial value of the program counter, and subsequent
+       instructions are read and executed, interleaved with memory and port access, one
+       after the other.
+           However, the Intel 8080 also provides a way of interrupting this regular sequence
+       of instruction execution. As we have seen, the interrupt request pin can be used
+       to instructs the CPU to fetch the first byte of the next instruction without using
+       the program counter, instead relying on some external mechanism to put the right
+       value on the data bus. For the software implementation, we keep things simple by
+       putting the instruction itself in the interrupt request:
+
+       interrupt :: (Monad m) => Instr -> SoftCPU m ()
+       interrupt instr = whenM (use allowInterrupts) $ do
+           allowInterrupts .= False
+           exec instr
+
+           We can combine regular nextInstr for normal operation and interrupt for
+       external triggers by running the former in a loop, and calling the latter whenever
+       we want to simulate an event. We will see an example of this in the software
+       implementation of the Space Invaders arcade machine, where the video subsystem
+       raises interrupts on certain raster lines.
+
+15.8.3 Testing
+       The big benefit of having a software model of the CPU is that it allows high-level
+       testing of the components that are going to be shared with the hardware implemen-
+       tation. Concretely, we can use the software CPU as a test bench for the microcode.
+       We started with the specification of the various 8080 instructions and turned them
+       into microcode; before thinking too much about how to implement that microcode
+       in hardware, it would be nice to have some assurance that we’re targeting correct
+       microcode.
+           There are several test suites one can find for the 8080, most of them contemporary
+       to the CPU itself. Here, we will look at two tests in particular: Preliminary Z80 tests,
+       which was released as open source in 1994 by Frank D. Cringle and modified to
+       target the Intel 8080 by Ian Bartholomew; and the Microcosm Associates 8080/8085
+       CPU Diagnostic from 1980 by Kelly Smith and containing updates by Mike Douglas,
+       donated to the SIG/M CP/M users’ group according do its header.
+
+    The interface to both of these tests is the same: they are meant to run on the
+CP/M operating system, print some success / failure messages, and exit. Does that
+mean we need to build a full computer that can run CP/M just to be able to test our
+CPU? Fortunately not: we can implement the OS routine (at address 0x0005) that
+originally prints to the screen by writing to an output port. Similarly, we can use
+a single HLT instruction to “exit” the current “process” at 0x0000. This gives us a
+simple way to observe the test results by just listening to writes to the output port
+and the CPU’s halt status.
+    The only other CP/M convention we need to be aware of is that user programs
+are loaded to and run from address 0x0100 onwards. So given a binary image file
+containing one of the two test suites, we can load it into an array representing the
+8080 memory by prepending our “mini CP/M” prelude:
+
+load :: FilePath -> IO (IOArray Addr Value)
+load file = do
+    bs <- fmap bitCoerce . BS.unpack <$> BS.readFile file
+    arr <- newArray (minBound, maxBound) 0x00
+    zipWithM_ (writeArray arr) [0x0000..] prelude
+    zipWithM_ (writeArray arr) [0x0100..] bs
+    return arr
+
+    Then we can run it by implementing readMem and writeMem using the array, and
+printing in outPort. The initial CPU state sets the program counter to 0x0100, which
+is where the tests start.
+
+run :: IOArray Addr Value -> IO ()
+run arr = runSoftCPU (mkWorld arr) (mkState 0x0100)
+
+mkWorld :: IOArray Addr Value -> World IO
+mkWorld arr = World{..}
+  where
+    readMem addr = readArray arr addr
+    writeMem addr val = writeArray arr addr val
+    inPort _ = return 0xff
+    outPort _port value = do
+        putChar . chr . fromIntegral $ value
+        return 0xff
+
+    Note that outPort doesn’t actually check the port number – our prelude only
+uses a single port (port 0), so we just connect the same functionality to all of them.
+    Here, we write main to simply run each test suite in turn, and it is up to the user
+to verify their output. Integrating into a testing framework is beyond our scope,
+
+      and is thus left as an exercise for the reader; in the code accompanying this book,
+      the Intel 8080 implementation uses the Tasty library for this purpose.
+
+      main :: IO ()
+      main = do
+          hSetBuffering stdout NoBuffering
+
+          for_ files $ \file -> do
+              putStrLn $ "Running test " <> takeBaseName file <> ":"
+              run =<< load file
+              putStrLn ""
+        where
+          files = ["TST8080.COM", "8080PRE.COM"]
+
+         The only missing part is writing the prelude; finally we get to program our own
+      CPU! We need two entry points for these tests: 0x0000 finishes the test, and 0x0005
+      prints a message. For the first one, we implement 0x0000 as printing a courtesy
+      newline before stopping the CPU:
+
+      prelude :: [Value]
+      prelude = mconcat [exit, message]
+        where
+          exit =
+            [ [ 0x3e, 0x0a ]        -- 0x0000: exit:                MVI A, 0x0a
+            , [ 0xd3, 0x00 ]        -- 0x0002:                      OUT 0
+            , [ 0x76 ]              -- 0x0004:                      HLT
+            ]
+
+           Printing a message turns out to be a bit trickier, because CP/M actually maps
+      several different functionalities to entry address 0x0005, dispatched on the C regis-
+      ter’s value. If C is equal to 2, the single ASCII character in the E register is printed; if
+      C is 9, a sequence of characters starting at DE is printed, terminated by a '$' character.
+      Because these are the only two modes used in our test suites, instead of multi-way
+      switching, we simply check C against 2, and then do one or the other.
+
+           message =
+             [ [ 0x3e, 0x02 ]              -- 0x0005: message: MVI A, 0x02
+             , [ 0xb9 ]                    -- 0x0007:          CMP C
+             , [ 0xc2, 0x0f, 0x00 ]        -- 0x0008:          JNZ 0x000f
+             , [ 0x7b ]                    -- 0x000B: putChr: MOV A, E
+             , [ 0xd3, 0x00 ]              -- 0x000C:          OUT 0
+             , [ 0xc9 ]                    -- 0x000E:          RET
+
+       , [ 0x0e, 0x24 ]            -- 0x000F: putStr:      MVI C, '$'
+       , [ 0x1a ]                  -- 0x0011: loop:        LDAX DE
+       , [ 0xb9 ]                  -- 0x0012:              CMP C
+       , [ 0xc2, 0x17, 0x00 ]      -- 0x0013:              JNZ next
+       , [ 0xc9 ]                  -- 0x0016:              RET
+       , [ 0xd3, 0x00 ]            -- 0x0017: next:        OUT 0
+       , [ 0x13 ]                  -- 0x0019:              INX DE
+       , [ 0xc3, 0x11, 0x00 ]      -- 0x001a:              JMP loop
+
+   If everything works fine, we should see the following output:
+
+Running test TST8080:
+MICROCOSM ASSOCIATES 8080/8085 CPU DIAGNOSTIC
+ VERSION 1.0 (C) 1980
+
+ CPU IS OPERATIONAL
+
+Running test 8080PRE:
+8080 Preliminary tests complete
+
+   Just to see what a positive result look like, let’s break the microcode a bit. Let’s
+say we forget to write the result back to the register pair in DCX:
+
+microcode (DCX rr) = padded $
+    step INothing (FromReg2 rr) INothing >++>
+    step INothing (Compute2 Dec) INothing
+
+   This is caught by the Microcosm test:
+
+Running test TST8080:
+MICROCOSM ASSOCIATES 8080/8085 CPU DIAGNOSTIC
+ VERSION 1.0 (C) 1980
+
+ CPU HAS FAILED!       ERROR EXIT=04EE
+
+   For this test, the exit location is always the address of the instruction just after
+the error; looking at 0x04ee in the assembly source of TST8080, we see the following
+code testing the DCX instruction:
+
+04E5    0B            DCX B
+04E6    1B            DCX D
+04E7    2B            DCX H
+04E8    3E 12         MVI A,012H
+04EA    B8            CMP B
+04EB    C4 A006       CNZ CPUER     ;TEST "DCX" B
+
+         The so-called “preliminary” test doesn’t catch this error; for another example,
+      we can try breaking PCHL by omitting the step that does the actual jump:
+
+      Running test 8080PRE:
+      02f7
+
+         The output is less elaborate than the one from the Microcosm test, but it does
+      lead us to the assembly code just before 0x2f7:
+
+                           ; test indirect jumps
+      02F0   21 02F7       LXI H,lab7
+      02F3   E9            PCHL
+      02F4   CD 0352       CALL error
+
+15.9 The complete CPU
+      We structure the hardware implementation of the CPU the same way as our earlier
+      processors: we create a datatype to control the various execution phases and use
+      that in the state.
+
+      data Phase
+          = Init
+          | Halted
+          -- More to be added
+          deriving (Show, Generic, NFDataX)
+
+      data CPUState = CPUState
+          { _phase :: Phase
+          , _microState :: MicroState
+          }
+          deriving (Show, Generic, NFDataX)
+      makeLenses ''CPUState
+
+      initState :: Addr -> CPUState
+      initState pc0 = CPUState
+          { _phase = Init
+          , _microState = mkMicroState pc0
+          }
+
+      type CPU = CPUM CPUState CPUOut
+
+         We implement the default output values by wiring the address buffer to the
+      address line, and checking the phase for the halted output.
+
+defaultOut :: CPUState -> Pure CPUOut
+defaultOut CPUState{_microState = MicroState{..}, ..} = CPUOut{..}
+  where
+    _addrOut = Right _addrBuf
+    _dataOut = Nothing
+    _interruptAck = False
+    _halted = case _phase of
+        Halted -> True
+        _ -> False
+
+    For the implementation of the actual CPU state transition function, let’s ignore
+interrupts first. We extend the Phase datatype with two more constructors: we enter
+Fetching with the next instruction’s machine code available on the dataIn input, so
+we can use that as an index into a ROM containing the microcode; we then go to the
+Executing phase, which goes through the microcode step by step.
+
+data Phase
+    = Fetching
+    | Executing Value (Index MicroLen)
+    | ...
+
+   As a first approximation, the four constructors of Phase can be handled as such:
+
+   • In Init, we start fetching the next instruction, by setting the address bus to
+     the program counter’s value and going to the Fetching phase.
+
+   • In Fetching, the instruction machine code is read from the data bus, the
+     program counter is incremented, and we go to the Executing phase for the
+     first micro-step.
+
+   • In Executing instr i, the i-th micro-step of the given instruction is executed.
+
+   • In the Halted phase, we simply remain in that phase without any other state
+     change.
+
+cpu :: Pure CPUIn -> CPUM CPUState CPUOut ()
+cpu CPUIn{..} = use phase >>= \case
+    Init -> fetchNext
+    Fetching -> do
+        let instr = dataIn
+        microState.pc += 1
+        phase .= Executing instr 0
+    Executing instr i -> exec instr i
+    Halted -> return ()
+
+      fetchNext :: CPU ()
+      fetchNext = do
+          addr <- use (microState.pc)
+          addrOut .:= Right addr
+          phase .= Fetching
+
+          For the actual execution, the microcode is retrieved from ROM and executed
+      using the uexec function we have already implemented. Then, depending on the re-
+      sult, either we go to the next step (Executing instr (i + 1)), to the next instruction
+      via fetchNext, or the Halted phase.
+
+      exec :: Value -> Index MicroLen -> CPU ()
+      exec instr i = do
+          let ((uop, post), cont) = microcodeFor instr !! i
+          runExceptT (zoom microState $ uexec uop) >>= \case
+              Left GotoNext -> do
+                  fetchNext
+              Left GotoHalt -> do
+                  phase .= Halted
+              Right () -> do
+                  maybe fetchNext (assign phase . Executing instr) $ succIdx i
+
+         The implementation of microcodeFor uses Template Haskell to evaluate
+      microcode at all possible 8-bit machine code bytes. The Template Haskell excursion
+      ensures that Clash puts only the flattened bit-level data of the microcode in the
+      generated Verilog, instead of complicated expressions to compute it that can trip
+      up some downstream synthesis tools.
+
+      microcodeFor :: Value -> MicroOps
+      microcodeFor = asyncRom
+          $(TH.lift $ map (snd . microcode . decodeInstr . bitCoerce) $
+          indicesI @256)
+
+           While the above is enough scaffolding for the execution of the micro-instructions,
+      it doesn’t solve the problem of I/O: note that both the initial read address and the
+      after-instruction read/write address from the microcode is ignored. So what does
+      it look like to handle these requests? Writes are easy: we can simply set the address
+      line output to the outAddr-computed value, and put valueBuf on dataOut. However,
+      reads are more involved: after setting the address bus, the result comes back from
+      RAM at the next cycle. So for example, in the Fetching phase, we have no way
+      of handling the full extent of an initial read request; the most we can do is set the
+      address bus, and then add a flag for the Executing phase to store the dataIn input
+      in the value buffer:
+
+data Phase
+    = Executing Value (Index MicroLen) | ...
+
+   We write the addressing implementation to return whether it is a read request,
+so that both the Fetching and Executing phases know what to pass to the next
+Executing phase:
+
+addressing :: Wedge OutAddr InAddr -> CPU Bool
+addressing Nowhere = return False
+addressing (Here write) = do
+    doWrite =<< zoom microState (outAddr write)
+    return False
+addressing (There read) = do
+    doRead =<< zoom microState (inAddr read)
+    return True
+
+doWrite :: Either Port Addr -> CPU ()
+doWrite target = do
+    addrOut .:= target
+    value <- use $ microState.valueBuf
+    dataOut .:= Just value
+
+doRead :: Either Port Addr -> CPU ()
+doRead addr = addrOut .:= addr
+
+    The changes to cpu and exec are fairly small: just applying addressing on the
+initial setup and the after-instruction address request, and passing its result on.
+
+cpu :: Pure CPUIn -> CPUM CPUState CPUOut ()
+cpu CPUIn{..} = use phase >>= \case
+    Fetching -> do
+        let instr = dataIn
+        microState.pc += 1
+        let setup = setupFor instr
+        load <- addressing (wedgeRight setup)
+        phase .= Executing load instr 0
+    Executing load instr i -> do
+        when load $ microState.valueBuf .= dataIn
+        exec instr i
+    ...
+
+      exec :: Value -> Index MicroLen -> CPU ()
+      exec instr i = do
+          let ((uop, post), cont) = microcodeFor instr !! i
+          runExceptT (zoom microState $ uexec uop) >>= \case
+              Right () -> do
+                  load <- addressing post
+                  maybe fetchNext (assign phase . Executing load instr) $
+          succIdx i
+              ...
+
+         The code providing the lookup table for the initial Setup of each instruction is
+      similar to the microcode table, we just take the fst component of each microcode
+      entry instead of the snd:
+
+      setupFor :: Value -> Setup
+      setupFor = asyncRom
+          $(TH.lift $ map (fst . microcode . decodeInstr . bitCoerce) $
+          indicesI @256)
+
+          Note that we need to keep microcodeFor and setupFor separate. If instead, we
+      had microcodeAndSetupFor :: Value -> (Setup, MicroOps), Clash would gener-
+      ate two copies of the same ROM, since it is accessed from two separate places (the
+      two branches of the switch on phase), with two different addresses.
+          One more optimization we can do is to take the cont flag into account: since a
+      False value means there is no point in continuing execution (since all that remains
+      is padding), we can go to fetchNext at that point:
+
+      exec :: Value -> Index MicroLen -> CPU ()
+      exec instr i = do
+          let ((uop, post), cont) = microcodeFor instr !! i
+          runExceptT (zoom microState $ uexec uop) >>= \case
+              Right () -> do
+                  load <- addressing post
+                  let i' = guard cont *> succIdx i
+                  maybe fetchNext (assign phase . Executing load instr) i'
+              ...
+
+          Note, however, that mixing addressing and fetchNext in the same cycle can be
+      bad news, since both may want to set the address bus. This bug is not introduced
+      by the optimization that takes cont into account; rather, it was there in our previous
+      version as well, but would only cause problems if we had any instruction that has
+      no padding (i.e. is 8 micro-steps long) and finishes with a memory write. But now
+
+       that we have a way of going to the next instruction earlier, it is important to ensure
+       that the last real (i.e. non-padding) instruction has no write:
+
+       padded
+           :: (KnownNat k, KnownNat n, ((n + 1) + k) ~ MicroLen)
+           => MicroSteps (n + 1) pre False
+           -> Microcode
+
+          This type-level change ensures this property holds without the need for any
+       term-level checks. And in fact, when we try to compile our code after this
+       check, we will find that several instructions (among them push2) require an extra
+       step INothing uNOP INothing step just to avoid finishing on a step that writes to
+       memory – these would cause faulty behavior if we didn’t change padded to catch
+       them statically.
+
+15.9.1 Running the test suite
+       We can use similar scaffolding as the CHIP-8 to run the test suite on our CPU using
+       high-level simulation. We start with an implementation of the world that consumes
+       the CPU output to produce the next cycle’s input:
+       world :: (Monad m) => World m -> Pure CPUOut -> m (Pure CPUIn)
+       world World{..} CPUOut{..} = do
+           dataIn <- case _addrOut of
+               Left port ->
+                   maybe (inPort port) (outPort port) _dataOut
+               Right addr -> do
+                   x <- readMem addr
+                   traverse_ (writeMem addr) _dataOut
+                   return x
+           interruptRequest <- pure False
+           return CPUIn{..}
+
+           Then, we run the CPU and the world in tandem, feeding one into the other. As
+       with the software implementation, sim returns a flag telling the rest of the simulation
+       if the CPU is still running, i.e. not halted.
+       sim :: (Monad m) => World m -> StateT (Pure CPUIn, CPUState) m Bool
+       sim w = do
+           (inp, s) <- get
+           let (out, s') = runState (runCPU defaultOut $ cpu inp) s
+           inp' <- lift $ world w out
+           put (inp', s')
+           return $ not $ _halted out
+
+       initInput :: Pure CPUIn
+       initInput = CPUIn
+           { dataIn = 0x00
+           , interruptRequest = False
+           }
+
+       run :: IOArray Addr Value -> IO ()
+       run arr =
+           evalStateT `flip` (initInput, initState 0x0100) $
+           whileM $ sim (mkWorld arr)
+
+          The rest of the test running framework can be reused as-is from the software
+       implementation.
+
+15.9.2 Interrupt handling
+       The above takes care of straight-line execution, but what about interrupts? The
+       two components of interrupt handling are recording the interrupt event, and then
+       reacting to it. These two are separate because interrupt requests can come in at any
+       time, including in the middle of executing an instruction; but reacting to them will
+       have to wait until just before fetching the next instruction.
+           We record interrupt requests in a simple flag which is updated in every cycle
+       in cpu independently of other, phase-specific state transitions. Of course, interrupt
+       requests should only be latched when not masked, i.e. when allowInterrupts is set.
+
+       data CPUState = CPUState
+           { _interrupted :: Bool
+           ...
+           }
+
+       latchInterrupt :: Pure CPUIn -> CPU Bool
+       latchInterrupt CPUIn{..} = do
+           allowed <- use (microState.allowInterrupts)
+           when (interruptRequest && allowed) $ interrupted .= True
+           use interrupted
+
+           To accept an interrupt, we need to do a special kind of Fetching: instead of setting
+       the address bus from the program counter, we need to raise the interruptAck output,
+       and then wait one more cycle for the interrupt instruction to be available. Interrupts
+       also enable coming back from the Halted state, which gives programmers a handy
+       way to sleep until the next interrupt occurs.
+
+cpu :: Pure CPUIn -> CPUM CPUState CPUOut ()
+cpu inp@CPUIn{..} = do
+    interrupted <- latchInterrupt inp
+    use phase >>= \case
+        Fetching False | interrupted -> do
+            acceptInterrupt
+            phase .= Fetching True
+        Fetching interrupting -> do
+            let instr = dataIn
+            unless interrupting $ microState.pc += 1
+            ...
+        Halted -> when interrupted $ do
+            acceptInterrupt
+            phase .= Fetching True
+        ...
+
+    When an interrupt is accepted, we also disable further interrupts until an EI
+instruction enables them back:
+
+acceptInterrupt :: CPU ()
+acceptInterrupt = do
+    microState.allowInterrupts .= False
+    interrupted .= False
+    interruptAck .:= True
+
+    Although not needed for the two test suites we’ve been using, it can be instruc-
+tive, even useful, to also update our high-level simulation framework to support
+interrupts. We store an extra IRQ component in the state of the world:
+
+data IRQ
+    = NewIRQ Value
+    | QueuedIRQ Value
+
+world
+    :: (Monad m)
+    => World m
+    -> Pure CPUOut
+    -> StateT (Maybe IRQ) m (Pure CPUIn)
+
+    Externally, a new interrupt can be raised by changing the state to
+Just (NewIRQ instr). We leave the policy decision of what to do if there is
+already a queued interrupt to the rest of the simulation code. Internally, memory
+read requests are overridden with the instruction code from the QueuedIRQ by
+
+       adding a new branch to the dataIn computation. The two new functions taking
+       care of interrupt state management are getInterrupt and newInterrupt.
+
+       world World{..} CPUOut{..} = do
+           dataIn <- case _addrOut of
+               Right addr | _interruptAck ->
+                   getInterrupt
+               ...
+           interruptRequest <- newInterrupt
+           return CPUIn{..}
+         where
+           getInterrupt = get >>= \case
+               Just (QueuedIRQ instr) -> do
+                   put Nothing
+                   return instr
+               _ -> return 0x00
+
+           newInterrupt = get >>= \case
+               Just (NewIRQ instr) -> do
+                   put $ Just $ QueuedIRQ instr
+                   return True
+               _ -> return False
+
+          We can get rid of this new StateT layer in our test bench runner by starting from
+       no queued interrupts, and never adding any:
+
+       run :: IOArray Addr Value -> IO ()
+       run arr =
+           evalStateT `flip` Nothing $
+           evalStateT `flip` (initInput, initState 0x0100) $
+           whileM $ sim (mkWorld arr)
+
+15.9.3 Stalling on memory contention
+       As we have seen in the CHIP-8 chapter, when peripherals are connected to the same
+       RAM elements as the CPU, those peripherals may need to pre-empt the processor’s
+       memory access. The real Intel 8080 has the READY and WAIT pins for this purpose:
+       when a peripheral needs access to RAM, the READY input is pulled low, which stalls
+       the CPU on its next read from the data bus, signaled to the outside world by the
+       WAIT output going high.
+          In our implementation, we leave the WAIT output to an exercise, and bundle READY
+       with dataIn: if the memory is not ready for reading, we simply put Nothing on the
+       data input pins of the CPU. This ensures we don’t accidentally forget to implement
+
+stalling and mistake the memory output from an address requested by a peripheral
+with the intended read value.
+
+data CPUIn = CPUIn
+  { dataIn :: Maybe Value
+  ...
+  }
+
+   There are two points in our code where we access dataIn: during Fetching to get
+the machine code of the next instruction, and when Executing a microcode step that
+was preceded by a read request. In both of these cases, if dataIn contains Nothing,
+there is no meaningful way to apply the rest of the state changes in the given period,
+and we need to retry in the next one. We can do this easily by wrapping CPUM inside
+the MaybeT monad transformer, and treating mzero as a retry request.
+
+type CPU = MaybeT (CPUM CPUState CPUOut)
+
+cpu :: Pure CPUIn -> CPUM CPUState CPUOut ()
+cpu inp@CPUIn{..} = void . runMaybeT $ do
+    ...
+
+    We get rid of the MaybeT layer at the top of cpu, which ensures that the rest of
+it will only be executed up to the first mzero. Do we need to go through the rest of
+our code and lift everything? No, because uexec and addressing are polymorphic,
+and MaybeT has lifting instances of MonadState! All we need to do is to change direct
+accesses of dataIn with an effectful way of reading a byte, and use readByte both
+when Fetching and when Executing:
+
+readByte :: Pure CPUIn -> CPU Value
+readByte CPUIn{..} = maybe retry consume dataIn
+  where
+    retry = mzero
+    consume x = return x
+
+   If we change our simulation-based test to always put Just values on the data
+input, it will seem as if we are done: just change world to reflect that the World
+can fail to provide read values; that is, that the underlying monad is wrapped in a
+MaybeT.
+
+world
+    :: (Monad m)
+    => World (MaybeT m)
+    -> Pure CPUOut
+    -> StateT (Maybe IRQ) m (Pure CPUIn)
+
+      world World{..} CPUOut{..} = do
+          dataIn <- case _addrOut of
+              Left port -> lift . runMaybeT $
+                  maybe (inPort port) (outPort port) _dataOut
+              Right addr | _interruptAck ->
+                  getInterrupt
+              Right addr -> lift . runMaybeT $ do
+                  x <- readMem addr
+                  traverse_ (writeMem addr) _dataOut
+                  return x
+          ...
+
+         With this change, we can run our test benches and see that they still work. How-
+      ever, this is misleading, because we haven’t really exercised the new functionality:
+      we run the test with the CPU always getting read results immediately. To expand
+      the scope of our testing, we can extend the test bench program with a supply of
+      Bool values to tell if memory should be ready in a given period. There are many
+      ways to do this; here, we present one way, using the monad-supply package. Note
+      the use of cycle to ensure an infinite list of Booleans, avoiding evalSupplyT to error
+      out because of running out of items.
+
+      import Control.Monad.Supply
+
+      run :: [Bool] -> IOArray Addr Value -> IO ()
+      run accessPattern arr =
+          evalStateT `flip` Nothing $
+          evalStateT `flip` (initInput, initState 0x0100) $
+          evalSupplyT `flip` cycle accessPattern $
+          whileM $ do
+              memReady <- supply
+              lift $ sim (mkWorld memReady)
+
+         The only change to mkWorld here is the addition of a new Bool parameter, which
+      we can use in readMem to decide if the result should be held back:
+
+      mkWorld :: Bool -> IOArray Addr Value -> World (MaybeT IO)
+      mkWorld memReady arr = World{..}
+        where                   -- writeMem, inPort and outPort unchanged
+          readMem addr = do
+              guard memReady
+              liftIO $ readArray arr addr
+
+   If we try running the tests with different memory accessPatterns from the
+imaginary peripherals, taking care to include at least some True cycles where the
+CPU gets a chance to use the RAM, we quickly run into trouble: either the tests
+hang, or print nonsense, or just produce failures.
+
+    To see what is going wrong, we should look at how the address bus changes
+whenever readByte fails with a retry. In the cycle before the first retry, the address
+bus is set directly to the desired address in doRead, for example by an IncrSP
+addressing mode. Then, in the first cycle, if the RAM was busy serving some other
+peripheral’s request, readByte fails, leading to another readByte in the next cycle.
+However, since the address bus isn’t restored, it will use whatever value is specified
+in defaultOut; in our case, that is to use the contents of the addrBuf. But that will
+not give the same result as IncrSP did in the previous cycle – and so the next cycle
+(unless it fails again) will read from the wrong address. Neither would it be a good
+idea to re-evaluate the last addressing mode, since that would result in SP being
+increased twice (and the second try would already be using the once-increased
+value).
+
+   The solution to this problem is to remember the last read address and the last
+value to be written until the read succeeds, and put that on the address bus for
+subsequent cycles. We put an address and a write latch in the CPU state, and use
+their value as the default for addrOut and dataOut:
+
+data CPUState = CPUState
+    { _addrLatch :: Either Port Addr
+    , _dataOutLatch :: Maybe Value
+    ...
+    }
+
+defaultOut :: CPUState -> Pure CPUOut
+defaultOut CPUState{_microState = MicroState{..}, ..} = CPUOut{..}
+  where
+    _addrOut = fromMaybe (Right 0x0000) _addrLatch
+    _dataOut = _dataOutLatch
+    ...
+
+   In fact, we can do one better, by changing the type of addrOut in CPUOut to a
+Maybe; this allows circuits to implement peripherals that have lower priority access
+to RAM than the CPU.
+
+      data CPUOut = CPUOut
+          { _addrOut :: Maybe (Either Port Addr)
+          ...
+          }
+
+      defaultOut :: CPUState -> Pure CPUOut
+      defaultOut CPUState{_microState = MicroState{..}, ..} = CPUOut{..}
+        where
+          _addrOut = _addrLatch
+          ...
+
+         Now all that remains to be done is to update addrLatch and dataOutLatch both
+      on read/write requests and successful reads. If there is no pending read/write
+      request, we still return the dataIn value (if available); this is for the case where the
+      data bus is populated by an external actor in the case of an interrupt. The fromJustX
+      used here is a simulation-friendly version of fromJust.
+
+      readByte :: Pure CPUIn -> CPU Value
+      readByte CPUIn{..} = do
+          pending <- isJust <$> use addrLatch
+          if pending then maybe retry consume dataIn
+              else return $ fromJustX dataIn
+        where
+          retry = mzero
+          consume x = do
+              addrLatch .= Nothing
+              dataOutLatch .= Nothing
+              return x
+
+      doRead :: Either Port Addr -> CPU ()
+      doRead addr = addrLatch .= Just addr
+
+      doWrite :: Either Port Addr -> CPU ()
+      doWrite target = do
+          addrLatch .= Just target
+          value <- use $ microState.valueBuf
+          dataOutLatch .= Just value
+
+         The new structure of cpu is as follows: after latching interrupt requests (since
+      that can happen while waiting for memory), we use readByte to ensure any pending
+      read/write requests are fulfilled. Then, the result of readByte is used in all branches
+      where normally, dataIn would be accessed (in the lines marked with (*) below):
+
+cpu :: Pure CPUIn -> CPUM CPUState CPUOut ()
+cpu inp@CPUIn{..} = void . runMaybeT $ do
+    interrupted <- latchInterrupt inp
+    dataRead <- readByte inp                                    -- (*)
+
+       use phase >>= \case
+           Init -> do
+               fetchNext
+           Fetching False | interrupted -> do
+               acceptInterrupt
+               phase .= Fetching True
+           Fetching interrupting -> do
+               let instr = dataRead                             -- (*)
+               unless interrupting $ microState.pc += 1
+               let setup = setupFor instr
+               load <- addressing (wedgeRight setup)
+               phase .= Executing load instr 0
+           Executing load instr i -> do
+               when load $ microState.valueBuf .= dataRead      -- (*)
+               exec instr i
+           Halted -> when interrupted $ do
+               acceptInterrupt
+               phase .= Fetching True
+
+   With these changes applied, both test suites should pass with any access pattern
+that has at least some True values.
+   All that remains is exporting the complete CPU as a Clash signal function for
+our further chapters:
+
+intel8080From
+    :: (HiddenClockResetEnable dom)
+    => Addr
+    -> Signals dom CPUIn
+    -> Signals dom CPUOut
+intel8080From startAddr =
+    mealyCPU (initState startAddr) defaultOut cpu
+
+intel8080
+    :: (HiddenClockResetEnable dom)
+    => Signals dom CPUIn
+    -> Signals dom CPUOut
+intel8080 = intel8080From 0x0000
+
+        Exercises
+           • Add various status outputs from the real 8080’s SYNC functionality, such as
+             WAIT
+
+           • The implementation of addressing by IncrPC, IncrSP or DecrSP contains its
+             own 16-bit incrementer/decrementer. Change the microcode to make use of
+             the Compute2 instruction instead, thereby sharing a single 16-bit ALU both for
+             addressing and arithmetic.
+
+           • Implement Compute2 via two rounds of 8-bit Compute, reusing a single 8-bit
+             ALU
+
+           • The only use of SwapReg2 that exploits its swapping behavior (i.e. that couldn’t
+             be implemented with a much simpler ToReg2) is in XTHL and XCHG. By using
+             both the value buffer and the address buffer as temporary storage, it is possible
+             to implement XTHL and XCHG using ToReg2, thereby obliviating the need for
+             SwapReg2.
+
+           • Instead of microcode instructions that operate directly on register pairs, ex-
+             plore implementing everything in terms of single (8-bit) registers only.
+
+15.10   Summary
+           • The Intel 8080 was a real, physically existing CPU. Some of its design decisions
+             stem from the constraints of physical IC design, such as saving on the number
+             of pins.
+
+           • Instead of following the hardware interface directly, we are capturing the
+             intended meaning of its pins: on one hand, there is no constraint on space,
+             so we can avoid multiple-duty pins like the various status bits on the data bus;
+             on the other hand, we package up related pins, such as packing READY and the
+             data-in bus into a single Maybe Value input.
+
+           • It is a von Neumann machine using instructions taking up between one
+             and three bytes. The first byte determines the instruction width, so we
+             implement generic fetching for the first byte, and fold the rest of the fetching
+             into the execution of the instruction.
+
+           • Control flow can be changed externally using interrupts. The 8080’s interrupt
+             design in particular requires quite a lot of external machinery; we implement
+             that outside our CPU core so that different computers using the same 8080
+             implementation can use different interrupting schemes, just like the real hard-
+             ware.
+
+   • Our implementation is microcoded: each 8080 instruction is mapped to a
+     sequence of simpler, more regular micro-instructions that can be executed in
+     a single clock period. By embedding the microcode into Haskell, we get to
+     use Haskell’s tools for abstraction to reuse microcode fragments, and can use
+     the host type system to enforce some microcode invariants.

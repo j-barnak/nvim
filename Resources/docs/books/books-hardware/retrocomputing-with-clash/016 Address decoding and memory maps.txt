@@ -1,0 +1,1124 @@
+           Address decoding and memory maps
+                                                    14
+     One important component of our CHIP-8 was the logic to decode the CPU’s address
+     output according to the following, very simple, memory map:
+
+        • 512 bytes of (font) ROM starting at address 0x000
+        • 3584 bytes of RAM starting at address 0x200
+
+        Let’s recall the code we wrote that implements the above logic:
+
+     fontAddr = enable (_memAddr .< 0x200) _memAddr
+     ramAddr = enable (0x200 <=. _memAddr) (_memAddr - 0x200)
+
+     font = rom (hexDigits ++ repeat 0 :: Vec 0x200 Byte)
+             (fromJustX <$> fontAddr)
+     ram = packRam (blockRamFile (SNat @(0x1000 - 0x200)) programFile)
+             (fromJustX <$> ramAddr)
+             (liftA2 (,) <$> ramAddr <*> _memWrite)
+
+     memRead = muxA
+         [ enable (register False $ isJust <$> fontAddr) font
+         , enable (register False $ isJust <$> ramAddr) ram
+         ] <|. 0
+
+        The topic of this chapter is developing abstractions that allow us to rewrite the
+     above code into a form that is much closer to the above textual description. These
+     abstractions will help in further chapters as memory maps become more complex.
+
+14.1 Room for improvement
+     Dedicating a whole chapter to this problem only makes sense if we are not satisfied
+     with the hand-written code. So what are its problems that we hope to improve?
+        First of all, there is the disconnect between the three parts of our code: matching
+     the address against subintervals, using each matched sub-address to create a mem-
+
+      ory component, and then using multiplexing the read results into a single memRead.
+      We could have easily accidentally used isJust <$> fontAddr to select ram.
+          Second is just how verbose it is, when the actual information to characterize the
+      whole memory map is just the sizes and types of components, and their place in the
+      address space. Some of this verbosity is local, like how we check that _memAddr is at
+      least 0x200 before subtracting 0x200 from it to calculate its intra-component offset;
+      and some of this is global: compare the whole code to the two bullet points of text
+      preceding it.
+          A much nicer approach would be taking a declarative description of the memory
+      map, and generating everything else from it. Maybe something like the following:
+
+      memRead = fromMaybe 0 <$> memoryMap _memAddr _memWrite
+          [ from 0x000 $ romFromVec (hexDigits ++ repeat 0 :: Vec 0x200 Byte)
+          , from 0x200 $ ramFromFile (SNat @(0x1000 - 0x200)) programFile
+          ]
+
+         Note that while we have to give the size (as a static parameter) for the RAM, we
+      can infer the size of the ROM from its contents.
+         While this is about as concise as it could be (it corresponds directly to our two
+      original bullet points), it overfits to the CHIP-8 example in some important regards:
+
+         • In some designs, the same memory component is connected to multiple parts
+           of the address space. For example, imagine a 16-bit address space, with
+           the same 4 kB RAM mapped both from 0x7000 and 0xf000. This sharing is
+           observably different from having two 4 kB RAM components, since the value
+           written to 0x789a is then also available for reading from 0xf89a.
+
+         • Components can be shared between the CPU and other elements, leading to
+           potential access contention. The CHIP-8 provided an example of this when
+           accessing the video RAM, but since it has dedicated lines to it, this concern
+           didn’t affect the address decoder. In systems where the video RAM (or other
+           shared memory) is mapped to the normal memory address space, the address
+           decoder has to make sure the read-data-ready signal is correctly routed back.
+
+         • Just because a component communicates with the CPU via its address and
+           data bus, doesn’t necessarily mean it is a memory element: it could be a
+           memory-mapped I/O peripheral. And the whole point of a peripheral is to
+           interface with the wide world outside the CPU; so these components will have
+           some backpane connections that need to refer to parts of our circuit that have
+           nothing to do with address decoding.
+
+         Our design will be driven by the first requirement; we will come back to the
+      other two later in this chapter, but their implementation will involve only fairly
+
+     localized changes. We address sharing by assigning identity to components: when
+     a component is declared, we get a handle pointing to it; that handle is then used
+     when defining its place in the address space:
+
+     memRead = memoryMap_ _memAddr _memWrite $ do
+         font <- romFromVec (hexDigits ++ repeat 0 :: Vec 0x200 Byte)
+         ram <- ramFromFile (SNat @(0x1000 - 0x200)) programFile
+
+            from 0x000 $ connect font
+            from 0x200 $ connect ram
+
+        The point, of course, is that this allows us to write our motivating example as
+     the following:
+
+     dataIn = memoryMap_ addr dataOut $ do
+         ram <- ram0 (SNat @0x1000) -- 0-initialized RAM
+
+            from 0x7000 $ connect ram
+            from 0xf000 $ connect ram
+
+         And why the name memoryMap_, with an underscore tacked on? That is to mark
+     it as “memoryMap without any backpane connections”, similar to how traverse_ is
+     “traverse without any result”. We will stick to these backpane-less versions of all
+     our combinators until later in the chapter when we get to implementing backpane
+     connections.
+
+14.2 A whirlwind intro to Template Haskell
+     Before we move on to the implementation of memoryMap_, there is one more piece of
+     the puzzle we have to discuss: Template Haskell. As much as it would be desirable
+     to be able to write the code from the previous examples, our final version will
+     instead look like the following:
+
+     memRead = $(memoryMap_ @Addr [|_memAddr|] [|_memWrite|] $ do
+         font <- romFromVec (SNat @0x0200)
+                     [|hexDigits ++ repeat 0 :: Vec 0x200 Byte|]
+         ram <- ramFromFile (SNat @(0x1000 - 0x200)) [|programFile|]
+
+            from 0x000 $ connect font
+            from 0x200 $ connect ram)
+
+        It turns out, as of the writing of this book, the Clash compiler is unable to
+     handle complicated, recursive definitions of signals. We don’t have this problem in
+
+       other parts of this book, because all our other complex code lives inside the signal
+       processing functions; but here, we are not defining the combinational part of a
+       circuit (inside a Mealy machine or otherwise), we are defining the circuit itself.1
+       Instead of generating Signal values, we are forced to generate the code of the circuit
+       we want – and this is where Template Haskell comes into play.
+           For readers who haven’t worked with Template Haskell before, the expected
+       reactions are “ugh, what’s with these weird [| |] brackets?!” and “how is that
+       $(memoryMap_ ...)$ even valid Haskell syntax?!”. In this section, we very briefly
+       review the small subset of Template Haskell that we will use in this chapter.
+
+14.2.1 Expressions
+       Haskell expressions are represented by the type Language.Haskell.TH.Exp2 . As one
+       would expect, its constructors correspond to the term formers of Haskell; for exam-
+       ple, if we have fun :: Exp and arg :: Exp, then AppE fun arg :: Exp corresponds
+       to the Haskell term that is the application of the fun expression to the arg expres-
+       sion. In this chapter, we will never take expressions apart, and will only build them
+       using VarE, ListE and LetE; as their names suggest, these correspond to variable
+       occurrences, list literals, and let expressions, respectively. Everything else will be
+       user-supplied, or static templates.
+
+14.2.2 Splicing and quoting
+       The $(...) syntax instructs the compiler to splice the results of an Exp-valued compu-
+       tation into our source code. So when we write memRead = $(memoryMap_ foo bar),
+       the expectation is that memoryMap_ is a function that, after application, results in
+       the Exp that represents the term muxA [...]. The basic operation on Exp, of course,
+       is to make larger expressions from smaller ones, according to the term formers of
+       Haskell.
+           Note that we’ve been describing the process in terms of “computations resulting
+       in an Exp result”; that is because the Template Haskell macros like memoryMap_ are
+       all run in a monad called Q (for “code quotation”). In our code, we are going to
+       use only a single effect provided by Q, and that is generating fresh, unique variable
+       names with the newName function. In its full generality, Q provides a lot of other
+       facilities for compile-time inspection, but we are not going to discuss those. Since
+       everything is in the Q monad, the Language.Haskell.TH module also exports handy
+
+           1 See https://github.com/clash-lang/clash-compiler/issues/1536 for the very long thread in the Clash
+
+       bug tracker for details.
+           2 We will omit the Language.Haskell.TH namespace qualifier for the rest of this chapter, and assume
+
+       that the Template Haskell support library has been imported unqualified.
+
+       type synonyms for quoted representations, for example ExpQ for Q Exp; similarly, we
+       have varE :: Name -> ExpQ beside the raw constructor VarE :: Name -> Exp.
+           Pairing up with the yin that is $(...) is the yang of the quoting bracket [| ... |].
+       As the former takes a computation and splices its result into the code, the latter takes
+       a Haskell term and gives back its Exp representation. In the example we’ve seen,
+       programFile is the Haskell term referring to the parameter of logicBoard, and
+       [|programFile|] is an expression of type ExpQ that returns the Exp representation
+       of it.
+           Here is an example of Haskell code that uses both $(...) and [| ... |], which
+       comes from the code we will write later in this chapter, using another variable
+       maskeds :: [ExpQ]:
+
+       masked = [| muxA $(listE maskeds) |]
+
+          If we have a program that processes the memory map description and generates
+       the list of expressions maskeds:
+
+       maskeds =
+           [ [| enable (register False $ isJust <$> $addr) $rd |]
+           | (addr, rd) <- components
+           ]
+
+       then the expression generated by out will be exactly what we wrote by hand initially.
+
+14.2.3 Declarations
+       Our original hand-written code for the CHIP-8 is not a single definition of memRead;
+       instead, it is a whole set of variable definitions, allowing us to use ramAddr both as
+       the address line going into the blockRamFile as well as its multiplex selector. These
+       definitions, and other possible declarations, are represented in Template Haskell as
+       the Dec (and corresponding DecQ) type. Declarations are quoted using the syntax
+       [d| ... |]. A single such quotation can contain a whole list of declarations, so
+       its type is Q [Dec]. The only declarations we’ll need here are variable definitions,
+       which are written as [d| $(varP v) = $someExpr |], where v is the newly bound
+       variable name (as created by newName), varP creates a variable pattern, and someExpr
+       is, of course, the right-hand side of the definition.
+            The following example code assembles the CHIP-8 memory map from fragments
+       containing the address decoding logic, the component creation, and driving the
+       final read data multiplexer. Its aim is to illustrate all the Template Haskell concepts
+       introduced here, without doing any complicated processing yet.
+
+      chip8Example :: ExpQ -> ExpQ -> ExpQ      -- (1)
+      chip8Example addr wr = do
+          -- (2)
+          addrs@[addr1, addr2] <- replicateM 2 $ newName "addr"
+          let addrDecs =
+                 [d| $(varP addr1) = enable ($addr .< 0x200) $addr
+                     $(varP addr2) = enable (0x200 <=. $addr) ($addr - 0x200)
+                 |]
+
+          -- (3)
+          rds@[rd1, rd2] <- replicateM 2 $ newName "rd"
+          let rdDecs =
+                 [d| $(varP rd1) = rom (hexDigits ++ repeat 0 :: Vec 0x200 Byte)
+                         (fromJustX <$> $(varE addr1))
+                     $(varP rd2) = packRam
+                         (blockRamFile (SNat @(0x1000 - 0x200)) programFile)
+                         (fromJustX <$> $(varE addr2))
+                         (liftA2 (,) <$> $(varE addr2) <*> $wr)
+                 |]
+
+          -- (4)
+          let maskeds =
+                 [ [| enable selected $(varE rd) |]
+                 | (addr, rd) <- L.zip addrs rds
+                 , let selected = register False $ isJust <$> $(varE addr)
+                 ]
+
+          -- (5)
+          decs <- addrDecs <> rdDecs
+          letE (pure <$> decs) [| muxA $(listE maskeds) |]
+
+        1. We write our macro as a function from the expressions holding the address
+           and write signals (_memAddr and _memWrite in the CHIP8 example). It might be
+           cleaner to use the type Exp -> Exp -> Q Exp, but at the use site in logicBoard,
+           we will want to pass [| ... |]-quoted expressions as the arguments, and
+           those have type ExpQ.
+
+        2. We create variable bindings for the addresses restricted for individual compo-
+           nents. For simplicity’s sake, in this example code we create both names addr1
+           and addr2 upfront.
+
+        3. We do the same for the read results of individual components. Note that the
+           definition of the components refers to addr1 and addr2. In our real implemen-
+
+       tation, the tricky part will be figuring out which restricted addresses to use
+       for which component. Here, it’s all hardcoded.
+
+  4. We create the masked versions of the component read-outs uniformly, by
+     applying enable (register False $ isJust <$> addr).
+
+  5. The total set of declarations is the union of the addresses and the component
+     reads. The type of [d| ... |] is Q [Dec], not [Dec] (since it can contain
+     other, effectful splices), or Q Dec (since one [d| ... |] quotation can contain
+     multiple declarations). However, letE expects a [Q Dec] as its first argument.
+     We bridge this impedance mismatch by first binding to decs (so at this point
+     we have decs :: [Dec]), and then turning each Dec element into a Q Dec by
+     mapping pure over the list.
+
+   We can see what the generated code is from GHCi, by using runQ and then
+pretty-printing the result with Template Haskell’s ppr function:
+
+Main> fmap ppr $ runQ $ chip8Example            [|_memAddr|] [|_memWrite|]
+
+    Looking at the output, we can confirm that it matches our expectation in recov-
+ering the original, hand-written CHIP-8 memory map:
+
+let {addr_0 = enable (_memAddr .< 512) _memAddr;
+     addr_1 = enable (512 <=. _memAddr) (_memAddr - 512);
+     rd_2 = rom (hexDigits ++ repeat 0 :: Vec 512 Byte)
+         (fromJustX <$> addr_0);
+     rd_3 = packRam (blockRamFile (SNat @(4096 - 512)) programFile)
+         (fromJustX <$> addr_1) ((liftA2 (,) <$> addr_1) <*> _memWrite)}
+ in muxA [enable (register False $ (isJust <$> addr_0)) rd_2,
+          enable (register False $ (isJust <$> addr_1)) rd_3]
+
+    (The actual output of ppr is less readable, because every bound identifier is
+printed with is fully qualified name. So <$> is rendered as Data.Functor.<$>, and
+so on. We are omitting these qualifiers here for the sake of readability).
+    Looks great, so let’s try actually using it in logicBoard, by replacing our hand-
+written definition of memRead with $(chip8Example [|_memAddr|] [|_memWrite|].
+One constraint is that chip8Example has to be defined in a different module than
+where we want to splice its result; if we define it right next to logicBoard in the
+same module, we get the following GHC error message:
+
+       GHC stage restriction: chip8Example is used in a top-level splice, quasi-
+       quote, or annotation, and must be imported, not defined locally.
+
+           Once moved somewhere else, we can indeed replace the hand-written definition.
+       This concludes our small Template Haskell tutorial. The rest of this chapter is about
+       using this facility to implement a nice declarative way of describing memory maps;
+       in other words, it concerns itself with compiling the user code into the right Template
+       Haskell fragments.
+
+14.2.4 But what about Typed Template Haskell?
+       One shortcoming of using Template Haskell is that splicing a given, well-typed
+       ExpQ into a bigger expression may lead to a non-well-typed expression because the
+       larger context requires a different type. For a very banal example, imagine passing
+       [|True|] as the first argument to chip8Example: on its own, it is the quotation of a
+       valid Haskell expression, but it leads to the following output:
+
+       addr_0 = enable (True .< 512) True;
+
+          GHC typechecks the output of Template Haskell, so this will be detected; but
+       because it is the generated code that has a type error, the error will necessarily
+       be reported in terms of the generated code. And depending on how complicated
+       the expression generator program is, it might not be obvious which argument to
+       the generator is causing the problem. This difficulty increases even more when
+       debugging the generator itself.
+          GHC’s answer to these concerns is Typed Template Haskell, which enables
+       chip8Example to be typed as:
+
+       chip8Example
+           :: TExpQ (Signal dom addr)
+           -> TExpQ (Signal dom dat)
+           -> TExpQ (Signal dom dat)
+
+          In Typed Template Haskell, the typed quotation [|| True ||] has type
+       TExpQ Bool, so it cannot be passed as an argument in the TExpQ (Signal dom addr)
+       position.
+          Unfortunately, the rest of this chapter will not use Typed Template Haskell, for
+       two reasons:
+
+          • The address comparison needs (Num addr, Ord addr), while wrapping the
+            per-component addresses in register False requires an (NfDataX addr,
+            HiddenClockResetEnable dom) constraint; thus, the full type of chip8Example
+            would need to be:
+
+             chip8Example
+                 :: (HiddenClockResetEnable dom, NFDataX addr, Num addr, Ord
+                 addr)
+                 => TExpQ (Signal dom addr)
+                 -> TExpQ (Signal dom dat)
+                 -> TExpQ (Signal dom dat)
+
+             Unfortunately, at the time of writing this book, handling typeclass constraints
+             in Typed Template Haskell is an open problem.3
+
+          • Typed Template Haskell is an “all or nothing” affair: typed quotations are
+            only valid in typed splices, and vice versa. So even for the bits of our library
+            that don’t need typeclass constraints, we can’t use Typed Template Haskell
+            and then integrate nicely with the rest of the library, since the top-level splice
+            will be necessarily an untyped one.
+
+14.3 A memory map DSL
+     The API we will create for defining memory maps is going to be monadic, to make it
+     easy to carry the handles of the created component to the points in the code where
+     they are connected to the memory address space:
+
+     do
+            bootRom <- romFromFile (SNat @0x0800) [|"bootRom.bin"|]
+            ram <- ram0 (SNat @0x1000)
+
+            from 0x0000 $ connect bootRom
+            from 0x1000 $ connect ram
+            from 0x2000 $ connect ram
+
+        Here, bootRom and ram are bound to the results of the two component builders;
+     the do-notation makes it seamless to pass them to later connect calls.
+        The above code also illustrates the three moving parts that need to come together
+     to make everything work out:
+
+          1. When a component is created, we need to remember the Clash code we will
+             need to generate (for example, a call to romFile), and we need to provide a
+             handle that identifies that particular component at later connect calls.
+
+          2. from restricts all connections in its body to be active only when the
+             current address matches the given interval.      For example, in the
+          3 See https://stackoverflow.com/a/65406350/477476
+
+             from 0x0000 $ connect bootRom line, the bootRom is only connected to
+             the address range 0x0000 to 0x07ff. Where does the upper bound come from?
+             Note that we passed a (type-level) size argument to romFromFile. We will
+             use this to mark the bootRom handle as being addressed by a signal of type
+             Index 0x0800; and this means when we can use this information in the type
+             of connect bootRom, propagating the type information to its encompassing
+             from (or any other address matcher), which can use that to calculate the full
+             target address range.
+
+           3. When we connect a component, we add the restricted address to the set of
+              addresses that are connected to the given component. In other words, there
+              is always a “current most restricted address” for every point of our memory
+              map specification, and a given component’s address input will be collected
+              from these.
+
+          Below is the code we intend to generate from this example. Note that each from
+      call corresponds to the definition of a new, Maybe-valued signal; these signals are
+      collected per component, and then also used in the final output multiplexer. Of
+      course, we could have a connect call in the top level as well, so it is simpler to just
+      always suppose the type of the address is a Maybe-valued signal.
+
+      let rd1 = fmap unpack $ romFilePow2 "bootRom.bin"
+              (bitCoerce . fromJustX <$> compAddr1)
+          rd2 = blockRam1 NoClearOnReset (SNat @0x1000) 0
+              (fromJustX <$> compAddr2)
+              (liftA2 (,) <$> compAddr2 <*> wr)
+
+            addr1 = (from' @(Index 0x0800) 0x0000 =<<) <$> addr
+            addr2 = (from' @(Index 0x1000) 0x1000 =<<) <$> addr
+            addr3 = (from' @(Index 0x1000) 0x2000 =<<) <$> addr
+            compAddr1 = muxA [addr1]
+            compAddr2 = muxA [addr2, addr3]
+      in
+            muxA
+                [ enable (register False $ isJust <$> addr1) rd1
+                , enable (register False $ isJust <$> addr2) rd2
+                , enable (register False $ isJust <$> addr3) rd2
+                ]
+
+         Here, from' is the term-level workhorse function for matching continuous ad-
+      dress ranges, going from a larger space addr to addr', if the argument matches the
+      given range:
+
+      from'
+          :: forall addr' addr. (Integral addr, Ord addr, Integral addr',
+          Bounded addr')
+          => addr -> addr -> Maybe addr'
+      from' base addr = do
+          guard $ addr >= base
+          let offset = addr - base
+          guard $ offset <= fromIntegral (maxBound :: addr')
+          return (fromIntegral offset)
+
+          Note that in this latest example, we create three matched addresses, and then
+      need to combine the second and the third one to get the effective address of the
+      second component. In the from 0x1000 $ connect ram line, we want to emit the
+      definition of addr2, and also, behind the scenes, remember that addr2 is one of the
+      possible address lines of the component identified by the handle ram; this is so that
+      later on, when we get to generating each component’s address signal, we can look
+      up all the address variables that go into compAddr2.
+
+14.3.1 Implementation
+      The two main types that we will build our API around is Addressing, a monad in
+      which we describe addressing schemes; and Handle, which is created by declaring
+      memory components, and can be connected to address sub-ranges. Both Addressing
+      and Handle are parameterized by the address sub-range type, which, as we have
+      seen, is used by the interaction of from and connect. Without knowing yet the
+      representation of Addressing and Handle, looking at our latest example, we can
+      come up with the following desired API:
+
+      type Addressing addr a
+      instance Monad (Addressing addr)
+
+      type Handle addr
+
+      romFromFile :: SNat n -> ExpQ -> Addressing addr (Handle (Index n))
+      ram0 :: SNat n -> Addressing addr (Handle (Index n))
+      from :: addr -> Addressing addr' a -> Addressing addr a
+      connect :: Handle addr -> Addressing addr ()
+
+          In Addressing, we need to collect three kinds of output: standalone declarations
+      for things like rd and addr, a list of addresses per component for compAddr, and
+      a single global list of the masked component outputs to be put in the final muxA.
+      This suggests using a WriterT over the Q monad (we need the latter to come up
+      with the fresh names for rd1, rd2 etc.). We also need access to the write signal (for
+
+      components like ram0), and the current restricted address signal. We can put these
+      two in a ReaderT, giving the following definition for Addressing:
+
+      newtype Addressing addr a = Addressing
+        { runAddressing ::
+            ReaderT (Addr, Wr) (WriterT (DecsQ, Connections, [Component]) Q) a
+        }
+        deriving newtype (Functor, Applicative, Monad)
+
+          The addr type parameter is merely a phantom parameter because we can’t use
+      Typed Template Haskell; but at least we can use some type synonyms (all defined
+      as ExpQ) just to keep track of the role of each generated fragment:
+
+      type Addr = ExpQ           -- Signal dom (Maybe addr)
+      type Wr = ExpQ             -- Signal dom (Maybe dat)
+      type Component = ExpQ      -- Signal dom (Maybe dat)
+
+          For Connections, we need an associative data structure that collects the per-
+      component addresses in such a way that its Monoid instance combines results rather
+      than overwriting them, as a Map Name [Addr] would do. Note that the Monoid
+      instance of [Addr] provides exactly the right operator for combining sub-results;
+      this suggests using a MonoidalMap (from the Monoidal Containers package):
+
+      import Data.Map.Monoidal as Map
+
+      type Connections = MonoidalMap Name [Addr]
+
+          Note that our code will crucially depend on the Addressing newtype only in-
+      heriting the Monad instance from its underlying representation, not the MonadWriter
+      instance. The fact that, under the hood, we are building up three collections is
+      an implementation detail, and we will write our combinators to populate the col-
+      lections properly; but we don’t want user code to break because, for example, an
+      out-of-scope name makes its way into the list of Components.
+          To see how this representation of Addressing works, we can write the compiler
+      that takes an addressing scheme, the input signals for the address and the data-out,
+      and generates a single Template Haskell expression corresponding to the result of
+      reading from the whole address space:
+
+      compile
+          :: Addressing addr ()
+          -> Addr
+          -> Wr
+          -> ExpQ
+
+compile addressing addr wr = do
+    -- (1)
+    (decs, conns, outs) <- execWriterT $
+        runReaderT (runAddressing addressing) (addr, wr)
+
+       -- (2)
+       let compAddrs = [ [d| $(varP nm) = muxA $(listE addrs) |]
+                       | (nm, addrs) <- Map.toList conns
+                       ]
+
+       -- (3)
+       decs <- mconcat (decs:compAddrs)
+       letE (pure <$> decs) [| muxA $(listE outs) |]
+
+  1. We peel off all the layers of addressing, running it with the given address
+     and write signals. Note that we represent addresses as Maybe-valued signals
+     (where a Nothing value means the address doesn’t match the current address
+     sub-range), and of course the original address is always inside the outermost
+     (full) address range; we will take care of this in memoryMap_.
+
+  2. For each component’s connections, we generate its corresponding compAddr
+     definition by taking the combination of all its incoming addresses.
+
+  3. The rest of the code should be familiar from our Template Haskell orientation
+     example: we flatten the list of declarations, create our final output signal by
+     multiplexing all outputs, and put everything under a let.
+
+    The public entry point memoryMap_ calls compile with two locally bound variables
+for addr and wr; the purpose of this is to avoid generating large and redundant code
+when the user supplies a complicated expression for any of the two arguments:
+
+type RawAddr = ExpQ -- Signal dom addr
+
+memoryMap_
+    :: RawAddr
+    -> Wr
+    -> Addressing addr ()
+    -> ExpQ
+memoryMap_ addr wr addressing =
+    [| let addr' = Just <$> $addr; wr' = $wr
+       in $(compile addressing [| addr' |] [| wr' |])
+    |]
+
+          We also have everything to implement from. In fact, from is just a special case
+      of address matching; in later chapters, we will add other matchers built in top of
+      matchAddr as the need arises.
+
+      matchAddr
+          :: ExpQ {- addr -> Maybe addr' -}
+          -> Addressing addr' a
+          -> Addressing addr a
+      matchAddr match body = Addressing $ do
+          nm <- lift . lift $ newName "addr"
+          let addr' = varE nm
+          ReaderT $ \(addr, wr) -> do
+              let dec = [d| $(varP nm) = ($match =<<) <$> $addr |]
+              runReaderT
+                (tell (dec, mempty, mempty) >> runAddressing body)
+                (addr', wr)
+
+          We use newName (from the underlying Q monad) to create a fresh name, and
+      want to bind it in a declaration to the result of applying the given matcher function
+      to the current address signal. The only complication comes from the fact that we
+      are changing types from Addressing addr to Addressing addr'. Hence, we can’t
+      run body using just local; instead, we need to peel off the ReaderT layer, emit the
+      definition of nm, and then re-enter ReaderT with the address signal corresponding
+      to the result of the match.
+          Note that the bulk of matchAddr is written in ReaderT _ (WriterT _ Q), not in
+      Addressing; we merely wrap it into the latter at the outermost layer. This pattern
+      will repeat itself in all our combinator definitions, and the reason for it is that
+      Addressing is our public interface, providing no direct way to accessing MonadReader,
+      MonadWriter or Q effects. In the implementation, we can do all these by relying on the
+      representation of Addressing, and using the newtype constructor of Addressing to
+      shrink-wrap it before delivery. User code has no access to the newtype constructor
+      unless we export it, ensuring this safety barrier.
+          Given matchAddr, we write from by using from' as the matcher. We need to splice
+      both the result type and the start address into the matcher fragment; however, we
+      have these not as quoted expressions, but as bona fide, compile-time values. Luckily,
+      Template Haskell provides the lift function for reifying values into expressions;
+      and for reifying types, we have liftTypeQ from the lift-type package. The extra
+      typeclass constraints on from come from the constraints of lift and liftTypeQ.4
+
+          4 GHC arranges behind the scenes for Typeable to always hold for any concrete type; however, on
+
+      the term level, only first-order values can be unquoted, so the Lift constraint is a real restriction on the
+      types of addresses we can work with.
+
+      import LiftType
+      import Type.Reflection (Typeable)
+      import qualified Language.Haskell.TH.Syntax as TH
+
+      from
+          :: forall addr' addr a. (Typeable addr', Lift addr)
+          => (Integral addr, Ord addr, Integral addr', Bounded addr')
+          => addr
+          -> Addressing addr' a
+          -> Addressing addr a
+      from base = matchAddr [| from' @($(liftTypeQ @addr')) $(TH.lift base) |]
+
+          In fact, GHC can insert the TH.lift calls for us, whenever we refer from a
+      fragment to something in the scope outside the fragment, so we can rewrite the
+      above in more compact form as:
+
+      from base = matchAddr [| from' @($(liftTypeQ @addr')) base |]
+
+14.3.2 Representing components
+      Next, we think about how to represent component handles. In this section, we will
+      concentrate on a single memory component type: block RAM initialized from a file.
+      We use this because it illustrates both the handling of compile-time arguments (to
+      pass the RAM contents file name) and writable components.
+
+      ramFromFile
+          :: SNat n
+          -> ExpQ {- FilePath -}
+          -> Addressing addr (Handle (Index n))
+
+          Note that the file path is passed as a quoted expression instead of a compile-time
+      FilePath value.    If we passed a value, and used TH.lift to reify that, it would
+      mean that the filename is determined at compile time. However, we have seen in
+      the Brainfuck and CHIP-8 chapters that it can be useful for high-level simulation if
+      we can take the filename as a runtime argument set from the command line. We
+      wouldn’t want to recompile our simulator every time we want to test with a different
+      memory image! We solve this by passing a fragment instead of a value, since that
+      fragment can then be just a variable.
+          Another thing worth highlighting is that when a component is created, its ad-
+      dress type (Index n in this case) has no relation to the current address space addr.
+      They will need to be the same when we get to connecting the component, but there
+      can be any number of matchAddr calls between the two ensuring this holds. Sharing
+
+      components in the address map only makes sense if the same component can be
+      connected to multiple address sub-spaces.
+         Inside ramFromFile, we need to emit the definition of the value read from the
+      component, as in the previous examples:
+
+          rd2 = blockRamFile size fileName
+              (fromJustX <$> compAddr2)
+              (liftA2 (,) <$> compAddr2 <*> wr)
+
+          We don’t know yet what the definition of compAddr2 will be: that will only be
+      available once we have collected all later connect calls. But that’s not a problem, as
+      long as we have the name compAddr2 at hand. When we make a new component,
+      we will generate both the rd and the compAddr names, but only define the former.
+      The latter will be defined in compile, from the collected address signals. Of course,
+      for the signals to go to the right place, we need to remember (in the Handle) the
+      generated name. Similarly, even though we define rd2 here, we record it in the
+      Handle so that connect can emit its masked version as one of the alternatives of the
+      final muxA:
+
+      data Handle addr = Handle Name Name
+
+      ramFromFile size fileName = Addressing $ do
+          rd <- lift . lift $ newName "rd"
+          addr <- lift . lift $ newName "compAddr"
+          (_, wr) <- ask
+          let decs = [d| $(varP rd) = packRam (blockRamFile size $fileName)
+                             (fromJustX <$> $(varE addr))
+                             (liftA2 (,) <$> $(varE addr) <*> $wr)
+                     |]
+          tell (decs, Map.singleton addr mempty, mempty)
+          return $ Handle rd addr
+
+         In the type of connect, we require the Handle address type to match the current
+      address type, thereby ensuring that the current addr can be passed as one possible
+      address input during compile:
+
+      connect
+          :: Handle addr
+          -> Addressing addr ()
+      connect (Handle rd compAddr) = Addressing $ do
+          (addr, _) <- ask
+          let masked = [| enable (delay False $ isJust <$> $addr) $(varE rd) |]
+          tell (mempty, Map.singleton compAddr [addr], [masked])
+
+          This short definition packs quite a punch: first, it creates an expression fragment
+      that corresponds to taking the given component’s read-out value if that component
+      was addressed through this particular address range; then, it adds the current address
+      to the component’s list of addresses (recall that we are collecting results into a
+      MonoidalMap, so multiple connect calls at different sites can build up the list keyed
+      to a given compAddr); and finally, the masked read-out value is added to the list of
+      all read-outs that goes into the output multiplexer.
+
+14.3.3 More components
+      We can implement romFromFile similar to ramFromFile:
+
+      romFromFile
+          :: SNat n
+          -> ExpQ {- FileName -}
+          -> Addressing addr (Handle (Index n))
+      romFromFile size fileName = Addressing $ do
+          rd <- lift . lift $ newName "rd"
+          addr <- lift . lift $ newName "compAddr"
+          let decs = [d| $(varP rd) = fmap unpack $ romFilePow2 $fileName
+                             (bitCoerce . fromJustX <$> $addr)
+                     |]
+          tell (decs, Map.singleton addr mempty, mempty)
+          return $ Handle rd addr
+
+         In fact, it is so similar that it begs to be unified. The general form of a read-write
+      component (with no backpane signals, hence the underscore suffix of the name) is
+      one that given the effective component-specific address and write signals, returns
+      the code fragment that creates the read-out value:
+
+      readWrite_
+          :: (Addr -> Wr -> ExpQ)
+          -> Addressing addr (Handle addr')
+      readWrite_ component = Addressing $ do
+          rd <- lift . lift $ newName "rd"
+          addr <- lift . lift $ newName "compAddr"
+          (_, wr) <- ask
+          let decs = [d| $(varP rd) = $(component (varE addr) wr) |]
+          tell (decs, Map.singleton addr mempty, mempty)
+          return $ Handle rd addr
+
+         We can recover ramFromFile and romFromFile in a straightforward way:
+
+      romFromFile size fileName = readWrite_ $ \addr _wr ->
+          [| fmap unpack $ romFilePow2 $fileName
+                 (bitCoerce . fromJustX <$> $addr)
+          |]
+
+      ramFromFile size fileName = readWrite_ $ \addr wr ->
+          [| packRam (blockRamFile size $fileName)
+                 (fromJustX <$> $addr)
+                 (liftA2 (,) <$> $addr <*> $wr)
+          |]
+
+          And for good measure, we will add two more: romFromVec and ram0, the latter
+      standing for “0-initialized RAM”. For the former, the same consideration applies to
+      the vector of elements as for the filename argument of ramFromFile and romFromFile:
+      by taking a fragment instead of a compile-time value, we allow for simulations to
+      calculate the ROM contents at runtime.
+
+      romFromVec
+          :: SNat n
+          -> ExpQ {- Vec n dat -}
+          -> Addressing addr (Handle (Index n))
+      romFromVec size xs = readWrite_ $ \addr _wr ->
+          [| rom $xs (bitCoerce . fromJustX <$> $addr) |]
+
+      ram0
+          :: SNat n
+          -> Addressing addr (Handle (Index n))
+      ram0 size = readWrite_ $ \addr wr ->
+          [| blockRam1 NoClearOnReset size 0
+              (fromJustX <$> $addr)
+              (liftA2 (,) <$> $addr <*> $wr)
+          |]
+
+14.4 Backpane connections
+      Next, we extend our library with support for components with backpane connec-
+      tions. What we mean by that is a component that has pins on two sides: the
+      CPU-facing side contains the address and data pins, and its backside contains pins
+      facing the outside world.
+         For a concrete example, imagine a peripheral adapter connected to sixteen push-
+      buttons that can be toggled by button presses. In this case, the adapter would
+
+implement debouncing each button, maintain its own internal 16-bit toggle state,
+and present it as two bytes mapped to two particular read-only memory addresses:
+
+                          Address
+
+               CPU                       Driver               Buttons
+                            Data
+
+   Another example would be if the CHIP-8’s video buffer was mapped to the main
+address space. If we abstract the complete video system as a single component, its
+backpane connection is the VGA signal itself:
+
+                            Address
+
+                CPU                        Video               VGA
+                                Data
+
+   We can describe an addressing scheme that includes the first example with the
+tools we already have:
+
+toggleBtnDriver
+    :: (HiddenClockResetEnable dom)
+    => Signal dom (BitVector 16)
+    -> Signal dom (Maybe (Index 2))
+    -> Signal dom (Unsigned 8)
+
+toggleBtnExample :: Addressing (Unsigned 16) ()
+toggleBtnExample = do
+    ram <- ram0 (SNat @0x1000)
+    btns <- readWrite_ @(Index 2) $ \addr _ ->
+        [| toggleBtnDriver btns addr |]
+
+       from 0x0000 $ connect ram
+       from 0xf000 $ connect btns
+       from 0xf800 $ connect btns
+
+   This works because like any other circuit, toggleBtnDriver consumes its back-
+pane input signal as an argument; to instantiate it, we simply apply it on btns
+alongside the collected component-specific address addr.
+   The second example, however, requires some changes to our infrastructure. The
+reason for this is that these backpane outputs must have a way of getting out of
+the memoryMap. We can’t directly bind them to return values of readWrite, since
+
+      readWrite runs while we build our internal Addressing representation, whereas the
+      signals to be returned will only exist once compile (as called by memoryMap) finishes
+      assembling its fragment.
+         Before we actually solve this, let’s look at what the end result should be: one
+      possible version of the code to generate. Continuing the second example above,
+      suppose we have the following video driver component (omitting constraints on
+      dom for simplicity):
+
+      video
+          :: Signal dom (Maybe (Index 4096))
+          -> Signal dom (Maybe (Unsigned 8))
+          -> (Signal dom (Unsigned 8), VGAOut dom 8 8 8)
+
+         This gives us 4096 individually addressable bytes of video RAM, in a format
+      that almost looks like normal RAM. The difference becomes clear if we write out
+      the code that we would generate if video were passed to readWrite_:
+
+      let rd1 = video compAddr1 wr
+          addr1 = ...
+          compAddr1 = muxA [addr1]
+      in
+          muxA
+              [ enable (register False $ isJust <$> addr1) rd1
+              ]
+
+          This is clearly wrong: instead of the read-out signal from the video RAM, rd1 is
+      now bound to the pair of signals coming out of video; moreover, the final result of
+      this expression is only whatever byte is read out from the video RAM, with no way
+      to refer to the VGA backpane output.
+         What we want to do is to be able to write code like the following:
+
+      (addrOut, dataOut) = cpu (dataIn .|> 0)
+
+      (dataIn, vgaOut) = $(memoryMap [|addrOut|] [|dataOut|] $ do
+          (vid, vga) <- readWrite @(Index 4096) $ \addr wr ->
+              [| video $addr $wr |]
+          from 0xc000 $ connect vid
+          return vga)
+
+      And have it generate code that binds dataIn to what comes out of the memory map,
+      and vgaOut to the backpane of the vid component:
+
+(dataIn, vgaOut) =
+    let addr = Just <$> addrOut
+         wr = dataOut
+         (rd1, vga) = video compAddr1 dataOut
+         addr1 = (from' @(Index 4096) 0 =<<) <$> addr
+         compAddr1 = muxA [addr1]
+    in ( muxA
+             [ enable (register False $ isJust <$> addr1) rd1
+             ] .<| 0
+       , vga
+       )
+
+   As we can see, the differences compared to our previous version are minor, but
+important:
+
+   • For each component (video in this case), its result is a pair consisting of the
+     read output signal and the backpane connections.
+
+   • When a component is created, its result pair is bound to its rd variable (as
+     before) and a new variable holding the backpane outputs.
+
+   • The final expression generated is similarly a pair of the muxA output and the
+     result of the Addressing description.
+
+    The first two of these changes are straightforward; the real question is how to
+tie the code generated for the component video to the return vga statement at the
+end of our memory map description. The solution is similar to the representation
+of Handle: whenever a component with a backpane is created, its declaration will
+bind a fresh name, and that name is stored in the Result returned. Then, in compile,
+we take the expression from the Result and splice it into the second coordinate of a
+pair:
+
+data Result = Result ExpQ
+
+compile
+    :: Addressing addr Result
+    -> Addr
+    -> Wr
+    -> ExpQ
+compile addressing addr wr = do
+    (Result x, conns, outs) <- execWriterT $
+        runReaderT (runAddressing addressing) (addr, wr)
+    ...
+    letE (pure <$> decs) [| muxA $(listE outs), $x |]
+
+         Indeed, this allows us to write a version of readWrite for components with
+      backpane outputs, like our video example:
+
+      readWrite
+          :: (Addr -> Wr -> Component)
+          -> Addressing addr (Handle addr', Result)
+      readWrite component = Addressing $ do
+          ...
+          result <- lift . lift $ newName "result"
+          let decs = [d| ($(varP rd), $(varP result)) =
+                             $(component (varE addr) wr)
+                     |]
+          tell (decs, Map.singleton addr mempty, mempty)
+          return (Handle rd addr, Result (varE result))
+
+         And this degenerates to readWrite_ nicely, as expected, by using a single ()
+      value as the backpane, and dropping the Result:
+
+      readWrite_
+          :: (Addr -> Wr -> Dat)
+          -> Addressing addr (Handle addr')
+      readWrite_ component = fmap fst $ readWrite $ \addr wr ->
+          [| ($(component addr wr), ()) |]
+
+          However, compile as written can only handle the case of exactly one Result.
+      What if we want to return none, do we need an almost duplicate implementation
+      for compile_? And what if we have multiple components with backpane outputs,
+      how would we return two or more Results from one memoryMap?
+          We can generalize in the number of Results by making a typeclass for Backpane
+      results that is closed under products. This works out because Template Haskell
+      fragments themselves are closed under products, in the obvious way: a pair of
+      fragments can be turned into a fragment that is the (,) constructor applied on both
+      fragments.
+
+      class Backpane a where
+          backpane :: a -> ExpQ
+
+      instance Backpane () where
+          backpane () = [|()|]
+
+      instance Backpane Result where
+          backpane (Result e) = e
+
+instance (Backpane a1, Backpane a2) => Backpane (a1, a2) where
+    backpane (x1, x2) = [| ($(backpane x1), $(backpane x2)) |]
+
+instance (Backpane a1, Backpane a2, Backpane a3) =>
+  Backpane (a1, a2, a3) where
+    backpane (x1, x2, x3) =
+        [| ($(backpane x1), $(backpane x2), $(backpane x3)) |]
+
+    It’s truly unfortunate for situations like this that Haskell’s tuple types are not
+inductively defined; we have to handle two-, three-, etc. tuples in as many instances.
+In this book, we won’t need more than three-tuples; of course, the instances for
+larger tuples follow naturally.
+    We can now rewrite compile to work with any Backpane result:
+
+compile
+    :: (Backpane a)
+    => Addressing addr a
+    -> Addr
+    -> Wr
+    -> ExpQ
+compile addressing addr wr = do
+    ...
+    letE (pure <$> decs) [| muxA $(listE outs), $(backpane x) |]
+
+   Giving us the public entry points memoryMap and memoryMap_ as before:
+
+memoryMap
+    :: forall addr a. (Backpane a)
+    => Addr
+    -> Wr
+    -> Addressing addr a
+    -> ExpQ
+memoryMap addr wr addressing =
+    [| let addr' = $addr; wr' = $wr
+        in $(compile addressing [| addr' |] [| wr' |])
+    |]
+
+memoryMap_
+    :: forall addr dat. ()
+    => Addr
+    -> Wr
+    -> Addressing addr ()
+    -> ExpQ
+memoryMap_ addr wr addressing = [| fst $(memoryMap addr wr addressing) |]
+
+          This completes the implementation of backpane outputs. Before we move on
+      to the next section, however, it is worth revisiting the video example from earlier.
+      Suppose we are building a computer with a memory-mapped video buffer, and
+      we would like to write a high-level simulator that interprets video RAM writes by
+      drawing into an SDL texture. In the CHIP-8, we implemented exactly this, and it
+      crucially depended on splitting the video system off the main logic board. But if we
+      were writing our memory map as in the example, that means the video system is
+      part of the main logic board, its connections tangled up with other internal signals.
+         Instead, we can add a new kind of component that is not really a component,
+      merely a way of hooking an external read signal into part of our address space, by
+      forwarding the address and write signals directly into the backpane:
+
+                            Address
+                                                                 External address
+                CPU                        Conduit
+                              Data
+                                                                 External data
+
+         The implementation is straightforward: we use readWrite with a component
+      that simply returns the external read signal, and the current address and write
+      signals.
+
+      conduit
+          :: forall addr' addr. ()
+          => ExpQ
+          -> Addressing addr (Handle addr', Result, Result)
+      conduit rdExt = do
+          (h, Result x) <- readWrite $ \addr wr -> [| ($rdExt, ($addr, $wr)) |]
+          return (h, Result [| fst $x |], Result [| snd $x |])
+
+         We can rewrite our previous example using conduit to expose the video RAM
+      address and write signals to the rest of the circuit, or to the simulator:
+
+      (addrOut, dataOut) = cpu (dataIn .|> 0)
+      (dataIn, (vidAddr, vidWrite)) = $(memoryMap [|addrOut|] [|dataOut|] $ do
+          (vid, vidAddr, vidWrite) <- conduit @(Index 4096) [|vidRead|]
+          from 0xf000 $ connect vid
+          return (vidAddr, vidWrite))
+
+14.5   Access contention
+       As we have seen in the previous chapter, when a memory element is shared between
+       the CPU and some peripherals, sometimes memory access requests from the CPU
+       cannot be fulfilled immediately. In a complex address space, at any given moment
+       some components might be preempted while others are available for immediate
+       access.
+          In the CHIP-8 chapter, we used a simple way of handling this situation by using
+       Maybe to model availability. We can use the same approach here. Let’s take our latest
+       example and build a bit more code around it, to show the exact types of vidAddr,
+       vidWrite and vidRead:
+
+       boardWithExternalVideo
+           :: Signal dom (Maybe (Unsigned 8))
+           -> (Signal dom (Index 4096), Signal dom (Maybe (Unsigned 8)))
+       boardWithExternalVideo = (vidAddr, vidWrite)
+         where
+           (addrOut, dataOut) = cpu (dataIn .|> Just 0)
+           (dataIn, (vidAddr, vidWrite)) = $(memoryMap [|addrOut|] [|dataOut|]
+           $ do
+               (vid, vidAddr, vidWrite) <- conduit @(Index 4096) [|vidRead|]
+               from 0xf000 $ connect vid
+               return (vidAddr, vidWrite))
+
+          This works, because memoryMap is agnostic about the type on the data bus, as
+       long as it is consistent between the components. However, what happens if we now
+       want to add a piece of RAM to the start of the address space?
+
+              (dataIn, (vidAddr, vidWrite)) = $(memoryMap [|addrOut|] [|dataOut|]
+              $ do
+                  ram <- ram0 (SNat @0x8000)
+                  (vid, vidAddr, vidWrite) <- conduit @(Index 4096) [|vidRead|]
+
+                  from 0x0000 $ connect ram
+                  from 0xf000 $ connect vid
+                  return (vidAddr, vidWrite))
+
+           The problem here, is that we don’t want to store Maybe values in the RAM –
+       instead, since this RAM is an internal component with no other connections, and
+       thus, no way of having contention, we want to wrap the values read from it in a
+       Just constructor.
+           Since a Handle is represented by the names of its read-out and address variables,
+       we can make a transformed Handle by creating a new variable for the former:
+
+      mapH :: ExpQ -> Handle addr' -> Addressing addr (Handle addr')
+      mapH f (Handle rd compAddr) = Addressing $ do
+          rd' <- lift . lift $ newName "rd"
+          tell ([d| $(varP rd') = $f <$> $(varE rd)|], mempty, mempty)
+          return $ Handle rd' compAddr
+
+         This allows us to change our example so that the value read from ram0 is always
+      Just-wrapped:
+
+          (dataIn, (vidAddr, vidWrite)) = $(memoryMap [|addrOut|] [|dataOut|]
+          $ do
+              ram <- mapH [|Just|] =<< ram0 (SNat @0x8000)
+              ...
+
+         And what about the other direction, i.e. the CPU explicitly saying “I have no
+      need for memory access at the moment”? Again, we can model that as a Maybe – this
+      time on the address line. A Nothing address will simply not match any components:
+
+      matchJust
+          :: Addressing addr a
+          -> Addressing (Maybe addr) a
+      matchJust = matchAddr [| id |]
+
+         Note that in both cases of wrapping the address signal and the read-out signal in
+      an extra layer of Maybe, the internal representation of address sub-spaces and read
+      results is already a Maybe, but the two layers mean completely different things:
+
+         • A Nothing address, internally, means that the current address, whatever it is,
+           does not match the given address sub-space. A Just Nothing address, on the
+           other hand, means the current address sub-space is of type Maybe a, and the
+           current address is in that subspace.
+
+         • A Nothing read-out value means no components match the current address.
+           Real hardware usually has no way of detecting this – basically, some circuit-
+           dependent bogus value will always be on the data bus. We can model that
+           easily by applying fromMaybe dummyValue on the output of the memory map-
+           per.
+
+         • A Just Nothing read-out value means access to the addressed component was
+           pre-empted. This is a situation the CPU needs to handle. In a real hardware,
+           a separate signal line tells the CPU to wait for the memory to be ready. Of
+           course, this separate line is not raised if no component is selected. Due to this,
+           if we are modeling CPU stalling with Maybe, we should make sure the default
+           dummyValue is Just some value.
+
+       Overall, the details of how memory access contention is modeled depends on
+    the design of the whole system. Instead of building a specific solution into the
+    memoryMap DSL, we have seen how the mapH combinator can be used to implement
+    specific designs.
+
+14.6 Summary
+       • When multiple components are attached to the same address and data bus,
+         there is some mapping of address sub-spaces to components.
+
+       • Since implementing such mappings is highly regular, we can librarize it. Due
+         to technical issues ruling out some of the alternatives, our weapon of choice
+         here is Template Haskell.
+
+       • We created a monadic API where the effects are declaring components, enter-
+         ing address sub-spaces, and connecting components. Because one component
+         can appear under multiple address ranges, observable sharing is necessary.
+
+       • In this chapter, we added code for creating RAM and ROM components, and
+         mapping them to contiguous address ranges. We can also add an escape
+         hatch for hooking external components to the address map with the conduit
+         combinator. In later chapters, we will expand this toolkit as needed.

@@ -226,6 +226,11 @@ case "$SLUG" in
   modern-x86-assembly-language-programming|fuzzing-against-the-machine)
     CTLX="s/$(printf '\010')/ /g
 " ;;
+  # Memory Consistency Primer: byte 0x16 is the mu of "μhb"/"μspec" (CCICheck),
+  # only ever mid-line; without this the tr turns it into a stray "?".
+  a-primer-on-memory-consistency-and-cache-coherence)
+    CTLX="s/$(printf '\026')/μ/g
+" ;;
 esac
 FURN=
 case "$SLUG" in
@@ -259,6 +264,22 @@ case "$SLUG" in
   # elf_fix.awk drops both forms symmetrically; it is anchored on the "N-M" page
   # tag and the all-caps title so it never touches a body line or a TOC entry.
   elf-specification) FIXAWK="${AWKF%/*}/elf_fix.awk" ;;
+  # Retrocomputing with Clash: folio.awk leaves 145 running heads (verso
+  # "<folio> Chapter N <title>", recto "<n.m> <section> <folio>"); retroclash_fix
+  # drops both, page-top only, keeping TOC dot-leaders. Every match is the first
+  # non-blank line of its page, so no body/code line is touched.
+  retrocomputing-with-clash) FIXAWK="${AWKF%/*}/retroclash_fix.awk" ;;
+  # Essentials of Compilation: folio.awk leaks 11 running heads in the four short
+  # sections (ch6, Appendix, References, Index). essentials_fix.awk drops them and
+  # guards the References/Index odd-form so the front-matter TOC survives.
+  essentials-of-compilation) FIXAWK="${AWKF%/*}/essentials_fix.awk" ;;
+  # Modern Compiler Implementation in C: folio.awk leaks 253 all-caps running
+  # heads ("CHAPTER ONE. INTRODUCTION"). The all-caps form is head-only (prose
+  # uses "Chapter N"), so modern_compiler_fix.awk drops it with no false hits.
+  modern-compiler-implementation-in-c) FIXAWK="${AWKF%/*}/modern_compiler_fix.awk" ;;
+  # Memory Consistency Primer: 174 running heads folio.awk misses (even
+  # "<folio> <n>. TITLE", odd "<n.m>. TITLE <folio>"), all-caps-title keyed.
+  a-primer-on-memory-consistency-and-cache-coherence) FIXAWK="${AWKF%/*}/primer_fix.awk" ;;
 esac
 # pre_fix (SSAFIX): a per-slug filter on the RAW pdftotext output, BEFORE the
 # control-byte tr. SSA-based Compiler Design typesets a few relations in
@@ -323,6 +344,34 @@ elif [ "$4" = book ] && [ "$SLUG" = elf-specification ]; then
     printf '71\tBook III: Program Loading and Dynamic Linking\n'
     printf '89\tBook III: Intel Architecture and System V R4 Dependencies\n'
     printf '103\tIndex\n'; } > "$OUT/.ch.tsv"
+elif [ "$4" = book ] && [ "$SLUG" = essentials-of-compilation ]; then
+  # Auto-detect swallowed the Appendix (its outline title "A Appendix" matches
+  # no book-mode pattern) into ch12 Generics, and the References bookmark
+  # resolves one page early (onto the Appendix's last page). Fix both here; the
+  # front matter (pages 1-10) is auto-emitted before the first boundary.
+  { printf '11\tPreface\n'
+    printf '15\t1 Preliminaries\n'
+    printf '27\t2 Integers and Variables\n'
+    printf '43\t3 Parsing\n'
+    printf '59\t4 Register Allocation\n'
+    printf '79\t5 Booleans and Conditionals\n'
+    printf '105\t6 Loops and Dataflow Analysis\n'
+    printf '113\t7 Tuples and Garbage Collection\n'
+    printf '139\t8 Functions\n'
+    printf '157\t9 Lexically Scoped Functions\n'
+    printf '175\t10 Dynamic Typing\n'
+    printf '191\t11 Gradual Typing\n'
+    printf '209\t12 Generics\n'
+    printf '221\tA Appendix\n'
+    printf '223\tReferences\n'
+    printf '231\tIndex\n'; } > "$OUT/.ch.tsv"
+elif [ "$4" = book ] && [ "$SLUG" = a-primer-on-memory-consistency-and-cache-coherence ]; then
+  # The depth-0 fallback breaks here: the outline nodes are not in page order and
+  # a stray "Blank Page" bookmark (page 2) would swallow the whole body. Take the
+  # depth-0 nodes, drop "Blank Page", and sort by page; front matter is
+  # auto-emitted before the first boundary.
+  awk -F'\t' '$1==0 && $3!="Blank Page"{t=$3; sub(/^[ \t]+/,"",t); sub(/[ \t]+$/,"",t); print $2"\t"t}' "$OUT/.all.tsv" \
+    | sort -t"$(printf '\t')" -k1,1n -s > "$OUT/.ch.tsv"
 elif [ "$4" = book ] && [ "$SLUG" = operating-systems-three-easy-pieces ]; then
   # OSTEP's chapters are topic-titled (no Chapter N / number / Part keyword), so
   # no title pattern can find them; the split follows the outline's shape.

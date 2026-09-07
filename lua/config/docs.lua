@@ -3083,6 +3083,8 @@ local BOOKS = {
 		{ title = "SSA-based Compiler Design", fmt = "pdf", file = "Fabrice Rastello, Florent Bouchez Tichadou - SSA-based Compiler Design-Springer (2022).pdf" },
 		{ title = "Talking Compilers with ChatGPT", fmt = "pdf", file = "TalkingCompilersWithGPT.pdf" },
 		{ title = "Introduction to Static Analysis", fmt = "pdf", file = "Introduction to Static Analysis_ An Abstract Interpretation -- Xavier Rival & Kwangkeun Yi -- MIT Press, Cambridge, Massachusetts, 2020 -- The MIT -- 9780262043410 -- ba89612250e3eb6bad9461c789c1b5fe -- Anna’s Arch.pdf" },
+		{ title = "Modern Compiler Implementation in C", fmt = "pdf", slug = "modern-compiler-implementation-in-c", file = "Modern Compiler Implementation in C -- Andrew W. Appel.pdf" },
+		{ title = "Essentials of Compilation (Python)", fmt = "pdf", slug = "essentials-of-compilation", file = "book.pdf" },
 	} },
 	{ module = "Containers", key = "books-container", items = {
 		{ title = "Build Your Own Docker (CodeCrafters)", fmt = "md", slug = "build-your-own-docker", file = "https://github.com/codecrafters-io/build-your-own-docker" },
@@ -3115,6 +3117,9 @@ local BOOKS = {
 		{ title = "Serious Cryptography (2e)", fmt = "epub", file = "Serious Cryptography, 2nd Edition_ A Practical Introduction -- Jean-Philippe Aumasson -- 2, 2024 -- No Starch Press, Incorporated -- isbn13 9781718503847 -- 98baee034c0a929a742dfde69353a637 -- Anna’s Archive.epub" },
 		{ title = "Fuzzing Against the Machine", fmt = "pdf", file = "FuzzingAgainstTheMachine.pdf" },
 		{ title = "Secure Coding in C and C++ (2e)", fmt = "pdf", slug = "secure-coding-in-c-and-cpp", file = "Secure Coding in C and C++ (2nd Edition) (SEI Series in -- Seacord, Robert C_ -- 601df46864954c0d50394370bb73c517 -- Anna’s Archive.pdf" },
+	} },
+	{ module = "Hardware", key = "books-hardware", items = {
+		{ title = "Retrocomputing with Clash", fmt = "pdf", slug = "retrocomputing-with-clash", file = "retroclash.pdf" },
 	} },
 	{ module = "Firmware", key = "books-firmware", items = {
 		{ title = "Beyond BIOS", fmt = "epub", file = "Beyond BIOS - Vincent Zimmer,Michael Rothman,Suresh Marisetty.epub" },
