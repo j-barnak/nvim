@@ -3133,6 +3133,7 @@ local BOOKS = {
 	} },
 	{ module = "Security", key = "books-security", items = {
 		{ title = "The Art of Memory Forensics", fmt = "pdf", file = "TheArtOfMemoryForensics.pdf" },
+		{ title = "Practical Binary Analysis", fmt = "epub", file = "PBA.epub" },
 		{ title = "Linternals + Kernel Exploitation (sam4k)", fmt = "md", slug = "linternals-sam4k", file = "https://sam4k.com/linternals/" },
 		{ title = "Nightmare: Binary Exploitation Course", fmt = "md", slug = "nightmare-binary-exploitation", file = "https://github.com/guyinatuxedo/nightmare" },
 		{ title = "Heap Exploitation (Dhaval Kapil)", fmt = "md", slug = "heap-exploitation-dhaval-kapil", file = "https://github.com/DhavalKapil/heap-exploitation" },

@@ -1,0 +1,7 @@
+## PREFACE
+
+Binary analysis is one of the most fascinating and challenging topics in hacking and computer science. It’s also one of the most difficult to learn, and this is in no small part because of the lack of available information on the subject.
+
+While books on reverse engineering and malware analysis are plenty, the same cannot be said for advanced binary analysis topics, such as binary instrumentation, dynamic taint analysis, or symbolic execution. The beginning binary analyst is forced to scrape together knowledge from dark corners of the Internet, outdated and sometimes plain incorrect newsgroup posts, and obscure articles. Many articles, as well as academic literature on binary analysis, already presuppose a large amount of knowledge, making it a chicken-and-egg problem to learn about binary analysis from these resources. To make matters worse, many analysis tools and libraries come with incomplete documentation or without any documentation at all.
+
+With this book, I hope to make the field of binary analysis more accessible by providing a coherent resource that introduces you to all important topics in the field in a straightforward, hands-on way. After reading this book, you’ll be well equipped to make sense of the rapidly changing world of binary analysis and to venture out on your own.

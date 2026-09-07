@@ -31,7 +31,12 @@ NAME_FIX = {"more-ocaml-algorithms-methods-and-diversions": {
     # "dedication03" file stem).
     "designing-data-intensive-applications-2e": {
         "titlepage01.html": "Title Page", "copyright-page01.html": "Copyright",
-        "dedication03.html": "Epigraph"}}
+        "dedication03.html": "Epigraph"},
+    # PBA back matter the ncx does not label: bm03 is the back-cover praise (it
+    # mined the blurb's first 140 chars as a title); nav is the epub landmarks.
+    "practical-binary-analysis": {
+        "bm03.xhtml": "Praise for Practical Binary Analysis",
+        "nav.xhtml": "Navigation"}}
 # Calibre PDF-reflow listings printed as <p> paragraphs whose lines are led by a
 # small-font <span class="X">N</span> line number (C++ Initialization Story:
 # 55 paragraphs, 7 listing runs). Value: (line-number span class, fence
@@ -104,6 +109,32 @@ def sanitize(t):
 _CIRC = "\u2460\u2461\u2462\u2463\u2464\u2465\u2466\u2467\u2468\u2469\u246a\u246b\u246c\u246d\u246e\u246f\u2470\u2471\u2472\u2473"
 def prep_code(s):
     expand_spacers(s)
+    # No Starch (Practical Binary Analysis) sets each code listing as ONE
+    # <p class="programs"> whose lines are separated by <br/> and whose
+    # indentation is nbsp runs - there is no <pre>. Left alone, pandoc renders it
+    # as an escaped prose paragraph. Rebuild each as a <pre> so it fences as
+    # code: <br/> -> newline, nbsp -> space, callout glyphs kept. The "listing"
+    # class is the placeholder clean() strips to a bare fence.
+    for p in s.select("p.programs, p.programsc"):
+        # A page break lands mid-listing as <span epub:type="pagebreak"/> plus the
+        # surrounding source line-wrap; the real line breaks are the <br/> only.
+        # Drop the pagebreak spans, mark <br/> with a sentinel, then strip every
+        # source-formatting newline so a page break cannot add a blank line inside
+        # a readelf/objdump dump - only the sentinel becomes a newline.
+        for pb in p.find_all("span", attrs={"epub:type": "pagebreak"}):
+            pb.extract()
+        for br in p.find_all("br"):
+            br.replace_with("\x00")
+        txt = p.get_text().replace(chr(0xa0), " ").replace("\r", "").replace("\n", "")
+        pre = s.new_tag("pre"); pre["class"] = "listing"
+        code = s.new_tag("code"); code.string = txt.replace("\x00", "\n").strip("\n")
+        pre.append(code); p.replace_with(pre)
+    # No Starch marks inline code with <span class="literal"> (269 in one PBA
+    # chapter): map it to <code> so it renders as `inline code` instead of a bare
+    # word. Semantically a literal IS inline code, so this is safe for any epub.
+    for sp in s.select("span.literal"):
+        sp.name = "code"
+        del sp["class"]
     # A boxed sidebar (Crafting Interpreters' div.aside, 8-34 per chapter, drawn
     # with a border by the book's own CSS) is not part of the running argument,
     # but pandoc has no reason to know that and merged each one into the
