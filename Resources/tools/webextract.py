@@ -17,7 +17,10 @@ and differ only in <mode> <selector> <opts>. --preserve-tabs is not optional
 (see the note at the end of this docstring).
 
     osdev            mediawiki "" https://wiki.osdev.org      clean opts: listsep
+    browser-eng      content body <url> wbe,abs
     learncpp         content div.entry-content <url> abs
+    learnopengl      content div#content <url> abs,logl
+    revers-hyper     content div.page-contents <url> reveng,abs
     rayanfam         content div.post-content
     rust-atomics     content article "" guesslang
     herd7            content body
@@ -79,6 +82,11 @@ and every one is documented at the point it runs:
     doare      doar-e.github.io's date strip and its language-less Pygments blocks
     duasynt    duasynt.com's section headings, drawn as <div class="post-section">
     guesslang  label an attribute-less <pre> from its own text (rust-atomics)
+    wbe        browser.engineering's <header> social links, print-edition
+               <aside class="ad">, Substack <div id="signup">, and <footer>
+               (its custom pandoc template has no article wrapper)
+    logl       learnopengl.com's hidden <h1 id="content-url"> URL-path heading
+    reveng     revers.engineering's author box, Digiprove seal and license table
 
 Some rules are unconditional because the markup they repair is never anything
 but damage: Cloudflare's data-cfemail obfuscation (which eats real text such as
@@ -701,6 +709,37 @@ if mode == "content":
         for d in el.select("div.post-section"):
             d.name = "h2"
 
+    if opt("wbe"):
+        # browser.engineering ships a custom pandoc template with NO article
+        # wrapper: every chapter is flat siblings under <body>, so the selector
+        # has to be "body" and the site chrome comes with it. The prev/next and
+        # chapter-contents <nav>s go with the generic nav rule; these are what
+        # it does not name - the print-edition ad, the Substack signup iframe,
+        # and the copyright footer. The <header> holds the chapter's own <h1>
+        # title beside three social links (Twitter/Blog/Discussions), so lift
+        # the title out and drop the rest of the header with it.
+        for t in el.select("aside.ad, #signup, footer"):
+            t.decompose()
+        head = el.find("header")
+        if head is not None:
+            h1 = head.find("h1")
+            head.replace_with(h1.extract() if h1 is not None else s.new_tag("span"))
+        # The book is itself built by pandoc, so a Python listing is
+        # <pre class="sourceCode python"><code class="sourceCode python">.
+        # pandoc's gfm writer takes the FIRST class as the fence's info string,
+        # which is "sourceCode", not "python", so every one of the book's code
+        # listings would fence as "``` sourceCode" and clean() (which does not
+        # know that word) would then strip it to a bare fence - the language
+        # label the reader wants is the SECOND class. Drop the "sourceCode"
+        # token so the real language ("python", "javascript", "html", ...) is
+        # what pandoc emits and clean() keeps.
+        for c in el.select("pre.sourceCode, code.sourceCode"):
+            kept = [x for x in (c.get("class") or []) if x != "sourceCode"]
+            if kept:
+                c["class"] = kept
+            else:
+                del c["class"]
+
     if opt("mkdocs"):
         # mkdocs-material renders the WHOLE site nav plus the page's own table
         # of contents into every article, and hangs a permalink anchor off
@@ -709,6 +748,31 @@ if mode == "content":
                            ".md-content__button, .md-footer, .md-header, "
                            ".md-top, .md-dialog, .md-feedback, .md-skip"):
             t.decompose()
+
+    if opt("logl"):
+        # learnopengl.com's theme prints TWO <h1> at the top of div#content: the
+        # real title in <h1 id="content-title"> and, right after it, the URL
+        # path in <h1 id="content-url" style="display:none;"> - hidden in the
+        # browser but read by pandoc, so every page otherwise opens with a
+        # second, duplicate heading ("Getting-started/Hello-Triangle"). It is
+        # metadata the theme's script reads, never shown to a reader.
+        for t in el.select("#content-url"):
+            t.decompose()
+
+    if opt("reveng"):
+        # revers.engineering (WordPress) hangs three plugin blocks at the tail
+        # of div.page-contents: the PublishPress multiple-authors box (an
+        # "Author" widget heading plus avatar and bio), and the Digiprove
+        # plugin's copyright seal and its "license terms" table (table.dprv).
+        # None are the article; the author's own "Recommended Reading" list is
+        # ordinary body content and stays.
+        for t in el.select("div.pp-multiple-authors-boxes-wrapper, "
+                           "h2.box-header-title, table.dprv, img[src*=dp_seal]"):
+            t.decompose()
+        for a in el.select('a[href*="digiprove.com"], a[href^="javascript:dprv"]'):
+            tgt = a.find_parent("p") or a
+            if tgt.parent is not None:
+                tgt.decompose()
 
     if opt("unescape"):
         # blogs.oracle.com's KFENCE post is double-escaped at the source: its

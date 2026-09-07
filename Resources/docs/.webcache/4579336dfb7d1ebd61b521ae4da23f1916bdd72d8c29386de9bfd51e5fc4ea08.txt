@@ -1,0 +1,459 @@
+# Tessellation
+
+# Tessellation Chapter II: Rendering Terrain using Tessellation Shaders & Dynamic Levels of Detail
+
+In order to complete this chapter, you will need to be able to create an OpenGL 4.0+ context. This should not be a technical concern as Windows and Linux support OpenGL 4.6 and OS X only supports OpenGL 4.1. The Tessellation Shaders to be discussed are only available starting in OpenGL 4.0. Using OpenGL 3.3 or earlier will result in errors. The sample shader code will user OpenGL 4.1 for cross-platform compatibility between OS X, Windows, and Linux.
+
+In the [previous chapter](https://learnopengl.com/Guest-Articles/2021/Tessellation/Height-map), we implemented a terrain height map on the CPU and it worked but it had its deficiencies:
+
+- The mesh generation is time intensive ( O(`n`^(`2`)).
+- The mesh storage is memory intensive to store the vertices and indices  
+  ( `width * height * 3 * sizeof(float) + width * (height+1) * sizeof(unsigned int)` - almost 72MB in our example).
+- The mesh has a fixed uniform resolution (`width * height` vertices and `(height-1) * (width*2)` triangles - 4,607,744 vertices and 9,206,730 triangles in our example).
+- The Vertex Shader needs to process a minimum of `width * height` vertices.
+- To draw the entire mesh, we need to have `height - 1` draw calls.
+
+In this chapter we'll offload the work to the GPU making use of tessellation shaders to improve the performance and memory footprint. We will render the corresponding terrain using a new method:
+
+- Dynamically subdividing a low resolution mesh on the GPU
+
+This method will give us comparable results, greater control & flexibility, and better performance. In this chapter, we will expand our existing OpenGL Rendering Pipeline and introduce two new programmable shaders.
+
+This chapter is organized in to the following sections:
+
+1.  CPU / OpenGL Setup
+2.  GPU Implementation using Tessellation Shaders
+    - Expanded Rendering Pipeline
+    - Tessellation Control Shader
+    - Tessellation Primitive Generation
+    - Tessellation Evaluation Shader
+3.  Dynamic Level of Detail
+4.  Exercises
+5.  References
+
+### CPU / OpenGL Setup
+
+The first step is to specify the number of vertices that make up each of our primitives. When dealing with tessellation, our new primitive type is a patch denoted by the constant GL_PATCHES. A patch is an abstract primitive that is comprised of a set of `n` vertices that will be interpolated between. The number of vertices per patch is specified CPU side via the OpenGL command below:
+
+    glPatchParameteri(GL_PATCH_VERTICES, 4);
+
+Here we are specifying that each set of four verticies refer to a single patch (which matches our quad subdivision previously). Depending on your interpolation calculation, the number of vertices may vary. In the next chapter, we'll see an instance where we'll have more verticies used.
+
+We'll set up our VBO as the set of vertices that represent our quad. We will do a course subdivision of our terrain. Here, `width` and `height` correspond to the size of the height map image we read in. The `rez` is the number of patches across and down our terrain. Therefore, we'll be generating `rez`^(`2`) patches, each to be individually tessellated. Each vertex of our quad has an (x,y,z) location in space and a (u,v) texture coordinate. The locations span through the X range of `[-width/2, width/2]` and Z range of `[-height/2, height/2`. Y is set to be zero and will be modified by the height map in our shaders. The texture coordinates span `[0, 1]` to correspond to each resolution block of the texture.
+
+    // vertex generation
+    std::vector<float> vertices;
+
+    unsigned rez = 20;
+    for(unsigned i = 0; i <= rez-1; i++)
+    {
+    	for(unsigned j = 0; j <= rez-1; j++)
+    	{
+    		vertices.push_back(-width/2.0f + width*i/(float)rez); // v.x
+    		vertices.push_back(0.0f); // v.y
+    		vertices.push_back(-height/2.0f + height*j/(float)rez); // v.z
+    		vertices.push_back(i / (float)rez); // u
+    		vertices.push_back(j / (float)rez); // v
+
+    		vertices.push_back(-width/2.0f + width*(i+1)/(float)rez); // v.x
+    		vertices.push_back(0.0f); // v.y
+    		vertices.push_back(-height/2.0f + height*j/(float)rez); // v.z
+    		vertices.push_back((i+1) / (float)rez); // u
+    		vertices.push_back(j / (float)rez); // v
+
+    		vertices.push_back(-width/2.0f + width*i/(float)rez); // v.x
+    		vertices.push_back(0.0f); // v.y
+    		vertices.push_back(-height/2.0f + height*(j+1)/(float)rez); // v.z
+    		vertices.push_back(i / (float)rez); // u
+    		vertices.push_back((j+1) / (float)rez); // v
+
+    		vertices.push_back(-width/2.0f + width*(i+1)/(float)rez); // v.x
+    		vertices.push_back(0.0f); // v.y
+    		vertices.push_back(-height/2.0f + height*(j+1)/(float)rez); // v.z
+    		vertices.push_back((i+1) / (float)rez); // u
+    		vertices.push_back((j+1) / (float)rez); // v
+    	}
+    }
+
+We'll send the `vertices` vector to a VBO. When it comes time to actually render and draw the patch, we'll use the same draw command we're accustomed to but using the primtive type `GL_PATCHES`.
+
+    glBindVertexArray(terrainVAO);
+    glDrawArrays(GL_PATCHES, 0, 4*rez*rez);
+
+That is the extent of what's done on the CPU and via OpenGL. We specify the vertices per patch and will leave the subdivision of each patch to the GPU and our tessellation shaders.
+
+## GPU Implementation using Tessellation Shaders
+
+The previous chapter performed the quad subdivision once on the CPU and then sent the precomputed results to the GPU to render. We will now move the quad subdivision to the GPU. The quad subdivision, or tessellation of the quad, is broken in to three steps:
+
+1.  Determine how much tessellation to do
+2.  Perform the tessellation to generate intermediate points
+3.  Evaluate the intermediate point to generate a new vertex point
+
+Each of those three steps will correspond to each of the new stages in our rendering pipeline.
+
+### Expanded Rendering Pipeline
+
+The [Geometry Shader](https://learnopengl.com/Advanced-OpenGL/Geometry-Shader) sits after the Vertex Shader and before the clipping & culling stage of the pipeline. However, between the Vertex and Geometry Shaders are two more optional shaders called the Tessellation Control Shader and the Tessellation Evaluation Shader.
+
+The image below displays a simplified OpenGL Rendering Pipeline. The boxes name each stage in the pipeline and the clouds name the input/output objects for each stage.
+
+![OpenGL 4.0 Rendering Pipeline](https://learnopengl.com/img/guest/2021/tessellation/tessellation/opengl_4_0_pipeline.png "OpenGL 4.0 Rendering Pipeline")
+
+The Tessellation Evaluation Shader is required for the tessellation process to be computed. If the Tessellation Control Shader is omitted then the output of the Vertex Shader is sent directly to the Tessellation Primitive Generator.
+
+The new stages we have added, and their responsibilites, are:
+
+1.  Tessellation Control Shader - Determine how much tessellation to do
+2.  Tessellation Primitive Generator - Perform the tessellation to generate intermediate points
+3.  Tessellation Evaluation Shader - Evaluate the intermediate point to generate a new vertex point
+
+As we walk through the tessellation process, we will start the shader program with a simple pass-through vertex shader, shown below.
+
+```
+// vertex shader
+#version 410 core
+
+// vertex position
+layout (location = 0) in vec3 aPos;
+// texture coordinate
+layout (location = 1) in vec2 aTex;
+
+out vec2 TexCoord;
+
+void main()
+{
+    // convert XYZ vertex to XYZW homogeneous coordinate
+    gl_Position = vec4(aPos, 1.0);
+    // pass texture coordinate though
+    TexCoord = aTex;
+}
+	
+```
+
+### Tessellation Control Shader (TCS)
+
+The main task of the control shader, as stated above, is to determine how much tessellation to do. How that is done specifically is a multistep process. The three steps are the following:
+
+1.  Specify the number of vertices per patch
+2.  Perform any transformations to each vertex of the patch
+3.  Specify the tessellation levels to perform - which controls how much tessellation to do
+
+When specifying the number of vertices per patch, this value needs to match the number specified on the CPU. This is accomplished via a output layout parameter.
+
+    layout (vertices=4) out;
+
+The tessellation control shader will be run on each vertex that is part of the patch. The shader receives its inputs as an array whose size equals the number of vertices in the patch. The built-in GLSL variable gl_InvocationID tracks which vertex of the patch we are currently processing. We'll use this value to access the proper element within the array. Any varyings we are using will also be arrays, both as input and output:
+
+    // varying input from vertex shader
+    in vec2 TexCoord[];
+    // varying output to evaluation shader
+    out vec2 TextureCoord[];
+
+The vertex positional data gets sent through the built-in GLSL variables gl_in and gl_out which are both arrays of the following struct type:
+
+    in gl_PerVertex
+    {
+    	vec4 gl_Position;
+    	float gl_PointSize;
+    	float gl_ClipDistance[];
+    } gl_in[gl_MaxPatchVertices];
+
+With all the inputs and outputs set up properly, we're ready to pass through all of the vertex attribute data.
+
+    gl_out[gl_InvocationID].gl_Position = gl_in[gl_InvocationID].gl_Position;
+    TextureCoord[gl_InvocationID] = TexCoord[gl_InvocationID];
+
+Now that we've specified the patch data, the final step is to actually specify how much tessellation to do. How the tessellation is performed exactly will be described below in the next section. Each edge of our quad can be subdivided independently. Therefore, there are four different edge values we can set as specified by the built-in GLSL array gl_TessLevelOuter. Additionally, the patch can be internally tessellated along each dimension. There are two dimensions we can set as specified by the built-in GLSL array gl_TessLevelInner. The image below shows the correspondance of each element in the array to the associated quad edge.
+
+![Quad Tessellation Levels](https://learnopengl.com/img/guest/2021/tessellation/tessellation/QuadLevels.png "Quad Tessellation Levels")
+
+Image Source: [OpenGL Wiki](https://www.khronos.org/opengl/wiki/Tessellation)
+
+We will set each element within the two arrays to the number of subdivisions to perform. These are float values and how these values get used will be explained below when the tessellation algorithm is explained. Initially, we will hardcode all the values to be 16. This will be result in 16² tessellated points to be generated.
+
+    gl_TessLevelOuter[0] = 16;
+    gl_TessLevelOuter[1] = 16;
+    gl_TessLevelOuter[2] = 16;
+    gl_TessLevelOuter[3] = 16;
+
+    gl_TessLevelInner[0] = 16;
+    gl_TessLevelInner[1] = 16;
+
+The full tessellation control shader code looks as follows:
+
+```
+// tessellation control shader
+#version 410 core
+
+// specify number of control points per patch output
+// this value controls the size of the input and output arrays
+layout (vertices=4) out;
+
+// varying input from vertex shader
+in vec2 TexCoord[];
+// varying output to evaluation shader
+out vec2 TextureCoord[];
+
+void main()
+{
+    // ----------------------------------------------------------------------
+    // pass attributes through
+    gl_out[gl_InvocationID].gl_Position = gl_in[gl_InvocationID].gl_Position;
+    TextureCoord[gl_InvocationID] = TexCoord[gl_InvocationID];
+
+    // ----------------------------------------------------------------------
+    // invocation zero controls tessellation levels for the entire patch
+    if (gl_InvocationID == 0)
+    {
+        gl_TessLevelOuter[0] = 16;
+        gl_TessLevelOuter[1] = 16;
+        gl_TessLevelOuter[2] = 16;
+        gl_TessLevelOuter[3] = 16;
+
+        gl_TessLevelInner[0] = 16;
+        gl_TessLevelInner[1] = 16;
+    }
+}
+	
+```
+
+### Tessellation Primitive Generation
+
+The Tessellation Primitive Generator is responsible for doing the actual tessellation of the patch and generating each intermediate point. There is no specific shader code written for the Tessellation Primitive Generator. However, it uses the output of the tessellation control shader and the input of the tessellation evaluation shader to dictate how the generation is performed. The tessellation control shader output the tessellation levels, or number of times to subdivide each edge. The tessellation evaluation shader's input then specifies how to space the subdivisions on each edge. There are three options for how to specify the subdivision spacing:
+
+1.  `equal_spacing` - creates subdivisions of equal sizes
+2.  `fractional_odd_spacing` - creates an odd number of subdivisions broken into long & short segments
+3.  `fractional_even_spacing` - creates an even number of subdivisions broken into long & short segments
+
+A visual of each option is shown below. For more details and specifics, jump over to the [OpenGL Wiki](https://www.khronos.org/opengl/wiki/Tessellation#Edge_tessellation_spacing) page.
+
+![Subdivide Equal](https://learnopengl.com/img/guest/2021/tessellation/tessellation/SubdivideEqual.gif "Subdivide Equal")
+
+Equal Subdivision (Image Source: [OpenGL Wiki](https://www.khronos.org/opengl/wiki/Tessellation))
+
+![Subdivide Fractional Odd](https://learnopengl.com/img/guest/2021/tessellation/tessellation/SubdivideOdd.gif "Subdivide Fractional Odd")
+
+Fractional Odd Subdivision (Image Source: [OpenGL Wiki](https://www.khronos.org/opengl/wiki/Tessellation))
+
+![Subdivide Fractional Even](https://learnopengl.com/img/guest/2021/tessellation/tessellation/SubdivideEven.gif "Subdivide Fractional Even")
+
+Fractional Even Subdivision (Image Source: [OpenGL Wiki](https://www.khronos.org/opengl/wiki/Tessellation))
+
+The tessellation is performed in a two-step process - first the inner patch is recursively tessellated and then the outer edges are subdivided. The image below shows different tessellations that would result based on different values of the inner tessellation levels.
+
+![Inner Tessellation](https://learnopengl.com/img/guest/2021/tessellation/tessellation/QuadInnerOnlyLineCorr.png "Inner Tessellation")
+
+Image Source: [OpenGL Wiki](https://www.khronos.org/opengl/wiki/Tessellation)
+
+Once the inner rings have been generated, the outer ring was its final intermediate points generated based on each outer tessellation level.
+
+![Inner Tessellation](https://learnopengl.com/img/guest/2021/tessellation/tessellation/QuadOuterAndNotris.png "Inner Tessellation")
+
+Image Source: [OpenGL Wiki](https://www.khronos.org/opengl/wiki/Tessellation)
+
+The abstract patch space spans its dimensions within the range `[0, 1]`. Each intermediate point is represented by a fractional coordinate `(u, v)` that corresponds to its location within the patch. The tessellation evaluation shader will then be run on every generated intermediate point.
+
+### Tessellation Evaluation Shader
+
+The Tessellation Evaluation Shader has a relatively simple job after the above steps have been completed - to specify the `(x, y, z)`location of the generated intermediate point. The presence of the tessellation evaluation shader in the pipeline is what triggers the tessellation primitive generation. Therefore, the inputs for the tessellation primitive generator are placed in the tessellation evaluation shader as input layout paramaters. We will need to specify the abstract patch type and can optionally specify the spacing and winding order for the generated primitives. Our patch is representing a quad to be subdivided, so the patch type will be quads (other options include `triangles` and `isolines`). The spacing options were outlined above and the winding order can be either ccw or cw, with `ccw` being the default.
+
+    layout (quads, fractional_odd_spacing, ccw) in;
+
+The tessellation evaluation shader receives the following inputs:
+
+- the array of patch vertices, again through the built-in `gl_in`
+- the array of varying attributes
+- the 2D tessellation coordinate for the generated point through the built-in gl_TessCoord
+
+We then use the `gl_TessCoord` values as the parameters to interpolate the patch vertices as desired. Here, we will apply the same quad subdivision as we did CPU side in the previous chapter. The difference being that we are now determining the interpolated texture coordinate and final vertex position within the GPU in parallel, opposed to on the CPU in sequence. The process is also simplified since our code is performing only a single interpolation opposed to having to generate the fractional interpolation parameters and do the interpolation. We have now offloaded the generation of the interpolation parameters to the tessellation primitive generator.
+
+The full tessellation evaluation shader is displayed below with equivalent steps from the CPU tessellation subdivision.
+
+```
+// tessellation evaluation shader
+#version 410 core
+
+layout (quads, fractional_odd_spacing, ccw) in;
+
+uniform sampler2D heightMap;  // the texture corresponding to our height map
+uniform mat4 model;           // the model matrix
+uniform mat4 view;            // the view matrix
+uniform mat4 projection;      // the projection matrix
+
+// received from Tessellation Control Shader - all texture coordinates for the patch vertices
+in vec2 TextureCoord[];
+
+// send to Fragment Shader for coloring
+out float Height;
+
+void main()
+{
+    // get patch coordinate
+    float u = gl_TessCoord.x;
+    float v = gl_TessCoord.y;
+
+    // ----------------------------------------------------------------------
+    // retrieve control point texture coordinates
+    vec2 t00 = TextureCoord[0];
+    vec2 t01 = TextureCoord[1];
+    vec2 t10 = TextureCoord[2];
+    vec2 t11 = TextureCoord[3];
+
+    // bilinearly interpolate texture coordinate across patch
+    vec2 t0 = (t01 - t00) * u + t00;
+    vec2 t1 = (t11 - t10) * u + t10;
+    vec2 texCoord = (t1 - t0) * v + t0;
+
+    // lookup texel at patch coordinate for height and scale + shift as desired
+    Height = texture(heightMap, texCoord).y * 64.0 - 16.0;
+
+    // ----------------------------------------------------------------------
+    // retrieve control point position coordinates
+    vec4 p00 = gl_in[0].gl_Position;
+    vec4 p01 = gl_in[1].gl_Position;
+    vec4 p10 = gl_in[2].gl_Position;
+    vec4 p11 = gl_in[3].gl_Position;
+
+    // compute patch surface normal
+    vec4 uVec = p01 - p00;
+    vec4 vVec = p10 - p00;
+    vec4 normal = normalize( vec4(cross(vVec.xyz, uVec.xyz), 0) );
+
+    // bilinearly interpolate position coordinate across patch
+    vec4 p0 = (p01 - p00) * u + p00;
+    vec4 p1 = (p11 - p10) * u + p10;
+    vec4 p = (p1 - p0) * v + p0;
+
+    // displace point along normal
+    p += normal * Height;
+
+    // ----------------------------------------------------------------------
+    // output patch point position in clip space
+    gl_Position = projection * view * model * p;
+}
+	
+```
+
+The `Height` value is then used in the fragment shader to apply a grayscale color based on the relative height. A sample fragment shader used is below:
+
+    #version 410 core
+
+    in float Height;
+
+    out vec4 FragColor;
+
+    void main()
+    {
+    	float h = (Height + 16)/64.0f;
+    	FragColor = vec4(h, h, h, 1.0);
+    }
+
+The result is shown below:
+
+![GPU Terrain Overworld](https://learnopengl.com/img/guest/2021/tessellation/tessellation/gpu_overworld.png "GPU Terrain Overworld")
+
+When we view the wireframe of the full terrain, we can see the tessellation of each patch.
+
+![GPU Terrain Overworld Wireframe](https://learnopengl.com/img/guest/2021/tessellation/tessellation/gpu_wireframe.png "GPU Terrain Overworld Wireframe")
+
+If we outline each patch, we have a visual of the course resolution of our patch array:
+
+![GPU Terrain Overworld with Patch Outlines](https://learnopengl.com/img/guest/2021/tessellation/tessellation/gpu_overworld_patch_outline.png "GPU Terrain Overworld with Patch Outlines")
+
+And the tessellation patch by patch:
+
+![GPU Terrain Overworld Wireframe with Patch Outlines](https://learnopengl.com/img/guest/2021/tessellation/tessellation/gpu_wireframe_patch_outline.png "GPU Terrain Overworld Wireframe with Patch Outlines")
+
+## Dynamic Level of Detail
+
+In the above TCS code we are hard coding every patch to use tessellation levels of 16 uniformly across all patches. This effectively is the same as we had done on the CPU - pick a fixed resolution and render it. We do get the memory and performance boosts from running in parallel on the GPU. The benefit and power of tessellation shaders is to dynamically calculate the resolution of the subdivision to produce the desired geometry. We will walk through a distanced-based model to compute the tessellation levels. Due to our perspective projection, we need a high level of detail for meshes that are near the camera and can use a lower level of detail for meshes that are far away from the camera.
+
+The Tessellation Control Shader controls the tessellation level of the patch so we must have it present in our shader program to accomplish this task. We only need to perform these calculations once per patch since the 0^(th)-indexed vertex sets the tessellation levels for the entire patch. We'll linearly interpolate the tessellation levels based the depth of the patch. This process is accomplished in six steps:
+
+1.  **Define parameters**: We'll be interpolating between a range of tessellation levels and need to define a MIN_TESS_LEVEL and MAX_TESS_LEVEL. Additionally, the distance is used as the interpolation parameter and we'll define a MIN_DISTANCE and MAX_DISTANCE to clamp the patch distance within. These distance parameters are also used in the third step to normalize the patch distance.  
+      
+2.  **Transform patch vertices to eye space**: By transforming our patch vertices in to eye space, the z-component of the coordinate corresponds to the distance to the camera. This distance is in world space scale just relative to the camera.  
+      
+3.  **Compute normalized distance to camera**: By normalizing the distance to the camera, we're computing how far this vertex's distance lies between our distance range. This percentage is then used in the next step to compute the same relative distance between the tessellation levels. After this normalization is completed, the value returned will be in the range `[0.0, 1.0]` where a smaller value corresponds to being closer to the camera.  
+      
+4.  **Interpolate outer tessellation levels**: We computed the normalized distance for each vertex of our patch. These vertices coorespond to the corner of a quad. The tessellation levels correspond to the edges of the quads. For each edge, we'll use the vertex that is closer to the camera as the interpolation parameter to result in a higher level of detail. For each edge, we'll interpolate from the maximum tessellation level (more detail) at close distances to the camera down to the minimum tessellation level (less detail) at far distances to the camera.  
+      
+5.  **Set outer tessellation levels**: Assign each corresponding outer tessellation level for the corresponding edge.  
+      
+6.  **Compute & set inner tessellation levels**: Each inner tessellation level is along the same dimension as two outer tessellation levels. Use the higher outer tessellation level for the inner tessellation level.
+
+&nbsp;
+
+    // ----------------------------------------------------------------------
+    // invocation zero controls tessellation levels for the entire patch
+    if(gl_InvocationID == 0)
+    {
+        // ----------------------------------------------------------------------
+        // Step 1: define constants to control tessellation parameters
+    	// set these as desired for your world scale
+        const int MIN_TESS_LEVEL = 4;
+        const int MAX_TESS_LEVEL = 64;
+        const float MIN_DISTANCE = 20;
+        const float MAX_DISTANCE = 800;
+
+        // ----------------------------------------------------------------------
+        // Step 2: transform each vertex into eye space
+        vec4 eyeSpacePos00 = view * model * gl_in[0].gl_Position;
+        vec4 eyeSpacePos01 = view * model * gl_in[1].gl_Position;
+        vec4 eyeSpacePos10 = view * model * gl_in[2].gl_Position;
+        vec4 eyeSpacePos11 = view * model * gl_in[3].gl_Position;
+
+        // ----------------------------------------------------------------------
+        // Step 3: "distance" from camera scaled between 0 and 1
+        float distance00 = clamp((abs(eyeSpacePos00.z)-MIN_DISTANCE) / (MAX_DISTANCE-MIN_DISTANCE), 0.0, 1.0);
+        float distance01 = clamp((abs(eyeSpacePos01.z)-MIN_DISTANCE) / (MAX_DISTANCE-MIN_DISTANCE), 0.0, 1.0);
+        float distance10 = clamp((abs(eyeSpacePos10.z)-MIN_DISTANCE) / (MAX_DISTANCE-MIN_DISTANCE), 0.0, 1.0);
+        float distance11 = clamp((abs(eyeSpacePos11.z)-MIN_DISTANCE) / (MAX_DISTANCE-MIN_DISTANCE), 0.0, 1.0);
+
+        // ----------------------------------------------------------------------
+        // Step 4: interpolate edge tessellation level based on closer vertex
+        float tessLevel0 = mix( MAX_TESS_LEVEL, MIN_TESS_LEVEL, min(distance10, distance00) );
+        float tessLevel1 = mix( MAX_TESS_LEVEL, MIN_TESS_LEVEL, min(distance00, distance01) );
+        float tessLevel2 = mix( MAX_TESS_LEVEL, MIN_TESS_LEVEL, min(distance01, distance11) );
+        float tessLevel3 = mix( MAX_TESS_LEVEL, MIN_TESS_LEVEL, min(distance11, distance10) );
+
+        // ----------------------------------------------------------------------
+        // Step 5: set the corresponding outer edge tessellation levels
+        gl_TessLevelOuter[0] = tessLevel0;
+        gl_TessLevelOuter[1] = tessLevel1;
+        gl_TessLevelOuter[2] = tessLevel2;
+        gl_TessLevelOuter[3] = tessLevel3;
+
+        // ----------------------------------------------------------------------
+        // Step 6: set the inner tessellation levels to the max of the two parallel edges
+        gl_TessLevelInner[0] = max(tessLevel1, tessLevel3);
+        gl_TessLevelInner[1] = max(tessLevel0, tessLevel2);
+    }
+    	
+
+The dynamic tessellation levels of each patch is not necessarily noticeable right away when looking at the resultant image.
+
+![GPU Terrain Dynamic Level of Detail](https://learnopengl.com/img/guest/2021/tessellation/tessellation/gpu_lod.png "GPU Terrain Dynamic Level of Detail")
+
+When we look at the wireframe model, we can more clearly see the patch resolution increasing as the points get closer to the camera. This is purposely a drastic change in the image to demonstrate the effect that can be accomplished. In practice, you would likely want a smoother more gradual transition.
+
+![GPU Terrain Dynamic Level of Detail Wireframe](https://learnopengl.com/img/guest/2021/tessellation/tessellation/gpu_lod_wireframe.png "GPU Terrain Dynamic Level of Detail Wireframe")
+
+You can find the complete source code for this chapter [here](https://learnopengl.com/code_viewer_gh.php?code=src/8.guest/2021/3.tessellation/terrain_gpu_dist/main.cpp). In the [next chapter](https://learnopengl.com/Guest-Articles/2021/Tessellation/Surfaces), we'll take a look at using tessellation shaders to render smooth curves and surfaces.
+
+## Exercises
+
+Some additional techniques to add on and investigate:
+
+1.  **Biome Mapping**: In addition to using a height map for the shape of the terrain, use climate simulation to map the temperature, moisture, and other data for the appearance of the terrain. A simple example of ocean/beach/forest/mountain/snow biomes based on the elevation is shown below. ![Terrain with mountain biomes](https://learnopengl.com/img/guest/2021/tessellation/tessellation/biomes.png "Terrain with mountain biomes")
+2.  **Procedurally Generate Infinite Terrain**: Instead of reading height data from a predefined and static height map texture of fixed size, use a noise function to generate the height data through space.
+3.  **Roughness-based Level of Detail**: Instead of naïvely using the eye space distance of the patch corner points to determine the appropriate tessellation levels, use the roughness of the patch to determine the appropriate tessellation level.
+
+## References
+
+- [Tangram Heightmapper](https://tangrams.github.io/heightmapper/)
+- [Tessellation - OpenGL Wiki](https://www.khronos.org/opengl/wiki/Tessellation)
+
+**Article by:** Dr. Jeffrey Paone  
+**Contact:** [email](mailto:jpaone@mines.edu)

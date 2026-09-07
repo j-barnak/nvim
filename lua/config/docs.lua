@@ -2473,6 +2473,10 @@ local pick_herd7 = frozen_web_provider("herd7", "herd7 manual> ")
 -- and "C++" above "C Library", because the slug spells a space "_", which
 -- sorts after every letter. The wiki is CC0, so the text is ours to carry.
 local pick_osdev = frozen_web_provider("osdev", "OSDev wiki> ")
+local pick_llvm_tutorial = frozen_web_provider("llvm-tutorial", "LLVM Tutorial> ")
+local pick_browser_engineering = frozen_web_provider("browser-engineering", "Web Browser Engineering> ")
+local pick_learnopengl = frozen_web_provider("learnopengl", "LearnOpenGL> ")
+local pick_revers_hypervisor = frozen_web_provider("revers-hypervisor", "Hypervisor Development> ")
 
 -- ── Ghidra: versioned API/docs (pick a release tag, all versions) ────────
 local function pick_ghidra()
@@ -2972,6 +2976,7 @@ local BOOKS = {
 	} },
 	{ module = "Compilers", key = "books-compilers", items = {
 		{ title = "Linkers and Loaders", fmt = "pdf", file = "Linkers-and-Loaders.pdf" },
+		{ title = "How To Write Shared Libraries", fmt = "pdf", slug = "how-to-write-shared-libraries", file = "dsohowto.pdf" },
 		{ title = "Crafting Interpreters", fmt = "epub", file = "Crafting Interpreters -- Robert Nystrom -- United States_] _, 2021 -- Genever Benning -- isbn13 9780990582939 -- c96d09f7d0933fc5c9b75228f7f3e2a3 -- Anna’s Archive.epub" },
 		{ title = "Writing a C Compiler", fmt = "epub", file = "WritingaCCompiler.epub" },
 		{ title = "SSA-based Compiler Design", fmt = "pdf", file = "Fabrice Rastello, Florent Bouchez Tichadou - SSA-based Compiler Design-Springer (2022).pdf" },
@@ -3106,6 +3111,10 @@ local WEB_BOOKS = {
 	{ title = "Snapshot Fuzzer", key = "snapshot-fuzzer", run = pick_snapshot_fuzzer },
 	{ title = "The Astra Book", key = "astra", run = pick_astra },
 	{ title = "Linux Kernel Exploitation Dojo", key = "kernel-exploitation", run = pick_kernel_exploitation },
+	{ title = "LLVM Tutorial (Kaleidoscope + ORC JIT)", key = "llvm-tutorial", run = pick_llvm_tutorial },
+	{ title = "Web Browser Engineering", key = "browser-engineering", run = pick_browser_engineering },
+	{ title = "LearnOpenGL", key = "learnopengl", run = pick_learnopengl },
+	{ title = "Hypervisor Development (revers.engineering)", key = "revers-hypervisor", run = pick_revers_hypervisor },
 }
 
 -- All books under one entry, in ONE flat list: Books -> book -> chapter.
@@ -3258,6 +3267,10 @@ LOCATION["kernel-labs"] = { index = "kernel-labs/index.tsv", unit = "chapter" }
 LOCATION.slub = { index = "slub/index.tsv", unit = "chapter" }
 LOCATION["kernel-internals"] = { index = "kernel-internals/index.tsv", unit = "article" }
 LOCATION["kernel-exploitation"] = { index = "kernel-exploitation/index.tsv", unit = "chapter" }
+LOCATION["llvm-tutorial"] = { index = "llvm-tutorial/index.tsv", unit = "chapter" }
+LOCATION["browser-engineering"] = { index = "browser-engineering/index.tsv", unit = "chapter" }
+LOCATION["learnopengl"] = { index = "learnopengl/index.tsv", unit = "chapter" }
+LOCATION["revers-hypervisor"] = { index = "revers-hypervisor/index.tsv", unit = "chapter" }
 -- Fetched from a live URL on every read; there is no on-disk set to freeze.
 for _, key in ipairs({ "ocaml", "haskell", "multiboot", "make" }) do
 	LOCATION[key] = { network = true }

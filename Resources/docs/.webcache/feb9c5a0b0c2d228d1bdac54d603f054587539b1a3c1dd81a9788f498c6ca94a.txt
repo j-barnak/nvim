@@ -1,0 +1,546 @@
+## Overview
+
+Today is the day of heavy details and implementation. There will be a lot of technical explanation and a lot of text. We’ll start off with a section explaining the need for some form of internal logging API because – well, having **[DbgPrint](https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/content/wdm/nf-wdm-dbgprint)** spammed throughout functions when validating certain control values is disgusting and a pain if you need to modify some sort of output customization. I’ll briefly discuss a project hierarchy I would recommend to stay organized and keep your project modular, and then we’ll dive into the details of VMX setup. We’re going to start with defining system and per-processor contexts – however, since we’re only initializing VMX operation on a single processor in this article that’s all we’ll be addressing. There will be a long sub-section on initialization of processors, terminology, some diagrams to help the reader visualize the process; and then we’ll move forward with describing the pre-VMX operation requirements and how to enable VMX operation on your system. The rest of the article will detail entering VMX operation through the use of **[VMXON](https://www.felixcloutier.com/x86/VMXON.html)**, allocating and initializing system and per-processor contexts. We’ll validate that everything completed successfully and your processor has entered VMX operation at the end of this section.
+
+You’ll notice there is a lengthy section on introducing the **[VMCS](https://searchservervirtualization.techtarget.com/feature/The-what-where-and-why-of-VMCS-shadowing)**. We’re going to do basic allocation and initialization in this article to expedite the process for Day 3 since that will have substantial space taken up discussing each of the **[VMCS](https://www.pagetable.com/?p=348)** data sections and state areas.
+
+I’m glad you’ve stuck with me so far, you’re on your way. Please continue to take advantage of the recommended reading to deepen your understanding as this is a topic that is riddled with important details. If you want to be able to build upon the end result of this series you’ll need to be more knowledgeable than the content I’ve posted. This is just a foundation for understanding and walk-through to get you to the point where you can build something interesting and unique to your objective. The recommended list is at the bottom.
+
+As always I have to place the notice for congruence of all readers.
+
+**Notice:** At the time of writing all information has been checked and verified with the sources provided, any additional changes or modifications that may occur at a later date should be forwarded to the author. However, always check the sources should the information in the article be dated.
+
+All development took place on [**Windows 10 x64 (Version 1803)**](https://www.catalog.update.microsoft.com/Search.aspx?q=windows+10+1803+x64). If you’re on a different version, higher or lower, you may experience issues/conflicts during testing. This is not a guarantee, but a warning that you should – for the sake of correctness – be on the same version of Windows and developing for the same target version.
+
+## Internal Logging API
+
+Almost every project needs some form of internal logging mechanism. It’s something that prevents the pollution of code with API calls that fire despite executing in a release build. There’s tons of references, and I highly encourage you to implement your own form of internal logging API. I’ve provided some examples below that are used in various projects. Take your pick, but do implement some form of logging because with such an abstract project and the amount of debugging that has to occur should an error be encountered is incredible. Printing out control values, checking values for items in different contexts, dumping the VMCS data, displaying VMX error codes, general purpose tracking, etc., These all may require some form of custom logging facility in your project.
+
+Examples of Logging Facilities:
+
+- [**HyperPlatform**](https://github.com/tandasat/HyperPlatform): <https://github.com/tandasat/HyperPlatform/blob/master/HyperPlatform/log.cpp>
+- **[HyperBone](https://github.com/DarthTon/HyperBone)**: <https://github.com/DarthTon/HyperBone/blob/master/src/Include/Common.h>
+- **[SimpleVisor](https://github.com/ionescu007)**: <https://github.com/ionescu007/SimpleVisor/blob/master/nt/shvos.c#L333>
+
+The logging API in my current project are similar to SimpleVisor:
+
+```
+void log_debug( const char *fmt, ... )
+{
+  va_list args;
+  va_start( args, fmt );
+
+  vDbgPrintExWithPrefix( "[*] ", DPFLTR_IHVDRIVER_ID, DPFLTR_ERROR_LEVEL, fmt, args );
+
+  va_end( args );
+}
+```
+
+In any case, find what works for you and implement it. You’ll thank yourself later.
+
+## Project Hierarchy
+
+The organization of your project is vital to success. A disorganized project can, and usually is, disastrous especially with larger projects such as this. When I suggest having some form of organization I mean a formal hierarchy where source files are in one folder, and includes in another. Source and includes could be within sub-folders in those parent folders. The more modularity the better. I’ve provided a screenshot for the organization of this project that might help those of you who may be struggling with what goes where.
+
+![](https://i0.wp.com/i.imgur.com/EX0gu9J.png?resize=180%2C195&ssl=1)
+
+Figure 1. Organizational hierarchy for ReHV.
+
+Pictured above is the form of organization I use. I like to separate my definitions into their respective headers that are placed in a folder that is specific to their purpose. For instance, `cr.h` is in `inc/arch/` which was chosen because `cr.h` is used for all of my control register definitions. Control registers are architecture specific so they’re in my `arch` sub-folder. Categorizing your includes is useful and keeps include directives clean and understandable.
+
+If you haven’t done so already, take a minute to organize the definitions given from the last article and any you’ve added yourself after doing the reading.
+
+**Recommendation**: Use some sort of version control. The possibility of losing data is high. I’ve had a few times when testing new features where VMware has hung, which resulting in my system hanging and then resetting. That reset wound up zeroing out my source file, luckily I had committed not 10 minutes prior to testing – if I didn’t have it backed up something would’ve been broken… **[Back your code up often.](https://github.com/)**
+
+## VMX Setup
+
+At this point we’re going to begin defining critical structures for our **[VMM](https://en.wikipedia.org/wiki/Hypervisor)** and Processor(s).
+
+#### — A Quick Distinction
+
+Throughout this series you’ll see the words processor and logical processor used. I want to take a moment to define those two since there often is confusion about the distinction.
+
+**Processor**
+
+When I say **[processor](https://en.wikipedia.org/wiki/Processor_(computing))** I’m referring to the physical hardware. The component responsible for all processing operations. A machine can have more than one processor, just as some servers have a bi-processor setup. This is also referred to as a socket, CPU, or package.
+
+**Core**
+
+Within a physical processor there is an operation unit called a **[core](https://en.wikipedia.org/wiki/Multi-core_processor)**. It’s often said that a core is like a processor, so a single processor with 2 cores means it has a single physical piece of hardware with two independent processing units that can fetch and execute instructions. Most processors today are multi-core.
+
+**Logical Processor**
+
+A **[logical processor](http://www.directionsonmicrosoft.com/licensing/30-licensing/3420-sql-server-2012-adopts-per-core-licensing-model.html)** is the number of threads a machine can handle at the same time. This is an abstraction of a processor, at least on Windows. It’s able to fetch and execute its own stream of instructions in the same processor time slot. The number of logical processors on your machine can be found by multiplying the number of physical cores by the thread count.
+
+In virtualization literature you may see the term **[virtual processor](https://whatis.techtarget.com/definition/virtual-CPU-vCPU)** (VP) used, however, by today’s standards a virtual processor is equivalent to a physical core. That means if you need to allocate a number of virtual processors for your virtual machine you determine the number of cores in your physical processor and assign however many that is. If I have a quad core processor, I allocate 4 virtual processors to the virtual machine. In this series, we start with a single processor setup, and then move to support a multi-processor environment – and to do that we must have control structures allocated for each core so that we can manage the virtual processor state.
+
+#### — Defining System and Processor Contexts
+
+There’s a handful of structures that are going to be used throughout our main VMX source file. They’re used to make accessing and reading/initializing data in a simpler way. The first two structures we’re going to define are our **[VMM context](http://www.eecs.harvard.edu/~cs161/notes/virtualization.pdf) **and virtual CPU (vCPU) context.
+
+The **VMM context** is our hypervisor control structure which will contain a pointer to the VMM stack (or host stack), a table of vCPU contexts (remember, vCPU contexts are per processor), and a processor count. The last member of the structure is used in one of our validation routines to ensure that the number of processors initialized is the number of active processors on the system.
+
+The **vCPU context** is our per processor structure that contains state information regarding the virtualized logical processor. We’ll list off every construct that each processor in the system (for now just one) should have and build our vCPU context by identifying what objects belong to a virtual CPU. This is often referred to in object-oriented programming as a composition relationship, or **[has-a relationship](https://en.wikipedia.org/wiki/Has-a)**.
+
+Let’s start with defining our virtual CPU context by identifying what unique objects we know of belong to any given virtual CPU:
+
+- It’s own set of control registers.
+- It’s own set of debug registers.
+- It’s own set of model specific registers.
+- It’s own set of special registers (**[GDTR](https://en.wikipedia.org/wiki/Global_Descriptor_Table)**, **[LDTR](https://en.wikipedia.org/wiki/Global_Descriptor_Table#Local_Descriptor_Table)**, **[IDTR](https://en.wikipedia.org/wiki/Interrupt_descriptor_table)**)
+- It’s own status register (**[RFLAGS](https://en.wikipedia.org/wiki/FLAGS_register)**)
+- It’s own general purpose registers (RAX-R15)
+- It’s own segment information
+
+These are objects that belong to all logical processors and are independent of whether or not they’re in VMX operation. Now let’s figure out what objects belong to all logical processors while in VMX operation, or rather – that are required for VMX operation. If you read the distinctions of processing units above, you might recognize that the vCPU context is used to represent the operational state of a virtual processor. Each virtual processor has their own set of items listed above and below.
+
+- A processor context (vCPU context; container for important structures for VMX operation)
+- A VMXON region
+- A VMCS region
+- A processor stack
+
+**VMXON Region**
+
+The VMXON region is a per logical processor data structure allocated and used by the processor for internal operations related to VMX. This structure is typically 4-KByte’s in size and naturally aligned (meaning page aligned, lowest 12 bits are 0.) However, this may not be the case on all processors and is implementation specific, so we need to read the amount of memory required for the VMXON region from the **IA32_VMX_BASIC** MSR – lucky for us, we already have a structure defined. It’s required to be allocated an initialized prior to entering VMX operation using the `vmxon` instruction. The `vmxon` instruction operand is required to be the physical address of the VMXON region, otherwise called the **VMXON pointer**.
+
+The VMXON region should be zeroed prior to executing `vmxon`, and the VMCS revision identifier written into the VMXON region at the appropriate offset. For this particular article, we’ll only be allocating a single VMXON region; but in the next article and onward we will be allocating a VMXON region for each LP in the system.
+
+![](https://i0.wp.com/i.imgur.com/7WD4R5D.png?resize=677%2C139&ssl=1)Table 1. Not documented in the Intel SDM.
+
+**VMCS Region**
+
+The VMCS region is a per logical processor data structure that’s also allocated and used by the processor for internal VMX operations. It also contains the settings used by the VMM to control guest operation. We’ll talk more about this structure after enabling and entering VMX operation for the first time. However, an important thing to know is the format of the VMCS.
+
+![](https://i0.wp.com/i.imgur.com/wFXNn6P.png?resize=786%2C177&ssl=1)
+
+Table 24-1. Credit to the Intel SDM Volume 3C.
+
+The VMCS region is a 4-KByte naturally aligned structure, and eerily similar to the VMXON region format. Given these two format table we’re going to create a structure that can be used for both the VMCS and VMXON region. The definition is provided below.
+
+```
+struct __vmcs_t
+{
+  union 
+  {
+    unsigned int all;
+    struct
+    {
+      unsigned int revision_identifier : 31;
+      unsigned int shadow_vmcs_indicator : 1;
+    } bits;
+  } header;
+
+  unsigned int abort_indicator;
+  char data[ 0x1000 - 2 * sizeof( unsigned ) ];
+};
+```
+
+Now that we have our VMCS structure defined that can be used for both our critical regions, we can begin defining our vCPU context. Since each logical processor has to have its own VMX regions it’s only fitting that our structure to represent these logical processors contains information about them. Having this structure defined with make initialization of the regions simple.
+
+Below is our new vCPU context definition.
+
+```
+struct __vcpu_t
+{
+  struct __vmcs_t *vmcs;
+  unsigned __int64 vmcs_physical;
+
+  struct __vmcs_t *vmxon;
+  unsigned __int64 vmxon_physical;
+};
+```
+
+Recall that the operand to the `vmxon` instruction requires the physical address of the VMXON region, we’ve added a member to our virtual processor context to hold that information. The physical address of the VMCS is also required for `vmptrld`, and `vmclear`.
+
+#### — Pre-VMX Operation Requirements
+
+Before we define and enable VMX operation there are some pre-VMX operation requirements that need to be satisfied before using `vmxon`. If we don’t adhere to the restrictions of pre-VMX operation setup it will result in a failure when using `vmxon`. These restrictions are placed on the processors **[CR0](https://en.wikipedia.org/wiki/Control_register)** and **[CR4](https://en.wikipedia.org/wiki/Control_register)**. They’re required to be set to specific values (fixed bit values) prior to entering VMX operation and the use of an unsupported value will result in a failure, and if you attempt to change the fixed values while in VMX operation you’ll be met with a **[\#GP](https://en.wikipedia.org/wiki/General_protection_fault)** (general-protection fault.) I’m leaving out some particular restrictions to VMX operation that don’t apply to this project since I know what processor mode you’re operating in and since it’s 2018, I’m sure that your processor wasn’t one of the earliest to support VMX operation.
+
+How do we know what these fixed bits are? The architecture provides us with 4 MSRs (listed below) that identify how many bits in the two control registers are fixed.
+
+- IA32_VMX_CR0_FIXED0
+- IA32_VMX_CR0_FIXED1
+- IA32_VMX_CR4_FIXED0
+- IA32_VMX_CR4_FIXED1
+
+**Note**: VMX is only supported in paged protected mode unless your processor supports unrestricted guest operation (which means your guest can run in unpaged protected mode or in real-address mode.) If you clear the **[PE](https://en.wikipedia.org/wiki/Control_register)** or **[PG](https://en.wikipedia.org/wiki/Control_register)** bits in **[CR0](https://en.wikipedia.org/wiki/Control_register)** you won’t be able to enter VMX operation.
+
+#### — Enabling VMX Operation
+
+Now that we’ve covered the requirements of entering VMX operation, let’s enable VMX operation. There’s a few things we have take care of prior to entering VMX operation, the first of which is setting the VMX enable bit in CR4.
+
+We’re going to write a function and use our CR4 structure defined in `cr.h`. We’ll use **[\_\_readcr4](https://msdn.microsoft.com/en-us/library/6h4tw9x6.aspx)** to get the control value of CR4 for the logical processor and set the `vmx_enable` bit, then write the control value back.
+
+```
+int enable_vmx_operation( void )
+{
+  union __cr4_t cr4 = { 0 };
+  union __ia32_feature_control_msr_t feature_msr = { 0 };
+
+  cr4.control = __readcr4();
+  cr4.bits.vmx_enable = 1;
+  __writecr4( cr4.control );
+
+  //
+  // Allow general use of VMXON...
+  //
+}
+```
+
+Now, we need enable the use of VMXON in general operations (inside and outside SMX.) “**[Safer Mode Extensions](http://linasm.sourceforge.net/docs/instructions/smx.php)** (‬aka SMX‭) is a programming interface for system software to establish a measured environment within the platform to support trust decisions by end users.”**[\[1\]](http://linasm.sourceforge.net/docs/instructions/smx.php)**
+
+The `vmxon` instruction is controlled by an MSR, specifically **IA32_FEATURE_CONTROL** (we made a structure for this MSR.) The particular bits of interest in this MSR are 0, 1, and 2. Full details on these bits are described in the **[Intel SDM, Volume 3C Section 23.7](https://software.intel.com/en-us/articles/intel-sdm)**. All that’s important to know for this particular section is the following:
+
+**Bit 0 (lock bit)**
+
+It’s used to enable platform VMX support. The system will only support VMX operation if the lock bit, and bit 1 or bit 2 (or both) are set. We’re going to check if the lock bit is set initially as well, which may mean that VMX support was disabled in the BIOS (assuming bit 1 or 2, or both are clear.) If it’s not set we’re going to set it and bit 2.
+
+**Bit 2 (VMXON enabled outside SMX operation)**
+
+Assuming the lock bit was not set, we’re going to set this bit to allow for `vmxon` to be used outside of safer mode extension operation. If `vmxon` is used while this bit is clear the processor will generate a **[\#GP](https://en.wikipedia.org/wiki/General_protection_fault)** (general protection fault.)
+
+Our function defined earlier will now have a complete definition.
+
+```
+int enable_vmx_operation( void )
+{
+  union __cr4_t cr4 = { 0 };
+  union __ia32_feature_control_msr_t feature_msr = { 0 };
+
+  cr4.control = __readcr4();
+  cr4.bits.vmx_enable = 1;
+  __writecr4( cr4.control );
+
+  feature_msr.control = __readmsr( IA32_FEATURE_CONTROL );
+    
+  if ( feature_msr.bits.lock == 0 ) {
+    feature_msr.bits.vmxon_outside_smx = 1;
+    feature_msr.bits.lock = 1;
+    
+    __writemsr( IA32_FEATURE_CONTROL, feature_msr.control );
+
+    return TRUE;
+  }
+
+  return FALSE;
+}
+```
+
+## Entering VMX Operation
+
+At this point we need to create a processor initialization function that will be used to initialize all logical processors later on in the series, as well as use our VMM context to pass information to the function.
+
+**— Understanding Initialization**
+
+When we are setting up the structure of our project we need to have the initialization process in mind. By that I mean how we’re going to allocate structures, modify controls, and initialize each logical processor in the system. The following operations have to occur before entering VMX operation.
+
+1.  Check if VMX operation is supported by the processor.
+2.  Allocate system and processor specific structures.
+3.  Adjust CR4 and CR0 to supported values.
+4.  Enable VMX operation on each processor.
+5.  Set feature control bits to allows use of `vmxon`.
+6.  Execute `vmxon`, and enter VMX operation.
+    - Remember when I mentioned you’ll want to check flags for success of certain instructions? This is one of those instructions. If it fails, the **[CF](https://en.wikipedia.org/wiki/Carry_flag)** (carry flag) in **[RFLAGS](https://en.wikipedia.org/wiki/FLAGS_register)** is set. We’ll write a custom intrinsic to perform this check.
+
+These are only the steps to enter basic VMX operation, the VMCS isn’t setup yet, but we’re getting close. I’ve made a diagram to help visualize what the flow of operations looks like.
+
+![](https://i0.wp.com/revers.engineering/wp-content/uploads/2018/11/Untitled-Diagram-4.png?resize=450%2C194&ssl=1)
+
+The **N** in label identifies the processor number that these operations occur. Since these operations are per processor (the **IA32_FEATURE_CONTROL** MSR has unique scope) they must occur for each virtual processor allocated for the VM. Each operation in the sequence should be taken care of in it’s own function – because modularity. In the next subsection, we’ll allocate our system and processor specific structures, and then initialize our VM for a test entrance to VMX operation.
+
+#### — Allocating System and Processor Contexts
+
+It’s time to start building our main source file (`vmx.c`, in my case) and write our initialization routine that will allocate our hypervisor and VM specific structures.
+
+The first thing we want to do is refer back to our VMM context structure. This is the structure that maintains a table of all virtual processor contexts in the VM, has our hypervisor stack, and our virtual processor count. We’ll need to allocate our VMM context in the non-paged pool, as well as our vCPU table and stack. We’re also going to initialize our `processor_count` member to the current active processor count using **[KeQueryActiveProcessorCountEx](https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/content/ntddk/nf-ntddk-kequeryactiveprocessorcountex)**.
+
+The final definition for our VMM context allocation routine will look like this:
+
+```
+struct __vmm_context_t *allocate_vmm_context( void )
+{
+  struct __vmm_context_t *vmm_context = NULL;
+  vmm_context = ( struct __vmm_context_t * )ExAllocatePoolWithTag( NonPagedPool, sizeof( struct __vmm_context_t ), VMM_TAG );
+
+  if( vmm_context == NULL ) {
+    log_error( "Oops! vmm_context could not be allocated.\n" );
+    return NULL;
+  }
+
+  vmm_context->processor_count = KeQueryActiveProcessorCountEx( ALL_PROCESSOR_GROUPS );
+  vmm_context->vcpu_table = ExAllocatePoolWithTag( NonPagedPool, sizeof( struct __vcpu_t * ) * vmm_context->processor_count, VMM_TAG );
+
+  //
+  // Allocate stack for vm-exit handlers and fill it with garbage
+  // data.
+  //
+  vmm_context->stack = ExAllocatePoolWithTag( NonPagedPool, VMM_STACK_SIZE, VMM_TAG );
+  memset( vmm_context->stack, 0xCC, VMM_STACK_SIZE );
+
+  log_success( "vmm_context allocated at %llX\n", vmm_context );
+  log_success( "vcpu_table allocated at %llX\n", vmm_context->vcpu_table );
+  log_debug( "vmm stack allocated at %llX\n", vmm_context->stack );
+
+  return vmm_context;
+}
+```
+
+For our stack allocation there is a define for **VMM_STACK_SIZE**. This definition is 6 **[pages](https://en.wikipedia.org/wiki/Page_(computer_memory))**. A lot of projects default to 8 pages (8 \* 4-KBytes), however, the kernel stack size for Windows 10 (Version 1803) is 6000₁₆ and I wanted to follow suit.
+
+The next thing we want to do is create a VMM initialization routine, a function that kicks off the start of virtualization. All it needs to do is call `allocate_vmm_context`, and then initialize each virtual process context in the table. However, to accomplish this we need to allocate a vCPU table entry on the non-paged pool prior to modifying any data otherwise we’ll be accessing garbage data. Below is the implementation of our vCPU table entry initialization function.
+
+```
+struct __vcpu_t *init_vcpu( void )
+{
+  struct __vcpu_t *vcpu = NULL;
+
+  vcpu = ExAllocatePoolWithTag( NonPagedPool, sizeof( struct __vcpu_t ), VMM_TAG );
+
+  if( !vcpu ) {
+    log_error( "Oops! vcpu could not be allocated.\n" );
+    return NULL;
+  }
+
+  RtlSecureZeroMemory( vcpu, sizeof( struct __vcpu_t ) );
+
+  return vcpu;
+}
+```
+
+Now that we’ve defined init_vcpu, we can build our VMM initialization routine.
+
+```
+int vmm_init( void )
+{
+  struct __vmm_context_t *vmm_context;
+  vmm_context = allocate_vmm_context( );
+
+  for ( unsigned iter = 0; iter < vmm_context->processor_count; iter++ ) {
+    vmm_context->vcpu_table[ iter ] = init_vcpu( );
+    vmm_context->vcpu_table[ iter ]->vmm_context = vmm_context;
+  }
+
+  init_logical_processor( vmm_context, 0 );
+
+  return TRUE;
+}
+```
+
+You’ll notice that as part of the `__vcpu_t` structure I added a back link to the VMM context that way I can obtain peripheral virtual processor information in any functions that I may need to. The `init_logical_processor` function isn’t defined yet, however, we’re going to define it below as that is where we’ll initialize the VMXON and VMCS regions and execute `vmxon`.
+
+#### — Initializing VMX Regions
+
+As mentioned above, we’re going to define our per processor initialization routine. This is where all of our VM setup will occur and where we will launch into the VM using `vmlaunch`. So, what does this function require? Well, we’re setting ourselves up for success and although this article only addresses initialization on a single processor, we will need to support a multiprocessor environment in the the future. We’re going to pass our VMM context pointer and the Guest RSP (needed for later initialization, next article) so we can operate on the current virtual processor.
+
+The prototype will look like this: `void init_logical_processor( struct __vmm_context_t *context, void *guest_rsp )`
+
+Once we have a basic body defined, we’re going to define our region initialization functions.
+
+**VMXON Initialization**
+
+When initializing our VMXON region we need to have a few things in mind, particularly the requirements specified in the Intel SDM. The VMXON region is supposed to be allocated on a naturally aligned page – meaning a 4-KByte allocation aligned on a page boundary. To do this simply and with the guarantee that we are always returned a page aligned allocation we’re going to use **[MmAllocateContiguousMemory](https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/content/wdm/nf-wdm-mmallocatecontiguousmemory)**.
+
+If you recall, we’re also going to need the VMCS revision identifier (see VMXON region format table above). We’ll need to define a structure for the **IA32_VMX_BASIC** MSR and read the value of this MSR. (You have this structure defined – `union __vmx_basic_msr_t`.
+
+As mentioned in an earlier section, the VMXON region has a similar structure to the VMCS, so we’re also going to define a `__vmcs_t` pointer for the VMXON region allocation. This will also make the writing of the VMCS revision identifier trivial. Following the allocation of our VMXON region, we need to get the physical address of the region and store it in our vCPU context for later use. We’ll use **[MmGetPhysicalAddress](https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/content/ntddk/nf-ntddk-mmgetphysicaladdress)** to obtain the physical address of the structure.
+
+Our final result will look like this:
+
+```
+int init_vmxon( struct __vcpu_t *vcpu )
+{
+  union __vmx_basic_msr_t vmx_basic = { 0 };
+  struct __vmcs_t *vmxon;
+  PHYSICAL_ADDRESS physical_max;
+
+  if( !vcpu ) {
+    log_error( "VMXON region could not be initialized. vcpu was null.\n" );
+    return FALSE;
+  }
+
+  vmx_basic.control = __readmsr( IA32_VMX_BASIC );
+  physical_max.QuadPart = ~0ULL;
+
+  vcpu->vmxon = MmAllocateContiguousMemory( PAGE_SIZE, physical_max );
+
+  vcpu->vmxon_physical = MmGetPhysicalAddress( vcpu->vmxon ).QuadPart;
+
+  vmxon = vcpu->vmxon;
+  RtlSecureZeroMemory( vmxon, PAGE_SIZE );
+
+  vmxon->header.all = vmx_basic.bits.vmcs_revision_identifier;
+
+  log_debug( "VMXON for vcpu %d initialized:\n\t-> VA: %llX\n\t-> PA: %llX\n\t-> REV: %X\n",
+    KeGetCurrentProcessorNumber( ),
+    vcpu->vmxon,
+    vcpu->vmxon_physical,
+    vcpu->vmxon->header.all );
+
+  return TRUE;
+}
+```
+
+Our VMXON region is now initialized.
+
+**VMCS Initialization**
+
+Initializing the VMCS follows the same requirements as the VMXON, the only difference is the format of the structure. There is much more to VMCS initialization, however, we only need to write the VMCS revision identifier for this article.
+
+We are setting ourselves up for success later in the series, so our definition is going to include a few extra arguments – but don’t worry, in time those will be explained and make sense.
+
+The prototype for this function looks like this: `int init_vmcs( struct __vcpu_t *vcpu, void *guest_rsp, void ( *guest_rip )( ) )`
+
+Our simple implementation is below.
+
+```
+int init_vmcs( struct __vcpu_t *vcpu, void *guest_rsp, void ( *guest_rip )( ), int is_pt_allowed )
+{
+  struct __vmcs_t *vmcs;
+  union __vmx_basic_msr_t vmx_basic = { 0 };
+  PHYSICAL_ADDRESS physical_max;
+
+  vmx_basic.control = __readmsr( IA32_VMX_BASIC );
+
+  physical_max.QuadPart = ~0ULL;
+  vcpu->vmcs = MmAllocateContiguousMemory( PAGE_SIZE, physical_max );
+  vcpu->vmcs_physical = MmGetPhysicalAddress( vcpu->vmcs ).QuadPart;
+
+  RtlSecureZeroMemory( vcpu->vmcs, PAGE_SIZE );
+
+  vmcs = vcpu->vmcs;
+  vmcs->header.all = vmx_basic.bits.vmcs_revision_identifier;
+  vmcs->header.bits.shadow_vmcs_indicator = 0;
+
+  return TRUE;
+}
+```
+
+**Note**: You should always be using **[RtlSecureZeroMemory](https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/content/wdm/nf-wdm-rtlsecurezeromemory)** to zero out your allocations prior to use.
+
+All that’s left is to create our control register adjustment function – this function will query the IA32_FIXED MSRs to determine which bits can be set. Remember, this has to be done to ensure that an to enter VMX operation doesn’t fail because of unsupported bits in CR4 and CR0.
+
+```
+union __cr_fixed_t 
+{
+    struct 
+  {
+        unsigned long low;
+        long high;
+    } split;
+
+    struct 
+  {
+        unsigned long low;
+        long high;
+    } u;
+
+    long long all;
+};
+
+void adjust_control_registers( void )
+{
+  union __cr4_t cr4 = { 0 };
+  union __cr0_t cr0 = { 0 };
+  union __cr_fixed_t cr_fixed;
+
+  cr_fixed.all = __readmsr( IA32_VMX_CR0_FIXED0 );
+  cr0.control = __readcr0( );
+  cr0.control |= cr_fixed.split.low;
+  cr_fixed.all = __readmsr( IA32_VMX_CR0_FIXED1 );
+  cr0.control &= cr_fixed.split.low;
+  __writecr0( cr0.control );
+
+  cr_fixed.all = __readmsr( IA32_VMX_CR4_FIXED0 );
+  cr4.control = __readcr4( );
+  cr4.control |= cr_fixed.split.low;
+  cr_fixed.all = __readmsr( IA32_VMX_CR4_FIXED1 );
+  cr4.control &= cr_fixed.split.low;
+  __writecr4( cr4.control );
+}
+```
+
+I provided the `__cr_fixed_t` definition. It’s simply a **[LARGE_INTEGER](https://docs.microsoft.com/en-us/windows/desktop/api/winnt/ns-winnt-_large_integer)** with a different name and slightly different sized members. The MSR’s are queried and then some bitwise operations are performed to check that the control register values are within an appropriate range and don’t set any bits outside of the reserved settings. If you’re unfamiliar with bitwise operations or what’s going on in this function I suggest reading **[this](https://en.wikipedia.org/wiki/Bitwise_operations_in_C)** article.
+
+We’re now ready to fill the empty body of our per processor initialization function. Inside of this function we’ll need to be able to access information in the VMM context, use the vCPU table to get the current virtual processor table entry, and query the current processor number so that we can index into the vCPU table to get the proper entry – it’s best that the indexes correspond to the virtual processor number.
+
+We’re going to follow the operations of the diagram in the **Understanding Initialization** subsection. The final result is below, with the official use of `vmxon` to enter VMX operation for the first time.
+
+```
+void init_logical_processor( struct __vmm_context_t *context, void *guest_rsp )
+{
+  struct __vmm_context_t *vmm_context;
+  struct __vcpu_t *vcpu;
+  union __vmx_misc_msr_t vmx_misc;
+  unsigned long processor_number;
+
+  processor_number = KeGetCurrentProcessorNumber( );
+
+  vmm_context = ( struct __vmm_context_t * )context;
+  vcpu = vmm_context->vcpu_table[ processor_number ];
+
+  log_debug( "vcpu %d guest_rsp = %llX\n", processor_number, guest_rsp );
+
+  adjust_control_registers( );
+
+  if( !is_vmx_supported( ) ) {
+    log_error( "VMX operation is not supported on this processor.\n" );
+
+    free_vmm_context( vmm_context );
+    return;
+  }
+
+  if( !init_vmxon( vcpu ) ) {
+    log_error( "VMXON failed to initialize for vcpu %d.\n", processor_number );
+
+    free_vcpu( vcpu );
+    disable_vmx( );
+    return;
+  }
+
+  if( __vmx_on( &vcpu->vmxon_physical ) != 0 ) {
+    log_error( "Failed to put vcpu %d into VMX operation.\n", KeGetCurrentProcessorNumber( ) );
+
+    free_vcpu( vcpu );
+    disable_vmx( );
+    free_vmm_context( vmm_context );
+    return
+  }
+
+  log_success( "vcpu %d is now in VMX operation.\n", KeGetCurrentProcessorNumber( ) );
+}
+```
+
+It’s time to boot up our VM and our [**DebugView**](https://docs.microsoft.com/en-us/sysinternals/downloads/debugview) and give this a test run. You should be calling `vmm_init` in your DriverEntry. It’s also important to explain why I check the return value of the call to the `vmxon` instrinsic. There are different status codes for VMX instructions, and good to know for future error checking purposes. The status codes are defined below.
+
+![](https://i0.wp.com/i.imgur.com/weeM8Iw.png?resize=652%2C159&ssl=1)
+
+#### — Validation
+
+Using our scripts and tools it’s time to test and see if the CPU properly enters VMX operation. Remember to make a snapshot of your VM prior to testing with all the tools setup how you want them. This will make debugging and testing much easier on you.
+
+Here’s the result of your hard work today:
+
+![](https://i0.wp.com/i.imgur.com/QUXG4nS.png?resize=612%2C344&ssl=1)Congratulations! **vCPU 0 is now in VMX operation. **
+
+## Conclusion
+
+In this article we’ve covered a lot. In the next article we will go over the VMCS, the various state areas, execution control fields, multi-processor basics, and so much more. It’s going to be yet another long read. I suggest doing the recommended reading prior to the publication of the next article (which I hope won’t take two days to write, but I don’t want to be sloppy.)
+
+By getting to the conclusion of this article you should have new found confidence in your ability to write your own hypervisor. It’s an intimidating task, but if you’re up to the challenge you can accomplish it. Take a minute to pat yourself on the back because you’ve digested a lot of material today, and you’re not done.
+
+I’ve been wordy enough, so I’m stopping here. Please read the recommended reading, it’s important you get all the details and any details I may have missed.
+
+------------------------------------------------------------------------
+
+As always feel free to leave a comment, feedback, suggestion or information you’d like to be expanded on.
+
+#### Recommended Reading
+
+- **[Intel SDM Volume 3C Chapter 23 (Introduction to VMX Operation)](https://software.intel.com/en-us/download/intel-64-and-ia-32-architectures-sdm-combined-volumes-1-2a-2b-2c-2d-3a-3b-3c-3d-and-4)**
+- **[Intel SDM Volume 3A Chapter 3 – Protected-Mode Memory Management (Segmentation)](https://software.intel.com/en-us/download/intel-64-and-ia-32-architectures-sdm-combined-volumes-1-2a-2b-2c-2d-3a-3b-3c-3d-and-4)**
+- **[The GDT (Global Descriptor Table)](https://en.wikipedia.org/wiki/Global_Descriptor_Table)**
+- **[What is a segment descriptor?](https://en.wikipedia.org/wiki/Segment_descriptor)**
+- **[Memory segmentation](https://en.wikipedia.org/wiki/Memory_segmentation)**
+- **[Introduction to Multiprocessor Initialization](https://slideplayer.com/slide/4981699/)**
+
+Tags: [daax](https://revers.engineering/tag/daax/), [hypervisor development](https://revers.engineering/tag/hypervisor-development/), [hypervisors](https://revers.engineering/tag/hypervisors/), [research](https://revers.engineering/tag/research/), [vmm](https://revers.engineering/tag/vmm/), [vmware](https://revers.engineering/tag/vmware/), [vmx operation](https://revers.engineering/tag/vmx-operation/), [vmxon](https://revers.engineering/tag/vmxon/)

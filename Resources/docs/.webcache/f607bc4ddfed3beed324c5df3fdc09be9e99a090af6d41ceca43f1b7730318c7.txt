@@ -1,0 +1,693 @@
+## Overview
+
+In the [**last article**](https://revers.engineering/day-4-vmcs-segmentation-ops/) you learned about the VMCS, initializing the VMCS, segmentation and made a skeleton of the VM-exit handler. It was a long read, but if you’re here reading this now you’ve made it through the most time consuming part. Now we get to start interposing on system operations at a whim, and that’s where the fun is. In this article we’ll cover VM-exit events, VM-entries, and write various handlers for different VM-exit events. We’ll also discuss event injection, its purpose, and provide an example of using it to prevent read access on a set of MSRs. Following the discussion of event injection I’ll present the changes that were made to the various context structures used throughout the project such as the vCPU context, VMM context, and the hypervisor stack and then how we can maintain access to them in the exit handler by modifying the VMM entrypoint assembly stub. That last part was left as a challenge for the reader in the last article, but to make sure that we’re all on the same page we’re gonna provide the missing pieces of the puzzle! Once we finish adjusting everything, we’re going to apply our knowledge and override the guest response when the **[CPUID instruction](https://en.wikipedia.org/wiki/CPUID)** is executed with a little trick and trap. I’ll explain how the modification of responses when certain instructions are executed can be used in a security context and prevent certain issues when virtualizing the CPU. We’ll conclude with a recap, and a preface for the *final article of the series*.
+
+This project was written to operate on the Intel 64 architecture with VMX support, and run on **Windows 10 1903 (Build 18362.239)**. However, we started on version 1809 of Windows, and support has been maintained across these updates. If you’re operating on a version lower than 1809 or higher than 1903 please be sure to consult the developer network (**[MSDN](https://docs.microsoft.com/en-us/windows/win32/apiindex/windows-api-list)**) for any changes to APIs used or specifications consulted in the writing of these articles.
+
+It’s time to cover VM-exit events – let’s get it done.
+
+## VM-Exit Events
+
+In this section we’ll cover what events cause VM-exits, some relevant terminology and definitions, and discuss the reasons for preserving the general-purpose registers (since I missed that in the previous article.) This is a pretty short introduction to the section, and the section will fly-by, but let’s start by detailing some important classifications that will help you understand what happens on VM-exits.
+
+#### — Traps, Faults, Aborts
+
+The Intel 64 architecture defines classifies exceptions in three different ways. The title of this subsection answers what those classifications are, but the differences between them are what’s important to understand if we’re going to properly discuss handling VM-exits. We’ll start with the **fault** classification, you’ve probably heard of things called [**page faults**](https://en.wikipedia.org/wiki/Page_fault) (or [**segmentation faults**](https://en.wikipedia.org/wiki/Segmentation_fault) if you’re from the era before mine). A **fault** is just an exception type that can be corrected, and allows the processor the ability to execute some fault handler to rectify an offending operation without terminating the entire operation. When a **fault** occurs the system state is reverted to an earlier state before the faulting operation occurred, and the fault handler is called. After executing the fault handler the processor returns to the faulting instruction to execute it again. That last sentence is important, because that means it redoes an instruction execution to make sure the proper results are used in following operations. This is different from how a [**trap**](https://wikidiff.com/exception/trap) is handled. A **trap** is an exception that is delivered immediately following execution of a trapping instruction. In our hypervisor we trap on various instructions, meaning that after execution of an instruction – say **[rdtsc](https://en.wikipedia.org/wiki/Time_Stamp_Counter)** – a **trap** exception is reported to the processor. Once a trap exception is reported, control is passed to a trap handler which will perform some operation(s). Following the execution of the trap handler, the processor returns to the instruction following the trapping instruction.
+
+The flow of execution when trapping into our hypervisor is shown below.
+
+![](https://i0.wp.com/revers.engineering/wp-content/uploads/2019/07/Untitled-Diagram1.png?resize=361%2C141&ssl=1)
+
+An **abort**, however, is an exception that occurs and doesn’t always yield the location of the error. Aborts are commonly used for reporting hardware errors, or otherwise. You won’t see these very often, and if you do… Well, you’re doing something wrong. It’s important to know that all exceptions are reported on an instruction boundary – excluding aborts. Real quick, an **instruction boundary** is quite simple: if you have the bytes `0F 31 48 C1 E2 20` which translates to the instructions
+
+```
+rdtsc
+shl rdx, 20h
+```
+
+then the instruction boundary would be between the bytes `31` and `48`. That’s because `0F 31` are the instruction opcodes for `rdtsc`. Hopefully that makes sense, two instructions separated by a boundary.
+
+We’re going to be talking about trapping instructions quite frequently throughout this article, so if you’re in need of some further clarification see the recommended reading for exception classifications. The [**Intel SDM Volume 3 Chapter 6**](https://software.intel.com/en-us/articles/intel-sdm) concisely describes them.
+
+#### — CPU Register Preservation
+
+In the previous article we wrote our VMM entrypoint in MASM, so that when we trap into our VMM it preserves our general purpose registers and sets up the host stack for use in the VM-exit handler. I didn’t think I did a well enough job explaining the reasoning behind this, so I’m going to do it now. When switching between contexts: **[worlds](https://labs.vmware.com/download/105/)**, processes, threads, etc., there are structures that represent the states of those objects/modes. These context structures vary, but almost all will store the state of the various registers. As an example, look at the [**\_CONTEXT**](https://docs.microsoft.com/en-us/windows/win32/api/winnt/ns-winnt-_context) structure on MSDN. This structure is used to store process and thread context information, so that when a process or thread is resumed from a suspended state the operation of said process or thread executes as if nothing had changed. This state preservation is important to employ when switching between our guest and VMM since the guest should operate under the illusion that it’s running on real hardware. If we weren’t to preserve the general purpose registers prior to trapping into our hypervisor we risk corrupting the guests state, or leaking information from our VMM to our guest – which is just as bad if not worse than corrupting the guest state.
+
+If you look back at your VMM entrypoint, you’ll notice we preserve the general-purpose registers and the XMM registers; but what about the debug registers, segment registers, FLAGS, etc? That’s all in our VMCS. Recall that we have fields in both the guest and host state areas for storing this information. It would be redundant to store all that information again when we can access it by performing a `vmread` on the desired field (given it is readable and valid).
+
+So, when you’re looking at the VMM entrypoint wondering why some information is there, and some is missing just remember that we already have the “missing” information in our VMCS fields. We simply need to preserve the state of the guest prior to entering our VM-exit handler.
+
+#### — How VM-Exits Work
+
+In this subsection we’re going to discuss the nuances of VM-exits. It can get quite confusing, so make to dissect and understand the diagrams. I’m only going to cover the information on architectural state changes, and causes of VM-exits relevant to this project. If you want the full measure of detail and brain mushing text then check out the **[Intel SDM Chapter 27](https://software.intel.com/en-us/articles/intel-sdm)**. If you’re going to extend on this project you’re likely going to have to look at it anyways – best just to get it over with… Let’s get started.
+
+As we already know VM-exits occur in response to specific instruction execution or system events in non-root operation. The question is how do we know what caused the VM-exit, and what exactly does the processor do during this transition from non-root to root operation? The first is pretty simple: VM-exit information is stored in the VM-exit information field of the VMCS. It can be accessed by performed a `vmread` on our `VMX_VMEXIT_REASON` field. The result of this field query will return a 32-bit integer that can be formatted into a structure defined in the Intel SDM, which we are going to define and use through our VM-exit handler.
+
+`Note: You can use macros to perform bit shifts and operations if you'd rather, however, I'm not that masochistic and am not too concerned with performance overhead of the generated assembly.`
+
+The structure for the VM-exit reason is defined below.
+
+```
+union __vmx_exit_reason_field_t
+{
+    unsigned __int64 flags;
+    struct
+    {
+        unsigned __int64 basic_exit_reason : 16;
+        unsigned __int64 must_be_zero_1 : 11;
+        unsigned __int64 was_in_enclave_mode : 1;
+        unsigned __int64 pending_mtf_exit : 1;
+        unsigned __int64 exit_from_vmx_root : 1;
+        unsigned __int64 must_be_zero_2 : 1;
+        unsigned __int64 vm_entry_failure : 1;
+    } bits;
+};
+```
+
+This structure will provide us with the basic exit information. The most important being the `basic_exit_reason` member. This member of the structure is loaded with a number that indicates the cause of the VM-exit, we’ll define all the numbers and their meaning below using an enumeration.
+
+```
+enum __vmexit_reason_e
+{
+    vmexit_nmi = 0,
+    vmexit_ext_int,
+    vmexit_triple_fault,
+    vmexit_init_signal,
+    vmexit_sipi,
+    vmexit_smi,
+    vmexit_other_smi,
+    vmexit_interrupt_window,
+    vmexit_nmi_window,
+    vmexit_task_switch,
+    vmexit_cpuid,
+    vmexit_getsec,
+    vmexit_hlt,
+    vmexit_invd,
+    vmexit_invlpg,
+    vmexit_rdpmc,
+    vmexit_rdtsc,
+    vmexit_rsm,
+    vmexit_vmcall,
+    vmexit_vmclear,
+    vmexit_vmlaunch,
+    vmexit_vmptrld,
+    vmexit_vmptrst,
+    vmexit_vmread,
+    vmexit_vmresume,
+    vmexit_vmwrite,
+    vmexit_vmxoff,
+    vmexit_vmxon,
+    vmexit_control_register_access,
+    vmexit_mov_dr,
+    vmexit_io_instruction,
+    vmexit_rdmsr,
+    vmexit_wrmsr,
+    vmexit_vmentry_failure_due_to_guest_state,
+    vmexit_vmentry_failure_due_to_msr_loading,
+    vmexit_mwait = 36,
+    vmexit_monitor_trap_flag,
+    vmexit_monitor = 39,
+    vmexit_pause,
+    vmexit_vmentry_failure_due_to_machine_check_event,
+    vmexit_tpr_below_threshold = 43,
+    vmexit_apic_access,
+    vmexit_virtualized_eoi,
+    vmexit_access_to_gdtr_or_idtr,
+    vmexit_access_to_ldtr_or_tr,
+    vmexit_ept_violation,
+    vmexit_ept_misconfiguration,
+    vmexit_invept,
+    vmexit_rdtscp,
+    vmexit_vmx_preemption_timer_expired,
+    vmexit_invvpid,
+    vmexit_wbinvd,
+    vmexit_xsetbv,
+    vmexit_apic_write,
+    vmexit_rdrand,
+    vmexit_invpcid,
+    vmexit_vmfunc,
+    vmexit_encls,
+    vmexit_rdseed,
+    vmexit_pml_full,
+    vmexit_xsaves,
+    vmexit_xrstors,
+};
+```
+
+That’s quite the list. We’re going to need it for later when we create a structure that associates a handler with each of the exit reasons. That way when we perform our check in the common VM-exit handler we can quickly check the exit reason, and call the appropriate handler. There’s another structure for exit qualifications that is split into a bunch of unions, and its use varies based on the cause of the VM-exit but we aren’t going to concern ourselves with it until the MMU virtualization series.
+
+Now, what about the architectural state changes that occur during a VM-exit? Well, we know that the VM-exit information fields are populated, and the processor state is saved in the guest-state area. There’s a lot of different configurations and events that change what might be stored, and what the value is. To stay relevant to this project, we only need to think about how segment registers are saved, control registers, debug registers; and RIP, RSP, and RFLAGS. Following guest state storage the processor state would be reloaded based on the host-state area and our VM-exit controls – which were setup when initializing our VMCS in the [**previous article**](https://revers.engineering/day-4-vmcs-segmentation-ops/).
+
+Based on our configuration, the following registers will be saved in their corresponding fields:
+
+- Control Registers 0, 3, and 4
+- IA32_SYSENTER_CS, IA32_SYSENTER_ESP, and IA32_SYSENTER_EIP
+- Segment Registers (CS, SS, DS, ES, FS, GS, GDTR, IDTR)
+- RIP, RSP, RFLAGS
+
+The segment registers have all their values saved to the corresponding VMCS fields before the VM-exit. Now, before we talk about the RIP, RSP, and RFLAGS states on a VM-exit we need to lay out the instructions and events that cause VM-exits – unconditionally and conditionally.
+
+#### — Unconditionally Exiting Instructions
+
+![](https://i0.wp.com/revers.engineering/wp-content/uploads/2019/07/Untitled-Diagram2.png?resize=201%2C141&ssl=1)
+
+The above table depicts the instructions that will cause unconditional VM-exits when executed in the guest. The **[VMX instructions](http://linasm.sourceforge.net/docs/instructions/vmx.php)** are all of the instructions we have seen thus far in the series: `vmcall``, vmclear`, `vmlaunch`, `vmptrld`, etc. When an instruction that causes an unconditional VM-exit (meaning it will always exit, regardless of execution controls) the RIP register will store the value that references the instruction. These instructions exit into the VMM, and if you remember our description of a fault it means that no processor state is modified by the instruction nor is the instruction executed (or rather, the state is restored to before execution).
+
+This can be a bit confusing since we used the term trap earlier when describing how an exit occurs. The easiest way to remember is that instructions that cause exits are “fault-like” unless specified otherwise meaning they do not update processor state or execute. However, we trap into our hypervisor (VM-exit) and emulate the behavior of an instruction, and then return to the guest. The start behavior is similar to a fault, the end behavior is similar to a trap in that we do not re-execute the exiting instruction, and resume execution on the following instruction. This is important to remember, because since our RIP value when in root operation references the exiting instruction we’ll have to manually increment the RIP before returning control back to the guest. This is done so the VMM can **[trap-and-emulate](https://stackoverflow.com/questions/20388156/what-is-meant-by-trap-and-emulate-virtualization)**. The diagram below illustrates the logic behind this sequence of operations.
+
+![](https://i0.wp.com/revers.engineering/wp-content/uploads/2019/07/Untitled-Diagram3.png?resize=653%2C244&ssl=1)
+
+As can be seen, when `cpuid` exits non-root operation `HOST_RIP` is the VM-exit handler, the exit reason field is populated with the exit reason, and the `GUEST_RIP` is a value referencing the `cpuid` instruction. We’ll call our CPUID VM-exit handler, advance the guest instruction pointer, and resume execution of the guest. At that point the guest will be executing on the instruction following `cpuid`. This emulates the behavior required for an unconditionally exiting instruction. Advancing the guest instruction pointer is quite simple: in any handler for our unconditionally exiting instructions we’ll use the guest instruction pointer, perform a `vmread` on the VMCS field `VMX_VMEXIT_INSTRUCTION_LENGTH` and add it to our `GUEST_RIP`. You can do that with a simple function that looks like this:
+
+```
+static void adjust_rip(__gcpu_context* gcpu)
+{
+    unsigned __int64 instruction_length;
+
+    instruction_length = __vmx_vmread(VMX_VMEXIT_INSTRUCTION_LENGTH);
+    gcpu->ext_registers.rip += instruction_length;
+    __vmx_vmwrite(GUEST_RIP, gcpu->ext_registers.rip);
+}
+```
+
+The `VMX_VMEXIT_INSTRUCTION_LENGTH` field is relatively self-explanatory. It’s used to store the length of the exiting instruction length, in the event of an exit occurring due to instruction execution. This function will come in handy once we start writing our VM-exit handlers, so save it in your project and read on because we still have to learn about conditionally exiting instructions.
+
+#### — Conditionally Exiting Instructions
+
+The list of conditionally exiting instructions is absurdly long, and I wouldn’t expect anyone to memorize all of them or their conditions. Having said that I made a table of all the conditionally executing instructions, and **highlighted** the ones we’ll be concerning ourselves with in this project. If you’re interested in the others please consult the **[Intel SDM Volume 3 Chapter 25.1.3](https://software.intel.com/en-us/articles/intel-sdm)**.
+
+![](https://i0.wp.com/revers.engineering/wp-content/uploads/2019/07/tab.png?resize=722%2C322&ssl=1)
+
+We’re only concerning ourselves with the above highlighted instructions. The reason for `rdmsr` and `wrmsr` is because these instructions will exit on every bitmap access if the `use_msr_bitmap` bit is clear, or the target MSR is not within our bitmap range. Since we’re not specifically targeting any MSRs to emulate, we just need to handle accesses that are outside the ranges `0000-1FFF` and `C0000000-C0001FFF`. You’ll also notice we are going to handle `vmread` and `vmwrite`, this is because these instructions will exit if the `vmcs_shadowing` bit is clear in our secondary processor controls. There’s a specific operation we’ll have to perform for the latter two instructions, we’ll address that when we get to event injection.
+
+Now that I’ve described unconditionally and conditionally exiting instructions, and their behaviors it’s up to you to read about the other events that cause VM-exits. To trim down your long read focus on **[exceptions](https://en.wikipedia.org/wiki/Exception_handling)**, and **[triple faults](https://en.wikipedia.org/wiki/Triple_fault)**. All of this information can be found in the **[Intel SDM](https://software.intel.com/en-us/articles/intel-sdm)**. See the recommended reading section to find chapters and other references.
+
+`Note: I only address what is necessary to understand the contents of the articles. All other details are up to the reader to research themselves.`
+
+## Context Modifications
+
+#### — Hypervisor Stack
+
+This change was a little more complicated and made on a recommendation by a friend. I consulted the Intel SDM chapter covering stacks and their layout and figured that laying out the hypervisor stack like a normal stack was much cleaner, and gave the VMM the ability to access the various components of the system in an easier way. If it confuses you upon first look just read below the definition for an explanation. If you’re not familiar with the stack layout, see recommended reading and read **[Intel SDM Chapter 6.2](https://software.intel.com/en-us/articles/intel-sdm)**.
+
+We’re going to create a structure, as shown below.
+
+```
+struct __vmm_stack_t
+{
+      unsigned char limit[VMM_STACK_SIZE - sizeof(struct __vmm_context_t)];
+      struct __vmm_context_t vmm_context;
+};
+```
+
+This structure is going to take the place of our original VMM stack setup. It will be used where we initialize our `HOST_RSP`. To describe this structure briefly, it contains an array of bytes of the size `VMM_STACK_SIZE` which is based off the kernel stack size in Windows – `KeKernelStackSize (0x6000)`. The limit is shown as being the VMM stack size minus the size of our VMM context structure, that’s because we don’t want any stack operations in the hypervisor to be able to overwrite the contents of that structure. The structure will be available in our VM-exit handler and can be referenced by our guest CPU context structure. Before we define our gCPU structure, we need to modify our vCPU structure so that each virtual CPU has this stack structure. Simply add this stack structure to the end of our vCPU structure so it looks like this:
+
+```
+struct __vcpu_t
+{
+    vmexit_status_t status;
+
+    unsigned __int64 guest_rsp;
+    unsigned __int64 guest_rip;
+
+    struct __vmcs_t *vmcs;
+    unsigned __int64 vmcs_physical;
+
+    struct __vmcs_t *vmxon;
+    unsigned __int64 vmxon_physical;
+
+    __declspec(align(4096)) struct __vmm_stack_t vmm_stack;
+};
+```
+
+Now our vCPU structure is up to date. The fields were not filled out completely until now, that was one of your TODO’s from Day 3. But either way, let’s set our new host stack pointer. Recall that our `HOST_RSP` VMCS field was set in the `init_vmcs` function.
+
+The change is simple, we’ll modify it to point to our new stack context member.
+
+```
+unsigned __int64 vmm_stack = (unsigned __int64)&vcpu->vmm_stack.vmm_context; 
+__vmx_vmwrite(HOST_RSP, vmm_stack);
+```
+
+This may or may not already be done, depending on how you setup your VMM stack from the previous article. This is how I did it for this series. We choose to set the stack pointer to the address of `vmm_context` in the structure so that any stack operations performed do not modify or overwrite the contents of the VMM context.
+
+You may be wondering, well what does the `vmm_context` structure look like now? The answer is: not that different. The hypervisor context (`vmm_context`) simply has the msr_bitmap pointer, our vCPU table, and processor count. Following the last initialization operation of our VMCS we’ll need to add the following lines to ensure that our hypervisor stack for each vCPU has the proper data loaded into it. And since our `init_vmcs` function takes a `vmm_context` pointer as an argument, this is pretty straightforward.
+
+```
+vcpu->vmm_stack.vmm_context.msr_bitmap = vmm_context->msr_bitmap;
+vcpu->vmm_stack.vmm_context.processor_count = vmm_context->processor_count;
+vcpu->vmm_stack.vmm_context.vcpu_table = vmm_context->vcpu_table;
+```
+
+Recall our VMM context structures looks like this:
+
+```
+struct __vmm_context_t
+{
+    unsigned long processor_count;
+    __declspec(align(4096)) struct __vcpu_t **vcpu_table;
+    __declspec(align(4096)) void *msr_bitmap;
+};
+```
+
+Now, before we get to implementing our handlers we need to define a structure that can be used inside of our handler to access the data available on the hypervisor stack. This structure is simple because how we use our stack is simple. Prior to calling our VM-exit handler, in the assembly stub, you may recall we push all general-purpose registers on to the stack. We’ll want a way to be able to access those guest registers as they hold state information that isn’t stored in the VMCS. How do we do this? We define a structure, we’ll call it the VM-exit stack. This VM-exit stack will have the first member be a structure that gives us access to the guest registers stored on the stack from top of the stack to bottom. If you’re unfamiliar with stack structure, and stack layout, please consult the Intel SDM, or recommended reading for other resources. The structure that holds our guest register information will look like this.
+
+```
+struct __guest_registers_t
+{
+    __m128 xmm[6];
+    void *padding;
+    unsigned __int64 r15;
+    unsigned __int64 r14;
+    unsigned __int64 r13;
+    unsigned __int64 r12;
+    unsigned __int64 r11;
+    unsigned __int64 r10;
+    unsigned __int64 r9;
+    unsigned __int64 r8;
+    unsigned __int64 rdi;
+    unsigned __int64 rsi;
+    unsigned __int64 rbp;
+    unsigned __int64 rbx;
+    unsigned __int64 rdx;
+    unsigned __int64 rcx;
+    unsigned __int64 rax;
+};
+```
+
+You’ll see that our first push is `rax`, so the last member of this structure is `rax` (**[stack layout](https://eli.thegreenplace.net/2011/09/06/stack-frame-layout-on-x86-64)**). The padding pointer is to make sure our structure is aligned on an 8-byte boundary, followed by our XMM registers. This will be our first member structure of the VM-exit stack structure. Let’s get a definition made for that.
+
+```
+struct __vmexit_stack_t
+{
+    struct __guest_registers_t guest_registers;
+    struct __vmm_context_t vmm_context;
+};
+```
+
+If you recall, our VMM context is on the bottom of the stack, unable to be overwritten, followed by our guest registers (since they’re pushed prior to entering the VM-exit handler.) However, our guest register structure doesn’t have a few registers – those being the Guest RIP, Guest RSP, and the RFLAGS. We’ll define a structure for these real quick, calling them extended registers.
+
+```
+struct __ext_registers_t
+{
+    unsigned __int64 rip;
+    unsigned __int64 rsp;
+    union __rflags_t rflags;
+};
+```
+
+Well, we have all that information, but we want to reduce the number of arguments we use when calling our VM-exit handlers (for practical purposes). We’re going to define a structure that contains all of this information that can easily be initialized at the beginning of our common VM-exit handler. We’ll call it our gCPU context, and it’s defined as such:
+
+```
+struct __gcpu_context_t
+{
+    void *vcpu;
+    struct __ext_registers_t ext_registers;
+    struct __guest_registers_t guest_registers;
+};
+```
+
+We’ll use this structure to pass information from our VM-exit stack to the various reason-specific VM-exit handlers. Now that all of this is defined, we can get into implementing our VM-exit handlers! There may be some structures that lack definitions in the series, and those can be found throughout the **[Intel SDM Volume 3 Chapter 23-Chapter 33](https://software.intel.com/en-us/articles/intel-sdm)**. These will also be extremely succinct to please consult the recommended reading if you find yourself confused. That being said, let’s get into it.
+
+## VM-Exit Handler(s)
+
+In this section, we’re going to define our VM-exit handlers for the bare minimum operation of our hypervisor. All code presented will be explained, however, in the interest of saving space in this article I’ve decided that I’ll be referencing the **[Intel SDM](https://software.intel.com/en-us/download/intel-64-and-ia-32-architectures-sdm-combined-volumes-1-2a-2b-2c-2d-3a-3b-3c-3d-and-4)** when more details are required for the reader. You’ve come this far, and are almost to the top of the mountain. Pay attention to the explanations and references, and please do the recommended reading.
+
+In this project we’re going to have a generic VM-exit handler that performs initial setup of guest context structures, and calls one of our reason-specific VM-exit handlers. Each subsequently defined handler will be placed inside of our generic handler. The MSR access handler will read or write an MSR so long as it’s defined. The VMX instruction handlers will simply inject an invalid opcode exception into the guest, regardless of guest CPL. The CPUID handler will emulate standard behavior of the `cpuid` instruction until the final section of this article where the results will be modified. The triple fault handler will make use of the **RST_CNT** register which is one of the processor interface registers detailed in the **[IO Controller Hub Specification Section 13.7](https://www.intel.com/content/www/us/en/io/io-controller-hub-10-family-datasheet.html)**. This register will allow us to perform a hard reset of the system after logging pertinent diagnostic information in the triple fault handler.
+
+#### — Generic Handler
+
+```
+vmexit_status_t vmexit_generic_handler(struct __vmm_stack* stack)
+{
+    union __vmx_exit_reason_field_t vmexit_reason;
+    struct __gcpu_context_t gcpu;
+    vmexit_status_t vmexit_status;
+    
+    vmexit_status = VMEXIT_UNHANDLED;
+    vmexit_reason.flags = __vmx_vmread(VMX_VMEXIT_REASON);
+    
+    gcpu.ext_registers.rip = get_guest_rip();
+    gcpu.ext_registers.rsp = get_guest_rsp();
+    gcpu.ext_registers.rflags.value = get_guest_rflags();
+    gcpu.guest_registers = &stack->guest_registers;
+    
+    switch(vmexit_reason.basic_exit_reason) {
+        case vmexit_vmcall:
+        case vmexit_vmclear:
+        case vmexit_vmlaunch:
+        case vmexit_vmptrld:
+        case vmexit_vmptrst:
+        case vmexit_vmread:
+        case vmexit_vmresume:
+        case vmexit_vmwrite:
+        case vmexit_vmxoff: 
+        case vmexit_vmxon:
+		case vmexit_invept:
+		case vmexit_vmfunc:
+		case vmexit_invvpid:
+            vmexit_status = vmexit_vmx_instruction_executed(&gcpu);
+            break;
+        case vmexit_cpuid:
+            vmexit_status = vmexit_cpuid_handler(&gcpu);
+            break;
+        case vmexit_rdmsr:
+            vmexit_status = vmexit_msr_access(&gcpu, false);
+            break;
+        case vmexit_wrmsr:
+            vmexit_status = vmexit_msr_access(&gcpu, true);
+            break;
+        case vmexit_triple_fault:
+            vmexit_triple_fault_handler();
+            break;
+        default:
+            vmexit_status = VMEXIT_UNHANDLED;
+            break;
+    }
+    
+    if(vmexit_status == VMEXIT_UNHANDLED) {
+        DUMP_GCPU_STATE_INFORMATION(gcpu);
+        HYPERVISOR_BREAK();
+    }
+    
+    return vmexit_status;
+}
+```
+
+The generic handler VM-exit handler has changed quite a bit since the last article. We’ve since created a VMM stack structure to give us access to guest registers, and our VMM context in the VM-exit handler. If you recall we’ve also created a structure to represent our guest CPU while in root operation, and more correctly setup our hypervisor stack to keep our VMM context at the base of the stack. This definition includes the method of acquiring the VM-exit reason, storing guest registers from the VMM stack, and sets up the switch statement required to execute reason-specific handlers. Those handlers are defined and explored below.
+
+`Note: This is the common setup for a common VM-exit handler. There are many different ways to set them up. For instance, you could have a different VM-exit function for each vCPU.`
+
+#### — VMX Instruction Execution
+
+```
+// START interrupt_info.h
+struct __vmentry_event_information_t
+{
+    struct __vmentry_interrupt_info_t interrupt_info;
+    unsigned __int32 instruction_length;
+    unsigned __int64 error_code;
+};
+
+enum apic_exception_vectors_t 
+{
+    EXCEPTION_DIVIDE_ERROR,
+    EXCEPTION_DEBUG_BREAKPOINT,
+    EXCEPTION_NMI,
+    EXCEPTION_BREAKPOINT,
+    EXCEPTION_OVERFLOW,
+    EXCEPTION_BOUND_RANGE_EXCEEDED,
+    EXCEPTION_UNDEFINED_OPCODE,
+    EXCEPTION_NO_MATH_COPROCESSOR,
+    EXCEPTION_DOUBLE_FAULT,
+    EXCEPTION_RESERVED0,
+    EXCEPTION_INVALID_TASK_SEGMENT_SELECTOR,
+    EXCEPTION_SEGMENT_NOT_PRESENT,
+    EXCEPTION_STACK_SEGMENT_FAULT,
+    EXCEPTION_GENERAL_PROTECTION_FAULT,
+    EXCEPTION_PAGE_FAULT,
+    EXCEPTION_RESERVED1,
+    EXCEPTION_MATH_FAULT,
+    EXCEPTION_ALIGNMENT_CHECK,
+    EXCEPTION_MACHINE_CHECK,
+    EXCEPTION_SIMD_FLOATING_POINT_NUMERIC_ERROR,
+    EXCEPTION_VIRTUAL_EXCEPTION,
+    EXCEPTION_RESERVED2,
+    EXCEPTION_RESERVED3,
+    EXCEPTION_RESERVED4,
+    EXCEPTION_RESERVED5,
+    EXCEPTION_RESERVED6,
+    EXCEPTION_RESERVED7,
+    EXCEPTION_RESERVED8,
+    EXCEPTION_RESERVED9,
+    EXCEPTION_RESERVED10,
+    EXCEPTION_RESERVED11,
+    EXCEPTION_RESERVED12
+};
+
+enum interrupt_type_t 
+{
+    INTERRUPT_TYPE_EXTERNAL_INTERRUPT = 0,
+    INTERRUPT_TYPE_RESERVED = 1,
+    INTERRUPT_TYPE_NMI = 2,
+    INTERRUPT_TYPE_HARDWARE_EXCEPTION = 3,
+    INTERRUPT_TYPE_SOFTWARE_INTERRUPT = 4,
+    INTERRUPT_TYPE_PRIVILEGED_SOFTWARE_INTERRUPT = 5,
+    INTERRUPT_TYPE_SOFTWARE_EXCEPTION = 6,
+    INTERRUPT_TYPE_OTHER_EVENT = 7
+};
+// END interrupt_info.h
+
+static vmexit_status vmexit_vmx_instruction_executed(struct __gcpu_context_t* gcpu)
+{
+    struct __vmentry_event_information_t ud_exception;
+    
+    ud_exception.instruction_length = 0;
+    ud_exception.error_code = 0;
+    
+    ud_exception.interrupt_info.bits.valid = 1;
+    ud_exception.interrupt_info.bits.vector = EXCEPTION_UNDEFINED_OPCODE;
+    ud_exception.interrupt_info.bits.interrupt_type = INTERRUPT_TYPE_HARDWARE_EXCEPTION;
+    ud_exception.interrupt_info.bits.deliver_code = 0;
+    
+    __vmx_vmwrite(VMX_VMENTRY_INTERRUPTION_INFO, ud_exception.flags);
+    __vmx_vmwrite(VMX_VMENTRY_INSTRUCTION_LENGTH, ud_exception.instruction_length);
+    
+    //
+    // Since the VM-exit did not occur during delivery of an event
+    // through the IDT, we need to set RF flag in RFLAGS to 1.
+    //
+    // See Intel SDM Chapter 27.3.3 for more information.
+    //
+    gcpu->guest_registers.rflags.bits.rf = 1;
+    __vmx_vmwrite(GUEST_RFLAGS, gcpu->guest_registers.rflags.value);
+    
+    return VMEXIT_HANDLED;
+}
+```
+
+The contents of this excerpt are split from two files, `interrupt_info.h` and `vmexit.c`. This handler performs what’s called **event injection**. This is to prohibit the guest from executing **[VMX instructions](http://linasm.sourceforge.net/docs/instructions/vmx.php)** regardless of CPL. If the guest attempts to execute any of the **[VMX instructions](http://linasm.sourceforge.net/docs/instructions/vmx.php)** that become available when vmxon is executed a **\#UD** exception will be reported and the offending process, executive, or otherwise will be terminated. If you’re unsure what event injection is then consult the **[Intel SDM Chapter 26.5](https://software.intel.com/en-us/articles/intel-sdm)**.
+
+There’s a lot to it in order to understand what’s going on underneath, and a majority of that content is out of the scope of this series. However, I’ll briefly describe what’s going on when we inject an interrupt or exception into the guest. All the interruption information is written into the VM-entry fields for the VMCS, during VM-entry, after all the guest context has been restored, it delivers the exception through the IDT using the vector specified in the code. In this instance, **\#UD** – vector 6. It locates the guest IDT by using the `GUEST_IDTR` field in the VMCS. This is why setting those up is so important, as noted in the previous article. We set the resume flag in the RFLAGS register since the VM-exit didn’t occur during delivery of the event through the IDT (once again, this is one of the brain tweaking details in the manual.)
+
+If none of this is making sense to you, consult the recommended reading section and check out the references on **[Exceptions](https://software.intel.com/en-us/download/intel-64-and-ia-32-architectures-sdm-combined-volumes-3a-3b-3c-and-3d-system-programming-guide)** and the **[Interrupt Descriptor Table (IDT)](https://en.wikipedia.org/wiki/Interrupt_descriptor_table)**.
+
+#### — CPUID Handler
+
+```
+// START cpuid.h
+struct __cpuid_params_t
+{
+    unsigned __int64 rax;
+    unsigned __int64 rbx;
+    unsigned __int64 rcx;
+    unsigned __int64 rdx;
+};
+
+#define QUERY_CPUID_BIT(x, b)		((x) & (1 << b))
+#define SET_CPUID_BIT(x, b)			((x) | (1 << b))
+#define CLR_CPUID_BIT(x, b)			((x) & ~(1 << b))
+// END cpuid.h
+
+static vmexit_status_t vmexit_cpuid_handler(struct __gcpu_context_t* gcpu)
+{
+    struct __cpuid_params_t cpuid_reg;
+    cpuid_reg.rax = gcpu->guest_registers->rax;
+    cpuid_reg.rbx = gcpu->guest_registers->rbx;
+    cpuid_reg.rcx = gcpu->guest_registers->rcx;
+    cpuid_reg.rdx = gcpu->guest_registers->rdx;
+    
+    //
+    // __cpuid intrinsic clears RCX prior to executing cpuid instruction,
+    // we want to be able to return any additional information requested
+    // so we use __cpuidex.
+    //
+    __cpuidex(&cpuid_reg, gcpu->guest_registers->rax, gcpu->registers->rcx);
+    
+    switch(leaf)
+    {
+        case CPUID_HYPERVISOR_PRESENT:
+            if(QUERY_BIT(cpuid_reg.rcx, 31))
+                CLR_CPUID_BIT(cpuid_reg.rcx, 31);
+            break;
+        default:
+            break;
+    }
+    
+    gcpu->guest_registers->rax = cpuid_reg.rax;
+    gcpu->guest_registers->rbx = cpuid_reg.rbx;
+    gcpu->guest_registers->rcx = cpuid_reg.rcx;
+    gcpu->guest_registers->rdx = cpuid_reg.rdx;
+    
+    adjust_rip(gcpu);
+    
+    return VMEXIT_HANDLED;
+}
+```
+
+The CPUID handler is presented above. The documentation for `cpuid` instruction can be found in the **[Intel SDM Vol 2A](https://software.intel.com/en-us/download/intel-64-and-ia-32-architectures-sdm-combined-volumes-2a-2b-2c-and-2d-instruction-set-reference-a-z)**. You’ll notice the use of the intrinsic **[\_\_cpuidex](https://docs.microsoft.com/en-us/cpp/intrinsics/cpuid-cpuidex?view=vs-2019)** from `intrin.h` which is a header provided by Microsoft. The reasoning behind this is explained, the details of both [**\_\_cpuid**](https://docs.microsoft.com/en-us/cpp/intrinsics/cpuid-cpuidex?view=vs-2019) and [**\_\_cpuidex**](https://docs.microsoft.com/en-us/cpp/intrinsics/cpuid-cpuidex?view=vs-2019) are explained in the documentation on MSDN. This handler currently filters the leaf 0x1, specifically bit 31 in RCX. This bit is **[reserved](https://kb.vmware.com/s/article/1009458)** by Intel and AMD to be set or cleared indicating the presence of a hypervisor to the guest. A variety of tools test this bit to verify the environment an application is running, so we’re going to see if our function leaf is 1, if so we’ll query bit 31, and if it’s set we’re going to clear it. Otherwise, we’ll break and operate as normal.
+
+You’ll have to adjust RIP to skip the executed `cpuid` instruction in the guest. Recall how exiting instructions behave or refer to the top of this article to recap.
+
+#### — MSR Access
+
+```
+// START msr.h
+#define MSR_MASK_LOW ((unsigned __int64)(unsigned __int32) - 1)
+
+#define RESERVED_MSR_RANGE_LOW 0x40000000
+#define RESERVED_MSR_RANGE_HI  0x400000FF
+
+#define MSR_READ TRUE
+#define MSR_WRITE FALSE
+// END msr.h
+
+static void vmentry_inject_gp(struct __gcpu_context* gcpu, unsigned __int32 error_code)
+{
+    struct __vmentry_event_information_t gp_exception;
+    
+    gp_exception.instruction_length = __vmx_vmread(VMX_VMEXIT_INSTRUCTION_LENGTH);
+    gp_exception.error_code = error_code;
+    
+    gp_exception.interrupt_info.bits.valid = 1;
+    gp_exception.interrupt_info.bits.vector = EXCEPTION_GENERAL_PROTECTION_FAULT;
+    gp_exception.interrupt_info.bits.interrupt_type = INTERRUPT_TYPE_HARDWARE_EXCEPTION;
+    gp_exception.interrupt_info.bits.deliver_code = 1;
+    
+    __vmx_vmwrite(VMX_VMENTRY_EXCEPTION_ERROR_CODE, gp_exception.error_code);
+    __vmx_vmwrite(VMX_VMENTRY_INTERRUPTION_INFO, gp_exception.flags);
+    __vmx_vmwrite(VMX_VMENTRY_INSTRUCTION_LENGTH, gp_exception.instruction_length);
+}
+
+static vmexit_status_t vmexit_msr_access(struct __gcpu_context_t* gcpu, boolean access_type)
+{
+    unsigned __int64 msr_value;
+    unsigned __int64 msr_id;
+
+    msr_id = gcpu->guest_registers->rcx;
+    msr_value = 0;
+    
+    //
+    // Synthetic MSRs are not hardware MSRs, regardless of 
+    // access type we're going to inject #GP into the guest.
+    //
+    if((msr_id >= RESERVED_MSR_RANGE_LOW && (msr_id <= RESERVED_MSR_RANGE_HI)) {
+        vmentry_inject_gp(gcpu, 0);
+        return VMEXIT_HANDLED;
+    }
+    
+    if(access_type == MSR_READ) {
+        msr_value = __rdmsr(msr_id);
+        gcpu->guest_registers->rdx = (msr_value >> 32);
+        gcpu->guest_registers->rax = (msr_value & MSR_MASK_LOW);
+    } else {
+        msr_value = (gcpu->guest_registers->rdx << 32);
+        msr_value |= (gcpu->guest_registers->rax) & MSR_MASK_LOW;
+        __wrmsr(msr_id, msr_value);
+    }
+    
+    adjust_rip(gcpu);
+
+    return VMEXIT_HANDLED;
+}
+```
+
+This ones a weird one, much like the next one. I’ll cover the preprocessor directives at the top and we’ll work our way down. To start we define a mask, its use will become clear later on, but it simple sets the lower 32 bits of a 64-bit unsigned integer to 1. It’s the low part of a 64-bit value. The next definition is `RESERVED_MSR_RANGE_LOW`. This definition is the lower bound on a range of MSR IDs reserved for Hyper-V, they’re referred to as [**Synthetic MSRs**](https://download.microsoft.com/download/F/B/0/FB0D01A3-8E3A-4F5F-AA59-08C8026D3B8A/requirements-for-implementing-microsoft-hypervisor-interface.docx). You can read the documentation linked in the bolded text. Synthetic MSRs are not real hardware MSRs and if not implemented will cause `rdmsr` and `wrmsr` to fail. It’s worth noting that reads/writes to MSRs outside the coverage of our MSR bitmaps may need to be prevented or to determine which MSRs are valid on real hardware. The `RESERVED_MSR_RANGE_HI` is just the upper bound of that range. We use these macros to validate our MSR ID when an access is performed which brings us to our next part of the code. If you recall, to emulate behavior of a real system not in VMX operation we had to inject a **[\#UD exception](https://wiki.osdev.org/Exceptions)** into the guest. Similarly, to prevent synthetic MSR access we have to inject a \#GP(0) fault into the guest.
+
+If you’re wondering how I know what exception/fault/interrupt to inject into the guest I just consult the **[Intel SDM Volume 2A](https://software.intel.com/en-us/articles/intel-sdm)** on the instruction of interest and check the **Protected Mode Exceptions** section at the bottom of the description. For `rdmsr`, it states that “*if the value in ECX specifies a reserved or unimplemented MSR address, inject \#GP(0)*“.
+
+![](https://i0.wp.com/i.imgur.com/mK3G8Re.png?resize=648%2C92&ssl=1)
+
+Otherwise, if the read or write is permitted I use the intrinsics provided by Microsoft to read the MSR value, and due to the MSR value being split between EDX:EAX I shift the MSR value right 32-bits and store it in RDX, and perform a **[bitwise-AND](https://www.programiz.com/c-programming/bitwise-operators)** on the MSR value to mask the lower 32-bits of the MSR value and store them in RAX. The inverse operations are performed for writes to put the register values into the MSR value appropriately, followed by a write to the MSR. If you’re struggling with bit-masks or would like a refresher take a look at the recommended reading!
+
+#### — Triple Fault
+
+```
+//
+// All information used in these functions is based on the IO Controller Hub 10
+// Spec. Section 13.7.5, Page 446 - RST_CNT - which is the Reset Control Register.
+//
+// I/O Address: CF9h
+// Size: 8-bits
+// Attributes: RW
+//
+
+#define RST_CNT_IO_PORT						0xCF9;
+
+union __reset_control_register
+{
+	unsigned __int8 flags;
+	struct 
+	{
+		unsigned __int8 reserved0		: 1;
+		unsigned __int8 system_reset	 : 1;
+		unsigned __int8 reset_cpu		: 1;
+		unsigned __int8 full_reset	   : 1;
+		unsigned __int8 reserved1		: 4;
+	};
+};
+
+static void ap_hard_reset(void)
+{
+    union __reset_control_register reset_register;
+    reset_register.flags = __inbyte(RST_CNT_IO_PORT);
+    
+    //
+    // Reset CPU bit set, determines type of reset based on:
+    //		- System Reset = 0; soft reset by activating INIT# for 16 PCI clocks.
+    // 	   - System Reset = 1; then hard reset by activating PLTRST# and SUS_STAT#.
+    //		- System Reset = 1; main power well reset.
+    //
+    reset_register.reset_cpu = 1;
+    reset_register.system_reset = 1;
+    
+    __outbyte(RST_CNT_IO_PORT, reset_register.flags);
+}
+
+static void vmexit_triple_fault_handler(struct __gcpu_context_t* gcpu)
+{
+    DUMP_GCPU_STATE_INFORMATION(gcpu);
+    ap_hard_reset();
+
+    //
+    // No return since reset occurs.
+    //
+}
+```
+
+The triple fault handler is quite different. To summarize, sift through the **[IO Controller Hub Specification](https://www.intel.com/content/www/us/en/io/io-controller-hub-10-family-datasheet.html)** released by Intel for registers related to resetting or power management. You’ll find the **RST_CNT** register listed under the Processor Interface Registers section. In the data sheet it lays out the I/O address, port attributes, size of the register, as well as other details. I laid out a structure based on the table in the data sheet to prevent having to write macros for setting or clearing bits. I use **[\_\_inbyte](https://docs.microsoft.com/en-us/cpp/intrinsics/inbyte?view=vs-2019)** and **[\_\_outbyte](https://docs.microsoft.com/en-us/cpp/intrinsics/outbyte?view=vs-2019)** intrinsics provided by `intrin.h` to read and write a byte to/from the IO port, respectively. I set the proper bit combination to perform a hard reset of the processor, and write the modified control value back to the **RST_CNT** register. The result is a full power cycle from the `CF9h` hard reset, emulating the behavior of a triple fault outside of VMX operation. Having encountered a triple fault while working on a hypervisor getting diagnostic information and quickly putting your processor in the shutdown state is important, otherwise you wind up with a hung VM or physical machine and no information to help you.
+
+`Note: Dump guest state information prior to performing the hard reset.`
+
+If you’re interested in reading about the **[power states](https://docs.microsoft.com/en-us/windows/win32/power/system-power-states)** mentioned in the ICH specification, and terminology used in the code; see the **[6th Generation Intel Processor Data Sheet, Chapter 4](https://www.intel.com/content/dam/www/public/us/en/documents/datasheets/desktop-6th-gen-core-family-datasheet-vol-1.pdf)**. The I/O address may vary across processor generations, so verify with the proper data sheet.
+
+#### VMRESUME
+
+Now that your VM-exit handlers are written to handle very base case scenarios and your VMCS, and contexts are complete you will be able to start your hypervisor and run with a very basic implementation. Your VM-exit handlers will execute successfully and `vmresume` will be executed no issue. There may be some gaps in the explanation about these handlers, and the reasons they’re necessary, but the recommended reading references specifications and descriptions that, rather than transcribing them, do it more justice and cover all the edge cases.
+
+## Conclusion
+
+In this article you learned about how VM-exits work, the different classifications of exceptions, how to write reason-specific VM-exit handlers, and a few tricks that can be done in the CPUID handler. This is the final article of the series – the following article will be anecdotes, personal recommendations on project structuring, modular programming practices, and recommended reading to push you farther ahead on your journey into virtualization. I kept this article short and sweet since at this stage it’s likely you’re able to find the answers to questions you have on your own, and if not the recommended reading has all the information you’ll need to succeed with this series. Today you also restructured your guest contexts, created a better-designed hypervisor stack layout, and upgraded your VMM context structure. At this point, you should be able to build, test, and extend **your very own hypervisor**. This series is an elementary introduction – yes, elementary – and there is so much to learn and do in regards to virtualization. I’d go as far as recommending you restructure your hypervisor entirely after the next articles suggestions are published. It goes a long way to break things up into little pieces.
+
+I’m happy I was able to be a resource for you as you journey into hypervisor development. The real-world applications for this technology are boundless and I hope everyone who made it this far learned something, and enjoyed learning it. In the near future, I will be covering MMU virtualization (EPT), IOMMU virtualization (VT-d) and APIC virtualization. The EPT series will only be three articles long, with example usage of EPTP switching and preventing reads or writes to pages. The other series’ will likely be much longer and span over 6 months or so because I’m still currently learning a lot of the things to do with APIC virtualization. It’s a different beast itself. However, at the conclusion of the series I will be starting the Applied Reverse Engineering series that covers topics from basic architecture to heuristic analysis using Zydis and Distorm, all the way to employing your hypervisor in a reverse engineering scenario.
+
+Hit the books and start tinkering. Best of luck!
+
+### Recommended Reading / Other Projects
+
+- **[ICH10 Specification – Chapter 13.7.5 (Reset Vector)](https://www.intel.com/content/www/us/en/io/io-controller-hub-10-family-datasheet.html)**
+- [**Intel SDM Chapter 31 (VMM Programming Considerations)**](https://software.intel.com/en-us/download/intel-64-and-ia-32-architectures-sdm-volume-3c-system-programming-guide-part-3)
+- **[Intel SDM Chapter 27.1-27.6 (VM-exit Details)](https://software.intel.com/en-us/download/intel-64-and-ia-32-architectures-sdm-volume-3c-system-programming-guide-part-3)**
+- **[Intel SDM Chapter 31.8.5 (CPUID Emulation)](https://software.intel.com/en-us/download/intel-64-and-ia-32-architectures-sdm-volume-3c-system-programming-guide-part-3)**
+- **[Interrupt Descriptor Table](https://en.wikipedia.org/wiki/Interrupt_descriptor_table)**
+- **[Synthetic MSRs](https://download.microsoft.com/download/F/B/0/FB0D01A3-8E3A-4F5F-AA59-08C8026D3B8A/requirements-for-implementing-microsoft-hypervisor-interface.docx)**
+- **[HVPP (Intel VT-x Hypervisor in C++) by Petr Beneš](https://github.com/wbenny/hvpp)**
+- **[HyperPlatform (Intel VT-X Hypervisor) by Satoshi Tanda](https://github.com/tandasat/HyperPlatform)**
+- **[DdiMon (Intel VT-x Hypervisor w/ EPT) by Satoshi Tanda](https://github.com/tandasat/DdiMon)**
+- **[Intel SDM Chapter 28 (Extended Page Tables)](https://software.intel.com/en-us/download/intel-64-and-ia-32-architectures-sdm-volume-3c-system-programming-guide-part-3)**
+- **[Intel SDM Chapter 24.8.3 (Event Injection Structures)](https://software.intel.com/en-us/download/intel-64-and-ia-32-architectures-sdm-volume-3c-system-programming-guide-part-3)**
+- [**Intel SDM Chapter 26.5 (Event Injection)**](https://software.intel.com/en-us/download/intel-64-and-ia-32-architectures-sdm-volume-3c-system-programming-guide-part-3)
+
+—–
+
+`Note: The source to this project will be added to the next article. I'm currently documenting it as much as possible so that you can follow along with the series, and reference back to specific days.  (7/23/2019)`

@@ -1,0 +1,1245 @@
+## Overview
+
+This article will cover the various requirements and features available for MMU virtualization via Intel Extended Page Tables. It’s going to be a relatively long article as I want to cover all of or most of the details concerning initialization and capability checking, MTRR setup, page splitting, and so on. We’ll start with checking feature availability and what capabilities are supported on the latest Intel processors, restructuring some of the VMM constructs to support EPT, and then move into the allocation of the page tables. This article will use the Windows memory management API to allocate and track resources. It’s highly recommended that the reader research and implement a custom memory allocator that doesn’t rely on the OS for resource allocation as these can be attack vectors for malicious third parties. However, we will be sticking to the most straightforward approach for simplicity. There is a lot of information to cover to avoid wasting much more time on this overview.
+
+**Disclaimer**
+
+Readers must have a foundational knowledge of virtual memory, paging, address translation, and page tables. This information is in [**§4.1.0 V-3A Intel SDM**](https://software.intel.com/content/www/us/en/develop/articles/intel-sdm.html).
+
+As always, the research and development of this project were performed on the latest **Windows 10 Build 21343.1000**. To ensure compatibility with all features, be aware that the author hosts an **Intel i9-10850k (Comet Lake)** that supports the most recent virtualization extensions. During capability/feature support checks, if your processor doesn’t show availability, do not worry — as long as it supports baseline EPT all is good.
+
+## Feature Availability
+
+To start, we need to check a few things to make sure that we support EPT and different EPT policies. This project has a function that sets all VMX capabilities before launch, if available – checking for WB cache type, various processor controls, and related to this article – EPT, VPID, INVPCID support. These capabilities are inside the secondary processor controls, which we’ll read from the **IA32_VMX_PROCBASED_CTLS2** MSR. The first 32 bits indicate the allowed 0 settings of these controls, and the upper 32 bits indicate the allowed one settings of this control. You should already have an algorithm set up to check and enable the various control features. If not, please refer back to **this article** in the first series on CPU virtualization.
+
+**Possible Incompatibility**
+
+If your processor doesn’t support secondary processor controls, you will be unable to implement EPT. The likelihood of this being an issue is slim unless you’re using a very old processor.
+
+Once the capabilities and policies have been verified and enabled, we will enable EPT. However, there will be an information dump prior because it’s essential to understand extended paging as an extension of the existing paging mechanism and the structural changes to your hypervisor. We’ll need to allocate a data structure inside of our guest descriptor that will contain the EPTP. The design of your project will vary from mine, but the important thing is that each guest structure allocated has its EPTP – this will be a 64-bit physical address. Here is an example of my guest descriptor:
+
+```
+typedef struct gcpu_descriptor_t
+{
+    uint16_t                id;
+    gcpu_handle_t           guest_list;
+    crn_access_rights       cr0_ar;
+    crn_access_rights       cr4_ar;
+    uint64_t                eptp;
+
+    //
+    // ... irrelevant members ...
+    //
+
+    gcpu_descriptor_t*      next_gcpu;
+} gcpu_descriptor_t;
+```
+
+Once you have an EPTP member setup, you’ll need to write the address of this member into the **VMCS_EPTP_ADDRESS** field using whatever VMCS write primitive you have set up. Similar to this:
+
+```
+// EPTP Address (Field Encoding: 0x201A)
+//
+vmwrite(vmcs, VMCS_EPTP_ADDRESS, gcpu->eptp);
+```
+
+Before implementing the main portion of the code for EPT, let’s address some important technical details. It’s in your best interest to read the following sections thoroughly to ensure you understand why certain things are checked and why certain conditions are unsupported. Improper virtualization of the MMU can cause loads of issues as you build your project out, so it’s imperative to understand how everything works before extending. It’s also good to review so that confusion is minimized in future sections… and because details are cool.
+
+## Memory Virtualization
+
+Virtual memory and paging are necessary abstractions in today’s working environments. They enable the modern computer system to efficiently utilize physical memory, isolate processes and execution contexts, and pass off the most complex parts of memory management to the OS. Before diving into the implementation of EPT, the reader (you) must have a decent understanding of virtual memory and paging; and address translation. There was a brief overview of the address translation performed in the [**previous article**](https://revers.engineering/mmu-ept-technical-details/). We’ll go into more detail here to set the stage for allocating and maintaining your EPT page hierarchies.
+
+#### — Virtual Memory and Paging
+
+In modern systems, when paging is enabled, every process has its own dedicated virtual address space managed at a specific granularity. This granularity usually is 4kB in size, and if you’ve ever heard the term [**page-aligned**](https://en.wikipedia.org/wiki/Data_structure_alignment), then you’ve worked with paging mechanisms. Page-aligned buffers are buffers (like your VMCS) aligned on page boundary — since the system is divided into granular chunks called pages, then page-aligned means that the starting address of a buffer is at the beginning of a page. A simple way to verify if an address is aligned on a page boundary is to check that the lower 12-bits of the address are clear (or zero). However, this is only true for 4kB pages; pages with different granularity, such as 2MB, 4MB, or 1GB, will have different alignment masks. For example, take the address `` FFFFD288`BD600000 ``. This address is 4kB page aligned (the lower 12-bits are clear), but it would not be aligned on a page boundary if the size of pages were 1GB. To check this, we would take this address to perform a logical AND operation against the 2s complement of the size (4kB, 1MB, 2MB, 4MB, 1GB) minus 1.
+
+The macro might look something like this: `PAGE_ALIGN_4KB(_ADDRESS)   ((UINTPTR)(_ADDRESS) & ~(0x1000 - 1))`. Whereas for 1GB, the 0x1000 (4,096 in hex) would be replaced by 0x40000000 (the size of a 1GB page.) Give it a try yourself and look at the differences between the addresses when aligned on their respective granularity’s boundary.
+
+* ***Page Alignment Trivia  
+**
+
+On a 4kB page size architecture, there are several different instances of page-aligned addresses other than 4,096. Two of those are 12,288 (0x3000) and 413,696 (0x65000) — as you may notice, the lower 12-bits are all clear in these. You can use any multiple desired page granularity to determine if the page is appropriately aligned. The expression `(``` FFFFD288`BD600000 & ~(0x32000-1)) `` still results in the same address; thus, this address is page-aligned – 0x32000 is a multiple of the page granularity.
+
+So, how is this virtual memory managed and mapped to a physical page? The implementation details are specific to the OS that does the memory management; there is enough information for a whole book — luckily, a few well-written researchers have covered much of it in **[Windows Internals 7th Edition](https://www.amazon.com/Windows-Internals-Part-architecture-management/dp/0735684189)**. The main thing to understand here is that all per-process mappings are stored in a page table which allows for virtual-to-physical address translation. In modern systems using virtual memory, for all load/store operations on a virtual address, the processor translates the virtual address to a physical address to access the data in memory. There are many different hardware facilities like the [**Translation Lookaside Buffer (TLB)**](https://en.wikipedia.org/wiki/Translation_lookaside_buffer) that expedite this address translation by caching the **[most recently used (MRU)](https://en.wikipedia.org/wiki/Cache_replacement_policies#Most_recently_used_(MRU)) [page table entries (PTEs)](https://www.geeksforgeeks.org/page-table-entries-in-page-table/)**. This allows the system to leverage paging in a performant manner since performing all the steps to address translation every time it’s accessed would significantly reduce performance, as with TLB misses. The previous article briefly covered the TLB and the various conditions that may be encountered. It may be worth reviewing since it’s been a bit since it was released…
+
+* * **Overheads of Paging  
+**
+
+As physical memory requirements grow, large workloads will experience higher latency due to paging on modern systems. This is in part to the size of the TLB not keeping pace with memory demands; this is partly due to the TLB being on the processor’s critical path for memory access. There are a few TLBs on systems, but most notably, the L1 and L2 TLB have begun to stagnate in size. You can read more about this problem, referred to as *TLB reach limitation*, in the recommended reading section if interested. There are also several papers on ResearchGate proposing solutions to increase TLB reach.  
+
+The reason for mentioning this is that how you design virtual memory managers is vital in preserving the many benefits of paging without tanking system performance. This is something to consider when adding an additional layer of address translation, such as in the case of EPT. So, what about the page table?
+
+#### ****𝛿** **Address Translation Visualized
+
+As mentioned above, the page table is a per-process structure (or per-context) that contains all the virtual-to-physical mappings of a process. The OS manages it, and the hardware performs the page table walk; in some cases, the OS fetches the translation. You know that this mapping of virtual to physical addresses occurs at a page granularity specified. So let’s take a look at a diagram showing the process of translating a virtual address to a physical address and then walk through the process.
+
+![](https://i0.wp.com/revers.engineering/wp-content/uploads/2021/08/pagetibbles.png?resize=700%2C628&ssl=1)
+
+The above diagram features an abstract view that you’ve likely seen a few times throughout this series, but it’s essential to keep it fresh in mind when walking through the actual address translation process. To address the abstract layout, we start with **[CR3](https://en.wikipedia.org/wiki/Control_register#CR3)**, which contains the physical base address of the current task’s topmost paging structure — in this case, the base of the PML4 table. The indexes in these different tables are determined by the linear address given for translation. A given PML4 entry (PML4E) will point to the base of a page directory pointer table (PDPT). At each step, the new physical address calculated is dereferenced to determine the base of the next paging structure. An offset into that table is added to the entries physical address, and so on — down the chain. Let’s walk through the process with a non-trivial linear address to get a more concrete example of this.
+
+The linear address given is, and the CR3 was determined by reading the **[\_KPROCESS structure](https://www.geoffchappell.com/studies/windows/km/ntoskrnl/structs/eprocess/index.htm)** and pulling the address out of the **DirectoryTableBase** member which was `13B7AA000`. The first thing that must be done is to split the associated linear address into parts required for address translation. The numbers above each block are the bit ranges that comprise that index. Bits 39 to 47, for instance, are the bits that will be used to determine the offset into the PML4 table to find the corresponding PML4E. If you want to follow along or try it out for yourself, you can use **[SpeedCrunch](https://speedcrunch.org/)** or WinDbg (with the **[.format command](https://docs.microsoft.com/en-us/windows-hardware/drivers/debugger/-formats--show-number-formats-)**) on the linear address and split it up accordingly. I’d say this is somewhat straightforward, but for the sake of giving as many examples as possible, the code below presents a few C macros that are useful for address translation.
+
+```
+#define X64_PML4E_ADDRESS_BITS          47
+#define X64_PDPTE_ADDRESS_BITS          39
+#define X64_PDTE_ADDRESS_BITS           30
+#define X64_PTE_ADDRESS_BITS            21
+        
+#define PT_SHIFT                        12
+#define PDT_SHIFT                       21
+#define PDPT_SHIFT                      30
+#define PML4_SHIFT                      39
+        
+#define ENTRY_SHIFT                     3
+
+#define X64_PX_MASK(_ADDRESS_BITS)      ((((UINT64)1) << _ADDRESS_BITS) - 1)
+
+#define Pml4Index(Va)                   (UINT64)((Va & (UINT64)(X64_PX_MASK(X64_PML4E_ADDRESS_BITS)) >> PML4_SHIFT))
+#define PdptIndex(Va)                   (UINT64)((Va & (UINT64)(X64_PX_MASK(X64_PDPTE_ADDRESS_BITS)) >> PDPT_SHIFT))
+#define PdtIndex(Va)                    (UINT64)((Va & (UINT64)(X64_PX_MASK(X64_PDTE_ADDRESS_BITS)) >> PDT_SHIFT))
+#define PtIndex(Va)                     (UINT64)((Va & (UINT64)(X64_PX_MASK(X64_PTE_ADDRESS_BITS)) >> PT_SHIFT))
+
+// Returns the physical address of PML4E mapping the provided virtual address.
+//
+#define GetPml4e(Cr3, Va)               ((PUINT64)(Cr3 + (Pml4Index(Va) << ENTRY_SHIFT)))
+
+// Returns the physical address of the PDPTE which maps the provided virtual address.
+//
+#define GetPdpte(PdptAddress, Va)       ((PUINT64)(PdptAddress + (PdptIndex(Va) << ENTRY_SHIFT)))
+
+// Returns the physical address of the PDTE which maps the provided virtual address.
+//
+#define GetPdte(PdtAddress, Va)         ((PUINT64)(PdtAddress + (PdtIndex(Va) << ENTRY_SHIFT)))
+
+// Returns the physical address of the PTE which maps the provided virtual address.
+//
+#define GetPte(PtAddress, Va)           ((PUINT64)(PtAddress + (PtIndex(Va) << ENTRY_SHIFT)))
+```
+
+There’s a lot of shifting and masking in the above; it can be quite daunting to those unfamiliar. There’s only one way to detail the bit shifting shenanigans, and that’s done pretty well in the **Intel SDM Vol. 3A Chapter 4**. This will be in the recommended reading as understanding paging and virtual memory in depth are necessary. However, circling back to our earlier example, I’ll explain how these macros, in conjunction with a simple algorithm, can be used to traverse the paging hierarchy quickly and efficiently.
+
+* * **Important Note  
+**
+
+If you attempt to traverse the paging structures yourself, you will find that the entries inside of each page table look something akin to `` 0a000001`33c1a867 ``. This is normal; this is the format for the PTE data structure. On Windows, this is the structure type `_MMPTE`. If you cast entry to this data structure, you’ll see that it has a union specified and allows you to look at the individual bits set inside the hardware page structure, among other types. For instance, the example given – `` 0a000001`33c1a867 `` – is valid, dirty, allows writes, and has a PFN of `133c1a`. The information you want for address translation is the **page frame number (PFN)**.
+
+Given the note above, we have to do two simple bitwise operations to get the page frame number (PFN) from the page table entry to provide these macros at each step. The first thing is to mask off the upper word (16-bits) of the entry — this will leave the page frame number and the additional information such as the valid, dirty, owner, and accessed bits, which is what makes up the bottom portion (the `867`).  In this case, using the entry value `` 0a000001`33c1a867 ``, we would have to perform a bitwise AND against a mask that will retain the lower 48 bits (maximum address size when 4-level paging is used). A mask that would do this can be constructed by setting the uppermost bit position (48) and subtracting one, resulting in a mask with all the bits 48 and below set. The mask can be hard-coded or generated with this expression: `((1 << 48) - 1)`.
+
+If we take our address and do the following:
+
+```
+u64 pdpe_address = ( 0x0a00000133c1a867 & ( ( 1 << 48 ) - 1 ) ) ... /* one more step necessary */
+```
+
+We would be left with the lower 48 bits yielding the result `133c1a867`. All that’s left is to clear the lower 12 bits and then pass the result to the next step in our address translation sequence. The bottom 12 bits must be clear since the address of the next paging structure will always be page-aligned. This can be done by masking them off and completing the above expression to yield the next paging structures address:
+
+```
+u64 pdpe_address = ( 0x0a00000133c1a867 & ( ( 1 << 48 ) - 1 ) ) & ~0xFFF;
+```
+
+The above is the same as doing `133c1a867 & 0x000FFFFFFFFFF000`, but we want the cleanest solution possible. After this, the variable the result is assigned to holds the value `133c1a000` which is our PDPE base address in this example. These steps can be macro’d out, but I wanted to illustrate the actual entries being processed by hand, so the logic became clear. As the below code excerpt demonstrates, the macros provided before this example are intended to be used.
+
+```
+// This is a brief example, not production ready code...
+//
+u64 DirectoryBase = 0x1b864d000;
+u64 Va = 0x760715d000;
+
+u64 Pml4e = GetPml4e( DirectoryBase, Va );
+
+u64 PdptBase = ( *Pml4e & X64_VIRTUAL_ADDRESS_BITS ) & ~0xFFF;
+u64 Pdpte = GetPdpte( PdptBase, Va );
+
+u64 PdtBase = ( *Pdpte & X64_VIRTUAL_ADDRESS_BITS ) & ~0xFFF;
+u64 Pde = GetPdte( PdtBase, Va );
+
+/* ... etc ... */
+```
+
+Ideally, you would loop and decrement the level based on various conditions and utilize the requirement that 9 bits be subtracted each time from whichever mask and check for certain bits and extensions in CR0 and CR4, among other things. We will cover a proper page walk in a later section of this article. This was intended to give a quick and dirty overview of the address translation process without checking for presence, large pages, access rights, etc. As of now, hopefully, you have a decent idea of how virtual memory and address translation work. This next section will dive into the info about [**SLAT**](https://en.wikipedia.org/wiki/Second_Level_Address_Translation) mechanisms, in this case – the [**Extended Page Tables (EPT)**](https://en.wikipedia.org/wiki/Second_Level_Address_Translation) feature on Intel processors.
+
+#### — Extended Page Tables
+
+Intel and other hardware manufacturers introduced virtualization extensions to allow multiple operating systems to execute on a single hardware setup. To perform better than the software virtualization solutions, many different facilities were introduced – one of them was EPT. This extension allows the host computer to fully virtualize memory thought it introduces a level of indirection between guest virtual address space (the VM virtual address space; GVA) and the host physical address space (HPA) called the guest physical address space (GPA). The addition of this second-level in the address translation process is where the acronym **[SLAT](https://en.wikipedia.org/wiki/Second_Level_Address_Translation)** is derived from and also modifies the process taken. The procedure formerly was VA → PA, but with SLAT enabled, becomes GVA → GPA → HPA. Guest virtual address to guest physical address translation is done through an additional per-process guest page table, and the guest physical address to host physical address translation is performed through the per-VM host page table.
+
+ 
+
+![](https://i0.wp.com/revers.engineering/wp-content/uploads/2021/08/abstables-1.png?resize=700%2C125&ssl=1)
+
+Figure 2. Guest Virtual Address to Host Physical Address
+
+This method of memory virtualization is commonly referred to as **[hardware-assisted nested paging](https://docs.oracle.com/en/virtualization/virtualbox/6.0/admin/nestedpaging.html). It is** accomplished by allowing the processor to hold two-page table pointers: one pointing to the guest page table and another to the host page table. As mentioned earlier, we know that address translation can negatively impact system performance if the TLB misses are high. You can imagine this would by double-so with nested paging enabled it multiplies overheads 6-fold when a TLB miss occurs since it requires a 2-dimensional page walk. I write 2-dimensional because native page-walks only require one dimension of the page hierarchy being traversed, whereas with extended paging, there are two dimensions because of the two-page tables needing to be traversed. Natively, memory references that cause a TLB miss require 4 accesses to complete translation whereas when virtualized it increases to a whopping 24 accesses. This is where MMU caches and intermediate translations can improve the performance of memory accesses that result in a TLB miss – even when virtualized.
+
+Anyways, enough of that, there will be some resources following the conclusion for those interested in reading about the page-walk caches and nested TLBs. I know you’re itching to initialize the EPT data for your project… so let’s get it goin’.
+
+#### — EPT and Paging Data Structures
+
+If you recall in the first series for virtualization we had a single function that initialized the VMXON, VMCS, and other associated data structures. Prior to enabling VMX operation, but after allocating the regions for our VMXON and VMCS as well as any other host-associated structures, we’re going to initialize our EPT resources. This will be done in the same function that runs for each virtual CPU. First and foremost, we need to check that the processor supports the features necessary for EPT. Depending on the structure of your project, I do it when checking the various VM-entry/VM-exit/VM-control structures for what bits are supported. Below are the data structure, function, and required references for checking if EPT features are available.
+
+```
+// EPT VPID Capability MSR Address
+//
+#define     IA32_VMX_EPT_VPID_CAP_MSR_ADDRESS                                   0x048C
+
+// EPT VPID Capability MSR Bit Masks
+//
+#define     IA32_VMX_EPT_VPID_CAP_MSR_EXECUTE_ONLY                              (UINT64)(0x0000000000000001)
+#define     IA32_VMX_EPT_VPID_CAP_MSR_PAGE_WALK_LENGTH_4                        (UINT64)(0x0000000000000040)
+#define     IA32_VMX_EPT_VPID_CAP_MSR_UC_MEMORY_TYPE                            (UINT64)(0x0000000000000100)
+#define     IA32_VMX_EPT_VPID_CAP_MSR_WB_MEMORY_TYPE                            (UINT64)(0x0000000000004000)
+#define     IA32_VMX_EPT_VPID_CAP_MSR_PDE_2MB_PAGES                             (UINT64)(0x0000000000010000)
+#define     IA32_VMX_EPT_VPID_CAP_MSR_PDPTE_1GB_PAGES                           (UINT64)(0x0000000000020000)
+#define     IA32_VMX_EPT_VPID_CAP_MSR_INVEPT_SUPPORTED                          (UINT64)(0x0000000000100000)
+#define     IA32_VMX_EPT_VPID_CAP_MSR_ACCESSED_DIRTY_FLAG                       (UINT64)(0x0000000000200000)
+#define     IA32_VMX_EPT_VPID_CAP_MSR_EPT_VIOLATION_ADVANCED_EXIT_INFO          (UINT64)(0x0000000000400000)
+#define     IA32_VMX_EPT_VPID_CAP_MSR_SUPERVISOR_SHADOW_STACK_CONTROL           (UINT64)(0x0000000000800000)
+#define     IA32_VMX_EPT_VPID_CAP_MSR_SINGLE_CONTEXT_INVEPT                     (UINT64)(0x0000000002000000)
+#define     IA32_VMX_EPT_VPID_CAP_MSR_ALL_CONTEXT_INVEPT                        (UINT64)(0x0000000004000000)
+#define     IA32_VMX_EPT_VPID_CAP_MSR_INVVPID                                   (UINT64)(0x0000000100000000)
+#define     IA32_VMX_EPT_VPID_CAP_MSR_INDIVIDUAL_ADDRESS_INVVPID                (UINT64)(0x0000010000000000)
+#define     IA32_VMX_EPT_VPID_CAP_MSR_SINGLE_CONTEXT_INVVPID                    (UINT64)(0x0000020000000000)
+#define     IA32_VMX_EPT_VPID_CAP_MSR_ALL_CONTEXT_INVVPID                       (UINT64)(0x0000040000000000)
+#define     IA32_VMX_EPT_VPID_CAP_MSR_SINGLE_CONTEXT_GLOBAL_INVVPID             (UINT64)(0x0000080000000000)
+
+typedef struct _msr_vmx_ept_vpid_cap
+{
+    u64 value;
+    union
+    {
+        // RWX support
+        //
+        u64 ept_xo_support : 1;
+        u64 ept_wo_support : 1;
+        u64 ept_wxo_support : 1;
+        
+        // Guest address width support
+        //
+        u64 gaw_21 : 1;
+        u64 gaw_30 : 1;
+        u64 gaw_39 : 1;
+        u64 gaw_48 : 1;
+        u64 gaw_57 : 1;
+        
+        // Memory type support
+        u64 uc_memory_type : 1;
+        u64 wc_memory_type : 1;
+        u64 rsvd0 : 2;
+        u64 wt_memory_type : 1;
+        u64 wp_memory_type : 1;
+        u64 wb_memory_type : 1;
+        u64 rsvd1 : 1;
+        
+        // Page size support
+        u64 pde_2mb_pages : 1;
+        u64 pdpte_1gb_pages : 1;
+        u64 pxe_512gb_page : 1;
+        u64 pxe_1tb_page : 1;
+        
+        // INVEPT support
+        u64 invept_supported : 1;
+        u64 ept_accessed_dirty_flags : 1;
+        u64 ept_violation_advanced_information : 1;
+        u64 supervisor_shadow_stack_control : 1;
+        u64 individual_address_invept : 1;
+        u64 single_context_invept : 1;
+        u64 all_context_invept : 1;
+        u64 rsvd2 : 5;
+        
+        // INVVPID support
+        u64 invvpid_supported : 1;
+        u64 rsvd7 : 7;
+        u64 individual_address_invvpid : 1;
+        u64 single_context_invvpid : 1;
+        u64 all_context_invvpid : 1;
+        u64 single_context_global_invvpid : 1;
+        u64 rsvd8 : 20;
+    } bits;
+} msr_vmx_ept_vpid_cap;
+
+boolean_t is_ept_available( void )
+{
+    msr_vmx_ept_vpid_cap cap_msr;
+    cap_msr.value = __readmsr(IA32_VMX_EPT_VPID_CAP_MSR_ADDRESS);
+    
+    if( !cap_msr.bits.ept_xo_support             ||
+        !cap_msr.bits.gaw_48                     ||
+        !cap_msr.bits.wb_memory_type             ||
+        !cap_msr.bits.pde_2mb_pages              ||
+        !cap_msr.bits.pdpte_1gb_pages            ||
+        !cap_msr.bits.invept_supported           ||
+        !cap_msr.bits.single_context_invept      ||
+        !cap_msr.bits.all_context_invept         ||
+        !cap_msr.bits.invvpid_supported          ||
+        !cap_msr.bits.individual_address_invvpid ||
+        !cap_msr.bits.single_context_invvpid     ||
+        !cap_msr.bits.all_context_invvpid        ||
+        !cap_msr.bits.single_context_global_invvpid )
+    {
+        return FALSE;
+    }
+    
+    return TRUE;
+}
+```
+
+The above code is intended to be placed into your project based on your layout. I included the macros for the bitmasks in case using the structure to represent the MSR was not as clean as desired. This function `is_ept_available` is intended to be called prior to setting the processor controls in the primary and secondary controls. Though we won’t get into handling CR3 load exiting in this article, the two controls of interest, for now, is `enable_vpid` and `enable_ept` in the secondary processor controls field. You should switch based on the result of the previous function. If all is well, the processor supports the required features (which can be adjusted at your discretion), we’ll need to set up the EPT data structures. However, before we do that we have to take a little detour to explain the use of [**VPIDs**](http://www.jauu.net/2011/11/13/virtual-processor-ids-and-tlb/).
+
+#### — Virtual Processor Identifiers and Process-Context Identifiers
+
+Back in 2008, Intel decided to add a new cache hierarchy alongside some very important changes to the TLB hierarchy to cache virtual-to-physical address mappings. There were more involved changes, but what is relevant for our purposes is that the [**Intel Nehalem microarchitecture**](https://en.wikipedia.org/wiki/Nehalem_(microarchitecture)) introduced the **virtual processor identifier (VPID)**. As we know from the previous article, the TLB caches virtual-to-physical address translations for pages. The mapping cached in the TLB is specific to a task and guest (VM). On older processors, the TLB would be flushed incessantly as the processor switched between the VM and VMM, which had a massive impact on performance. The VPID is intended to track which guest a given translation entry in the TLB is associated with, providing the ability for the hardware to selectively invalidate caches on VM-exit and VM-entry, removing the requirement of flushing of the TLB for coherence and isolation.
+
+For example, a process attempts to access a translation that it isn’t associated with — this results in a TLB miss rather than an access violation when walking through the page tables. [**VPIDs**](https://docs.oracle.com/en/virtualization/virtualbox/6.0/admin/nestedpaging.html) were introduced to improve the performance of VM transitions. Coupled with EPT, which further reduced VM transition overhead (because the VMM no longer had to service the \#PF itself), you begin to see a reduction in VM exits and a significant improvement in virtualization performance. This feature brought with it new instructions to allow software the ability to invalidate mappings from the TLB associated with a VPID; the instruction is documented as `invvpid`; similarly, EPT introduced `invept` instruction which allows the software to invalidate cached information from the EPT page structures. To review some other technical details, please refer to the [**previous article**](https://revers.engineering/mmu-ept-technical-details/).
+
+Alongside the VPID technology, a hardware feature known as the [**process-context identifier (PCID)**](https://xem.github.io/minix86/manual/intel-x86-and-64-manual-vol3/o_fe12b1e2a880e0ce-139.html) was introduced. PCIDs enable the hardware to “cache information for multiple linear-address spaces.” This means a processor can maintain cached data when software switches to a different address space with a different PCID. This was added at the same time in order to mitigate the performance impacts of TLB flushes due to context switching, and in a similar fashion to VPIDs, the instruction `invpcid` was added so that software may invalidate cached mappings in the TLBs associated with a specific PCID.
+
+The main takeaway is that these features allow the software to skip flushing of the TLB when performing a context switch. This is because TLB flushing occurs on VM-entry and VM-exit due to address space change (aka the reload of CR3.) VPIDs support retention of TLB entries across VM switches and provide a performance improvement. Prior to this hardware feature being introduced the TLB used to map linear address → physical adress, but utilizing VPID the TLB maps {VPID, linear address} → physical address. Host software runs with VPID of 0, and the Guest will have a non-zero VPID assigned by the VMM. Note that some VMM implementations run on modern hardware will have the guest with a VPID of 0, this indicates that a TLB flush will occur on VM-entry and VM-exit.
+
+* * **Regarding PCID and VPID  
+**
+
+As noted in the Intel SDM, software can use PCIDs and VPIDs concurrently; for this project, we will not concern ourselves with the use of PCIDs. If you would like to tinker with this you can find details on how to enable PCIDs in [**§4.10.1 Vol. 3A of the Intel SDM**](https://software.intel.com/content/www/us/en/develop/articles/intel-sdm.html).  
+
+For now, this is all that’s necessary to keep in the back of your mind. This next part is going to be pretty excerpt-heavy with descriptions and reasoning for collecting the information. Let’s get on to MTRRs, and then we’ll finally be ready to setup our EPT context.
+
+#### — MTRRs
+
+[**Memory type range registers (MTRRs)**](https://en.wikipedia.org/wiki/Memory_type_range_register) were briefly discussed in the first article of this series. In the simplest sense, these registers are used to associate memory caching types with physical-address ranges in system memory. They’re initialized by the BIOS (usually) and are intended to optimize accesses for a variety of memory. RAM, ROM, frame-buffer, MMIO, [**SMRAM**](https://www.computerhope.com/jargon/s/smram.htm), etc. These memory type registers are available for use through a series of model-specific registers which define the type of memory for a given range of physical memory. There are a handful of memory types, and if you’re familiar with the general theory of caching you’ll recall that there are 3 different levels of caches the processor may use for memory operations. The memory type specified for a region of system memory influences whether these locations are cached or not, and their memory ordering model. In this subsection, whenever you see **memory type** or **cache type** they’re referring to the same thing. We’re going to address those memory types below.
+
+**PAT preference over MTRR**
+
+This section is optional**\*** and a moderate overview of how the BIOS/UEFI firmware sets up MTRRs during boot, therefore this section is optional unless you’re interested in how the BIOS/firmware determines memory types and updates the various MTRRs. It’s recommended that system developers use the **Page Attribute Table (PAT)** over the MTRRs. Feel free to skip over this to the EPT hierarchies section.
+
+#### ****𝛿**** Strong Uncacheable (UC)
+
+Any system memory marked as UC indicates that it isn’t cached. Every load and store to that region will be passed through the memory access path and executed in order, without any reordering. This means that there aren’t speculative memory accesses, page-table walks, or any sort of branch prediction. The memory controller performs the operation on DRAM of the default size (64-bytes is typical minimum read size), but returns the requested data to the processor and the information is not propagated to any cache. Since having to access main memory (DRAM) is slow, using this memory type frivolously can significantly reduce performance of the system. It typically will be used for MMIO device ranges, and the BIOS region. The memory model for this memory type is referred to as **strongly ordered**.
+
+#### ****𝛿**** Uncacheable (UC- or UC Minus)
+
+This memory type has the same properties as the UC type although it can be overridden by WC if the MTRRs are updated. It’s also only able to be selected through the use of the page attribute table (PAT), which we will discuss following this section.
+
+#### ****𝛿**** Write Combine (WC)
+
+This memory type is primarily used with any sort of GPU memory, frame buffer, etc. This is because the order of writes aren’t important to the display of whatever data. It operates similar to UC in that the memory locations aren’t cached and coherency isn’t enforced. For instance, if you were to use some GPU API to map a buffer or texture into memory you can bet that memory will be marked as **write combine (WC)**. An interesting behavior is what happens when a read is performed. The read operation is treated as if it were performed on an uncached location. All write-combined buffers get flushed to main memory (oof) and then the read is completed without any cache references. This means that reads on WC memory will impact performance if done often, much like with UC (because they behave as if the memory was UC).
+
+There’s not really a great reason to read from WC memory, and reading back-buffers, or some constant buffer is usually advised against for this reason. If you want to perform a write to WC memory, well, you need to make sure your compiler doesn’t try to reorder writes (hint: volatile). You also don’t want to be performing writes to individual memory locations with WC memory – if you’re writing to a WC range, you’re going to want to write the whole range. It’s better to have one large write than a bunch of small writes — less of a performance impact when modifying WC memory. Alignment, access width, and other rules may be in place – so whether Intel or AMD, check your manual.
+
+(For those reading that like to make game hacks and have issues with the perf of your “hardware ESP”, maybe this will jog your brain.)
+
+#### ****𝛿**** Write Through (WT)
+
+With this cache type memory operations are cached. Reads will come from caches on a cache hit, misses will cause cache fills. You can see an explanation of read + fill in the **previous article**. The biggest thing to note about the **write through (WT)** type is that writes are propagated to a cache line and also *written through* to memory. This type enforces coherency between caches and main memory.
+
+#### ****𝛿**** Write Back (WB)
+
+This is the most common memory type throughout the ranges on your machine, as it is the most performant. Memory operations are cached, speculative operations are allowed, however, writes to a cache line are not forwarded to system memory; they’re propagated to the cache and the modified cache lines are *written back* to main memory when a *write-back* operation occurs. It enforces memory and cache coherency, and requires devices that may access memory on the system bus to be able to snoop memory accesses. This allows low latency and high throughput for write-intensive tasks.
+
+* * **Bus Snooping  
+**
+
+The term bus snooping used to mean a device was sniffing the bus (monitoring bus transactions) to be aware of changes that may have occurred when requesting a cache line. In modern systems, it’s a bit different. If you’re interested in how cache coherency is maintained on modern systems you can look at the recommended reading section, and/or the patents under the cache coherency classification [**here**](https://patents.google.com/?q=G06F12%2f0831&sort=new). Additionally, the Intel Patent linked [**here**](https://patents.google.com/patent/US7543115).
+
+#### ****𝛿**** Write Protected (WP)
+
+This caching type simply propagates writes to the interconnect (shared bus) and causes relevant cache lines on all processors to be invalidated. Whereas reads fetch data from cache lines when available. This memory type is usually intended to cache ROM without having to reach out to the ROM itself.
+
+Now that we’ve discussed the different memory types available to the system programmer, let’s implement our MTRR API so we can appropriately set our memory types when we begin allocating memory for EPT.
+
+#### — MTRR Implementation
+
+With [**MTRRs**](https://en.wikipedia.org/wiki/Memory_type_range_register), whether programming them or accessing for information, we’re going to be using a number of [**model-specific registers (MSRs)**](https://en.wikipedia.org/wiki/Model-specific_register) that Intel documents. The main two of interest will be the `IA32_MTRR_CAP_MSR` and `IA32_MTRR_DEF_TYPE_MSR`. The MTRR capabilities MSR (`IA32_MTRR_CAP_MSR`) is used to gather additional information about MTRRs such as the number of variable range MTRRs are implemented by the hardware, fixed range MTRRs, and whether write-combining is supported. There are some other flags, but they aren’t of interest to us for this article. The structure for this MSR is given below.
+
+```
+typedef union _ia32_mtrrcap_msr
+{
+    u64 value;
+    struct
+    {
+        u64 vcnt : 8;
+        u64 fr_mtrr : 1;
+        u64 rsvd0 : 1;
+        u64 wc : 1;
+        u64 smrr : 1;
+        u64 prmrr : 1;
+        u64 rsvd1 : 51;
+    } bits;
+} ia32_mtrrcap_msr;
+```
+
+The MTRR default type MSR (`IA32_MTRR_DEF_TYPE_MSR`) provides the default cache properties of physical memory that is not covered by the MTRRS. It also allows the software programming the MTRRs to determine whether MTRRs and the associated fixed-ranges are enabled. Here is the structure I use.
+
+```
+typedef union _ia32_mtrr_def_type_msr
+{
+    u64 value;
+    struct
+    {
+        u64 type : 8;
+        u64 rsvd0 : 2;
+        u64 fe : 1;
+        u64 en : 1;
+        u64 rsvd1 : 51;
+    } bits;
+} ia32_mtrr_def_type_msr;
+```
+
+MTRRs come in two flavors, fixed and variable range. On Intel, there are 11 fixed-range registers each divided into 8 bit-fields and are used to determine/specify the memory type for each sub-range it covers. The table below depicts how each fixed-range MTRR is divided to cover their respective address ranges.
+
+![](https://i0.wp.com/i.imgur.com/3m0atD2.png?resize=604%2C390&ssl=1)
+
+Figure 4. Bit-field layout for fixed-range MTRRs
+
+Knowing the mapping for each of these type range registers allows us to develop an algorithm to determine which fixed-range an address falls under, if at all. How we’ll achieve this is by defining a few base points to compare the address against. As you can see the first MTRR is named `IA32_MTRR_FIX64K_00000` and based on the address ranges covered by the bit-field it maps 512 KiB from `00000h` to `7FFFFh`, and it has eight 64 KiB sub-ranges in the bitfield (see above table). The `IA32_MTRR_FIX16K_80000` and `IA32_MTRR_FIX16K_A0000` MTRRs map two 128 KiB address ranges from `80000h` to `BFFFFh`. Then there are eight 32KiB ranges covered by the FIX4K MTRRs. These 4K MTRRs cover 256 KiB through 8 fixed-range registers.
+
+* ***MTRR Ranges  
+**
+
+I’ve been unable to determine the exact reasoning for the layout of MTRRs, but my best guess would be because of the physical memory map after the BIOS transfers control. For instance, the first 384 KiB is typically reserved for ROM shadowing, real mode IVT, BIOS data, bootloader, etc. Then you have the 64 KiB range `A0000h` to `AFFFFh` which typically houses the graphics video memory; and the 32 KiB range `C0000h` to `C7FFFh` normally containing the VGA BIOS ROM / Video ROM, though the sub-ranges may require different memory types. It also stands to reason that the first two MTRRs cover the 640 KiB that was referred to as [**conventional memory**](https://en.wikipedia.org/wiki/Conventional_memory) back in early PCs.
+
+With this in mind let’s define a few things like the MTRR MSRs, cache type encodings, and the start addresses for each range covered, which a given address will be compared against to determine if it falls within.
+
+```
+#define CACHE_MEMORY_TYPE_UC                 0x0000
+#define CACHE_MEMORY_TYPE_WC                 0x0001
+#define CACHE_MEMORY_TYPE_WT                 0x0004
+#define CACHE_MEMORY_TYPE_WP                 0x0005
+#define CACHE_MEMORY_TYPE_WB                 0x0006
+#define CACHE_MEMORY_TYPE_UC_MINUS           0x0007
+#define CACHE_MEMORY_TYPE_ERROR              0x00FE     /* user-defined */
+#define CACHE_MEMORY_TYPE_RESERVED           0x00FF
+
+#define IA32_MTRR_CAP_MSR                    0x00FE
+#define IA32_MTRR_DEF_TYPE_MSR               0x02FF
+
+#define IA32_MTRR_FIX64K_00000_MSR           0x0250
+#define IA32_MTRR_FIX16K_80000_MSR           0x0258
+#define IA32_MTRR_FIX16K_A0000_MSR           0x0259
+#define IA32_MTRR_FIX4K_C0000_MSR            0x0268
+#define IA32_MTRR_FIX4K_C8000_MSR            0x0269
+#define IA32_MTRR_FIX4K_D0000_MSR            0x026A
+#define IA32_MTRR_FIX4K_D8000_MSR            0x026B
+#define IA32_MTRR_FIX4K_E0000_MSR            0x026C
+#define IA32_MTRR_FIX4K_E8000_MSR            0x026D
+#define IA32_MTRR_FIX4K_F0000_MSR            0x026E
+#define IA32_MTRR_FIX4K_F8000_MSR            0x026F
+
+#define MTRR_FIX64K_BASE                     0x00000
+#define MTRR_FIX16K_BASE                     0x80000
+#define MTRR_FIX4K_BASE                      0xC0000
+#define MTRR_FIXED_MAXIMUM                   0xFFFFF
+
+#define MTRR_FIXED_RANGE_ENTRIES_MAX         88
+#define MTRR_VARIABLE_RANGE_ENTRIES_MAX      255
+```
+
+Now, let’s derive a function to get the memory type of an address that falls within a fixed-range.
+
+```
+static u8 mtrr_index_fixed_range( u32 msr_address, u32 idx )
+{
+    // Read MTRR and extract the memory type value from the bitfield.
+    //
+    u64 val = __readmsr( msr_address + ( idx >> 3 ) );
+    return ( u8 )( msr_val >> ( idx << 3 ) );
+}
+
+static u8 mtrr_get_fixed_range_type( u64 address, u64* size )
+{
+    ia32_mtrrcap_msr mtrrcap = { 0 };
+    ia32_mtrr_def_type_msr mtrrdef = { 0 };
+    
+    mtrrcap.value = __readmsr( IA32_MTRR_CAP_MSR );
+    mtrrdef.value = __readmsr( IA32_MTRR_DEF_TYPE_MSR );
+    
+    // Check if fixed-range MTRRs are enabled, and the address
+    // is within the ranges covered by fixed-range MTRRs.
+    //
+    if( !( mtrrdef.bits.fe ) || address >= MTRR_FIXED_MAXIMUM )
+        return CACHE_MEMORY_TYPE_RESERVED;
+    
+    // Check if address is within the FIX64K range.
+    //
+    if( address < MTRR_FIX16K_BASE ) 
+    {
+        *size = PAGE_SIZE << 4; /* 64KB */
+        return mtrr_index_fixed_range( IA32_MTRR_FIX64K_00000_MSR, address / ( PAGE_SIZE << 4 ) );
+    }
+    
+    // Check if address is within the FIX16K range.
+    //
+    if( address < MTRR_FIX4K_BASE ) 
+    {
+        address -= MTRR_FIX16K_BASE;
+        *size = PAGE_SIZE << 2; /* 16 KB */
+        return mtrr_index_fixed_range( IA32_MTRR_FIX16K_80000_MSR, address / ( PAGE_SIZE << 2 ) );
+    }
+    
+    // If we're not in any of those ranges, we're in the FIX4K range.
+    //
+    address -= MTRR_FIX4K_BASE;
+    *size = PAGE_SIZE;
+    
+    return mtrr_index_fixed_range( IA32_MTRR_FIX4K_C0000_MSR, address / PAGE_SIZE );
+}
+```
+
+The function above uses the relevant MSRs and MTRRs to determine if an address given falls within a fixed-range. The function `mtrr_get_fixed_range_type` captures the current values of the MTRR capability MSR and MTRR default memory type, and then uses the bitfields from the structures defined earlier to determine if fixed-range MTRRs are enabled, and that the range falls within the maximum fixed-range supported. It then compares the address provided to the different start addresses of the ranges – `MTRR_FIX16K_BASE`, which starts at `80000h`, for instance. The expression checks to see if the address falls within the 64K fixed-range by checking if it’s less than `80000h`. It then sets the size of the range to 64K, or whatever the relevant size for the range is. Remember that the 64K range is comprised of eight 64-KiB sub-ranges. We then have a helper function above as well that utilizes the base MSR and an expression that yields the index into the MSR bitfield from which to take the memory type. Let’s briefly walk through that line and helper function, as it will make sense for the others as well.
+
+Given the address `81A00h` passed through this function, we’ll wind up branching into this conditional block:
+
+```
+// Check if address is within the FIX16K range.
+//
+if( address < MTRR_FIX4K_BASE ) 
+{
+    address -= MTRR_FIX16K_BASE;
+    *size = PAGE_SIZE << 2;
+    return mtrr_index_fixed_range( IA32_MTRR_FIX16K_80000_MSR, address / ( PAGE_SIZE << 2 ) );
+}
+```
+
+This is because the address `8A100h` is less than the start address of the fixed 4K range, and not lower than the fixed 16K range start. Inside this conditional block the address is subtracted from the base of the fixed range (`MTRR_FIX16K_BASE`) to determine the offset into the range it falls. The size of the range is then set to `PAGE_SIZE << 2` which is just `PAGE_SIZE (1000h) * 4` yielding 16KiB. We then use the fixed-range MSR for the first 16K MTRR, and the address divided by size of the range which will give us the index into the bitfield of the MSR after it is read. We also use this index to determine which MSR should be read from. The shifts will be explained as we go through the helper function.
+
+```
+static u8 mtrr_index_fixed_range( u32 msr_address, u32 idx )
+{
+    // Read MTRR and extract the memory type value from the bitfield
+    //
+    u64 val = __readmsr( msr_address + ( idx >> 3 ) );
+    return ( u8 )( msr_val >> ( idx << 3 ) );
+}
+```
+
+The helper function above reads from the MSR address, which is `IA32_MTRR_FIX16K_80000_MSR` in this case, after adding the index divided by 8. In this case, the index is derived from the expression in the conditional block – `address / ( PAGE_SIZE << 2 )`. This expands to `1A00h / 4000h ``→ 0`. This means it will read from the MSR address give, and index into that MSRs bitfield (refer to the earlier diagram) using the value 0. This makes sense as the address `81A00h` falls within the first bitfield (0th index) of the `IA32_MTRR_FIX16K_80000` MTRR which covers physical addresses `80000h` to `83FFFh`. It then takes the MSR value, which when read is `` 06060606`06060606h ``, and shifts it right by the index multiplied by 8 – which is 0, meaning it will use the value `6h` from the first byte of this value. The memory type that corresponds to the value `6h` is `CACHE_MEMORY_TYPE_WB` per our earlier definitions. If this is confusing to follow, I’ve provided a diagram below using the same address as well as an address that would fall within a fixed 4K range.
+
+![](https://i0.wp.com/revers.engineering/wp-content/uploads/2021/08/gatfawe.png?resize=700%2C476&ssl=1)
+
+Figure 5. Calculating memory type for physical address using MTRRs.
+
+The above is pretty straight forward as the fixed-ranges have easily indexable MSRs. Hopefully the example cleared up any potential confusion about how the memory type is calculated for these ranges. Now that we’ve gone over fixed-range MTRRs we need to construct an algorithm for determining the memory type of a variable range MTRR. And yes, there’s more to them… Each variable range MTRR allows software to specify a memory type for a varying number address ranges. This is done through a pair of MTRRs for each range. How do we determine the number of variable ranges our platform supports? Recall the `IA32_MTRRCAP_MSR` structure.
+
+```
+typedef union _ia32_mtrrcap_msr
+{
+    u64 value;
+    struct
+    {
+        u64 vcnt : 8;
+        u64 fr_mtrr : 1;
+        u64 rsvd0 : 1;
+        u64 wc : 1;
+        u64 smrr : 1;
+        u64 prmrr : 1;
+        u64 rsvd1 : 51;
+    } bits;
+} ia32_mtrrcap_msr;
+```
+
+The first 8 bits of the bitfield are allocated for the vcnt member, which indicates the number of variable ranges implemented on the processor. We’ll need to remember this for use in our function. It was mentioned that there are MSR pairs provided for programming the memory type of these variable range MTRRs – these are referred to as `IA32_MTRR_PHYSBASEn` and `IA32_MTRR_PHYSMASKn`. The “`n`” is used to represent a value in the range of `0 ``→`` (vcnt - 1)`. The MSR addresses for these pairs are provided below.
+
+```
+#define IA32_MTRR_PHYSBASE0_MSR              0x0200
+#define IA32_MTRR_PHYSMASK0_MSR              0x0201
+
+#define IA32_MTRR_PHYSBASE1_MSR              0x0202
+#define IA32_MTRR_PHYSMASK1_MSR              0x0203 
+     
+#define IA32_MTRR_PHYSBASE2_MSR              0x0204
+#define IA32_MTRR_PHYSMASK2_MSR              0x0205
+   
+#define IA32_MTRR_PHYSBASE3_MSR              0x0206
+#define IA32_MTRR_PHYSMASK3_MSR              0x0207 
+          
+#define IA32_MTRR_PHYSBASE4_MSR              0x0208
+#define IA32_MTRR_PHYSMASK4_MSR              0x0209 
+         
+#define IA32_MTRR_PHYSBASE5_MSR              0x020a
+#define IA32_MTRR_PHYSMASK5_MSR              0x020b
+           
+#define IA32_MTRR_PHYSBASE6_MSR              0x020c
+#define IA32_MTRR_PHYSMASK6_MSR              0x020d  
+        
+#define IA32_MTRR_PHYSBASE7_MSR              0x020e
+#define IA32_MTRR_PHYSMASK7_MSR              0x020f 
+          
+#define IA32_MTRR_PHYSBASE8_MSR              0x0210
+#define IA32_MTRR_PHYSMASK8_MSR              0x0211
+         
+#define IA32_MTRR_PHYSBASE9_MSR              0x0212
+#define IA32_MTRR_PHYSMASK9_MSR              0x0213
+```
+
+Each of these MSRs has a specific layout, both of them are defined below.
+
+```
+typedef union _ia32_mtrr_physbase_msr
+{
+    u64 value;
+    struct
+    {
+        u64 type : 8;
+        u64 rsvd0 : 4;
+        u64 physbase_lo : 39;
+        u64 rsvd1 : 13;
+    } bits;
+} ia32_mtrr_physbase_msr;
+
+typedef union _ia32_mtrr_physmask_msr
+{
+    u64 value;
+    struct
+    {
+        u64 rsvd0 : 11;
+        u64 valid : 1;
+        u64 physmask_lo : 39;
+        u64 rsvd1 : 13;
+    } bits;
+} ia32_mtrr_physmask_msr;
+```
+
+* * **Overlapping Ranges  
+**
+
+It’s possible for variable range MTRRs to overlap an address range that is described by another variable range MTRR. It’s important that the reader look over [**§11.11.4.1 MTRR Precedences (Intel SDM Vol 3A)**](https://www.intel.com/content/www/us/en/develop/download/intel-64-and-ia-32-architectures-sdm-combined-volumes-1-2a-2b-2c-2d-3a-3b-3c-3d-and-4.html) and ensure these rules are followed when attempting to determine the memory type of an address within a variable range MTRR. The proper implementation to follow the precedence rules are pointed out in the function implementation below, however, ensure you understand why.  
+
+If you’re interested in how the variable range MTRRs and PAT are initialized by the hardware/BIOS/firmware I highly recommend checking out the section in the manual referenced in the note above or seeing the recommended reading for additional reading on setting up memory types during early boot stages. This section was initially going to cover the entire initialization, but since it’s unnecessary/out of scope of this series and using the PAT is recommended I’ve cut the remainder out to try and reduce the length of this article. If there is interest in the process of setting them up, I could do a spin-off article about it. In any case, let’s move on to the EPT hierarchies and get our structures updated to facilitate EPT initialization.
+
+#### — EPT Page Hierarchies
+
+Once the features have been determined to be available we’re going to want to initialize our EPT pointer. This article will only cover the initialization of a single page hierarchy. In a future article, we will cover the initialization of multiple EPT pointers to allow for a switching method that utilizes numerous page hierarchies, as opposed to the standard page-switching that occurs upon EPT violations **[you may have read about](http://www.phrack.org/issues/69/15.html)**.
+
+There are a number of ways to design a hypervisor, some may choose to only associate EPT data within the vCPU structure, others may take a more decoupled approach and have an EPT state structure for the host that tracks all guest EPT states utilizing some form of global and linked list with accessors. For the sake of simplicity, this article will track the data structures by storing them in the vCPU data structure to be initialized during the MP init phase of your hypervisor. The EPT data structure to be added to your vCPU structure is given below.
+
+```
+typedef struct _ept_state
+{
+	u64 eptp;
+	p64 topmost_ps;
+	u64 gaw;
+} ept_state, *pept_state;
+```
+
+The members of this structure relevant to this article are presented, however, this structure will/can be extended in the future to support more than one EPTP and topmost paging structure. The `gaw` member is the guest address width value. It’s important to know when it comes to performing a page walk over the EPT hierarchy. You’ll need to allocate this data structure as you would with any other in your stand-up functions prior to `vmxon`. If you’re wondering why there is a member for the EPTP and the topmost paging structure, it’s because the EPT pointer has a specific format that contains the topmost paging structure (in this case, PML4) and other configuration information like memory type, walk length, etc.
+
+```
+pept_state vcpu_ept_data = mem_allocate( sizeof( ept_state ) );
+zeromemory_s(vcpu_ept_data, sizeof( ept_state ) );
+
+//
+// Initialization of the single EPT page hierarchy.
+//
+// ...
+//
+```
+
+At this point, we need to allocate our EPT page hierarchy. This will require standing up our own PML4 table and initializing our EPTP properly. Allocation of our PML4 table is done just like it would be for any other page:
+
+```
+typedef union _physical_address
+{
+    struct
+    {
+        u32 low;
+        i32 high;
+    };
+    struct
+    {
+        u32 low;
+        i32 high;
+    } upper;
+    
+    i64 quad;
+} physical_address;
+
+static p64 eptm_allocate_entry( physical_address* pa )
+{
+    p64 pxe = mem_allocate( page_size );
+    
+    if( !pxe )
+        return NULL;
+    
+    zeromemory_s( pxe, 0, page_size );
+    
+    // Translate allocated entry virtual address to physical.
+    //
+    *pa = mem_vtop( pxe );
+    
+    // Return virtual address of our new entry.
+    //
+    return pxe;
+}
+```
+
+* * **Custom Address Translation  
+**
+
+The `mem_vtop` function uses a custom address translation/page walker, however, it may be better suited for your first run through to use [**MmGetPhysicalAddress**](https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/ntddk/nf-ntddk-mmgetphysicaladdress) on the returned virtual address. Implementing your own address translation and page walker isn’t necessary for this basic setup utilizing EPT, but I will include it toward the end of the article as extra reading material.
+
+Your `ept_initialize` function should look something like this at this point.
+
+```
+// Allocate and initialize prior to vmxon and after feature availability check.
+//
+pept_state vcpu_ept_data = mem_allocate( sizeof( ept_state ) ); 
+zeromemory_s( vcpu_ept_data, sizeof( ept_state ) ); 
+
+// Initialization of the single EPT page hierarchy. 
+//
+vcpu_ept_data->gaw = PTM4 - 1;
+ret = eptm_initialize_pt( vcpu_ept_data );
+
+if( ret != 0 )
+    eptm_release_resources( vcpu_ept_data );
+
+vcpu->ept_state = &vcpu_ept_data;
+
+///////////////////////////////// eptm_initialize_pt definition below /////////////////////////////////
+
+// Initialization of page tables associated with our EPTP.
+//
+vmm_status_t eptm_initialize_pt( pept_state ept_state )
+{
+    p64 ept_topmost;
+    physical_address ept_topmost_pa;
+    vmm_status_t ret;
+    
+    ret = 0;
+    
+    ept_topmost = eptm_allocate_entry( &ept_topmost_pa );
+    if( !ept_topmost )
+        return VMM_STATUS_MEM_ALLOC_FAILED;
+    
+    ept_state->topmost_ps = ept_topmost;
+    
+    // Initialize the EPT pointer and store it in our EPT state
+    // structure.
+    //
+    // ...
+    //
+    
+    //
+    // Construct identity mapping for EPT page hierarchy w/ default
+    // page size granularity (4kB).
+    //
+    // ...
+    //
+}
+```
+
+The next step is to construct our EPTP and store it in the `ept_state` structure for later insertion into the VMCS. We’ll first need the structure defined that represents the EPTP format.
+
+```
+typedef struct _eptp_format
+{
+    u64 value;
+    union
+    {
+        u32 memory_type : 3;
+        u32 guest_address_width : 3;
+        u32 ad_flag_enable : 1;
+        u32 ar_enforcement_ssp : 1;
+        u32 rsvd0 : 4;
+        u32 ept_pml4_pa_low : 20;
+        u32 ept_pml4_pa_high;
+    } bits;
+} eptp_format;
+```
+
+Once defined we’ll adjust the `eptm_initialize_pt` function and initialize our EPT pointer.
+
+```
+vmm_status_t eptm_initialize_pt( pept_state ept_state )
+{
+    p64 ept_topmost;
+    physical_address ept_topmost_pa;
+    eptp_format eptp;
+    vmm_status_t ret;
+    
+    ret = 0;
+    
+    ept_topmost = eptm_allocate_entry( &ept_topmost_pa );
+    if( !ept_topmost )
+        return VMM_STATUS_MEM_ALLOC_FAILED;
+    
+    ept_state->topmost_ps = ept_topmost;
+    
+    // Initialize the EPT pointer and store it in our EPT state
+    // structure.
+    //
+    eptp.value = ept_topmost_pa.quad;
+    eptp.memory_type = EPT_MEMORY_TYPE_WB;
+    eptp.guest_address_width = ept_state->gaw;
+    eptp.rsvd0 = 0;
+    
+    ept_state->eptp = eptp.value;
+    
+    //
+    // Construct identity mapping for EPT page hierarchy w/ default
+    // page size granularity (4kB).
+    //
+    // ...
+    //
+}
+```
+
+We’ve now successfully set up our topmost paging structure (the EPT PML4 table), and our EPT pointer is formatted for use. All that’s left is to construct the identity mapping permitting all page accesses for our EPT page hierarchy – however, this requires us to cover the differences between the normal paging structures and EPT paging structures.
+
+#### — Paging Structure Differences
+
+When utilizing EPT there are subtle changes in how things are structured. One of which is the differences in the page table entry structure. For every first-level page mapping structure **(FL-PME*n*)**, you’ll see a layout similar to this:
+
+```
+struct
+{
+    u64 present : 1;
+    u64 rw : 1;
+    u64 us : 1;
+    u64 pwt : 1;
+    u64 pcd : 1;
+    u64 accessed : 1;
+    u64 dirty : 1;
+    u64 ps_pat : 1;
+    u64 global : 1;
+    u64 avl0 : 3;
+    u64 pfn : 40;
+    u64 avl1 : 7;
+    u64 pkey : 4;
+    u64 xd : 1;
+} pte, pme;
+```
+
+Each field here is used by the page walker to perform address translation and verify if an operation to this page is valid, or invalid. The fields are detailed in the [**Intel SDM Vol. 3-A Chapter 4**](https://software.intel.com/content/www/us/en/develop/articles/intel-sdm.html) – this is just a definition used in my project as I don’t fancy having masks everywhere for individual bits (so I use bitfields). The `pme` simply means page mapping entry and is an internal term for my project since all paging structure entries follow a similar format. I use this structure for every table entry at all levels. The only difference is the reserved bits at each level which you’ll either come to memorize or document yourself. Now, let’s take a look at what the page table entry structure looks like for EPT.
+
+For each second-level page mapping entry **(SL-PME*n*)**, we see this layout:
+
+```
+struct
+{
+    u64 rd : 1;
+    u64 wr : 1;
+    u64 x : 1;
+    u64 mt : 3;
+    u64 ipat : 1;
+    u64 avl0 : 1;
+    u64 accessed : 1;
+    u64 dirty : 1;
+    u64 ex_um : 1;
+    u64 avl1 : 1;
+    u64 pfn : 39;
+    u64 rsvd : 9;
+    u64 sssp : 1;
+    u64 sub_page_wr : 1;
+    u64 avl2 : 1;
+    u64 suppressed_ve : 1;
+} epte, slpme;
+```
+
+The differences may not be immediately obvious, but the first three bits in this **SL-PME** represent whether this page allows read, write, or execute (instruction fetches) from the region it controls. As opposed to the first structure which has a bit for determining if the page is present, allows read/write operations, and if user-mode accesses are allowed. The differences become clear when we place the two tables atop one another, as below.
+
+ 
+
+![](https://i0.wp.com/revers.engineering/wp-content/uploads/2021/08/ptable_table1.png?resize=700%2C537&ssl=1)![](https://i0.wp.com/revers.engineering/wp-content/uploads/2021/08/ptable_table2.png?resize=700%2C719&ssl=1)
+
+Figure 3. Format of a FL-PTE (top) and SL-PTE (bottom).
+
+ 
+
+With this information, it’s helpful to derive a data structure to represent the two formats as this will make translation much easier later on. The data structure you create may look something like this:
+
+```
+typedef union _page_entry_t
+{
+    struct
+    {
+        u64 present : 1;
+        u64 rw : 1;
+        u64 us : 1;
+        u64 pwt : 1;
+        u64 pcd : 1;
+        u64 accessed : 1;
+        u64 dirty : 1;
+        u64 ps_pat : 1;
+        u64 global : 1;
+        u64 avl0 : 3;
+        u64 pfn : 40;
+        u64 avl1 : 7;
+        u64 pkey : 4;
+        u64 xd : 1;
+    } pte, flpme;
+    
+    struct
+    {
+        u64 rd : 1;
+        u64 wr : 1;
+        u64 x : 1;
+        u64 mt : 3;
+        u64 ipat : 1;
+        u64 avl0 : 1;
+        u64 accessed : 1;
+        u64 dirty : 1;
+        u64 ex_um : 1;
+        u64 avl1 : 1;
+        u64 pfn : 39;
+        u64 rsvd : 9;
+        u64 sssp : 1;
+        u64 sub_page_wr : 1;
+        u64 avl2 : 1;
+        u64 suppressed_ve : 1;
+    } epte, slpme;
+    
+    struct
+    {
+        u64 rd : 1;
+        u64 wr : 1;
+        u64 x : 1;
+        u64 mt : 3;
+        u64 ps_ipat : 1;
+        u64 avl0 : 1;
+        u64 accessed : 1;
+        u64 dirty : 1;
+        u64 avl1 : 1;
+        u64 snoop : 1;
+        u64 pa : 39;
+        u64 rsvd : 24;
+    } vtdpte;
+} page_entry_t;
+```
+
+Using a union here allows me to easily cast to one data structure and reference some internal bitfield layout for whatever specific entry type is needed. You will see this come into play as we initialize the remaining requirements for EPT in the next section.
+
+* * **Requirements for First-Level and Second-Level Page Tables  
+**
+
+Despite the differences in their page table entry format, both tables require a top-level structure such as the PML4 or PML5, and the respective sub tables. Those being PDPT, PDT, PT; or PML4, PDPT, PDT, PT (if PML5 is enabled).  
+
+#### — EPT Identity Mapping (4kB)
+
+When it comes to paging there are a lot of interchanged terms, **identity mapping** is one of them. It’s sometimes referred to as **identity paging** or **direct mapping**. I find the latter more confusing than the former, so throughout the remainder of this article, any time identity mapping/paging is used they are referring to the same thing.
+
+When a processor first enables paging it is required to be executing code from an identity mapped page. This means that the software maps each virtual address to the same physical address. This identity mapping is achieved by initializing page entries to point to the corresponding 4kB physical frame. It may be easier understood through example, so here is the code for constructing the table and associated sub-tables for the guest with a 1:1 mapping to the host.
+
+First, we’ll need a way to get all available physical memory pages allocated. We’re going to reference a global pointer that’s within `ntoskrnl` – `MmPhysicalMemoryBlock` – which contains a list of physical memory descriptors ([**\_PHYSICAL_MEMORY_DESCRIPTORS**](https://www.vergiliusproject.com/kernels/x86/Windows%207/SP1/_PHYSICAL_MEMORY_DESCRIPTOR)). The number of elements in this data structure is determined via the `NumberOfRuns` member. There is also an array under the `Run` member, which is of type [**\_PHYSICAL_MEMORY_RUN**](https://www.vergiliusproject.com/kernels/x86/Windows%207/SP1/_PHYSICAL_MEMORY_RUN). Both of these structures are defined in the WDK headers, however, I’ve redefined them to fit the format of the other code.
+
+```
+typedef struct _physical_memory_run
+{
+    u64 base_page;
+    u64 page_count;
+} physical_memory_run, *pphysical_memory_run;
+
+typedef struct _physical_memory_desc
+{
+    u32 num_runs;
+    u64 num_pages;
+    physical_memory_run run[1];
+} physical_memory_desc, *pphysical_memory_desc;
+
+pphysical_memory_desc mm_get_physical_memory_block( void )
+{
+    return get_global_poi( "nt!MmPhysicalMemoryBlock" );
+}
+```
+
+The `get_global_poi` function is a helper function that uses symbols to locate the `MmPhysicalMemoryBlock` within `ntoskrnl`. Our objective now is to initialize EPT entries for all physical memory pages accounted for in this table. However, you may have noticed we’ve only allocated our top-level paging structure. To complete the above it’s required that we implement a few more functions to acquire (if they already exist) or allocate our additional paging structures. Recall page walking on a system with 4-level paging goes PML4 → PDPT → PDT → PT. We’ve allocated our PML4, now we need to determine if there is an existing EPT entry or if we need to allocate it. The logic is described in the diagram below, followed by the implementation of these functions with a brief explanation.
+
+ 
+
+![](https://i0.wp.com/revers.engineering/wp-content/uploads/2021/08/eptmap0.png?resize=700%2C384&ssl=1)
+
+Figure 4. Flow of EPT hierarchy initialization.
+
+As the diagram shows, we will call some parent functions to initialize EPT hierarchies, within this if you refer back to the function `eptm_initialize_pt` from earlier on we’re going to complete the implementation by writing the `ept_create_mapping_4k` and associated functions. Within these functions, you will see the traversal and validation of additional paging structures, if the paging structure for the current level exists we will call `mem_ptov` and operate on the physical address returned. Otherwise, we’ll construct a new EPT entry, lucky for us we have this allocation function defined. So, how will the other functions look? Let’s see them below, and then how they’ll fit into the bigger picture.
+
+```
+static p64 ept_map_page_table( u64 entry )
+{
+    p64 ptable = NULL;
+    page_entry_t *pxe = NULL;
+    physical_address table_pa = { 0 };
+    
+    // Check if the EPT entry referenced is valid
+    //
+    if( entry != 0 )
+    {
+        table_pa.quad = *( ( u64 )entry & X64_PFN_MASK );
+        ptable = mem_ptov( table_pa.quad );
+        
+        if(!ptable) 
+            return NULL;
+    }
+    else
+    {
+        // If allocation succeeds construct EPT entry
+        //
+        ptable = eptm_allocate_entry( &table_pa );
+        if( !ptable )
+            return NULL;
+        
+        pxe = ( page_entry_t* )ptable;
+        
+        // Set access rights. Mask for EPT access all = 7, achieves same as below
+        //
+        pxe->epte.rd = access.rd;
+        pxe->epte.wr = access.wr;
+        pxe->epte.x = access.x;
+        
+        // Set PFN for EPTE entry using PFN mask
+        //
+        pxe->pfn = ( u64 )( table_pa.quad ) & 0x000FFFFFFFFFF000;
+        
+        pxe->mt = 0x00;
+    }
+    
+    return ptable;
+}
+
+p64 ept_create_mapping_4k( pept_state ept_state, ept_access_rights access, physical_address gpa, physical_address hpa )
+{
+    // Page structure address
+    //
+    u64 pmln = NULL;
+    
+    // Next page structure pointer
+    //
+    u64 ps_ptr = NULL;
+    page_entry_t *pxe = { 0 };
+    
+    // Get the topmost page table (PML4)
+    //
+    pmln = ept_state->topmost_ps;
+    ps_ptr = &pmln[ PML4_IDX( gpa.quad ) ];
+
+    // Check and validate next table exists, allocate if not (PDPT)
+    //
+    pmln = ept_map_page_table(ps_ptr);
+    ps_ptr = &pmln[ PML3_IDX( gpa.quad ) ];
+
+    // Check and validate PDT exists, allocate if not
+    //
+    pmln = ept_map_page_table(ps_ptr);
+    ps_ptr = &pmln[ PML2_IDX( gpa.quad ) ];
+
+    // Get PTE if it exists, allocate if not
+    pmln = ept_map_page_table(ps_ptr);
+    ps_ptr = &pmln[ PML1_IDX( gpa.quad ) ];
+    
+    // Verify page is aligned on 4KB boundary
+    //
+    if (!PAGE_ALIGN_4KB( hpa.quad ) == hpa.quad)
+        hpa.quad &= ( ~( PAGE_SIZE - 1 ) );
+
+    pxe = (page_entry_t*)ps_ptr;
+    
+    // Set access rights. Mask for EPT access all = 7, achieves same as below
+    //
+    pxe->epte.rd = access.rd;
+    pxe->epte.wr = access.wr;
+    pxe->epte.x = access.x;
+    
+    // Set PFN for EPTE entry using PFN mask
+    //
+    pxe->pfn = ( u64 )( hpa.quad ) & 0x000FFFFFFFFFF000;
+    
+    // Set memory type for page table entry.
+    //
+    pxe->mt = hw_query_mtrr_memtype( gpa.quad );
+
+    return pxe;
+}
+```
+
+The functions given above ensure that a table is constructed if it has not already and if so it quickly falls through to the next check/allocation. There are some missing error checks, but to save space I only kept the main logic. With these functions, we can go back to `eptm_initialize_pt` and complete the implementation.
+
+```
+typedef struct _physical_memory_run
+{
+    u64 base_page;
+    u64 page_count;
+} physical_memory_run, *pphysical_memory_run;
+
+typedef struct _physical_memory_desc
+{
+    u32 num_runs;
+    u64 num_pages;
+    physical_memory_run run[1];
+} physical_memory_desc, *pphysical_memory_desc;
+
+pphysical_memory_desc mm_get_physical_memory_block( void )
+{
+    return get_global_poi( "nt!MmPhysicalMemoryBlock" );
+}
+
+static p64 ept_map_page_table( u64 entry )
+{
+    p64 ptable = NULL;
+    page_entry_t *pxe = NULL;
+    physical_address table_pa = { 0 };
+    
+    // Check if the EPT entry referenced is valid
+    //
+    if( entry != 0 )
+    {
+        table_pa.quad = *( ( u64 )entry & X64_PFN_MASK );
+        ptable = mem_ptov( table_pa.quad );
+        
+        if(!ptable) 
+            return NULL;
+    }
+    else
+    {
+        // If allocation succeeds construct EPT entry
+        //
+        ptable = eptm_allocate_entry( &table_pa );
+        if( !ptable )
+            return NULL;
+        
+        pxe = ( page_entry_t* )ptable;
+        
+        // Set access rights. Mask for EPT access all = 7, achieves same as below
+        //
+        pxe->epte.rd = access.rd;
+        pxe->epte.wr = access.wr;
+        pxe->epte.x = access.x;
+        
+        // Set PFN for EPTE entry using PFN mask
+        //
+        pxe->pfn = ( u64 )( table_pa.quad ) & 0x000FFFFFFFFFF000;
+        
+        pxe->mt = 0x00;
+    }
+    
+    return ptable;
+}
+
+p64 ept_create_mapping_4k( pept_state ept_state, ept_access_rights access, physical_address gpa, physical_address hpa )
+{
+    // Page structure address
+    //
+    u64 pmln = NULL;
+    
+    // Next page structure pointer
+    //
+    u64 ps_ptr = NULL;
+    page_entry_t *pxe = { 0 };
+    
+    // Get the topmost page table (PML4)
+    //
+    pmln = ept_state->topmost_ps;
+    ps_ptr = &pmln[ PML4_IDX( gpa.quad ) ];
+
+    // Check and validate next table exists, allocate if not (PDPT)
+    //
+    pmln = ept_map_page_table(ps_ptr);
+    ps_ptr = &pmln[ PML3_IDX( gpa.quad ) ];
+
+    // Check and validate PDT exists, allocate if not
+    //
+    pmln = ept_map_page_table(ps_ptr);
+    ps_ptr = &pmln[ PML2_IDX( gpa.quad ) ];
+
+    // Get PTE if it exists, allocate if not
+    pmln = ept_map_page_table(ps_ptr);
+    ps_ptr = &pmln[ PML1_IDX( gpa.quad ) ];
+    
+    // Verify page is aligned on 4KB boundary
+    //
+    if (!PAGE_ALIGN_4KB( hpa.quad ) == hpa.quad)
+        hpa.quad &= ( ~( PAGE_SIZE - 1 ) );
+
+    pxe = (page_entry_t*)ps_ptr;
+    
+    // Set access rights. Mask for EPT access all = 7, achieves same as below
+    //
+    pxe->epte.rd = access.rd;
+    pxe->epte.wr = access.wr;
+    pxe->epte.x = access.x;
+    
+    // Set PFN for EPTE entry using PFN mask
+    //
+    pxe->pfn = ( u64 )( hpa.quad ) & 0x000FFFFFFFFFF000;
+    
+    // Set memory type for page table entry.
+    //
+    pxe->mt = hw_query_mtrr_memtype( gpa.quad );
+
+    return pxe;
+}
+
+vmm_status_t eptm_initialize_pt( pept_state ept_state )
+{
+    p64 ept_topmost;
+    p64 epte;
+    physical_address ept_topmost_pa;
+    physical_address pa;
+    eptp_format eptp;
+    vmm_status_t ret;
+    
+    ret = 0;
+    
+    ept_topmost = eptm_allocate_entry( &ept_topmost_pa );
+    if( !ept_topmost )
+        return VMM_STATUS_MEM_ALLOC_FAILED;
+    
+    ept_state->topmost_ps = ept_topmost;
+    
+    // Initialize the EPT pointer and store it in our EPT state
+    // structure.
+    //
+    eptp.value = ept_topmost_pa.quad;
+    eptp.memory_type = EPT_MEMORY_TYPE_WB;
+    eptp.guest_address_width = ept_state->gaw;
+    eptp.rsvd0 = 0;
+    
+    ept_state->eptp = eptp.value;
+    
+    // Construct identity mapping for EPT page hierarchy w/ default
+    // page size granularity (4kB).
+    //
+    u32 idx = 0;
+    u64 pn = 0;
+    physical_memory_desc* pmem_desc = ( physical_memory_desc* )mm_get_physical_memory_block();
+    ept_access_rights epte_ar = { .rd = 1, .wr = 1, .x = 1 };
+    
+    for( ; idx < pmem_desc->num_runs; idx++ )
+    {
+        physical_memory_run* pmem_run = &pmem_desc->run[ idx ];
+        u64 base = ( run->base_page << PAGE_SHIFT );
+        
+        // For each physical page, map a new EPT entry.
+        //
+        for( ; pn < run->page_count; pn++ ) 
+        {
+            pa.quad = ( i64 )( base + ( ( u64 )pn << PAGE_SHIFT ) );
+            epte = ept_create_mapping_4k( ept_state, epte_ar, pa, pa );
+            if( !epte ) 
+            {
+                // Unmap each of the entries allocated in the table.
+                //
+                ept_teardown_tables( ept_state );
+                return VMM_LARGE_ALLOCATION_FAILED;
+            }
+        }
+    }
+    
+    return VMM_OPERATION_SUCCESS;
+}
+```
+
+This completes the initialization of our extended page table hierarchy, however, we’re not quite out of the woods. We still need to implement our teardown functions to release all EPT resources and associated structures (unmap), EPT page walk helpers, EPT splitting methods, 2MB page support and 1GB page support, page merging; as well as GVA → GPA and GPA → HPA helpers. And of course, we can’t forget our EPT violation handler.
+
+## Conclusion
+
+There’s still a bit of work to do, and now that I finally have time to resume writing I’m hoping to have the next part in a few weeks. The next article will spend time clearing up any confusion and residual requirements to get EPT functioning properly, including the details on the page walking mechanisms present on the platform, the logic, and how to implement our own that handles GVA → HPA smoothly. As you can see, the introduction of EPT adds a significant amount of background requirements. Because of this, the next article will primarily be explanations of small snippets of source and logic used when constructing the routines. It’s important that readers get familiar, if not already, with paging and address translation – the added layers of indirection add a lot of complexity that can confuse the reader. There will also be other requirements that are not normally of our concern since hardware/OS typically handles it when converting a guest virtual address to a guest physical address. These are things such as checking reserved bits, the US flag, verifying page size, checking SMAP, the pkey, and so on. The page walking method will be a large part of the next article as it’s important to properly traverse the paging structures.
+
+As always, be sure to check the recommended reading! And please excuse the cluster-f of an article that this is. I had been writing it for a long time and cut out various parts that were written and then deemed unnecessary. In the end, it was still long and I wanted to get a fresh start in a new article as opposed to mashing it all in one — you probably didn’t want that either.
+
+Thanks to **[@ajkhoury](https://twitter.com/aidankhoury)** for cleaner macros to help with the address translation explanation.
+
+#### Recommended Reading
+
+- **[Increasing TLB Reach by Exploiting Clustering in Page Translations](http://www.cs.yale.edu/homes/abhishek/binhpham-hpca14.pdf) (Paper)**
+- **[Virtual Memory: Address Translation Walkthrough (David Black-Schaffer)](https://www.youtube.com/watch?v=6neHHkI0Z0o)**
+- [**Virtual Memory: Multi-level Page Tables (David Black-Schaffer)**](https://www.youtube.com/watch?v=Z4kSOv49GNc)
+- [**Introduction to Paging on Windows x64 (Connor McGarr)**](https://connormcgarr.github.io/paging/)
+- [**Hypervisor from Scratch – Part 4 (Mohammad Karvandi)**](https://rayanfam.com/topics/hypervisor-from-scratch-part-4/)
+- **[§28.3.1 Extended Page Table Mechanism (Intel SDM Vol. 3C)](https://www.intel.com/content/www/us/en/developer/articles/technical/intel-sdm.html)**
+- [**Alternative EPT Setup Reference**](https://github.com/tandasat/HyperPlatform/blob/master/HyperPlatform/ept.cpp) (HyperPlatform via **[@standasat](https://twitter.com/standa_t)**)

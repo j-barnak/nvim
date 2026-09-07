@@ -1,0 +1,679 @@
+## Overview
+
+This article will be presenting a lot of different information. The first section will be over multiple-processor initialization, the different processor classes and how they’re referenced throughout the post, and a variety of other multi-processor related information. I’ll also demonstrate the MP initialization protocol for the hypervisor we’re creating in full detail using what was learned in the sections before. Once finished, we’ll cover the VMCS with a brief introduction and define required terminology. The different components of the VMCS will be detailed as well as the execution control fields and the shadow VMCS (which we won’t be using, but it’s important nonetheless.) There will be more in depth explanation of the VMCS format as well in the introduction. Toward the closing of our article I’ll be covering the implementation of error handling mechanisms, the ways that VMX indicates to the host that an error has occured, properly recovering, and CPU redemption (a term I coined to represent the act of returning the system back to a stable state in the event of a fatal error.)
+
+There’s going to be a lot of detail, and additional reading material in each section. As always I suggest that the readers who are interested head to these resources and digest as much information as you can. We’re getting closer to initializing the VMCS, and creating our exit handlers for our first VM-exit and achieving processor virtualization.
+
+**Notice:** At the time of writing all information has been checked and verified with the sources provided, any additional changes or modifications that may occur at a later date should be forwarded to the author. However, always check the sources should the information in the article be dated.
+
+All development took place on [**Windows 10 x64 (Version 1803)**](https://www.catalog.update.microsoft.com/Search.aspx?q=windows+10+1803+x64). If you’re on a different version, higher or lower, you may experience issues/conflicts during testing. This is not a guarantee, but a warning that you should – for the sake of correctness – be on the same version of Windows and developing for the same target version.
+
+Let’s dig in…
+
+## Introduction to the VMCS
+
+A **[VMCS](https://www.pagetable.com/?p=348)** is the virtual machine control structure, the structure that is used to control a processor while in VMX operation. It does everything from manage transitions in and out of VMX operation (VM entries and VM exits) as well as processor behavior in VMX non-root operation. For a guest with multiple logical processors (as we’ve referred to them – virtual processors), the hypervisor can associate a different VMCS with each virtual processor. This is why our initialization protocol (above) required us to allocate and initialize a VMCS region for each logical processor supported by the virtual machine.
+
+![](https://i0.wp.com/i.imgur.com/hBJxuI0.png?resize=756%2C385&ssl=1)
+
+Figure 1. Virtual machine transitions and the ability to support multiple VMCS per VM.
+
+In the **[previous article](https://revers.engineering/day-2-entering-vmx-operation/)** we covered the **VMCS region**, which is a specific region in memory used by the logical processor to control VMX operation; and the **VMCS pointer** – which is the 64-bit physical address of the VMCS region. On a logical processor there can be numerous VMCS’s, but only one can be designated as `active`. The VMCS currently active on the logical processor is referred to as the `current` VMCS. Any modifications that are attempted to be made to a VMCS only operate on the `current` VMCS. The VMCS is a 4-KByte naturally aligned block of memory that holds the complete CPU state of both the host and the guest. This includes the segment registers, **[GDT](https://en.wikipedia.org/wiki/Global_Descriptor_Table)**, **[IDT](https://en.wikipedia.org/wiki/Interrupt_descriptor_table)**, **[TR](https://en.wikipedia.org/wiki/Load_task_register)**, various MSR’s, and control field structures for handling exit and entry operations.
+
+If you recall there are a number of instructions introduced after entering VMX operation. The ones of interest are the instructions that manipulate the VMCS – `vmclear`, `vmptrld`, `vmread`, and `vmwrite`. The instructions abstract access to the virtualization state so that implementation specific data isn’t at risk of being incorrectly modified. This is a quirk of **[Intel VMX](https://en.wikipedia.org/wiki/X86_virtualization)**. You cannot read/write directly from the VMCS region to get information about the virtualization state, only read and write through the use of `vmread`, and `vmwrite`. Once we get to implementation of the VMCS you’ll see that we use the Microsoft provided intrinsic **[\_\_vmx_vmread](https://msdn.microsoft.com/en-us/library/aa983361.aspx) **and **[\_\_vmx_vmwrite](https://msdn.microsoft.com/en-us/library/aa983386.aspx)** to read and write the VMCS, respectively. This is done so that the actual layout of the data can be altered for implementations on new CPUs. It’s also another reason Intel performs component encoding (explained in the next subsection), that way all indexes into the VMCS start at a specific offset and can be consistent across implementations.
+
+Before moving on to VMCS component encoding we’re going to cover the new instructions, briefly.
+
+**[vmclear](https://www.felixcloutier.com/x86/VMCLEAR.html)**
+
+This instruction is used primarily to copy VMX implementation specific data to the VMCS provided in the memory operand (i.e. the VMCS region provided for the logical processor.) The memory operand for `vmclear` is the physical address of the VMCS region, and following the execution of `vmclear` the VMCS is no longer active/current on the logical processor.
+
+This instruction also sets the launch state of the VMCS to clear. In the instruction specification, it’s mentioned that this instruction may not explicitly write any VMCS data to memory due to it already being resident in memory before `vmclear` was executed.
+
+The launch state determines the instructions that should be used to change the launch state, and the activity status of the VMCS used as the memory operand. For instance, `vmclear` sets the launch state to `clear`, the instruction that should be used on a VMCS with the launch state `clear`,  that is also active, and current is `vmlaunch`. Using this instruction will subsequently enter guest operation, and set the launch state to launched. If the VMCS is not in a launched state, `vmresume` – which resumes guest operation at the guest RIP – will fail.
+
+[**vmptrld**](https://www.felixcloutier.com/x86/VMPTRLD.html)
+
+The operand for `vmptrld` is the physical address of the VMCS. Once this instruction is execute the VMCS becomes both `active` and `current` on the current logical processor. This should only be executed once per logical processor as a logical processor can only have one active VMCS. There is such a thing called migrating a VMCS, however, that would require a `vmclear` to make the current VMCS on the logical processor inactive, and load all VMCS data into memory; and then execute `vmptrld` on the new logical processor.
+
+It’s worth noting that the VMCS that is marked active on more than one virtual processor can be corrupted if the **[shadow-VMCS](https://searchservervirtualization.techtarget.com/feature/The-what-where-and-why-of-VMCS-shadowing)**, or other VMCS data are modified while a VMCS is active.
+
+**[vmread](https://www.felixcloutier.com/x86/VMREAD.html)**
+
+This instruction reads a component from a VMCS and stores it in a register / memory operand. The component that is read is based on the encoding of the field for the operand. If this instruction is executed in VMX root operation it will read data from the current VMCS, however, if executed in non-root operation it will read from the VMCS referenced in the VMCS link pointer field in the current VMCS. If the link pointer is invalid, it will trap into the hypervisor and execute the proper exit handler for this instruction.
+
+**[vmwrite](https://www.felixcloutier.com/x86/VMWRITE.html)**
+
+This instruction writes the contents of a register / memory operand to the provided VMCS component. In VMX root operation, the instruction writes to the current VMCS. If operating in a non-root context his instruction will write to the VMCS referenced in the link pointer of the current VMCS; and if there is no link pointer it will trap into the hypervisor and execute the appropriate VM exit handler.
+
+The instruction details are provided in the VMX Instruction Reference in the **[Intel SDM Volume 3C Chapter 30](https://software.intel.com/en-us/download/intel-64-and-ia-32-architectures-sdm-combined-volumes-1-2a-2b-2c-2d-3a-3b-3c-3d-and-4)**. If you’re interested in an overview of what all the new VMX instructions do, see Chapter 30.1.
+
+Each of these instructions has error status codes associated, so when we get to the implementation portion of the series and write our error handling / checking mechanisms we’ll be well suited to handle them. For now, let’s move on to the next subsection.
+
+ 
+
+#### — VMCS Component Encoding
+
+An encoding for the VMCS is a 32-bit field that every VMCS contains. This encoding value is provided in a register / memory operand to `vmread` or `vmwrite`. If you encode a field to be larger than 32-bits the instructions to read and write VMCS components will fail. However, that shouldn’t be an issue because there’s no way you’d encode them that high, unless you made a typo in the field encoding. The structure of the 32-bit VMCS component encodings is given below.
+
+![](https://i0.wp.com/i.imgur.com/qu9vins.png?resize=788%2C387&ssl=1)
+
+Table 24-17. Taken from the **[Intel SDM](https://software.intel.com/en-us/download/intel-64-and-ia-32-architectures-sdm-combined-volumes-1-2a-2b-2c-2d-3a-3b-3c-3d-and-4)**
+
+We’re going to write our own VMCS component encodings, so I’d suggest making a header that will contain all VMCS encodings. Using the structure above we’ll write a few macros and cover the components that are currently supported by Intel VMX.
+
+To start, let’s cover the types with different values to represent different field types/widths.
+
+**Access Type Enumeration**
+
+```
+enum __vmcs_access_e
+{
+    full = 0,
+    high = 1
+};
+```
+
+A value of 0 indicates full field access. All 64-bit fields must have this bit cleared (zeroed), this means that a `vmread` or `vmwrite` to a component with an encoding that uses the full access type accesses the entire field.
+
+As an example, if a 64-bit field uses the field access type high then a `vmread` or `vmwrite` to this encoded component will access the high 32-bits of the field.
+
+**Field Type Enumeration**
+
+```
+enum __vmcs_type_e
+{
+    control = 0,
+    vmexit,
+    guest,
+    host
+};
+```
+
+The field type distinguishes between the various types of VMCS fields.
+
+- Control field types are types for components that control VMX root and non-root operation, and encode components that control what operations in the guest cause VM-exits as well as various VMM settings.
+- VM-exit field types are used for components that are used within the VM-exit handler, or occasionally used to read errors that occurred when executing a VMX instruction (recall, the read-only instruction error component.)
+- Guest field types are pretty self-explanatory, they’re used when encoding components that are required for guest state area initialization and proper guest operation. This goes for host field types as well.
+
+**Field Width Enumeration**
+
+```
+enum __vmcs_width_e
+{
+    word = 0,
+    quadword,
+    doubleword,
+    natural
+};
+```
+
+This enumeration has values for 16-bit, 32-bit, 64-bit and natural field widths. It’s important to not let natural width fields confuse you, on the Intel 64 architecture fields that use natural width are 64 bits in width. The only difference is the value used when creating the 32-bit encoding value. If you substitute the 64-bit field width value (1) for the natural field width value (3) you’ll wind up with an incorrect component encoding and a very vague error `vmentry_with_invalid_control_fields`.
+
+In this enumeration, I use the associated nouns from the Intel SDM (and most architectural literature) for the various sizes. It was cleaner, in my opinion, than using an underscore in each of the field width enumeration values.
+
+Now that we have our enumerative types defined we can create our component encoding macros and create our VMCS field enumeration that contains all the encoded components for the VMCS. To do this, let’s take another look at the structure of the VMCS component encoding. We have to generate a 32-bit encoding value based on the bit fields in the structure, which is going to require some bit twiddling.
+
+We know we need to use the access type, index, field type, and field width. All that’s required to generate a 32-bit encoding value is to ensure that the bits for each of the associated contents in the structure are set; and how do we do this? Using a **[compound OR](https://en.wikipedia.org/wiki/Bitwise_operations_in_C)** statement.
+
+Let’s create a macro that takes the access, type, width, and index of the component encoding and performs a bitwise OR of the fields to yield the proper 32-bit encoded value.
+
+```
+#define VMCS_ENCODE_COMPONENT( access, type, width, index )	( unsigned )( ( unsigned short )( access ) | \
+                                                                        ( ( unsigned short )( index ) << 1 ) | \
+                                                                        ( ( unsigned short )( type ) << 10 ) | \
+                                                                        ( ( unsigned short )( width ) << 13 ) )
+```
+
+This macro properly generates the 32-bit encoding value for VMCS components, and now we can begin encoding our individual VMCS components. You could go to an existing project like **[KVM](https://elixir.bootlin.com/linux/latest/source/arch/x86/kvm/vmx.c)** and copy out the definitions with the proper encoding value already defined, however, I believe that’s a poor idea given that on any given processor the values are subject to change. We want to be able to find and generate these encodings with ease and flexibility should new fields be introduced.
+
+Since we will be reading and writing to the entire component on any given read or write I created a macro for full encoding – defined below.
+
+```
+#define VMCS_ENCODE_COMPONENT_FULL( type, width, index )	VMCS_ENCODE_COMPONENT( full, type, width, index )
+```
+
+And then made individual macros for the various field magnitudes.
+
+```
+#define VMCS_ENCODE_COMPONENT_FULL_16( type, index )		VMCS_ENCODE_COMPONENT_FULL( type, word, index )
+#define VMCS_ENCODE_COMPONENT_FULL_32( type, index )		VMCS_ENCODE_COMPONENT_FULL( type, doubleword, index )
+#define VMCS_ENCODE_COMPONENT_FULL_64( type, index )		VMCS_ENCODE_COMPONENT_FULL( type, quadword, index )
+```
+
+Before we encode our VMCS fields we need to go over the organization of VMCS data, as well as the various processor state information and control fields associated with VMX operation. This information will be used to help us determine what fields for the guest are 16, 32, 64-bit or natural – as well as their type and index.
+
+#### — Guest State Area Encoding
+
+The guest state area is the processor state that is loaded upon VM entry and stored on VM exit. We’re going to cover the Guest register state – however, only briefly because the extensive information is provided in Chapter 24 of the **[Intel SDM Volume 3C](https://software.intel.com/en-us/download/intel-64-and-ia-32-architectures-sdm-combined-volumes-1-2a-2b-2c-2d-3a-3b-3c-3d-and-4)**. The host state area is the processor state that is loaded from the corresponding VMCS components on every VM exit. The host state doesn’t require the same fields as the guest. We’ll be doing an example encoding of the VMCS fields in just a moment, and from there it will be up to you to complete the encoding of all the fields.
+
+The following list lays out the natural guest fields of the guest state area, with the field widths, type, and indexes. All of the encoded field values will be placed in an enumeration I named `__vmcs_fields_e`. The empty definition is provided below, and we will fill in all our encoded components as we go down the list.
+
+```
+enum __vmcs_fields_e
+{
+// field encoding inserted here.
+};
+```
+
+**Guest Register State**
+
+- CR0, CR3, CR4
+- DR7
+- RSP, RIP, RFLAGS
+- Segment Base Addresses/Selectors/Limits/Access Rights for the items below
+  - ES, CS, SS, DS, FS, GS, LDTR, GDTR, IDTR, and TR
+- And the following MSR’s
+  - IA32_DEBUGCTL
+  - IA32_SYSENTER_CS
+  - IA32_SYSENTER_ESP
+  - IA32_SYSENTER_EIP
+  - IA32_PERF_CONTROL_GLOBAL
+  - IA32_PAT
+  - IA32_EFER
+  - IA32_BNDCFS
+
+These are the components that the guest register state is composed of. All of these registers and MSR values are required to be set and stored for proper guest operation. We’re going to do the encoding of the guest register state below. Using **[Appendix B](https://software.intel.com/en-us/download/intel-64-and-ia-32-architectures-sdm-combined-volumes-1-2a-2b-2c-2d-3a-3b-3c-3d-and-4)** in the Intel SDM Volume 3C, we’ll build our encoded VMCS fields with the proper indexes and check the encoding against what’s provided in the documentation.
+
+Let’s start with the natural guest components.
+
+**Natural Guest Register State Fields**
+
+```
+GUEST_CR0 = VMCS_ENCODE_COMPONENT_FULL( guest, natural, 0 ),
+GUEST_CR3 = VMCS_ENCODE_COMPONENT_FULL( guest, natural, 1 ),
+GUEST_CR4 = VMCS_ENCODE_COMPONENT_FULL( guest, natural, 2 ),
+GUEST_ES_BASE = VMCS_ENCODE_COMPONENT_FULL( guest, natural, 3 ),
+GUEST_CS_BASE = VMCS_ENCODE_COMPONENT_FULL( guest, natural, 4 ),
+GUEST_SS_BASE = VMCS_ENCODE_COMPONENT_FULL( guest, natural, 5 ),
+GUEST_DS_BASE = VMCS_ENCODE_COMPONENT_FULL( guest, natural, 6 ),
+GUEST_FS_BASE = VMCS_ENCODE_COMPONENT_FULL( guest, natural, 7 ),
+GUEST_GS_BASE = VMCS_ENCODE_COMPONENT_FULL( guest, natural, 8 ),
+GUEST_LDTR_BASE = VMCS_ENCODE_COMPONENT_FULL( guest, natural, 9 ),
+GUEST_TR_BASE = VMCS_ENCODE_COMPONENT_FULL( guest, natural, 10 ),
+GUEST_GDTR_BASE = VMCS_ENCODE_COMPONENT_FULL( guest, natural, 11 ),
+GUEST_IDTR_BASE = VMCS_ENCODE_COMPONENT_FULL( guest, natural, 12 ),
+GUEST_DR7 = VMCS_ENCODE_COMPONENT_FULL( guest, natural, 13 ),
+GUEST_RSP = VMCS_ENCODE_COMPONENT_FULL( guest, natural, 14 ),
+GUEST_RIP = VMCS_ENCODE_COMPONENT_FULL( guest, natural, 15 ),
+GUEST_RFLAGS = VMCS_ENCODE_COMPONENT_FULL( guest, natural, 16 ),
+GUEST_SYSENTER_ESP = VMCS_ENCODE_COMPONENT_FULL( guest, natural, 18 ),
+GUEST_SYSENTER_EIP = VMCS_ENCODE_COMPONENT_FULL( guest, natural, 19 ),
+```
+
+As you can see above we are able generate the proper encoding value with our macros for each of these fields. This is the process we will use for all of our guest register state components, while using **[Appendix B](https://software.intel.com/en-us/download/intel-64-and-ia-32-architectures-sdm-combined-volumes-1-2a-2b-2c-2d-3a-3b-3c-3d-and-4)** to determine how the specification indexes these fields.
+
+**64-bit Guest Register State Fields**
+
+```
+GUEST_VMCS_LINK_POINTER = VMCS_ENCODE_COMPONENT_FULL_64( guest, 0 ),
+GUEST_DEBUG_CONTROL = VMCS_ENCODE_COMPONENT_FULL_64( guest, 1 ),
+GUEST_PAT = VMCS_ENCODE_COMPONENT_FULL_64( guest, 2 ),
+GUEST_EFER = VMCS_ENCODE_COMPONENT_FULL_64( guest, 3 ),
+GUEST_PERF_GLOBAL_CONTROL = VMCS_ENCODE_COMPONENT_FULL_64( guest, 4 ),
+GUEST_BNDCFGS = VMCS_ENCODE_COMPONENT_FULL_64( guest, 9 ),
+```
+
+**32-Bit Guest Register State Fields**
+
+```
+GUEST_ES_LIMIT = VMCS_ENCODE_COMPONENT_FULL_32( guest, 0 ),
+GUEST_CS_LIMIT = VMCS_ENCODE_COMPONENT_FULL_32( guest, 1 ),
+GUEST_SS_LIMIT = VMCS_ENCODE_COMPONENT_FULL_32( guest, 2 ),
+GUEST_DS_LIMIT = VMCS_ENCODE_COMPONENT_FULL_32( guest, 3 ),
+GUEST_FS_LIMIT = VMCS_ENCODE_COMPONENT_FULL_32( guest, 4 ),
+GUEST_GS_LIMIT = VMCS_ENCODE_COMPONENT_FULL_32( guest, 5 ),
+GUEST_LDTR_LIMIT = VMCS_ENCODE_COMPONENT_FULL_32( guest, 6 ),
+GUEST_TR_LIMIT = VMCS_ENCODE_COMPONENT_FULL_32( guest, 7 ),
+GUEST_GDTR_LIMIT = VMCS_ENCODE_COMPONENT_FULL_32( guest, 8 ),
+GUEST_IDTR_LIMIT = VMCS_ENCODE_COMPONENT_FULL_32( guest, 9 ),
+GUEST_ES_ACCESS_RIGHTS = VMCS_ENCODE_COMPONENT_FULL_32( guest, 10 ),
+GUEST_CS_ACCESS_RIGHTS = VMCS_ENCODE_COMPONENT_FULL_32( guest, 11 ),
+GUEST_SS_ACCESS_RIGHTS = VMCS_ENCODE_COMPONENT_FULL_32( guest, 12 ),
+GUEST_DS_ACCESS_RIGHTS = VMCS_ENCODE_COMPONENT_FULL_32( guest, 13 ),
+GUEST_FS_ACCESS_RIGHTS = VMCS_ENCODE_COMPONENT_FULL_32( guest, 14 ),
+GUEST_GS_ACCESS_RIGHTS = VMCS_ENCODE_COMPONENT_FULL_32( guest, 15 ),
+GUEST_LDTR_ACCESS_RIGHTS = VMCS_ENCODE_COMPONENT_FULL_32( guest, 16 ),
+GUEST_TR_ACCESS_RIGHTS = VMCS_ENCODE_COMPONENT_FULL_32( guest, 17 ),
+GUEST_SMBASE = VMCS_ENCODE_COMPONENT_FULL_32( guest, 20 ),
+GUEST_SYSENTER_CS = VMCS_ENCODE_COMPONENT_FULL_32( guest, 21 ),
+```
+
+**16-Bit Guest Register State Fields**
+
+```
+GUEST_ES_SELECTOR = VMCS_ENCODE_COMPONENT_FULL_16( guest, 0 ),
+GUEST_CS_SELECTOR = VMCS_ENCODE_COMPONENT_FULL_16( guest, 1 ),
+GUEST_SS_SELECTOR = VMCS_ENCODE_COMPONENT_FULL_16( guest, 2 ),
+GUEST_DS_SELECTOR = VMCS_ENCODE_COMPONENT_FULL_16( guest, 3 ),
+GUEST_FS_SELECTOR = VMCS_ENCODE_COMPONENT_FULL_16( guest, 4 ),
+GUEST_GS_SELECTOR = VMCS_ENCODE_COMPONENT_FULL_16( guest, 5 ),
+GUEST_LDTR_SELECTOR = VMCS_ENCODE_COMPONENT_FULL_16( guest, 6 ),
+GUEST_TR_SELECTOR = VMCS_ENCODE_COMPONENT_FULL_16( guest, 7 ),
+```
+
+The above is an example of component encoding for all the fields in the `guest register state` using the macros we defined above. The rest of the guest components, particularly the `non-register guests state` components, are up to you to sift through **[Appendix B](https://software.intel.com/en-us/download/intel-64-and-ia-32-architectures-sdm-combined-volumes-1-2a-2b-2c-2d-3a-3b-3c-3d-and-4)** and **[Chapter 24 in Volume 3C](https://software.intel.com/en-us/download/intel-64-and-ia-32-architectures-sdm-combined-volumes-1-2a-2b-2c-2d-3a-3b-3c-3d-and-4)** to encode them properly. It’s only a matter of determining their index and width. All of them will have the type `guest` for guest fields. You’ll also need to do `host`, `control`, and `vmexit` components. It’s important you do them yourself and do it the long way so that any changes that may occur in the future to the layout of the components is easily adjustable. If you notice there are gaps in the indexes in the examples above remember that this is only the encoding generation for the `guest register state`. Complete the `guest non-register state` fields and you’ll fill those gaps.
+
+ 
+
+#### — VM-Execution Control Fields
+
+“The VM-execution control fields govern VMX non-root operation.”**[\[1\]](https://software.intel.com/en-us/download/intel-64-and-ia-32-architectures-sdm-combined-volumes-1-2a-2b-2c-2d-3a-3b-3c-3d-and-4) **If you recall in the second and third articles of this series I provided some structures necessary for organized and efficient VMM programming. In the next few subsections we’re going to cover the structures we didn’t define for VM-execution, VM-exit, and VM-entry control fields. As well as provided prefabricated structures for each and a brief description of their purpose. When we get to the actual initialization of the VMCS and the various components we’ll go more in depth on the purpose of each of these control fields.
+
+![](https://i0.wp.com/i.imgur.com/WLMP7T3.png?resize=746%2C199&ssl=1)
+
+Figure 2. Relevant VM-execution control fields for the series project.
+
+The first control field in the table is the Pin-Based Execution Control. It is a 32-bit vector that controls the handling of asynchronous events in the guest. One example provided is interrupts. If the guest encounters a non-maskable interrupt we could set a control bit that will cause a VM exit any time an attempt to deliver an NMI is made. This structure will be zeroed for our project, however, it will be important in a later series on APIC virtualization. The structure is defined below, and more information can be found in the **[Intel SDM Volume 3C Chapter 24.6.1](https://software.intel.com/en-us/download/intel-64-and-ia-32-architectures-sdm-combined-volumes-1-2a-2b-2c-2d-3a-3b-3c-3d-and-4)**.
+
+```
+union __vmx_pinbased_control_msr_t
+{
+    unsigned __int64 control;
+    struct
+    {
+        unsigned __int64 external_interrupt_exiting : 1;
+        unsigned __int64 reserved_0 : 2;
+        unsigned __int64 nmi_exiting : 1;
+        unsigned __int64 reserved_1 : 1;
+        unsigned __int64 virtual_nmis : 1;
+        unsigned __int64 vmx_preemption_timer : 1;
+        unsigned __int64 process_posted_interrupts : 1;
+    } bits;
+};
+```
+
+------------------------------------------------------------------------
+
+The next control field in the table is interesting, and going to be of great use for control of our hypervisor when we get to the launch phase. There are actually two 32-bit vectors that control the handling of synchronous events referred to as the **primary processor-based VM-execution controls** and the **secondary processor-based VM-execution controls**. These two vectors control events that occur by the execution of specific instructions such as **[cpuid](https://www.felixcloutier.com/x86/CPUID.html)**, or **[rdmsr](https://x86.puri.sm/html/file_module_x86_id_276.html)**, or **[rdtsc](https://c9x.me/x86/html/file_module_x86_id_278.html)** to name a few. The definitions are provided below, and the controls we will be setting will be explained upon use in the next article, for now add these definitions to your project and consult the recommended reading for more information.
+
+```
+union __vmx_primary_processor_based_control_t
+{
+    unsigned __int64 control;
+    struct
+    {
+        unsigned __int64 reserved_0 : 2;
+        unsigned __int64 interrupt_window_exiting : 1;
+        unsigned __int64 use_tsc_offsetting : 1;
+        unsigned __int64 reserved_1 : 3;
+        unsigned __int64 hlt_exiting : 1;
+        unsigned __int64 reserved_2 : 1;
+        unsigned __int64 invldpg_exiting : 1;
+        unsigned __int64 mwait_exiting : 1;
+        unsigned __int64 rdpmc_exiting : 1;
+        unsigned __int64 rdtsc_exiting : 1;
+        unsigned __int64 reserved_3 : 2;
+        unsigned __int64 cr3_load_exiting : 1;
+        unsigned __int64 cr3_store_exiting : 1;
+        unsigned __int64 reserved_4 : 2;
+        unsigned __int64 cr8_load_exiting : 1;
+        unsigned __int64 cr8_store_exiting : 1;
+        unsigned __int64 use_tpr_shadow : 1;
+        unsigned __int64 nmi_window_exiting : 1;
+        unsigned __int64 mov_dr_exiting : 1;
+        unsigned __int64 unconditional_io_exiting : 1;
+        unsigned __int64 use_io_bitmaps : 1;
+        unsigned __int64 reserved_5 : 1;
+        unsigned __int64 monitor_trap_flag : 1;
+        unsigned __int64 use_msr_bitmaps : 1;
+        unsigned __int64 monitor_exiting : 1;
+        unsigned __int64 pause_exiting : 1;
+        unsigned __int64 active_secondary_controls : 1;
+    } bits;
+};
+```
+
+```
+union __vmx_secondary_processor_based_control_t
+{
+    unsigned __int64 control;
+    struct
+    {
+        unsigned __int64 virtualize_apic_accesses : 1;
+        unsigned __int64 enable_ept : 1;
+        unsigned __int64 descriptor_table_exiting : 1;
+        unsigned __int64 enable_rdtscp : 1;
+        unsigned __int64 virtualize_x2apic : 1;
+        unsigned __int64 enable_vpid : 1;
+        unsigned __int64 wbinvd_exiting : 1;
+        unsigned __int64 unrestricted_guest : 1;
+        unsigned __int64 apic_register_virtualization : 1;
+        unsigned __int64 virtual_interrupt_delivery : 1;
+        unsigned __int64 pause_loop_exiting : 1;
+        unsigned __int64 rdrand_exiting : 1;
+        unsigned __int64 enable_invpcid : 1;
+        unsigned __int64 enable_vmfunc : 1;
+        unsigned __int64 vmcs_shadowing : 1;
+        unsigned __int64 enable_encls_exiting : 1;
+        unsigned __int64 rdseed_exiting : 1;
+        unsigned __int64 enable_pml : 1;
+        unsigned __int64 use_virtualization_exception : 1;
+        unsigned __int64 conceal_vmx_from_pt : 1;
+        unsigned __int64 enable_xsave_xrstor : 1;
+        unsigned __int64 reserved_0 : 1;
+        unsigned __int64 mode_based_execute_control_ept : 1;
+        unsigned __int64 reserved_1 : 2;
+        unsigned __int64 use_tsc_scaling : 1;
+    } bits;
+};
+```
+
+------------------------------------------------------------------------
+
+The third control field is the **[exception bitmap](https://xem.github.io/minix86/manual/intel-x86-and-64-manual-vol3/o_fe12b1e2a880e0ce-1079.html)**, and while not of use to us in this series it will be later. This control field is a 32-bit field that contains a bit for an exception. When an exception occurs in the guest, it’s control field is used to determine if the exception should cause a VM exit or be delivered normally through the IDT using the descriptor that matches the exception’s vector.
+
+The layout of the exception bitmap and which bit corresponds to the appropriate exception vector is 1:1 – meaning that a Divide Error (**[\#DE](https://wiki.osdev.org/Exceptions)**) exception’s vector is 1, thus if bit 1 in the exception bitmap is set any occurrence of a Divide Error (**[\#DE](https://wiki.osdev.org/Exceptions)**) will cause a VM exit. You’re free to define your own bitmap structure to aid in your programming.
+
+------------------------------------------------------------------------
+
+The fourth control field in the table is the [**Guest/Host Mask and Read Shadows for CR0, and CR4**](https://software.intel.com/en-us/download/intel-64-and-ia-32-architectures-sdm-combined-volumes-1-2a-2b-2c-2d-3a-3b-3c-3d-and-4). These fields control execution of instructions that access those registers. In general, special VMCS control-components allow your VMM to modify values read from CR0 and CR4. If the bits in the guest/host mask are set to 1 then they are owned by the host which means if the guest attempts to set them to values different from the bits in the read shadow for the respective control register then a VM exit will occur. Any guest that reads the values for these bits through use of typical instructions will read values from the read shadow for the respective control register. If bits are cleared to 0 in the guest/host mask then they are owned by the guest, meaning that any attempt by the guest to modify or read them succeeds and returns the bits from the respective control register.
+
+Below is an illustration of the use of the mask and read shadows in action. There’s also another more in depth explanation **[here](https://howtohypervise.blogspot.com/2018/09/how-does-control-register-exiting-work.html)**.
+
+![](https://i0.wp.com/i.imgur.com/3INew50.png?resize=972%2C362&ssl=1)
+
+Figure 3. Mask and shadow illustration from lecture notes.
+
+------------------------------------------------------------------------
+
+The last control field part of the VM-execution control fields is the **[MSR bitmap](https://github.com/Bareflank/hypervisor_example_msr_bitmap)**. The MSR bitmap is comprised of 4 contiguous memory blocks – each 1-KByte in size. You can allocate this entire bitmap in one go using **[MmAllocateContiguousMemory](https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/content/wdm/nf-wdm-mmallocatecontiguousmemory)** and specifying the size to be 4-KByte’s or using the PAGE_SIZE macro. **[MmAllocateContiguousMemory](https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/content/wdm/nf-wdm-mmallocatecontiguousmemory)** is guaranteed to allocate a block of the size specified and align the allocation to the upper page boundary (the MSR bitmap is required to be naturally aligned.)
+
+This bitmap controls whether the execution of rdmsr or wrmsr causes a VM exit. It only causes a VM exit if the value in RCX is not in the range of MSR’s supported by the bitmap, or the bit in the MSR bitmap that corresponds to the value of RCX is 1.
+
+Now that we’ve covered the 5 relevant VM-execution control fields, let’s move on to the VM-Exit control fields.
+
+ 
+
+#### — VM-Exit Control Fields
+
+The VM-Exit controls are a 32-bit vector that controls the operation of VM exits. There isn’t much detail to go into for these controls since the only control we’re interested in is the host address-space size control which determines if a virtual processor will be in 64-bit mode after a VM exit. Since we’re supporting the Intel 64 architecture this field must be 1.
+
+The structure for this control field is defined below.
+
+```
+union __vmx_exit_control_t
+{
+    unsigned __int64 control;
+    struct
+    {
+        unsigned __int64 reserved_0 : 2;
+        unsigned __int64 save_dbg_controls : 1;
+        unsigned __int64 reserved_1 : 6;
+        unsigned __int64 host_address_space_size : 1;
+        unsigned __int64 reserved_2 : 2;
+        unsigned __int64 load_ia32_perf_global_control : 1;
+        unsigned __int64 reserved_3 : 2;
+        unsigned __int64 ack_interrupt_on_exit : 1;
+        unsigned __int64 reserved_4 : 2;
+        unsigned __int64 save_ia32_pat : 1;
+        unsigned __int64 load_ia32_pat : 1;
+        unsigned __int64 save_ia32_efer : 1;
+        unsigned __int64 load_ia32_efer : 1;
+        unsigned __int64 save_vmx_preemption_timer_value : 1;
+        unsigned __int64 clear_ia32_bndcfgs : 1;
+        unsigned __int64 conceal_vmx_from_pt : 1;
+    } bits;
+};
+```
+
+ 
+
+#### — VM-Entry Control Fields
+
+The VM-Entry control field is another 32-bit vector that controls the behavior of the system during VM entries. The only entry control of concern in this field is the IA32e mode guest bit. This bit determines if the processor is in IA32e mode after VM entry. Since we support Intel 64 architecture this field must also be 1.
+
+The entry control structure is defined below.
+
+```
+union __vmx_entry_control_t
+{
+    unsigned __int64 control;
+    struct
+    {
+        unsigned __int64 reserved_0 : 2;
+        unsigned __int64 load_dbg_controls : 1;
+        unsigned __int64 reserved_1 : 6;
+        unsigned __int64 ia32e_mode_guest : 1;
+        unsigned __int64 entry_to_smm : 1;
+        unsigned __int64 deactivate_dual_monitor_treament : 1;
+        unsigned __int64 reserved_3 : 1;
+        unsigned __int64 load_ia32_perf_global_control : 1;
+        unsigned __int64 load_ia32_pat : 1;
+        unsigned __int64 load_ia32_efer : 1;
+        unsigned __int64 load_ia32_bndcfgs : 1;
+        unsigned __int64 conceal_vmx_from_pt : 1;
+    } bits;
+};
+```
+
+You can read more about these control fields in the Intel SDM, please see the recommended reading.
+
+## 
+
+## Multiple-Core Initialization
+
+Modern systems are almost all [**multi-core processors**](https://en.wikipedia.org/wiki/Multi-core_processor), therefore it’s important that our hypervisor supports the ability to operate properly on a multi-core system. In our previous article, we were operating under the assumption that the system was a **[uniprocessor](https://en.wikipedia.org/wiki/Uniprocessor_system)** (UP) system with a single core and had the settings for our VM set to the following:
+
+![](https://i0.wp.com/i.imgur.com/AoRd8K2.png?resize=353%2C95&ssl=1)
+
+At this point we’re going to implement the ability to support multi-core processors, and to allocate another virtual processor (core) for our **[VMware](https://www.vmware.com/)** virtual machine we simple need to increase the number of cores per processor from 1 to 2. Before we get into initializing the VMM on a MCP we need to cover some terminology, and a few ways the initialization can be done. After that, we’ll define and implement our initialization protocol for the hypervisor.
+
+Individual cores will be referred to as **[logical processors](http://www.directionsonmicrosoft.com/licensing/30-licensing/3420-sql-server-2012-adopts-per-core-licensing-model.html)**, or **[virtual processors](http://cloudpatterns.org/mechanisms/virtual_cpu)**.
+
+ 
+
+#### — Inter-Processor Interrupts, Affinity Masks, and Dpc’s
+
+There’s multiple ways to complete the objective of multi-core initialization. All of them have some relation to the other, but allow setup to be taken care of by the operating system. We’ll cover which ones those are, the different ways of initializing all logical processors in a system, and the advantage / disadvantages of each. I’ll also close this subsection by selecting one of the methods which will be used to initialize our VMM on all virtual processors.
+
+ 
+
+[**Inter-processor Interrupts**](https://en.wikipedia.org/wiki/Inter-processor_interrupt)
+
+An inter-processor interrupt is a special type of interrupt that allows a source processor the ability to interrupt another processor, the destination processor, in a multiprocessor environment. The ability to use inter-processor interrupts is available because of support from the programming interrupt controllers (Intel’s APIC/x2APIC.) An example of their use is at boot, all interrupts are delivered to an arbitrarily selected processor core – this core is then referred to as the bootstrap processor (BSP). The selection of the bootstrap processor is done by system hardware, and all other processors / cores are designated as application processors (AP).
+
+**Note:** You can determine the BSP by reading the **IA32_APIC_BASE** MSR on all processors and checking to see if the BSP flag is set.
+
+During system initialization each logical processor is assigned an APIC ID, this ID is how processor programmable interrupt controllers identify and send IPI’s to other logical processors. This sending of IPI’s from one logical processor to another is performed by writing the the interrupt command register (ICR) of it’s local APIC/x2APIC. The ICR is a 64-bit local APIC register, and is primarily used to do the following:
+
+- Send an IPI.
+- Forward a received interrupt to another processor for servicing.
+- Perform a self-interrupt.
+- Deliver special IPI’s (which we won’t define in this series, see recommended reading for more information.)
+
+To send an IPI by hand, system software sets up the ICR to indicate the IPI type and destination processor(s). Below is a diagram of the interrupt command register, and a structure defined for use.
+
+![](https://i0.wp.com/i.imgur.com/ZBmikTX.png?resize=455%2C425&ssl=1)
+
+And the structure defined for the ICR is given below.
+
+```
+union __interrupt_command_register_t
+{
+    unsigned __int64 full;
+    struct
+    {
+        unsigned __int64 vector : 8;
+        unsigned __int64 delivery_mode : 3;
+        unsigned __int64 destination_mode : 1;
+        unsigned __int64 delivery_status : 1;
+        unsigned __int64 reserved_0 : 1;
+        unsigned __int64 level : 1;
+        unsigned __int64 trigger_mode : 1;
+        unsigned __int64 reserved_1 : 2;
+        unsigned __int64 destination_short : 2;
+        unsigned __int64 reserved_3 : 35;
+        unsigned __int64 destination : 8;
+    } bits;
+};
+```
+
+It’s important to understand this facility provided by the APIC/x2APIC. However, we won’t be using it for our method of initialization. This is the primary method of initialization for type-1 hypervisors, and can be used by type-2 hypervisors. The best solution on a type-2 hypervisor is to use the operating system facilities provided to initialize the VMM binary on all processors sequentially. Using an IPI either through the use of **[KeIpiGenericCall](https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/content/wdm/nf-wdm-keipigenericcall)**, or writing our own subroutine, limits what we can do inside of the IPI callback (the function that executes when the IPI is received) because the IRQL of the callback is raised to **[IPI_LEVEL](https://mk0resourcesinfm536w.kinstacdn.com/wp-content/uploads/040813_1105_WritingWind2.png)** (29). Very few operating system facilities can be used at this level, and we’re trying to make this project as simple as possible.
+
+ 
+
+[**Affinity Masks**](https://en.wikipedia.org/wiki/Affinity_mask)
+
+An affinity mask is a bit mask that determines what processor a thread should be run on. Processor affinity refers to the binding of a thread to a specific processing unit so that the thread will run on the designated processor. To initialize the VMM on each virtual processor we can modify the processor affinity of the thread executing initialization code to a specific processor. One simple and effective and widely used way is through the use of **[KeSetSystemAffinityThreadEx](https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/content/wdm/nf-wdm-kesetsystemaffinitythreadex)**. This function does exactly what we described above, sets the processor affinity of the current thread. To restore the original affinity of the thread we call **[KeRevertToUserAffinityThreadEx](https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/content/wdm/nf-wdm-kereverttouseraffinitythreadex)**.
+
+So how can we initialize the VMM on each virtual processor using these operating system routines? Use a for-loop from 0 to the number of processors, set the thread processor affinity to schedule a thread to run on the target processor, execute the initialization code, and revert the threads affinity. This method requires that the IRQL during execution of initialization code be **[DISPATCH_LEVEL](https://mk0resourcesinfm536w.kinstacdn.com/wp-content/uploads/040813_1105_WritingWind2.png)** or lower, and to ensure that **[NonPagedPool](https://docs.microsoft.com/en-us/windows/desktop/memory/memory-pools)** allocations are all that can be used we’re going to force the IRQL to **[DISPATCH_LEVEL](https://mk0resourcesinfm536w.kinstacdn.com/wp-content/uploads/040813_1105_WritingWind2.png)**.
+
+We’ll see an example of this method in our VMM initialization protocol subsection when we actually implement multi-processor initialization.
+
+ 
+
+[**Deferred Procedure Calls**](https://en.wikipedia.org/wiki/Deferred_Procedure_Call)
+
+Deferred procedure calls are a feature in Windows that is commonly leveraged. They’re most commonly known for the usage in ISR servicing. For those unfamiliar, ISR is an abbreviation for **[interrupt service routine](https://en.wikipedia.org/wiki/Interrupt_handler)**. Since what we’ve been talking about is interrupting and executing code on each logical processor allocated to our virtual machine we can apply DPC’s to this as well. This won’t be an exhaustive subsection on how DPC’s work or how Windows implements them – we’re just going to cover the important aspects that relate to running code on different processors.
+
+To keep things simple, it is possible and used in a variety of hypervisor projects, to queue a DPC to each logical processor in the system This is done by calling **KeGenericCallDpc **which is an undocumented, but exported Windows System Routine. It schedules processor-specific DPC’s on all processors except the current. To queue a DPC for the current processor we would call **[KeInsertQueueDpc](https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/content/wdm/nf-wdm-keinsertqueuedpc)** following the construction of our own DPC object. It is possible to select a processor that a DPC object will be executed on using **[KeSetTargetProcessorDpc](https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/content/ntddk/nf-ntddk-kesettargetprocessordpc)**.
+
+As you can see this involves a lot more work than the previous method of changing the threads processor affinity, and a little less complicated than learning how the APIC/x2APIC works and how to issue inter-processor interrupts. That’s why for this project we’ll be using the affinity mask modification method. If you’re interested in learning more about DPC’s and their purpose or about the ICR and sending IPI’s please refer to the recommended reading section at the closing of this post.
+
+ 
+
+#### — VMM Initialization Protocol
+
+VMM initialization is performed with the assumption that it is operating on a symmetric system. This means that the processors on a system share the memory, I/O bus, and the operating system. The hypervisor will execute the same VMM on all virtual processors. Asymmetric VMM design is possible, however, it requires much different design choices than we’ve made thus far. We’re going to operate as if the VMM is going to run and all data is run on logical processors sequentially. This also means that because an active VMCS cannot control more than a single virtual processor that a symmetric hypervisor has to allocate a VMCS for each virtual processor to support an **[MP-aware OS](https://en.wikipedia.org/wiki/Symmetric_multiprocessing)**.
+
+There are considerations to be made when initializing a VMM on a multiprocessor system. The first of which is to ensure that the required features are supported. We did this in the previous article with entering VMX operation and checking CPUID. However, that was on a system with a single virtual processor allocated for the guest. At this point we need to do the following per processor (as per the specification as well):
+
+- Use `cpuid` on each virtual processor to determine if VMX is supported.
+- Check VMCS and VMXON revision identifiers for each virtual processor.
+- Check the VMX capability MSR’s of each virtual processor for value restrictions (allowed 0, or 1 bits).
+- Allocate and initialize VMXON and VMCS regions on each virtual processor.
+- Adjust CR0 and CR4 to support all fixed bits reported in the fixed MSR’s.
+- Enable VMX operation on each virtual processor.
+- Validate that the **IA32_FEATURE_CONTROL** MSR has been properly programmed and the lock bit set.
+- Execute VMXON for each virtual processor.
+- Error handling.
+
+To do this we’re going to have to modify our original approach to initializing our VMM. We’ve since chosen our method of initialization, and defined vmx related structures. Now all that’s left for this article is to initialize properly on multiple processors and enter VMX operation.
+
+**Edit 11/8/2018: **Since it was pointed out that won’t run on systems with more than 64 processors let’s modify our `vmm_init` function to support more than 64 processors. We’re not doing any status checks in this excerpt because I wanted the standard functionality. You can add status checks and various error codes and actions to take should one of these functions fail or not all processors run the callback.
+
+We need to implement our MP virtualization protocol in `vmm_init` first. Since we’re going to be modifying the processor affinity and assigning which group of processors we’re going to initialize on we’ll need to declare a few variables with type **[GROUP_AFFINITY](https://docs.microsoft.com/en-us/windows/desktop/api/winnt/ns-winnt-_group_affinity)**, and **[PROCESSOR_NUMBER](https://docs.microsoft.com/en-us/windows/desktop/api/winnt/ns-winnt-_processor_number)**. We’re also going to use **[KeGetProcessorNumberFromIndex](https://docs.microsoft.com/en-us/windows-hardware/drivers/ddi/content/wdm/nf-wdm-kegetprocessornumberfromindex) **to acquire a system-wide processor index from a group number and group-relative processor number. Since this system routine takes a processor index that identifies a processor on the entire multiprocessor system we’re going to pass in our iteration number. This works because a MP system can have groups – as an example a system with four groups, each group having 64 processors, has group ranges from 0 to 64 processors, and system-wide indexes from 0-255.
+
+Our new `vmm_init` implementation should look like this:
+
+```
+int vmm_init( void )
+{
+    struct __vmm_context_t *vmm_context;
+    PROCESSOR_NUMBER processor_number;
+    GROUP_AFFINITY affinity, old_affinity;
+    KIRQL old_irql;
+
+    vmm_context = allocate_vmm_context( );
+
+    for ( unsigned iter = 0; iter < vmm_context->processor_count; iter++ ) {
+        vmm_context->vcpu_table[ iter ] = init_vcpu( );
+        vmm_context->vcpu_table[ iter ]->vmm_context = vmm_context;
+    }
+
+    for( unsigned iter = 0; iter < vmm_context->processor_count; iter++ ) {
+
+        //
+        // Convert from an index to a processor number.
+        //
+        KeGetProcessorNumberFromIndex( iter, &processor_number );
+
+        RtlSecureZeroMemory( &affinity, sizeof( GROUP_AFFINITY ) );
+        affinity.Group = processor_number.Group;
+        affinity.Mask = ( KAFFINITY )1 << processor_number.Number;
+        KeSetSystemGroupAffinityThread( &affinity, &old_affinity );
+
+        init_logical_processor( vmm_context, 0 );
+
+        KeRevertToUserGroupAffinityThread( &old_affinity );
+    }
+
+    return TRUE;
+}
+```
+
+Before we attempt to enter VMX operation on all logical processors we’re going to make a simple modification to our `init_vcpu` function. This modification is in preparation for the next article when we begin writing our VM exit handlers and perform a first test. If you recall from the VM-Execution Control Fields section we briefly talked about MSR bitmap, this bitmap is used to control which MSR’s cause a VM exit when rdmsr or wrmsr is used on them. We don’t want to exit on any MSR accesses for this project, so we need to allocate an MSR bitmap (recall it is 4-KByte in size) and zero it out so that all bits in the bitmap are 0.
+
+First we need to add two members to our `__vcpu_t` structure. It should now look like this:
+
+```
+struct __vcpu_t
+{
+    struct __vmcs_t *vmcs;
+    unsigned __int64 vmcs_physical;
+
+    struct __vmcs_t *vmxon;
+    unsigned __int64 vmxon_physical;
+
+    void *msr_bitmap;
+    unsigned __int64 msr_bitmap_physical;
+};
+```
+
+Remember that we provided the MSR bitmaps physical address to the VMCS component when initializing the VMCS and having both the VA and PA is important for tracking and memory management purposes.
+
+In our `init_vcpu` routine we’re going to allocate the MSR bitmap, zero it, and store the corresponding information in the new `__vcpu_t` members. The `init_vcpu` function should now resemble this:
+
+```
+struct __vcpu_t *init_vcpu( void )
+{
+    struct __vcpu_t *vcpu = NULL;
+
+    vcpu = ExAllocatePoolWithTag( NonPagedPool, sizeof( struct __vcpu_t ), VMM_TAG );
+
+    if( !vcpu ) {
+        log_error( "Oops! vcpu could not be allocated.\n" );
+        return NULL;
+    }
+
+    RtlSecureZeroMemory( vcpu, sizeof( struct __vcpu_t ) );
+
+    //
+    // Zero out msr bitmap so that no traps occur on MSR accesses
+    // when in guest operation.
+    //
+    vcpu->msr_bitmap = ExAllocatePoolWithTag( NonPagedPool, PAGE_SIZE, VMM_TAG );
+    RtlSecureZeroMemory( vcpu->msr_bitmap, PAGE_SIZE );
+
+    vcpu->msr_bitmap_physical = MmGetPhysicalAddress( vcpu->msr_bitmap ).QuadPart;
+
+    log_debug( "vcpu entry allocated successfully at %llX\n", vcpu );
+
+    return vcpu;
+}
+```
+
+That’s it. We won’t have to worry about MSR accesses causing VM exits once we enter non-root operation in the next article.
+
+Now we’re ready to enter VMX operation on all of our virtual processors. Boot up your VM and debugging tools and give it a test run. There are some implementation details that are missing such as what files the structures are in, but that’s a project parameter that’s up to you. All of the implementation up to this point should give you the desired result if you’ve followed along and read the previous posts.
+
+The resulting [**DbgView**](https://docs.microsoft.com/en-us/sysinternals/downloads/debugview) output is below:
+
+![](https://i0.wp.com/i.imgur.com/v8H2YMr.png?resize=446%2C422&ssl=1)
+
+Based on our previous implementation the only item from the initialization protocol to add is error handling. At this point we haven’t executed `vmlaunch` or `vmclear`, but we have executed `vmxon`. Lucky for us, the Microsoft specific **[\_\_vmx_on](https://msdn.microsoft.com/en-us/library/aa983363.aspx)** intrinsic used in our project does all the error checking for us. The particular check of interest is to see if RFLAGS.CF was 0, if is was set that would indicate that `vmxon` failed and without the Microsoft specific intrinsic we’d be left doing all the checks ourselves. The same goes for the use off the **[\_\_vmx_off](https://msdn.microsoft.com/en-us/library/aa983379.aspx)** intrinsic. If an error occurs and `vmxoff` fails then software is required to check if RFLAGS.CF and RFLAGS.ZF are 0, and if they’re not then return the appropriate status codes.
+
+These intrinsic functions save us a lot of trouble, I’d suggest using them and not attempting to write your own until you become more comfortable and have done all the reading to understand the various checks that are to be performed before executing these instructions.
+
+## Conclusion
+
+In this article we’ve covered a lot of details regarding the VMCS, Multi-processor initialization, and the different methods of initializing on multiple processors. This particular post was intended to be thorough and detailed on the count of preparing you for the implementation and initialization of the VMCS and much more complex functions. In the next article, Day 4, we’re going to cover more of the VMCS – particularly the parts that we are going to initialize and their purpose. We’ll also cover segmentation in detail and writing intrinsics for setting up guest/host segmentation data. In the next article we’ll prep for our first vmlaunch and by the end we’ll be ready to write our VM exit handlers and test our hypervisor in action.
+
+In this particular post we didn’t do a large amount of programming because I wanted to cover the important details before diving into implementation. I also suggest that before the next post is released you cover the recommended reading – all of it. It will be immensely helpful with reinforcing what you will learn in then next post. We also didn’t implement a lot of error handling since that will mainly come when we begin to large amounts of `vmwrite` and build our exit handler and have to check the result of a `vmresume` execution.
+
+Prepare yourself for the next entry and do the recommended reading. I hope this article today was valuable and I look forward to doing some really intense implementation in the next one.
+
+As always please feel free to leave a comment, suggestion, or some feedback.
+
+#### Recommended Reading
+
+- **[Intel SDM Volume 3C Chapter 24 (Virtual Machine Control Structure)](https://software.intel.com/en-us/download/intel-64-and-ia-32-architectures-sdm-combined-volumes-1-2a-2b-2c-2d-3a-3b-3c-3d-and-4)**
+- **[Intel SDM Volume 3A Chapter 3 (Protected-Mode Memory Management)](https://software.intel.com/en-us/download/intel-64-and-ia-32-architectures-sdm-combined-volumes-1-2a-2b-2c-2d-3a-3b-3c-3d-and-4)**
+- **[Intel SDM Volume 3C Chapter 31.3, 31.4, 31.5 (VMM Programming Considerations)](https://software.intel.com/en-us/download/intel-64-and-ia-32-architectures-sdm-combined-volumes-1-2a-2b-2c-2d-3a-3b-3c-3d-and-4)**
+- **[The GDT](https://en.wikipedia.org/wiki/Global_Descriptor_Table)**
+- **[The IDT](https://en.wikipedia.org/wiki/Interrupt_descriptor_table)**
+- **[Segmentation Intro](https://wiki.osdev.org/Segmentation)**
+- **[How does the Guest/Host Mask and Read Shadow work?](https://howtohypervise.blogspot.com/2018/09/how-does-control-register-exiting-work.html)**
+- **[VMCS Field Encoding (wbenny)](https://gist.github.com/wbenny/d0fdb53425de2641e207b8c4ef672cbc)**
+- **[VMCS Example Encoding (C++)](https://github.com/wbenny/hvpp/blob/master/src/hvpp/hvpp/ia32/vmx/vmcs.h)**

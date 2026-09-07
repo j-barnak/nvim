@@ -1,0 +1,1320 @@
+## Overview
+
+A quick apology for the extended delay of this series. It is my intention to continue this series at Day 4 with a lot of newfound knowledge to share with the readers. I hope that with the last 6 months those of you who had taken an interest in this series were able to cover the required reading to follow along in this article. This will be the longest of all of the articles as I dive into VMCS fields not previously covered, **[segmentation](https://en.wikipedia.org/wiki/Memory_segmentation)**, a brief **[history of segmentation](https://en.wikipedia.org/wiki/Memory_segmentation#History)**, and tying it all together with launching our now initialized VMCS, and breaking in our **[VM-exit handler](https://software.intel.com/en-us/articles/intel-sdm)**. We have yet to write out VM-exit handler, that will be started in this article of the series and completed by the final day.
+
+As always this hypervisor and all related code was written in C, and intended to be executed on an Intel processor that supports VT-x and VT-d. All drivers, tests, and debugging were performed on **Windows 10**, however we have adapted across builds and started on **1807** and are currently now on **1903**. This shouldn’t have an impact on the functionality of the project, however, I want to be sure everyone is on the same page.
+
+On that note, let’s dive right back in.
+
+## VMCS Revisited
+
+In the previous article we covered the guest and host register states, and the execution fields required for VMCS operation. In this section of the article we will cover the many other fields that demand proper initialization and understanding such as the Guest and Host Register States, MSR bitmap, EPT pointer, control register read shadow, debug control, and others. We will cover the required selector initialization in this section as well, but won’t untangle the convoluted puzzle that is segmentation until the next two sections.
+
+We’re going to start off with the initialization of the guest and host register states.
+
+#### — Guest/Host Register States
+
+In the previous article we encoded our VMCS fields, and if you recall the guest and host states were both in that encoding example. The need for initializing the guest/host registers states is simple – to provide consistency in the processor states across context switches (or sometimes referred to as **[world switches](https://www.usenix.org/legacy/publications/library/proceedings/usenix01/sugerman/sugerman_html/node3.html)**.) The guest has it’s own processor state that is saved upon a VM-exit and the host has it’s processor state loaded, and vice versa. This is primarily done to ensure that the guest has “no knowledge” of its virtualization, and that it maintains the illusion of running on real hardware.
+
+If you recall from the description of how the VMCS is laid out in the previous articles you may remember that the guest-state area, and host-state area are one of the six logical data groups in the VMCS. Let’s start with initialization of the guest-state area…
+
+In every architecture, there are usually a set of control registers critical to the operation of the processor. When using **[Virtual Machine Extensions](https://www.intel.com/content/www/us/en/virtualization/virtualization-technology/intel-virtualization-technology.html)**, there are only 3 control registers that require state preservation across VM-exits and entries. They are CR0, CR3, and CR4.
+
+- CR0 is important because it holds various flags that can modify basic processor operations. One such flag we’ll encounter is the protection enable bit, which determines whether the processor is executing in real mode or protected mode.
+- CR3 is used when paging is enabled, or the PG bit is set in CR0. CR3 is the linear address of the top level paging structure used when translating virtual addresses to physical addresses. If you’ve seen hypervisors that support EPT, page-faults, or has some sort of hypervisor assisted debugging tool associated you’ll understand the importance of CR3.
+- CR4 is has loads of flags that support different processor operations as well. One of which being the VMXE (VMX enable bit.)
+
+We’re already far enough along that we’ve used CR4 to enable VMX on the host, and placed each logical processor in VMX operation, now it’s all about filling in our VMCS fields with the correct information to prepare for vmlaunch. However, before we do that there’s two specific operations required to be performed to be able to `vmread`, `vmwrite`, and `vmlaunch`.
+
+If you’re unsure what these instructions do please refer to the previous [**articles subsections**](https://revers.engineering/day-3-multiprocessor-initialization-error-handling-the-vmcs/) on these instructions, or the [**Intel SDM Vol. 2**](https://software.intel.com/en-us/download/intel-64-and-ia-32-architectures-sdm-combined-volumes-2a-2b-2c-and-2d-instruction-set-reference-a-z).
+
+To manipulate the VMCS and execute VMX instructions such as VMCLEAR, VMPTRLD, and VMLAUNCH, the processor must first be put in VMX root operation by executing the VMXON (as is used earlier in the series) instruction. Once in VMX root operation, we can clear and load the VMCS as shown below. This makes sure that all VMCS data cached by the processor is flushed to memory and no other software is able to modify the VMM’s VMCS. The two instructions can be executed in succession while checking for a bad result, as given below.
+
+```
+if ((__vmx_vmclear(&vcpu->vmcs_physical) != VMX_OK) 
+|| (__vmx_vmptrld(&vcpu->vmcs_physical) != VMX_OK)) {
+    // Error Handling
+}
+```
+
+Now that we’ve loaded the current VMCS we can begin to initialize the VMCS. Let me demonstrate how simple it is to setup the VMCS with the proper data starting with the control registers of the guest state.
+
+```
+__vmx_vmwrite(GUEST_CR0, __readcr0());
+__vmx_vmwrite(GUEST_CR3, __readcr3());
+__vmx_vmwrite(GUEST_CR4, __readcr4());
+```
+
+And that’s it. That’s all it required after entering VMX operation to initialize the VMCS fields for guest control registers. However, we’re not finished initializing the guest state. The other requirements, as described in the previous article are the debug registers, stack pointer, instruction pointer, RFLAGS, and the segment registers. We’ll just run through and initialize them using our **[\_\_vmx_vmwrite](https://docs.microsoft.com/en-us/cpp/intrinsics/vmx-vmwrite?view=vs-2019)** intrinsic, except for the segmentation registers which we’ll initialize in the segmentation section of this article.
+
+To set the debug register, specifically DR7 required in the guest register state we’ll just follow the same format as above, but with **[\_\_readdr](https://docs.microsoft.com/en-us/cpp/intrinsics/readdr?view=vs-2019)**.
+
+```
+__vmx_vmwrite(GUEST_DR7, __readdr(7));
+```
+
+The stack pointer, as follows.
+
+```
+__vmx_vmwrite(GUEST_RSP, vcpu->guest_rsp);
+__vmx_vmwrite(GUEST_RIP, vcpu->guest_rip);
+```
+
+The [**RFLAGS**](https://en.wikipedia.org/wiki/FLAGS_register) and required MSRs.
+
+```
+__vmx_vmwrite(GUEST_RFLAGS, __readeflags());
+__vmx_vmwrite(GUEST_DEBUGCTL, __readmsr(IA32_DEBUGCTL));
+__vmx_vmwrite(GUEST_SYSENTER_ESP, __readmsr(IA32_SYSENTER_ESP));
+__vmx_vmwrite(GUEST_SYSENTER_EIP, __readmsr(IA32_SYSENTER_EIP));
+__vmx_vmwrite(SYSENTER_CS, __readmsr(IA32_SYSENTER_CS));
+__vmx_vmwrite(GUEST_LINK_POINTER, MAXUINT64);
+__vmx_vmwrite(GUEST_FS_BASE, __readmsr(IA32_FS_BASE));
+__vmx_vmwrite(GUEST_GS_BASE, __readmsr(IA32_GS_BASE));
+```
+
+If you’ve looked at the [**Intel SDM, Volume 3C**](https://software.intel.com/en-us/articles/intel-sdm) you’ll notice we aren’t setting up the Guest Segment information yet. We’ll cover this later on in the article because I want to provide details of why certain things are required when setting up and their purpose. There shouldn’t be any blind copying and everything should be substantiated, so bear with me. Speaking of which, let’s cover the importance of setting up the [**RFLAGS**](https://en.wikipedia.org/wiki/FLAGS_register) and assorted MSRs.
+
+#### — RFLAGS
+
+We want to setup our [**RFLAGS**](https://en.wikipedia.org/wiki/FLAGS_register) for the guest since this register contains the current status of the processor. This will be required when transitioning from root to non-root operation to make sure the illusion of direct execution is maintained. The RFLAGS register is subject to change on state transitions during VMX operation and may have different bits set depending on the processors VMX mode, thus we want to save and restore.
+
+#### — SYSENTER & SYSEXIT
+
+The next MSRs (**[IA32_SYSENTER_ESP](https://wiki.osdev.org/Sysenter)**/[**IA32_SYSENTER_EIP**](https://wiki.osdev.org/Sysenter)/[**IA32_SYSENTER_CS**](https://wiki.osdev.org/Sysenter#Operation)) are used on x86 architecture for fast entry into the kernel, the ESP and EIP  are required to be set to a canonical address on processors with Intel 64 support, so we set them to the MSRs contents – which is a canonical address. [**SYSENTER**](https://wiki.osdev.org/Sysenter#INTEL:_SYSENTER.2FSYSEXIT) and [**SYSEXIT**](https://wiki.osdev.org/Sysenter#INTEL:_SYSENTER.2FSYSEXIT) MSRs are not used unless the corresponding bits in the VM-exit control field is set.
+
+#### — VMCS Link Pointer
+
+The VMCS field following those MSRs is known as the link pointer, and is only useful when VMCS shadowing is enabled in the VM-execution control field. Otherwise, we are required to set it to `` FFFFFFFF`FFFFFFFFh `` – which is exactly what we do.
+
+#### — FS/GS Base
+
+The last two guest fields we set in this section are [**GUEST_FS_BASE**](https://gist.github.com/Keno/0753fa1909fadb3b66af1ecb76801f03) and [**GUEST_GS_BASE**](https://gist.github.com/Keno/0753fa1909fadb3b66af1ecb76801f03). While all fields are required to be setup for proper VM entry, these two are required because the FS base and GS base are loaded from these base-address fields on VM entry. When we begin our in depth discussion on segmentation and the various segment registers on the Intel architecture their purpose will become apparent.
+
+#### — Debug Control
+
+Now, what about the various MSRs being stored in the VMCS? Let’s start with **IA32_DEBUGCTL** (Debug Control). This MSR provides a bit field to control debug trace interrupts, debug trace stores, and in short is used for branch tracing. This **[branch tracing](https://en.wikipedia.org/wiki/Branch_trace)** is supported on all Intel processors, however, the functionality on Windows is undocumented and we won’t be covering it in this article. A fun fact before moving on though is that it can be used for detecting the presence of a hypervisor since most don’t perform [**LBR virtualization**](https://hypervsir.blogspot.com/2014/11/using-lbr-last-branch-record-feature-to.html). If you’re interested in seeing how this is supported in Windows, consult `KiRestoreDebugRegisterState` and `KiCpuTracingFlags` usage in the latest kernel.
+
+ 
+
+All of these are initialized the same for the designated guest/host fields, except the **HOST_RSP** and **HOST_RIP**. Those are set to the following:
+
+```
+unsigned __int64 vmm_stack = (unsigned __int64)&vcpu->vmm_stack.vmm_context;
+__vmx_vmwrite(HOST_RSP, vmm_stack);
+__vmx_vmwrite(HOST_RIP, vmm_entrypoint);
+```
+
+I’m aware the full `vmm_context` structure isn’t provided, but it will be as we close this article up to ensure your code structure is consistent with mine. There’s a lot to cover before diving into the details of the stack layout. However, **HOST_RSP** is set to `vmm_stack` because that is the stack that our hypervisor will be using, allowing us 24KB (6000h) minus the size of our `vmm_context`. This concludes the first part of our guest/host register state field initialization. We’ll complete it after we cover segmentation and its purpose later on. For now, let’s setup the other components of the VMCS.
+
+### MSR Bitmap
+
+If you’re unfamiliar with the MSR bitmap component of the VMCS I suggest you re-read [**Article 3**](https://revers.engineering/day-3-multiprocessor-initialization-error-handling-the-vmcs/), and consult the [**Intel SDM Volume 3C Chapter 24.6.9**](https://software.intel.com/en-us/download/intel-64-and-ia-32-architectures-sdm-combined-volumes-3a-3b-3c-and-3d-system-programming-guide). The MSR bitmap was setup at the end of the previous article linked.
+
+### Control Register Shadows
+
+The read shadows for CR0 and CR4 were covered in detail in [**Article 3**](https://revers.engineering/day-3-multiprocessor-initialization-error-handling-the-vmcs/) as well, so this will be a very brief setup. Since this tutorial series is to cover the bare bones of hypervisor development I won’t be going into mask setting/updating, or control register access exiting. If you’re interested in implementing that yourself, consult the Intel SDM and make use of macros – they’ll make your life way easier. However to setup CR0 and CR4 shadows we’ll just perform a read on the two registers.
+
+```
+__vmx_vmwrite(CR0_READ_SHADOW, __readcr0());
+__vmx_vmwrite(CR4_READ_SHADOW, __readcr4());
+```
+
+Simple as that.
+
+### Control Fields
+
+If you’ll recall from the previous article we discussed the structure of the pin-based execution controls for the VMCS, as well as the primary and secondary controls, and provided those bit fields. In this section we’re going to define how the processor will operate on VM-entry and VM-exit by adjusting the control structures as required.
+
+We’re going to start with the **VM-entry controls** by first providing the structure of the controls, discussing its purpose, and setting the required bits.
+
+#### — VM-entry Control Field
+
+```
+union __vmx_entry_control_t
+{
+    unsigned __int64 control;
+    struct
+    {
+        unsigned __int64 reserved_0 : 2;
+        unsigned __int64 load_dbg_controls : 1;
+        unsigned __int64 reserved_1 : 6;
+        unsigned __int64 ia32e_mode_guest : 1;
+        unsigned __int64 entry_to_smm : 1;
+        unsigned __int64 deactivate_dual_monitor_treament : 1;
+        unsigned __int64 reserved_3 : 1;
+        unsigned __int64 load_ia32_perf_global_control : 1;
+        unsigned __int64 load_ia32_pat : 1;
+        unsigned __int64 load_ia32_efer : 1;
+        unsigned __int64 load_ia32_bndcfgs : 1;
+        unsigned __int64 conceal_vmx_from_pt : 1;
+    } bits;
+};
+```
+
+The above structure will be used to tell the processor to operate in long mode (64-bit). Let’s start by defining this structure in our `init_vmcs` function.
+
+`Note: All of this initialization should be performed in the init_vmcs function.`
+
+```
+union __vmx_entry_control_t entry_controls;
+
+//
+// Zero the union, and put the processor in long mode (64-bit).
+//
+entry_controls.control = 0;
+entry_controls.ia32e_mode_guest = TRUE;
+
+//
+// Adjust the control value based on the capability MSR.
+//
+vmx_adjust_entry_controls(&entry_controls);
+```
+
+Let’s break this down line by line starting with the first esoteric member of the entry controls – `ia32e_mode_guest`. This bit is used to determine whether the **[LP](https://buildwindows.wordpress.com/2012/12/13/virtualization-processor-core-logical-processor-virtual-processor-what-does-this-mean/)** will be in IA32e mode after VM-entry, the value is loaded into [**IA32_EFER_MSR.LMA**](https://en.wikibooks.org/wiki/X86_Assembly/Protected_Mode#Entering_Long_Mode), where LMA is an abbreviation for long mode active. This is required for processors that support Intel 64 architecture.
+
+The next line calls a function that has been adjusted since the beginning of the series. However, its purpose is simple, adjust the flags for the control field based on the capability MSR.
+
+```
+// msr.h
+union __vmx_true_control_settings_t
+{
+    unsigned __int64 control;
+    struct
+    {
+        unsigned __int32 allowed_0_settings;
+        unsigned __int32 allowed_1_settings;
+    };
+};
+// vmx.c
+static void vmx_adjust_cv(unsigned int capability_msr, unsigned int value)
+{
+    union __vmx_true_control_settings_t cap;
+    unsigned int actual;
+    
+    cap.control = __readmsr( capability_msr );
+    actual = value;
+    
+    actual |= cap.allowed_0_settings;
+    actual &= cap.allowed_1_settings;
+}
+
+static void vmx_adjust_entry_controls(union __vmx_entry_control_t *entry_controls)
+{
+    unsigned int capability_msr;
+    union __vmx_basic_msr_t basic;
+    
+    basic.control = __readmsr( IA32_VMX_BASIC );
+    capability_msr = (basic.true_controls != FALSE) ? IA32_VMX_TRUE_ENTRY_CTLS : IA32_VMX_ENTRY_CTLS;
+    
+    entry_controls->control = vmx_adjust_cv( capability_msr, entry_controls->control );
+}
+```
+
+This is something you’ll see happening with all of the execution control fields. This is because each bit in the VM-execution controls may require being set or cleared based on an MSR that indicates the VMX capabilities. The capability MSR is composed of two 32-bit fields, as noted in the structure above (`__vmx_true_control_settings_t`) the lower 32-bit member indicates which bits can be 0, and the higher member which are allowed to be 1. These are fixed bits, and MUST be set to these specific values based on the capability MSR. The bitwise operations being performed are shortcuts to force the bits to their allowed setting.
+
+This function could be improved upon by having a generic adjustment function parse through the capability MSRs and match with a provided identifier, as will be shown in the finalized code. As a challenge, try to implement it yourself. We’ll be using derivatives of this function as we continue our initialization. Let’s move on to our **VM-exit** **controls**.
+
+#### — VM-exit Control Field
+
+The structure of the VM-exit control field is provided below, while it has a lot of members we’re only going to be focusing on three in this article. The other members will be covered in various articles to extend the functionality of the hypervisor.
+
+```
+union __vmx_exit_control_t
+{
+    unsigned __int64 control;
+    struct
+    {
+        unsigned __int64 reserved_0 : 2;
+        unsigned __int64 save_dbg_controls : 1;
+        unsigned __int64 reserved_1 : 6;
+        unsigned __int64 host_address_space_size : 1;
+        unsigned __int64 reserved_2 : 2;
+        unsigned __int64 load_ia32_perf_global_control : 1;
+        unsigned __int64 reserved_3 : 2;
+        unsigned __int64 ack_interrupt_on_exit : 1;
+        unsigned __int64 reserved_4 : 2;
+        unsigned __int64 save_ia32_pat : 1;
+        unsigned __int64 load_ia32_pat : 1;
+        unsigned __int64 save_ia32_efer : 1;
+        unsigned __int64 load_ia32_efer : 1;
+        unsigned __int64 save_vmx_preemption_timer_value : 1;
+        unsigned __int64 clear_ia32_bndcfgs : 1;
+        unsigned __int64 conceal_vmx_from_pt : 1;
+    } bits;
+};
+```
+
+To start, let me layout what needs to be done. We’re going to use this control to ensure the logical processor is in 64-bit mode upon VM-exit. Just like before we’ll need to create and initialize our structure, and set the required bits to ensure this behavior. We’ll also need another adjustment function for the exit controls. The code to do this is as follows. (You’ll need to organize these snippets in your project as necessary.)
+
+```
+union __vmx_exit_control_t exit_controls;
+
+//
+// Zero the control value, set address space size, save and load IA32_EFER.
+//
+exit_controls.control = 0;
+exit_controls.host_address_space_size = TRUE;
+
+vmx_adjust_exit_controls( &exit_controls );
+
+//
+// VM-exit control adjustment function.
+//
+static void vmx_adjust_exit_controls(union __vmx_exit_control_t *exit_controls)
+{
+    unsigned int capability_msr;
+    union __vmx_basic_msr_t basic;
+
+    basic.control = __readmsr( IA32_VMX_BASIC );
+    capability_msr = (basic.true_controls != FALSE) ? IA32_VMX_TRUE_EXIT_CTLS : IA32_VMX_EXIT_CTLS;
+
+    exit_controls->control = vmx_adjust_cv( capability_msr, exit_controls->control );
+}
+```
+
+Great, our VM-entry and VM-exit control fields are setup. Now we need to setup our pin-based execution controls, primary and secondary processor based controls and then begin our deep dive into segmentation. We’re going to speed through the initialization of the next few controls unless elaboration is required. You’ll need to modify the original adjustment function for the remaining controls.
+
+#### — Pin-Based Controls
+
+**Structure:**
+
+```
+union __vmx_pinbased_control_msr_t
+{
+    unsigned __int64 control;
+    struct
+    {
+        unsigned __int64 external_interrupt_exiting : 1;
+        unsigned __int64 reserved_0 : 2;
+        unsigned __int64 nmi_exiting : 1;
+        unsigned __int64 reserved_1 : 1;
+        unsigned __int64 virtual_nmis : 1;
+        unsigned __int64 vmx_preemption_timer : 1;
+        unsigned __int64 process_posted_interrupts : 1;
+    } bits;
+};
+```
+
+**Init:**
+
+```
+union __vmx_pinbased_control_msr_t pinbased_controls;
+
+pinbased_controls.control = 0;
+vmx_adjust_pinbased_controls( &pinbased_controls);
+```
+
+This execution control is specific to handling asynchronous events such as interrupts, and useful for APIC virtualization. We won’t be covering I/O interposition or APIC virtualization in this series, so we’re going to initialize this structure by setting its control to zero, and adjusting its value with the true controls. Remember, regardless of whether we use a field or not we must always be sure it follows the specification – in this instance we have to be sure all must-be bits are appropriately set or cleared.
+
+#### — Primary Processor Controls
+
+**Structure:**
+
+```
+union __vmx_primary_processor_based_control_t
+{
+    unsigned __int64 control;
+    struct
+    {
+        unsigned __int64 reserved_0 : 2;
+        unsigned __int64 interrupt_window_exiting : 1;
+        unsigned __int64 use_tsc_offsetting : 1;
+        unsigned __int64 reserved_1 : 3;
+        unsigned __int64 hlt_exiting : 1;
+        unsigned __int64 reserved_2 : 1;
+        unsigned __int64 invldpg_exiting : 1;
+        unsigned __int64 mwait_exiting : 1;
+        unsigned __int64 rdpmc_exiting : 1;
+        unsigned __int64 rdtsc_exiting : 1;
+        unsigned __int64 reserved_3 : 2;
+        unsigned __int64 cr3_load_exiting : 1;
+        unsigned __int64 cr3_store_exiting : 1;
+        unsigned __int64 reserved_4 : 2;
+        unsigned __int64 cr8_load_exiting : 1;
+        unsigned __int64 cr8_store_exiting : 1;
+        unsigned __int64 use_tpr_shadow : 1;
+        unsigned __int64 nmi_window_exiting : 1;
+        unsigned __int64 mov_dr_exiting : 1;
+        unsigned __int64 unconditional_io_exiting : 1;
+        unsigned __int64 use_io_bitmaps : 1;
+        unsigned __int64 reserved_5 : 1;
+        unsigned __int64 monitor_trap_flag : 1;
+        unsigned __int64 use_msr_bitmaps : 1;
+        unsigned __int64 monitor_exiting : 1;
+        unsigned __int64 pause_exiting : 1;
+        unsigned __int64 active_secondary_controls : 1;
+    } bits;
+};
+```
+
+**Init:**
+
+```
+union __vmx_primary_processor_based_control_t primary_controls;
+
+primary_controls.control = 0;
+primary_controls.use_msr_bitmaps = TRUE;
+primary_controls.activate_secondary_controls = TRUE;
+
+vmx_adjust_processor_based_controls( &primary_controls );
+```
+
+This execution control is used to control synchronous events, particularly those caused by specific instruction executions. Since we’re using MSR bitmaps, and the bitmap is clear, we want to set `use_msr_bitmap` so that VM-exits or prohibited from occurring when MSRs in the documented ranges are accessed. However, if an MSR access outside the ranges covered occurs then we will encounter a VM-exit. We also want to activate our secondary controls which will allows us to let the guest execute certain instructions (and without proper initialization the guest OS will typically halt or crash.)
+
+#### — Secondary Processor Controls
+
+**Structure:**
+
+```
+union __vmx_secondary_processor_based_control_t
+{
+    unsigned __int64 control;
+    struct
+    {
+        unsigned __int64 virtualize_apic_accesses : 1;
+        unsigned __int64 enable_ept : 1;
+        unsigned __int64 descriptor_table_exiting : 1;
+        unsigned __int64 enable_rdtscp : 1;
+        unsigned __int64 virtualize_x2apic : 1;
+        unsigned __int64 enable_vpid : 1;
+        unsigned __int64 wbinvd_exiting : 1;
+        unsigned __int64 unrestricted_guest : 1;
+        unsigned __int64 apic_register_virtualization : 1;
+        unsigned __int64 virtual_interrupt_delivery : 1;
+        unsigned __int64 pause_loop_exiting : 1;
+        unsigned __int64 rdrand_exiting : 1;
+        unsigned __int64 enable_invpcid : 1;
+        unsigned __int64 enable_vmfunc : 1;
+        unsigned __int64 vmcs_shadowing : 1;
+        unsigned __int64 enable_encls_exiting : 1;
+        unsigned __int64 rdseed_exiting : 1;
+        unsigned __int64 enable_pml : 1;
+        unsigned __int64 use_virtualization_exception : 1;
+        unsigned __int64 conceal_vmx_from_pt : 1;
+        unsigned __int64 enable_xsave_xrstor : 1;
+        unsigned __int64 reserved_0 : 1;
+        unsigned __int64 mode_based_execute_control_ept : 1;
+        unsigned __int64 reserved_1 : 2;
+        unsigned __int64 use_tsc_scaling : 1;
+    } bits;
+};
+```
+
+**Init:**
+
+```
+union __vmx_secondary_processor_based_control_t secondary_controls;
+
+secondary_controls.control = 0;
+secondary_controls.enable_rdtscp = TRUE;
+secondary_controls.enable_xsave_xrstor = TRUE;
+secondary_controls.enable_invpcid = TRUE;
+
+vmx_adjust_secondary_controls( &secondary_controls );
+```
+
+The enables set in the secondary controls will allow those instructions to execute on the guest OS. This guest OS is Windows 10, and since it makes use of [**XSAVE**](https://www.felixcloutier.com/x86/xsave)/[**XRSTORS**](https://www.felixcloutier.com/x86/xrstors), **[INVPCID](https://www.felixcloutier.com/x86/invpcid)**, and **[RDTSCP](https://docs.microsoft.com/en-us/cpp/intrinsics/rdtscp?view=vs-2019)** we must enable their execution otherwise a **[\#UD](https://www.felixcloutier.com/x86/ud)** will be generated and bug check the system.
+
+#### — Write Control Fields to VMCS
+
+But wait, we’re not done. We need to make sure our VMCS has all the information we just initialized. Let’s tie it all together and set our VMCS control fields to the appropriate control values by using `__vmx_vmwrite`. If you haven’t already figured it out, here’s how we’d do that.
+
+```
+__vmx_vmwrite( VMX_PIN_BASED_VM_EXECUTION_CONTROLS, pinbased_controls.control );
+__vmx_vmwrite( VMX_PROCESSOR_BASED_VM_EXECUTION_CONTROLS, primary_controls.control );
+__vmx_vmwrite( VMX_SECONDARY_PROCESSOR_BASED_VM_EXECUTION_CONTROLS, secondary_controls.control );
+__vmx_vmwrite( VMX_VMEXIT_CONTROLS, exit_controls.control );
+__vmx_vmwrite( VMX_VMENTRY_CONTROLS, entry_controls.control );
+```
+
+Congratulations, you’re half way complete with setting up and understanding the VMCS. After this next section covering segmentation and the guest/host segment register fields you’ll be finished. If a lot of this didn’t make sense consult the recommended reading or various links throughout the writing (red-bolded keywords.)
+
+## Segmentation
+
+When writing a hypervisor and initializing the VMCS there is one section that never fails to confuse a lot of people, the segment register fields. If you’re unfamiliar with segmentation, its purpose, and what all those excerpts from open-source projects mean then this section would do well to be read thoroughly. I’m going to cover all the basics of segmentation, the history, the tables, and what all those other projects have implemented means. No more copying and pasting, ignoring the reasons why certain things are required and used. Knowing how segmentation works, despite it not being as commonplace anymore, will do wonders for your system development knowledge-base. Let’s start off with an introduction that will cover the history, and then discuss its application in modern operating systems and in this project.
+
+Now, this was way back in the day when paging wasn’t even a twinkle in anyone’s eye. Back when supporting a large address space and properly virtualizing memory to reduce [**fragmentation**](https://itstillworks.com/internal-external-memory-fragmentation-28851.html) were a huge issue. If you’ve ever heard of the base and bounds register then you may already be familiar with segmentation, or a very basic implementation of it. Through the usage of base and bounds registers operating systems were able to relocate processes to different areas in physical memory. However, the usage of the base and bounds (sometimes referred to as base/limit) was wasteful. OS developers needed something much more adaptable. These developers wanted a solution to reduce the amount of space being wasted by processes that don’t require the full address space allocated for them, thus segmentation blinked into existence. The idea was simple, associate a base/limit register pair with each logical segment of an address space.
+
+If a segment is simple a contiguous block of memory with a finite length in an address space, then do you remember what segments are part of an address space? In a very reduced example, you would have the code segment, stack segment, and heap segment. [**Segmentation**](https://en.wikipedia.org/wiki/Memory_segmentation) allowed the OS to place those segments in different areas of physical memory and avoided the wasting of physical memory by flooding it with unused virtual address spaces.
+
+So, how does it work? If you’ve ever experienced a segmentation fault, you might have a general idea. To be specific let’s do an example with a very reduced and elementary segment register definition. Let’s say our code segment has an associated id, 0. It also has a base, and a size.
+
+```
+CS.ID = 0
+CS.Base = 16K
+CS.Size = 4K
+```
+
+You can see from this example the ID is 0, our base address starts at 16K, and the size of this segment is 4K. Let’s say that a reference is made to the virtual address 150 of this example process (an instruction fetch – meaning it will be in the code segment). When this occurs, hardware will take CS.Base and add it to the offset (150) to acquire the proper physical address. 16K + 150 = 16534. The hardware will check whether that address is within the boundaries of this segment. And it is since 150 is definitely less than 4K which will result in the successful reference to said physical memory address. What would happen if one were to go over the 4K limit? A segmentation fault would be generated and would trap into the OS promptly destroying the offending process. Not only were significant savings accrued for physical memory, but this offered an avenue for the OS to protect applications from one another.
+
+This is a significantly reduced discussion of segmentation starting out, because there were multiple issues with the first implementations. Segmentation was introduced to allow variable sized pieces of memory to be relocated and minimize physical memory waste. And then they went and made it more complex by using segmentation to protect programs, and improve memory management. This added complexity means that more modern architectures have segments that are composed of many parts: base, limit, access rights, and a selector. This had varying effects depending on the memory model used.
+
+Lucky for us, in IA32e mode of the Intel 64 architecture segmentation use depends on whether a given process is running in compatibility mode or 64-bit mode. In 64-bit mode, segmentation is more or less disabled, and the operating system and applications have access to a continuous, unsegmented linear address space. All segment register bases and limits are set to 0 for our 64-bit code segments, but that doesn’t matter because the processor doesn’t perform limit checks at runtime in 64-bit mode. Anyways, If you recall in a section above we set the FS and GS base for both the host and guest, wouldn’t they just be zero? The answer is not always. The FS and GS segment registers can still have non-zero base addresses because they may be used for critical operating system structures, and in Windows 10 – they are. The GS on Windows stores the **[Thread Environment Block](https://en.wikipedia.org/wiki/Win32_Thread_Information_Block)**. The FS segment is used for thread local storage, or canary-based protection, it could also be configured to read/write and acquire information from your introspective engine.
+
+Now, why am I telling you all this if we don’t have to worry about it? Compatibility mode. For Intel 64 architecture it’s required that we have a 64-bit code segment, a 32-bit code segment and a 32-bit data segment (for data and stack.) Understanding why we have to know how segmentation works, even at an elementary level is because compatibility mode still exists and is required to be supported by your hypervisor (otherwise 32-bit applications won’t run.) Further, for this to all make sense I have to cover where these segments come from, how to acquire them, what the various descriptor tables are, and explain how the hell we’re going to get the information we need. Let’s start with the macro structures and work our way to the nitty-gritty.
+
+### Segment Descriptor Tables
+
+A segment descriptor table is an array of **[segment descriptors](https://en.wikipedia.org/wiki/Segment_descriptor)**, it’s variable in length and each entry is an 8-byte segment descriptor. Each table can hold up to 8192 descriptors, and every system has one and only one **[Global Descriptor Table](https://en.wikipedia.org/wiki/Global_Descriptor_Table)**. The system can have one or more LDTs, however. There are two types of descriptors: segment descriptors and system descriptors. We’ll cover segment descriptors in detail. System descriptors are descriptors that have the S flag cleared in a segment descriptor, and there are a few system descriptors worth mentioning now since we talk about them in the next few sections. The system descriptors recognized on Intel processors are the LDT (local descriptor table), task-state descriptor, call-gate descriptor, interrupt-gate descriptor, trap-gate descriptor, and task-gate descriptor. These system descriptors are in one of two categories: system-segment or gate descriptors. This means that if a descriptor is a system-segment descriptor it will point to some system segment such as the LDT or TSS. (If you don’t know what these are fear not, we’ll cover them in layman terms.) Otherwise, they’re gates which hold pointers to procedure entry points in some code segment (think **[syscall](https://www.felixcloutier.com/x86/syscall)** instruction.)
+
+`Note: All descriptors are 8-bytes in length, except call-gate descriptors, IDT gate descriptors, and LDT/TSS descriptors in IA32e mode. These are expanded to 16-bytes.`
+
+**— Global Descriptor Table**
+
+If you’ve taken a look at the Intel SDM and noticed that we hadn’t mentioned a few registers in the host/guest register state (namely, GDTR and LDTR) you’re correct. I wanted to save their mentioning until now when I can detail their usage. As mentioned above, the GDT is not a segment it’s a data structure that contains segment descriptors. The GDTR (global descriptor table register) holds the base address and limit of the GDT. This is important because when we setup our guest/host descriptor and segment fields we’ll have to provide the GDT limit and base address. To read and write to the GDTR we will use the `lgdt` and `sgdt` instructions.
+
+So, what’s so special about the GDT? Well it’s the table that holds the information for all the segments and the system-segment descriptor for the LDT. Without the GDT memory management would be a nightmare if not non-existent.
+
+![](https://i0.wp.com/i.imgur.com/v8sMtji.png?resize=581%2C513&ssl=1)
+
+The figure above was taken from the Intel SDM to help you understand what these tables look like. As you’ll see the first descriptor entry in the GDT is unused. This is often called the null descriptor and is used to prevent references to unused segment registers by initializing a segment register to the descriptor resulting a **[\#GP](https://en.wikipedia.org/wiki/General_protection_fault)**. The figure also shows that an LDT is in the GDT at GDT\[2\]. This is a requirement by the architecture, however, the LDT descriptor can be located anywhere in the GDT (other than the first entry.)
+
+The GDT will contain segment descriptors for each of the segment registers: CS, SS, DS, ES, FS, and GS. As shown in Figure 3-10, the segment descriptor is selected through the use of the segment selector. This is just a 16-bit identifier for a segment and its structure is given below. We’ll use this information to help us with indexing into the GDT to setup our segment descriptors.
+
+![](https://i0.wp.com/i.imgur.com/SH9BmOj.png?resize=583%2C161&ssl=1)
+
+Just an FYI, we won’t be covering the LDT or providing support since all of this code executes as the operating system so an LDT is not used. The only thing you’ll need to know is how we’re going to setup the LDTR fields and that will be through the use of `sldt` instruction when we get to writing our intrinsics. Now that you know what the GDT is and its purpose, we can continue to our segment field initialization where we’ll implement our functions to get the required values for the VMCS fields. I’ll explain the logic and go into detail following each code excerpt, but do think through the logic and really try to understand how it works.
+
+### Segment Field Initialization
+
+You now have a basic understanding of segmentation, why it’s important that things be initialized properly (compatibility mode, general function), and how the GDT will play a large part in initializing our segment register fields. Some fields will be super quick and easy to initialize while others will require some thought and explanation. I’ll start from easiest to most difficult for both guest and host; and don’t skip ahead because there are some subtle changes for initializing the host.
+
+#### — Guest Segment Register Fields
+
+We’re going to start off by initializing the segment selectors for CS, SS, DS, ES, FS, GS, LDT, and the TR. The first six are straightforward, they just require a few custom instrinsics – since `intrin.h` doesn’t have support for these. If you’re unfamiliar with how to write and link custom ASM source files, please consult **[this guide](https://www.youtube.com/watch?v=LqyVybUodXE)**. For those who are familiar, we’re going to create a new ASM file in our project, and call it `vmm_intrin.asm`. We’re going to need intrinsics that are able to get the selectors for all of those segment registers, lucky for us it’s a few moves and that’s it. I’ve provided the source below to save time.
+
+```
+__read_ldtr proc
+        sldt    ax
+        ret
+__read_ldtr endp
+
+__read_tr proc
+        str     ax
+        ret
+__read_tr endp
+
+__read_cs proc
+        mov     ax, cs
+        ret
+__read_cs endp
+
+__read_ss proc
+        mov     ax, ss
+        ret
+__read_ss endp
+
+__read_ds proc
+        mov     ax, ds
+        ret
+__read_ds endp
+
+__read_es proc
+        mov     ax, es
+        ret
+__read_es endp
+
+__read_fs proc
+        mov     ax, fs
+        ret
+__read_fs endp
+
+__read_gs proc
+        mov     ax, gs
+        ret
+__read_gs endp
+```
+
+Now we’ll have to make our respective header to hold the prototypes for these functions. I’ve also provided this below, in a file called `vmm_intrin.h`.
+
+```
+#pragma once
+
+//
+// Segment Selector Intrinsics
+//
+unsigned short __read_ldtr(void);
+unsigned short __read_tr(void);
+unsigned short __read_cs(void);
+unsigned short __read_ss(void);
+unsigned short __read_ds(void);
+unsigned short __read_es(void);
+unsigned short __read_fs(void); 
+unsigned short __read_gs(void);
+```
+
+You’ll need to navigate back to `vmx.c` and find a spot in your `init_vmcs` function to initialize the 16-bit guest segment selector fields. It’s pretty straightforward, and you’ll do it as shown below.
+
+```
+__vmx_vmwrite(GUEST_CS_SELECTOR, __read_cs());
+__vmx_vmwrite(GUEST_SS_SELECTOR, __read_ss());
+__vmx_vmwrite(GUEST_DS_SELECTOR, __read_ds());
+__vmx_vmwrite(GUEST_ES_SELECTOR, __read_es());
+__vmx_vmwrite(GUEST_FS_SELECTOR, __read_fs());
+__vmx_vmwrite(GUEST_GS_SELECTOR, __read_fs());
+__vmx_vmwrite(GUEST_LDTR_SELECTOR, __read_ldtr());
+__vmx_vmwrite(GUEST_TR_SELECTOR, __read_tr());
+```
+
+That wasn’t too bad. All that’s left is the segment limit, access rights, and base addresses for the system segment descriptors and GDT. If you’re wondering how I know this it’s shown in the **[Intel SDM Volume 3C Chapter 24 “Organization of VMCS Data”](https://software.intel.com/en-us/articles/intel-sdm)** – it tells you exactly what it needed to be setup prior to launch. The next easiest setup will leverage our newly created intrinsics and an intrinsic provided by Microsoft, **[\_\_segmentlimit](https://docs.microsoft.com/en-us/cpp/intrinsics/segmentlimit?view=vs-2019)**. All this does is use the `lsl` instruction to store our segment limit in `ax`, but why spend time writing our own? Let’s get it done.
+
+```
+__vmx_vmwrite(GUEST_CS_LIMIT, __segmentlimit(__read_cs())); 
+__vmx_vmwrite(GUEST_SS_LIMIT, __segmentlimit(__read_ss())); 
+__vmx_vmwrite(GUEST_DS_LIMIT, __segmentlimit(__read_ds())); 
+__vmx_vmwrite(GUEST_ES_LIMIT, __segmentlimit(__read_es())); 
+__vmx_vmwrite(GUEST_FS_LIMIT, __segmentlimit(__read_fs())); 
+__vmx_vmwrite(GUEST_GS_LIMIT, __segmentlimit(__read_fs())); 
+__vmx_vmwrite(GUEST_LDTR_LIMIT, __segmentlimit(__read_ldtr())); 
+__vmx_vmwrite(GUEST_TR_LIMIT, __segmentlimit(__read_tr()));
+```
+
+That’s pretty simple, but what about the GDTR and IDTR limits? We’re going to have to use two other instructions, `sgdt` and `sidt`. And since those operate on a structure that’s 16-bytes in size, we’ll need to define one to make things easy on us. It’ll also help us later. However, there’s some more information I need to pass along. When the **[SGDT](https://www.felixcloutier.com/x86/sgdt)** instruction is executed and the GDTR is stored a 48-bit pseudo-descriptor is stored in memory. The pseudo-descriptor isn’t laid out the same as a segment descriptor, it has the following structure (based off Vol 3A. 3-16).
+
+```
+#pragma pack(push, 1)
+struct __pseudo_descriptor_64_t
+{
+  unsigned __int16 limit;
+  unsigned __int64 base_address;
+};
+#pragma pack(pop)
+```
+
+Now let’s use the intrinsics **[\_sgdt](https://docs.microsoft.com/en-us/cpp/intrinsics/x64-amd64-intrinsics-list?view=vs-2019)** and **[\_\_sidt](https://docs.microsoft.com/en-us/cpp/intrinsics/x64-amd64-intrinsics-list?view=vs-2019)** to load our new pseudo-descriptors, and then write our register limits and base addresses into the VMCS.
+
+```
+struct __pseudo_descriptor_64_t gdtr;
+struct __pseudo_descriptor_64_t idtr;
+
+_sgdt( &gdtr );
+__sidt( &idtr );
+
+//
+// ... down in init section ...
+//
+
+__vmx_vmwrite(GUEST_GDTR_LIMIT, gdtr.limit);
+__vmx_vmwrite(GUEST_IDTR_LIMIT, idtr.limit);
+
+__vmx_vmwrite(GUEST_GDTR_BASE, gdtr.base_address);
+__vmx_vmwrite(GUEST_IDTR_BASE, idtr.base_address);
+```
+
+Awesome. All your segment and table register base/limit pairs are initialized. Now we’re going to write our functions to index into the GDT and properly get our segment base addresses, and access rights. We’ll need to define some structures for this, in particular two for segment descriptors (both x64/x86), segment selectors, and segment access rights. Let’s start with segment descriptors. All definitions are created following the diagrams in Vol 3A of the Intel SDM.
+
+To start, we’ll need a general segment descriptor structure for 64-bit environments.
+
+```
+struct __segment_descriptor_64_t
+{
+  unsigned __int16 segment_limit_low;
+  unsigned __int16 base_low;
+  union
+  {
+    struct
+    {
+      unsigned __int32 base_middle                                           : 8;
+      unsigned __int32 type                                                  : 4;
+      unsigned __int32 descriptor_type                                       : 1;
+      unsigned __int32 dpl                              		     : 2;
+      unsigned __int32 present                                               : 1;
+      unsigned __int32 segment_limit_high                                    : 4;
+      unsigned __int32 system                                                : 1;
+      unsigned __int32 long_mode                                             : 1;
+      unsigned __int32 default_big                                           : 1;
+      unsigned __int32 granularity                                           : 1;
+      unsigned __int32 base_high	                                     : 8;
+    };
+
+    unsigned __int32 flags;
+  } ;
+  unsigned __int32 base_upper;
+  unsigned __int32 reserved;
+};
+```
+
+And a general segment descriptor for 32-bit environments.
+
+```
+struct __segment_descriptor_32_t
+{
+  unsigned __int16 segment_limit_low;
+  unsigned __int16 base_low;
+  union
+  {
+    struct
+    {
+      unsigned __int32 base_middle                                           : 8;
+      unsigned __int32 type                                                  : 4;
+      unsigned __int32 descriptor_type                                       : 1;
+      unsigned __int32 dpl                              		     : 2;
+      unsigned __int32 present                                               : 1;
+      unsigned __int32 segment_limit_high                                    : 4;
+      unsigned __int32 system                                                : 1;
+      unsigned __int32 long_mode                                             : 1;
+      unsigned __int32 default_big                                           : 1;
+      unsigned __int32 granularity                                           : 1;
+      unsigned __int32 base_high	                                     : 8;
+    };
+
+    unsigned __int32 flags;
+  };
+};
+```
+
+Those are our two segment descriptor structures we’ll be using, let’s go ahead and define the remaining required structures: segment selector, and segment access rights.
+
+**Segment Selector:**
+
+```
+union __segment_selector_t
+{
+  struct
+  {
+    unsigned __int16 rpl                                   : 2;
+    unsigned __int16 table                                 : 1;
+    unsigned __int16 index                                 : 13;
+  };
+
+  unsigned __int16 flags;
+};
+```
+
+**Segment Access Rights:**
+
+```
+union __segment_access_rights_t
+{
+  struct
+  {
+    unsigned __int32 type                                                    : 4;
+    unsigned __int32 descriptor_type                                         : 1;
+    unsigned __int32 dpl                                                     : 2;
+    unsigned __int32 present                                                 : 1;
+    unsigned __int32 reserved0                                               : 4;
+    unsigned __int32 available                                               : 1;
+    unsigned __int32 long_mode                                               : 1;
+    unsigned __int32 default_big                                             : 1;
+    unsigned __int32 granularity                                             : 1;
+    unsigned __int32 unusable                                                : 1;
+    unsigned __int32 reserved1                                               : 15;
+  };
+
+  unsigned __int32 flags;
+};
+```
+
+Remember, all of this information is given in the Intel SDM and the only reason I know exactly what structures I’ll need is based on what the specification requires. If you’re unfamiliar with these structures, check the recommended reading section and learn about them! Let’s continue…
+
+We’re first going to have to write some functions that acquire the following data: segment access rights, and segment base addresses. This is tricky, but lucky for you I’ve already done it and will explain everything along the way. We’re going to start with the easy stuff first – getting the segment access rights. Let’s work through the logic quickly. We know that a segment register is unusable if it’s loaded with the null selector and based off our earlier discussion. This means the table bit will be cleared, and the index bit will be cleared (that’s where the null entry is). If we encounter a segment selector that has those bits cleared, then we’ll have to set the unusable bit in the access rights and return. If it isn’t a null selector we’ll need to convert the segment access rights to the proper format for VMX, the only difference for these formats is that the first byte of the standard format isn’t used in the VMX access rights. We’ll have to write another intrinsic to get the access rights of a segment selector and then perform some necessary modifications (to ensure that reserved bits are clear). Sounds simple enough – what follows is the function to acquire segment access rights and put them in the proper format for the VMCS.
+
+```
+static unsigned __int32 read_segment_access_rights(unsigned __int16 segment_selector)
+{
+    union __segment_selector_t selector;
+    union __segment_access_rights_t vmx_access_rights;
+    
+    selector.flags = segment_selector;
+    
+    //
+    // Check for null selector use, if found set access right to unusable
+    // and return. Otherwise, get access rights, modify format, return the
+    // segment access rights.
+    //
+    if(selector.table == 0 
+    && selector.index == 0)
+    {
+        vmx_access_rights.flags = 0;
+        vmx_access_rights.unusable = TRUE;
+        return vmx_access_rights.flags;
+    }
+    
+    //
+    // Use our custom intrinsic to store our access rights, and
+    // remember that the first byte of the access rights returned
+    // are not used in VMX access right format.
+    //
+    vmx_access_rights.flags = (__load_ar(segment_selector) >> 8);
+    vmx_access_rights.unusable = 0;
+    vmx_access_rights.reserved0 = 0;
+    vmx_access_rights.reserved1 = 0;
+    
+    return vmx_access_rights.flags;
+}
+```
+
+The above function follows the logic laid out pretty well, and works. Perfect. One thing is missing though, you haven’t written the intrinsic used – `__load_ar`. I keep things out of order because I want to make sure you’re taking the time to read and learn before cutting and pasting things together to make them work. Rushing and shortcuts only hurt you in the long run! I know this is a long article, but bear with me. Let’s take a look at our intrinsic below.
+
+```
+__load_ar proc
+        lar     rax, rcx
+        jz      no_error
+        xor     rax, rax
+no_error:
+        ret
+__load_ar endp
+```
+
+If you’re unfamiliar with assembly, this might be a little confusing. I’ll break it down to make sure you know what’s going on. We start off by using [**lar**](http://x86.dapsen.com/html/file_module_x86_id_149.html) which is an instruction that loads the access rights from a segment descriptor specified by the selector, and sets the ZF flag in the [**RFLAGS register**](https://en.wikipedia.org/wiki/FLAGS_register) on successful execution. This is why there is a `jz`, so we jump if the ZF flag is set to our label `no_error`. Otherwise, if it fails, the ZF flag will be 0 and we’ll zero our return value to signal to the caller that it failed.
+
+Now that we have this function written we can initialize our segment access right fields in the VMCS. If you recall how to get the segment selectors for each of the segment registers then we’re just going to feed those to our new `read_segment_access_rights` function to fill out our VMCS.
+
+```
+__vmx_vmwrite(GUEST_CS_ACCESS_RIGHTS, read_segment_access_rights(__read_cs()));
+__vmx_vmwrite(GUEST_SS_ACCESS_RIGHTS, read_segment_access_rights(__read_ss()));
+__vmx_vmwrite(GUEST_DS_ACCESS_RIGHTS, read_segment_access_rights(__read_ds()));
+__vmx_vmwrite(GUEST_ES_ACCESS_RIGHTS, read_segment_access_rights(__read_es()));
+__vmx_vmwrite(GUEST_FS_ACCESS_RIGHTS, read_segment_access_rights(__read_fs()));
+__vmx_vmwrite(GUEST_GS_ACCESS_RIGHTS, read_segment_access_rights(__read_gs()));
+__vmx_vmwrite(GUEST_LDTR_ACCESS_RIGHTS, read_segment_access_rights(__read_ldtr()));
+__vmx_vmwrite(GUEST_TR_ACCESS_RIGHTS, read_segment_access_rights(__read_tr);
+```
+
+Pretty easy, right? All that’s left is to get the segment bases from their descriptors, and we’ll have to build a function to take care of that. Before we get going though, you’re likely going to notice that we’re using the `__segment_descriptor_32_t` structure instead of the 64-bit version. This is because for 64-bit GDT entries the base and limit of said descriptors are 0. However, for 32-bit code and data GDT entries we have to do some bit masking to build the proper segment base address, and limit. You’ll see what I mean when you take a look at the code below. You’ll need to refer to the structure in the specification to understand what’s going on in this function.
+
+```
+static unsigned __int64 get_segment_base(unsigned __int64 gdt_base, unsigned __int16 segment_selector)
+{
+    unsigned __int64 segment_base;
+    union __segment_selector_t selector;
+    struct __segment_descriptor_32_t *descriptor;
+    struct __segment_descriptor_32_t *descriptor_table;
+    
+    selector.flags = segment_selector;
+    
+    if(selector.table == 0
+    && selector.index == 0)
+    {
+        segment_base = 0;
+        return segment_base;
+    }
+    
+    descriptor_table = (struct __segment_descriptor_32_t*)gdt_base;
+    descriptor = &descriptor_table[selector.index];
+    
+    //
+    // All of this bit masking and shifting is just a shortcut instead
+    // of allocating some local variables to hold the low, mid, and high base
+    // values. 
+    //
+    // If we did it with local variables it would look similar to this:
+    // base_high = descriptor->base_high << 24;
+    // base_mid = descriptor->base_middle << 16;
+    // base_low = descriptor->base_low;
+    // segment_base = (base_high | base_mid | base_low) & 0xFFFFFFFF;
+    //
+    // But for the purposes of doing it all in one fell-swoop we did the shifting
+    // and masking inline.
+    //
+   segment_base = ((unsigned __int64)descriptor->base_high << 24) |
+                  ((unsigned __int64)descriptor->base_middle << 16) |
+                  (unsigned __int64)descriptor->base_low;
+    
+    //
+    // As mentioned in the discussion in the article, some system descriptors are expanded
+    // to 16 bytes on Intel 64 architecture. We only need to pay attention to the TSS descriptors
+    // and we'll use our expanded descriptor structure to adjust the segment base.
+    //
+    if((descriptor->system == 0) && 
+    ((descriptor->type == SEGMENT_DESCRIPTOR_TYPE_TSS_AVAILABLE) ||
+    (descriptor->type == SEGMENT_DESCRIPTOR_TYPE_TSS_BUSY)))
+    {
+        struct __segment_descriptor_64_t *expanded_descriptor;
+        expanded_descriptor = (struct __segment_descriptor_64_t*)descriptor;
+        segment_base |= ((unsigned __int64)expanded_descriptor->base_upper << 32);
+    }
+    
+    return segment_base;
+}
+```
+
+The comments explain the logic, and to clear up confusion on the expanded descriptors please refer to the top of this section and read about the different descriptor sizes, tables, and changes across architectures. If you’re unfamiliar with bit-masking, check the recommended reading. We’re going to start moving a little quicker here since we have all of our functions to fill in the VMCS fields and push us closer to `vmlaunch`.
+
+We’ll refer to the organization page of the VMCS data to determine what fields are left for the guest register state.
+
+![](https://i0.wp.com/i.imgur.com/NMi8sgZ.png?resize=772%2C163&ssl=1)
+
+All that’s left is to set the bases for the LDTR, TR, and then we’ll move on to initializing the host fields! We’re almost there! We’re going to write to these fields as shown below.
+
+```
+__vmx_vmwrite(GUEST_LDTR_BASE, get_segment_base(gdtr.base_address, __read_ldtr()));
+__vmx_vmwrite(GUEST_TR_BASE, get_segment_base(gdtr.base_address, __read_tr()));
+```
+
+And that’s it! We’ve intialized all of our guest register and non-register state fields. Hopefully, this segmentation stuff is starting to make more sense and the code that looks quite convoluted is easy to understand now. If so, I’ve done my job! Let’s jump on down to the next section and initialize the host segment register fields; but remember it’s not all the same, so you need to pay attention.
+
+#### — Host Segment Register Fields
+
+![](https://i0.wp.com/i.imgur.com/CiWnJmr.png?resize=836%2C226&ssl=1)
+
+As shown in the screenshot from the Intel specification, we don’t have to initialize nearly as many fields for the host-state area. We only need to initialize the selector and base address fields, **BUT** there’s a small change on the setting of the host selector fields based on the checks performed on host segment and descriptor table registers. This information can be found in [**Intel SDM Volume 3C Chapter 26.2.3**](https://software.intel.com/en-us/articles/intel-sdm) – “*In the selector field for each of CS, SS, DS, ES, FS, GS and TR, the RPL (bits 1:0) and the TI flag (bit 2) must be 0.*“
+
+This means that we’ll have to mask off these bits when setting the selector fields for the host-state area. That’s easy enough since the bits are given to us. Let’s do this easy mask together. We have to mask off the RPL (1:0), and TI flag (2). That’s the first three bits of the selector, the maximum number that can be stored in three bits is (2^3)-1, so the mask value will be 7. Since they need to be zero, we’re going to perform a **[bitwise NOT](https://stackoverflow.com/questions/4295578/explanation-of-bitwise-not-operator)** on the mask yielding something like `~selector_mask` and then **[bitwise AND](https://docs.microsoft.com/en-us/cpp/cpp/bitwise-and-operator-amp?view=vs-2019)** it against the selector.
+
+We’ll do this all inline with the vmwrite.
+
+```
+__vmx_vmwrite(HOST_CS_SELECTOR, __read_cs() & ~selector_mask);
+__vmx_vmwrite(HOST_SS_SELECTOR, __read_ss() & ~selector_mask);
+__vmx_vmwrite(HOST_DS_SELECTOR, __read_ds() & ~selector_mask);
+__vmx_vmwrite(HOST_ES_SELECTOR, __read_es() & ~selector_mask);
+__vmx_vmwrite(HOST_FS_SELECTOR, __read_fs() & ~selector_mask);
+__vmx_vmwrite(HOST_GS_SELECTOR, __read_gs() & ~selector_mask);
+__vmx_vmwrite(HOST_TR_SELECTOR, __read_tr() & ~selector_mask);
+```
+
+Notice, we ignore the LDTR selector. That’s because there is no field for the LDTR selector in the host-state area, as stated in the image above. All that’s left to initialize are the base addresses. Refer to the image to determine which ones are left.
+
+```
+__vmx_vmwrite(HOST_TR_BASE, get_segment_base(gdtr.base_address, __read_tr()));
+__vmx_vmwrite(HOST_GDTR_BASE, gdtr.base_address);
+__vmx_vmwrite(HOST_IDTR_BASE, idtr.base_address);
+```
+
+And that’s it! We have two more host state fields to write to, but we have a few things to cover before we finish those and execute our first `vmlaunch`.
+
+## Custom Intrinsics
+
+If you’ve made it this far you’ve made it through the hardest part! Congratulations. Good on you for staying committed. In this section we’re going to set up some stubs, and intrinsics necessary to get our VMM launched properly and at the right place. This section has a lot of assembly programming and will require, at minimum, a basic understanding of the stack and the ISA. I know you’re probably in a hurry at this point you’ve likely read a lot and are mentally exhausted, but stick with it. These next sections fly by once we finish this one.
+
+Now to make sure we’re all on the same page, we need to recap what we’ve covered up to this point and what fields are still in need of being covered. So far we’ve covered:
+
+1.  Guest/Host State Register Area
+2.  Guest Non-Register State Area
+3.  Host Non-Register State Area
+    - excluding HOST_RSP, and HOST_RIP
+4.  VM Execution Controls
+5.  Adjusting VM Controls
+6.  Setting up VMCS, and per processor operation
+7.  VM-Exit Control Fields
+8.  VM-Entry Control Fields
+9.  VM-Exit Information Fields
+
+That’s a heap of information to cover, and we’ve done it. In this section we’re going to write a few stubs to setup `HOST_RSP` and `HOST_RIP` fields in the VMCS. Following that, I’ll explain how the new vCPU structure is setup, and the VMM context modifications. The assembly here gets detailed though, so be sure you follow along and read everything that I explain otherwise certain sections will be confusing. Before we get going let’s get a visual for what the hell we need to happen when we `vmlaunch`.
+
+![](https://i0.wp.com/revers.engineering/wp-content/uploads/2019/07/Untitled-Diagram.png?resize=613%2C521&ssl=1)
+
+The diagram above shows the process we’ve taken to get where we are right now, but you’ll notice there is an important piece missing. What happens when an event causes a VM-exit? We’re out of luck. We have the hypervisor stack setup at this point, so when the processor traps into the VMM we’ll have a stack available, but where will it trap? It won’t – currently. You’ll just halt right there an go nowhere. We know that on execution of vmlaunch we jump to the guest instruction pointer, and we have the guest stack saved. It’s all good there. The opposite event, on a VM-exit, will jump to the host instruction pointer; but if you recall we haven’t initialized that field in the VMCS. We need to setup an entry point for the host (hypervisor, or VMM), and to do that we’re going to have to write a small assembly stub to get us to our VM-exit handler. That’s what we’re going to do now.
+
+You’ll need to open your assembly source file, the one used for our intrinsics, and setup a procedure called `vmm_entrypoint`. We’re going to setup some constants to help us keep track of errors, and macros to reduce the amount of redundant code. There’s something important to note and that is state preservation. There’s a lot of that going on during transitions from root operation to non-root operation. Let’s start with making our assembly macros. We’ll make one to save all general purpose registers and restore them. If you don’t know how to make macros or how they work in MASM, please consult the recommended reading section.
+
+```
+SAVE_GP macro
+        push    rax
+        push    rcx
+        push    rdx
+        push    rbx
+        push    rbp
+        push    rsi
+        push    rdi
+        push    r8
+        push    r9
+        push    r10
+        push    r11
+        push    r12
+        push    r13
+        push    r14
+        push    r15
+endm
+
+RESTORE_GP macro
+        pop     r15
+        pop     r14
+        pop     r13
+        pop     r12
+        pop     r11
+        pop     r10
+        pop     r9
+        pop     r8
+        pop     rdi
+        pop     rsi
+        pop     rbp
+        pop     rbx
+        pop     rdx
+        pop     rcx
+        pop     rax
+endm
+```
+
+You’ll notice we don’t preserve RSP, and that’s because the stack is already present in the VMCS fields and stored. Next, we’re going to start building out our VMM entrypoint. This is the entry point of the VM-exit handler. When a VM-exit occurs the processor will begin execution at `HOST_RIP`. Any code executing in this handler is what is considering the hypervisor and is where all interposition will take place. I’m going to provide the VMM entry point, and explain the logic instruction by instruction following it.
+
+```
+vmm_entrypoint proc
+        SAVE_GP
+
+        sub     rsp, 68h
+        movaps  xmmword ptr [rsp +  0h], xmm0
+        movaps  xmmword ptr [rsp + 10h], xmm1
+        movaps  xmmword ptr [rsp + 20h], xmm2
+        movaps  xmmword ptr [rsp + 30h], xmm3
+        movaps  xmmword ptr [rsp + 40h], xmm4
+        movaps  xmmword ptr [rsp + 50h], xmm5
+
+        mov     rcx, rsp
+        sub     rsp, 20h
+        call    vmexit_handler
+        add     rsp, 20h
+
+        movaps  xmm0, xmmword ptr [rsp +  0h]
+        movaps  xmm1, xmmword ptr [rsp + 10h]
+        movaps  xmm2, xmmword ptr [rsp + 20h]
+        movaps  xmm3, xmmword ptr [rsp + 30h]
+        movaps  xmm4, xmmword ptr [rsp + 40h]
+        movaps  xmm5, xmmword ptr [rsp + 50h]
+        add     rsp, 68h
+
+        test    al, al
+        jz      exit
+        RESTORE_GP
+        vmresume
+        jmp     vmerror
+
+exit:
+        RESTORE_GP
+        vmxoff
+        jz      vmerror
+        jc      vmerror
+        push    r8
+        popf
+        mov     rsp, rdx
+        push    rcx
+        ret
+
+vmerror:
+        int 3
+vmm_entrypoint endp
+```
+
+Immediately, we want to save all the general purpose registers by taking advantage of our macro created earlier. Following that we need to save the XMM registers, the `sub rsp, n` instructions are to allocate space on the stack. Once again, if you’re not familiar with the stack or stack operations please consult the recommended reading section!
+
+After saving the XMM registers we store the stack pointer in `rcx` so that we can use it as an argument to `vmexit_handler`. We allocate shadow space on the stack prior to calling our VM-exit handler, and upon servicing of whatever VM-exit event we reclaim that stack space with `add rsp, n`. We need to restore the XMM registers we preserved prior to our exit, and reclaim that used stack space.
+
+The test al, al is to test the return value from our VM-exit handler to determine if all completed successfully or an error was encountered. If there is no error we are going to restore the general purpose registers using the `RESTORE_GP` macro and executing `vmresume`. If an error occurs and the jump is taken, we’re going to terminate VMX operation by executing `vmxoff`, but not before restoring our general purpose registers. This stub checks if an error occurred directly after terminating VMX operation. If an error occurred, based on the specification, the CF or ZF flag are set so we’re going to perform a conditional jump to our `vmerror` label which will break execution by executing `int 3` so that the debugger (if one is attached) will break at this position. We can use this spot to dump VMCS data and instruction error fields to determine the cause of our error. However, if the VMX instruction does not fail we’ll restore our [**FLAGS register**](https://en.wikipedia.org/wiki/FLAGS_register), RSP, and then return from our entry point which will jump to the instruction following the instruction causing the VM-exit.
+
+Now that we have that setup and explained, let’s create our function prototype in the header, and write our VM-exit handler and complete our assembly file with external references. We’ll place the following in our `vmm_intrin.h` file.
+
+```
+void vmm_entrypoint(void);
+
+unsigned short __read_ldtr(void);
+unsigned short __read_tr(void);
+unsigned short __read_cs(void);
+unsigned short __read_ss(void);
+unsigned short __read_ds(void);
+unsigned short __read_es(void);
+unsigned short __read_fs(void); 
+unsigned short __read_gs(void);
+```
+
+We’re going to write our `vmm_entrypoint` into the host field of the VMCS.
+
+```
+__vmx_vmwrite(HOST_RIP, (UINT64)vmm_entrypoint);
+```
+
+Let’s get back into our assembly file and make an external reference to our `vmexit_handler` function. We’ll do this right under the `.code` header. Our full assembly file will look like what is depicted below.
+
+```
+.code
+
+extern vmexit_handler : proc
+
+SAVE_GP macro
+        push    rax
+        push    rcx
+        push    rdx
+        push    rbx
+        push    rbp
+        push    rsi
+        push    rdi
+        push    r8
+        push    r9
+        push    r10
+        push    r11
+        push    r12
+        push    r13
+        push    r14
+        push    r15
+endm
+
+RESTORE_GP macro
+        pop     r15
+        pop     r14
+        pop     r13
+        pop     r12
+        pop     r11
+        pop     r10
+        pop     r9
+        pop     r8
+        pop     rdi
+        pop     rsi
+        pop     rbp
+        pop     rbx
+        pop     rdx
+        pop     rcx
+        pop     rax
+endm
+
+__read_rip proc
+    mov rax, [rsp]
+    ret
+__read_rip endp
+
+__read_rsp proc
+    mov rax, rsp
+    add rax, 8h
+    ret
+__read_rsp endp
+
+vmm_entrypoint proc
+        SAVE_GP
+
+        sub     rsp, 68h
+        movaps  xmmword ptr [rsp +  0h], xmm0
+        movaps  xmmword ptr [rsp + 10h], xmm1
+        movaps  xmmword ptr [rsp + 20h], xmm2
+        movaps  xmmword ptr [rsp + 30h], xmm3
+        movaps  xmmword ptr [rsp + 40h], xmm4
+        movaps  xmmword ptr [rsp + 50h], xmm5
+
+        mov     rcx, rsp
+        sub     rsp, 20h
+        call    vmexit_handler
+        add     rsp, 20h
+
+        movaps  xmm0, xmmword ptr [rsp +  0h]
+        movaps  xmm1, xmmword ptr [rsp + 10h]
+        movaps  xmm2, xmmword ptr [rsp + 20h]
+        movaps  xmm3, xmmword ptr [rsp + 30h]
+        movaps  xmm4, xmmword ptr [rsp + 40h]
+        movaps  xmm5, xmmword ptr [rsp + 50h]
+        add     rsp, 68h
+
+        test    al, al
+        jz      exit
+        RESTORE_GP
+        vmresume
+        jmp     vmerror
+
+exit:
+        RESTORE_GP
+        vmxoff
+        jz      vmerror
+        jc      vmerror
+        push    r8
+        popf
+        mov     rsp, rdx
+        push    rcx
+        ret
+
+vmerror:
+        int     3
+vmm_entrypoint endp
+
+__read_cs proc
+        mov     ax, cs
+        ret
+__read_cs endp
+
+__read_ss proc
+        mov     ax, ss
+        ret
+__read_ss endp
+
+__read_ds proc
+        mov     ax, ds
+        ret
+__read_s endp
+
+__read_es proc
+        mov     ax, es
+        ret
+__read_es endp
+
+__read_fs proc
+        mov     ax, fs
+        ret
+__read_fs endp
+
+__read_gs proc
+        mov     ax, gs
+        ret
+__read_gs endp
+
+__read_ldtr proc
+        sldt    ax
+        ret
+__read_ldtr endp
+
+__read_tr proc
+        str     ax
+        ret
+__read_tr endp
+
+__load_ar proc
+        lar     rax, rcx
+        jz      no_error
+        xor     rax, rax
+no_error:
+        ret
+__load_ar endp
+
+end
+```
+
+That’s it. We’re going to write our VM-exit handler and explain a few brief things, and then we’re ready to launch. You’ll note that we have no fail-safes or graceful unload procedures in place. Your challenge before the next article is to implement these yourself given what you’ve learned from these articles thus far, how to undo the things we’ve done in a graceful and safe manner to return the OS to a stable state should an error occur.
+
+## VM-Exit Handler
+
+The exit handler is just like any other function or handler you’ve encountered before. When a VM-exit occurs the processor will perform a state transition, execute the stub in the HOST_RIP field of the VMCS and execute the code in this handler as it would any other function. The main difference is that this mode will not incur any exits for using certain instructions and is not limited by VMM restrictions on the guest. You’re running in root mode. If you recall from the setup of the VMM entrypoint we pass through the hypervisor stack, which will just contain our guest general purpose registers. I’ve made a structure to easily access these registers. Knowing this, let’s write our bare VM-exit handler.
+
+**Guest Register Structure:**
+
+```
+struct __vmexit_guest_registers_t
+{
+    unsigned __int64 rax;
+    unsigned __int64 rcx;
+    unsigned __int64 rdx;
+    unsigned __int64 rbx;
+    unsigned __int64 rsp;
+    unsigned __int64 rbp;
+    unsigned __int64 rsi;
+    unsigned __int64 rdi;
+    unsigned __int64 r8;
+    unsigned __int64 r9;
+    unsigned __int64 r10;
+    unsigned __int64 r11;
+    unsigned __int64 r12;
+    unsigned __int64 r13;
+    unsigned __int64 r14;		// 70h
+    unsigned __int64 r15;			
+};
+```
+
+And then in a new file, `vmexit.c` we’ll `include "vmm_intrin.h"` and `intrin.h` (MSFT header). We’ll create our function making the parameter of type` __vmexit_guest_registers_t*` so that we can access guest registers easily.
+
+```
+boolean vmexit_handler(struct __vmexit_guest_registers_t *guest_registers)
+{
+    DbgBreakPointWithStatus( STATUS_BREAKPOINT );
+    
+    return 0;
+}
+```
+
+I want to keep this bare because writing the VM-exit handler is a whole new article on its own. As of now when you launch into VMX operation and a VM-exit occurs, you will wind up breaking in this function. Have your debugger and VM ready because we’re about to launch and test everything. If you’re confused on where things go or have missing parts, consult the previous articles and structures, and pay attention to which files I mention to put them in. I would rather not have readers pasting this together without understanding why it’s structured this way.
+
+And without further a do, let’s launch this bad boy.
+
+## Lift Off
+
+We’re going to take our `init_vmcs` function and put it in the `init_logical_processor` function defined in the previous articles. You’ll need to place it after the vmx init and `vmxon`. Following the initialization of our VMCS we’ll execute `vmlaunch`. However, we’re going to add some error handling to retrieve and display any errors in **[DbgView](https://docs.microsoft.com/en-us/sysinternals/downloads/debugview)** if `vmlaunch` fails.
+
+If `vmlaunch` executes with the result being 0, then all is good. If it fails we’ll grab the error status by performing a vmread on the `VM_INSTRUCTION_ERROR` field of the VMCS and displaying it. If it does fail, it’s important that you implemented your own graceful shutdown procedures so that the service can clean itself up and terminate VMX operation in a stable manner. The following code should be placed after initialization of our VMCS.
+
+```
+status = __vmx_vmlaunch();
+if(status != 0)
+{
+    vmx_error = __vmx_vmread(VM_INSTRUCTION_ERROR);
+    DbgPrint("vmlaunch failed: %u", vmx_error);
+    // Some clean-up procedure
+}
+```
+
+`Note: VM instruction error codes and descriptions can be found in Table 30-1 in the Intel SDM.`
+
+The full `init_logical_processor` function should look like this:
+
+```
+void init_logical_processor(struct __vmm_context_t *context, void *guest_rsp, void *system_argument1, void *system_argument2)
+{
+    struct __vmm_context_t *vmm_context;
+    struct __vcpu_t *vcpu;
+    union __vmx_misc_msr_t vmx_misc;
+    unsigned long processor_number;
+
+    processor_number = KeGetCurrentProcessorNumber();
+
+    vmm_context = (struct __vmm_context_t *)context;
+    vcpu = vmm_context->vcpu_table[ processor_number ];
+
+    log_debug( "vcpu %d guest_rsp = %llX\n", processor_number, guest_rsp );
+
+    adjust_control_registers( );
+
+    if(!is_vmx_supported( )) {
+        log_error( "VMX operation is not supported on this processor.\n" );
+
+        free_vmm_context( vmm_context );
+
+        goto _end;
+    }
+
+    if(!init_vmxon( vcpu )) {
+        log_error( "VMXON failed to initialize for vcpu %d.\n", processor_number );
+
+        free_vcpu( vcpu );
+        disable_vmx( );
+        
+        goto _end;
+    }
+
+    if(__vmx_on( &vcpu->vmxon_physical ) != 0) {
+        log_error( "Failed to put vcpu %d into VMX operation.\n", KeGetCurrentProcessorNumber( ) );
+
+        free_vcpu( vcpu );
+        disable_vmx( );
+        free_vmm_context( vmm_context );
+
+        goto _end;
+    }
+
+    log_success( "vcpu %d is now in VMX operation.\n", KeGetCurrentProcessorNumber( ) );
+
+    init_vmcs( vcpu, guest_rsp, guest_entry_stub );
+
+    status = __vmx_vmlaunch();
+    if(status != 0)
+    {
+        vmx_error = __vmx_vmread( VM_INSTRUCTION_ERROR )
+        log_error( "vmlaunch failed: %u", vmx_error );
+        // cleanup
+    }
+
+_end:
+    KeSignalCallDpcSynchronize( system_argument2 );
+    KeSignalCallDpcDone( system_argument1 );
+}
+```
+
+If we boot up our VM and attach WinDbg, start our service, you should wind up breaking right here.
+
+![](https://i0.wp.com/i.imgur.com/lA9leh3.png?resize=1100%2C220&ssl=1)
+
+And that’s it, you’re in VMX root operation at the debug break. There’s more defined in this vmexit_handler depicted because – well, I’ve already completed this project for this tutorial series. We’ll define this much more in the next article and come full circle. I’ll also publish the full source so that if you’re having issues or errors you can compare and correct.
+
+## Conclusion
+
+We’ve covered an insane amount in this article. I think it may even be the longest article in this series. If you kept up and managed to reach the same state I did at the end then you’re in good shape! We covered initialization of the VMCS (which you’ll have to define your own function for that, challenge \#2), segmentation, and provided a detailed look at how everything works together to get us to the final picture. From allocating and initializing our vCPU contexts to vmlaunch and how exits actually occur, you should have a good idea of how virtualization allows incredible control over your system. In the next article we’ll cover the VM-exit handler in great detail, setup much more detailed contexts for our vCPUs and VMM, as well as write handlers for CPUID, VMCALL, MSR accesses, and other events that cause VM-exits. I’ll also be providing a fun example of what the VMM can do with instruction virtualization and modify some CPUID outputs to show the flexibility and usefulness of having a hypervisor. We’ll also cover interrupt injection (see recommended reading for clarification) and setup a state dumper for errors. I’ll also provide the graceful shutdown procedures in the next article which will make sure that any errors encountered will result in the system returning to a stable operational state.
+
+I say this at the end of every article, but if any part was confusing, needs clarification, or I missed something in the slew of words please don’t hesitate to reach out! Thank you for reading and best of luck!
+
+`Also, read the recommended reading. I promise it'll make things way easier.`
+
+### Recommended Reading
+
+- [**Intel SDM Volume 3 Chapter 3 (Segmentation)**](https://software.intel.com/en-us/download/intel-64-and-ia-32-architectures-sdm-combined-volumes-1-2a-2b-2c-2d-3a-3b-3c-3d-and-4)
+- **[Intel SDM Volume 3 Chapter 27 (VM Exits)](https://software.intel.com/en-us/download/intel-64-and-ia-32-architectures-sdm-combined-volumes-1-2a-2b-2c-2d-3a-3b-3c-3d-and-4)**
+- **[Intel SDM Volume 3 Chapter 31 (VMM Programming Considerations)](https://software.intel.com/en-us/download/intel-64-and-ia-32-architectures-sdm-combined-volumes-1-2a-2b-2c-2d-3a-3b-3c-3d-and-4)**
+- **[Quick Guide to Bitmasking](https://stackoverflow.com/questions/18591924/how-to-use-bitmask)**
+- **[OSTEP Chapter 15 (Segmentation)](http://pages.cs.wisc.edu/~remzi/OSTEP/)**
+- **[Control Register Guest/Host Masks and Read Shadows](https://howtohypervise.blogspot.com/2018/09/how-does-control-register-exiting-work.html)**
+- **[Hardware and Software Support for Virtualization](https://www.amazon.com/Hardware-Software-Virtualization-Synthesis-Architecture/dp/1627056939) **(thanks** [*@standa_t*](https://twitter.com/standa_t)** for the recommendation)
+
+As always leave your comments, questions, feedback or otherwise in the comments.
+
+Tags: [7 days to virtualization](https://revers.engineering/tag/7-days-to-virtualization/), [daax](https://revers.engineering/tag/daax/), [hypervisor](https://revers.engineering/tag/hypervisor/), [hypervisor development](https://revers.engineering/tag/hypervisor-development/), [reverse engineering](https://revers.engineering/tag/reverse-engineering/), [tutorial](https://revers.engineering/tag/tutorial/), [virtualization](https://revers.engineering/tag/virtualization/)
