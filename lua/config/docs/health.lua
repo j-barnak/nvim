@@ -66,7 +66,7 @@ function M.check()
 	for _, w in ipairs({ { "learncpp", 356 }, { "osdev", 778 }, { "rust-atomics", 13 }, { "rayanfam", 8 }, { "herd7", 3 },
 		{ "astra", 7 }, { "kernel-ctf", 10 },
 		{ "packer", 18 }, { "snapshot-fuzzer", 13 }, { "kernel-labs", 27 },
-		{ "slub", 14 }, { "kernel-internals", 482 }, { "kernel-exploitation", 79 } }) do
+		{ "slub", 14 }, { "kernel-internals", 482 }, { "kernel-exploitation", 77 } }) do
 		local idx = fr .. "/" .. w[1] .. "/index.tsv"
 		if vim.fn.filereadable(idx) == 1 then
 			local n = #vim.fn.readfile(idx)
