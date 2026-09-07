@@ -1,0 +1,712 @@
+                                                                                            CHAPTER
+
+Optimism and manual
+memory management
+                                                                                            19
+For the remaining chapters of this book, we focus on challenges and opportunities
+that arise when creating concurrent software using the C++ programming language.
+C++ has rich support for concurrency, with language-level threads, locks, a memory
+consistency model, and the atomic<> template, but it lacks the automatic memory
+management (i.e., garbage collection) of Java, and its consequent memory safety
+guarantees. In this chapter, we focus on the challenges that arise for optimistic syn-
+chronization when the programmer is responsible for explicitly managing memory.
+
+19.1 Transitioning from Java to C++
+C++ and Java have (not coincidentally) very similar syntax. Both allocate memory
+with the new keyword, both use the class keyword to declare types, and many of the
+primitive types (e.g., int, float, double) are the same.
+    One notable difference is with regard to volatile fields. The features provided
+by the Java volatile keyword and the java.util.concurrent.atomic package are pro-
+vided in C++ through the std::atomic<> template (defined in the <atomic> header).
+The std::atomic<T> template defines atomic objects of type T, so we can easily define
+objects equivalent to AtomicInteger and AtomicReference, for example. It is also easy
+to define an array of atomic registers. Because C++ programmers can cast between
+pointers and integers, we can also use std::atomic<> to achieve the behaviors of an
+AtomicMarkableReference. Pragma 19.1.1 gives several examples.
+    The load() and store() methods of atomic objects take an optional parameter,
+which can be used to relax the memory ordering guarantees when the object is ac-
+cessed. In this chapter, we never provide such a parameter, and so always get the
+default, which provides the strongest guarantees (i.e., linearizability).
+
+19.2 Optimism and explicit reclamation
+The optimistic techniques we describe in much of this book make the following as-
+sumption: If the linearization of an operation Ol causes some other pending operation
+Op to restart, no harm will come if it takes some time for Op to realize that it has
+become invalid and must retry from the beginning. In languages like Java and C#,
+The Art of Multiprocessor Programming. https://doi.org/10.1016/B978-0-12-415950-1.00029-X
+Copyright © 2021 Elsevier Inc. All rights reserved.
+
+            PRAGMA 19.1.1
+            In C++, atomic variables should be declared using the std::atomic<> template.
+      1     #include <cstdint> // for the uintptr_t type
+      2     #include <atomic> // for std::atomic
+      3
+
+      4     // an atomic pointer to an Object
+      5     std::atomic<Object *> ptr;
+      6
+
+      7     // an array of atomic pointers to Objects
+      8     std::atomic<Object *> *arr;
+      9
+
+      10    // an atomic pointer to an array of atomic pointers to Objects
+      11    std::atomic<std::atomic<Object *> *> arr_ptr;
+      12
+
+      13    // read an atomic variable
+      14    Object *ref = ptr.load();
+      15
+
+      16    // store to an atomic variable
+      17    ptr.store(ref);
+      18
+
+      19    // mark the low bit of ptr
+      20    ptr.store((Object *)(1 | (uintptr_t)ptr.load()));
+      21
+
+      22    // unmark the low bit of ptr
+      23    ptr.store((Object *)((~1) & (uintptr_t)ptr.load()));
+      24
+
+      25    // check the low bit of ptr
+      26    bool marked = (1 & (uintptr_t)ptr.load());
+      27
+
+      28    // safely dereference ptr when its low bit might be marked
+      29    *(Object *)((~1) & (uintptr_t)ptr.load());
+
+            The uintptr_t type is an unsigned integer that is guaranteed to be the same number
+            of bits as a pointer: It is helpful when casting between pointers and integers from
+            code that can be run in 32-bit and 64-bit environments. Casting between pointers
+            and integers is, in general, unsafe; we use it only when an algorithm needs a mark
+            bit that is modified atomically with a pointer.
+
+           which have automatic memory reclamation (garbage collection), this assumption is
+           reasonable. However, in C++, doomed-to-retry operations might not be harmless.
+               The essence of the problem is that in C++, merely holding a pointer to an object
+           does not ensure that the use of that object will be safe: If another thread reclaims
+           the memory corresponding to that object (using delete or free), then all bets are
+           off. Consider the interleaving in Fig. 19.1, where thread T1 reads the next pointer of
+                                         19.2 Optimism and explicit reclamation             453
+
+FIGURE 19.1
+Concurrent access to a lazy list by two threads.
+
+the node holding the value 7. T2 deletes the node holding the value 8, and then at
+some point in the future T1 attempts to dereference the pointer. The memory of the
+deleted object could be used by the program in some way that T1 does not expect, or
+the memory of the deleted object could be returned to the operating system. Many
+hard-to-trace bugs could result. A few of the most common are listed below.
+    First, thread T2 might call new to create a different object of the same type, and
+the call to new may have returned the same memory region that formerly stored 8. T2
+might still be initializing (constructing) the object, in which case accesses to the node
+by T1 will produce undefined behavior.
+    Second, suppose that thread T2 calls new to constructs a new node with the value
+25, and inserts it into the list. If T1 was searching for 9, it might conclude that the
+node holding 7 points to the node holding 25, and thus that 9 is not in the list.
+    Third, some other thread T3 might call new to create a completely different type
+of object. If new returns the region that formerly stored 8, then accesses to that object
+by T3 will race with invalid attempts to use that same memory as a list node by T1 .
+These races violate type safety and are completely dependent on low-level decisions
+by the allocator about when to give the deleted memory to a different thread.
+    Fourth, the allocator may decide to return the memory region to the operating
+system. In this case, any subsequent access by T1 will cause a segmentation fault.
+    Note that in all cases, T1 may exhibit incorrect or dangerous behaviors. Using
+optimistic algorithms in programming languages with manual memory reclamation,
+like C++, requires us to pay close attention to the pending operations in a program’s
+history, and establish sufficient conditions for avoiding the bad behaviors described
+above. In this chapter, we derive a sufficient condition for using optimistic algorithms
+in C and C++, and then we explore two implementations.
+
+      19.3 Protecting pending operations
+      When a region of memory is reclaimed, the programmer cannot know how that region
+      of memory will be reused, or even whether it is reused. The first step in developing
+      a general solution to prevent the sorts of races described in the previous section is to
+      recognize that such races first become possible when the region is reclaimed (via free
+      or delete). We define the act of reclaiming a region of memory as racing with any
+      concurrent access to the region. We can prevent these races by delaying reclamation.
+      If we think in terms of pending operations on a concurrent data structure, a sufficient
+      condition is that memory is only reclaimed when it is impossible for any pending
+      operation to access it in the future.
+           In a language with automatic memory management, this property can be ensured
+      by a garbage collector, which tracks every reference to every object allocated in the
+      program. These references could be on the heap, in a thread’s stack, or in a thread’s
+      registers. An object can be reclaimed when no references to it remain, since it can
+      never be accessed again.
+           The property is also achieved by reference counting. In a reference-counted im-
+      plementation of the list, a counter of type atomic<int> is associated with each node.
+      Whenever a reference to node N is created (either in a local variable or by pointing
+      some other node’s next pointer to N ), the count must first be incremented. Whenever
+      a reference to N is destroyed (for example, by overwriting a local variable), the count
+      is subsequently decremented. When the count reaches zero, there are no outstanding
+      references to the node, and it can be reclaimed.
+           C++ supports reference counting via the std::atomic_shared_ptr<> template. To
+      use it, threads never create local variables of type Node *; instead, they use local
+      variables of type std::atomic_shared_ptr<Node *>. Similarly, the type of the Node’s
+      next pointer must be std::atomic_shared_ptr<Node *>.
+           Under the hood, std::atomic_shared_ptr<Node *>> introduces two overheads.
+      First, the reference count associated with a std::atomic_shared_ptr<Node *> must be
+      stored on the heap. With one std::atomic_shared_ptr<Node *> per list node, refer-
+      ence counting effectively doubles the number of memory locations accessed during a
+      list traversal. Fortunately, this overhead affects only latency, not scalability. However,
+      the second overhead affects scalability. Every reader of a node must first increment
+      the node’s reference count; later, it must decrement the reference count, once the node
+      is not needed anymore. In a linked list, every traversal references the same prefix of
+      list nodes. For each node, each thread will write to the counter twice, and as we know,
+      concurrent writes to the same location cause cache contention.
+           Before constructing more scalable approaches, it is useful to ask why reference
+      counting works. By incrementing a counter associated with a node before accessing
+      the node, an operation can ensure that other threads know of its intention to use the
+      node. In response, those other threads promise not to reclaim the node if the count is
+      nonzero. And in exchange for this guarantee of protection, the operation inherits the
+      responsibility to reclaim a node if it discovers (upon decrementing the counter) that
+      it had inhibited reclamation by some other thread.
+                                                19.4 An object for managing memory              455
+
+         Thus we can say that reference counting serves two roles: It allows operations to
+     protect a node from concurrent deletion, and it allows threads to delegate the recla-
+     mation of a node. While delegation means that a node is not reclaimed immediately,
+     from the perspective of the deleting thread, it is reclaimed as soon as possible without
+     violating safety.
+         It would be correct to allow operations to protect a node from concurrent deletion,
+     but require the deleting thread to defer reclamation, without delegating to another
+     thread. That is, if a region of memory has outstanding references, the deleting oper-
+     ation will not reclaim it immediately. Instead, it will put it into some set, and then
+     periodically query the set for entries that have no remaining references. When such
+     an entry is found, it can be reclaimed immediately and removed from the set.
+         One can think of this strategy as a sort of fine-granularity garbage collection,
+     where the programmer controls which regions of memory are reclaimed immediately,
+     and which are deferred.
+         We can vary how we implement the set (for example, by using per-thread sets),
+     the frequency with which threads search for reclaimable memory, and the mecha-
+     nisms by which operations protect nodes. In doing so, we can trade tight bounds on
+     the amount of unreclaimed memory for low run-time overhead and minimal commu-
+     nication between threads.
+
+     19.4 An object for managing memory
+     Fig. 19.2 presents a generic interface for protecting memory during an optimistic
+     operation. There are many different ways to implement the object; we discuss two in
+     this chapter. What matters for now is to understand the specification of the object.
+
+ 1   class MemManager {
+ 2     void register_thread(int num); // called once, before any call to op_begin()
+ 3                                    // num indicates the maximum number of
+ 4                                    // locations the caller can reserve
+ 5     void unregister_thread(); // called once, after the last call to op_end()
+ 6
+
+ 7       void op_begin(); // indicate the beginning of a concurrent operation
+ 8       void op_end(); // indicate the end of a concurrent operation
+ 9
+
+10       bool try_reserve(void* ptr); // try to protect a pointer from reclamation
+11       void unreserve(void* ptr); // stop protecting a pointer
+12       void sched_for_reclaim(void* ptr); // try to reclaim a pointer
+13   }
+
+     FIGURE 19.2
+     An interface for protecting memory during an optimistic operation.
+
+               To have a single interface that is suitable for a variety of memory reclamation al-
+           gorithms, our object has seven methods. The most important part of the interface are
+           the last three functions. They let a thread try to protect some memory from reclama-
+           tion, stop requesting protection for memory, and schedule memory for reclamation
+           as soon as it has no outstanding protection requests from concurrent threads.
+
+           19.5 Traversing a list
+           Suppose that we wanted to use the MemManager object to protect an optimistic traversal
+           of a nonblocking list-based integer set (Section 9.8). First, of course, we must trans-
+           late the code to C++. To do this, we make use of std::atomic<> variables instead of
+           the volatile keyword in Java. Then we can redesign the find() method of the Window
+           class from Fig. 9.23, so that it protects memory during optimistic accesses.
+               Fig. 19.3 presents the data type for nodes in our C++ nonblocking list, as well as
+           some helper functions for setting and unsetting the low bit of pointers. Setting and
+           unsetting the low bit of pointers is the C++ equivalent of the AtomicMarkableReference<>
+           class in Java. Note that in C++, we can set the low bit of a pointer directly, but we
+           cannot use a pointer whose low bit is 1: we must copy the pointer and explicitly unset
+           the low bit of the copy before using it.
+
+      1    class Node<T>{
+      2      T item;
+      3      int key;
+      4      std::atomic<Node<T>*> next;
+      5    public:
+      6      Node() : item(), next(nullptr) { }
+      7      Node(T _item, int _key, Node* n) : item(_item), key(_key), next(n) { }
+      8    };
+      9    // return whether the low bit of the pointer is marked or not
+      10   bool is_marked(Node* ptr) {
+      11     return ((uintptr_t)ptr)&1;
+      12   }
+      13   // clear the mark bit of a pointer
+      14   Node* unmark(Node* ptr) {
+      15     return (Node*)(((uintptr_t)ptr) & ~(uintptr_t)1);
+      16   }
+      17   // set the mark bit of a pointer
+      18   Node* mark(Node* ptr) {
+      19     return (Node*)(((uintptr_t)ptr) | 1);
+      20   }
+
+           FIGURE 19.3
+           C++ nonblocking linked list: node data type and helper functions.
+                                                                      19.5 Traversing a list    457
+
+21   bool find(int key, Node<T>*&prev, Node<T>*&curr, Node<T>*&next, MemManager* mm) {
+22     prev = list;
+23     mm->try_reserve(prev);
+24     curr = prev->next.load();
+25     while (curr != nullptr) {
+26       if (mm->try_reserve(curr)) {
+27         if (prev->next.load() != curr) {
+28           mm->unreserve(prev); mm->unreserve(curr);
+29           return find(key, prev, curr, next);
+30         }
+31       }
+32       next = curr->next.load();
+33       if (is_marked(next)) { // curr is logically deleted
+34         Node<T> *tmp = unmark(next);
+35         if (!prev->next.compare_exchange_strong(curr, tmp)) {
+36           mm->unreserve(prev); mm->unreserve(curr);
+37           return find(key, prev, curr, next);
+38         }
+39         mm->unreserve(curr);
+40         mm->sched_for_reclaim(curr);
+41         curr = tmp;
+42       }
+43       else {
+44         int ckey = curr->key;
+45         if (prev->next.load() != curr) {
+46           mm->unreserve(prev); mm->unreserve(curr);
+47           return find(key, prev, curr, next);
+48         }
+49         if (ckey >= key) {
+50           return ckey == key;
+51         }
+52         mm->unreserve(prev);
+53         prev = curr;
+54         curr = next;
+55       }
+56     }
+57     return false;
+58   }
+
+     FIGURE 19.4
+     Traversing a nonblocking linked list with safe reclamation.
+
+         With these definitions, a list is defined as a pointer to the head node. We refer to
+     this pointer as list. As in other high-performance optimistic lists, we avoid a corner
+     case by making the first node in the list a “sentinel” node, whose value is never read.
+     In that way, list is never null.
+         Fig. 19.4 reintroduces the find() function from the nonblocking list-based set
+     from Section 9.8, rewritten in C++. The main difference in our C++ version is that it
+     must explicitly manage memory. We use an explicit MemManager object for this purpose.
+
+      Note that find() is an internal function. A public function that calls find() must do so
+      between calls to MemManager’s op_begin() and op_end() methods. Also, find() protects
+      up to two locations at a time, so it must be preceded by a call to register_thread(i),
+      with the value of i no less than 2.
+           Starting with the sentinel node, our traversal follows the same pattern as the non-
+      blocking Java list: We keep track of a window of three consecutive nodes, prev, curr,
+      and next. At all points, the memory representing prev is safe to access, because it
+      has already been reserved (or it is the sentinel). Also, prev always references a node
+      whose key is less than the search key. Note, too, that prev and curr are guaranteed to
+      be unmarked.
+           Before using the successor of prev, we must protect it via a call to try_reserve()
+      (line 26). If this returns true, then MemManager cannot guarantee that curr was not
+      reclaimed between the time when it was read (line 24 or line 32) and the time when
+      try_reserve() was called. In this case, the code double-checks that after the call to
+      try_reserve(), curr still succeeds prev. If not, the find() operation retries.
+           Line 32 finds the successor of the current node, as next. If the pointer to next
+      is not marked, then at line 45, we ensure that prev remains linked to curr. If so,
+      we check the key stored at curr, and use its value to determine whether to continue
+      traversing or to return. If the find() operation should continue, it will no longer use
+      the prev pointer, so it unreserves it.
+           If find() discovers a marked node at curr, it uses compare_exchange_strong() to
+      unlink curr, and then hands curr to MemManager for reclamation. When find() returns
+      true, prev and curr are reserved and protected from reclamation.
+           With the find() function, the public operations on our nonblocking C++ linked
+      list are straightforward. They appear in Fig. 19.5.
+
+      19.6 Hazard pointers
+      Our first solution for protecting the in-use nodes of the nonblocking list uses a variant
+      of a technique known as hazard pointers. The approach has two main components.
+      The first is a mechanism through which threads can share the locations they have
+      reserved, so that other threads may see those reservations any time they attempt to
+      reclaim memory. The second is a per-thread mechanism for deferring the reclamation
+      of memory.
+          Fig. 19.6 presents the two main data types of this implementation. Every thread
+      has its own ThreadContext object, which it can access directly via MemManager::self.
+      The entire set of these objects is organized as a linked list, represented by
+      MemManager::head. Within a thread’s context, there is a private set of locations that the
+      thread has scheduled for reclamation, and a shared array of locations that the thread
+      does not want other threads to reclaim. For convenience, our code does not allow
+      threads to remove their contexts from the shared set. That is, unregister_thread()
+      does not remove a thread’s context from the set rooted at MemManager::head.
+                                                                         19.6 Hazard pointers   459
+
+59    bool add(int key) {
+60      mm->op_begin();
+61      Node<T> *prev, *curr, *next;
+62      while (true) {
+63        if (find(key, prev, curr, next, mm)) {
+64          mm->op_end();
+65          return false;
+66        }
+67        Node *new_node = new Node(key, curr);
+68        if (prev->next.compare_exchange_strong(curr, new_node)) {
+69          mm->op_end();
+70          return true;
+71        }
+72        mm->unreserve(prev); mm->unreserve(curr);
+73      }
+74    }
+75    bool contains(int key, MemManager* mm) {
+76      mm->op_begin();
+77      Node<T> *prev, *curr, *next;
+78      bool ans = find(key, prev, curr, next, mm);
+79      mm->op_end();
+80      return ans;
+81    }
+82    bool remove(int key, MemManager* mm) {
+83      mm->op_begin();
+84      Node<T> *prev, *curr, *next;
+85      while (true) {
+86        if (!find(key, prev, curr, next, mm)) {
+87          mm->op_end();
+88          return false;
+89        }
+90        if (!curr->next.compare_exchange_strong(next, mark(next))) {
+91          mm->unreserve(prev); mm->unreserve(curr);
+92          continue;
+93        }
+94        if (prev->next.compare_exchange_strong(curr, next)) {
+95          mm->sched_for_reclaim(curr);
+96        } else {
+97          mm->unreserve(prev); mm->unreserve(curr);
+98          find(key, prev, curr, next, mm);
+99        }
+100       mm->op_end();
+101       return true;
+102     }
+103   }
+
+      FIGURE 19.5
+      Public methods of the C++ nonblocking list-based set.
+
+      1    class ThreadContext {
+      2     public:
+      3      std::vector<void*> pending_reclaims;
+      4      std::atomic<void*> *reservations;
+      5      ThreadContext *next;
+      6      const int num;
+      7
+
+      8     ThreadContext(int _num, MemManager m): num(_num) {
+      9       reservations = new std::atomic<void*>[_num];
+      10      for (int i = 0; i < num; ++i)
+      11        reservations[i] = nullptr;
+      12      while (true) {
+      13        next = m.head;
+      14        if (m.head.compare_exchange_strong(next, this))
+      15          break;
+      16      }
+      17    }
+      18   }
+      19   class MemManager {
+      20    public:
+      21     static thread_local ThreadContext *self = nullptr;
+      22     std::atomic<ThreadContext*> head;
+      23     ...
+      24   }
+
+           FIGURE 19.6
+           Data types to support hazard pointers with blocking reclamation.
+
+               Fig. 19.7 presents the rest of our implementation of hazard pointers. Since
+           our implementation is blocking, and since we never unlink thread contexts, both
+           register_thread() and unregister_thread() are trivial: The former creates a thread
+           context and inserts it at the head of MemManager’s list; the latter is a no-op. Similarly,
+           op_begin() is a no-op: Its postcondition is that the calling thread has no reservations
+           and no pending reclamations. Both of these properties are provided by op_end().
+               During execution, a thread reserves a pointer ptr by finding an empty slot in its
+           reservations array and writing ptr into it. The array positions are all std::atomic<>,
+           so that we can be sure that any such write will be strongly ordered: all previously
+           issued reads and writes will complete before it, and all subsequent reads and writes
+           will not happen until after it.
+               Note that in our hazard pointer implementation, try_reserve() always returns
+           true. This is necessary to prevent races. Consider the moment when thread Tr exe-
+           cutes line 24 of the find() method. When the line completes, prev points to curr, but
+           Tr has not yet reserved curr. At that point, another thread Td could mark and unlink
+           curr. If Td scanned Tr ’s reservations array, it would not find curr, and thus it could
+           reclaim curr immediately. A subsequent access to curr by Tr would cause a race. By
+                                                                      19.6 Hazard pointers      461
+
+25   MemManager::register_thread(int num) { self = new ThreadContext(num, this); }
+26   MemManager::unregister_thread() { /* no-op */ }
+27   MemManager::op_begin() { /* no-op */ }
+28   void MemManager::sched_for_reclaim(void* ptr) { self->pending_reclaims.push_back(ptr); }
+29   bool MemManager::try_reserve(void* ptr) {
+30     for (int i = 0; i < num; ++i) {
+31       if (self->reservations[i] == nullptr) {
+32         self->reservations[i].store(ptr);
+33         return true;
+34       }
+35     }
+36     throw error;
+37   }
+38   void MemManager::unreserve(void* ptr) {
+39     for (int i = 0; i < num; ++i) {
+40       if (self->reservations[i] == ptr) {
+41         self->reservations[i].store(nullptr);
+42         return;
+43       }
+44     }
+45   }
+46   void MemManager::op_end() {
+47     for (int i = 0; i < self->num; ++i)
+48       self->reservations[i].store(nullptr);
+49     for (auto i : pending_reclaims) {
+50       wait_until_unreserved(p);
+51       free(p);
+52     }
+53     pending_reclaims.clear();
+54   }
+55   MemManager::wait_until_unreserved(void* ptr) {
+56     ThreadContext* curr = head;
+57     while (curr) {
+58       for (int i = 0; i < curr->num; ++i) {
+59         while (curr->reservations[i] == ptr)
+60           wait();
+61       }
+62       curr = curr->next;
+63     }
+64   }
+
+     FIGURE 19.7
+     MemManager methods to support hazard pointers with blocking reclamation.
+
+     returning true, try_reserve() notifies the find() function that accesses to curr are
+     not yet guaranteed to be safe; find() must double-check that prev still points to curr.
+     Note that try_reserve() stored curr in an atomic<> field, which guarantees that the
+     double-check follows the write of curr to reservations.
+         In our nonblocking list implementation, as in many other algorithms, a location
+     is not reclaimed by the thread that marks a node, but the thread that unlinks it. This
+
+      is one of many situations in which more than one thread may have a reservation
+      for a memory region that is logically deleted from the data structure. In general,
+      the number of reservations for an unlinked node should rapidly drop to zero, but is
+      most likely to be nonzero immediately after being unlinked. Thus it would be un-
+      wise for the unlinking thread to attempt to reclaim memory immediately. Instead,
+      sched_for_reclaim(ptr) places ptr into a thread-private vector, and delays reclama-
+      tion until op_end().
+           The postconditions of our implementation of op_end() are the same as the pre-
+      conditions of op_begin(): The thread has no reservations and no outstanding recla-
+      mations. Achieving the former is simple, and is achieved by the loop on line 47.
+      To ensure that there are no outstanding reclamations, the caller of op_end() iterates
+      through the elements in its pending_reclaims set. For each entry, the caller iterates
+      through the MemManager’s set of thread contexts, and for each context, the caller checks
+      if the context includes a reservation for the entry. If it does, the caller spin-waits until
+      the reservation changes. Since the entry has already been unlinked, it would seem
+      that the caller of op_begin() can be sure that no subsequent reservation will appear,
+      and hence the location is safe to reclaim. However, there is one troublesome order-
+      ing. Suppose that some thread Ti is about to reserve location l, and some thread Tr
+      has called op_end() and has seen that Ti does not have l in reservations. We can-
+      not allow Ti to subsequently write l into reservations and use l. Again, this is why
+      try_reserve() must return true: to ensure that Ti will double-check, see that l has
+      been unlinked, and restart.
+           It is possible to make a hazard pointer implementation lock-free if we are will-
+      ing to allow a bounded amount of memory to remain unclaimed for an unbounded
+      amount of time. Suppose that every time a thread reached line 60, it instead skipped
+      reclamation for the current entry in pending_reclaims, and moved on to the next.
+      With T threads and num maximum reserved addresses per thread, up to T × num
+      locations could be unreclaimable at any time. For higher performance, this bound is
+      typically multiplied by an order of magnitude.
+
+      19.7 Epoch-based reclamation
+      Our hazard pointer implementation is precise, ensuring that reclamation can hap-
+      pen as soon as possible, so that there is no unnecessary backlog of to-be-reclaimed
+      memory. However, that precision comes at a great cost: During the course of every
+      operation, there will be a linear number of calls to try_reserve(), each of which
+      performs an expensive strongly ordered write to shared memory. While writes are
+      more expensive than reads, the fact of O(n) writes should not have too significant
+      of an impact on modern CPUs, because they are to a small, fixed number of loca-
+      tions (the thread’s reservations array). However, since each of these writes is to a
+      std::atomic<> variable, each entails a memory fence, and every memory fence in-
+      creases latency significantly.
+                                                 19.7 Epoch-based reclamation              463
+
+    When the percentage of remove() operations is small, the cost of these fences is
+hard to justify: They protect find() from unlikely interleavings with the infrequently
+called remove() operation. If we relax guarantees on the number of unreclaimed loca-
+tions, we can eliminate many of these fences. To do so, we introduce the concept of
+epochs.
+    Suppose that every thread had its own shared counter, initialized to zero. When-
+ever the thread called op_begin(), it would increment that counter. Whenever it called
+op_end(), it would increment that counter again. If we looked at a thread’s counter and
+found an even number, we could immediately conclude that the thread was not be-
+tween op_begin() and op_end(). That, in turn, must mean that the thread could not
+have any references to the nodes of our linked list.
+    Unfortunately, if one thread is repeatedly executing operations on the list, another
+thread may never see an even number. Instead, it may see a different odd number
+each time it looks. However, this information is equally useful: It means that the
+thread has completed one operation and started another. Any memory that was un-
+linked concurrently with the former operation cannot be accessed during the current
+operation attempt, and thus as soon as the counter changed from one odd number to
+another odd number, the unlinked memory would be unreachable, and safe to reclaim.
+    Putting these ideas together, we can create a remarkably simple MemManager object.
+This new version will not be able to put any bounds on the number of unreclaimed
+objects, because a single thread stalling in the middle of its find() operation will
+make it impossible for any other thread to reclaim anything. When remove() calls
+are exceptionally rare, or when a program (such as an operating system itself) can
+guarantee that a call to find() cannot stall indefinitely, the cost of unbounded garbage
+is more than offset by the performance improvement that comes from the elimination
+of O(n) memory fences.
+    In Fig. 19.8, we implement a MemManager based on epochs. As with our implemen-
+tation of hazard pointers, we have chosen to make the implementation blocking, by
+having each thread immediately reclaim all the memory it unlinked when it reaches
+op_end().
+    As with the hazard pointer implementation, we have a global shared list of thread
+contexts, and each thread keeps a private vector of the locations it has scheduled for
+reclamation. However, we no longer need to track the individual pointers accessed
+by the operation: instead, a thread maintains a std::atomic<> counter, which it in-
+crements to odd in op_begin(). The increment has strong memory ordering, which
+means that before an operation touches any of the shared memory that comprises the
+nodes of the list, that thread has notified all other threads that they may not reclaim
+anything.
+    In op_end(), a thread increments its counter to even, indicating that it will no
+longer access any of the shared memory of the list. As with the increment in
+op_begin(), this increment is strongly ordered, so that it is guaranteed to happen af-
+ter all of the parent operation’s loads and stores to shared memory. If a thread has
+deferred reclamation of any locations, then it must wait until the execution of every
+concurrent thread has, at least momentarily, been outside of a data structure oper-
+
+      1    struct ThreadContext {
+      2      std::vector<void*> pending_reclaims;
+      3      std::atomic<uint64_t> counter;
+      4      ThreadContext *next;
+      5
+      6     ThreadContext(MemManager m) {
+      7       while (true) {
+      8         next = m.head;
+      9         if (m.head.compare_exchange_strong(next, this))
+      10          break;
+      11      }
+      12    }
+      13   }
+      14   struct MemManager {
+      15     static thread_local ThreadContext *self = nullptr;
+      16     std::atomic<ThreadContext*> head;
+      17     ...
+      18   }
+      19   MemManager::register_thread(int num) { self = new ThreadContext(this); }
+      20   MemManager::unregister_thread() { /* no-op */ }
+      21   MemManager::op_begin() { self->counter++; }
+      22   void MemManager::sched_for_reclaim(void* ptr) { self->pending_reclaims.push_back(ptr); }
+      23   bool MemManager::try_reserve(void* ptr) { return false; }
+      24   void MemManager::unreserve(void* ptr) { }
+      25
+
+      26   void MemManager::op_end() {
+      27     self->counter++;
+      28     if (pending_reclaims.count() == 0)
+      29       return;
+      30     wait_until_unreserved()
+      31     for (auto p : pending_reclaims)
+      32       free(p);
+      33   }
+      34   void MemManager::wait_until_unreserved() {
+      35     ThreadContext* curr = head;
+      36     while (curr) {
+      37       uint64_t val = curr->counter;
+      38       if (odd(val))
+      39       do {
+      40         wait();
+      41       } while (curr->counter.read() == val)
+      42       curr = curr->next;
+      43     }
+      44   }
+
+           FIGURE 19.8
+           Epoch-based reclamation.
+
+           ation. It does this by checking each thread’s counter: If the counter is even or if it
+           changes from one odd number to a larger odd number, then that thread can no longer
+                                                              19.8 Chapter notes         465
+
+find a pointer to the locations awaiting reclamation. Once all threads’ progress has
+been verified, the deferred reclamations can be performed.
+    Given these implementations of op_begin() and op_end(), try_reserve() can be
+a single statement: return false. To understand why this is correct, consider an in-
+terleaving between a call to find() and a call to remove() that marks location l for
+deletion. If find() discovered a node whose next pointer was l, then it must have
+done so after it made its counter odd. At the time when it read l, the node at l had
+not yet been unlinked, and therefore the corresponding remove() operation could not
+have reached its op_end(). If, at this point, the find() thread were to delay, and the
+remove() thread were to reach op_begin(), l would not be reclaimed: The remove()
+thread is guaranteed to see the find() thread’s odd counter value, and wait. There-
+fore, there is no benefit in double-checking the reachability of l: Its fields can be
+accessed without any additional checks to ensure that it has not been reclaimed.
+
+19.8 Chapter notes
+Variants of the hazard pointer technique were discovered by Michael [127] and by
+Herlihy, Luchangoo, & Moir [67]. Subsequently, Petrank et al. proposed improve-
+ments to reduce the fence overhead [22,31]. Michael also showed how to eliminate
+the fence overhead, when reclamation is extremely rare, by leveraging interprocess
+interrupts [44].
+    Epoch-based techniques were used by Fraser [48] in the context of nonblocking
+data structures, and subsequently adapted for use in software transactional memory
+by Hudson et al. [81]. They were also proposed by McKenney in the context of op-
+erating systems [123], where they protected kernel data structures. In that context,
+movement from user mode to kernel mode would make a processor’s counter odd,
+and returning to user mode would make it even again.
+    Research into both of these techniques has given much attention to attempting to
+provide nonblocking progress without an unbounded worst-case space overhead. To
+achieve nonblocking guarantees, op_end() pushes the contents of pending_reclaims
+into a per-thread buffer. When the buffer becomes large, hazard pointer implementa-
+tions use a variant of wait_until_unreserved that skips nodes with outstanding reser-
+vations. The number of skipped nodes can be bounded. Nonblocking epoch-based
+techniques bundle several operations’ worth of contents from pending_reclaims into
+a new buffer, to which is added a snapshot of all threads’ counters. Each time one
+of these bundles is collected, the corresponding counter snapshot is compared with
+past ones. Bundles whose snapshots have been superseded by the new snapshot can
+be reclaimed. In the worst case, this technique can lead to out-of-memory errors if a
+single operation delays arbitrarily during an operation. However, Brown showed that
+interprocess interrupts can be used to prevent this pathological scenario [23].
+
+      19.9 Exercises
+      Exercise 19.1. If the LockFreeStack (Section 11.2) used hazard pointers to protect
+      memory, would it still be vulnerable to the ABA problem? Why or why not?
+
+      Exercise 19.2. Describe how to use hazard pointers to protect the memory in the
+      lock-free unbounded queue from Section 10.5.
+      Exercise 19.3. The presentation of hazard pointers in Section 19.6 was blocking.
+      The easiest way to make it nonblocking is defer reclamation of reserved objects.
+      Under this strategy, what is the worst-case number of unreclaimed objects for any one
+      thread’s pending_reclaims vector? What is the worst-case number of unreclaimed
+      objects in a system with T threads?
+      Exercise 19.4. If a hazard pointer implementation is willing to let some objects go
+      unreclaimed for a longer duration, then its op_end method could begin by copying
+      all of the threads’ reservations to a private list. It could then intersect that list with
+      its pending_reclaims to identify the objects that were ready to reclaim. Under what
+      circumstances would this be advantageous? Under what circumstances would it harm
+      performance?
+
+      Exercise 19.5. For each of the following data structures, discuss the number of haz-
+      ard pointers that would be required in the worst case when implementing the data
+      structure with optimistic concurrency control:
+      1. lock-free queue,
+      2. lock-free stack,
+      3. lazy list,
+      4. skip list.
+      Exercise 19.6. The std::atomic<> types in C++ support relaxed memory ordering.
+      What orderings can be relaxed in the hazard pointer implementation from Sec-
+      tion 19.6?
+
+      Exercise 19.7. Similar to Exercise 19.3, we could make the epoch-based reclamation
+      in Section 19.7 nonblocking. Rewrite the code in Fig. 19.8 so that threads do not wait
+      at commit time.
+      Exercise 19.8. In our implementation of epoch-based memory reclamation, we did
+      not require threads to attain an atomic snapshot of all other threads’ counters when
+      deciding whether it was safe to reclaim an object. Why was this correct?

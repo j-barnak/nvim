@@ -1003,6 +1003,14 @@ if mode == "content":
             if new != str(t):
                 t.replace_with(NavigableString(new))
 
+    if opt("decompwiki"):
+        # decompilation.wiki (mkdocs-material): drop the heading pilcrow anchors
+        # (a.headerlink) and the footnote back-references (a.footnote-backref, the
+        # "↩" jump-back arrows). The footnote list itself stays - each note is a
+        # citation the book keeps.
+        for a in el.select("a.headerlink, a.footnote-backref"):
+            a.decompose()
+
     if opt("studyplan"):
         # studyplan.dev embeds a <CoursePromo> upsell card inside the lesson body
         # (an <a> "View Recommended Course" pointing at a broken /undefined path,

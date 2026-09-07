@@ -1,0 +1,1577 @@
+                                                                                            CHAPTER
+
+Counting, sorting, and
+distributed coordination
+                                                                                            12
+12.1 Introduction
+This chapter shows how some important problems that seem inherently sequential
+can be made highly parallel by “spreading out” coordination tasks among multiple
+parties. What does this spreading out buy us?
+    To answer this question, we need to understand how to measure the performance
+of a concurrent data structure. There are two measures that come to mind: latency,
+the time it takes an individual method call to complete, and throughput, the overall
+rate at which method calls complete. For example, real-time applications might care
+more about latency, and databases might care more about throughput.
+    In Chapter 11, we saw how to apply distributed coordination to the
+EliminationBackoffStack class. Here, we cover several useful patterns for distributed
+coordination: combining, counting, diffraction, and sampling. Some are determinis-
+tic, while others use randomization. We also cover two basic structures underlying
+these patterns: trees and combinatorial networks. Interestingly, for some data struc-
+tures based on distributed coordination, high throughput does not necessarily mean
+low latency.
+
+12.2 Shared counting
+We recall from Chapter 10 that a pool is a collection of items that provides put() and
+get() methods to insert and remove items (Fig. 10.1). Familiar classes such as stacks
+and queues can be viewed as pools that provide additional fairness guarantees.
+   One way to implement a pool is to use coarse-grained locking, perhaps mak-
+ing both put() and get() synchronized methods. The problem, of course, is that
+coarse-grained locking is heavy-handed: The lock creates both a sequential bottle-
+neck, forcing all method calls to synchronize, and a hotspot, a source of memory
+contention. We would prefer to have Pool method calls work in parallel, with less
+synchronization and lower contention.
+   Let us consider the following alternative: The pool’s items reside in a cyclic array,
+where each array entry contains either an item or null. We route threads through two
+counters. Threads calling put() increment one counter to choose an array index into
+which the new item should be placed. (If that entry is full, the thread waits until it
+becomes empty.) Similarly, threads calling get() increment another counter to choose
+The Art of Multiprocessor Programming. https://doi.org/10.1016/B978-0-12-415950-1.00022-7
+Copyright © 2021 Elsevier Inc. All rights reserved.
+
+      an array index from which the new item should be removed. (If that entry is empty,
+      the thread waits until it becomes full.)
+          This approach replaces one bottleneck, the lock, with two, the counters. Naturally,
+      two bottlenecks are better than one (think about that claim for a second). We now
+      explore the idea that shared counters need not be bottlenecks, and can be effectively
+      parallelized. We face two challenges:
+      1. We must avoid memory contention, where too many threads try to access the same
+         memory location, stressing the underlying communication network and cache-
+         coherence protocols.
+      2. We must achieve real parallelism. Is incrementing a counter an inherently sequen-
+         tial operation, or is it possible for n threads to increment a counter faster than it
+         takes one thread to increment a counter n times?
+      We now look at several ways to build highly parallel counters through data structures
+      that coordinate the distribution of counter indices.
+
+      12.3 Software combining
+      Here is a linearizable shared-counter class using a pattern called software combining.
+      A CombiningTree is a binary tree of nodes, where each node contains bookkeeping
+      information. The counter’s value is stored at the root. Each thread is assigned a leaf,
+      and at most two threads share a leaf, so if there are p physical processors, then there
+      are ?p/2? leaves; the number of leaves in a combining tree is its width. To increment
+      the counter, a thread starts at its leaf, and works its way up the tree to the root. If
+      two threads reach a node at approximately the same time, then they combine their
+      increments by adding them together. One thread, the active thread, propagates their
+      combined increments up the tree, while the other, the passive thread, waits for the
+      active thread to complete their combined work. A thread may be active at one level
+      and become passive at a higher level.
+          For example, suppose threads A and B share a leaf node. They start at the same
+      time, and their increments are combined at their shared leaf. The first one, say, B,
+      actively continues up to the next level, with the mission of adding 2 to the counter
+      value, while the second, A, passively waits for B to return from the root with an
+      acknowledgment that A’s increment has occurred. At the next level in the tree, B may
+      combine with another thread C, and advance with the renewed intention of adding 3
+      to the counter value.
+          When a thread reaches the root, it adds the sum of its combined increments to the
+      counter’s current value. The thread then moves back down the tree, notifying each
+      waiting thread that the increments are now complete.
+          Combining trees have an inherent disadvantage with respect to locks: Each in-
+      crement has a higher latency, that is, the time it takes an individual method call
+      to complete. With a lock, a getAndIncrement() call takes O(1) time, while with a
+      CombiningTree, it takes O(log p) time. Nevertheless, a CombiningTree is attractive
+
+because it promises far better throughput, that is, the overall rate at which method
+calls complete. For example, using a queue lock, p getAndIncrement() calls complete
+in O(p) time, at best, while using a CombiningTree, under ideal conditions where all
+threads move up the tree together, p getAndIncrement() calls complete in O(log p)
+time, an exponential improvement. Of course, the actual performance is often less
+than ideal, a subject examined in detail later on. Still, the CombiningTree class, like
+other techniques we consider later, is intended to benefit throughput, not latency.
+    Combining trees can be adapted to apply any associative and commutative func-
+tion, not just increment, to the value maintained by the tree.
+
+12.3.1 Overview
+Although the idea behind a CombiningTree is simple, the implementation is not. To
+keep the overall (simple) structure from being submerged in (not-so-simple) detail,
+we split the data structure into two classes: the CombiningTree class manages navi-
+gation within the tree, moving up and down the tree as needed, while the Node class
+manages each visit to a node. As you go through the algorithm’s description, it may
+be helpful to consult Fig. 12.3, which shows an example CombiningTree execution.
+    This algorithm uses two kinds of synchronization. Short-term synchronization is
+provided by synchronized methods of the Node class. Each method locks the node
+for the duration of the call to ensure that it can read and write node fields without
+interference from other threads. The algorithm also requires excluding threads from a
+node for durations longer than a single method call. Such long-term synchronization
+is provided by a Boolean locked field. When this field is true, no other thread is
+allowed to access the node.
+    The fields of the Node class are shown in Fig. 12.1. Every node has a combining
+status (field CStatus), which defines what stage of combining concurrent requests a
+node is in. The possible values for the combining status, and their associated mean-
+ings, are:
+• IDLE: This node is not in use.
+• FIRST: One active thread has visited this node, and will return to check whether
+  another passive thread has left a value with which to combine.
+• SECOND: A second thread has visited this node and stored a value in the node’s
+  value field to be combined with the active thread’s value, but the combined oper-
+  ation is not yet complete.
+• RESULT: Both threads’ operations have been combined and completed, and the
+  second thread’s result has been stored in the node’s result field.
+• ROOT: This value is a special case to indicate that the node is the root, and must be
+  treated specially.
+    The CombiningTree class has a field leaf, which is an array of w leaves, where w
+is the width of the combining tree. Thread i is assigned to leaf[i/2], so a combining
+tree for p threads has width w = ?p/2?.
+
+      1    public class Node {
+      2      enum CStatus{IDLE, FIRST, SECOND, RESULT, ROOT};
+      3      boolean locked;
+      4      CStatus cStatus;
+      5      int firstValue, secondValue;
+      6      int result;
+      7      Node parent;
+      8      public Node() {
+      9        cStatus = CStatus.ROOT;
+      10       locked = false;
+      11     }
+      12     public Node(Node myParent) {
+      13       parent = myParent;
+      14       cStatus = CStatus.IDLE;
+      15       locked = false;
+      16     }
+      17     ...
+      18   }
+
+           FIGURE 12.1
+           The Node class: the constructors and fields.
+
+      1      public CombiningTree(int width) {
+      2        Node[] nodes = new Node[2 * width - 1];
+      3        nodes[0] = new Node();
+      4        for (int i = 1; i < nodes.length; i++) {
+      5          nodes[i] = new Node(nodes[(i-1)/2]);
+      6        }
+      7        leaf = new Node[width];
+      8        for (int i = 0; i < leaf.length; i++) {
+      9          leaf[i] = nodes[nodes.length - i - 1];
+      10       }
+      11     }
+
+           FIGURE 12.2
+           The CombiningTree class: constructor.
+
+               Fig. 12.2 shows the CombiningTree class constructor. To construct a CombiningTree
+           of width w, we create an array of Node objects of length 2w − 1. The root is node[0],
+           and for 0 < i < 2w − 1, the parent of node[i] is node[(i − 1)/2]. The leaf nodes are
+           the last w nodes in the array. The initial combining state is ROOT for the root, and IDLE
+           for every other node.
+               The CombiningTree’s getAndIncrement() method, shown in Fig. 12.4, has four
+           phases. In the precombining phase (lines 16–20), it moves up the tree, applying
+           precombine() to each node. The precombine() method returns a Boolean indicating
+
+FIGURE 12.3
+The concurrent traversal of a width 8 combining tree by five threads. The structure is
+initialized with all nodes unlocked, the root node having the CStatus ROOT and all other
+nodes having the CStatus IDLE.
+
+whether the thread was the first to arrive at the node. If so, the getAndIncrement()
+method continues moving up the tree. The stop variable is set to the last node visited,
+which is either the first node at which the thread arrived second, or the root. Parts (a)
+and (b) of Fig. 12.3 show a precombining phase example. Thread A, which is fastest,
+
+      12    public int getAndIncrement() {
+      13      Stack<Node> stack = new Stack<Node>();
+      14      Node myLeaf = leaf[ThreadID.get()/2];
+      15      Node node = myLeaf;
+      16      // precombining phase
+      17      while (node.precombine()) {
+      18        node = node.parent;
+      19      }
+      20      Node stop = node;
+      21      // combining phase
+      22      int combined = 1;
+      23      for (node = myLeaf; node != stop; node = node.parent) {
+      24        combined = node.combine(combined);
+      25        stack.push(node);
+      26      }
+      27      // operation phase
+      28      int prior = stop.op(combined);
+      29      // distribution phase
+      30      while (!stack.empty()) {
+      31        node = stack.pop();
+      32        node.distribute(prior);
+      33      }
+      34      return prior;
+      35    }
+
+           FIGURE 12.4
+           The CombiningTree class: the getAndIncrement() method.
+
+           stops at the root, while B stops in the middle-level node where it arrived after A, and
+           C stops at the leaf where it arrived after B.
+               Fig. 12.5 shows Node’s precombine() method. The thread waits until the locked
+           field is false (line 20), and then proceeds based on the node’s combining status
+           (line 21):
+
+           • IDLE: The thread sets the node’s status to FIRST to indicate that it will return to
+             look for a value for combining. If it finds such a value, it proceeds as the active
+             thread, and the thread that provided that value is passive. The call then returns
+             true, instructing the thread to move up the tree.
+           • FIRST: An earlier thread has recently visited this node, and will return to look
+             for a value to combine. The thread stops moving up the tree (by returning false),
+             and starts the next phase, computing the value to combine. Before precombine()
+             returns, the thread places a long-term lock on the node (by setting locked to true)
+             to prevent the earlier visiting thread from proceeding without combining with the
+             thread’s value.
+
+19   synchronized boolean precombine() {
+20      while (locked) wait();
+21      switch (cStatus) {
+22        case IDLE:
+23          cStatus = CStatus.FIRST;
+24          return true;
+25        case FIRST:
+26          locked = true;
+27          cStatus = CStatus.SECOND;
+28          return false;
+29        case ROOT:
+30          return false;
+31        default:
+32          throw new PanicException("unexpected Node state" + cStatus);
+33      }
+34    }
+
+     FIGURE 12.5
+     The Node class: the precombining phase.
+
+     • ROOT: If the thread has reached the root node, it instructs the thread to start the next
+       phase.
+     (Line 31 is a default case that is executed if an unexpected status is encountered.)
+
+      PRAGMA 12.3.1
+      It is good programming practice always to provide an arm for every possible enu-
+      meration value, even if we know it cannot happen. If we are wrong, the program
+      is easier to debug, and if we are right, the program may later be changed even by
+      someone who does not know as much as we do. Always program defensively.
+
+         In the combining phase (Fig. 12.4, lines 21–26), the thread revisits the nodes
+     it visited in the precombining phase, combining its value with values left by other
+     threads. It stops when it arrives at the node stop, where the precombining phase
+     ended. We push the nodes we visit onto a stack so that we can traverse them later in
+     reverse order.
+         The Node class’s combine() method, shown in Fig. 12.6, adds any values left by a
+     recently arrived passive process to the values combined so far. As before, the thread
+     first waits until the locked field is false. It then sets the long-term lock on the node,
+     to ensure that late-arriving threads do not attempt to combine with it. If the status is
+     SECOND, it adds the other thread’s value to the accumulated value; otherwise it returns
+     the value unchanged. In part (c) of Fig. 12.3, thread A starts ascending the tree in
+     the combining phase. It reaches the second-level node locked by thread B and waits.
+
+      35    synchronized int combine(int combined) {
+      36      while (locked) wait();
+      37      locked = true;
+      38      firstValue = combined;
+      39      switch (cStatus) {
+      40        case FIRST:
+      41          return firstValue;
+      42        case SECOND:
+      43          return firstValue + secondValue;
+      44        default:
+      45          throw new PanicException("unexpected Node state " + cStatus);
+      46      }
+      47    }
+
+           FIGURE 12.6
+           The Node class: the combining phase. This method applies addition to firstValue and
+           secondValue, but any other commutative operation would work just as well.
+
+           In part (d), B releases the lock on the second-level node, and A locks the node and,
+           seeing that the node’s combining state is SECOND, moves to the root with the com-
+           bined value 3, the sum of the firstValue and secondValue fields written by A and B,
+           respectively.
+               At the start of the operation phase (line 28), the thread has combined all method
+           calls from lower-level nodes; it now examines the node where it stopped at the end of
+           the precombining phase (Fig. 12.7). If the node is the root, as in part (d) of Fig. 12.3,
+           then the thread, in this case A, carries out the combined getAndIncrement() oper-
+           ations: It adds its accumulated value (3 in the example) to the result and returns
+           the prior value. Otherwise, the thread had set the long-term lock on this node at
+           the end of its precombining phase (Fig. 12.5, line 26), so it deposits its value as the
+           secondValue, unlocks the node, notifies any blocked thread, and waits for the other
+           thread to return a result after propagating the combined operations toward the root.
+           For example, this is the sequence of actions taken by thread B in parts (c) and (d) of
+           Fig. 12.3. In this case, the other thread will have set the long-term lock, and left it set
+           so that a thread arriving later will wait until the thread has retrieved the result. Thus,
+           the thread must release the long-term lock and notify any blocked thread.
+               When the result arrives, A enters the distribution phase, propagating the result
+           down the tree. In this phase (lines 29–34), the thread moves down the tree, releasing
+           locks and informing passive partners of the values they should report to their own
+           passive partners or to the caller (at the lowest level). The distribute method is shown
+           in Fig. 12.8. If the state of the node is FIRST, no thread combines with the distributing
+           thread, and it can reset the node to its initial state by releasing the lock and setting the
+           state to IDLE. If, on the other hand, the state is SECOND, the distributing thread updates
+           the result to be the sum of the prior value brought from higher up the tree, and the
+           FIRST value. This reflects a situation in which the active thread at the node managed
+
+48     synchronized int op(int combined) {
+49       switch (cStatus) {
+50         case ROOT:
+51           int prior = result;
+52           result += combined;
+53           return prior;
+54         case SECOND:
+55           secondValue = combined;
+56           locked = false;
+57           notifyAll(); // wake up waiting threads
+58           while (cStatus != CStatus.RESULT) wait();
+59           locked = false;
+60           notifyAll();
+61           cStatus = CStatus.IDLE;
+62           return result;
+63         default:
+64           throw new PanicException("unexpected Node state");
+65       }
+66     }
+
+     FIGURE 12.7
+     The Node class: applying the operation.
+
+67    synchronized void distribute(int prior) {
+68       switch (cStatus) {
+69         case FIRST:
+70           cStatus = CStatus.IDLE;
+71           locked = false;
+72           break;
+73         case SECOND:
+74           result = prior + firstValue;
+75           cStatus = CStatus.RESULT;
+76           break;
+77         default:
+78           throw new PanicException("unexpected Node state");
+79       }
+80       notifyAll();
+81    }
+
+     FIGURE 12.8
+     The Node class: the distribution phase.
+
+     to perform its increment before the passive one. The passive thread waiting to get
+     a value reads the result once the distributing thread sets the status to RESULT. For
+     example, in part (e) of Fig. 12.3, the active thread A executes its distribution phase
+
+      in the middle-level node, setting the result to 5, changing the state to RESULT, and
+      descending down to the leaf, returning the value 4 as its output. The passive thread B
+      awakes and sees that the middle-level node’s state has changed, and reads result 5.
+
+      12.3.2 An extended example
+      Fig. 12.3 describes the various phases of a CombiningTree execution. There are five
+      threads, labeled A through E. Each node has six fields, as shown in Fig. 12.1. Initially,
+      all nodes are unlocked and all but the root are in an IDLE combining state. The counter
+      value in the initial state in part (a) is 3, the result of an earlier computation.
+          In part (a), to perform a getAndIncrement(), threads A and B start the precom-
+      bining phase. A ascends the tree, changing the nodes it visits from IDLE to FIRST,
+      indicating that it will be the active thread in combining the values up the tree. Thread
+      B is the active thread at its leaf node, but has not yet arrived at the second-level node
+      shared with A.
+          In part (b), B arrives at the second-level node and stops, changing it from FIRST
+      to SECOND, indicating that it will collect its combined values and wait here for A to
+      proceed with them to the root. B locks the node (changing the locked field from
+      false to true), preventing A from proceeding with the combining phase without B’s
+      combined value. But B has not combined the values. Before it does so, C starts
+      precombining, arrives at the leaf node, stops, and changes its state to SECOND. It also
+      locks the node to prevent B from ascending without its input to the combining phase.
+      Similarly, D starts precombining and successfully reaches the root node. Neither A
+      nor D changes the root node state, and in fact it never changes. They simply mark it
+      as the node where they stopped precombining.
+          In part (c), A starts up the tree in the combining phase. It locks the leaf so that any
+      later thread will not be able to proceed in its precombining phase, and will wait until
+      A completes its combining and distribution phases. It reaches the second-level node,
+      locked by B, and waits. In the meantime, C starts combining, but since it stopped at
+      the leaf node, it executes the op() method on this node, setting secondValue to 1 and
+      then releasing the lock. When B starts its combining phase, the leaf node is unlocked
+      and marked SECOND, so B writes 1 to firstValue and ascends to the second-level node
+      with a combined value of 2, the result of adding the firstValue and secondValue
+      fields.
+          When it reaches the second-level node, the one at which it stopped in the pre-
+      combining phase, it calls the op() method on this node, setting secondValue to 2. A
+      must wait until it releases the lock. Meanwhile, in the right-hand side of the tree, D
+      executes its combining phase, locking nodes as it ascends. Because it meets no other
+      threads with which to combine, it reads 3 in the result field in the root and updates it
+      to 4. Thread E then starts precombining, but is late in meeting D. It cannot continue
+      precombining as long as D locks the second-level node.
+          In part (d), B releases the lock on the second-level node, and A, seeing that the
+      node is in state SECOND, locks the node and moves to the root with the combined value
+      3, the sum of the firstValue and secondValue fields written, respectively, by A and
+
+B. A is delayed while D completes updating the root. Once D is done, A reads 4 in
+the root’s result field and updates it to 7. D descends the tree (by popping its local
+Stack), releasing the locks, and returning the value 3 that it originally read in the
+root’s result field. E now continues its ascent in the precombining phase.
+     Finally, in part (e), A executes its distribution phase. It returns to the second-level
+node, setting result to 5, changing the state to RESULT, and descending to the leaf,
+returning the value 4 as its output. B awakens and sees the state of the middle-level
+node has changed, reads 5 as the result, and descends to its leaf where it sets the
+result field to 6 and the state to RESULT. B then returns 5 as its output. Finally, C
+awakens and observes that the leaf node state has changed, reads 6 as the result,
+which it returns as its output value. Threads A through D return values 3 to 6, which
+fit the root’s result field value of 7. The linearization order of the getAndIncrement()
+method calls by the different threads is determined by their order in the tree during
+the precombining phase.
+
+12.3.3 Performance and robustness
+Like all the algorithms described in this chapter, CombiningTree’s throughput depends
+in complex ways on the characteristics of both the application and the underlying
+architecture. Nevertheless, it is worthwhile to review, in qualitative terms, some ex-
+perimental results from the literature. Readers interested in detailed experimental
+results (mostly for obsolete architectures) may consult the chapter notes.
+    As a thought experiment, a CombiningTree should provide high throughput under
+ideal circumstances when each thread can combine its increment with another’s. But
+it may provide poor throughput under worst-case circumstances, where many threads
+arrive late at a locked node, missing the chance to combine, and are forced to wait
+for the earlier request to ascend and descend the tree.
+    In practice, experimental evidence supports this informal analysis. The higher the
+contention, the greater the observed rate of combining, and the greater the observed
+speedup. Worse is better. Combining trees are less attractive when concurrency is
+low. The combining rate decreases rapidly as the arrival rate of increment requests is
+reduced. Throughput is sensitive to the arrival rate of requests.
+    Because combining increases throughput and failure to combine does not, it
+makes sense for a request arriving at a node to wait for a reasonable duration for
+another thread to arrive with an increment with which to combine. Not surprisingly,
+it makes sense to wait for a short time when the contention is low, and longer when
+contention is high. When contention is sufficiently high, unbounded waiting works
+very well.
+    An algorithm is robust if it performs well in the presence of large fluctuations in
+request arrival times. The literature suggests that the CombiningTree algorithm with a
+fixed waiting time is not robust, because high variance in request arrival rates seems
+to reduce the combining rate.
+
+      12.4 Quiescently consistent pools and counters
+          First shalt thou take out the Holy Pin. Then shalt thou count to three, no more, no
+          less. Three shall be the number thou shalt count, and the number of the counting
+          shall be three. . . . Once the number three, being the third number, be reached,
+          then lobbest thou thy Holy Hand Grenade of Antioch towards thy foe, who, being
+          naughty in my sight, shall snuff it.
+                                                        From Monty Python and the Holy Grail.
+
+          Not all applications require linearizable counting. Indeed, counter-based Pool im-
+      plementations require only quiescently consistent1 counting: All that matters is that
+      the counters produce no duplicates and no omissions. It is enough that for every item
+      placed by a put() in an array entry, another thread eventually executes a get() that
+      accesses that entry, eventually matching put() and get() calls. (Wraparound may still
+      cause multiple put() calls or get() calls to compete for the same array entry.)
+
+      12.5 Counting networks
+      Students of tango know that the partners must be tightly coordinated: If they do not
+      move together, the dance does not work, no matter how skilled the dancers may be as
+      individuals. In the same way, combining trees must be tightly coordinated: If requests
+      do not arrive together, the algorithm does not work efficiently, no matter how fast the
+      individual processes.
+          We now consider counting networks, which look less like tango and more like a
+      rave: each participant moves at its own pace, but collectively the counter delivers a
+      quiescently consistent set of indices with high throughput.
+          Let us imagine that we replace the combining tree’s single counter with multiple
+      counters, each of which distributes a subset of indices (see Fig. 12.9). We allocate w
+      counters (in the figure, w = 4), each of which distributes a set of unique indices mod-
+      ulo w (in the figure, for example, the second counter distributes 2, 6, 10, . . . i · w + 2
+      for increasing i). The challenge is how to distribute the threads among the counters
+      so that there are no duplications or omissions, and how to do so in a distributed and
+      loosely coordinated way.
+
+      12.5.1 Networks that count
+      A balancer is a simple switch with two input wires and two output wires, called the
+      top and bottom wires (or sometimes the north and south wires). Tokens arrive on the
+      balancer’s input wires at arbitrary times, and emerge on their output wires, at some
+      later time. A balancer can be viewed as a toggle: given a stream of input tokens,
+      it sends one token to the top output wire, and the next to the bottom, and so on,
+
+      1 See Chapter 3 for a detailed definition of quiescent consistency.
+
+FIGURE 12.9
+A quiescently consistent shared counter based on w = 4 counters preceded by a counting
+network. Threads traverse the counting network to choose which counters to access.
+
+FIGURE 12.10
+A balancer. Tokens arrive at arbitrary times on arbitrary input lines and are redirected to
+ensure that when all tokens have exited the balancer, there is at most one more token on
+the top wire than on the bottom one.
+
+effectively balancing the number of tokens between the two wires (see Fig. 12.10).
+More precisely, a balancer has two states: up and down. If the state is up, the next
+token exits on the top wire; otherwise it exits on the bottom wire.
+    We use x0 and x1 to denote the number of tokens that respectively arrive on a
+balancer’s top and bottom input wires, and y0 and y1 to denote the number that exit
+on the top and bottom output wires. For brevity, we also use xi and yi to denote the
+wires themselves. A balancer never creates tokens; at all times,
+
+                                    x 0 + x1 ≥ y 0 + y1 .
+
+A balancer is said to be quiescent if every token that arrived on an input wire has
+emerged on an output wire:
+                                    x 0 + x 1 = y 0 + y1 .
+A balancing network is constructed by connecting some balancers’ output wires
+to other balancers’ input wires. A balancing network of width w has input wires
+x0 , x1 , . . . , xw−1 (not connected to output wires of balancers), and w output wires
+y0 , y1 , . . . , yw−1 (similarly unconnected). The balancing network’s depth is the max-
+imum number of balancers one can traverse starting from any input wire. We consider
+only balancing networks of finite depth (meaning the wires do not form a loop). Like
+balancers, balancing networks do not create tokens:
+                                                  
+                                          xi ≥       yi .
+
+      FIGURE 12.11
+      A sequential execution of a B ITONIC [4] counting network. Each vertical line represents a
+      balancer, and each balancer’s two input and output wires are the horizontal lines it
+      connects to at the dots. In this sequential execution, tokens pass through the network, one
+      completely after the other in the order specified by the numbers on the tokens. We track
+      every token as it passes through the balancers on the way to an output wire. For example,
+      token number 3 enters on wire 2, goes down to wire 3, and ends up on wire 2. Note how
+      the step property is maintained in every balancer, and also in the network as a whole.
+
+      (We often drop indices from summations when we sum over every element in a se-
+      quence.) A balancing network is quiescent if every token that arrived on an input wire
+      has emerged on an output wire:
+                                                  
+                                           xi =      yi .
+
+          So far, we have described balancing networks as if they were switches in a net-
+      work. On a shared-memory multiprocessor, however, a balancing network can be
+      implemented as an object in memory. Each balancer is an object, whose wires are
+      references from one balancer to another. Each thread repeatedly traverses the object,
+      starting on some input wire, and emerging at some output wire, effectively shepherd-
+      ing a token through the network.
+          Some balancing networks have interesting properties. The network shown in
+      Fig. 12.11 has four input wires and four output wires. Initially, all balancers are up.
+      We can check for ourselves that if any number of tokens enter the network, in any
+      order, on any set of input wires, then they emerge in a regular pattern on the output
+      wires. Informally, no matter how token arrivals are distributed among the input wires,
+      the output distribution is balanced across the output wires, where the top output wires
+      are filled first. If the number of tokens n is a multiple of four (the network width),
+      then the same number of tokens emerges from each wire. If there is one excess token,
+      it emerges on output wire 0; if there are two, they emerge on output wires 0 and 1,
+      and so on. In general, if
+                                                  
+                                             n=      xi ,
+      then, when the network is quiescent,
+
+                                         yi = ?(n − i)/w? .
+
+We call this property the step property.
+    A balancing network that satisfies the step property is called a counting network
+because it can easily be adapted to count the number of tokens that have traversed
+the network. Counting is done, as we described earlier in Fig. 12.9, by adding a local
+counter to each output wire i, so that tokens emerging on that wire are assigned
+consecutive numbers i + 1, i + w + 1, . . . , i + (yi − 1)w + 1.
+    The step property can be defined in a number of equivalent ways.
+
+Lemma 12.5.1. If y0 , . . . , yw−1 is a sequence of nonnegative integers, the following
+statements are all equivalent:
+1. For any i < j , 0 ≤ yi − yj ≤ 1.
+2. Either yi = yj for all i, j , or there exists some c such that for any i < c and j ≥ c,
+   yi − yj = 1.
+                                      
+3. If m = yi , then yi = m−i     w .
+
+12.5.2 The bitonic counting network
+In this section, we describe the bitonic counting network, which generalizes the
+counting network of Fig. 12.11 to a counting network whose width is any power
+of 2. We give an inductive construction.
+      When describing counting networks, we do not care about when tokens arrive, we
+care only that, when the network is quiescent, the numbers of tokens exiting on the
+output wires satisfy the step property. Define a width-w sequence of inputs or outputs
+x = x0 , . . . , xw−1 to be a collection of tokens, partitioned into w subsets xi . The xi
+are the input tokens that arrive or leave on wire i. As before, we also use xi to denote
+the size of the set xi .
+      We first define the M ERGER [2k] network, which has two input sequences, x and
+x ? , of width k, and a single output sequence y of width 2k. It guarantees that in
+any quiescent state, if x and x ? both satisfy the step property, then so does y. The
+M ERGER [2k] network is defined inductively, as illustrated in Fig. 12.12 for k = 4.
+For k = 1, the M ERGER [2k] network is a single balancer. For k > 1, we construct
+the M ERGER [2k] network with input sequences x and x ? from two M ERGER [k]
+networks and k balancers as follows: Using a M ERGER [k] network, we merge the
+even subsequence x0 , x2 , . . . , xk−2 of x with the odd subsequence x1? , x3? , . . . , xk−1
+                                                                                               of
+                                                            
+x (that is, the sequence x0 , . . . , xk−2 , x1 , . . . , xk−1 is the input to the M ERGER [k]
+network), while with a second M ERGER [k] network, we merge the odd subsequence
+of x with the even subsequence of x ? . We call the outputs of these two M ERGER [k]
+networks z and z? . The final stage of the network combines z and z? by sending each
+pair of wires zi and zi? into a balancer whose outputs yield y2i and y2i+1 .
+      The M ERGER [2k] network consists of log 2k layers of k balancers each. It pro-
+vides the step property for its outputs only when its two input sequences also have
+the step property, which we ensure by filtering the inputs through smaller balancing
+networks.
+
+      FIGURE 12.12
+      On the left-hand side, we see the logical structure of a M ERGER [8] network, into which feed
+      two B ITONIC [4] networks, as depicted in Fig. 12.11. The gray M ERGER [4] network has as
+      inputs the even wires coming out of the top B ITONIC [4] network and the odd ones from the
+      lower B ITONIC [4] network. In the lower M ERGER [4] the situation is reversed. Once the wires
+      exit the two M ERGER [4] networks, each pair of identically numbered wires is combined by a
+      balancer. On the right-hand side, we see the physical layout of a M ERGER [8] network. The
+      different balancers are color-coded to match the logical structure in the left-hand figure.
+
+      FIGURE 12.13
+      The recursive structure of a B ITONIC [2k] counting network. Two B ITONIC [k] counting
+      networks feed into a M ERGER [2k] balancing network.
+
+          The B ITONIC [2k] network is constructed by passing the outputs from two
+      B ITONIC [k] networks into a M ERGER [2k] network, where the induction is grounded
+      in the B ITONIC [2] network consisting of a single balancer,
+                                                                    as
+                                                                       depicted in Fig. 12.13.
+                                                            log 2k+1
+      This construction gives us a network consisting of        2      layers, each consisting
+      of k balancers.
+
+      12.5.2.1 A software bitonic counting network
+      So far, we have described counting networks as if they were switches in a network.
+      On a shared-memory multiprocessor, however, a balancing network can be imple-
+      mented as an object in memory. Each balancer is an object whose wires are references
+      from one balancer to another. Each thread repeatedly traverses the object, starting on
+      some input wire and emerging at some output wire, effectively shepherding a token
+      through the network. Here, we show how to implement a B ITONIC [2k] network as a
+      shared-memory data structure.
+
+ 1   public class Balancer {
+ 2     boolean toggle = true;
+ 3     public synchronized int traverse() {
+ 4       try {
+ 5         if (toggle) {
+ 6           return 0;
+ 7         } else {
+ 8           return 1;
+ 9         }
+10       } finally {
+11         toggle = !toggle;
+12       }
+13     }
+14   }
+
+     FIGURE 12.14
+     The Balancer class: a synchronized implementation.
+
+          The Balancer class (Fig. 12.14) has a single Boolean field: toggle. The synchro-
+     nized traverse() method complements the toggle field and returns an output wire,
+     either 0 or 1. The Balancer class’s traverse() method does not need an argument
+     because the wire on which a token exits a balancer does not depend on the wire on
+     which it enters.
+          The Merger class (Fig. 12.15) has three fields: The width field must be a power of
+     2, half[] is a two-element array of half-width Merger objects (empty if the network
+     has width 2), and layer[] is an array of width/2 balancers implementing the final
+     network layer. The class provides a traverse(i) method, where i is the wire on which
+     the token enters. (For merger networks, unlike balancers, a token’s path depends on
+     its input wire.) If the input wire is one of the first width/2, then the token is sent to
+     half[0] if i is even and to half[1] if i is odd. Otherwise, it is sent to half[0] if i is odd
+     and to half[1] if i is even. No matter which half-width merger network it traverses, a
+     token that emerges on wire i is fed to the balancer at layer[i].
+          The Bitonic class (Fig. 12.16) also has three fields: width must be a power of
+     2, half[] is a two-element array of half-width Bitonic objects (uninitialized if the
+     network has width 2), and merger is a full-width Merger object. The class provides a
+     traverse(i) method, where i is the token’s input wire. If the input wire is one of the
+     first width/2, then it is sent through half[0], otherwise through half[1]. A token that
+     emerges from the half-merger subnetwork on wire i then traverses the final merger
+     network from input wire i if it passed through half[0], or from input wire i+width/2
+     if it passed through half[1].
+          Note that the Bitonic class uses a simple synchronized Balancer implementation,
+     but if the Balancer implementation were lock-free (or wait-free), the network imple-
+     mentation as a whole would be lock-free (or wait-free).
+
+      1    public class Merger {
+      2      Merger[] half; // two half-width merger networks
+      3      Balancer[] layer; // final layer
+      4      final int width;
+      5      public Merger(int myWidth) {
+      6        width = myWidth;
+      7        layer = new Balancer[width / 2];
+      8        for (int i = 0; i < width / 2; i++) {
+      9          layer[i] = new Balancer();
+      10       }
+      11       if (width > 2) {
+      12         half = new Merger[]{new Merger(width/2), new Merger(width/2)};
+      13       }
+      14     }
+      15     public int traverse(int input) {
+      16       int output = 0;
+      17       if (input < width / 2) {
+      18         output = half[input % 2].traverse(input / 2);
+      19       } else {
+      20         output = half[1 - (input % 2)].traverse(input / 2);
+      21       return (2 * output) + layer[output].traverse();
+      22     }
+      23   }
+
+           FIGURE 12.15
+           The Merger class.
+
+           12.5.2.2 Proof of correctness
+           We now show that B ITONIC [w] is a counting network. The proof proceeds as a
+           progression of arguments about the token sequences passing through the network.
+           Before examining the network itself, here are some simple lemmas about sequences
+           with the step property.
+           Lemma 12.5.2. If a sequence has the step property, then so do all its subsequences.
+           Lemma 12.5.3. For even k, if x0 , . . . , xk−1 has the step property, then its even and
+           odd subsequences satisfy
+                          k              ? k−1
+                          2 −1
+                                                             k
+                                            xi               2 −1
+                                                                               
+                                                                              k−1
+                                                                                  xi
+                                 x2i =              and             x2i+1 =             .
+                                                2                                   2
+                          i=0             i=0                i=0              i=0
+
+           Proof. Either x2i = x2i+1 for 0 ≤ i < k/2, or by Lemma 12.5.1, there exists a unique
+           j such?that x2j?= x2j +1 +? 1 and x2i = x2i+1 for all i ?= j , 0?≤ i < k/2.
+                                                                                      In the? first
+           case,
+                    x    =
+                      2i ?    x 2i+1 =   x i /2, and in the second case,     x 2i =    xi /2 and
+              x2i+1 =      xi /2 .
+
+ 1   public class Bitonic {
+ 2     Bitonic[] half; // two half-width bitonic networks
+ 3     Merger merger; // final merger layer
+ 4     final int width; // network width
+ 5     public Bitonic(int myWidth) {
+ 6       width = myWidth;
+ 7       merger = new Merger(width);
+ 8       if (width > 2) {
+ 9         half = new Bitonic[]{new Bitonic(width/2), new Bitonic(width/2)};
+10       }
+11     }
+12     public int traverse(int input) {
+13       int output = 0;
+14       int subnet = input / (width / 2);
+15       if (width > 2) {
+16         output = half[subnet].traverse(input - subnet * (width / 2));
+17       }
+18       return merger.traverse(output + subnet * (width / 2));
+19     }
+20   }
+
+     FIGURE 12.16
+     The Bitonic class.
+
+     Lemma 12.5.4. ?  Let x0 , .?
+                                . . , xk−1 and y0 , . . . , yk−1 be arbitrary sequences having the
+     step property. If xi = yi , then xi = yi for all 0 ≤ i < k.
+                                                                                 
+     Proof. Let m = xi = yi . By Lemma 12.5.1, xi = yi = m−i                 k    .
+     Lemma 12.5.5. ?  Let x0 , .?
+                                . . , xk−1 and y0 , . . . , yk−1 be arbitrary sequences having the
+     step property. If xi = yi + 1, then there exists a unique j , 0 ≤ j < k, such that
+     xj = yj + 1 and xi = yi for i ?= j , 0 ≤ i < k.
+                                                                                                  
+     Proof. Let m = xi = yi +1. By Lemma 12.5.1, xi = m−i                  k    and yi =   m−1−i
+                                                                                             k     .
+     These two terms agree for all i, 0 ≤ i < k, except for the unique i such that i =
+     m − 1 (mod k).
+        We now show that the M ERGER [w] network preserves the step property.
+     Lemma 12.5.6. If M ERGER [2k] is quiescent (where k is a power of 2) and its
+     inputs x0 , . . . , xk−1 and x0? , . . . , xk−1
+                                                     both have the step property, then its output
+     y0 , . . . , y2k−1 also has the step property.
+     Proof. We argue by induction on log k. It may be worthwhile to consult Fig. 12.17,
+     which shows an example of the proof structure for a M ERGER [8] network.
+         If 2k = 2, M ERGER [2k] is just a balancer, and its outputs are guaranteed to have
+     the step property by the definition of a balancer.
+
+      FIGURE 12.17
+      The inductive proof that a M ERGER [8] network correctly merges two width-4 sequences x
+      and x’ that have the step property into a single width-8 sequence y that has the step
+      property. The odd and even width-2 subsequences of x and x’ all have the step property.
+      Moreover, the difference in the number of tokens between the even sequence from one and
+      the odd sequence from the other is at most 1 (in this example, 11 and 12 tokens,
+      respectively). It follows from the induction hypothesis that the outputs z and z’ of the two
+      M ERGER [4] networks have the step property, with at most 1 extra token in one of them.
+      This extra token must fall on a specific numbered wire (wire 3 in this case) leading into the
+      same balancer. In this figure, these tokens are darkened. They are passed to the
+      southern-most balancer, and the extra token is pushed north, ensuring the final output has
+      the step property.
+
+            If 2k > 2, let z0 , . . . , zk−1 be the outputs of the first M ERGER [k] subnetwork,
+      which merges the even subsequence of x with the odd subsequence of x ? , and let
+      z0? , . . . , zk−1
+                           be the outputs of the second M ERGER [k] subnetwork. Since x and
+          
+      x have the step property by assumption, so do their even and odd subsequences
+      (Lemma??
+                       12.5.2),? and ?
+                                     hence so do ?z and z??(induction?hypothesis).
+                                                                                    Furthermore,
+           zi =          xi /2 +       xi? /2 and zi? =? xi /2 ?+          xi /2 (Lemma 12.5.3).
+      A straightforward case analysis shows that zi and                ?
+                                                                  zi can ? differ by at most 1.
+            We claim that 0 ≤ yi − yj ≤ 1 for any i < j . If zi = zi? , then Lemma 12.5.4
+      implies that zi = zi? for 0 ≤ i < k/2. After the final layer of balancers,
+
+                                      yi − yj = z?i/2 − z?j/2 ,
+
+      and the result follows
+                            because ? z? has the step property.
+          Similarly, if      zi and    zi differ by one, Lemma 12.5.5 implies that zi = zi?
+      for 0 ≤ i < k/2, except for a unique ? such that z? and z?? differ by one. Let x =
+      min(z? , z?? ), and thus, max(z? , z?? ) = x + 1. From the step property for z and z? , we
+      have zi = zi? = x + 1 for all i < ?, and zi = zi? = x for all i > ?. Since z? and z??
+      are joined by a balancer with outputs y2? and y2?+1 , it follows that y2? = x + 1 and
+      y2?+1 = x. Similarly, zi and zi? for i ?= ? are joined by the same balancer. Thus, for
+      any i < ?, y2i = y2i+1 = x + 1 and for any i > ?, y2i = y2i+1 = x. The step property
+      follows by choosing c = 2? + 1 and applying Lemma 12.5.1.
+
+   The proof of the following theorem is now immediate.
+
+Theorem 12.5.7. In any quiescent state, the outputs of B ITONIC [w] have the step
+property.
+
+12.5.2.3 A periodic counting network
+In this section, we show that the Bitonic network is not the only counting network
+with depth O(log 2 w). We introduce a new counting network with the remarkable
+property that it is periodic, consisting of a sequence of identical subnetworks, as
+depicted in Fig. 12.18. We define the network B LOCK [k] as follows: When k is equal
+to 2, the B LOCK [k] network consists of a single balancer. The B LOCK [2k] network
+for larger k is constructed recursively. We start with two B LOCK [k] networks A and
+B. Given an input sequence x, the input to A is x A , and the input to B is x B . Let y be
+the output sequence for the two subnetworks, where y A is the output sequence for A
+and y B the output sequence for B. The final stage of the network combines each yiA
+and yiB in a single balancer, yielding final outputs z2i and z2i+1 .
+    Fig. 12.19 describes the recursive construction of a B LOCK [8] network. The P E -
+RIODIC [2k] network consists of log 2k B LOCK [2k] networks joined so that the ith
+
+FIGURE 12.18
+A P ERIODIC [8] counting network constructed from three identical B LOCK [8] networks.
+
+FIGURE 12.19
+The left-hand side illustrates a B LOCK [8] network, into which feed two P ERIODIC [4]
+networks. The right-hand illustrates the physical layout of a M ERGER [8] network. The
+balancers are color-coded to match the logical structure in the left-hand figure.
+
+      1    public class Layer {
+      2      int width;
+      3      Balancer[] layer;
+      4      public Layer(int width) {
+      5        this.width = width;
+      6        layer = new Balancer[width];
+      7        for (int i = 0; i < width / 2; i++) {
+      8          layer[i] = layer[width-i-1] = new Balancer();
+      9        }
+      10     }
+      11     public int traverse(int input) {
+      12       int toggle = layer[input].traverse();
+      13       int hi, lo;
+      14       if (input < width / 2) {
+      15         lo = input;
+      16         hi = width - input - 1;
+      17       } else {
+      18         lo = width - input - 1;
+      19         hi = input;
+      20       }
+      21       if (toggle == 0) {
+      22         return lo;
+      23       } else {
+      24         return hi;
+      25       }
+      26     }
+      27   }
+
+           FIGURE 12.20
+           The Layer network.
+
+           output wire of one is the ith wire of the next. Fig. 12.18 is a P ERIODIC [8] counting
+           network.2
+
+           12.5.2.4 A software periodic counting network
+           Here is how to implement the periodic network in software. We reuse the Balancer
+           class in Fig. 12.14. A single layer of a B LOCK [w] network is implemented by the
+           L AYER [w] network (Fig. 12.20). A L AYER [w] network joins input wires i and w −
+           i − 1 to the same balancer.
+               In the B LOCK [w] class (Fig. 12.21), after the token emerges from the initial
+           L AYER [w] network, it passes through one of two half-width B LOCK [w/2] networks
+           (called north and south).
+
+           2 While the B LOCK [2k] and M ERGER [2k] networks may look the same, they are not: There is no per-
+           mutation of wires that yields one from the other.
+
+ 1   public class Block {
+ 2     Block north;
+ 3     Block south;
+ 4     Layer layer;
+ 5     int width;
+ 6     public Block(int width) {
+ 7       this.width = width;
+ 8       if (width > 2) {
+ 9         north = new Block(width / 2);
+10         south = new Block(width / 2);
+11       }
+12       layer = new Layer(width);
+13     }
+14     public int traverse(int input) {
+15       int wire = layer.traverse(input);
+16       if (width > 2) {
+17         if (wire < width / 2) {
+18           return north.traverse(wire);
+19         } else {
+20           return (width / 2) + south.traverse(wire - (width / 2));
+21         }
+22       } else {
+23         return wire;
+24       }
+25     }
+26   }
+
+     FIGURE 12.21
+     The Block network.
+
+         The P ERIODIC [w] network (Fig. 12.22) is implemented as an array of log w
+     B LOCK [w] networks. Each token traverses each block in sequence, where the output
+     wire taken on each block is the input wire for its successor. (The chapter notes cite
+     the proof that the P ERIODIC [w] is a counting network.)
+
+     12.5.3 Performance and pipelining
+     How does counting network throughput vary as a function of the number of threads
+     and the network width? For a fixed network width, throughput rises with the number
+     of threads up to a point, and then the network saturates, and throughput remains
+     constant or declines. To understand these results, let us think of a counting network
+     as a pipeline.
+
+     • If the number of tokens concurrently traversing the network is less than the number
+       of balancers, then the pipeline is partly empty, and throughput suffers.
+
+      1    public class Periodic {
+      2      Block[] block;
+      3      public Periodic(int width) {
+      4        int logSize = 0;
+      5        int myWidth = width;
+      6        while (myWidth > 1) {
+      7          logSize++;
+      8          myWidth = myWidth / 2;
+      9        }
+      10       block = new Block[logSize];
+      11       for (int i = 0; i < logSize; i++) {
+      12         block[i] = new Block(width);
+      13       }
+      14     }
+      15     public int traverse(int input) {
+      16       int wire = input;
+      17       for (Block b : block) {
+      18         wire = b.traverse(wire);
+      19       }
+      20       return wire;
+      21     }
+      22   }
+
+           FIGURE 12.22
+           The Periodic network.
+
+           • If the number of concurrent tokens is greater than the number of balancers, then
+             the pipeline becomes clogged because too many tokens arrive at each balancer at
+             the same time, resulting in per-balancer contention.
+           • Throughput is maximized when the number of tokens is roughly equal to the num-
+             ber of balancers.
+
+           If an application needs a counting network, then the best network size to choose is one
+           that ensures that the number of tokens traversing the balancer at any time is roughly
+           equal to the number of balancers.
+
+           12.6 Diffracting trees
+           Counting networks provide a high degree of pipelining, so throughput is largely in-
+           dependent of network depth. Latency, however, does depend on network depth. Of
+           the counting networks we have seen, the most shallow has depth ?(log2 w). Can
+           we design a logarithmic-depth counting network? The good news is yes, such net-
+           works exist, but the bad news is that for all known constructions, the constant factors
+           involved render these constructions impractical.
+                                                                  12.6 Diffracting trees          289
+
+FIGURE 12.23
+The T REE [8] class: a tree that counts. Note how the network maintains the step property.
+
+     Here is an alternative approach: Consider a set of balancers with a single input
+wire and two output wires, with the top and bottom labeled 0 and 1, respectively.
+The T REE [w] network (depicted in Fig. 12.23) is a binary tree structured as fol-
+lows: Let w be a power of two, and define T REE [2k] inductively. When k is equal
+to 1, T REE [2k] consists of a single balancer with output wires y0 and y1 . For k > 1,
+construct T REE [2k] from two T REE [k] trees and one additional balancer. Make the
+input wire x of the single balancer the root of the tree and connect each of its output
+wires to the input wire of a tree of width k. Redesignate output wires y0 , y1 , . . . , yk−1
+of the T REE [k] subtree extending from the “0” output wire as the even output wires
+y0 , y2 , . . . , y2k−2 of the final T REE [2k] network and the wires y0 , y1 , . . . , yk−1 of
+the T REE [k] subtree extending from the balancer’s “1” output wire as the odd output
+wires y1 , y3 , . . . , y2k−1 of the final T REE [2k] network.
+     To understand why the T REE [2k] network has the step property in a quiescent
+state, let us assume inductively that a quiescent T REE [k] has the step property. The
+root balancer passes at most one token more to the T REE [k] subtree on its “0” (top)
+wire than on its“1” (bottom) wire. The tokens exiting the top T REE [k] subtree have
+a step property differing from that of the bottom subtree at most one wire j among
+their k output wires. The T REE [2k] outputs are a perfect shuffle of the wires leaving
+the two subtrees, and it follows that the two step-shaped token sequences of width k
+form a new step of width 2k, where the possible single excess token appears at the
+higher of the two wires j , that is, the one from the top T REE [k] tree.
+     The T REE [w] network may be a counting network, but is it a good counting net-
+work? The good news is that it has shallow depth: While a B ITONIC [w] network has
+depth log2 w, the T REE [w] network depth is just log w. The bad news is contention:
+Every token that enters the network passes through the same root balancer, causing
+that balancer to become a bottleneck. In general, the higher the balancer in the tree,
+the higher the contention.
+     We can reduce contention by exploiting a simple observation similar to one we
+made about the EliminationBackoffStack of Chapter 11:
+
+              If an even number of tokens pass through a balancer, the outputs are evenly bal-
+              anced on the top and bottom wires, but the balancer’s state remains unchanged.
+                The basic idea behind diffracting trees is to place a "prism" at each balancer,
+           an out-of-band mechanism similar to the EliminationArray, which enables tokens
+           (threads) accessing a stack to exchange items. The prism allows tokens to pair off at
+           random array locations and agree to diffract in different directions, that is, to exit on
+           different wires without traversing the balancer’s toggle bit or changing its state. A
+           token traverses the balancer’s toggle bit only if it is unable to pair off with another
+           token within a reasonable period of time. If it did not manage to diffract, the token
+           toggles the bit to determine which way to go. It follows that we can avoid excessive
+           contention at balancers if the prism can pair off enough tokens without introducing
+           too much contention.
+                A Prism is an array of Exchanger<Integer> objects, like the EliminationArray. An
+           Exchanger<T> object permits two threads to exchange T values. If thread A calls the
+           object’s exchange() method with argument a, and B calls it with argument b, then
+           A’s call returns b and B’s call returns a. The first thread to arrive is blocked until the
+           second arrives. The call includes a timeout argument allowing a thread to proceed if
+           it is unable to exchange a value within a reasonable duration.
+                Before thread A visits the balancer’s toggle bit, it visits the associated Prism. In
+           the Prism, it picks an array entry at random, and calls that slot’s exchange() method,
+           providing its own thread ID as an exchange value. If it succeeds in exchanging IDs
+           with another thread, then the thread with the lower ID exits on wire 0, and the one
+           with the higher ID on wire 1.
+                Fig. 12.24 shows a Prism implementation. The constructor takes as an argument
+           the capacity of the prism (the maximal number of distinct exchangers). The Prism
+
+      1    public class Prism {
+      2      private static final int duration = 100;
+      3      Exchanger<Integer>[] exchanger;
+      4      public Prism(int capacity) {
+      5        exchanger = (Exchanger<Integer>[]) new Exchanger[capacity];
+      6        for (int i = 0; i < capacity; i++) {
+      7          exchanger[i] = new Exchanger<Integer>();
+      8        }
+      9      }
+      10     public boolean visit() throws TimeoutException,InterruptedException {
+      11       int me = ThreadID.get();
+      12       int slot = ThreadLocalRandom.current().nextInt(exchanger.length);
+      13       int other = exchanger[slot].exchange(me,duration,TimeUnit.MILLISECONDS);
+      14       return (me < other);
+      15     }
+      16   }
+
+           FIGURE 12.24
+           The Prism class.
+                                                                      12.6 Diffracting trees      291
+
+ 1   public class DiffractingBalancer {
+ 2     Prism prism;
+ 3     Balancer toggle;
+ 4     public DiffractingBalancer(int capacity) {
+ 5       prism = new Prism(capacity);
+ 6       toggle = new Balancer();
+ 7     }
+ 8     public int traverse() {
+ 9       boolean direction = false;
+10       try{
+11         if (prism.visit())
+12           return 0;
+13         else
+14           return 1;
+15       } catch(TimeoutException ex) {
+16         return toggle.traverse();
+17       }
+18     }
+19   }
+
+     FIGURE 12.25
+     The DiffractingBalancer class: If the caller pairs up with a concurrent caller through the
+     prism, it does not need to traverse the balancer.
+
+     class provides a single method, visit(), that chooses the random exchanger entry.
+     The visit() call returns true if the caller should exit on the top wire, false if the bot-
+     tom wire, and it throws a TimeoutException if the timeout expires without exchanging
+     a value. The caller acquires its thread ID (line 11), chooses a random entry in the array
+     (line 12), and tries to exchange its own ID with its partner’s (line 13). If it succeeds,
+     it returns a Boolean value, and if it times out, it rethrows TimeoutException.
+          A DiffractingBalancer (Fig. 12.25), like a regular Balancer, provides a traverse()
+     method whose return value alternates between 0 and 1. This class has two fields:
+     prism is a Prism, and toggle is a Balancer. When a thread calls traverse(), it tries to
+     find a partner through the prism. If it succeeds, then the partners return with distinct
+     values, without creating contention at the toggle (line 11). Otherwise, if the thread is
+     unable to find a partner, it traverses (line 16) the toggle (implemented as a balancer).
+          The DiffractingTree class (Fig. 12.26) has two fields. The child array is a two-
+     element array of child trees. The root field is a DiffractingBalancer that alternates
+     between forwarding calls to the left or right subtree. Each DiffractingBalancer has
+     a capacity, which is actually the capacity of its internal prism. Initially this capacity
+     is the size of the tree, and the capacity shrinks by half at each level.
+          As with the EliminationBackoffStack, DiffractingTree performance depends on
+     two parameters: prism capacities and timeouts. If the prisms are too big, threads miss
+     one another, causing excessive contention at the balancer. If the prisms are too small,
+     then too many threads concurrently access each exchanger in a prism, resulting in
+
+      1    public class DiffractingTree {
+      2      DiffractingBalancer root;
+      3      DiffractingTree[] child;
+      4      int size;
+      5      public DiffractingTree(int mySize) {
+      6        size = mySize;
+      7        root = new DiffractingBalancer(size);
+      8        if (size > 2) {
+      9          child = new DiffractingTree[]{
+      10           new DiffractingTree(size/2),
+      11           new DiffractingTree(size/2)};
+      12       }
+      13     }
+      14     public int traverse() {
+      15       int half = root.traverse();
+      16       if (size > 2) {
+      17         return (2 * (child[half].traverse()) + half);
+      18       } else {
+      19         return half;
+      20       }
+      21     }
+      22   }
+
+           FIGURE 12.26
+           The DiffractingTree class: fields, constructor, and traverse() method.
+
+           excessive contention at the exchangers. If prism timeouts are too short, threads miss
+           one another, and if they are too long, threads may be delayed unnecessarily. There
+           are no hard-and-fast rules for choosing these values, since the optimal values depend
+           on the load and the characteristics of the underlying multiprocessor architecture.
+               Nevertheless, experimental evidence suggests that it is sometimes possible to
+           choose these values to outperform both the CombiningTree and CountingNetwork
+           classes. Here are some heuristics that work well in practice: Because balancers higher
+           in the tree have more contention, we use larger prisms near the top of the tree, and
+           add the ability to dynamically shrink and grow the random range chosen. The best
+           timeout interval choice depends on the load: If only a few threads are accessing the
+           tree, then time spent waiting is mostly wasted, while if there are many threads, then
+           time spent waiting pays off. Adaptive schemes are promising: lengthen the timeout
+           while threads succeed in pairing off, and shorten it otherwise.
+
+           12.7 Parallel sorting
+           Sorting is one of the most important computational tasks, dating back to Hollerith’s
+           tabulating machine in the 19th century, through the first electronic computer systems
+                                                                      12.8 Sorting networks   293
+
+in the 1940s, and culminating today, when a high fraction of programs use sorting in
+some form or another. As most computer science undergraduates learn early on, the
+choice of sorting algorithm depends crucially on the number of items being sorted,
+the numerical properties of their keys, and whether the items reside in memory or in
+an external storage device. Parallel sorting algorithms can be classified in the same
+way.
+    We present two classes of sorting algorithms: sorting networks, which typically
+work well for small in-memory data sets, and sample sorting algorithms, which work
+well for large data sets in external memory. In our presentation, we sacrifice perfor-
+mance for simplicity. More complex techniques are cited in the chapter notes.
+
+12.8 Sorting networks
+In much the same way that a counting network is a network of balancers, a sorting
+network is a network of comparators.3 A comparator is a computing element with
+two input wires and two output wires, called the top and bottom wires. It receives two
+numbers on its input wires, and forwards the larger to its top wire and the smaller to
+its bottom wire. A comparator, unlike a balancer, is synchronous: It outputs values
+only when both inputs have arrived (see Fig. 12.27).
+    A comparison network, like a balancing network, is an acyclic network of com-
+parators. An input value is placed on each of its w input lines. These values pass
+through each layer of comparators synchronously, finally leaving together on the net-
+work output wires.
+    A comparison network with input values xi and output values yi , i ∈ {0 . . . w − 1},
+each on wire i, is a valid sorting network if its output values are the input values sorted
+in descending order, that is, yi−1 ≥ yi .
+    The following classic theorem simplifies the process of proving that a given net-
+work sorts.
+
+Theorem 12.8.1 (0-1 Principle). If a sorting network sorts every input sequence of
+0 s and 1 s, then it sorts any sequence of input values.
+
+FIGURE 12.27
+A comparator.
+
+3 Historically sorting networks predate counting networks by several decades.
+
+      12.8.1 Designing a sorting network
+      There is no need to design sorting networks, because we can recycle counting net-
+      work layouts. A balancing network and a comparison network are isomorphic if one
+      can be constructed from the other by replacing balancers with comparators, or vice
+      versa.
+
+      Theorem 12.8.2. If a balancing network counts, then its isomorphic comparison
+      network sorts.
+
+      Proof. We construct a mapping from steps in the comparison network to steps in the
+      isomorphic balancing network transitions. By Theorem 12.8.1, a comparison network
+      which sorts all sequences of 0 s and 1 s is a sorting network. Take any arbitrary
+      sequence of 0 s and 1 s as inputs to the comparison network, and for the balancing
+      network, place a token on each 1 input wire and no token on each 0 input wire. If
+      we run both networks in lockstep, the balancing network simulates the comparison
+      network.
+          The proof is by induction on the depth of the network. For level 0 the claim holds
+      by construction. Assuming it holds for wires of a given level k, let us prove it holds for
+      level k + 1. On every comparator where two 1 s meet in the comparison network, two
+      tokens meet in the balancing network, so one 1 leaves on each wire in the comparison
+      network on level k + 1, and one token leaves on each wire in the balancing network
+      on level k + 1. On every comparator where two 0 s meet in the comparison network,
+      no tokens meet in the balancing network, so a 0 leaves on each level k + 1 wire in
+      the comparison network, and no tokens leave in the balancing network. On every
+      comparator where a 0 and 1 meet in the comparison network, the 1 leaves on the
+      north (upper) wire and the 1 on the south (lower) wire on level k + 1, while in the
+      balancing network the token leaves on the north wire, and no token leaves on the
+      south wire.
+          If the balancing network is a counting network, that is, it has the step property
+      on its output level wires, then the comparison network must have sorted the input
+      sequence of 0 s and 1 s.
+
+          The converse is false: not all sorting networks are counting networks. We leave it
+      as an exercise to verify that the O DD E VEN network in Fig. 12.28 is a sorting network
+      but not a counting network.
+
+      Corollary 12.8.3. Comparison networks isomorphic to B ITONIC [] and P ERIODIC []
+      networks are sorting networks.
+
+         Sorting a set of size w by comparisons requires ?(w log w) comparisons. A sort-
+      ing network with w input wires has at most O(w) comparators in each level, so its
+      depth can be no smaller than ?(log w).
+
+      Corollary 12.8.4. The depth of any counting network is at least ?(log w).
+                                                             12.8 Sorting networks          295
+
+FIGURE 12.28
+The O DD E VEN sorting network.
+
+12.8.1.1 A bitonic sorting algorithm
+We can represent any width-w sorting network, such as B ITONIC [w], as a collection
+of d layers of up to w/2 balancers each. We can represent a sorting network layout
+as a table, where each entry is a pair that describes which two wires meet at that
+balancer at that layer. (For example, in the B ITONIC [4] network of Fig. 12.11, wires
+0 and 1 meet at the first balancer in the first layer, and wires 0 and 3 meet at the
+first balancer of the second layer.) Let us assume, for simplicity, that we are given an
+unbounded table bitonicTable[i][d][j ], where each array entry contains the index of
+the associated north (j = 0) or south (j = 1) input wire to balancer i at depth d.
+    An in-place array-based sorting algorithm takes as input an array of items to be
+sorted (here we assume these items have unique integer keys) and returns the same ar-
+ray with the items sorted by key. Here is how we implement BitonicSort, an in-place
+array-based sorting algorithm based on a bitonic sorting network. Let us assume that
+we wish to sort an array of 2 · p · s elements, where p is the number of threads (and
+typically also the maximal number of available processors on which the threads run)
+and p · s is a power of 2. The network has p · s comparators at every layer.
+    Each of the p threads emulates the work of s comparators. Unlike counting net-
+works, which act like uncoordinated raves, sorting networks are synchronous: All
+inputs to a comparator must arrive before it can compute the outputs. The algorithm
+proceeds in rounds. In each round, a thread performs s comparisons in a layer of the
+network, switching the array entries of items if necessary, so that they are properly or-
+dered. In each network layer, the comparators join different wires, so no two threads
+attempt to exchange the items of the same entry, avoiding the need to synchronize
+operations at any given layer.
+    To ensure that the comparisons of a given round (layer) are complete before pro-
+ceeding to the next one, we use a synchronization construct called a Barrier (studied
+in more detail in Chapter 18). A barrier for p threads provides an await() method,
+
+      1    public class BitonicSort {
+      2      static final int[][][] bitonicTable = ...;
+      3      static final int width = ...; // counting network width
+      4      static final int depth = ...; // counting network depth
+      5      static final int p = ...; // number of threads
+      6      static final int s = ...; // a power of 2
+      7      Barrier barrier;
+      8      ...
+      9        public <T> void sort(Item<T>[] items) {
+      10         int i = ThreadID.get();
+      11         for (int d = 0; d < depth; d++) {
+      12           barrier.await();
+      13           for (int j = 0; j < s; j++) {
+      14             int north = bitonicTable[(i*s)+j][d][0];
+      15             int south = bitonicTable[(i*s)+j][d][1];
+      16             if (items[north].key < items[south].key) {
+      17               Item<T> temp = items[north];
+      18               items[north] = items[south];
+      19               items[south] = temp;
+      20             }
+      21           }
+      22         }
+      23       }
+
+           FIGURE 12.29
+           The BitonicSort class.
+
+           whose call does not return until all p threads have called await(). The BitonicSort
+           implementation appears in Fig. 12.29. Each thread proceeds through the layers of
+           the network round by round. In each round, it awaits the arrival of the other threads
+           (line 12), ensuring that the items array contains the prior round’s results. It then em-
+           ulates the behavior of s balancers at that layer by comparing the items at the array
+           positions corresponding to the comparator’s wires, and exchanging them if their keys
+           are out of order (lines 14–19).
+               The BitonicSort takes O(s log2 p) time for p threads running on p processors,
+           which, if s is constant, is O(log2 p) time.
+
+           12.9 Sample sorting
+           The BitonicSort is appropriate for small data sets that reside in memory. For larger
+           data sets (where n, the number of items, is much larger than p, the number of threads),
+           especially ones that reside on out-of-memory storage devices, we need a different
+           approach. Because accessing a data item is expensive, we must maintain as much
+           locality of reference as possible, so having a single thread sort items sequentially is
+                                                                           12.9 Sample sorting   297
+
+cost-effective. A parallel sort like BitonicSort, where an item is accessed by multiple
+threads, is simply too expensive.
+    We attempt to minimize the number of threads that access a given item through
+randomization. This use of randomness differs from that in the DiffractingTree,
+where it was used to distribute memory accesses. Here we use randomness to guess
+the distribution of items in the data set to be sorted.
+    Since the data set to be sorted is large, we split it into buckets, throwing into each
+bucket the items that have keys within a given range. Each thread then sorts the items
+in one of the buckets using a sequential sorting algorithm, and the result is a sorted
+set (when viewed in the appropriate bucket order). This algorithm is a generalization
+of the well-known quicksort algorithm, but instead of having a single splitter key to
+divide the items into two subsets, we have p − 1 splitter keys that split the input set
+into p subsets.
+    The algorithm for n items and p threads involves three phases:
+1. Threads choose p − 1 splitter keys to partition the data set into p buckets. The
+   splitters are published so all threads can read them.
+2. Each thread sequentially processes n/p items, moving each item to its bucket,
+   where the appropriate bucket is determined by performing a binary search with
+   the item’s key among the splitter keys.
+3. Each thread sequentially sorts the items in its bucket.
+Barriers between the phases ensure that all threads have completed one phase before
+the next starts.
+    Before we consider the first phase, we look at the second and third phases.
+    The second phase’s time complexity is (n/p) log p, consisting of reading each
+item from memory, disk, or tape, followed by a binary search among p splitters
+cached locally, and finally adding the item into the appropriate bucket. The buck-
+ets into which the items are moved could be in memory, on disk, or on tape, so the
+dominating cost is that of the n/p accesses to the stored data items.
+    Let b be the number of items in a bucket. The time complexity of the third phase
+for a given thread is O(b log b), to sort the items using a sequential version of, say,
+quicksort.4 This part has the highest cost because it consists of read and write phases
+that access relatively slow memory, such as disk or tape.
+    The time complexity of the algorithm is dominated by the thread with the most
+items in its bucket in the third phase. It is therefore important to choose the splitters
+to be as evenly distributed as possible, so each bucket receives approximately n/p
+items in the second phase.
+    The key to choosing good splitters is to have each thread pick a set of sample
+splitters that represent its own n/p size data set, and choose the final p − 1 splitters
+from among all the sample splitter sets of all threads. Each thread selects uniformly
+at random s keys from its data set of size n/p. (In practice, it suffices to choose s to
+
+4 If the item’s key size is known and fixed, one could use algorithms like Radixsort.
+
+      be 32 or 64 keys.) Each thread then participates in running the parallel BitonicSort
+      (Fig. 12.29) on the s · p sample keys selected by the p threads. Finally, each thread
+      reads the p − 1 splitter keys in positions s, 2s, . . . , (p − 1)s in the sorted set of split-
+      ters, and uses these as the splitters in the second phase. This choice of s samples, and
+      the later choice of the final splitters from the sorted set of all samples, reduces the
+      effects of an uneven key distribution among the n/p size data sets accessed by the
+      threads.
+          For example, a sample sort algorithm could choose to have each thread pick
+      p − 1 splitters for its second phase from within its own n/p size data set, without
+      ever communicating with other threads. The problem with this approach is that if the
+      distribution of the data is uneven, the size of the buckets may differ greatly, and per-
+      formance would suffer. For example, if the number of items in the largest bucket is
+      doubled, so is the worst-case time complexity of the sorting algorithm.
+          The first phase’s complexity is s (a constant) to perform the random sampling,
+      and O(log2 p) for the parallel Bitonic sort. The overall time complexity of sample
+      sort with a good splitter set (where every bucket gets O(n/p) of the items) is
+
+                        O(log2 p) + O((n/p) log p) + O((n/p) log(n/p)),
+
+      which overall is O((n/p) log(n/p)).
+
+      12.10 Distributed coordination
+      This chapter covered several distributed coordination patterns. Some, such as com-
+      bining trees, sorting networks, and sample sorting, have high parallelism and low
+      overhead. All these algorithms contain synchronization bottlenecks, that is, points
+      in the computation where threads must wait to rendezvous with others. In combin-
+      ing trees, threads must synchronize to combine; when sorting, threads synchronize at
+      barriers.
+          In other schemes, such as counting networks and diffracting trees, threads never
+      wait for one another. (Although we implement balancers using synchronized meth-
+      ods, they could be implemented in a lock-free manner using compareAndSet().) Here,
+      the distributed structures pass information from one thread to another, and while a
+      rendezvous could prove advantageous (as in the Prism array), it is not necessary.
+          Randomization, which is useful in many places, helps to distribute work evenly.
+      For diffracting trees, randomization distributes work over multiple memory locations,
+      reducing the chance that too many threads simultaneously access the same location.
+      For sample sort, randomization helps distribute work evenly among buckets, which
+      threads later sort in parallel.
+          Finally, we saw that pipelining can ensure that some data structures can have high
+      throughput, even though they have high latency.
+          Although we focus on shared-memory multiprocessors, it is worth mentioning
+      that the distributed algorithms and structures considered in this chapter also work in
+                                                             12.11 Chapter notes          299
+
+message passing architectures. The message passing model might be implemented
+directly in hardware, as in a network of processors, or it could be provided on top of
+a shared-memory architecture through a software layer such as MPI.
+    In shared-memory architectures, switches (such as combining tree nodes or bal-
+ancers) are naturally implemented as shared-memory counters. In message passing
+architectures, switches are naturally implemented as processor-local data structures,
+where wires that link one processor to another also link one switch to another. When
+a processor receives a message, it atomically updates its local data structure and for-
+wards messages to the processors managing other switches.
+
+12.11 Chapter notes
+The idea behind combining trees is due to Allan Gottlieb, Ralph Grishman, Clyde
+Kruskal, Kevin McAuliffe, Larry Rudolph, and Marc Snir [53]. The software
+CombiningTree presented here is adapted from an algorithm by PenChung Yew, Nian-
+Feng Tzeng, and Duncan Lawrie [168] with modifications by Maurice Herlihy, Beng-
+Hong Lim, and Nir Shavit [71], all based on an original proposal by James Goodman,
+Mary Vernon, and Philip Woest [51].
+    Counting networks were invented by Jim Aspnes, Maurice Herlihy, and Nir Shavit
+[14]. Counting networks are related to sorting networks, including the groundbreak-
+ing Bitonic network of Kenneth Batcher [16], and the periodic network of Martin
+Dowd, Yehoshua Perl, Larry Rudolph, and Mike Saks [40]. Miklós Ajtai, János Kom-
+lós, and Endre Szemerédi discovered the AKS sorting network, an O(log w) depth
+sorting network [8]. (This asymptotic expression hides large constants that make net-
+works based on AKS impractical.)
+    Mike Klugerman and Greg Plaxton [93,94] were the first to provide an AKS-based
+counting network construction with O(log w) depth. The 0-1 principle for sorting
+networks is by Donald Knuth [95]. A similar set of rules for balancing networks
+is provided by Costas Busch and Marios Mavronicolas [26]. Diffracting trees were
+invented by Nir Shavit and Asaph Zemach [158].
+    Sample sorting was suggested by John Reif and Leslie Valiant [148] and by
+Huang and Chow [80]. The sequential Quicksort algorithm to which all sample
+sorting algorithms relate is due to Tony Hoare [76]. There are numerous parallel
+radix sort algorithms in the literature such as the one by Daniel Jiménez-González,
+Joseph Larriba-Pey, and Juan Navarro [91] or the one by Shin-Jae Lee, Minsoo Jeon,
+Dongseung Kim, and Andrew Sohn [111].
+    Monty Python and the Holy Grail was written by Graham Chapman, John Cleese,
+Terry Gilliam, Eric Idle, Terry Jones, and Michael Palin and codirected by Terry
+Gilliam and Terry Jones [28].
+
+      12.12 Exercises
+      Exercise 12.1. Prove Lemma 12.5.1.
+      Exercise 12.2. Implement a trinary CombiningTree, that is, one that allows up to three
+      threads coming from three subtrees to combine at a given node. Can you estimate the
+      advantages and disadvantages of such a tree when compared with a binary combining
+      tree?
+      Exercise 12.3. Implement a CombiningTree using Exchanger objects to perform the
+      coordination among threads ascending and descending the tree. What are the possi-
+      ble disadvantages of your construction when compared to the CombiningTree class
+      presented in Section 12.3?
+      Exercise 12.4. Implement the cyclic array-based shared pool described in Sec-
+      tion 12.2 using two simple counters and a ReentrantLock per array entry.
+      Exercise 12.5. Provide an efficient lock-free implementation of a Balancer.
+      Exercise 12.6. (Hard) Provide an efficient wait-free implementation of a Balancer
+      (i.e., not by using the universal construction).
+      Exercise 12.7. Prove that the T REE [2k] balancing network constructed in Sec-
+      tion 12.6 is a counting network, that is, that in any quiescent state, the sequences
+      of tokens on its output wires have the step property.
+      Exercise 12.8. Let B be a width-w balancing network of depth d in a quiescent state
+      s. Let n = 2d . Prove that if n tokens enter the network on the same wire, pass through
+      the network, and exit, then B will have the same state after the tokens exit as it did
+      before they entered.
+      Exercise 12.9. Let X and Y be k-smooth sequences of length w. A matching layer
+      of balancers for X and Y is one where each element of X is joined by a balancer to
+      an element of Y in a one-to-one correspondence.
+          Prove that if X and Y are each k-smooth and Z is the result of matching X and Y ,
+      then Z is (k + 1)-smooth.
+      Exercise 12.10. Consider a B LOCK [k] network in which each balancer has been
+      initialized to an arbitrary state (either up or down). Show that no matter what the
+      input distribution is, the output distribution is (log k)-smooth.
+          Hint: You may use the claim in Exercise 12.9.
+      Exercise 12.11. A smoothing network is a balancing network that ensures that in any
+      quiescent state, the output sequence is 1-smooth.
+          Counting networks are smoothing networks, but not vice versa.
+          A Boolean sorting network is one in which all inputs are guaranteed to be
+      Boolean. Define a pseudosorting balancing network to be a balancing network with
+      a layout isomorphic to a Boolean sorting network.
+                                                                    12.12 Exercises          301
+
+    Let N be the balancing network constructed by taking a smoothing network S of
+width w, taking a pseudosorting balancing network P also of width w, and joining
+the ith output wire of S to the ith input wire of P.
+    Show that N is a counting network.
+Exercise 12.12. A 3-balancer is a balancer with three input lines and three output
+lines. Like its 2-line relative, its output sequences have the step property in any quies-
+cent state. Construct a depth-3 counting network with six input and output lines from
+2-balancers and 3-balancers. Explain why it works.
+Exercise 12.13. Suggest ways to modify the BitonicSort class so that it will sort an
+input array of width w, where w is not a power of 2.
+Exercise 12.14. Consider the following w-thread counting algorithm. Each thread
+first uses a bitonic counting network of width w to take a counter value v. It then goes
+through a waiting filter, in which each thread waits for threads with lower values to
+catch up.
+    The waiting filter is an array filter[] of w Boolean values. Define the phase
+function
+                                φ(v) = ?(v/w) mod 2.
+A thread that exits with value v spins on filter[(v − 1) mod n] until that value is
+set to φ(v − 1). The thread responds by setting filter[v mod w] to φ(v), and then
+returns v.
+1. Explain why this counter implementation is linearizable.
+2. An exercise here shows that any linearizable counting network has depth at least
+   w. Explain why the filter[] construction does not contradict this claim.
+3. On a bus-based multiprocessor, would this filter[] construction have better
+   throughput than a single variable protected by a spin lock? Explain.
+Exercise 12.15. If a sequence X = x0 , . . . xw−1 is k-smooth, then the result of pass-
+ing X through a balancing network is k-smooth.
+Exercise 12.16. Prove that the B ITONIC [w] network has depth (log w)(1 + log w)/2
+and uses (w log w)(1 + log w)/4 balancers.
+Exercise 12.17. Show that the OddEven network in Fig. 12.28 is a sorting network
+but not a counting network.
+Exercise 12.18. Can counting networks do anything besides increments? Consider
+a new kind of token, called an antitoken, which we use for decrements. Recall that
+when a token visits a balancer, it executes getAndComplement(): It atomically reads
+the toggle value and complements it, and then departs on the output wire indicated
+by the old toggle value. Instead, an antitoken complements the toggle value, and then
+departs on the output wire indicated by the new toggle value. Informally, an antitoken
+“cancels” the effect of the most recent token on the balancer’s toggle state, and vice
+versa.
+
+      1     public synchronized int antiTraverse() {
+      2       try {
+      3         if (toggle) {
+      4           return 1;
+      5         } else {
+      6           return 0;
+      7         }
+      8       } finally {
+      9         toggle = !toggle;
+      10      }
+      11    }
+
+           FIGURE 12.30
+           The antiTraverse() method.
+
+               Instead of simply balancing the number of tokens that emerge on each wire, we
+           assign a weight of +1 to each token and −1 to each antitoken. We generalize the
+           step property to require that the sums of the weights of the tokens and antitokens that
+           emerge on each wire have the step property. We call this property the weighted step
+           property.
+               Fig. 12.30 shows an antiTraverse() method that moves an antitoken though a
+           balancer. (Other networks would need different antiTraverse() methods.)
+               Let B be a width-w balancing network of depth d in a quiescent state s. Let
+           n = 2d . Show that if n tokens enter the network on the same wire, pass through the
+           network, and exit, then B will have the same state after the tokens exit as it did before
+           they entered.
+           Exercise 12.19. Let B be a balancing network in a quiescent state s, and suppose a
+           token enters on wire i and passes through the network, leaving the network in state
+           s ? . Show that if an antitoken now enters on wire i and passes through the network,
+           then the network goes back to state s.
+           Exercise 12.20. Show that if balancing network B is a counting network for tokens
+           alone, then it is also a balancing network for tokens and antitokens.
+           Exercise 12.21. A switching network is a directed graph, where edges are called
+           wires and nodes are called switches. Each thread shepherds a token through the net-
+           work. Switches and tokens are allowed to have internal states. A token arrives at a
+           switch via an input wire. In one atomic step, the switch absorbs the token, changes its
+           state and possibly the token’s state, and emits the token on an output wire. Here, for
+           simplicity, switches have two input and output wires. Note that switching networks
+           are more powerful than balancing networks, since switches can have arbitrary state
+           (instead of a single bit) and tokens also have state.
+               An adding network is a switching network that allows threads to add (or subtract)
+           arbitrary values.
+                                                                      12.12 Exercises          303
+
+    We say that a token is in front of a switch if it is on one of the switch’s input
+wires. Start with the network in a quiescent state q0 , where the next token to run will
+take value 0. Imagine we have one token t of weight a and n–1 tokens t1 , . . . , tn−1
+all of weight b, where b > a, each on a distinct input wire. Denote by S the set of
+switches that t traverses if it traverses the network by starting in q0 .
+    Prove that if we run the t1 , . . . , tn−1 one at a time though the network, we can halt
+each ti in front of a switch of S.
+    At the end of this construction, n − 1 tokens are in front of switches of S. Since
+switches have two input wires, it follows that t’s path through the network encom-
+passes at least n − 1 switches, so any adding network must have depth at least n − 1,
+where n is the maximum number of concurrent tokens. This bound is discouraging
+because it implies that the size of the network depends on the number of threads
+(also true for CombiningTrees, but not counting networks), and that the network has
+inherently high latency.
+Exercise 12.22. Extend the proof of Exercise 12.21 to show that a linearizable count-
+ing network has depth at least n.

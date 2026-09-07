@@ -1,0 +1,173 @@
+# 2.3. Emulator Objects
+
+## 2.3.1. Weird macros and other mysteries
+
+Bochs has many macros with inscrutable names. One might even go as far as to say that Bochs is macro infested. Some of them are gross speed hacks, to cover up the slow speed that C++ causes. Others paper over differences between the simulated PC configurations. Many of the macros exhibit the same problem as C++ does: too much stuff happens behind the programmer's back. More explicitness would be a big win.
+
+## 2.3.2. Static methods hack
+
+C++ methods have an invisible parameter called the this pointer - otherwise the method wouldn't know which object to operate on. In many cases in Bochs, there will only ever be one object - so this flexibility is unnecessary. There is a hack that can be enabled by defining e.g. `BX_USE_PIC_SMF` to 1 in `config.h` that makes most methods static, which means they have a "special relationship" with the class they are declared in but apart from that are normal C functions with no hidden parameters. Of course they still need access t/o the internals of an object, so the single object of their class has a globally visible name that these functions use. It is all hidden with macros.
+
+Declaration of a class, from iodev/pic.h:
+
+```
+...
+#if BX_USE_PIC_SMF
+#  define BX_PIC_SMF  static
+#  define BX_PIC_THIS thePic->
+#else
+#  define BX_PIC_SMF
+#  define BX_PIC_THIS this->
+#endif
+...
+class bx_pic_c : public bx_pic_stub_c {
+
+public:
+  bx_pic_c();
+  ~bx_pic_c();
+...
+  BX_PIC_SMF void   service_master_pic(void);
+  BX_PIC_SMF void   service_slave_pic(void);
+  BX_PIC_SMF void   clear_highest_interrupt(bx_pic_t *pic);
+};
+```
+
+And iodev/pic.cc:
+
+```
+...
+#define LOG_THIS thePic->
+
+bx_pic_c *thePic = NULL;
+...
+void bx_pic_c::service_master_pic(void)
+{
+  Bit8u unmasked_requests;
+  int irq;
+  Bit8u isr, max_irq;
+  Bit8u highest_priority = BX_PIC_THIS s.master_pic.lowest_priority + 1;
+  if(highest_priority > 7)
+    highest_priority = 0;
+
+  if (BX_PIC_THIS s.master_pic.INT) { /* last interrupt still not acknowleged */
+    return;
+  }
+
+  isr = BX_PIC_THIS s.master_pic.isr;
+  if (BX_PIC_THIS s.master_pic.special_mask) {
+    /* all priorities may be enabled.  check all IRR bits except ones
+     * which have corresponding ISR bits set
+     */
+    max_irq = highest_priority;
+  }
+  else { /* normal mode */
+    /* Find the highest priority IRQ that is enabled due to current ISR */
+    max_irq = highest_priority;
+...
+}
+...
+```
+
+Ugly, isn't it? If we use static methods, methods prefixed with BX_PIC_SMF are declared static and references to fields inside the object, which are prefixed with BX_PIC_THIS, will use the globally visible object, thePic-\>. If we don't use static methods, BX_PIC_SMF evaluates to nothing and BX_PIC_THIS becomes this-\>. Making it evaluate to nothing would be a lot cleaner, but then the scoping rules would change slightly between the two Bochs configurations, which would be a load of bugs just waiting to happen. Some classes use BX_SMF, others have their own version of the macro, like BX_PIC_SMF above.
+
+## 2.3.3. CPU objects in UP/SMP configurations
+
+The CPU class is a special case of the above: if Bochs is simulating a uni- processor machine then there is obviously only one bx_cpu_c object and the static methods trick can be used. If, on the other hand, Bochs is simulating an SMP machine then we can't use the trick.
+
+In a UP configuration, the CPU object is declared as bx_cpu. In an SMP configuration it will be an array of pointers to CPU objects (bx_cpu_array\[\]). Access of a CPU object often goes through the BX_CPU(x) macro, which either ignores the parameter and evaluates to &bx_cpu, or evaluates to bx_cpu_array \[n\], so the result will always be a pointer. If static methods are used then BX_CPU_THIS_PTR evaluates to BX_CPU(0)-\>. Ugly, isn't it?
+
+## 2.3.4. The simulator interface
+
+The central object for the communication between several Bochs componnents is the simulator interface (AKA "siminterface"). It especially makes the separation between the configuration interface and the simulator possible. These jobs are done using the **SIM** object:
+
+- event handling
+
+- parsing / writing config file
+
+- accessing the parameter tree
+
+- begin and quit simulation
+
+- execute save and restore code
+
+- adjust log options
+
+- access to the debugger core
+
+The event handling supports both synchronous and asynchronous types. In case of a synchronous event, the sender waits until the receiver has processed the event (finally setting return code). Asynchronous events are simply added to the event queue and fetched from it later when the receiver processes events. The event handling is important if a multithreaded implementation of gui and config interface like wxWidgets is used. An example for the event handling is the procedure after pressing the "snapshot" tool bar button:
+
+1.  wxmain.cc: MyFrame::OnToolbarClick() adds BX_ASYNC_EVT_TOOBAR to the queue
+
+2.  wx.cc: bx_wx_gui_c::handle_events() fetches event and calls gui button handler
+
+3.  gui.cc: bx_gui_c::snapshot_handler() calls siminterface to ask for a file name
+
+4.  siminterface.cc: bx_real_sim_c::ask_filename() creates event BX_SYNC_EVT_ASK_PARAM and waits for completion
+
+5.  siminterface.cc: bx_real_sim_c::sim_to_ci_event() calls registered config interface function
+
+6.  wxmain.cc: SimThread::SiminterfaceCallback2() creates a wxCommandEvent
+
+7.  wxmain.cc: MyFrame::OnSim2CIEvent() calls handler for this event
+
+8.  wxmain.cc: MyFrame::HandleAskParamString() calls wxFileDialog()
+
+9.  wxmain.cc: MyFrame::OnSim2CIEvent() calls SimThread::SendSyncResponse to set return code()
+
+10. wxmain.cc: SimThread::SiminterfaceCallback2() returns event result
+
+11. siminterface.cc: bx_real_sim_c::ask_filename() returns file name if successful
+
+12. gui.cc: bx_gui_c::snapshot_handler() saves simulation screenshot to file
+
+## 2.3.5. The configuration parameter tree
+
+Starting with version 1.3, the Bochs configuration parameters are stored in parameter objects. These objects have get/set methods with min/max checks and it is possible to define parameter handlers to perform side effects and to override settings. Each parameter type has it's own object type with specific features (numeric, boolean, enum, string and file name). A special object type containing a list of parameters is designed for building and managing configuration menus or dialogs automatically. In the original implementation the parameters could be accessed only with their unique id from a static list or a special structure containing pointers to all parameters.
+
+Starting with version 2.3, the Bochs parameter object handling has been rewritten to a parameter tree. There is now a root list containing child lists, and these lists can contain lists or parameters and so on. The parameters are now accessed by a name build from all the list names in the path and finally the parameter name separated by periods.
+
+```
+Bit32u megs = SIM->get_param_num("memory.standard.ram.size")->get();
+```
+
+The example above shows how to get the memory size in megabytes from the simulator interface. In the root list (".") there is child list named "memory" containing a child list "standard". It's child list "ram" contains the numeric parameter type "size". The SIM-\>get_param_num() methods returns the object pointer and the get() method returns the parameter value.
+
+The table below shows all parameter types used by the Bochs configuration interface.
+
+**Table 2-2. Parameter types**
+
+| Type                | Description                                                                                                                                                                               |
+|---------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| bx_object_c         | Base class for all the other parameter types. It contains the unique parameter id and the object type value.                                                                              |
+| bx_param_c          | Generic parameter class. It contains the name, label, description and the input/output formats.                                                                                           |
+| bx_param_num_c      | Numerical (decimal/hex) config settings are stored in this parameter type.                                                                                                                |
+| bx_param_bool_c     | This parameter type is based on bx_param_num_c, but it is designed for boolean values. A dependency list can be defined to enable/disable other parameters depending on the value change. |
+| bx_param_enum_c     | Based on bx_param_num_c this parameter type contains a list of valid values.                                                                                                              |
+| bx_param_string_c   | Configuration strings are stored in this type of parameter.                                                                                                                               |
+| bx_param_filename_c | Based on bx_param_string_c this parameter type is used for file names.                                                                                                                    |
+| bx_list_c           | Contains a list of pointers to parameters (bx_param\_\*\_c and bx_list_c). In the config interface it is used for menus/dialogs.                                                          |
+
+## 2.3.6. The save/restore feature
+
+The save/restore feature is based on an extension to the parameter tree concept. A subtree (list) called "bochs" appears in the root of the parameter tree and some new "shadow" parameter types store pointers to values instead of the values itself. All the hardware objects have register_state() methods to register pointers to the device registers and switches that need to be saved. The simulator interface saves the registered data in text format to the specified folder (usually one file per item in the save/restore list). Large binary arrays are registered with a special parameter type, so they are saved as separate files. The filename is then created from the full parameter path without the prefix "bochs.".
+
+The table below shows the additional parameter types for save/restore.
+
+**Table 2-3. Save/restore parameter types**
+
+| Type                 | Description                                                                                                                                                |
+|----------------------|------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| bx_shadow_num_c      | Based on bx_param_num_c this type stores a pointer to a numerical variable.                                                                                |
+| bx_shadow_bool_c     | This parameter type stores a pointer to a boolean variable (bit \#0 only) or a numerical one (only one selected bit).                                      |
+| bx_shadow_data_c     | This special parameter type stores pointer size of a binary array. The data is saved in a separate file and the text file uses the file name as the value. |
+| bx_shadow_filedata_c | This special parameter type stores the descriptor of an open file (added in Bochs 2.5).                                                                    |
+
+It is also possible to use the bx_param_num_c object with parameter save/restore handlers. With this special way several device settings can be saved to and restored from one single parameter. The disk image state is also handled this way (see below).
+
+All devices can uses these two save/restore specific methods:
+
+- register_state() is called after the device init() to register the device members for save/restore
+
+- after_restore_state() is an optional method to do things directly after restore (e.g. vga: force a display update)
+
+To implement save/restore for hard drive images, the new method register_state() has been added to the base class of the disk image objects. It creates a bx_param_bool_c object called "image" and installs static save and restore handlers. The save operation finally sets the parameter's value (1 = success) and the save/restore handlers are doing the main job. The static handlers call the class-specific code. Depending on the image "mode" they copy either the whole image file or the file containing changes (journal). The files are saved similar to binary arrays with the same naming convention. The restore methods are doing some format or coherency checks, close the open image, copy the file(s) and finally re-open the image.

@@ -1,0 +1,2770 @@
+                                                                                            CHAPTER
+
+Transactional
+programming
+                                                                                            20
+Although C++ affords the programmer more control than Java and other high-level
+languages, the need to explicitly manage memory creates significant challenges, par-
+ticularly with speculative execution. To ensure that speculative operations do not
+access reclaimed memory, reclamation is often delayed, which can lead to large
+amounts of unused memory being allocated for long periods of time.
+    In addition, some seemingly correct programs are classified as racy according to
+the C++ memory model, so their behavior is undefined. Eliminating these races while
+maintaining good performance is nontrivial, and can lead to code that is difficult to
+extend and maintain. More generally, the complexity of a program’s synchronization
+mechanisms increases greatly with the complexity of the program, requiring more
+sophisticated, and difficult, techniques to achieve good performance. A data structure
+with a large set of operations (especially range queries and other multi-item opera-
+tions) requires more careful concurrency than one with few operations; a program
+that uses many threads is likely to need a finer granularity for its locks than one with
+few threads.
+    Transactional programming addresses this complexity by raising the level of
+abstraction: a programmer focuses on identifying which regions require atomicity,
+rather than how to make code regions appear to be atomic. Determining how to ensure
+atomicity without sacrificing performance is left to run-time systems and specialized
+hardware.
+
+20.1 Challenges in concurrent programming
+We begin with a review of techniques discussed in this book and challenges in apply-
+ing them, especially in the context of unmanaged languages such as C++.
+
+20.1.1 Problems with locking
+Locking, as a synchronization discipline, has many pitfalls for the inexperienced pro-
+grammer. Priority inversion occurs when a lower-priority thread is preempted while
+holding a lock needed by higher-priority threads. Convoying is a form of congestion
+that is easiest to understand in the context of the hand-over-hand locking pattern: If
+threads acquire and release locks in a fixed order, then the order in which threads
+acquire the first lock in the sequence dictates the order in which threads progress
+The Art of Multiprocessor Programming. https://doi.org/10.1016/B978-0-12-415950-1.00030-6
+Copyright © 2021 Elsevier Inc. All rights reserved.
+
+      through the data structure; if one thread delays, other threads cannot bypass it. Dead-
+      lock can occur if threads attempt to lock the same set of objects in different orders.
+      Deadlock avoidance can be awkward if threads must lock many objects, particularly
+      if the set of objects is not known in advance. Furthermore, if the operating system
+      suspends a thread while it holds a lock, then the entire program can grind to a halt.
+          A major obstacle to writing good lock-based code is that the association between
+      locks and data is established mostly by convention. It exists in the mind of the pro-
+      grammer, and may be documented only in comments. Consider the following typical
+      comment from a Linux header file1 describing the conventions governing the use of
+      a particular kind of buffer:
+      /*
+       * When a locked buffer is visible to the I/O layer BH_Launder
+       * is set. This means before unlocking we must clear BH_Launder,
+       * mb() on alpha and then clear BH_Lock, so no reader can see
+       * BH_Launder set on an unlocked buffer and then risk to deadlock.
+       */
+
+      Over time, interpreting and observing many such conventions spelled out in this way
+      complicates code maintenance.
+          Another challenge with locking is determining the appropriate lock granularity.
+      Consider a nonresizable hash table implemented as a fixed-size array of linked lists.
+      Should one lock protect the entire table? Or should there be one lock per array entry,
+      or even one for each node in the linked lists? If there are few threads, and each rarely
+      accesses the hash table, then a single lock protecting the entire table should suffice.
+      If many threads frequently access the hash table, then fine-grained locking may be
+      required to prevent the hash table from becoming a scalability bottleneck. Although it
+      improves scalability, finer granularity increases complexity and overhead. If the table
+      is frequently read but rarely written, we might consider readers–writer locks.
+          A hash table implementation is likely to be written as a generic data structure
+      with a specific contention scenario in mind. If that scenario never manifests during
+      program execution, then the hard-coded strategy may perform poorly. If the number
+      of threads and the way they use the table change over time, then different strategies
+      could be optimal at different points in the program execution. Furthermore, each
+      option could be pessimal in some cases.
+
+      20.1.2 Problems with explicit speculation
+      We have seen that the problems with locking can sometimes be mitigated by op-
+      timistic synchronization (see, for example, Section 9.6). For example, executing
+      read-only critical sections speculatively can greatly reduce the impact of the prob-
+      lems described above for data structures that are read often and written infrequently.
+      A useful tool for implementing such data structures is the sequence lock.
+
+      1 Kernel v2.4.19 /fs/buffer.c.
+                                       20.1 Challenges in concurrent programming                    469
+
+ 1   std::atomic<int> seqlock;
+ 2   int protected_data;
+ 3
+
+ 4   int reader() {
+ 5     while (true) {
+ 6       int s1 = seqlock;
+ 7       int ret = protected_data; // ERROR
+ 8       int s2 = seqlock;
+ 9       if (s1 == s2 && is_even(s1))
+10         return ret;
+11     }
+12   }
+13   void writer(int newval) {
+14     while (true) {
+15       unsigned s = seqlock;
+16       if (is_even(s) && seqlock.compare_exchange_strong(s, s+1)        {
+17         protected_data = newval;
+18         seqlock = s + 2;
+19         return;
+20       }
+21     }
+22   }
+
+     FIGURE 20.1
+     Incorrect use of a sequence lock: The lock release is not guaranteed to be ordered after the
+     data access.
+
+         The core idea behind sequence locks is to use a std::atomic<int> in place of a
+     mutual exclusion lock or spin-lock. The integer starts with value 0, and is incremented
+     whenever the lock is acquired or released. Thus, the lock is free whenever its value
+     is even and held by some thread whenever its value is odd. The value of a sequence
+     lock serves as a kind of version number for the data structure it protects, and while it
+     is even, the data structure does not change.
+         This observation might lead us to think we can execute a read-only critical section
+     speculatively, without writes or atomic operations, as shown in Fig. 20.1. A reading
+     thread reads the lock, reads the protected data, and then rereads the lock. If the lock
+     value is even, and the same before and after reading the protected data, then no other
+     thread wrote the data in that interval, so the reads of the protected data are valid.
+         However, this code is incorrect because the program has a data race: A reading
+     thread can execute line 7 at the same time as a writing thread executes line 17. It does
+     not matter that the reader will not use the value that it read: The read is still a race,
+     and programs with races have undefined behavior in C++.
+         There are many ways to fix this code. The simplest is to change the type of
+     protected_data to std::atomic<int>. However, this change would impose signifi-
+     cant overhead because every access to the data would be a synchronization operation.
+
+           Furthermore, the default strong ordering on these operations would impose more
+           ordering than necessary among accesses to different variables within a critical sec-
+           tion. To avoid this excessive ordering, programmers would need to exploit advanced
+           features of std::atomic<>, especially std::memory_order_relaxed. Lastly, making a
+           variable atomic appears to prevent code reuse. This third challenge can be overcome
+           by using std::atomic_ref<>, a new feature in C++20 that allows a variable to be
+           treated as atomic temporarily.
+
+           20.1.3 Problems with nonblocking algorithms
+           One way to avoid the problems of locking is to devise nonblocking algorithms
+           using atomic primitives such as compare-and-swap (available in C++ as the
+           compare_exchange_strong() method of std::atomic<>). Such nonblocking methods
+           are subtle, and may have high single-thread latency. The principal difficulty is that
+           nearly all synchronization primitives, whether reading, writing, or applying an atomic
+           compare-and-swap, operate only on a single word. This restriction often forces a
+           complex and unnatural structure on algorithms.
+               Let us review the lock-free queue of Section 10.5 (translated to C++ in Fig. 20.2)
+           with an eye toward the underlying synchronization primitives. On lines 13–14, the
+
+      1    template <class T>
+      2    class LockFreeQueue<T> {
+      3      std::atomic<Node*> head;
+      4      std::atomic<Node*> tail;
+      5      ...
+      6      void enq(T item) {
+      7        Node* node = new Node(item);
+      8        while (true) {
+      9          Node* last = tail;
+      10         Node* next = last->next;
+      11         if (last == tail) {
+      12           if (next == null) {
+      13             if (last->next.compare_exchange_strong(next, node)) {
+      14               tail.compare_exchange_strong(last, node);
+      15               return;
+      16             }
+      17           } else {
+      18             tail.compare_exchange_strong(last, next);
+      19           }
+      20         }
+      21       }
+      22     }
+      23   }
+
+           FIGURE 20.2
+           The LockFreeQueue class: the enq() method.
+                                      20.1 Challenges in concurrent programming                471
+
+ 1   template <class T>
+ 2   bool multiCompareAndSet(std::atomic<T*> *target,
+ 3                            T *expect,
+ 4                            T *update,
+ 5                            int count) {
+ 6     atomic {
+ 7       for (int i = 0; i < count; i++) {
+ 8         if (*target[i] != expected[i])
+ 9           return false;
+10       }
+11       for (int i = 0; i < count; i++)
+12         *target[i] = update[i];
+13       return true;
+14     }
+15   }
+
+     FIGURE 20.3
+     Pseudocode for multiCompareAndSet(). This code should execute atomically.
+
+     enq() method calls compare_exchange_strong() twice to change both the tail node’s
+     next field and the tail field itself to point to the new node. Because these updates
+     occur one-at-a-time, enq() and deq() methods must be prepared to encounter a half-
+     finished enq() (line 13). These methods could be much simpler if we could update
+     both fields together.
+         For example, suppose we had the multiCompareAndSet() primitive shown in
+     Fig. 20.3, which takes an array of std::atomic<T*> objects, an array of expected
+     T values, and an array of T-values used for updates, and updates all the array ele-
+     ments if they all have the expected values. (No element is updated if any element
+     does not have the expected value.) Unfortunately, there is no easy way to implement
+     multiCompareAndSet() on conventional architectures. If there were, we could replace
+     the complex logic of lines 12–18 in Fig. 20.2 with a single multiCompareAndSet() call
+     (see Fig. 20.4).
+
+     20.1.4 Problems with compositionality
+     One drawback common to all the synchronization mechanisms we have discussed so
+     far is that they cannot easily be composed. For example, suppose we want to dequeue
+     an item x from a queue q0 and enqueue it on another queue q1. The transfer must be
+     atomic: Concurrent threads must not observe that x has vanished, nor that it is present
+     in both queues. In Queue implementations based on monitors, each method acquires
+     the lock internally, so we cannot combine two method calls in this way.
+         There are, of course, ad hoc solutions: We could introduce a lock to be acquired
+     by any thread attempting an atomic modification to both q0 and q1 (in addition to
+     the individual locks for q0 and q1). Such a lock requires knowing in advance the
+     identities of the two queues, and it could be a bottleneck (no concurrent transfers).
+
+      1     void enq(T item) {
+      2       Node* node = new Node(item);
+      3       while (true) {
+      4         Node* last = tail;
+      5         Node* next = last->next;
+      6         if (last == tail) {
+      7           std::atomic<Node*> target[2] = {&last->next, &tail};
+      8           Node* expect[2] = {next, last};
+      9           Node* update[2] = {node, node};
+      10          if (multiCompareAndSet(target, expect, update)) return;
+      11        }
+      12      }
+      13    }
+
+           FIGURE 20.4
+           The LockFreeQueue class: simplified enq() method with multiCompareAndSet().
+
+           Alternatively, the queues could export their synchronization state (say, via lock()
+           and unlock() methods), and rely on the caller to manage multiobject synchroniza-
+           tion. Exposing synchronization state in this way would have a devastating effect on
+           modularity, complicating interfaces and relying on callers to follow complicated con-
+           ventions. Also, this approach does not work for nonblocking implementations.
+
+           20.1.5 Summary
+           It seems we have a rather dire state of affairs:
+           • Locks are hard to manage effectively, especially in large systems.
+           • Atomic primitives, such as compare-and-swap, operate on only one word at a time,
+             resulting in complex algorithms.
+           • The possibility of races necessitates costly synchronization at all times, even when
+             races are extremely rare.
+           • It is difficult to compose multiple calls to multiple objects into atomic units.
+               In the face of these challenges, transactional programming offers an appealing
+           alternative.
+
+           20.2 Transactional programming
+           In transactional programming, a programmer identifies which regions of code cannot
+           interleave with each other, and marks them as transactions. Then, a run-time system,
+           ideally with the assistance of specialized hardware, takes responsibility for finding
+           a way to execute as many transactions concurrently as possible, while ensuring that
+           transactions still appear to execute atomically.
+                                                      20.2 Transactional programming          473
+
+         Transactional programming requires programmers to give up some control: the
+     programmer no longer crafts the low-level synchronization protocol, and has limited
+     means to influence how transactions are scheduled and managed. In return, multiple
+     small transactions are automatically composed into larger transactions; transactions
+     appear to atomically modify multiple locations at once; the run-time system can pro-
+     vide optimizations for read-only transactions, where pessimistic locking would incur
+     high costs; and transactions eliminate the need to think about locks, std::atomic<>
+     variables, or other low-level synchronization mechanisms.
+         A transactional run-time system must ensure that intermediate effects of a trans-
+     action are not visible to other transactions: any values a transaction writes must be
+     hidden from other transactions, becoming visible only when the transaction commits.
+     The system must also ensure that a transaction’s behavior is consistent with a serial
+     execution, that is, one in which no transactions run concurrently. As an example, sup-
+     pose that in some program, variables x and y must always be equal. If transaction T1
+     reads variable x, and then transaction T2 increments both x and y and commits, then
+     if T1 attempts to read y, it should not be allowed to continue executing: It would see
+     a value that does not equal x, which could lead to erroneous behaviors.
+         Transactional run-time systems often employ speculative execution and fine-
+     grained access tracking. In our example, tracking the individual accesses of T1 and
+     T2 makes it possible to detect that T1 read x before T2 wrote x, but that T1 attempted
+     to read y after T2 wrote it. Speculative execution requires that the run-time system
+     somehow transform the execution of T1 , so that upon detecting a conflict on y, it can
+     roll back T1 and let it try again.
+
+     20.2.1 An example of transactional programming
+     To see the benefits of transactional programming, consider the code in Fig. 20.5.
+     When a thread calls this function, it iterates through the indices in which and, for
+     each index, checks whether the corresponding position in counters is positive. If so,
+
+ 1    std::mutex counter_lock;
+ 2    int *counters = ...;
+ 3
+
+ 4    void increment_pos_counters(size_t num, size_t *which) {
+ 5      std::lock_guard<std::mutex> guard(counter_lock);
+ 6      for (size_t i = 0; i < num; ++i) {
+ 7        if (counters[which[i]] > 0)
+ 8          ++counters[which[i]];
+ 9      }
+10    }
+
+     FIGURE 20.5
+     A lock-based algorithm for conditionally incrementing counters.
+
+           it increments that counter. To avoid races, the thread locks the entire array of counters
+           for the duration of the operation.
+                Suppose two threads call this function simultaneously, with the first thread’s which
+           array consisting only of the value 0, the second thread’s which array consisting only
+           of the value 1023, and all positions in the counters array set to 1. In that case, acquir-
+           ing the lock would not be necessary because the threads would not access the same
+           location in the counters array. Consequently, the program missed the opportunity for
+           greater parallelism. On the other hand, if the second thread’s which array also held
+           the value 0, then acquiring the lock would be necessary, or the two threads’ accesses
+           to counter[0] would race.
+                We could enable greater parallelism by replacing counter_lock with an array of
+           locks. Threads could then use a two-phase locking strategy, in which they acquire
+           each location’s lock before accessing the corresponding position in counters, and
+           release all of the locks at the end of the function. To know which locks to release,
+           and also because an index may appear more than once in which, the thread must
+           track the locks it has acquired. To avoid deadlock, all threads must also acquire the
+           locks in the same predetermined order. (They can do this by sorting which first.)
+           Although this fine-grained strategy is more scalable, it may actually be slower than
+           the coarse-grained strategy because it must acquire more locks.
+                With transactional programming, we can dispense with thinking about locks at
+           all. We simply execute the entire operation as a single transaction, and rely on the
+           transactional run-time system to avoid races while exploiting parallelism as much as
+           possible. The code might resemble that in Fig. 20.6. The transactional system would
+           watch what other threads were doing. If a thread’s speculative execution would race
+           with another thread, the system would stop the thread before the race manifested,
+           undo its operations, and try again.
+
+      1      int *counters = ...;
+      2
+
+      3      void increment_pos_counters(size_t num, size_t *which) {
+      4        transaction {
+      5          for (size_t i = 0; i < num; ++i) {
+      6            if (counters[which[i]] > 0)
+      7              ++counters[which[i]];
+      8          }
+      9        }
+      10     }
+
+           FIGURE 20.6
+           A transactional version of Fig. 20.5.
+                      20.3 Hardware support for transactional programming                      475
+
+20.3 Hardware support for transactional programming
+Speculation and access tracking have the lowest overhead when implemented in hard-
+ware. We now give an overview of how to provide hardware support for transactional
+programming. Some modern microprocessors already include such support.
+
+20.3.1 Hardware speculation
+Modern microprocessors execute hundreds of instructions simultaneously, even
+within a single core. Three features make this level of parallelism possible. First,
+many microprocessors can fetch multiple instructions in a single cycle, and sched-
+ule them on parallel arithmetic/logic units. Second, modern microprocessors are
+pipelined: different instructions can be in different stages of their execution (using
+different circuits) at the same time. Finally, to keep their pipelines and execution
+units busy, a modern microprocessor does not stall when it encounters a branch. In-
+stead, it predicts which direction the branch will take, and executes the corresponding
+instruction stream speculatively. If the microprocessor subsequently determines that
+an instruction should not have been executed, it undoes the instruction’s effect and
+the effects of instructions that depended on it. If the instructions would overwrite
+memory, the processor buffers the writes until it is known that the instruction was
+supposed to execute (e.g., all branches were predicted correctly); the buffered writes
+are discarded if the prediction was wrong.
+    Since processors can already speculate, and undo the effects of any speculative
+instructions that fail, to support transactions, we only need to allow the programmer
+to specify a granularity for speculation that extends beyond the pipeline: In addition to
+aborting any yet-to-complete instructions from a transaction that aborts, the effects of
+completed instructions by that transaction also need to be undone. To support undoing
+changes to registers, the instruction that starts a transaction stores their original state,
+so that the registers can be reset if the transaction aborts. To support undoing changes
+to memory, the processor must be able to roll back values in the cache that correspond
+to the writes that the failed transaction made. Invalidation is the simplest mechanism
+for rolling back a transaction’s writes.
+
+20.3.2 Basic cache coherence
+Hardware-supported transactional programming relies on the cache coherence proto-
+col for fine-grained access tracking and for detecting conflicting memory accesses by
+concurrent transactions. Before discussing the details, we briefly review cache coher-
+ence. Readers unfamiliar with cache coherence protocols may consult Appendix B
+for more background.
+    In modern multiprocessors each processor has an attached cache, a small high-
+speed memory used to avoid communicating with large and slow main memory. Each
+cache entry holds a group of neighboring words called a line, and has some way of
+mapping addresses to lines. Consider a simple architecture in which processors and
+memory communicate over a shared broadcast medium called a bus. Each cache line
+
+      has a tag, which encodes state information. In the standard MESI protocol, each cache
+      line is in one of the following states:
+      • Modified: The line in the cache has been modified, and must eventually be written
+        back to memory. No other processor has this line cached.
+      • Exclusive: The line has not been modified, but no other processor has this line
+        cached. (A line is typically loaded in exclusive mode before being modified.)
+      • Shared: The line has not been modified, and other processors may have this line
+        cached.
+      • Invalid: The line does not contain meaningful data.
+      The cache coherence protocol detects synchronization conflicts among individual
+      loads and stores, and ensures that different processors agree on the state of the shared
+      memory. When a processor loads or stores a memory address a, it broadcasts the
+      request on the bus, and the other processors and memory listen in (sometimes called
+      snooping).
+          A full description of a cache coherence protocol can be complex, but here are the
+      principal transitions of interest to us.
+      • When a processor requests to load a line in modified mode, the other processors
+        invalidate any copies of that line. A processor with a modified copy of that line
+        must write the line back to memory before the load can be fulfilled.
+      • When a processor requests to load a line into its cache in shared mode, any proces-
+        sor with an exclusive or modified copy must change its state to shared. A processor
+        with a modified copy must also write that line back to memory before the load can
+        be fulfilled.
+      • If the cache becomes full, it may be necessary to evict a line. If the line is shared
+        or exclusive, it can simply be discarded, but if it is modified, it must be written
+        back to memory.
+          Note that modern cache coherence protocols detect and resolve synchronization
+      conflicts between writers and between readers and writers, and they already allow
+      changes to memory to stay in the cache for a while, instead of immediately and
+      directly updating memory.
+
+      20.3.3 Transactional cache coherence
+      Many of the state transitions in the MESI protocol are asynchronous: They occur in
+      one processor on account of a memory operation performed by another processor.
+      While we customarily think of a data race as something that manifests at a much
+      higher level of abstraction, there is a close relationship between the programming
+      language concept of a race and the state transitions in the MESI protocol.
+          Consider the case of two threads attempting to increment a counter at the same
+      time. The statement counter++ translates to three assembly instructions: one to fetch
+      the value of counter to a register, one to increment the value in that register, and one to
+      update the value of counter by writing the register’s value to memory. A race occurs
+                     20.3 Hardware support for transactional programming                   477
+
+if there is any interleaving between the three instructions issued by one thread, and
+the three instructions issued by the other. If we examined every possible interleaving,
+and looked at the MESI state transitions that occur, we would find that whenever
+there is a data race, then at some time while the three instructions are being executed,
+either some line is invalidated or some line in the Modified state is downgraded to
+Shared or Exclusive. This observation holds for any section of code that accesses
+shared memory: If a race occurs with any of its accesses to shared memory, then the
+line containing the accessed data is either invalidated or downgraded from Modified
+during the execution of that section of code.
+    We can use this observation to execute a transaction speculatively, and abort the
+transaction if a problematic transitions occurs in the cache while the transaction is
+executing. (If no such transition occurs, then there were no data races with the trans-
+action, so the speculation succeeds.) Assume that each processor has a private L1
+cache and executes only one thread at a time. To detect problematic cache line tran-
+sitions, we add TX_Begin and TX_End instructions that delimit a transaction, a flag that
+indicates whether a transaction is active, and a bit to each line of the cache that in-
+dicates whether the line has been accessed by an active transaction. The TX_Begin
+instruction saves a private copy of the current values of the processor’s registers (a
+checkpoint), raises the flag, and returns true, indicating that the transaction is exe-
+cuting speculatively. While the flag is raised, any access to the cache will set the
+corresponding bit. The TX_End instruction lowers the flag, clears any bits that may
+have been set, and discards the checkpoint. Thus, if TX_End is executed, the transac-
+tion does not abort, and the result is the same as if the code were executed without
+the transaction (i.e., the speculation succeeded).
+    With the above mechanics in place, it is straightforward to detect problematic
+transitions: If a line whose bit is set is about to be evicted or downgraded from Mod-
+ified, the cache first notifies the processor to abort the speculation.
+    When a transaction aborts, any cache lines that it modified are invalidated; their
+values are not written back or provided to any other processor. In addition, the flag
+is lowered, all bits indicating transactional access are cleared, and the checkpoint
+is used to reset the thread to its state at the beginning of the transaction. Then the
+TX_Begin instruction returns false, indicating that the speculation has failed. Thus,
+the thread can determine whether it is executing on account of a successful TX_Begin,
+or in response to an abort.
+
+20.3.4 Limitations of hardware support
+Because data in a cache line that has been accessed by a hardware transaction can-
+not leave the cache without aborting the transaction, the cache size and associativity
+impose strict limits on the amount of data that a transaction can access. For example,
+some L1 caches are direct-mapped, which means that each address is mapped to a
+specific line in the cache; its contents must be cached at that line, and must therefore
+evict any data that were there before. With such a cache, if a transaction accesses two
+addresses that map to the same cache line, it can never successfully commit.
+
+          In addition, on many microprocessors, various events may cause significant delays
+      while a transaction is executing, during which time a cache line accessed by the
+      transaction could be evicted. These events may be induced by the transaction (e.g.,
+      by making a system call), or they may be unrelated (e.g., the thread executing the
+      transaction gets swapped out).
+          Because it is often difficult or impossible to predict when a transaction might
+      not be able to commit, programmers are advised to think of hardware transactional
+      support as being best effort, rather than something that can be relied on. Therefore,
+      when using hardware transactions, they should also provide a fallback mechanism, in
+      case the transaction cannot be committed.
+          Requiring programmers to provide a fallback mechanism reduces the burden on
+      computer architects: Transactions are not required to succeed for correctness, only
+      for quality of implementation, so architects are free to exert their best effort.
+
+      20.4 Transactional lock elision
+      The most straightforward way to employ transactional programming in existing lock-
+      based software is through a technique known as transactional lock elision (TLE). The
+      core idea in TLE is to modify the critical sections of a program so that they attempt
+      to run as a transactional speculation. If a speculation fails too many times (e.g., due
+      to conflicts with other threads), the execution falls back to the original lock.
+          With hardware support, TLE can be implemented as a special lock, whose acquire
+      and release methods attempt to use the TX_Begin and TX_End instructions, respec-
+      tively. This makes TLE exceptionally easy to use. However, TLE can only try to
+      extract more concurrency out of an existing lock-based program, it cannot guarantee
+      anything about progress or freedom from pathologies. In particular, the problems we
+      enumerated earlier (e.g., convoying, priority inversion, and deadlock) remain possi-
+      ble: If a speculation fails and falls back to locking, the transactional mechanism is
+      not used, and its benefits on progress and throughput cannot be achieved.
+          Since it is always correct for a TLE execution to fall back to using the original
+      locks in the program, TLE can be used to accelerate existing critical sections. Typi-
+      cally, critical sections are small: They touch few memory locations, and they do not
+      last for many cycles. If a transaction executing a small critical section fails, it is of-
+      ten worthwhile to retry it a few times before falling back to locking. We could even
+      augment the return value of TX_Begin to provide more detail about why a speculation
+      failed, which the code can use to decide whether to retry the critical section specu-
+      latively, or to fall back to locking. Fig. 20.7 presents a complete implementation of
+      TLE that uses a spin-lock as the fallback path.
+          Fig. 20.7 adds a fair bit of complexity around the calls to TX_Begin (line 5) and
+      TX_End (line 24). Of particular importance, we must remember that line 8 indicates
+      that the critical section will run speculatively, with TLE. If the speculation fails, then
+      control flow will return to line 5. That is, it may appear that TX_Begin executes mul-
+      tiple times, with different return values.
+                                                        20.4 Transactional lock elision          479
+
+ 1   void acquire(spinlock *lock) {
+ 2     int attempts = 0;
+ 3     while (true) {
+ 4       ++attempts;
+ 5       TLE_STATUS status = TX_Begin;
+ 6       if (status == STARTED) {
+ 7         if (!lock.held()) {
+ 8           return;
+ 9         }
+10         else {
+11           TX_End;
+12           attempts--;
+13           while (lock.held()) { }
+14         }
+15       }
+16       else if (status != TX_Conflict || attempts >= 4) {
+17         lock.acquire();
+18         return;
+19       }
+20     }
+21   }
+22   void release(spinlock *lock) {
+23     if (!lock.held()) {
+24       TX_End;
+25     }
+26     else {
+27       lock.release();
+28     }
+29   }
+
+     FIGURE 20.7
+     A complete implementation of TLE, using a spin-lock as the fallback path.
+
+          Recall that all modifications to memory that are performed between lines 5 and 24
+     are undone if the speculation fails. Thus, if we wish to prevent livelock and starvation,
+     it is necessary for us to count the number of attempts outside of the transaction. This
+     is accomplished by the attempts variable, which is incremented on each iteration
+     of the loop. Each time the speculation fails, control jumps from line 5 to line 16,
+     where attempts is checked. If the value becomes too large, then the thread stops
+     using TLE, acquires the lock, and then returns. When the thread reaches the end of
+     the critical section, it can observe that the lock is held, conclude that it must be the
+     lock holder, and release the lock to complete the critical section. In a similar fashion,
+     when a speculation fails, and conflict with another thread is not the cause, then line 16
+     reports a value in status that indicates the critical section must be run while holding
+     the lock.
+
+           Note that line 7 follows every successful call to TX_Begin. This code serves two
+      purposes. The first is to identify situations in which one thread attempts to run a
+      critical section via TLE while another thread is actively running a critical section
+      using the lock. By checking the lock after calling TX_Begin, the thread can discover
+      cases where the lock is held. When the lock is held, the thread quietly completes its
+      TLE region without doing any meaningful work. Starting on line 11, the thread makes
+      it look like it never even tried to execute speculatively, by decreasing its attempts and
+      then waiting for the lock to be released.
+           The second purpose of this call is more subtle. Suppose that a thread reaches
+      line 8, and has begun to execute its critical section. Let another thread subsequently
+      reach line 17. At this point, the second thread is unaware of the first thread, as the first
+      thread is executing speculatively. Since the second thread is not using TLE, its writes
+      are immediately visible in memory. If the first and second threads access the same
+      memory locations, but in different orders, there is a danger that the speculative thread
+      might see inconsistent state. Suppose there is a program invariant that variables x and
+      y are equal, and initially x == y == 0. Let the first thread read x == 0, and let then
+      the second thread execute the first line of the sequence y++; x++. Since the second
+      thread is not using TLE, its write to y immediately is visible in memory. Since the
+      first thread did not access y yet, it has no reason to abort. However, if the second
+      thread were to delay and the first thread were to read y, it would see y == 1, and thus
+      y != x.
+           The presence of line 7 makes the above situation impossible. Note that the first
+      thread read the lock while it was using TLE. Thus the lock must be in the thread’s
+      cache, with the transactional bit set. Consequently, any subsequent change to the
+      lock by another thread, be it nonspeculative or speculative, will cause the cache line
+      holding the lock to move to that thread’s cache, in the Modified state. Coherence
+      ensures that the line must first be evicted from the first thread’s cache. This will
+      cause the first thread to abort.
+
+      20.4.1 Discussion
+      TLE is a powerful tool for increasing the concurrency of programs whose critical sec-
+      tions rarely conflict. However, we must be careful about critical sections that try to
+      perform I/O. Note that TLE can be employed in user programs, as well as the operat-
+      ing system kernel. What should happen if a TLE critical section in the kernel attempts
+      to interact with a hardware device? If the critical section subsequently aborted, could
+      the device behave erroneously? For that matter, does it make sense for a TLE critical
+      section in a user program to make system calls?
+          Additionally, the TLE mechanism we described thus far has no way to guarantee
+      progress. Livelock and starvation are both possible. Even in our simple example with
+      a single shared counter, it is possible that one thread is always executing the first line
+      of code between the times when the other thread is executing the third line and when
+      it calls TX_End.
+          Given these constraints, TLE is best thought of as an optimization, not as a funda-
+      mentally new programming model. When critical sections rarely conflict, but threads
+                                                     20.5 Transactional memory            481
+
+still find themselves spending time waiting for locks, then using TLE to run the corre-
+sponding critical sections is likely to improve performance. Note that TLE does affect
+how a programmer constructs synchronization code: In programs where TLE is ef-
+fective, it is often the case that the programmer can get by with a few coarse-grained
+instead of many fine-grained locks.
+
+20.5 Transactional memory
+We have already seen how TLE can optimize the performance of existing lock-based
+programs. Can transactional programming also simplify the creation of new con-
+current programs? If so, how might de novo programs be designed differently, if
+transactions were part of the concurrency toolbox from the get-go?
+    Transactional memory (TM) refers, broadly, to the programming model that arises
+when programmers think in terms of transactions instead of locks. The differences
+between TM and TLE are subtle, but significant:
+• Programmers do not think about how to implement concurrency. Instead, they
+  mark the regions of code that need to run in isolation from each other, and they
+  leave it up to a run-time system to find an optimal concurrency mechanism.
+• Since programmers think in terms of regions requiring isolation, nesting of trans-
+  actions is natural, if not encouraged.
+• Since there is no guarantee of a lock-based fallback, the programming language
+  may need to ensure that transactions do not attempt operations that cannot be
+  undone (e.g., I/O).
+• Since everything inside of a transaction can be undone, it is natural, if not bene-
+  ficial, to expose speculation to the programmer, in the form of explicit self-abort
+  instructions.
+• Since there are no locks in the programming model, traditional problems with
+  locking (deadlock, convoying, priority inversion) are not possible.
+    To illustrate the difference between TLE and TM, consider the code in Fig. 20.8.
+We expect both functions to be able to complete using transactional speculation, since
+they each update only two locations. However, the TLE code is significantly more
+complex. The convention in the TLE program is that every access to either integer
+passed to the function must be performed while the corresponding lock is held. Thus
+the program must acquire both locks. In the common case, the acquisitions will use
+TLE, and will be elided. However, the worst case requires the programmer to pro-
+duce a consistent lock order to avoid deadlock (in this case, we order based on the
+addresses of the integers). In addition, the programmer must check that the two in-
+tegers are not protected by the same lock. In contrast, the designer of the TM code
+knows that every access to either integer, in any other place in the program, will also
+use TM. Consequently, it suffices to begin a TM region, increment the counters, and
+then end the region. If the region conflicts with other threads’ accesses, the run-time
+system will determine an order in which the threads will execute.
+
+      1    void tle_increment_two(int *i1, std::mutex *m1, int *i2, std::mutex *m2) {
+      2      int* ptrs[] = ((uintptr_t)i1) > ((uintptr_t)i2) ? {i2, i1} : {i1, i2};
+      3      std::mutex* locks[] = ((uintptr_t)i1) > ((uintptr_t)i2) ? {m2, m1} : {m1, m2};
+      4
+
+      5     tle_acquire(locks[0]);
+      6     if (locks[0] != locks[1])
+      7       tle_acquire(locks[1]);
+      8     *ptrs[0]++;
+      9     *ptrs[1]++;
+      10    tle_release(locks[0]);
+      11    if (locks[0] != locks[1])
+      12      tle_release(locks[1]);
+      13   }
+      14   void tm_increment_two(int *i1, int *i2) {
+      15     tm {
+      16       *i1++;
+      17       *i2++;
+      18     }
+      19   }
+
+           FIGURE 20.8
+           Code to atomically increment two counters with TLE (top) and TM (bottom).
+
+           20.5.1 Run-time scheduling
+           Since TM does not have a lock-based fallback, it requires some other mechanism to
+           ensure progress. Historically, this mechanism has been called “contention manage-
+           ment,” though it may be more appropriately thought of as a scheduler. In the common
+           case, the contention manager does nothing: Threads begin and end transactions, and
+           the transactions should usually succeed. When a thread finds itself repeatedly fail-
+           ing to commit, due to conflicts with other threads, then it may choose to (1) delay
+           itself before trying again, in the hope that the concurrent transactions with which it
+           is conflicting will commit, or (2) employ some mechanism to reduce the number of
+           transactions that run concurrently with it, to decrease the likelihood of a concurrent
+           transaction causing a conflict.
+               In the first case, a simple and effective strategy, which we saw in Section 7.4, is to
+           use randomized exponential back-off. That is, after n consecutive aborts, the thread
+           will choose a random number between 2n−1 and 2n − 1 and wait for that many CPU
+           cycles before retrying. Usually randomized exponential back-off will place a hard
+           limit on n, so that in high-conflict situations, threads will not wait for minutes.
+               In the second case, decreasing the number of running transactions is a heuristic,
+           not a hard-and-fast rule. A simple solution is to use a global Boolean flag. When
+           a thread tries to start a transaction, it first checks the flag. If the flag is true, the
+           thread waits. Once the flag is false, the thread may continue. If a transaction aborts
+           repeatedly, it tries to change the flag from false to true, via a compare-and-swap. If
+           it succeeds, it attempts its transaction until the transaction commits. Otherwise, it
+           waits. When the distressed transaction commits, it clears the flag. In Exercise 20.8,
+
+we explore the performance impact of this approach versus falling back to acquiring
+the lock in TLE.
+
+20.5.2 Explicit self-abort
+Since TM regions always run speculatively, the run-time system is allowed to abort
+a transaction at any time, and for any reason. Of course, every time a transaction
+aborts, that transaction’s previous work is wasted, so the run-time system should
+avoid causing unnecessary aborts. But since the potential is there, it is worthwhile to
+consider letting the programmer request self-abort.
+    Indeed, self-abort appears to be the cornerstone of creating truly compositional
+programs based on transactions. Consider a program in which a thread receives a list
+of tuples, where each tuple consists of a source account, a destination account, and a
+transfer amount. Since a single account can appear multiple times as a source and as
+a destination, and since the account balances cannot be read without using some kind
+of synchronization, it is not trivial to determine if the list of operations is valid. The
+challenge is especially great if each account is protected by a lock that is private to the
+account object. However, with TM and explicit self-abort, we can encapsulate each
+account’s synchronization entirely within its implementation, and still write correct
+code. Inspired by the conventions in the C++ TM Technical Specification, we say that
+if an integer exception escapes a transaction, it causes the transaction to abort, but the
+exception is retained. With such a definition, Fig. 20.9 shows how TM and self-abort
+together elegantly implement a solution.
+
+20.6 Software transactions
+Thus far, we have assumed hardware support for transactional programming. While
+there exist microprocessors with such support, it is also possible to implement trans-
+actions entirely in software. In addition to offering a pathway to transactional pro-
+gramming on legacy hardware, software transactions also provide a scalable fallback
+path when hardware transactions fail. In this section, we describe two software im-
+plementations that support transactional programming.
+    To implement transactions in software, we provide a library satisfying the inter-
+face in Fig. 20.10, which provides functions to call when beginning, committing, or
+aborting a transaction, and when reading and writing memory within a transaction.
+    It would be tedious and error-prone if programmers had to call these functions
+directly, so we assume programmers can write structured transactional code, and
+that a compiler inserts the appropriate library calls: Calls to beginTx and commitTx
+would be inserted at the beginning and end, respectively, of every transactional
+region, and every load and store within a transaction would be replaced by the ap-
+propriate function call. (The abortTx function is used for explicit self-abort.) For
+example, int x = *y would become int x = read(y), and global_i = 7 would be-
+come write(&global_i, 7).
+
+      1    class account {
+      2      double balance;
+      3    public:
+      4      static const int ERR_INSUF_FUNDS = 1;
+      5      void withdraw(double amount) {
+      6        tm {
+      7          if (balance < amount)
+      8            throw ERR_INSUF_FUNDS;
+      9          balance -= amount;
+      10       }
+      11     }
+      12     void deposit(double amount) { tm { balance += amount; } }
+      13   };
+      14   bool transfer_many(vector<account*> from,
+      15                     vector<account*> to,
+      16                     vector<double> amounts) {
+      17     try {
+      18       tm {
+      19         for (int i = 0; i < from.size(); ++i) {
+      20           from[i].withdraw(amounts[i]);
+      21           to[i].deposit(amounts[i]);
+      22         }
+      23       }
+      24       return true;
+      25     } catch (int e) {
+      26       if (e == account::ERR_INSUF_FUNDS) {
+      27         return false;
+      28       }
+      29     }
+      30   }
+
+           FIGURE 20.9
+           Code to atomically perform multiple transfers between accounts, using exception-based
+           self-abort.
+
+      1    void beginTx(jmp_buf *b);
+      2    void write(uintptr_t *addr, uintptr_t val);
+      3    int read(uintptr_t *addr);
+      4    void commitTx();
+      5    void abortTx();
+
+           FIGURE 20.10
+           Interface for software transactions.
+
+    As a transaction performs reads, it must track every location it has read, so it
+can later determine if that location was changed by a concurrent transaction. When
+it performs writes, it must do so in a manner that can be undone if the transaction
+ultimately aborts. Thus, a software transaction library would also define a transaction
+descriptor, a per-thread object to keep track of the state of an in-progress transaction,
+and some global synchronization data through which the threads can coordinate their
+accesses to shared memory. We must also be able to checkpoint a thread’s state when
+it begins a transaction, so we can reset the thread if its transaction aborts. In C++, the
+setjmp and longjmp instructions suffice for this purpose. For the sake of simplicity,
+we omit checkpointing in the following discussion.
+
+20.6.1 Transactions with ownership records
+One of the key challenges for software transactions is to detect conflicts between con-
+current transactions. The ownership record, or orec, is a data structure designed for
+this purpose. An orec superimposes a lock, a version number, and a thread’s unique
+identifier into a single memory word. In its simplest implementation, the lowest bit
+of an orec serves two roles: It is a lock bit, and it also indicates the meaning of the
+remaining bits of the orec.
+    In more detail, we say that when the orec’s low bit is zero, it is unlocked, and the
+remaining bits can be interpreted as a monotonically increasing integer (the version
+number). When the low bit is one, the orec is locked, and the remaining bits can be
+interpreted as the unique ID of the thread that holds the lock. In a sense, orecs enhance
+sequence locks (Section 20.1.2) by adding information about the lock owner.
+    If we built our software transactions using a single orec, it would not afford much
+concurrency. Instead, we will use an array of orecs. Fig. 20.11, line 3 declares the
+table of orecs as an array of NUM_LOCKS atomic integers. Line 6 implements a many-
+to-one mapping of memory regions to entries in the table. If we assume that every
+memory word (uintptr_t) is aligned on an 8-byte boundary, then as long as GRAIN is
+no less than 3, every memory word will map to exactly one entry in lock_table.
+    Our implementation will be able to detect conflicts on location L by any pair of
+transactions by watching how those transactions interact with the entry in lock_table
+that corresponds to L. False conflicts are possible, since there are many more memory
+locations than table entries. However, if the table size is large enough, false conflicts
+should be unlikely.
+    Before discussing the rest of the implementation, let us consider a strawman
+implementation of transactions that uses orecs in a manner more reminiscent of tradi-
+tional locks. Given our lock_table, we could run a transaction as follows: Any time
+the transaction tries to read a location, we could check the corresponding orec. If the
+orec is locked by the current transaction, then we could read the location directly; if
+the orec is unlocked, we could lock the orec and then read the location; and if the orec
+is locked by another transaction, we could abort the transaction, invoke the run-time
+transaction scheduler (to help avoid livelock), and then try again. Writes would run
+almost identically, except that they could not simply update a location; if they sub-
+sequently aborted, we would need some mechanism to undo that write. The easiest
+
+      1    atomic<uint64_t> id_gen(1)
+      2    atomic<uint64_t> clock(0);
+      3    atomic<uint64_t> lock_table[NUM_LOCKS];
+      4
+
+      5    atomic<uint64_t> *get_lock(void *addr) {
+      6      return &lock_table[(((uintptr_t)addr)>>GRAIN) % NUM_LOCKS];
+      7    }
+      8    struct Descriptor {
+      9      jmp_buf *checkpoint;
+      10     uint64_t my_lock;
+      11     uint64_t start_time;
+      12     unordered_map<uintptr_t*, uintptr_t> writes;
+      13     vector<atomic<uint64_t>*> reads;
+      14     vector<pair<atomic<uint64_t>*, uint64_t>> locks;
+      15
+      16     Descriptor() : my_lock(((id_gen++)<<1)|1) { }
+      17   };
+      18   void beginTx(jmp_buf *b) {
+      19     checkpoint = b;
+      20     start_time = clock;
+      21   }
+      22   void write(uintptr_t *addr, uintptr_t val) {
+      23     writes.insert_or_assign(addr, val);
+      24   }
+      25   int read(uintptr_t *addr) {
+      26     auto it = writes.find(addr);
+      27     if (it != writes.end())
+      28       return *it;
+      29
+
+      30       atomic<uint64_t>* l = get_lock(addr);
+      31       uint64_t pre = *l;
+      32       uintptr_t val = std::atomic_ref<uintptr_t>(*addr).load(std::memory_order_acquire);
+      33       uint64_t post = *l;
+      34       if ((pre&1) || (pre != post) || (pre > start_time))
+      35         abortTx();
+      36       reads.push_back(l);
+      37       return val;
+      38   }
+
+           FIGURE 20.11
+           Software transactions with ownership records (1/2).
+
+           approach would be to maintain an undo log, into which the old value could be saved
+           before the location was updated. If the transaction aborted, it would need to use the
+           log to restore the original values in memory. At commit time, a thread would release
+           its locks and discard its undo log.
+                The above strategy would allow nonconflicting transactions to run concurrently,
+           without the programmer needing to think about fine-grained locks. Since memory
+           would only be accessed when the thread held the appropriate lock, there would be no
+
+races. However, execution would be pessimistic: Any time any transaction accessed
+any location, that location would be inaccessible to all concurrent transactions. Espe-
+cially when reads abound, this approach would sacrifice concurrency.
+     While we could try to craft a solution based on readers–writer locks, so that multi-
+ple threads could have read permission on a location simultaneously, doing so would
+incur overhead, since nonconflicting threads would conflict when acquiring an orec in
+read mode. Instead, we will use optimistic reads. That is, when a transaction wishes
+to read a location L, it will first read the value of the orec that corresponds to L. If
+the orec is locked, then the code continues or aborts according to the same rules as in
+the strawman algorithm. However, if the orec is unlocked, we will not lock it. Instead
+we will record the version number stored in the orec. If that version number never
+changes before the transaction commits, or if it changes only on account of the same
+transaction subsequently acquiring the orec as a writer, then the transaction knows
+that its read remained valid.
+     The second change we will make to the strawman algorithm is to employ commit-
+time locking. With commit-time locking, a transaction writing to L does not acquire
+the orec for L until it is ready to commit. Consequently, it must log its writes in a
+private redo log instead of updating L directly.
+     The above two changes introduce a subtle but significant question: If a transac-
+tion reads L, how frequently must it check the orec that corresponds to L? As we
+will see in the chapter exercises, the transaction could have an incorrect execution if
+it subsequently read some other location L? and did not then check L’s orec. Unfor-
+tunately, if a transaction performs n reads, it would incur O(n2 ) overhead to validate
+the consistency of all of its reads.
+     To reduce the validation overhead in the common case, we introduce a monoton-
+ically increasing counter, which we call the global clock. This clock will increment
+every time a writing transaction attempts to commit, and its value will be used to
+establish the start and end times of transactions. When a transaction commits, it in-
+crements clock, and then uses the new value of the clock as the version of every orec
+that it releases.
+     While the clock becomes a potential bottleneck for writing transactions, its impact
+on read validation is dramatic. Suppose that a transaction sees the value Ts in the
+clock when it begins. If, before reading a location L, the transaction sees that L’s
+orec has a value To ≤ Ts , and after reading L, the transaction sees that the orec’s
+value is still To , then the transaction knows that L could not have been modified after
+it started. If the same property holds for every orec encountered by the transaction,
+then it never needs to validate during its execution: It only reads locations that have
+not been modified since it started, and it conservatively aborts if it attempts to read
+any location whose orec was modified after it started.
+     Our implementation in Figs. 20.11 and 20.12 illustrates the algorithm in full, for
+software transactions that operate on word-sized memory locations. Our implemen-
+tation uses the C setjmp and longjmp instructions to capture the state of the registers
+immediately before the transaction attempts, and to jump back to that point any time
+the transaction aborts. It also addresses the requirements of the C++ memory model
+
+      41   void commitTx() {
+      42     if (writes.empty()) {
+      43       reads.clear();
+      44       return;
+      45     }
+      46     for (auto &l : writes) {
+      47       atomic<uint64_t>* l = get_lock(l.first);
+      48       uint64_t prev = *l;
+      49       if ((prev&1 == 0) && (prev <= start_time)) {
+      50         if (!l->compare_exchange_strong(prev, my_lock))
+      51           abortTx();
+      52         locks.push_back(l, prev);
+      53       }
+      54       else if (prev != my_lock) {
+      55         abortTx();
+      56       }
+      57     }
+      58     uint64_t end_time = ++clock;
+      59     if (end_time != start_time + 1) {
+      60       for (auto l : reads) {
+      61         uint64_t v = *i;
+      62         if (((v&1) && (v != my_lock)) || ((v&1==0) && (v>start_time)))
+      63           abortTx();
+      64       }
+      65     }
+      66     for (auto w : writes)
+      67       std::atomic_ref<uintptr_t>(*w.first).store(w.second, std::memory_order_release);
+      68     for (auto l : locks)
+      69       *l.first = end_time;
+      70     writes.clear();
+      71     locks.clear();
+      72     readset.clear();
+      73   }
+      74   void abortTx() {
+      75     for (auto l : locks)
+      76       *l.first = l.second;
+      77     reads.clear();
+      78     writes.clear();
+      79     locks.clear();
+      80   }
+
+           FIGURE 20.12
+           Software transactions with ownership records (2/2).
+
+           by using std::atomic_ref<>, a feature of C++20, so that accesses to program mem-
+           ory by transactions will not form a race. This is a preferable alternative to casting
+           pointers to std::atomic<>.
+               Every transaction uses a Descriptor object to store its state during execution
+           (line 8). The Descriptor tracks three sets: one with the addresses of the orecs it has
+           read, one with the addresses of the orecs it has locked, and one with pairs representing
+
+the locations it intends to update, and the values it intends to write to those locations.
+It also stores its start time and its setjmp buffer. When a thread creates its Descriptor,
+it increments the global id_gen counter to get a unique integer, and it uses that to craft
+a value it can store in the orecs it acquires.
+     When a transaction begins, it reads the clock (line 20) in order to determine its
+starting time. To write value V to location L, the transaction stores the pair ?V , L?
+into its write set (line 23). To read a location L, the transaction starts by checking if
+L is in its write set, in which case it must return the value it intends to write (line 26).
+If L is not found, the transaction computes the address of the orec for L. It then
+reads the value of the orec (line 31), reads the value at L (line 32), and then rereads
+the value of the orec (line 33). This pattern is necessary: A concurrent transaction
+that is committing might be concurrently updating the location, and that transaction
+may have incremented clock and begun its commit sequence before this transaction
+begins. For the algorithm we present, checking the orec before and after reading L
+is necessary. Since we expect conflicts to be rare, we optimize read to be as short as
+possible. If line 34 detects any discrepancy in the two reads of the orec, the transaction
+aborts and tries again.
+     The most complex part of our algorithm is when a transaction tries to commit. If
+the transaction is read-only, then we know that it has not performed any writes, and
+as of its last read, it would have determined that all of its reads returned values that
+were written before the transaction started. Thus a read-only transaction can commit
+without any more effort (line 42). Otherwise, the transaction must acquire the orecs
+that protect the locations in its write set. This process extends from line 46 to line 57.
+For each address in the write set, the algorithm reads the current value of the orec. If
+the orec is already owned by the transaction, no work is needed. If the orec is locked
+by another transaction, then this transaction must abort. There is one more consider-
+ation: If the orec is unlocked, but its value is greater than the transaction’s start time,
+then the transaction aborts. This is a conservative step. Suppose that the transaction
+has also read a location protected by this orec: Once the transaction acquires the lock,
+it will be unable to see the old value of the orec, to recognize that its read was in-
+validated by another transaction’s commit. To simplify the subsequent checks, our
+transactions abort in this case.
+     Once the locks are acquired, the transaction gets its commit time by incrementing
+the clock (line 58). If the clock had not changed since the transaction started, then the
+transaction knows that all of its reads must be valid, and thus it need not check them
+individually. Otherwise, it must check each entry in its read set (line 59), to make
+sure the orec has not changed in such a way as to suggest that the corresponding read
+became invalid.
+     Once the transaction has validated its reads, it can replay its writes (line 66) and
+release its locks (line 68). Then it can clear its lists.
+     Lastly, if a transaction aborts, then it must clear its lists. Since the transaction
+may abort during the commit operation, it is possible that it has acquired some locks.
+If it has, it must release them during the abort operation (line 75). Note that in this
+case, the lock versions can be reset to the values they had before they were acquired:
+
+           A concurrent read that “misses” the locking of the orec will not read invalid values,
+           because the values are only updated after aborting becomes impossible.
+               Our implementation of transactions with orecs has a number of desirable proper-
+           ties. Even though it uses locks internally, its locks are not visible to the programmer,
+           and deadlock is not possible: The necessary condition of “hold and wait” is broken,
+           since a transaction that cannot acquire a lock releases all of its locks and tries again.
+           Furthermore, the use of commit-time locking decreases the likelihood of livelock:
+           Symmetric conflicts among transactions can only manifest if those transactions reach
+           their commit points simultaneously.
+
+           20.6.2 Transactions with value-based validation
+           The orec approach to transactions is not without its drawbacks. Chief among them is
+           the granularity of the mapping of locations to orecs: A simplistic hash function, like
+           the one in Fig. 20.11, can lead to deterministic collisions (for example, with 4096
+           orecs, the first element of every array of 216 elements will be protected by the same
+           orec); using a complex hash function introduces too much latency. One alternative
+           is to validate by directly using the values returned from calls to the read function.
+           Figs. 20.13 and 20.14 present such an algorithm.
+
+      1    atomic<uint64_t> lock(0);
+      2
+
+      3    struct Descriptor {
+      4      jmp_buf *checkpoint;
+      5      uint64_t start_time;
+      6      unordered_map<uintptr_t*, uintptr_t> writes;
+      7      vector<pair<uintptr_t*, uintptr_t>> reads;
+      8    };
+      9    void beginTx(jmp_buf *b) {
+      10     checkpoint = b;
+      11     start_time = lock;
+      12     if (start_time & 1)
+      13       start_time--;
+      14   }
+      15   void abortTx() {
+      16     writes.clear();
+      17     reads.clear();
+      18     longjmp(*checkpoint, 1);
+      19   }
+      20   int void write(uintptr_t *ptr, uintptr_t val) {
+      21     writes.insert_or_assign(addr, val);
+      22   }
+
+           FIGURE 20.13
+           Software transactions with value-based validation (1/2).
+
+ 1   uintprt_t read(uintptr_t *ptr) {
+ 2     auto it = writes.find(addr);
+ 3     if (it != writes.end())
+ 4       return *it;
+ 5     uintptr_t val = std::atomic_ref<uintptr_t>(*ptr).load(std::memory_order_acquire);
+ 6     while (start_time != globals.lock.val) {
+ 7       start_time = validate();
+ 8       val = std::atomic_ref<uintptr_t>(*ptr).load(std::memory_order_acquire);
+ 9     }
+10     reads.push_back({addr, val});
+11     return val;
+12   }
+13   void commitTx() {
+14     if (writes.empty()) {
+15       reads.clear();
+16       return;
+17     }
+18     uint64_t from = start_time;
+19     while (!lock.compare_exchange_strong(from, from + 1))
+20       from = validate();
+21     start_time = from;
+22     for (auto w : writes)
+23       std::atomic_ref<uintptr_t>(*w.first).store(w.second, std::memory_order_release);
+24     lock = 2 + start_time;
+25     writes.clear();
+26     reads.clear();
+27   }
+28   uint64_t validate() {
+29     while (true) {
+30       uint64_t time = lock;
+31       if (time & 1)
+32         continue;
+33       for (auto it = reads.begin(), e = reads.end(); it != e; ++it) {
+34         if (std::atomic_ref<uintptr_t>(*it.first).load(std::memory_order_acquire) !=
+35             it.second)
+36           abortTx();
+37       }
+38       if (time == lock)
+39         return time;
+40     }
+41   }
+
+     FIGURE 20.14
+     Software transactions with value-based validation (2/2).
+
+          This algorithm resembles our orec algorithm in that it delays transactional writes
+      until commit time (redo logging). The main differences are that it uses a single se-
+      quence lock to coordinate when transactions commit, and it does not use the sequence
+      lock to decide when transactions abort. Instead, changes to the sequence lock cause
+      transactions to validate.
+          The intuition behind this algorithm is that transactions can log the addresses they
+      read, and the values they observed when they performed those reads. When a transac-
+      tion commits, it increments the sequence lock to an odd value, writes back its entire
+      write set, and then increments the sequence lock to a new even value. A transaction
+      can trivially determine that it is valid if it sees that the sequence lock has the same
+      even value as the last time at which the transaction was valid.
+          If the sequence lock has changed since the last check, the transaction must wait
+      until the sequence lock is even (unheld). Then it can reread every location in its read
+      set, to ensure that the value is the same as it was when the transaction read it. The only
+      catch is that the transaction must check its entire read set, without any intervening
+      writer transaction commits. This manifests in the while loop of the validate function.
+      Note that after a successful validation, a transaction is equivalent to one that started
+      at the time of the validation, and hence can update its start time.
+          One question that arises is whether a transaction can start while the lock is held.
+      Rather than introduce waiting in the beginTx() function, we subtract one from the
+      start time if it would otherwise be odd. This means that a transaction might validate
+      on its first load, instead of waiting to start.
+          Like the orec algorithm, this approach to transactions is deadlock-free: It only
+      has one lock, and thus there is no potential for deadlock! In addition, note that
+      a transaction’s progress is only impeded when it must validate, and every valida-
+      tion corresponds to the completion of a writer transaction. Hence, the algorithm is
+      livelock-free. Unfortunately, starvation is possible, especially for long-running trans-
+      actions concurrent with a stream of small writers: The long-running transaction might
+      need to validate once per writer.
+
+      20.7 Combining hardware and software transactions
+      Part of the appeal of value-based validation is that it enables hybrid transactional
+      systems, which use hardware transactional execution when possible, and fall back to
+      software execution when a transaction cannot complete in hardware (e.g., because
+      it is too big). One of the simplest approaches is to introduce a mechanism for dy-
+      namically switching between two phases: one in which all transactions use hardware
+      support, and one in which none do.
+           The phase change from hardware mode to software mode is relatively simple to
+      achieve, using a mechanism similar to the fallback in hardware lock elision: The
+      transaction system includes a global flag to indicate if the current mode is “hard-
+      ware” or “software.” Every hardware-mode transaction begins by checking the flag.
+      If the flag changes during the transaction’s execution, it will abort, at which point it
+                                      20.8 Transactional data structure design             493
+
+can switch to software mode. If a hardware transaction cannot complete because of
+capacity, then after it aborts, it atomically changes the flag value and then starts in
+software mode.
+    The return from software to hardware is potentially more challenging. However,
+value-based validation provides a clean return: When the transaction that precipitated
+the switch to software mode is about to complete, its final step before validating is
+to use a transactional write to set the flag false (this write is performed by an aug-
+mented commitTx() function). So long as every software-mode transaction begins by
+reading the flag (i.e., via a call to read() from within beginTx()), then when the dis-
+tressed transaction commits and resets the mode, its commit will cause all concurrent
+transactions to validate, abort, and then resume in hardware mode.
+    This is but one of many mechanisms for combining hardware and software trans-
+actional execution. Other approaches use a global lock or epochs (Section 19.7) to
+manage the transition between modes. Truly hybrid systems allow hardware and soft-
+ware transactions to run and commit concurrently.
+
+20.8 Transactional data structure design
+One of the most promising roles for TM is in the creation of high-performance con-
+current data structures. As an example, consider the difficulty involved in creating a
+concurrent red/black tree: a lock-based implementation would have difficulty craft-
+ing a cycle-free lock acquisition order, because an operation does not know how
+much rebalancing is necessary until after it reaches its target node; a nonblocking
+implementation might need to atomically modify many memory locations in order to
+rebalance during an insert or removal. With transactions, these complex data struc-
+ture maintenance operations can be done atomically with the modification operation,
+without requiring the programmer to craft a complex synchronization protocol.
+    Another benefit of transactions is that they allow data structures to export rich
+interfaces. Consider a concurrent hashmap: a programmer may desire more meth-
+ods than the traditional insert/remove/contains. With transactions, a generic mod-
+ifyKey(k, λ) method becomes possible, wherein a programmer can atomically
+(1) find the entry with matching key, (2) apply the λ function to the value associated
+with that key, and (3) update the value with the computed result. TM is a pathway to
+composable, modular, generic concurrent data structures.
+    While TM can transform an arbitrary sequential operation into a concurrent op-
+eration, it does not promise scalability. Programmers must make sure that their data
+structures do not have obvious scalability bottlenecks. For example, if every insertion
+and removal in a hashmap must update a count of the total number of items, then
+transactions cannot prevent concurrent counter updates from conflicting. Further-
+more, TM is no different than locking in its requirement that all concurrent accesses to
+a datum agree on the synchronization mechanism being used. Just as it is not correct
+to allow one thread to perform an unsynchronized access to an item that is simulta-
+neously locked by another thread, it is not correct to allow nontransactional accesses
+
+      to an item that is simultaneously being accessed transactionally. Lastly, when using
+      software TM, programs must take great care when transitioning memory from a state
+      in which it is accessed transactionally to a state in which it is not. The most dangerous
+      example is memory reclamation: If a transaction unlinks a node from a data structure,
+      commits, and then tries to free that node, it must be sure that no concurrent (doomed
+      to abort) transaction is still accessing that node. We explore this “privatization” prob-
+      lem in an exercise.
+
+      20.9 Chapter notes
+      The transition from Linux Kernel 2.4 to Linux Kernel 2.6 involved a significant ef-
+      fort to improve performance on multiprocessors. Sequence locks were one of the
+      techniques that became widespread as a result [98]. The challenges faced when us-
+      ing sequence locks in C++ are discussed in detail by Hans Boehm [20]. We thank
+      Hans for explaining the subtleties of sequence locks, and suggesting a solution using
+      C++20’s std::atomic_ref<>.
+          TLE in modern microprocessors is based on a more general mechanism called
+      hardware transactional memory, first proposed by Maurice Herlihy and Eliot Moss
+      [74] as a general-purpose programming model for multiprocessors. Nir Shavit and
+      Dan Touitou [157] proposed the first TM that did not require specialized hardware,
+      instead using software instrumentation on every load and store.
+          The “orec” algorithm presented in this chapter is a variant of the TL2 algorithm
+      of Dave Dice, Ori Shalev, and Nir Shavit [35]. The value-based approach is due to
+      Luke Dalessandro, Michael Spear, and Michael Scott [33].
+          The use of transactional hardware for lock elision was developed by Ravi Rajwar
+      and James Goodman [146,145]. Like TM, there are software-only approaches to lock
+      elision [149].
+          A comparison of commercially available hardware systems that support TM can
+      be found in [133]. Harris, Larus, and Rajwar [59] provide the authoritative survey of
+      both hardware and software TM.
+
+      20.10 Exercises
+      Exercise 20.1. Let G be a global variable, and let H be a variable allocated on the
+      heap. Both G and H are structs with many fields, and a programmer wishes to protect
+      each with a sequence lock. Why is it necessary to use a safe memory reclamation
+      strategy for H, but not for G?
+
+      Exercise 20.2. Consider Exercise 20.1. If the structs were protected by readers–
+      writer locks, and a thread was going to read H, would it need a safe memory reclama-
+      tion strategy? Why or why not?
+                                                                     20.10 Exercises          495
+
+Exercise 20.3. In our implementation of TM with orecs, we used a simple vector to
+store transaction read sets. Suppose there were 216 orecs, with a strong hash function
+for mapping addresses to orecs. How many randomly chosen accesses would a single
+transaction need to make before it would read the same orec twice?
+
+Exercise 20.4. In Section 20.6.2, we argued that false conflicts on orecs can limit
+throughput. As in Exercise 20.3, consider a system with 216 orecs. If every thread
+issued W writes, then with two threads, at what value of W would the probability of
+false conflicts exceed 50%?
+
+Exercise 20.5. Continuing the example from Exercise 20.4, if there were eight
+threads, at what value of W would the probability of false conflicts exceed 50%?
+
+Exercise 20.6. Repeat Exercise 20.5, but with 220 orecs.
+
+Exercise 20.7. Instead of buffering writes in a redo log, an STM implementation
+could update locations while it was executing, and maintain an undo log for restoring
+values if the transaction aborted. A subtle complication arises: When the transaction
+aborts, it cannot restore the old value of orecs when it releases them. Why not? Con-
+sider the case where transaction T1 performs a write to location X and then aborts
+while reading location Y , and transaction T2 performs a read to location X that is
+concurrent with both of T1 ’s operations.
+
+Exercise 20.8. Let TA be a transaction that has aborted several times in a row, with
+Ti total transactions in the system. Suppose that the contention manager gives TA two
+options:
+• Block new transactions from starting, wait for all current transactions to commit,
+  and then begin.
+• Block new transactions from starting, and begin immediately.
+Which option would you favor? Why? It might help to consider specific workload
+characteristics in justifying your answer.
+
+Exercise 20.9. Would the choice of software TM or hardware TM influence your
+answer to Exercise 20.8?
+
+Exercise 20.10. We claimed that it is necessary for a transaction to ensure the valid-
+ity of its read set every time it reads a new location. If it does not, a destined-to-abort
+transaction may produce a visible fault. Create an interleaving between two transac-
+tions that could produce a divide-by-zero fault if a transaction does not validate after
+every read.
+
+Exercise 20.11. A common idiom in lock-based programming is to lock a data struc-
+ture, unlink part of it, and then unlock the data structure. Doing so makes the unlinked
+part “private” to the thread who did the unlinking, because that part is no longer
+reachable to other threads.
+
+          A challenge that transactional programming introduces is that speculative threads
+      may not know that they are destined to abort, and their transactional accesses to
+      the unlinked part could conflict with the nontransactional accesses by the unlinking
+      thread.
+          Create a workload where one thread’s transaction privatizes a linked list by split-
+      ting it at some point, and another thread’s transaction is traversing the list. Describe
+      a fault that could occur in the transactional thread.
+
+      Exercise 20.12. Consider your solution to Exercise 20.11. Would the algorithm in
+      Section 20.6.1 be vulnerable to that error? Why or why not?
+
+      Exercise 20.13. Consider your solution to Exercise 20.11. Would the algorithm in
+      Section 20.6.2 be vulnerable to that error? Why or why not?
+                                                                       APPENDIX
+
+Software basics
+                                                                      A
+A.1 Introduction
+This appendix describes the basic programming language constructs needed to un-
+derstand our examples and to write your own concurrent programs. Mostly, we use
+Java, but the same ideas could be equally well expressed in other high-level languages
+and libraries. Here, we review the basic software concepts needed to understand this
+text in Java, C++, and C#. Our discussion here is necessarily incomplete. If in doubt,
+consult the current documentation for the language or library of interest.
+
+A.2 Java
+The Java programming language uses a concurrency model in which threads ma-
+nipulate objects1 by calling the objects’ methods. The possibly concurrent calls are
+coordinated using various language and library constructs. We begin by explaining
+the basic Java constructs used in this text.
+
+A.2.1 Threads
+A thread executes a single, sequential program. In Java, a thread is an instance of
+(a subclass of) java.lang.Thread, which provides methods for creating threads, start-
+ing them, suspending them, and waiting for them to finish.
+    First, create a class that implements the Runnable interface. The class’s run()
+method does all the work. For example, here is a simple thread that prints a string:
+public class HelloWorld implements Runnable {
+  String message;
+  public HelloWorld(String m) {
+    message = m;
+  }
+  public void run() {
+    System.out.println(message);
+  }
+}
+
+1 Technically, threads are objects.
+
+      A Runnable object can be turned into a thread by calling the Thread class constructor,
+      which takes a Runnable object as its argument, like this:
+      final String m = "Hello world from thread " + i;
+      Thread thread = new Thread(new HelloWorld(m));
+
+      Java provides a syntactic shortcut, called an anonymous inner class, that allows you
+      to avoid defining an explicit HelloWorld class:
+      final String message = "Hello world from thread " + i;
+      thread = new Thread(new Runnable() {
+         public void run() {
+           System.out.println(message);
+         }
+       });
+
+      This snippet creates an anonymous class implementing the Runnable interface, whose
+      run() method behaves as shown.
+         After a thread has been created, it must be started:
+      thread.start();
+
+      This method causes thread to run (i.e., to execute the run() method). The thread that
+      calls start() returns immediately. If the caller wants to wait for thread to finish, it
+      must join the thread:
+      thread.join();
+
+      The caller is blocked until the joined thread’s run() method returns.
+          Fig. A.1 shows a method that initializes multiple threads, starts them, waits for
+      them to finish, and then prints out a message. The method creates an array of threads,
+      and initializes them in lines 2–10, using the anonymous inner class syntax. At the end
+      of this loop, it has created an array of dormant threads. In lines 11–13, it starts the
+      threads, and each thread executes its run() method, displaying its message. Finally,
+      in lines 14–16, it waits for each thread to finish.
+
+      A.2.2 Monitors
+      Java provides a number of ways to synchronize access to shared data, both built-in
+      and through packages. Here we describe the built-in model, called the monitor model,
+      a simple and commonly used approach. We discuss monitors in Chapter 8.
+          Imagine you are in charge of software for a call center. During peak hours, calls
+      arrive faster than they can be answered. When a call arrives, your switchboard soft-
+      ware places that call in a queue; it plays a recorded announcement assuring the caller
+      that you consider this call to be very important, and that calls will be answered in the
+      order received. An operator—an employee in charge of answering calls—dispatches
+      an operator thread to dequeue and answer the next call. When an operator finishes
+      with one call, he or she dequeues the next call from the queue and answers it.
+
+ 1   public static void main(String[] args) {
+ 2      Thread[] thread = new Thread[8];
+ 3      for (int i = 0; i < thread.length; i++) {
+ 4        final String message = "Hello world from thread " + i;
+ 5        thread[i] = new Thread(new Runnable() {
+ 6          public void run() {
+ 7            System.out.println(message);
+ 8          }
+ 9        });
+10      }
+11      for (int i = 0; i < thread.length; i++) {
+12        thread[i].start();
+13      }
+14      for (int i = 0; i < thread.length; i++) {
+15        thread[i].join();
+16      }
+17    }
+
+     FIGURE A.1
+     This method initializes a number of Java threads, starts them, and then waits for them to
+     finish.
+
+ 1    class CallQueue { // this code is incorrect
+ 2      final static int QSIZE = 100; // arbitrary size
+ 3      int head = 0;                  // next item to dequeue
+ 4      int tail = 0;                  // next empty slot
+ 5      Call[] calls = new Call[QSIZE];
+ 6      public enq(Call x) {           // called by switchboard
+ 7        calls[(tail++) % QSIZE] = x;
+ 8      }
+ 9      public Call deq() {            // called by operators
+10        return calls[(head++) % QSIZE]
+11      }
+12    }
+
+     FIGURE A.2
+     An incorrect queue class.
+
+        Fig. A.2 shows a simple but incorrect queue class. The calls are kept in an array
+     calls, where head is the index of the next call to remove and tail is the index of the
+     next free slot in the array.
+        This class does not work correctly if two operators try to dequeue a call at the
+     same time. The expression
+     return calls[(head++) % QSIZE]
+
+      does not happen as an atomic (i.e., indivisible) step. Instead, the compiler produces
+      code that looks something like this:
+      int temp0 = head;
+      head = temp0 + 1;
+      int temp1 = (temp0 % QSIZE);
+      return calls[temp1];
+
+          Two operators might execute these statements together: They execute the first line
+      at the same time, then the second, and so on. In the end, both operators dequeue and
+      answer the same call, possibly annoying the customer.
+          To make this queue work correctly, we must ensure that only one operator at a
+      time can dequeue the next call, a property called mutual exclusion. Java provides a
+      useful built-in mechanism to support mutual exclusion. Each object has an (implicit)
+      lock. If a thread A acquires the object’s lock (or, equivalently, locks that object),
+      then no other thread can acquire that lock until A releases the lock (or, equivalently,
+      unlocks the object). If a class declares a method to be synchronized, then that method
+      implicitly acquires the lock when it is called, and releases it when it returns.
+          Here is one way to ensure mutual exclusion for the enq() and deq() methods:
+      public synchronized T deq() {
+        return call[(head++) % QSIZE]
+      }
+      public synchronized enq(T x) {
+        call[(tail++) % QSIZE] = x;
+      }
+
+          Once a call to a synchronized method has acquired the object’s lock, any other call
+      to a synchronized method of that object is blocked until the lock is released. (Calls
+      to other objects, subject to other locks, are not blocked.) The body of a synchronized
+      method is often called a critical section.
+          There is more to synchronization than mutual exclusion. What should an operator
+      do if he or she tries to dequeue a call, but there are no calls waiting in the queue?
+      The call might throw an exception or return null, but what could the operator do then,
+      other than try again? Instead, it makes sense for the operator to wait for a call to
+      appear. Here is a first attempt at a solution:
+      public synchronized T deq() { // this is incorrect
+        while (head == tail) {}; // spin while empty
+        call[(head++) % QSIZE];
+      }
+
+      This attempt is not just wrong, it is disastrously wrong. The dequeuing thread waits
+      inside a synchronized method, locking out every other thread, including the switch-
+      board thread that could be trying to enqueue a call. This is a deadlock: The dequeuing
+      thread holds the lock waiting for an enqueuing thread, while the enqueuing thread
+      waits for the dequeuing thread to release the lock. Nothing will ever happen.
+          From this we learn that if a thread executing a synchronized method needs to wait
+      for something to happen, then it must unlock the object while it waits. The waiting
+
+thread should periodically reacquire the lock to test whether it can proceed. If so, it
+proceeds; if not, it releases the lock and goes back to waiting.
+    In Java, each object provides a wait() method, which unlocks the object and sus-
+pends the caller. While that thread is waiting, another thread can lock and change the
+object. Later, when the suspended thread resumes, it locks the object again before it
+returns from the wait() call. Here is a revised, but still incorrect, dequeue method:2
+public synchronized T deq() { // this is still incorrect
+  while (head == tail) { wait(); }
+  return call[(head++) % QSIZE];
+}
+    Each operator thread, seeking a call to answer, repeatedly tests whether the queue
+is empty. If so, it releases the lock and waits; if not, it removes and returns the item.
+In a similar way, an enqueuing thread checks whether the buffer is full.
+    When does a waiting thread wake up? The program must notify waiting threads
+when something significant happens. The notify() method eventually wakes up one
+waiting thread, chosen arbitrarily from the set of waiting threads. When that thread
+awakens, it competes for the lock like any other thread. When that thread reacquires
+the lock, it returns from its wait() call. You cannot control which waiting thread is
+chosen. By contrast, the notifyAll() method wakes up all waiting threads, eventually.
+Each time the object is unlocked, one of these newly awakened threads will reacquire
+the lock and return from its wait() call. You cannot control the order in which the
+threads reacquire the lock.
+    In the call center example, there are multiple operators and one switchboard. Sup-
+pose the switchboard software decides to optimize its use of notify() as follows. If
+it adds a call to an empty queue, then it should notify only one blocked dequeuer,
+since there is only one call to consume. This optimization, while it may seem reason-
+able, is flawed. Suppose the operator threads A and B discover the queue is empty,
+and block waiting for calls to answer. The switchboard thread S puts a call in the
+queue, and calls notify() to wake up one operator thread. Because the notification
+is asynchronous, however, there is a delay. S then returns and places another call in
+the queue, and because the queue already had a waiting call, it does not notify other
+threads. The switchboard’s notify() finally takes effect, waking up A, but not B, even
+though there is a call for B to answer. This pitfall is called the lost-wakeup problem:
+One or more waiting threads fail to be notified that the condition for which they are
+waiting has become true. See Section 8.2.2 for a more detailed discussion.
+
+A.2.3 Yielding and sleeping
+In addition to the wait() method, which allows a thread holding a lock to release the
+lock and pause, Java provides other ways for a thread that does not hold a lock to
+
+2 This program will not compile because the wait() call can throw InterruptedException, which must be
+caught or rethrown. As discussed in Pragma 8.2.1, real code must handle such exceptions, but we often
+elide such handlers to make the examples easier to read.
+
+      pause. A yield() call pauses the thread, asking the scheduler to run something else.
+      The scheduler decides whether to pause the thread, and when to restart it. If there
+      are no other threads to run, the scheduler may ignore the yield() call. Section 16.4.2
+      describes how yielding can be an effective way to prevent livelock. A call to sleep(t),
+      where t is a time value, instructs the scheduler not to run that thread for that duration.
+      The scheduler is free to restart the thread at any later time.
+
+      A.2.4 Thread-local objects
+      Often it is useful for each thread to have its own private instance of a variable. Java
+      supports such thread-local objects through the ThreadLocal<T> class, which manages
+      a collection of objects of type T, one for each thread. Because thread-local variables
+      were not built into Java, they have a somewhat complicated and awkward interface.
+      Nevertheless, they are extremely useful, and we use them often, so we review how to
+      use them here.
+          The ThreadLocal<T> class provides get() and set() methods that read and update
+      the thread’s local value, and an initialValue() method that is called the first time
+      a thread tries to get the value of a thread-local object. To initialize each thread’s
+      local value appropriately, we define a subclass of ThreadLocal<T> that overrides the
+      parent’s initialValue() method.
+          This mechanism is best illustrated by an example. In many of our algorithms, we
+      assume that each of n concurrent threads has a unique thread-local identifier between
+      0 and n − 1. To provide such an identifier, we show how to define a ThreadID class
+      with a single static method: get() returns the calling thread’s identifier. When a thread
+      calls get() for the first time, it is assigned the next unused identifier. Each subsequent
+      call by that thread returns that thread’s identifier.
+          Fig. A.3 shows the simplest way to use a thread-local object to implement this
+      useful class. Line 2 declares an integer nextID field that holds the next identifier to be
+      issued. Lines 3–7 define an inner class accessible only within the body of the enclos-
+      ing ThreadID class. This inner class manages the thread’s identifier. It is a subclass of
+      ThreadLocal<Integer> that overrides the initialValue() method to assign the next
+      unused identifier to the current thread.
+          Here is an example how the ThreadID class might be used:
+      thread = new Thread(new Runnable() {
+        public void run() {
+          System.out.println("Hello world from thread " + ThreadID.get());
+        }
+      });
+
+          Because the inner ThreadLocalID class is used exactly once, it makes little sense
+      to give it a name (for the same reason that it makes little sense to name your Thanks-
+      giving turkey). Instead, it is more common to use an anonymous class as described
+      earlier.
+
+ 1   public class ThreadID {
+ 2     private static volatile int nextID = 0;
+ 3     private static class ThreadLocalID extends ThreadLocal<Integer> {
+ 4       protected synchronized Integer initialValue() {
+ 5         return nextID++;
+ 6       }
+ 7     }
+ 8     private static ThreadLocalID threadID = new ThreadLocalID();
+ 9     public static int get() {
+10       return threadID.get();
+11     }
+12     public static void set(int index) {
+13       threadID.set(index);
+14     }
+15   }
+
+     FIGURE A.3
+     The ThreadID class: Give each thread a unique identifier.
+
+      PRAGMA A.2.1
+      In the type expression ThreadLocal<Integer>, we use Integer instead of int be-
+      cause int is a primitive type, and only reference types, such as Integer, are
+      allowed in angle brackets. Since Java 1.5, a feature called autoboxing allows you
+      to use int and Integer values more-or-less interchangeably, for example:
+         Integer x = 5;
+         int y = 6;
+         Integer z = x + y;
+
+      Consult your Java reference manual for complete details.
+
+     A.2.5 Randomization
+     Randomization is an important tool for algorithm design; several algorithms in this
+     book use randomization to reduce contention, for example. When using randomiza-
+     tion, it is important to understand the properties of the random number generator
+     used. For example, the Math.random method uses a single global instance of the
+     java.util.Random class to generate random numbers. Although Random is thread-safe,
+     concurrent calls to the same instance by multiple threads can introduce contention
+     and synchronization.
+         To avoid this contention, we use the ThreadLocalRandom class from the java.util.
+     concurrent package, which, as its name suggests, maintains a separate random num-
+
+      ber generator3 for each thread. The static method current() returns the random
+      number generator associated with the caller; it is recommended to always call this
+      method when using ThreadLocalRandom. For example, to generate a random int from
+      0 to k − 1, we call
+
+      ThreadLocalRandom.current().getInt(k)
+
+          The random numbers generated by ThreadLocalRandom are not cryptographically
+      secure. If such security is required, consider using java.security.SecureRandom in-
+      stead. However, if you do, then be careful not to introduce contention by having
+      multiple threads concurrently access the same random number generator.
+
+      A.3 The Java memory model
+      The Java programming language does not guarantee linearizability, or even sequential
+      consistency, when reading or writing fields of shared objects. Why not? The princi-
+      pal reason is that strict adherence to sequential consistency would outlaw widely used
+      compiler optimizations, such as register allocation, common subexpression elimina-
+      tion, and redundant read elimination, all of which involve reordering memory reads
+      and writes. In a single-thread computation, such reorderings are invisible to the op-
+      timized program, but in a multithreaded computation, one thread can spy on another
+      and observe out-of-order executions.
+          The Java memory model satisfies the fundamental property of relaxed memory
+      models: If a program’s sequentially consistent executions follow certain rules, then
+      every execution of that program in the relaxed model will still be sequentially con-
+      sistent. In this section, we describe rules that guarantee that the Java programs are
+      sequentially consistent. We do not try to cover the complete set of rules, which is
+      rather large and complex. Instead, we focus on a set of straightforward rules that
+      suffices for most purposes.
+          Fig. A.4 shows double-checked locking, a once-common programming idiom that
+      falls victim to Java’s lack of sequential consistency. Here, the Singleton class man-
+      ages a single instance of a Singleton object, accessible through the getInstance()
+      method. This method creates the instance the first time it is called. This method must
+      be synchronized to ensure that only one instance is created, even if several threads
+      observe instance to be null. Once the instance has been created, however, no further
+      synchronization should be necessary. As an optimization, the code in Fig. A.4 enters
+      the synchronized block only when it observes an instance to be null. Once it has
+      entered, it double-checks that instance is still null before creating the instance.
+          This pattern is incorrect: At line 5, the constructor call appears to take place before
+      the instance field is assigned, but the Java memory model allows these steps to occur
+
+      3 Technically, this is a pseudorandom number generator.
+
+1   public static Singleton getInstance() {
+2     if (instance == null) {
+3       synchronized(Singleton.class) {
+4         if (instance == null)
+5           instance = new Singleton();
+6       }
+7     }
+8     return instance;
+9   }
+
+    FIGURE A.4
+    Double-checked locking.
+
+    out of order, effectively making a partially initialized Singleton object visible to other
+    threads.
+        In the Java memory model, objects reside in a shared memory and each thread has
+    a private working memory that contains cached copies of fields it has read or written.
+    In the absence of explicit synchronization (explained later), a thread that writes to a
+    field might not propagate that update to the shared memory right away, and a thread
+    that reads a field might not update its working memory if the field’s copy in the shared
+    memory changes value. Naturally, a Java virtual machine is free to keep such cached
+    copies consistent, and in practice they often do, but they are not required to do so. At
+    this point, we can guarantee only that a thread’s own reads and writes appear to that
+    thread to happen in order, and that any field value read by a thread was written to that
+    field (i.e., values do not appear out of thin air).
+        Certain statements are synchronization events. The term “synchronization” usu-
+    ally implies some form of atomicity or mutual exclusion. In Java, however, it also
+    implies reconciling a thread’s working memory with the shared memory. Some syn-
+    chronization events cause a thread to write cached changes back to shared memory,
+    making those changes visible to other threads. Other synchronization events cause the
+    thread to invalidate its cached values, forcing it to reread field values from memory,
+    making other threads’ changes visible. Synchronization events are linearizable: They
+    are totally ordered, and all threads agree on that ordering. We now look at different
+    kinds of synchronization events.
+
+    A.3.1 Locks and synchronized blocks
+    A thread can achieve mutual exclusion either by entering a synchronized block or
+    method, which acquires an implicit lock, or by acquiring an explicit lock (such as
+    the ReentrantLock from the java.util.concurrent.locks package). These approaches
+    have the same implications for memory behavior.
+        If all accesses to a particular field are protected by the same lock, then reads
+    and writes to that field are linearizable. Specifically, when a thread releases a lock,
+    modified fields in working memory are written back to shared memory, performing
+
+      modifications while holding the lock accessible to other threads. When a thread ac-
+      quires the lock, it invalidates its working memory to ensure fields are reread from
+      shared memory. Together, these conditions ensure that reads and writes to the fields
+      of any object protected by a single lock are linearizable.
+
+      A.3.2 Volatile fields
+      Volatile fields are linearizable. Reading a volatile field is like acquiring a lock: The
+      working memory is invalidated and the volatile field’s current value is reread from
+      memory. Writing a volatile field is like releasing a lock: The volatile field is immedi-
+      ately written back to memory.
+          Although reading and writing a volatile field has the same effect on memory con-
+      sistency as acquiring and releasing a lock, multiple reads and writes are not atomic.
+      For example, if x is a volatile variable, the expression x++ will not necessarily incre-
+      ment x if concurrent threads can modify x. Some form of mutual exclusion is needed
+      as well. One common usage pattern for volatile variables occurs when a field is read
+      by multiple threads but written by only one.
+          Also, the compiler does not remove accesses to volatile fields, nor the shared-
+      memory accesses of synchronization methods.
+
+       PRAGMA A.3.1
+       Arrays require special attention: If a field or variable containing an array is de-
+       clared volatile, only accesses to the field or variable must be synchronized;
+       accesses to the elements of the array need not be synchronized. Therefore, when
+       access to the elements of an array must be synchronized, we must use a special
+       array type that provides such synchronized access.
+
+         The java.util.concurrent.atomic package includes classes that provide lineariz-
+      able memory such as AtomicReference<T> or AtomicInteger. The compareAndSet()
+      and set() methods act like volatile writes, and get() acts like a volatile read.
+
+      A.3.3 Final fields
+      Recall that a field declared to be final cannot be modified once it has been initialized.
+      An object’s final fields are initialized in its constructor. If the constructor follows
+      certain simple rules, described in the following paragraphs, then the correct value of
+      any final fields will be visible to other threads without synchronization. For example,
+      in the code shown in Fig. A.5, a thread that calls reader() is guaranteed to see x equal
+      to 3, because x is a final field. There is no guarantee that y will be equal to 4, because
+      y is not final.
+
+ 1   class FinalFieldExample {
+ 2     final int x; int y;
+ 3     static FinalFieldExample f;
+ 4     public FinalFieldExample() {
+ 5       x = 3;
+ 6       y = 4;
+ 7     }
+ 8     static void writer() {
+ 9       f = new FinalFieldExample();
+10     }
+11     static void reader() {
+12       if (f != null) {
+13         int i = f.x; int j = f.y;
+14       }
+15     }
+16   }
+
+     FIGURE A.5
+     Constructor with final field.
+
+ 1   public class EventListener { // this is incorrect
+ 2     final int x;
+ 3     public EventListener(EventSource eventSource) {
+ 4       eventSource.registerListener(this); // register with event source ...
+ 5     }
+ 6     public onEvent(Event e) {
+ 7      ... // handle the event
+ 8     }
+ 9   }
+
+     FIGURE A.6
+     Incorrect EventListener class.
+
+         If a constructor is synchronized incorrectly, however, final fields may be observed
+     to change value. The rule is simple: The this reference must not be released from the
+     constructor before the constructor returns.
+         Fig. A.6 shows an example of an incorrect constructor in an event-driven system.
+     Here, an EventListener class registers itself with an EventSource class, making a
+     reference to the listener object accessible to other threads. This code may appear
+     safe, since registration is the last step in the constructor, but it is incorrect because
+     if another thread calls the event listener’s onEvent() method before the constructor
+     finishes, then the onEvent() method is not guaranteed to see a correct value for x.
+         In summary, reads and writes to fields are linearizable if the field is either volatile
+     or protected by a unique lock that is acquired by all readers and writers.
+
+      A.4 C++
+      Prior to the 2011 C++ standard (C++11), C++ did not have native support for threads.
+      Instead, like C, it relied on operating system-specific mechanisms for threading. This
+      reliance came at a steep cost: Code was not portable across operating systems, and
+      programmers could not reason formally about the correctness of their code.
+          Since 2011, C++ has used a concurrency model that includes threads, locks, con-
+      dition variables, and std::atomic<> variables. To use these features, a programmer
+      must include the appropriate header files:
+      #include <thread> // thread objects; since C++11
+      #include <mutex> // mutual exclusion locks; since C++11
+      #include <atomic> // atomic variables; Since C++11
+      #include <shared_mutex> // readers/writer locks; since C++14
+      #include <condition_variable> // condition variables; Since C++14
+
+          It may also be necessary to provide a flag at compile time to enable these features
+      (e.g., -std=c++11 or -std=c++14). The C++ standard is updated every 3 years, and
+      each update since C++11 has added additional features for concurrency.
+
+      A.4.1 Threads in C++
+      The std::thread object represents a thread. The constructor to this object can take
+      either a function or a lambda expression. Arguments to that function or lambda can
+      also be provided, as shown in the example in Fig. A.7. (On certain operating systems,
+      such as some flavors of Linux, the linker may need to be given pthread-related flags
+      (e.g., -lpthread) in order to compile the program.)
+          On lines 10 and 12, the threads are created by providing the name of the function
+      that the thread should run. In the former case, the function takes no parameters. In the
+      latter, it takes two integer arguments, which are also passed to the thread constructor.
+          In addition, a thread can be created by providing it with a lambda to execute. The
+      examples on lines 17–32 illustrate some of the ways that a thread can be given a
+      lambda expression to run.
+          In C++, unlike Java, a single call creates the thread and also starts executing it.
+      A program must call join on all of its threads before terminating.4 A common idiom
+      is to store created threads in a std::vector, so that they are easily found and joined.
+      An example appears below:
+        std::vector<std::thread> threads;
+        for (int i = 0; i < 16; ++i)
+          threads.push_back(std::thread(f, i));
+        for (int i = 0; i < 16; ++i)
+          threads[i].join();
+
+      4 This requirement can be avoided by using a thread’s detach() method.
+
+ 1   #include <iostream>
+ 2   #include <thread>
+ 3
+
+ 4   void f1() { std::cout << "Hello from f1" << std::endl; }
+ 5   void f2(int a, int b) {
+ 6     std::cout << "f2 invoked with " << a << ", " << b << std::endl;
+ 7   }
+ 8
+
+ 9   int main() {
+10     std::thread t1(f1);
+11     t1.join();
+12     std::thread t2(f2, 1, 2);
+13     t2.join();
+14     std::thread t3(f2, 5, 7);
+15     t3.join();
+16     int i = 7;
+17     std::thread t4([&]() {
+18       std::cout << "lambda invoked with captured i == " << i << std::endl;
+19     });
+20     t4.join();
+21     std::thread t5(
+22         [&](int a) {
+23           std::cout << "lambda invoked with captured i == " << i
+24                    << " and a == " << a << std::endl;
+25         },
+26         1024);
+27     t5.join();
+28     auto f = [&](int k) {
+29       f1();
+30       f2(i, i * k);
+31     };
+32     std::thread t6(f, 99);
+33     t6.join();
+34   }
+
+     FIGURE A.7
+     Examples of creating and joining threads in C++.
+
+     A.4.2 Locks in C++
+     The most commonly used locks in C++ are std::mutex, std::recursive_mutex, and
+     std::shared_mutex. Programmers acquire and release a std::mutex by using its
+     lock() and unlock() methods. There is also a try_lock() method, which prevents
+     a thread from blocking when it attempts to acquire a lock that is held by another
+     thread:
+     std::mutex m;
+
+      ...
+      m.lock();
+      f();
+      m.unlock();
+      ...
+      if (m.try_lock()) {
+        f();
+        m.unlock();
+      } else {
+        std::cout << "couldn’t acquire lock" << std::endl;
+      }
+
+          A std::recursive_mutex maintains an internal counter and ID field, so that a
+      thread that attempts to lock() a mutex that it already holds does not block but instead
+      increments the counter. A thread must unlock() a recursive_mutex as many times
+      as it has locked it. The std::shared_mutex supports all the operations of std::mu-
+      tex, and also has methods lock_shared(), unlock_shared(), and try_lock_shared(),
+      which allow threads to use it as a readers–writers lock.
+          Although C++ does not have finally blocks, the resource-acquisition-is–
+      initialization (RAII) idiom can be used to achieve the same effect: If an object is
+      constructed on the stack, its destructor runs when the object goes out of scope. The
+      std::lock_guard wrapper object manages lock acquisition and release:
+      std::mutex m;
+      ...
+      {
+        std::lock_guard<std::mutex> g(m);
+        // mutex m is locked
+        if (i == 9)
+          return; // releases m because g destructs
+        f();
+        // releases m because g destructs
+      }
+
+      A.4.3 Condition variables
+      C++14 added condition variables as a language feature. Condition variables can be
+      used to create objects that behave like Java monitors. However, programmers must
+      explicitly manage the association between mutexes and condition variables.
+          One complication that arises is that std::lock_guard does not allow a program-
+      mer to unlock and relock the mutex: for as long as the lock_guard is in scope, the
+      mutex must be acquired. When a condition variable is used to make a thread wait, the
+      critical section must break atomicity. To do so, it must release the lock. It would be
+      unfortunate if programmers had to give up the convenience of lock_guard when using
+      condition variables. Fortunately, the std::unique_lock wrapper is like lock_guard,
+      but also allows threads to unlock and relock the underlying mutex. See Fig. A.8 for
+      an example.
+
+ 1   #include <condition_variable>
+ 2   #include <iostream>
+ 3   #include <mutex>
+ 4   #include <string>
+ 5   #include <thread>
+ 6
+
+ 7   std::mutex m;
+ 8   std::condition_variable cv_full, cv_empty;
+ 9   int data;
+10   bool data_ready;
+11
+
+12   void consumer_thread(int items) {
+13     for (int i = 0; i < items; ++i) {
+14       std::unique_lock<std::mutex> g(m);
+15       cv_full.wait(g, []() { return data_ready; });
+16       std::cout << "consumed " << data << std::endl;
+17       data_ready = false;
+18       cv_empty.notify_one();
+19     }
+20   }
+21   void producer_thread(int count, int *items) {
+22     for (int i = 0; i < count; ++i) {
+23       std::unique_lock<std::mutex> g(m);
+24       cv_empty.wait(g, []() { return !data_ready; });
+25       data = items[i];
+26       std::cout << "produced " << data << std::endl;
+27       data_ready = true;
+28       cv_full.notify_one();
+29     }
+30   }
+31   int main() {
+32     int items[] = {1, 1, 2, 3, 5, 8, 13, 21, 34, 55};
+33     std::thread producer(producer_thread, 10, items);
+34     std::thread consumer(consumer_thread, 10);
+35     producer.join();
+36     consumer.join();
+37   }
+
+     FIGURE A.8
+     Example of using condition variables in C++.
+
+         The std::condition_variable object requires that its associated mutex is ac-
+     cessed through a unique_lock. The std::condition_variable object provides two
+     different wait() methods. We use the more advanced version, which takes a predi-
+     cate as a second parameter and uses it to decide when to stop waiting. Consider the
+     call to wait() on line 24. It could be written as:
+
+      while (data_ready)
+        cv_empty.wait(g);
+
+      While this code is equivalent, most programmers prefer to use a predicate, which
+      avoids having to remember that condition variables, like Java monitors, are subject to
+      spurious wakeups.
+          Condition variables also have methods that let the programmer control how a
+      thread waits (e.g., by incorporating timeouts). There is also a notify_all() to wake
+      all threads that are waiting on a condition variable. C++ allows the programmer to
+      call notify_one or notify_all while holding the lock, and also while not holding the
+      lock. Although notifying without the lock may be faster in some cases, it is easier to
+      assert the correctness of code when it holds the lock while calling a notify function.
+
+      A.4.4 Atomic variables
+      The C++ memory model allows programmers to reason about the correctness of pro-
+      grams. It defines a happens-before order between thread lifecycle events (e.g., via
+      thread constructors and calls to join()), and ensures that programmers can reason
+      about the orders that are created among threads that use a common mutex. For fine-
+      grained ordering, C++ defines the std::atomic<> type, which is similar to volatile
+      in Java: By default, these variables are never cached in registers by the compiler, and
+      their use implies fences and ordering (both during compilation and during execution)
+      with respect to both regular data accesses and other std::atomic<> accesses.
+          Similar to volatile in Java, std::atomic<> can represent atomic scalar values,
+      atomic floating-point values, and atomic pointers. It is also possible to have pointers
+      to std::atomic<>, an improvement over volatile in Java. Through operator over-
+      loading, std::atomic<> integers support fetch-and-modify operations for arithmetic
+      and logic. For example, in the following code, increments of x will be achieved via a
+      hardware read–modify–write operation, and will not be vulnerable to races:
+      std::atomic<int> counter;
+      ...
+      {
+        counter++;
+        --counter;
+        counter *= 16;
+        counter ^= 0xFACE;
+      }
+
+      The std::atomic<> type also provides compare_exchange_strong() for performing
+      compare-and-set operations.
+          When accessing a std::atomic<> variable, a programmer can treat it as if it were
+      of a nonatomic type. For example, the following are valid:
+      std::atomic<int> my_int;
+      my_int = 7;
+      int local = my_int;
+
+When a program uses this syntax, the compiler will enforce the strictest ordering
+that it can. That is, an atomic load will prevent subsequent accesses from happening
+before it, a store will prevent preceding accesses from happening after it, and any
+read–modify–write operation will prevent any reorderings across it. A programmer
+can relax these orderings by using explicit load and store methods:
+std::atomic<int> my_int;
+my_int.store(7);
+int local = my_int.load();
+
+By default, the load and store methods ensure strict ordering, but the guarantees can
+be relaxed by specifying an additional parameter (e.g., std::memory_order_relaxed). In
+some programs, such relaxation can significantly improve performance. This idea is
+explored, briefly, in Chapter 20.
+
+A.4.5 Thread-local storage
+In C++, variable may have the thread_local storage class specifier, which indicates
+that each thread reads and writes a different logical instance of the variable. For ex-
+ample, in the code in Fig. A.9, many threads increment a shared counter, and also
+thread-local counters.
+
+thread_local int local_counter = 0;
+std::atomic<int> global_counter(0);
+std::mutex m;
+
+void increment(int howmany) {
+  for (int i = 0; i < howmany; ++i) {
+    local_counter++;
+    global_counter++;
+  }
+  std::lock_guard<std::mutex> g(m);
+  std::cout << "Thread exiting with local = " << local_counter
+            << " and global = " << global_counter << std::endl;
+}
+int run_threads(int thread_count, int increments_per_thread) {
+  std::vector<std::thread> threads;
+  for (int i = 0; i < thread_count; ++i)
+    threads.push_back(std::thread(increment, increments_per_thread));
+  for (int i = 0; i < thread_count; ++i)
+    threads[i].join();
+}
+
+FIGURE A.9
+A C++ program that uses thread-local variables.
+
+          If we call run_threads with multiple threads (e.g., run_threads(4, 1048576);), the
+      final value of the global counter will be equal to the sum of the increments_per_thread
+      values passed to each of the threads. The threads increment the counter concurrently.
+      As they do so, they also increment local_counter. However, each thread’s increments
+      are to a per-thread copy. Thus there are no races on local_counter, and its value does
+      not equal global_counter when the program completes.
+
+      A.5 C#
+      C# is a Java-like language that runs on Microsoft’s .Net platform.
+
+      A.5.1 Threads
+      C# provides a threading model similar to Java’s. C# threads are implemented by the
+      System.Threading.Thread class. When you create a thread, you tell it what to do by
+      passing it a ThreadStart delegate, a kind of pointer to the method you want to call.
+      For example, here is a method that prints a simple message:
+      void HelloWorld()
+      {
+          Console.WriteLine("Hello World");
+      }
+
+      We then turn this method into a ThreadStart delegate, and pass that delegate to the
+      thread constructor:
+      ThreadStart hello = new ThreadStart(HelloWorld);
+      Thread thread = new Thread(hello);
+
+      C# provides a syntactic shortcut, called an anonymous method, that allows you to
+      define a delegate directly, for example, by combining the previous steps into a single
+      expression:
+      Thread thread = new Thread(delegate()
+      {
+          Console.WriteLine("Hello World");
+      });
+
+      As in Java, after a thread has been created, it must be started:
+      thread.Start();
+
+      This call causes the thread to run, while the caller returns immediately. If the caller
+      wants to wait for the thread to finish, it must join the thread:
+      thread.Join();
+
+      The caller is blocked until the thread’s method returns.
+          Fig. A.10 shows a method that initializes a number of threads, starts them, waits
+      for them to finish, and then prints out a message. The method creates an array of
+
+ 1   static void Main(string[] args)
+ 2   {
+ 3       Thread[] thread = new Thread[8];
+ 4       // create threads
+ 5       for (int i = 0; i < thread.Length; i++)
+ 6       {
+ 7           String message = "Hello world from thread" + i;
+ 8           ThreadStart hello = delegate()
+ 9           {
+10               Console.WriteLine(message);
+11           };
+12           thread[i] = new Thread(hello);
+13       }
+14       // start threads
+15       for (int i = 0; i < thread.Length; i++)
+16       {
+17           thread[i].Start();
+18       }
+19       // wait for them to finish
+20       for (int i = 0; i < thread.Length; i++)
+21       {
+22           thread[i].Join();
+23       }
+24       Console.WriteLine("done!");
+25   }
+
+     FIGURE A.10
+     This method initializes a number of C# threads, starts them, waits for them to finish, and
+     then prints out a message.
+
+     threads, initializing each thread with its own ThreadStart delegate. We then start the
+     threads, and each thread executes its delegate, displaying its message. Finally, we
+     wait for each thread to finish, and display a message when they are all done. Except
+     for minor syntactic differences, this code is similar to what you would write in Java.
+
+     A.5.2 Monitors
+     For simple mutual exclusion, C# provides the ability to lock an object much like the
+     synchronized modifier in Java:
+     int GetAndIncrement()
+     {
+         lock (this)
+         {
+             return value++;
+         }
+     }
+
+      1       class Queue<T>
+      2       {
+      3           int head, tail;
+      4           T[] call;
+      5           public Queue(int capacity)
+      6           {
+      7               call = new T[capacity];
+      8               head = tail = 0;
+      9           }
+      10          public void Enq(T x)
+      11          {
+      12              Monitor.Enter(this);
+      13              try
+      14              {
+      15                  while (tail - head == call.Length)
+      16                  {
+      17                      Monitor.Wait(this); // queue is full
+      18                  }
+      19                  calls[(tail++) % call.Length] = x;
+      20                  Monitor.Pulse(this); // notify waiting dequeuers
+      21              }
+      22              finally
+      23              {
+      24                  Monitor.Exit(this);
+      25              }
+      26          }
+      27          public T Deq()
+      28          {
+      29              Monitor.Enter(this);
+      30              try
+      31              {
+      32                  while (tail == head)
+      33                  {
+      34                      Monitor.Wait(this); // queue is empty
+      35                  }
+      36                  T y = calls[(head++) % call.Length];
+      37                  Monitor.Pulse(this); // notify waiting enqueuers
+      38                  return y;
+      39              }
+      40              finally
+      41              {
+      42                  Monitor.Exit(this);
+      43              }
+      44          }
+      45      }
+
+           FIGURE A.11
+           A bounded Queue class.
+
+     Unlike Java, C# does not allow you to use a lock statement to modify a method
+     directly. Instead, the lock statement is used to enclose the method body.
+         Concurrent data structures require more than mutual exclusion: They also re-
+     quire the ability to wait and signal conditions. Unlike in Java, where every object
+     is an implicit monitor, in C# you must explicitly create the monitor associated with
+     an object. To acquire a monitor lock, call Monitor.Enter(this), and to release the
+     lock, call Monitor.Exit(this). Each monitor has a single implicit condition, which
+     is waited upon by Monitor.Wait(this), and signaled by Monitor.Pulse(this) or
+     Monitor.PulseAll(this), which respectively wake up one or all sleeping threads.
+     Fig. A.11 shows how to implement a bounded queue using C# monitors.
+
+     A.5.3 Thread-local objects
+     C# provides a very simple way to make a static field thread-local: Simply prefix the
+     field declaration with the attribute [ThreadStatic]:
+     [ThreadStatic]
+     static int value;
+
+     Do not provide an initial value for a [ThreadStatic] field, because the initialization
+     happens once, not once per thread. Instead, each thread will find the field initially has
+     that type’s default value: zero for integers, null for references, and so on.
+         Fig. A.12 shows how to implement the ThreadID class (Java version in Fig. A.3).
+     There is one point about this program that may require a comment. The first time a
+     thread inspects its [ThreadStatic] identifier, that field will be zero, the default value
+     for integers. To distinguish between an uninitialized zero and a thread ID zero, this
+     field holds the thread ID displaced by one: Thread 0 has field value 1, and so on.
+
+ 1      class ThreadID
+ 2      {
+ 3          [ThreadStatic] static int myID;
+ 4          static int counter;
+ 5          public static int get()
+ 6          {
+ 7              if (myID == 0)
+ 8              {
+ 9                  myID = Interlocked.Increment(ref counter);
+10              }
+11              return myID - 1;
+12          }
+13      }
+
+     FIGURE A.12
+     The ThreadID class provides each thread a unique identifier implemented using
+     [ThreadStatic].
+
+      A.6 Appendix notes
+      The Java programming language was created by James Gosling [52]. Dennis Ritchie
+      is credited with creating C. The basic monitor model is credited to Tony Hoare [77]
+      and Per Brinch Hansen [57], although they used different mechanisms for waiting
+      and notification. The mechanisms used by Java (and later by C#) were originally
+      proposed by Butler Lampson and David Redell [107].
+                                                                          APPENDIX
+
+Hardware basics
+                                                                          B
+   A novice was trying to fix a broken Lisp machine by turning the power off and
+   on. Knight, seeing what the student was doing spoke sternly: “You cannot fix a
+   machine just by power-cycling it with no understanding of what is going wrong.”
+   Knight turned the machine off and on. The machine worked.
+
+               (From “AI Koans,” a collection of jokes popular at MIT in the 1980s.)
+
+B.1 Introduction (and a puzzle)
+You can do a pretty good job of programming a uniprocessor without understanding
+much about computer architecture, but the same is not true of multiprocessors. You
+cannot program a multiprocessor effectively unless you know what a multiprocessor
+is. We illustrate this point by a puzzle. We consider two programs that are logically
+equivalent, but one is much less efficient than the other. Ominously, the simpler pro-
+gram is the inefficient one. This discrepancy cannot be explained, nor the danger
+avoided, without a basic understanding of modern multiprocessor architectures.
+    Here is the background to the puzzle. Suppose two threads share a resource that
+can be used by only one thread at a time. To prevent concurrent use, each thread must
+lock the resource before using it, and unlock it afterward. We study many ways to im-
+plement locks in Chapter 7. For the puzzle, we consider two simple implementations
+in which the lock is a single Boolean field. If the field is false, the lock is free, and
+otherwise it is in use. We manipulate the lock with the getAndSet(v) method, which
+atomically swaps its argument v with the field value. To acquire the lock, a thread
+calls getAndSet(true). If the call returns false, then the lock was free, and the caller
+succeeded in locking the object. Otherwise, the object was already locked, and the
+thread must try again later. A thread releases a lock simply by storing false into the
+Boolean field.
+    In Fig. B.1, the test-and-set (TASLock) lock repeatedly calls getAndSet(true)
+(line 4) until it returns false. By contrast, in Fig. B.2, the test-and-test-and-set lock
+(TTASLock) repeatedly reads the lock field (by calling state.get() at line 5) until it
+returns false, and only then calls getAndSet() (line 6). It is important to understand
+that reading the lock value is atomic, and applying getAndSet() to the lock value is
+atomic, but the combination is not atomic: Between the time a thread reads the lock
+value and the time it calls getAndSet(), the lock value may have changed.
+
+      1    public class TASLock implements Lock {
+      2      ...
+      3      public void lock() {
+      4        while (state.getAndSet(true)) {} // spin
+      5      }
+      6      ...
+      7    }
+
+           FIGURE B.1
+           The TASLock class.
+
+      1    public class TTASLock implements Lock {
+      2      ...
+      3      public void lock() {
+      4        while (true) {
+      5          while (state.get()) {}; // spin
+      6          if (!state.getAndSet(true))
+      7            return;
+      8        }
+      9      }
+      10     ...
+      11   }
+
+           FIGURE B.2
+           The TTASLock class.
+
+               Before you proceed, you should convince yourself that the TASLock and TTASLock
+           algorithms are logically the same. The reason is simple: In the TTASLock algorithm,
+           reading that the lock is free does not guarantee that the next call to getAndSet() will
+           succeed, because some other thread may have acquired the lock in the interval be-
+           tween reading the lock and trying to acquire it. So why bother reading the lock before
+           trying to acquire it?
+               Here is the puzzle: While the two lock implementations may be logically equiva-
+           lent, they perform very differently. In a classic 1989 experiment, Anderson measured
+           the time needed to execute a simple test program on several contemporary multipro-
+           cessors. He measured the elapsed time for n threads to execute a short critical section
+           one million times. Fig. B.3 shows how long each lock takes, plotted as a function
+           of the number of threads. In a perfect world, both the TASLock and TTASLock curves
+           would be as flat as the ideal curve on the bottom, since each run does the same number
+           of increments. Instead, we see that both curves slope up, indicating that lock-induced
+           delay increases with the number of threads. Curiously, however, the TASLock is much
+           slower than the TTASLock lock, especially as the number of threads increases. Why?
+               This appendix covers much of what you need to know about multiprocessor ar-
+           chitecture to write efficient concurrent algorithms and data structures. Along the way,
+           we will explain the divergent curves in Fig. B.3.
+
+FIGURE B.3
+Schematic performance of a TASLock, a TTASLock, and an ideal lock.
+
+   We are concerned with the following components:
+• The processors are hardware devices that execute software threads. There are typ-
+  ically more threads than processors, and each processor runs a thread for a while,
+  sets it aside, and turns its attention to another thread.
+• The interconnect is a communication medium that links processors to processors
+  and processors to memory.
+• The memory is actually a hierarchy of components that store data, ranging from
+  one or more levels of small, fast caches to a large and relatively slow main mem-
+  ory. Understanding how these levels interact is essential to understanding the
+  actual performance of many concurrent algorithms.
+    From our point of view, one architectural principle drives everything else: Pro-
+cessors and main memory are far apart. It takes a long time for a processor to read a
+value from memory. It also takes a long time for a processor to write a value to mem-
+ory, and longer still for the processor to be sure that value has actually been installed
+in memory. Accessing memory is more like mailing a letter than making a phone call.
+Almost everything we examine in this appendix is the result of trying to alleviate the
+long time it takes (“high latency”) to access memory.
+    Processor and memory speed change over time, but their relative performance
+changes slowly. Consider the following analogy. Imagine that it is 1980, and you
+are in charge of a messenger service in mid-town Manhattan. While cars outperform
+bicycles on the open road, bicycles outperform cars in heavy traffic, so you choose to
+use bicycles. Even though the technology behind both bicycles and cars has advanced,
+the architectural comparison remains the same. Then, as now, if you are designing
+an urban messenger service, you should use bicycles, not cars.
+
+      B.2 Processors and threads
+      A multiprocessor consists of multiple hardware processors, each of which executes a
+      sequential program. When discussing multiprocessor architectures, the basic unit of
+      time is the cycle: the time it takes a processor to fetch and execute a single instruc-
+      tion. In absolute terms, cycle times change as technology advances (from about 10
+      million cycles per second in 1980 to about 3000 million in 2005), and they vary from
+      one platform to another (processors that control toasters have longer cycles than pro-
+      cessors that control web servers). Nevertheless, the relative cost of instructions such
+      as memory access changes slowly when expressed in terms of cycles.
+          A thread is a sequential program. While a processor is a hardware device, a thread
+      is a software construct. A processor can run a thread for a while and then set it aside
+      and run another thread, an event known as a context switch. A processor may set aside
+      a thread, or deschedule it, for a variety of reasons. Perhaps the thread has issued a
+      memory request that will take some time to satisfy, or perhaps that thread has simply
+      run long enough, and it is time for another thread to make progress. When a thread is
+      descheduled, it may resume execution on another processor.
+
+      B.3 Interconnect
+      The interconnect is the medium by which processors communicate with the memory
+      and with other processors. There are essentially two kinds of interconnect archi-
+      tectures in use: symmetric multiprocessing (SMP) and nonuniform memory access
+      (NUMA). See Fig. B.4.
+          In an SMP architecture, processors and memory are linked by a bus intercon-
+      nect, a broadcast medium that acts like a tiny ethernet. Both processors and the main
+      memory have bus controller units in charge of sending and listening for messages
+      broadcast on the bus. (Listening is sometimes called snooping.) SMP architectures
+      are easier to build, but they are not scalable to large numbers of processors because
+      eventually the bus becomes overloaded.
+
+      FIGURE B.4
+      An SMP architecture with caches on the right and a cacheless NUMA architecture on the
+      left.
+
+   In a NUMA architecture, a collection of nodes are linked by a point-to-point net-
+work, like a tiny local area network. Each node contains one or more processors
+and a local memory. One node’s local memory is accessible to the other nodes, and
+together, the nodes’ memories form a global memory shared by all processors. The
+NUMA name reflects the fact that a processor can access memory residing on its own
+node faster than it can access memory residing on other nodes. Networks are more
+complex than buses, and require more elaborate protocols, but they scale better than
+buses to large numbers of processors.
+   The division between SMP and NUMA architectures is a simplification: For ex-
+ample, some systems have hybrid architectures, where processors within a cluster
+communicate over a bus, but processors in different clusters communicate over a
+network.
+   From the programmer’s point of view, it may not seem important whether the
+underlying platform is based on a bus, a network, or a hybrid interconnect. It is im-
+portant, however, to realize that the interconnect is a finite resource shared among the
+processors. If one processor uses too much of the interconnect’s bandwidth, then the
+others may be delayed.
+
+B.4 Memory
+Processors share a main memory, which is a large array of words, indexed by address.
+The size of a word or an address is platform-dependent, but typically it is either 32 or
+64 bits. Simplifying somewhat, a processor reads a value from memory by sending a
+message containing the desired address to memory. The response message contains
+the associated data, that is, the contents of memory at that address. A processor writes
+a value by sending the address and the new data to memory, and the memory sends
+back an acknowledgment when the new data have been installed.
+
+B.5 Caches
+On modern architectures, a main memory access may take hundreds of cycles, so
+there is a real danger that a processor may spend much of its time just waiting for the
+memory to respond to requests. Modern systems alleviate this problem by introducing
+one or more caches: small memories that are situated closer to the processors and
+are therefore much faster than main memory. These caches are logically situated
+“between” the processor and the memory: When a processor attempts to read a value
+from a given memory address, it first looks to see if the value is already in the cache,
+and if so, it does not need to perform the slower access to memory. If the desired
+address’s value was found, we say the processor hits in the cache, and otherwise it
+misses. In a similar way, if a processor attempts to write an address that is in the
+cache, it does not need to perform the slower access to memory. The proportion of
+requests satisfied in the cache is called the cache hit ratio (or hit rate).
+
+           Caches are effective because most programs display a high degree of locality: If a
+      processor reads or writes a memory address (also called a memory location), then it
+      is likely to read or write the same location again soon. Moreover, if a processor reads
+      or writes a memory location, then it is also likely to read or write nearby locations
+      soon. To exploit this second observation, caches typically operate at a granularity
+      larger than a single word: A cache holds a group of neighboring words called cache
+      lines (sometimes called cache blocks).
+           In practice, most processors have two or three levels of caches, called L1, L2, and
+      L3 caches. All but the last (and largest) cache typically reside on the same chip as the
+      processor. An L1 cache typically takes one or two cycles to access. An on-chip L2
+      may take about 10 cycles to access. The last level cache, whether L2 or L3, typically
+      takes tens of cycles to access. These caches are significantly faster than the hundreds
+      of cycles required to access the memory. Of course, these times vary from platform
+      to platform, and many multiprocessors have even more elaborate cache structures.
+           The original proposals for NUMA architectures did not include caches because it
+      was felt that local memory was enough. Later, however, commercial NUMA archi-
+      tectures did include caches. Sometimes the term cache-coherent NUMA (cc-NUMA)
+      is used to mean NUMA architectures with caches. Here, to avoid ambiguity, we use
+      NUMA to include cache-coherence unless we explicitly state otherwise.
+           Caches are expensive to build and therefore significantly smaller than the mem-
+      ory: Only a fraction of the memory locations will fit in a cache at the same time. We
+      would therefore like the cache to maintain values of the most highly used locations.
+      This implies that when a location needs to be cached and the cache is full, it is nec-
+      essary to evict a line, discarding it if it has not been modified, and writing it back to
+      main memory if it has. A replacement policy determines which cache line to replace
+      to make room for a given new location. If the replacement policy is free to replace
+      any line, then we say the cache is fully associative. If, on the other hand, there is only
+      one line that can be replaced, then we say the cache is direct-mapped. If we split the
+      difference, allowing any line from a set of size k to be replaced to make room for a
+      given line, then we say the cache is k-way set associative.
+
+      B.5.1 Coherence
+      Sharing (or, less politely, memory contention) occurs when one processor reads or
+      writes a memory address that is cached by another. If both processors are reading the
+      data without modifying it, then the data can be cached at both processors. If, however,
+      one processor tries to update the shared cache line, then the other’s copy must be
+      invalidated to ensure that it does not read an out-of-date value. In its most general
+      form, this problem is called cache-coherence. The literature contains a variety of
+      very complex and clever cache coherence protocols. Here we review one of the most
+      commonly used, called the MESI protocol (pronounced “messy”) after the names of
+      possible cache line states. (Modern processors tend to use more complex protocols
+      with additional states.) Here are the cache line states:
+
+FIGURE B.5
+Example of the MESI cache-coherence protocol’s state transitions. (a) Processor A reads
+data from address a, and stores the data in its cache in the exclusive state. (b) When
+processor B attempts to read from the same address, A detects the address conflict, and
+responds with the associated data. Now a is cached at both A and B in the shared state.
+(c) If B writes to the shared address a, it changes its state to modified, and broadcasts a
+message warning A (and any other processor that might have those data cached) to set its
+cache line state to invalid. (d) If A then reads from a, it broadcasts a request, and B
+responds by sending the modified data both to A and to the main memory, leaving both
+copies in the shared state.
+
+• Modified: The line has been modified in the cache, and it must eventually be writ-
+  ten back to main memory. No other processor has this line cached.
+• Exclusive: The line has not been modified, and no other processor has this line
+  cached.
+• Shared: The line has not been modified, and other processors may have this line
+  cached.
+• Invalid: The line does not contain meaningful data.
+We illustrate this protocol by a short example depicted in Fig. B.5. For simplicity, we
+assume processors and memory are linked by a bus.
+    Processor A reads data from address a, and stores the data in its cache in the
+exclusive state. When processor B attempts to read from the same address, A detects
+the address conflict, and responds with the associated data. Now a is cached at both
+A and B in the shared state. If B writes to the shared address a, it changes its state to
+modified, and broadcasts a message warning A (and any other processor that might
+have those data cached) to set its cache line state to invalid. If A then reads from a, it
+broadcasts a request, and B responds by sending the modified data both to A and to
+the main memory, leaving both copies in the shared state.
+
+          False sharing occurs when processors that are accessing logically distinct data
+      nevertheless conflict because the locations they are accessing lie on the same cache
+      line. This observation illustrates a difficult trade-off: Large cache lines are good for
+      locality, but they increase the likelihood of false sharing. The likelihood of false shar-
+      ing can be reduced by ensuring that data objects that might be accessed concurrently
+      by independent threads lie far enough apart in memory. For example, having multi-
+      ple threads share a byte array invites false sharing, but having them share an array of
+      double-precision integers is less dangerous.
+
+      B.5.2 Spinning
+      A processor is spinning if it is repeatedly testing some word in memory, waiting for
+      another processor to change it. Depending on the architecture, spinning can have a
+      dramatic effect on overall system performance.
+          On an SMP architecture without caches, spinning is a very bad idea. Each time
+      the processor reads the memory, it consumes bus bandwidth without accomplishing
+      any useful work. Because the bus is a broadcast medium, these requests directed to
+      memory may prevent other processors from making progress.
+          On a NUMA architecture without caches, spinning may be acceptable if the
+      address in question resides in the processor’s local memory. Even though multipro-
+      cessor architectures without caches are rare, we will still ask, when we consider a
+      synchronization protocol that involves spinning, whether it permits each processor to
+      spin on its own local memory.
+          On an SMP or NUMA architecture with caches, spinning consumes significantly
+      fewer resources. The first time the processor reads the address, it takes a cache miss,
+      and loads the contents of that address into a cache line. Thereafter, as long as those
+      data remain unchanged, the processor simply rereads from its own cache, consuming
+      no interconnect bandwidth, a process known as local spinning. When the cache state
+      changes, the processor takes a single cache miss, observes that the data have changed,
+      and stops spinning.
+
+      B.6 Cache-conscious programming, or the puzzle solved
+      We now know enough to explain why the TTASLock examined in Appendix B.1 out-
+      performs the TASLock. Each time the TASLock applies getAndSet(true) to the lock, it
+      sends a message on the interconnect causing a substantial amount of traffic. In an
+      SMP architecture, the resulting traffic may be enough to saturate the interconnect,
+      delaying all threads, including a thread trying to release the lock, or even threads
+      not contending for the lock. By contrast, while the lock is busy, the TTASLock spins,
+      reading a locally cached copy of the lock, and producing no interconnect traffic, ex-
+      plaining its improved performance.
+
+    The TTASLock is still far from ideal. When the lock is released, all its cached copies
+are invalidated, and all waiting threads call getAndSet(true), resulting in a burst of
+traffic, smaller than that of the TASLock, but nevertheless significant.
+    We further discuss the interactions of caches with locking in Chapter 7. Here we
+consider some simple ways to structure data to avoid false sharing.
+• Objects or fields that are accessed independently should be aligned and padded so
+  that they end up on different cache lines.
+• Keep read-only data separate from data that are modified frequently. For example,
+  consider a list whose structure is constant, but whose elements’ value fields change
+  frequently. To ensure that modifications do not slow down list traversals, one could
+  align and pad the value fields so that each one fills up a cache line.
+• When possible, split an object into thread-local pieces. For example, a counter
+  used for statistics could be split into an array of counters, one per thread, each
+  one residing on a different cache line. Splitting the counter allows each thread to
+  update its own replica, avoiding the invalidation traffic that would be incurred by
+  having a single shared counter.
+• If a lock protects data that is frequently modified, then keep the lock and the data
+  on distinct cache lines, so that threads trying to acquire the lock do not interfere
+  with the lock-holder’s access to the data.
+• If a lock protects data that are frequently uncontended, then try to keep the lock
+  and the data on the same cache lines, so that acquiring the lock will also load some
+  of the data into the cache.
+
+B.7 Multicore and multithreaded architectures
+In a multicore architecture, as in Fig. B.6, multiple processors are placed on the same
+chip. Each processor on that chip typically has its own L1 cache, but they share a
+
+FIGURE B.6
+A multicore SMP architecture. The L2 cache is on chip and shared by all processors while
+the memory is off-chip.
+
+      common L2 cache. Processors can communicate efficiently through the shared L2
+      cache, avoiding the need to go through memory, and to invoke the cumbersome
+      cache-coherence protocol.
+          In a multithreaded architecture, a single processor may execute two or more
+      threads at once. Many modern processors have substantial internal parallelism. They
+      can execute instructions out of order, or in parallel (e.g., keeping both fixed and
+      floating-point units busy), or even execute instructions speculatively before branches
+      or data have been computed. To keep hardware units busy, multithreaded processors
+      can mix instructions from multiple streams.
+          Modern processor architectures combine multicore with multithreading, where
+      multiple individually multithreaded cores may reside on the same chip. The context
+      switches on some multicore chips are inexpensive and are performed at a very fine
+      granularity, essentially context switching on every instruction. Thus, multithreading
+      serves to hide the high latency of accessing memory: Whenever a thread accesses
+      memory, the processor allows another thread to execute.
+
+      B.7.1 Relaxed memory consistency
+      When a processor writes a value to memory, that value is kept in the cache and marked
+      as dirty, meaning that it must eventually be written back to main memory. On most
+      modern processors, write requests are not applied to memory when they are issued.
+      Rather, they are collected in a hardware queue called a write buffer (or store buffer),
+      and applied to memory together at a later time. A write buffer provides two benefits.
+      First, it is often more efficient to issue several requests together, a phenomenon called
+      batching. Second, if a thread writes to an address more than once, earlier requests can
+      be discarded, saving a trip to memory, a phenomenon called write absorption.
+          The use of write buffers has a very important consequence: The order in which
+      reads and writes are issued to memory is not necessarily the order in which they
+      occur in the program. For example, recall the flag principle of Chapter 1, which was
+      crucial to the correctness of mutual exclusion: If two processors each first write their
+      own flag and then read the other’s flag location, then one of them will see the other’s
+      newly written flag value. With write buffers, this is no longer true: both threads may
+      write, each in its respective write buffer, but these writes might not be applied to the
+      shared memory until after each processor reads the other’s flag location in memory.
+      Thus, neither reads the other’s flag.
+          Compilers make matters even worse. They are good at optimizing performance on
+      single-processor architectures. Often, this optimization involves reordering a thread’s
+      reads and writes to memory. Such reordering is invisible for single-threaded pro-
+      grams, but it can have unexpected consequences for multithreaded programs in which
+      threads may observe the order in which writes occur. For example, if one thread fills
+      a buffer with data and then sets an indicator to mark the buffer as full, then concur-
+      rent threads may see the indicator set before they see the new data, causing them
+      to read stale values. The erroneous double-checked locking pattern described in Ap-
+      pendix A.3 is an example of a pitfall produced by unintuitive aspects of the Java
+      memory model.
+
+     Different architectures provide different guarantees about the extent to which
+memory reads and writes can be reordered. As a rule, it is better not to rely on such
+guarantees, and instead to use more expensive techniques, described in the following
+paragraph, to prevent such reordering.
+     Every architecture provides a memory barrier instruction (sometimes called a
+fence), which forces writes to take place in the order they are issued, but at a price. A
+memory barrier flushes the write buffer, ensuring that all writes issued before the bar-
+rier become visible to the processor that issued the barrier. Memory barriers are often
+inserted automatically by atomic read–modify–write operations such as getAndSet(),
+or by standard concurrency libraries. Thus, explicit use of memory barriers is needed
+only when processors perform read–write instructions on shared variables outside of
+critical sections.
+     On one hand, memory barriers are expensive (hundreds of cycles, maybe more),
+and should be used only when necessary. On the other hand, synchronization bugs
+can be very difficult to track down, so memory barriers should be used liberally,
+rather than relying on complex platform-specific guarantees about limits to memory
+instruction reordering.
+     The Java language itself allows reads and writes to object fields to be reordered
+if they occur outside synchronized methods or blocks. Java provides a volatile key-
+word that ensures that reads and writes to a volatile object field that occur outside
+synchronized blocks or methods are not reordered. (The atomic template provides
+similar guarantees for C++.) Using this keyword can be expensive, so it should be
+used only when necessary. We note that in principle, one could use volatile fields
+to make double-checked locking work correctly, but there would not be much point,
+since accessing volatile variables requires synchronization anyway.
+     Here ends our primer on multiprocessor hardware. We now continue to discuss
+these architectural concepts in the context of specific data structures and algorithms.
+A pattern will emerge: The performance of multiprocessor programs is highly depen-
+dent on synergy with the underlying hardware.
+
+B.8 Hardware synchronization instructions
+As discussed in Chapter 5, any modern multiprocessor architecture must support
+powerful synchronization primitives to be universal, that is, to provide concurrent
+computation’s equivalent of a universal Turing machine. It is therefore not surprising
+that implementations of Java and C++ rely on such specialized hardware instructions
+(also called hardware primitives) in implementing synchronization, from spin locks
+and monitors to the most complex lock-free data structures.
+    Modern architectures typically provide one of two kinds of universal synchro-
+nization primitives. The compare-and-swap (CAS) instruction is supported in archi-
+tectures by AMD, Intel, and Oracle. It takes three arguments: an address a in memory,
+an expected value e, and an update value v, and returns a Boolean. It atomically ex-
+ecutes the following: If the memory at address a contains the expected value e, write
+
+      the update value v to that address and return true, otherwise leave the memory un-
+      changed and return false.
+          On Intel and AMD architectures, CAS is called CMPXCHG; on Oracle SPARC sys-
+      tems, it is called CAS.1 Java’s java.util.concurrent.atomic library provides atomic
+      Boolean, integer, and reference classes that implement CAS by a compareAndSet()
+      method. (Because most of our examples are in Java, we often refer to compareAndSet()
+      instead of CAS.) The atomic template of C++ provides the same functionality.
+          The CAS instruction has one pitfall. Perhaps the most common use of CAS is the
+      following. An application reads value a from a given memory address, and computes
+      a new value c for that location. It intends to store c, but only if the value a at the
+      address has not changed since it was read. One might think that applying a CAS with
+      expected value a and update value c would accomplish this goal. There is a problem:
+      A thread could have overwritten the value a with another value b, and later written a
+      again to the address. The CAS will replace a with c, but the application may not have
+      done what it was intended to do (for example, if the address stores a pointer, the new
+      value a may be the address of a recycled object). This problem is known as the ABA
+      problem, and discussed in detail in Chapter 10.
+          The other hardware synchronization primitive is a pair of instructions: load-linked
+      and store-conditional (LL/SC). The LL instruction reads from an address a, and a
+      later SC instruction attempts to store a new value at that address. The SC instruction
+      succeeds if the contents of a have not changed since that thread issued the earlier LL
+      instruction. It fails if the contents of a have changed in the interval.
+          LL/SC instructions are supported by a number of architectures: Alpha AXP
+      (ldl_l/stl_c), IBM PowerPC (lwarx/stwcx) MIPS ll/sc, and ARM (ldrex/strex).
+      LL/SC does not suffer from the ABA problem, but in practice there are often severe
+      restrictions on what a thread can do between an LL and the matching SC. A context
+      switch, another LL, or another load or store instruction may cause the SC to fail.
+          It is a good idea to use atomic fields and their associated methods sparingly be-
+      cause they are often based on CAS or LL/SC. A CAS or LL/SC instruction takes
+      significantly more cycles to complete than a load or store: It includes a memory
+      barrier and prevents out-of-order execution and various compiler optimizations. The
+      precise cost depends on many factors, and varies not only from one architecture to the
+      next, but also from one application of the instruction to the next within the same ar-
+      chitecture. It suffices to say that CAS or LL/SC can be an order of magnitude slower
+      than a simple load or store.
+
+      B.9 Appendix notes
+      Tom Anderson [12] did the classic experiments on spin locks. John Hennessy and
+      David Patterson [63] give a comprehensive treatment of computer architecture. The
+
+      1 Instead of a Boolean, CAS on SPARC returns the location’s prior value, which can be used to retry an
+      unsuccessful CAS. CMPXCHG on Intel’s Pentium effectively returns both a Boolean and the prior value.
+
+MESI protocol is used by Intel’s Pentium processor [83]. The tips on cache-conscious
+programming are adapted from Benjamin Gamsa, Orran Krieger, Eric Parsons, and
+Michael Stumm [49]. Sarita Adve and Karosh Gharachorloo [1] give an excellent
+survey of memory consistency models.
+
+B.10 Exercises
+Exercise B.1. Thread A must wait for a thread on another processor to change a flag
+bit in memory. The scheduler can either allow A to spin, repeatedly retesting the flag,
+or it can deschedule A, allowing some other thread to run. Suppose it takes a total
+of 10 milliseconds for the operating system to switch a processor from one thread to
+another. If the operating system deschedules thread A and immediately reschedules
+it, then it wastes 20 milliseconds. If, instead, A starts spinning at time t0 , and the
+flag changes at t1 , then the operating system will have wasted t1 − t0 time doing
+unproductive work.
+     A prescient scheduler is one that can predict the future. If it foresees that the flag
+will change in less than 20 milliseconds, it makes sense to have A spin, wasting less
+than 20 milliseconds, because descheduling and rescheduling A wastes 20 millisec-
+onds. If, on the other hand, it takes more than 20 milliseconds for the flag to change, it
+makes sense to replace A with another thread, wasting no more than 20 milliseconds.
+     Your assignment is to implement a scheduler that never wastes more than twice
+the time a prescient scheduler would have wasted under the same circumstances.
+Exercise B.2. Imagine you are a lawyer, paid to make the best case you can for
+a particular point of view. How would you argue the following claim: “If context
+switches took negligible time, then processors would not need caches, at least for
+applications that encompass large numbers of threads”?
+   Extra credit: Critique your argument.
+Exercise B.3. Consider a direct-mapped cache with 16 cache lines, indexed 0 to 15,
+where each cache line encompasses 32 words.
+• Explain how to map an address a to a cache line in terms of bit shifting and
+  masking operations. Assume for this question that addresses refer to words, not
+  bytes: address 7 refers to the eighth word in memory.
+• Compute the best and worst possible hit ratios for a program that loops four times
+  through an array of 64 words.
+• Compute the best and worst possible hit ratios for a program that loops four times
+  through an array of 512 words.
+Exercise B.4. Consider a direct-mapped cache with 16 cache lines, indexed 0 to 15,
+where each cache line encompasses 32 words.
+   Consider a two-dimensional 32 × 32 array a of words. This array is laid out in
+memory so that a[0, 0] is next to a[0, 1], and so on. Assume the cache is initially
+empty, but that a[0, 0] maps to the first word of cache line 0.
+
+         Consider the following column-first traversal:
+      int sum = 0;
+      for (int i = 0; i < 32; i++) {
+        for (int j = 0; j < 32; j++) {
+          sum += a[i,j]; // 2nd dim changes fastest
+        }
+      }
+
+      and the following row-first traversal:
+      int sum = 0;
+      for (int i = 0; i < 32; i++) {
+        for (int j = 0; j < 32; j++) {
+          sum += a[j,i]; // 1st dim changes fastest
+        }
+      }
+
+      Compare the number of cache misses produced by the two traversals, assuming the
+      oldest cache line is evicted first.
+      Exercise B.5. In the MESI cache-coherence protocol, what is the advantage of dis-
+      tinguishing between exclusive and modified modes?
+          What is the advantage of distinguishing between exclusive and shared modes?
+
+      Exercise B.6. Implement the test-and-set and test-and-test-and-set locks shown in
+      Figs. B.1 and B.2, test their relative performance on a multiprocessor, and analyze
+      the results.

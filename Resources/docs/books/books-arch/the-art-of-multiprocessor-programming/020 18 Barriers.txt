@@ -1,0 +1,840 @@
+                                                                                            CHAPTER
+
+Barriers
+                                                                                            18
+18.1 Introduction
+Imagine you are writing the graphical display for a computer game. Your program
+prepares a sequence of frames to be displayed by a graphics package (perhaps a
+hardware coprocessor). This kind of program is sometimes called a soft real-time
+application: real-time because it must display at least 35 frames per second to be
+effective, and soft because occasional failure is not catastrophic. On a single-thread
+machine, you might write a loop like this:
+     while (true) {
+       frame.prepare();
+       frame.display();
+     }
+
+If, instead, you have n parallel threads available, then it makes sense to split the frame
+into n disjoint parts, and have each thread prepare its part in parallel with the others.
+      int me = ThreadID.get();
+      while (true) {
+        frame[me].prepare();
+        frame[me].display();
+      }
+
+The problem with this approach is that different threads require different amounts
+of time to prepare and display their portions of the frame. Some threads might start
+displaying the ith frame before others have finished the (i − 1)st.
+    To avoid such synchronization problems, we can organize computations such as
+this as a sequence of phases, where no thread should start the ith phase until the others
+have finished the (i − 1)st. We have seen this phased computation pattern before: In
+Chapter 12, the sorting network algorithms required each comparison phase to be
+separate from the others. Similarly, in the sample sorting algorithm, each phase had
+to make sure that prior phases had completed before proceeding.
+    The mechanism for enforcing this kind of synchronization is called a barrier; its
+interface is shown in Fig. 18.1. A barrier is a way of forcing asynchronous threads
+to act almost as if they were synchronous. When a thread finishing phase i calls the
+barrier’s await() method, it is blocked until all n threads have also finished that phase.
+Fig. 18.2 shows how one could use a barrier to make the parallel rendering program
+work correctly. After preparing frame i, all threads synchronize at a barrier before
+The Art of Multiprocessor Programming. https://doi.org/10.1016/B978-0-12-415950-1.00028-8
+Copyright © 2021 Elsevier Inc. All rights reserved.
+                                                                                                      431
+
+      1   public interface Barrier {
+      2     public void await();
+      3   }
+
+          FIGURE 18.1
+          The Barrier interface.
+
+      1   private Barrier b;
+      2     ...
+      3     while (true) {
+      4       frame[my].prepare();
+      5       b.await();
+      6       frame[my].display();
+      7     }
+
+          FIGURE 18.2
+          Using a barrier to synchronize concurrent displays.
+
+          starting to display that frame. This structure ensures that all threads concurrently
+          displaying a frame display the same frame.
+              Barrier implementations raise many of the same performance issues as spin locks
+          in Chapter 7, as well as some new issues. Clearly, barriers should be fast, in the sense
+          that we want to minimize the duration between when the last thread reaches the bar-
+          rier and when the last thread leaves the barrier. It is also important that threads leave
+          the barrier at roughly the same time. A thread’s notification time is the interval be-
+          tween when some thread has detected that all threads have reached the barrier, and
+          when that specific thread leaves the barrier. Having uniform notification times is im-
+          portant for many soft real-time applications. For example, picture quality is enhanced
+          if all portions of the frame are updated at more-or-less the same time.
+
+          18.2 Barrier implementations
+          Fig. 18.3 shows the SimpleBarrier class, which creates an AtomicInteger counter
+          initialized to n, the barrier size. Each thread applies getAndDecrement() to lower the
+          counter. If the call returns 1 (line 10), then that thread is the last to reach the barrier,
+          so it resets the counter for the next use (line 11). Otherwise, the thread spins on the
+          counter, waiting for the value to fall to zero (line 13). This barrier class may look like
+          it works, but it does not.
+               Unfortunately, the attempt to make the barrier reusable breaks it. Suppose there
+          are only two threads. Thread A applies getAndDecrement() to the counter, discovers
+          it is not the last thread to reach the barrier, and spins waiting for the counter value
+          to reach 0. When B arrives, it discovers it is the last thread to arrive, so it resets the
+          counter to n, in this case 2. It finishes the next phase and calls await(). Meanwhile, A
+                                                           18.3 Sense reversing barrier          433
+
+ 1   public class SimpleBarrier implements Barrier { // incorrect
+ 2     AtomicInteger count;
+ 3     int size;
+ 4     public SimpleBarrier(int n){
+ 5       count = new AtomicInteger(n);
+ 6       size = n;
+ 7     }
+ 8     public void await() {
+ 9       int position = count.getAndDecrement();
+10       if (position == 1) {
+11         count.set(size);
+12       } else {
+13         while (count.get() != 0){};
+14       }
+15     }
+16   }
+
+     FIGURE 18.3
+     An incorrect implementation of the SimpleBarrier class.
+
+     continues to spin; it never saw the counter reach 0. Eventually, A is waiting for phase
+     0 to finish, while B is waiting for phase 1 to finish, and the two threads starve.
+         Perhaps the simplest way to fix this problem is to alternate between two barriers,
+     using one for even-numbered phases and another for odd-numbered ones. However,
+     such an approach wastes space, and requires too much bookkeeping from applica-
+     tions.
+
+     18.3 Sense reversing barrier
+     A sense reversing barrier is an elegant and practical solution to the problem of reusing
+     barriers. As shown in Fig. 18.4, a phase’s sense is a Boolean value: true for even-
+     numbered phases and false otherwise. Each SenseBarrier object has a Boolean sense
+     field indicating the sense of the currently executing phase. Each thread keeps its cur-
+     rent sense as a thread-local object (Pragma 18.3.1). Initially the barrier’s sense is
+     the complement of the local sense of all the threads. When a thread calls await(),
+     it checks whether it is the last thread to decrement the counter. If so, it reverses the
+     barrier’s sense and continues. Otherwise, it spins waiting for the barrier’s sense field
+     to change to match its own local sense.
+         Decrementing the shared counter may cause memory contention, since all the
+     threads are trying to access the counter at about the same time. Once the counter has
+     been decremented, each thread spins on the sense field. This implementation is well
+     suited for cache-coherent architectures, since threads spin on locally cached copies
+     of the field, and the field is modified only when threads are ready to leave the barrier.
+
+      1    public SenseBarrier(int n) {
+      2      count = new AtomicInteger(n);
+      3      size = n;
+      4      sense = false;
+      5      threadSense = new ThreadLocal<Boolean>() {
+      6        protected Boolean initialValue() { return !sense; };
+      7      };
+      8    }
+      9    public void await() {
+      10     boolean mySense = threadSense.get();
+      11     int position = count.getAndDecrement();
+      12     if (position == 1) {
+      13       count.set(size);
+      14       sense = mySense;
+      15     } else {
+      16       while (sense != mySense) {}
+      17     }
+      18     threadSense.set(!mySense);
+      19   }
+
+           FIGURE 18.4
+           The SenseBarrier class: a sense reversing barrier.
+
+           The sense field is an excellent way of maintaining a uniform notification time on
+           symmetric cache-coherent multiprocessors.
+
+            PRAGMA 18.3.1
+            The constructor code for the sense reversing barrier, shown in Fig. 18.4, is mostly
+            straightforward. The one exception occurs on lines 5 and 6, where we initialize
+            the thread-local threadSense field. This somewhat complicated syntax defines a
+            thread-local Boolean value whose initial value is the complement of the sense
+            field’s initial value. See Appendix A.2.4 for a more complete explanation of
+            thread-local objects in Java.
+
+           18.4 Combining tree barrier
+           One way to reduce memory contention (at the cost of increased latency) is to use the
+           combining paradigm of Chapter 12. Split a large barrier into a tree of smaller barriers,
+           and have threads combine requests going up the tree and distribute notifications going
+           down the tree. A tree barrier (Fig. 18.5) is characterized by a size n, the total number
+           of threads, and a radix r, the number of children of each node For convenience, we
+           assume there are exactly n = r d+1 threads, where d is the depth of the tree.
+                                                             18.4 Combining tree barrier            435
+
+ 1   public class TreeBarrier implements Barrier {
+ 2     int radix;
+ 3     Node[] leaf;
+ 4     ThreadLocal<Boolean> threadSense;
+ 5     ...
+ 6     public void await() {
+ 7       int me = ThreadID.get();
+ 8       Node myLeaf = leaf[me / radix];
+ 9       myLeaf.await();
+10     }
+11     ...
+12   }
+
+     FIGURE 18.5
+     The TreeBarrier class: Each thread indexes into an array of leaf nodes and calls that leaf’s
+     await() method.
+
+         Specifically, the combining tree barrier is a tree of nodes, where each node has a
+     counter and a sense, just as in the sense reversing barrier. A node’s implementation is
+     shown in Fig. 18.6. Thread i starts at leaf node ?i/r?. The node’s await() method is
+     similar to the sense reversing barrier’s await(), the principal difference being that the
+     last thread to arrive, the one that completes the barrier, visits the parent barrier before
+     waking up the other threads. When r threads have arrived at the root, the barrier is
+     complete, and the sense is reversed. As before, thread-local Boolean sense values
+     allow the barrier to be reused without reinitialization.
+         The tree-structured barrier reduces memory contention by spreading memory ac-
+     cesses across multiple barriers. It may or may not reduce latency, depending on
+     whether it is faster to decrement a single location or to visit a logarithmic number
+     of barriers.
+         The root node, once its barrier is complete, lets notifications percolate down the
+     tree. This approach may be good for a NUMA architecture, but it may cause nonuni-
+     form notification times. Because threads visit an unpredictable sequence of locations
+     as they move up the tree, this approach may not work well on cacheless NUMA
+     architectures.
+
+      PRAGMA 18.4.1
+      Tree nodes are declared as an inner class of the tree barrier class, so nodes are
+      not accessible outside the class. As shown in Fig. 18.7, the tree is initialized by a
+      recursive build() method. The method takes a parent node and a depth. If the depth
+      is nonzero, it creates radix children, and recursively creates the children’s children.
+      If the depth is 0, it places each node in a leaf[] array. When a thread enters the
+      barrier, it uses this array to choose a leaf to start from. See Appendix A.2.1 for a
+      more complete discussion of inner classes in Java.
+
+      13       private class Node {
+      14         AtomicInteger count;
+      15         Node parent;
+      16         volatile boolean sense;
+      17
+
+      18           public Node() {
+      19             sense = false;
+      20             parent = null;
+      21             count = new AtomicInteger(radix);
+      22           }
+      23           public Node(Node myParent) {
+      24             this();
+      25             parent = myParent;
+      26           }
+      27           public void await() {
+      28             boolean mySense = threadSense.get();
+      29             int position = count.getAndDecrement();
+      30             if (position == 1) { // I’m last
+      31               if (parent != null) { // Am I root?
+      32                 parent.await();
+      33               }
+      34               count.set(radix);
+      35               sense = mySense;
+      36             } else {
+      37               while (sense != mySense) {};
+      38             }
+      39             threadSense.set(!mySense);
+      40           }
+      41       }
+      42   }
+
+           FIGURE 18.6
+           The TreeBarrier class: internal tree node.
+
+           18.5 Static tree barrier
+           The barriers seen so far either suffer from contention (the simple and sense reversing
+           barriers) or have excessive communication (the combining tree barrier). In the latter
+           barrier, which threads traverse up the tree is varying and unpredictable, which makes
+           it difficult to lay out the barriers on cacheless NUMA architectures. Surprisingly,
+           there is a simple barrier that allows a static layout and yet has low contention.
+               The static tree barrier of Fig. 18.8 works as follows: Each thread is assigned to a
+           node in a tree (Fig. 18.9). The thread at a node waits until all nodes below it in the tree
+           have finished, and then informs its parent. It then spins waiting for the global sense bit
+           to change. Once the root learns that its children are done, it toggles the global sense
+           bit to notify the waiting threads that all threads are done. On a cache-coherent mul-
+                                                                   18.5 Static tree barrier         437
+
+43   public class TreeBarrier implements Barrier {
+44     int radix;
+45     Node[] leaf;
+46     int leaves;
+47     ThreadLocal<Boolean> threadSense;
+48
+
+49       public TreeBarrier(int n, int r) {
+50         radix = r;
+51         leaves = 0;
+52         leaf = new Node[n / r];
+53         int depth = 0;
+54         threadSense = new ThreadLocal<Boolean>() {
+55           protected Boolean initialValue() { return true; };
+56         };
+57         // compute tree depth
+58         while (n > 1) {
+59           depth++;
+60           n = n / r;
+61         }
+62         Node root = new Node();
+63         build(root, depth - 1);
+64       }
+65       // recursive tree constructor
+66       void build(Node parent, int depth) {
+67         if (depth == 0) {
+68           leaf[leaves++] = parent;
+69         } else {
+70           for (int i = 0; i < radix; i++) {
+71             Node child = new Node(parent);
+72             build(child, depth - 1);
+73           }
+74         }
+75       }
+76       ...
+77   }
+
+     FIGURE 18.7
+     The TreeBarrier class: initializing a combining tree barrier. The build() method creates r
+     children for each node, and then recursively creates the children’s children. At the bottom,
+     it places leaves in an array.
+
+     tiprocessor, completing the barrier requires log(n) steps moving up the tree, while
+     notification simply requires changing the global sense, which is propagated by the
+     cache-coherence mechanism. On machines without coherent caches, threads propa-
+     gate notification down the tree as in the combining barrier we saw earlier.
+
+      1    public class StaticTreeBarrier implements Barrier {
+      2      int radix;
+      3      boolean sense;
+      4      Node[] node;
+      5      ThreadLocal<Boolean> threadSense;
+      6      int nodes;
+      7
+
+      8        public StaticTreeBarrier(int size, int myRadix) {
+      9          radix = myRadix;
+      10         nodes = 0;
+      11         node = new Node[size];
+      12         int depth = 0;
+      13         while (size > 1) {
+      14           depth++;
+      15           size = size / radix;
+      16         }
+      17         build(null, depth);
+      18         sense = false;
+      19         threadSense = new ThreadLocal<Boolean>() {
+      20           protected Boolean initialValue() { return !sense; };
+      21         };
+      22       }
+      23       // recursive tree constructor
+      24       void build(Node parent, int depth) {
+      25         if (depth == 0) {
+      26           node[nodes++] = new Node(parent, 0);
+      27         } else {
+      28           Node myNode = new Node(parent, radix);
+      29           node[nodes++] = myNode;
+      30           for (int i = 0; i < radix; i++) {
+      31             build(myNode, depth - 1);
+      32           }
+      33         }
+      34       }
+      35       public void await() {
+      36         node[ThreadID.get()].await();
+      37       }
+      38   }
+           FIGURE 18.8
+           The StaticTreeBarrier class: Each thread indexes into a statically assigned tree node and
+           calls that node’s await() method.
+
+           18.6 Termination detection barriers
+           All the barriers considered so far were directed at computations organized in phases,
+           where each thread finishes the work for a phase, reaches the barrier, and then starts a
+           new phase.
+                                                   18.6 Termination detection barriers         439
+
+39       public Node(Node myParent, int count) {
+40         children = count;
+41         childCount = new AtomicInteger(count);
+42         parent = myParent;
+43       }
+44       public void await() {
+45         boolean mySense = threadSense.get();
+46         while (childCount.get() > 0) {};
+47         childCount.set(children);
+48         if (parent != null) {
+49           parent.childDone();
+50           while (sense != mySense) {};
+51         } else {
+52           sense = !sense;
+53         }
+54         threadSense.set(!mySense);
+55       }
+56       public void childDone() {
+57         childCount.getAndDecrement();
+58       }
+
+     FIGURE 18.9
+     The StaticTreeBarrier class: internal Node class.
+
+          There is another interesting class of programs, in which each thread finishes its
+     own part of the computation, only to be put to work again when another thread gener-
+     ates new work. An example of such a program is the simplified work stealing executor
+     pool from Chapter 16 (Fig. 18.10). Once a thread exhausts the tasks in its local queue,
+     it tries to steal work from other threads’ queues. The execute() method itself may
+     push new tasks onto the calling thread’s local queue. Once all threads have exhausted
+     all tasks in their queues, the threads will run forever while repeatedly attempting to
+     steal items. Instead, we would like to devise a termination detection barrier so that
+     these threads can all terminate once they have finished all their tasks.
+          Each thread is either active (it has a task to execute) or inactive (it has none).
+     Note that any inactive thread may become active as long as some other thread is
+     active, since an inactive thread may steal a task from an active one. Once all threads
+     have become inactive, then no thread will ever become active again. Detecting that
+     the computation as a whole has terminated is the problem of determining that at some
+     instant in time, there are no longer any active threads.
+          None of the barrier algorithms studied so far can solve this problem. Termination
+     cannot be detected by having each thread announce that it has become inactive, and
+     simply count how many have done so, because threads may repeatedly change from
+     inactive to active and back. For example, we have suppose work stealing threads A,
+     B, and C. We would like the threads to be able to exit from the loop on line 9. An
+     incorrect strategy would assign each thread a Boolean value indicating whether it
+
+      1    public class WorkStealingThread {
+      2      DEQue[] queue;
+      3      public WorkStealingThread(DEQue[] queue) {
+      4        this.queue = queue;
+      5      }
+      6      public void run() {
+      7        int me = ThreadID.get();
+      8        RecursiveAction task = queue[me].popBottom();
+      9        while (true) {
+      10         while (task != null) {
+      11           task.compute();
+      12           task = queue[me].popBottom();
+      13         }
+      14         while (task == null) {
+      15           int victim = ThreadLocalRandom.current().nextInt(queue.length);
+      16           if (!queue[victim].isEmpty()) {
+      17             task = queue[victim].popTop();
+      18           }
+      19         }
+      20       }
+      21     }
+      22   }
+
+           FIGURE 18.10
+           Work stealing executor pool revisited.
+
+      1    public interface TDBarrier {
+      2      void setActive(boolean state);
+      3      boolean isTerminated();
+      4    }
+
+           FIGURE 18.11
+           Termination detection barrier interface.
+
+           is active or inactive. When A becomes inactive, it may then observe that B is also
+           inactive, and then observe that C is inactive. Nevertheless, A cannot conclude that
+           the overall computation has completed, as B might have stolen work from C after A
+           checked B, but before it checked C.
+               A termination detection barrier (Fig. 18.11) provides methods setActive(v) and
+           isTerminated(). Each thread calls setActive(true) to notify the barrier when it be-
+           comes active, and setActive(false) to notify the barrier when it becomes inactive.
+           The isTerminated() method returns true if and only if all threads had become inactive
+           at some earlier instant. Fig. 18.12 shows a simple implementation of a termination
+           detection barrier.
+                                                  18.6 Termination detection barriers              441
+
+ 1   public class SimpleTDBarrier implements TDBarrier {
+ 2     AtomicInteger count;
+ 3     public SimpleTDBarrier(int n){
+ 4       count = new AtomicInteger(n);
+ 5     }
+ 6     public void setActive(boolean active) {
+ 7       if (active) {
+ 8         count.getAndIncrement();
+ 9       } else {
+10         count.getAndDecrement();
+11       }
+12     }
+13     public boolean isTerminated() {
+14       return count.get() == 0;
+15     }
+16   }
+
+     FIGURE 18.12
+     A simple termination detection barrier.
+
+         The barrier encompasses an AtomicInteger initialized to 0. Each thread that be-
+     comes active increments the counter (line 8) and each thread that becomes inactive
+     decrements it (line 10). The computation is deemed to have terminated when the
+     counter reaches 0 (line 14).
+         The termination detection barrier works only if used correctly. Fig. 18.13 shows
+     how to modify the work stealing thread’s run() method to return when the computa-
+     tion has terminated. Initially, every thread registers as active (line 3). Once a thread
+     has exhausted its local queue, it registers as inactive (line 10). Before it tries to steal
+     a new task, however, it must register as active (line 14). If the theft fails, it registers
+     as inactive again (line 17).
+         Note that a thread sets its state to active before stealing a task. Otherwise, if a
+     thread were to steal a task while inactive, then the thread whose task was stolen
+     might also declare itself inactive, resulting in a computation where all threads declare
+     themselves inactive while the computation continues.
+         Here is a subtle point: A thread tests whether the queue is empty (line 13) before it
+     attempts to steal a task. This way, it avoids declaring itself active if there is no chance
+     the theft will succeed. Without this precaution, it is possible that the threads will not
+     detect termination because each one repeatedly switches to an active state before a
+     steal attempt that is doomed to fail.
+         Correct use of the termination detection barrier must satisfy both a safety and a
+     liveness property. The safety property is that if isTerminated() returns true, then the
+     computation really has terminated. Safety requires that no active thread ever declare
+     itself inactive, because it could trigger an incorrect termination detection. For exam-
+     ple, the work stealing thread of Fig. 18.13 would be incorrect if the thread declared
+     itself to be active only after successfully stealing a task. By contrast, it is safe for an
+
+      1        public void run() {
+      2          int me = ThreadID.get();
+      3          tdBarrier.setActive(true);
+      4          RecursiveAction task = queue[me].popBottom();
+      5          while (true) {
+      6            while (task != null) {
+      7              task.compute();
+      8              task = queue[me].popBottom();
+      9            }
+      10           tdBarrier.setActive(false);
+      11           while (task == null) {
+      12             int victim = ThreadLocalRandom.current().nextInt(queue.length);
+      13             if (!queue[victim].isEmpty()) {
+      14               tdBarrier.setActive(true);
+      15               task = queue[victim].popTop();
+      16               if (task == null) {
+      17                 tdBarrier.setActive(false);
+      18               }
+      19             }
+      20             if (tdBarrier.isTerminated()) {
+      21               return;
+      22             }
+      23           }
+      24         }
+      25       }
+      26   }
+
+           FIGURE 18.13
+           Work stealing executor pool: the run() method with termination.
+
+           inactive thread to declare itself active, which may occur if the thread is unsuccessful
+           in stealing work at line 15.
+               The liveness property is that if the computation terminates, then isTerminated()
+           eventually returns true. (It is not necessary that termination be detected instantly.)
+           While safety is not jeopardized if an inactive thread declares itself active, liveness
+           will be violated if a thread that does not succeed in stealing work fails to declare itself
+           inactive again (line 15), because termination will not be detected when it occurs.
+
+           18.7 Chapter notes
+           John Mellor-Crummey and Michael Scott [124] provide a survey of several barrier
+           algorithms, though the performance numbers they provide should be viewed from
+           a historical perspective. The combining tree barrier is based on code due to John
+           Mellor-Crummey and Michael Scott [124], which is in turn based on the combin-
+           ing tree algorithm of Pen-Chung Yew, Nian-Feng Tzeng, and Duncan Lawrie [168].
+
+     The dissemination barrier is credited to Debra Hensgen, Raphael Finkel, and Udi
+     Manber [64]. The tournament tree barrier used in the exercises is credited to John
+     Mellor-Crummey and Michael Scott [124]. The simple barriers and the static tree
+     barrier are most likely folklore. We learned of the static tree barrier from Beng-Hong
+     Lim. The termination detection barrier and its application to an executor pool are
+     based on a variation suggested by Peter Kessler to an algorithm by Dave Detlefs,
+     Christine Flood, Nir Shavit, and Xiolan Zhang [47].
+
+     18.8 Exercises
+     Exercise 18.1. Fig. 18.14 shows how to use barriers to make a parallel prefix com-
+     putation work on an asynchronous architecture.
+        A parallel prefix computation, given a sequence a0 , . . . , am−1 , of numbers,
+     computes in parallel the partial sums:
+                                                    
+                                                   i
+                                            bi =          aj .
+                                                   j =0
+
+     In a synchronous system, where all threads take steps at the same time, there are
+     simple, well-known algorithms for m threads to compute the partial sums in log m
+     steps. The computation proceeds in a sequence of rounds, starting at round zero. In
+     round r, if i ≥ 2r , thread i reads the value at a[i − 2r ] into a local variable. Next, it
+
+ 1   class Prefix extends java.lang.Thread {
+ 2     private int[] a;
+ 3     private int i;
+ 4     public Prefix(int[] myA, int myI) {
+ 5       a = myA;
+ 6       i = myI;
+ 7     }
+ 8     public void run() {
+ 9       int d = 1, sum = 0;
+10       while (d < m) {
+11         if (i >= d)
+12           sum = a[i-d];
+13         if (i >= d)
+14           a[i] += sum;
+15         d = d * 2;
+16       }
+17     }
+18   }
+
+     FIGURE 18.14
+     Parallel prefix computation.
+
+           adds that value to a[i]. Rounds continue until 2r ≥ m. It is not hard to see that after
+           log2 (m) rounds, the array a contains the partial sums.
+           1. What could go wrong if we executed the parallel prefix on n > m threads?
+           2. Add one or more barriers to this program to make it work properly in a concurrent
+              setting with n threads. What is the minimum number of barriers that are needed?
+
+           Exercise 18.2. Change the sense reversing barrier implementation so that waiting
+           threads call wait() instead of spinning.
+           • Give an example of a situation where suspending threads is better than spinning.
+           • Give an example of a situation where the other choice is better.
+
+      1     private class Node {
+      2       volatile boolean flag;    // signal when done
+      3       boolean active;           // active or passive?
+      4       Node parent;              // parent node
+      5       Node partner;             // partner node
+      6       // create passive node
+      7       Node() {
+      8         flag    = false;
+      9         active = false;
+      10        partner = null;
+      11        parent = null;
+      12      }
+      13      // create active node
+      14      Node(Node myParent) {
+      15        this();
+      16        parent = myParent;
+      17        active = true;
+      18      }
+      19      void await(boolean sense) {
+      20        if (active) { // I’m active
+      21          if (parent != null) {
+      22            while (flag != sense) {}; // wait for partner
+      23            parent.await(sense);    // wait for parent
+      24            partner.flag = sense; // tell partner
+      25          }
+      26        } else {                    // I’m passive
+      27          partner.flag = sense;     // tell partner
+      28          while (flag != sense) {}; // wait for partner
+      29        }
+      30      }
+      31    }
+
+           FIGURE 18.15
+           The TourBarrier class.
+
+Exercise 18.3. Change the tree barrier implementation so that it takes a Runnable
+object whose run() method is called once after the last thread arrives at the barrier,
+but before any thread leaves the barrier.
+
+Exercise 18.4. Modify the combining tree barrier so that nodes can use any barrier
+implementation, not just the sense reversing barrier.
+
+Exercise 18.5. A tournament tree barrier (class TourBarrier in Fig. 18.15) is an
+alternative tree-structured barrier. Assume there are n threads, where n is a power
+of 2. The tree is a binary tree consisting of 2n − 1 nodes. Each leaf is owned by a
+single, statically determined, thread. Each node’s two children are linked as partners.
+One partner is statically designated as active, and the other as passive. Fig. 18.16
+illustrates the tree structure.
+    Each thread keeps track of the current sense in a thread-local variable. When a
+thread arrives at a passive node, it sets its active partner’s sense field to the current
+sense, and spins on its own sense field until its partner changes that field’s value to the
+current sense. When a thread arrives at an active node, it spins on its sense field until
+its passive partner sets it to the current sense. When the field changes, that particular
+barrier is complete, and the active thread follows the parent reference to its parent
+node. Note that an active thread at one level may become passive at the next level.
+When the root node barrier is complete, notifications percolate down the tree. Each
+thread moves back down the tree setting its partner’s sense field to the current sense.
+• Explain how this barrier slightly improves the combining tree barrier of Fig. 18.5.
+• The tournament barrier code uses parent and partner references to navigate the
+  tree. We could save space by eliminating these fields and keeping all the nodes in
+  a single array with the root at index 0, the root’s children at indices 1 and 2, the
+
+FIGURE 18.16
+The TourBarrier class: information flow. Nodes are paired statically in active/passive pairs.
+Threads start at the leaves. Each thread in an active node waits for its passive partner to
+show up, then it proceeds up the tree. Each passive thread waits for its active partner for
+notification of completion. Once an active thread reaches the root, all threads have arrived,
+and notifications flow down the tree in the reverse order.
+
+              grandchildren at indices 3–6, and so on. Reimplement the tournament barrier to
+              use indexing arithmetic instead of references to navigate the tree.
+
+           Exercise 18.6. The combining tree barrier uses a single thread-local sense field for
+           the entire barrier. Suppose instead we were to associate a thread-local sense with each
+           node as in Fig. 18.17. Either explain why this implementation is equivalent to the
+           other one, except that it consumes more memory, or give a counterexample showing
+           that it is incorrect.
+
+      1     private class Node {
+      2        AtomicInteger count;
+      3        Node parent;
+      4        volatile boolean sense;
+      5        int d;
+      6        // construct root node
+      7        public Node() {
+      8          sense = false;
+      9          parent = null;
+      10         count = new AtomicInteger(radix);
+      11         ThreadLocal<Boolean> threadSense;
+      12         threadSense = new ThreadLocal<Boolean>() {
+      13           protected Boolean initialValue() { return true; };
+      14       };
+      15       }
+      16       public Node(Node myParent) {
+      17         this();
+      18         parent = myParent;
+      19       }
+      20       public void await() {
+      21         boolean mySense = threadSense.get();
+      22         int position = count.getAndDecrement();
+      23         if (position == 1) { // I’m last
+      24           if (parent != null) { // root?
+      25             parent.await();
+      26           }
+      27           count.set(radix); // reset counter
+      28           sense = mySense;
+      29         } else {
+      30           while (sense != mySense) {};
+      31         }
+      32         threadSense.set(!mySense);
+      33       }
+      34     }
+
+           FIGURE 18.17
+           Thread-local tree barrier.
+
+     Exercise 18.7. The tree barrier works “bottom-up,” in the sense that barrier com-
+     pletion moves from the leaves up to the root, while wakeup information moves from
+     the root back down to the leaves. Figs. 18.18 and 18.19 show an alternative design,
+     called a reverse tree barrier, which works just like a tree barrier except for the fact
+     that barrier completion starts at the root and moves down to the leaves. Either sketch
+     an argument why this is correct, perhaps by reduction to the standard tree barrier, or
+     give a counterexample showing why it is incorrect.
+
+ 1   public class RevBarrier implements Barrier {
+ 2     int radix;
+ 3     ThreadLocal<Boolean> threadSense;
+ 4     int leaves;
+ 5     Node[] leaf;
+ 6     public RevBarrier(int mySize, int myRadix) {
+ 7       radix = myRadix;
+ 8       leaves = 0;
+ 9       leaf = new Node[mySize / myRadix];
+10       int depth = 0;
+11       threadSense = new ThreadLocal<Boolean>() {
+12         protected Boolean initialValue() { return true; };
+13       };
+14       // compute tree depth
+15       while (mySize > 1) {
+16         depth++;
+17         mySize = mySize / myRadix;
+18       }
+19       Node root = new Node();
+20       root.d = depth;
+21       build(root, depth - 1);
+22     }
+23     // recursive tree constructor
+24     void build(Node parent, int depth) {
+25       // are we at a leaf node?
+26       if (depth == 0) {
+27         leaf[leaves++] = parent;
+28       } else {
+29         for (int i = 0; i < radix; i++) {
+30           Node child = new Node(parent);
+31           child.d = depth;
+32           build(child, depth - 1);
+33         }
+34       }
+35     }
+
+     FIGURE 18.18
+     Reverse tree barrier part 1.
+
+      36       public void await() {
+      37         int me = ThreadInfo.getIndex();
+      38         Node myLeaf = leaf[me / radix];
+      39         myLeaf.await(me);
+      40       }
+      41       private class Node {
+      42         AtomicInteger count;
+      43         Node parent;
+      44         volatile boolean sense;
+      45         int d;
+      46         // construct root node
+      47         public Node() {
+      48           sense = false;
+      49           parent = null;
+      50           count = new AtomicInteger(radix);
+      51         }
+      52         public Node(Node myParent) {
+      53           this();
+      54           parent = myParent;
+      55         }
+      56         public void await(int me) {
+      57           boolean mySense = threadSense.get();
+      58           // visit parent first
+      59           if ((me % radix) == 0) {
+      60             if (parent != null) { // root?
+      61               parent.await(me / radix);
+      62             }
+      63           }
+      64           int position = count.getAndDecrement();
+      65           if (position == 1) { // I’m last
+      66             count.set(radix); // reset counter
+      67             sense = mySense;
+      68           } else {
+      69             while (sense != mySense) {};
+      70           }
+      71           threadSense.set(!mySense);
+      72         }
+      73       }
+      74   }
+
+           FIGURE 18.19
+           Reverse tree barrier part 2: correct or not?.
+
+           Exercise 18.8. Implement an n-thread reusable barrier from an n-wire counting net-
+           work and a single Boolean variable. Sketch a proof that the barrier works.
+
+FIGURE 18.20
+Communication in the dissemination barrier. In each round r a thread i communicates with
+thread i + 2r (mod n).
+
+Exercise 18.9. A dissemination barrier is a symmetric barrier implementation in
+which threads spin on statically assigned locally cached locations using only loads
+and stores. As illustrated in Fig. 18.20, the algorithm runs in a series of rounds. At
+round r, thread i notifies thread i + 2r (mod n) (where n is the number of threads)
+and waits for notification from thread i − 2r (mod n).
+   For how many rounds must this protocol run to implement a barrier? What if n is
+not a power of 2? Justify your answers.
+
+Exercise 18.10. Give a reusable implementation of a dissemination barrier in Java.
+   Hint: Consider keeping track of both the parity and the sense of the current phase.
+Exercise 18.11. Create a table that summarizes the total number of operations in the
+static tree, combining tree, and dissemination barriers.
+
+Exercise 18.12. Can you devise a “distributed” termination detection algorithm for
+the executor pool in which threads do not repeatedly update or test a central location
+for termination, but rather use only local uncontended variables? Variables may be
+unbounded, but state changes should take constant time (so you cannot parallelize
+the shared counter).
+    Hint: Adapt the atomic snapshot algorithm from Chapter 4.
+
+Exercise 18.13. In the termination detection barrier, the state is set to active be-
+fore stealing the task; otherwise the stealing thread could be declared inactive; then
+it would steal a task, and before setting its state back to active, the thread it stole
+from could become inactive. This would lead to an undesirable situation in which all
+threads are declared inactive yet the computation continues. Can you devise a termi-
+nating executor pool in which the state is set to active only after successfully stealing
+a task?

@@ -1263,16 +1263,17 @@ local simple = {
 		exts = "-e md -e rst -e py -e c -e cc -e h -e lua -e txt",
 		prompt = "BCC> ",
 	},
-	-- Bochs: the x86/x64 emulator. Its user + development manuals live in the repo
-	-- as DocBook under bochs/doc/docbook (the rendered copy on sourceforge blocks
-	-- bots); browse those, and gs/:Src explores the emulator source.
+	-- Bochs: the x86/x64 emulator. The manuals are the frozen "Bochs
+	-- Documentation" web book (rendered from sourceforge's DocBook HTML); this
+	-- entry is the SOURCE explorer - clone the emulator tree so gs/:Src can jump
+	-- through the C++ (cpu, iodev, memory, gui, cpu/decoder ...) and the READMEs.
 	bochs = {
 		url = "https://github.com/bochs-emu/Bochs",
-		sparse = "/bochs/doc /bochs/README /bochs/CHANGES",
-		marker = "bochs/doc",
-		browse = "/bochs/doc",
-		exts = "-e txt -e dbk -e sgm -e html -e md -e rst",
-		prompt = "Bochs docs> ",
+		sparse = "/bochs",
+		marker = "bochs/cpu",
+		browse = "/bochs",
+		exts = "-e cc -e cpp -e h -e c -e txt -e README",
+		prompt = "Bochs source> ",
 	},
 	-- The tools' own tree: herd/libdir holds the .cat memory models (aarch64,
 	-- x86tso, riscv, linux-kernel, C11 ...), doc holds the manual sources and
@@ -2491,7 +2492,6 @@ local pick_llvm_tutorial = frozen_web_provider("llvm-tutorial", "LLVM Tutorial> 
 local pick_browser_engineering = frozen_web_provider("browser-engineering", "Web Browser Engineering> ")
 local pick_learnopengl = frozen_web_provider("learnopengl", "LearnOpenGL> ")
 local pick_revers_hypervisor = frozen_web_provider("revers-hypervisor", "Hypervisor Development> ")
-local pick_emulator = frozen_web_provider("emulator", "Emulator> ")
 local pick_elf_series = frozen_web_provider("elf-series", "ELF Series> ")
 local pick_glibc_malloc = frozen_web_provider("glibc-malloc", "glibc malloc> ")
 local pick_js_exploitation = frozen_web_provider("javascript-exploitation", "JavaScript Exploitation> ")
@@ -2501,6 +2501,11 @@ local pick_makefile_tutorial = frozen_web_provider("makefile-tutorial", "Makefil
 local pick_abs = frozen_web_provider("abs", "Bash Guide> ")
 local pick_studyplan_cpp = frozen_web_provider("studyplan-pro-cpp", "Pro C++> ")
 local pick_studyplan_dsa = frozen_web_provider("studyplan-dsa", "DSA> ")
+local pick_lyah = frozen_web_provider("lyah", "LYAH> ")
+local pick_lazyfoo_sdl3 = frozen_web_provider("lazyfoo-sdl3", "SDL3> ")
+local pick_qemu_internals = frozen_web_provider("qemu-internals", "QEMU> ")
+local pick_jit_series = frozen_web_provider("jit-series", "JIT> ")
+local pick_bochs_docs = frozen_web_provider("bochs-docs", "Bochs docs> ")
 
 -- ── glibc: frozen manual (docs) + per-version source (:Src) ──────────────
 -- Docs are the frozen latest manual (one book, same for every release). Source
@@ -3145,6 +3150,12 @@ local BOOKS = {
 	{ module = "Architecture", key = "books-arch", items = {
 		{ title = "A Primer on Memory Consistency and Cache Coherence", fmt = "pdf", slug = "a-primer-on-memory-consistency-and-cache-coherence", file = "A Primer on Memory Consistency and Cache Coherence (2nd ed).pdf" },
 		{ title = "Shared-Memory Synchronization", fmt = "pdf", slug = "shared-memory-synchronization", file = "Shared-Memory Synchronization (2nd ed).pdf" },
+		{ title = "The Art of Multiprocessor Programming", fmt = "pdf", slug = "the-art-of-multiprocessor-programming", file = "TheArtOfMultiprocessorProgramming.pdf" },
+		{ title = "Optimizing Software in C++ (Agner Fog)", fmt = "pdf", slug = "optimizing-software-in-cpp-agner-fog", file = "optimizing_cpp.pdf" },
+		{ title = "Optimizing Subroutines in Assembly (Agner Fog)", fmt = "pdf", slug = "optimizing-subroutines-in-assembly-agner-fog", file = "optimizing_assembly.pdf" },
+		{ title = "The Microarchitecture of Intel, AMD, and VIA CPUs (Agner Fog)", fmt = "pdf", slug = "microarchitecture-of-cpus-agner-fog", file = "microarchitecture.pdf" },
+		{ title = "Instruction Tables (Agner Fog)", fmt = "pdf", slug = "instruction-tables-agner-fog", file = "instruction_tables.pdf" },
+		{ title = "Calling Conventions (Agner Fog)", fmt = "pdf", slug = "calling-conventions-agner-fog", file = "calling_conventions.pdf" },
 	} },
 	{ module = "Hardware", key = "books-hardware", items = {
 		{ title = "Retrocomputing with Clash", fmt = "pdf", slug = "retrocomputing-with-clash", file = "retroclash.pdf" },
@@ -3262,7 +3273,6 @@ local WEB_BOOKS = {
 	{ title = "Web Browser Engineering", key = "browser-engineering", run = pick_browser_engineering },
 	{ title = "LearnOpenGL", key = "learnopengl", run = pick_learnopengl },
 	{ title = "Hypervisor Development (revers.engineering)", key = "revers-hypervisor", run = pick_revers_hypervisor },
-	{ title = "Emulator (emudev.org resources)", key = "emulator", run = pick_emulator },
 	{ title = "ELF (Series)", key = "elf-series", run = pick_elf_series },
 	{ title = "glibc malloc", key = "glibc-malloc", run = pick_glibc_malloc },
 	{ title = "JavaScript Exploitation", key = "javascript-exploitation", run = pick_js_exploitation },
@@ -3272,6 +3282,11 @@ local WEB_BOOKS = {
 	{ title = "Advanced Bash-Scripting Guide", key = "abs", run = pick_abs },
 	{ title = "Professional C++ (studyplan.dev)", key = "studyplan-pro-cpp", run = pick_studyplan_cpp },
 	{ title = "Data Structures & Algorithms (studyplan.dev)", key = "studyplan-dsa", run = pick_studyplan_dsa },
+	{ title = "Learn You a Haskell for Great Good!", key = "lyah", run = pick_lyah },
+	{ title = "LazyFoo SDL3 Tutorials", key = "lazyfoo-sdl3", run = pick_lazyfoo_sdl3 },
+	{ title = "QEMU Internals (Airbus Seclab)", key = "qemu-internals", run = pick_qemu_internals },
+	{ title = "JIT (Series)", key = "jit-series", run = pick_jit_series },
+	{ title = "Bochs Documentation", key = "bochs-docs", run = pick_bochs_docs },
 }
 
 -- All books under one entry, in ONE flat list: Books -> book -> chapter.
@@ -3429,7 +3444,6 @@ LOCATION["browser-engineering"] = { index = "browser-engineering/index.tsv", uni
 LOCATION["learnopengl"] = { index = "learnopengl/index.tsv", unit = "chapter" }
 LOCATION["revers-hypervisor"] = { index = "revers-hypervisor/index.tsv", unit = "chapter" }
 LOCATION["glibc"] = { index = "glibc/index.tsv", unit = "chapter" }
-LOCATION["emulator"] = { index = "emulator/index.tsv", unit = "chapter" }
 LOCATION["elf-series"] = { index = "elf-series/index.tsv", unit = "chapter" }
 LOCATION["glibc-malloc"] = { index = "glibc-malloc/index.tsv", unit = "chapter" }
 LOCATION["javascript-exploitation"] = { index = "javascript-exploitation/index.tsv", unit = "chapter" }
@@ -3439,6 +3453,11 @@ LOCATION["makefile-tutorial"] = { index = "makefile-tutorial/index.tsv", unit = 
 LOCATION["abs"] = { index = "abs/index.tsv", unit = "chapter" }
 LOCATION["studyplan-pro-cpp"] = { index = "studyplan-pro-cpp/index.tsv", unit = "chapter" }
 LOCATION["studyplan-dsa"] = { index = "studyplan-dsa/index.tsv", unit = "chapter" }
+LOCATION["lyah"] = { index = "lyah/index.tsv", unit = "chapter" }
+LOCATION["lazyfoo-sdl3"] = { index = "lazyfoo-sdl3/index.tsv", unit = "chapter" }
+LOCATION["qemu-internals"] = { index = "qemu-internals/index.tsv", unit = "chapter" }
+LOCATION["jit-series"] = { index = "jit-series/index.tsv", unit = "chapter" }
+LOCATION["bochs-docs"] = { index = "bochs-docs/index.tsv", unit = "chapter" }
 LOCATION["elf-tis"] = { rel = "books/books-compilers/elf-specification", marker = ".complete", unit = "chapter" }
 -- Fetched from a live URL on every read; there is no on-disk set to freeze.
 for _, key in ipairs({ "ocaml", "haskell", "multiboot", "make" }) do
